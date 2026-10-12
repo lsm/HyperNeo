@@ -182,15 +182,14 @@ export function neoContinuesLeft(stalled: number): number {
 }
 
 export function readNeoWorkContinueBudget(
-  continued: Pick<NeoWorkContinue, 'progress' | 'stalled' | 'continuedAt'> | null,
+  continued: Pick<NeoWorkContinue, 'progress' | 'stalled'> | null,
   progress: string,
   startedAt: number | null,
   ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null,
   now: number
 ): string | null {
   if (!ask || !isPooledNeoAsk(ask)) return readContinueBudget(continued, progress, startedAt, now);
-  const sinceApproval = continued && continued.continuedAt >= ask.approvedAt ? continued : null;
-  const stalled = readContinueBudget(sinceApproval, progress, null, now);
+  const stalled = readContinueBudget(continued, progress, null, now);
   if (stalled) return stalled;
   return neoAskApprovalSpent(ask, now) === 'expired'
     ? 'continue_budget_spent: this ask was approved over 48 hours ago; ask the human to approve it again.'

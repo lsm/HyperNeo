@@ -78,20 +78,16 @@ describe('readNeoWorkContinueBudget', () => {
   test('work under an approved ask keeps going while it moves, for 48 hours, with no flat count', () => {
     expect(
       readNeoWorkContinueBudget(
-        { progress: 'old', stalled: 2, continuedAt: HOUR },
+        { progress: 'old', stalled: 2 },
         'p',
         0,
         { ...approved, approvedContinues: 500 },
         13 * HOUR
       )
     ).toBeNull();
-    const stalled = { progress: 'p', stalled: 2, continuedAt: HOUR };
-    expect(readNeoWorkContinueBudget(stalled, 'p', 0, approved, 13 * HOUR)).toContain(
-      'brought no new commit'
-    );
     expect(
-      readNeoWorkContinueBudget(stalled, 'p', 0, { ...approved, approvedAt: 2 * HOUR }, 13 * HOUR)
-    ).toBeNull();
+      readNeoWorkContinueBudget({ progress: 'p', stalled: 2 }, 'p', 0, approved, 13 * HOUR)
+    ).toContain('brought no new commit');
     expect(readNeoWorkContinueBudget(null, 'p', 0, approved, 48 * HOUR)).toContain(
       'approve it again'
     );
@@ -381,8 +377,10 @@ describe('neo.work.continue', () => {
     });
     service.askRecords.approve(opened.id, Date.now() + 1);
     expect(service.askRecords.get(opened.id)?.approvedContinues).toBe(0);
-    expect(await invoke({ id: work.id, message: 'Approved again.' })).toMatchObject({
-      value: { ok: true },
+    for (const message of ['Approved again.', 'Second.', 'Third.'])
+      expect(await invoke({ id: work.id, message })).toMatchObject({ value: { ok: true } });
+    expect(await invoke({ id: work.id, message: 'Fourth.' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('brought no new commit') },
     });
   });
 

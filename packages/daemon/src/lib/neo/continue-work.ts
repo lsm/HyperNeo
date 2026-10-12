@@ -16,7 +16,7 @@ type Delivered = Exclude<ReturnType<typeof readDriverOutcome>, { failure: string
 interface NeoContinueEvidence {
   work: NeoWork | null;
   ref: WorkRef | null;
-  continued: Pick<NeoWorkContinue, 'progress' | 'stalled' | 'continuedAt'> | null;
+  continued: Pick<NeoWorkContinue, 'progress' | 'stalled'> | null;
   progress: string;
   inFlight: boolean;
   ask: NeoAsk | null;
