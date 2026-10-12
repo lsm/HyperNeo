@@ -1320,7 +1320,9 @@ describe('neo.ask operations', () => {
     ]);
     expect(
       await invoke('neo.ask.edit', { askId: targetId, add: [{ text: 'more' }] })
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('checklist_full') } });
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('holds 14 items from a fold') },
+    });
     expect(await invoke('neo.ask.edit', { askId: targetId, remove: ['i3'] })).toMatchObject({
       value: { ok: true },
     });

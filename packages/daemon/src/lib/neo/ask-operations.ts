@@ -684,7 +684,13 @@ export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gat
   const left = active.length - new Set(input.remove).size + input.add.length;
   if (left < 1) return { reason: fail('checklist_empty: keep at least one item.') };
   if (left > Math.max(12, active.length))
-    return { reason: fail('checklist_full: an ask holds at most 12 items.') };
+    return {
+      reason: fail(
+        active.length > 12
+          ? `checklist_full: this ask holds ${active.length} items from a fold and takes no new items until it has 12 or fewer.`
+          : 'checklist_full: an ask holds at most 12 items.'
+      ),
+    };
   const kept = active.filter((item) => !input.remove.includes(item.id));
   return countNeoAskWatches([...kept, ...input.add]) > NEO_ASK_WATCH_MAX
     ? {

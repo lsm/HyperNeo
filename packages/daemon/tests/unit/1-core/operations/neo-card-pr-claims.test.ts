@@ -5,6 +5,7 @@ import {
   beatsNeoPrClaim,
   hasNeoUnattachedOpenedPrs,
   keepNeoCardPrReads,
+  neoCardOpenedPrs,
   keepNeoUnbeatenPrs,
   neoPrMatchScore,
   planNeoCardPrCandidates,
@@ -353,7 +354,10 @@ describe('PRs the worker session opened', () => {
         opened: [pull(5), pull(6), pull(7)],
         stored: [],
       }).map((item) => item.url)
-    ).toEqual([pull(7), pull(6)]);
+    ).toEqual([pull(7), pull(6), pull(5)]);
+    expect(neoCardOpenedPrs(Array.from({ length: 10 }, (_, n) => pull(n + 1)))).toEqual(
+      [10, 9, 8, 7, 6, 5, 4, 3].map(pull)
+    );
   });
 
   test('attach while open, and an old finished one from before the card is rejected for good', () => {

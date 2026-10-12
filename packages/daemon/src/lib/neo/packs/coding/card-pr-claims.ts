@@ -38,14 +38,19 @@ export function planNeoCardPrCandidates(input: {
   const onBranch = new Set(input.branch.map(key));
   const opened = new Set((input.opened ?? []).map(key));
   const seen = new Set<string>();
-  return neoCardPrUrls(
+  const listed = neoCardPrUrls(
     [
       ...extractNeoWorkPrUrls([input.brief, input.report].filter(Boolean).join('\n'), input.stored),
       ...(input.refs?.named ?? []),
       ...(input.refs?.mentioned ?? []),
     ],
-    [...input.branch, ...[...(input.opened ?? [])].reverse()]
-  ).flatMap((url) => {
+    input.branch
+  );
+  const known = new Set(listed.map(key));
+  return [
+    ...listed,
+    ...neoCardOpenedPrs(input.opened ?? []).filter((url) => !known.has(key(url))),
+  ].flatMap((url) => {
     if (seen.has(key(url))) return [];
     seen.add(key(url));
     const claim: NeoPrClaim = onBranch.has(key(url))
@@ -227,10 +232,16 @@ export function keepNeoCardPrReads(
   return sorted;
 }
 
+const NEO_CARD_OPENED_PR_MAX = 8;
+
+export function neoCardOpenedPrs(opened: readonly string[]): string[] {
+  return [...opened].reverse().slice(0, NEO_CARD_OPENED_PR_MAX);
+}
+
 export function hasNeoUnattachedOpenedPrs(
   opened: readonly string[],
   stored: readonly { url: string }[]
 ): boolean {
   const attached = new Set(stored.map((pr) => key(pr.url)));
-  return opened.some((url) => !attached.has(key(url)));
+  return neoCardOpenedPrs(opened).some((url) => !attached.has(key(url)));
 }

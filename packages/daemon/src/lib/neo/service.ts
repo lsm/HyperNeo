@@ -162,6 +162,7 @@ import {
 } from './packs/coding/branch-prs.ts';
 import {
   hasNeoUnattachedOpenedPrs,
+  neoCardOpenedPrs,
   planNeoCardPrCandidates,
   type NeoCardPrCandidate,
 } from './packs/coding/card-pr-claims.ts';
@@ -403,6 +404,7 @@ export class NeoService {
   private readonly continuing = new Set<string>();
   private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
   private readonly cardOpenedPrs = new Map<string, string[]>();
+  private readonly openedPrsTried = new Map<string, string>();
   private readonly followReads = new Map<string, number>();
   private readonly followWork = (superpipe({})('neo-work-follow') as PipelineAPI)
     .input(['work', 'now'])
@@ -1345,13 +1347,17 @@ export class NeoService {
   private async attachOpenedPrs(workId: string): Promise<void> {
     const work = this.repo.getWork(workId);
     const stored = this.workPrs.get(workId);
+    const opened = this.cardOpenedPrs.get(workId) ?? [];
+    const tried = neoCardOpenedPrs(opened).join(' ');
     if (
       !work ||
       !this.packs().some((pack) => pack.id === CODING_PACK_BRIEF.id) ||
-      !hasNeoUnattachedOpenedPrs(this.cardOpenedPrs.get(workId) ?? [], stored?.prs ?? [])
+      this.openedPrsTried.get(workId) === tried ||
+      !hasNeoUnattachedOpenedPrs(opened, stored?.prs ?? [])
     )
       return;
-    await readNeoCardPrs(this.cardPrDeps, work, stored, Date.now());
+    const read = await readNeoCardPrs(this.cardPrDeps, work, stored, Date.now());
+    if (read.ok) this.openedPrsTried.set(workId, tried);
   }
 
   private async reclaimCardPrs(): Promise<void> {
