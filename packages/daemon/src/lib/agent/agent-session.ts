@@ -83,6 +83,7 @@ const NEO_CORE_OPERATIONS = [
   'neo.snapshot',
   'neo.ask.open',
   'neo.ask.tick',
+  'neo.ask.question',
   'neo.ask.edit',
   'neo.ask.settle',
   'neo.ask.approve',
