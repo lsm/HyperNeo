@@ -10,7 +10,7 @@ const DEFAULT_PROBE_HOST = 'api.anthropic.com';
 const NETWORK_UNREACHABLE_RE =
   /\b(?:ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EAI_AGAIN)\b|getaddrinfo|\bConnection error\./;
 const PROBE_HOST_RE =
-  /\b(?:ENOTFOUND|EAI_AGAIN)\s+([a-z0-9.-]+)|\b(?:ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)\s+([a-z0-9.-]+):\d+/i;
+  /\b(?:ENOTFOUND|EAI_AGAIN)\s+([a-z0-9.-]+)|\b(?:ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)\s+(\S+):\d+/i;
 
 type HeldPrompt = { uuid: string; content: string | MessageContent[] };
 
@@ -20,7 +20,8 @@ export function isNetworkUnreachableError(text: string): boolean {
 
 export function networkProbeHost(text: string): string {
   const match = PROBE_HOST_RE.exec(text);
-  return match?.[1] ?? match?.[2] ?? DEFAULT_PROBE_HOST;
+  const host = match?.[1] ?? match?.[2];
+  return host && !host.includes(':') ? host : DEFAULT_PROBE_HOST;
 }
 
 export function planNetworkOutageTick(
@@ -87,6 +88,12 @@ export class NetworkOutagePause {
     if (firstFailure) await this.deps.notice(NETWORK_OUTAGE_NOTICE);
   }
 
+  async resumeNow(): Promise<boolean> {
+    if (!this.active) return false;
+    await this.deps.resume(this.takePrompt());
+    return true;
+  }
+
   takePrompt(): HeldPrompt | null {
     const prompt = this.prompt;
     this.stop();
@@ -109,7 +116,11 @@ export class NetworkOutagePause {
     this.cancelProbe?.();
     await this.deps.hold(retryAt, this.prompt?.uuid);
     this.cancelProbe = this.deps.schedule(
-      () => void this.tick(),
+      () =>
+        void this.tick().catch((error: unknown) => {
+          this.deps.log(`network outage: probe tick failed, dropping the pause: ${String(error)}`);
+          this.stop();
+        }),
       Math.max(0, retryAt - this.deps.now())
     );
   }

@@ -645,6 +645,7 @@ export class AgentSession
       probe: probeNetworkHost,
       schedule: (run, delayMs) => {
         const timer = setTimeout(run, delayMs);
+        timer.unref?.();
         return () => clearTimeout(timer);
       },
       isHeld: () => this.stateManager.getState().status === 'rate_limit_cooldown',
@@ -1394,6 +1395,7 @@ export class AgentSession
   }
 
   cancelRateLimitRetry(): void {
+    this.networkPause.stop();
     runRateLimitManualCancel({
       db: this.db,
       sessionId: this.session.id,
@@ -1424,6 +1426,7 @@ export class AgentSession
   }
 
   async retryNowAfterRateLimit(): Promise<boolean> {
+    if (await this.networkPause.resumeNow()) return true;
     const persistedEpisodeMessageUuid = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
     if (this.rateLimitWatchdog.isPersistedCooldownArmed()) {
       this.rateLimitWatchdog.resumePersistedCooldown();

@@ -40,6 +40,7 @@ describe('networkProbeHost', () => {
     expect(networkProbeHost('getaddrinfo ENOTFOUND chatgpt.com')).toBe('chatgpt.com');
     expect(networkProbeHost('connect ECONNREFUSED 10.0.0.5:443')).toBe('10.0.0.5');
     expect(networkProbeHost('API Error: Connection error.')).toBe('api.anthropic.com');
+    expect(networkProbeHost('connect ENETUNREACH 2606:4700::1:443')).toBe('api.anthropic.com');
   });
 });
 
@@ -81,6 +82,7 @@ describe('NetworkOutagePause', () => {
     const events: string[] = [];
     const holds: number[] = [];
     let held = true;
+    let resumeFails = false;
     const resumed: unknown[] = [];
     const pause = new NetworkOutagePause({
       now: () => now,
@@ -106,6 +108,7 @@ describe('NetworkOutagePause', () => {
         events.push('popup');
       },
       resume: async (prompt) => {
+        if (resumeFails) throw new Error('Agent query did not start');
         resumed.push(prompt);
       },
       log: () => {},
@@ -124,6 +127,9 @@ describe('NetworkOutagePause', () => {
       tick,
       release: () => {
         held = false;
+      },
+      failResume: () => {
+        resumeFails = true;
       },
     };
   }
@@ -168,6 +174,25 @@ describe('NetworkOutagePause', () => {
     await h.tick(NETWORK_PROBE_EVERY_MS);
 
     expect(h.resumed).toEqual([]);
+    expect(h.pause.isActive()).toBe(false);
+  });
+
+  test('Retry Now resends the held prompt at once', async () => {
+    const h = harness(() => false);
+    expect(await h.pause.resumeNow()).toBe(false);
+    await h.pause.start('getaddrinfo ENOTFOUND chatgpt.com', prompt);
+
+    expect(await h.pause.resumeNow()).toBe(true);
+    expect(h.resumed).toEqual([prompt]);
+    expect(h.pause.isActive()).toBe(false);
+  });
+
+  test('a failing probe tick drops the pause instead of throwing', async () => {
+    const h = harness(() => true);
+    h.failResume();
+    await h.pause.start('getaddrinfo ENOTFOUND chatgpt.com', prompt);
+    await h.tick(NETWORK_PROBE_EVERY_MS);
+
     expect(h.pause.isActive()).toBe(false);
   });
 
