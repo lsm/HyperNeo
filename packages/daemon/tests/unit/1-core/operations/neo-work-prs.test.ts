@@ -102,6 +102,19 @@ describe('summarizeNeoWorkPr', () => {
   test('refuses a reply it cannot read', () => {
     expect(summarizeNeoWorkPr({ url: 'x' })).toBe(null);
   });
+
+  test('reads the issues and PRs a PR refers to from its title, body and closing issues', () => {
+    expect(
+      summarizeNeoWorkPr(
+        ghPr({
+          title: 'fix(neo): stalled asks wake Neo (#6587)',
+          body: 'Part of #6002. See https://github.com/lsm/HyperNeo/pull/6601.',
+          closingIssuesReferences: [{ number: 6587 }, { number: 6590 }],
+        })
+      )?.refs
+    ).toEqual([6587, 6002, 6601, 6590]);
+    expect(summarizeNeoWorkPr(ghPr({}))?.refs).toBeUndefined();
+  });
 });
 
 describe('neoWorkPrEvidence', () => {

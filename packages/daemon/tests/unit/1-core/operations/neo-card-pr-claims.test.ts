@@ -284,6 +284,24 @@ describe('keepNeoCardPrReads', () => {
     expect(sorted.rejected.map((item) => item.url)).toEqual([pull(1), pull(3)]);
   });
 
+  test('a card that names its issue keeps only the mentioned PRs that refer to it, even ones it claimed before', () => {
+    const named = { createdAt: 100, title: 'Drive #6587', instruction: 'Finish #6587.' } as Pick<
+      NeoWork,
+      'createdAt' | 'title' | 'instruction'
+    >;
+    const sorted = keepNeoCardPrReads(
+      named,
+      [owned(6607), owned(6624), owned(6601, { claimed: true }), owned(6626, { claim: 'named' })],
+      [
+        { ...pr(6607, 150), refs: [6587, 6002] },
+        { ...pr(6624, 150), refs: [6610] },
+        { ...pr(6601, 150), refs: [6596] },
+      ]
+    );
+    expect(sorted.kept.map((item) => item.url)).toEqual([pull(6607), pull(6626)]);
+    expect(sorted.rejected.map((item) => item.url)).toEqual([pull(6624), pull(6601)]);
+  });
+
   test('a new mention this read could not fetch stays unclaimed until a read dates it', () => {
     const sorted = keepNeoCardPrReads(card, [owned(4), owned(1)], [pr(1, 150)]);
     expect(sorted.kept.map((item) => item.url)).toEqual([pull(1)]);

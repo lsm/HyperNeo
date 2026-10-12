@@ -65,7 +65,7 @@ type NeoCardPrPlan = { owned: NeoCardPrOwned[] };
 
 const ownedUrls = (plan: NeoCardPrPlan) => plan.owned.map((item) => item.url);
 const stripReadTimes = (prs: readonly NeoWorkPr[]) =>
-  prs.map(({ createdAt: _createdAt, title: _title, branch: _branch, ...pr }) => pr);
+  prs.map(({ createdAt: _createdAt, title: _title, branch: _branch, refs: _refs, ...pr }) => pr);
 
 export function cachedNeoCardPrRead(row: NeoWorkPrRow | null): NeoCardPrRead {
   return { row, ok: !row || row.readOkAt >= row.readAt };
