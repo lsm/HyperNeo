@@ -11,6 +11,7 @@ import { runMigration328 } from '../../../../src/storage/schema/m328-neo-ask-ite
 import { runMigration330 } from '../../../../src/storage/schema/m330-neo-ask-waiting-item';
 import { runMigration342 } from '../../../../src/storage/schema/m342-neo-ask-item-options';
 import { runMigration343 } from '../../../../src/storage/schema/m343-neo-ask-item-decision';
+import { runMigration348 } from '../../../../src/storage/schema/m348-neo-ask-item-action';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -34,6 +35,7 @@ function withAsks() {
     runMigration330,
     runMigration342,
     runMigration343,
+    runMigration348,
   ])
     migrate(db);
   return db;

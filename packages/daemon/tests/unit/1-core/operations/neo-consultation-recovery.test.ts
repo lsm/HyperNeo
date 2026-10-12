@@ -41,19 +41,24 @@ describe('recoverNeoConsultations', () => {
     expect(mailbox.jobQueue.getJob(running.id)?.status).toBe('processing');
   });
 
-  test('does not touch unrelated jobs and delegates recovery once', async () => {
+  test('does not touch unrelated jobs, delegates recovery once, and clears stale needs_you', async () => {
     const unrelated = mailbox.jobQueue.enqueue({
       queue: 'mailbox',
       payload: { messageUuid: 'human' },
     });
     let calls = 0;
+    let cleared = 0;
     const service = {
       recoverConsultations: async () => {
         calls++;
       },
+      clearStaleNeedsYou: async () => {
+        cleared++;
+      },
     } as unknown as NeoService;
     expect(await recoverNeoConsultations(mailbox.jobQueue, service)).toEqual({ recovered: true });
     expect(calls).toBe(1);
+    expect(cleared).toBe(1);
     expect(mailbox.jobQueue.getJob(unrelated.id)).toEqual(unrelated);
     expect(
       mailbox.jobQueue.listJobs({ queue: NEO_CONSULTATION_RECOVERY, status: 'pending' })

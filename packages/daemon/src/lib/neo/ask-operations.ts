@@ -26,6 +26,7 @@ import {
 } from './packs/coding/issue-checks.ts';
 import { LIFE_ADMIN_CHECK_CONFIRMED } from './packs/life-admin/pack.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
+import { neoDaemonReadsItem } from './needs-you.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -79,6 +80,8 @@ export const NeoAskSchema = z.object({
         addedAt: z.number().nullable(),
         options: z.array(z.string()).optional(),
         decision: z.literal(true).optional(),
+        action: z.string().optional(),
+        waitCard: z.string().optional(),
       })
     )
     .optional(),
@@ -119,6 +122,7 @@ const Settle = z.object({
   summary: z.string().trim().min(1).max(200).optional(),
   evidence: z.string().trim().min(1).max(4000),
   cite: Cite.optional(),
+  action: z.string().trim().min(1).max(120).optional(),
 });
 
 const Tick = z.object({
@@ -133,6 +137,7 @@ const Tick = z.object({
     .refine((options) => new Set(options).size === options.length, 'Options must differ.')
     .optional(),
   cite: Cite.optional(),
+  action: z.string().trim().min(1).max(120).optional(),
 });
 
 const Answer = z.object({
@@ -426,6 +431,39 @@ function requireNeoAskTick(
     : { value: { ask, item } };
 }
 
+const NEO_HUMAN_TASK_REFUSALS = {
+  approval:
+    "approval_on_ask: re-approving continued work is the ask's Approve, not a checklist item. Tell the human the ask needs their Approve; approving it wakes you.",
+  wait: 'not_the_human: this waits on something the daemon reads itself (a PR, merge, CI, this machine’s deploy, a card, standing rules). Keep the item pending; the daemon wakes you when cards report, and you tick it met once you read it.',
+  fact: 'daemon_readable: you can read this yourself (a PR, merge, CI, this machine’s deploy, a card, standing rules). Read it and tick the item met, or keep it pending. reported is for claims you cannot read, such as another machine’s state.',
+} as const;
+
+export function requireNeoHumanTask<T>(
+  caller: OperationCaller,
+  state: NeoAskItem['state'],
+  text: string,
+  action: string | undefined,
+  value: T,
+  context = ''
+): Gate<T> {
+  if (caller.source !== 'mcp' || (state !== 'needs_you' && state !== 'reported')) return { value };
+  const reads = neoDaemonReadsItem(state, text, context);
+  if (reads) return { reason: fail(NEO_HUMAN_TASK_REFUSALS[reads]) };
+  return state === 'needs_you' && !action
+    ? {
+        reason: fail(
+          'action_required: pass action, a few words saying what the human does and where ("Choose A or B in chat", "Click Start work on card 3bce413f").'
+        ),
+      }
+    : { value };
+}
+
+export function neoTickTaskText(input: z.infer<typeof Tick>, item: NeoAskItem): string {
+  return input.state === 'needs_you'
+    ? [item.text, input.evidence, input.action].filter(Boolean).join('\n')
+    : item.text;
+}
+
 export type NeoHumanWaitSources = {
   said: readonly string[];
   rules: readonly string[];
@@ -650,7 +688,11 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
         : []),
     ],
     rules: neoStandingRules(service.db.getGlobalSettings?.().neo),
-    asking: ask.workIds.filter((id) => service.driverTargets.readNeedsYouSince(id) != null),
+    asking: ask.workIds.filter(
+      (id) =>
+        service.repo.getWork(id)?.status === 'proposed' ||
+        service.driverTargets.readNeedsYouSince(id) != null
+    ),
   });
   const readOwnedLiveAsk = (superpipe({})('neo-ask-owned-live') as PipelineAPI)
     .input(['askId', 'caller', 'name', 'verb'])
@@ -810,6 +852,25 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       (
         input: z.infer<typeof Settle>,
         ask: NeoAsk,
+        caller: OperationCaller,
+        decision: ReturnType<typeof planNeoAskDecision>
+      ) =>
+        decision.add
+          ? requireNeoHumanTask(
+              caller,
+              'needs_you',
+              [decision.add.text, input.evidence, input.action].filter(Boolean).join('\n'),
+              input.action,
+              ask
+            )
+          : { value: ask },
+      ['input', 'admission', 'caller', 'decision'],
+      'result:admission'
+    )
+    .pipe(
+      (
+        input: z.infer<typeof Settle>,
+        ask: NeoAsk,
         decision: ReturnType<typeof planNeoAskDecision>
       ) => {
         if (isNeoAskReplay(ask, input)) return { ask };
@@ -820,7 +881,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
             neoAskSummary(input),
             input.evidence,
             decision.waitingItem,
-            decision.add,
+            decision.add && input.action ? { ...decision.add, action: input.action } : decision.add,
             true
           ),
         };
@@ -882,6 +943,23 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
         target: { ask: NeoAsk; item: NeoAskItem },
         caller: OperationCaller
       ) =>
+        requireNeoHumanTask(
+          caller,
+          input.state,
+          neoTickTaskText(input, target.item),
+          input.action,
+          target,
+          input.evidence
+        ),
+      ['input', 'admission', 'caller'],
+      'result:admission'
+    )
+    .pipe(
+      (
+        input: z.infer<typeof Tick>,
+        target: { ask: NeoAsk; item: NeoAskItem },
+        caller: OperationCaller
+      ) =>
         requireNeoAskDecisionKept(
           target.ask,
           caller,
@@ -901,6 +979,12 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
             evidence: input.evidence ?? null,
             metBy: input.state === 'met' ? (caller.source === 'mcp' ? 'neo' : 'human') : null,
             options: input.options,
+            ...(input.state === 'needs_you'
+              ? {
+                  action: input.action,
+                  waitCard: input.cite && 'card' in input.cite ? input.cite.card : undefined,
+                }
+              : {}),
           },
           Date.now()
         );
@@ -1017,7 +1101,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.tick',
       description:
-        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide (pass options, 2-4 short choices, when the answer is one of a few; the human taps one and neo.ask.answer sends it back to you), or back to pending. needs_you also takes cite: {said: the human's exact words from this ask's opening message or this turn}, {rule: a saved standing rule}, or {card: a card under this ask whose session is waiting on the human}; without one the daemon refuses, so decide yourself instead. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide (pass options, 2-4 short choices, when the answer is one of a few; the human taps one and neo.ask.answer sends it back to you), or back to pending. needs_you needs action, a few words the human sees saying what to do and where ('Choose A or B in chat'). needs_you and reported are refused for what the daemon reads itself (a PR, merge, CI, this machine's deploy, a card, standing rules) and for re-approving continued work, which is the ask's Approve. needs_you also takes cite: {said: the human's exact words from this ask's opening message or this turn}, {rule: a saved standing rule}, or {card: a card under this ask whose session is waiting on the human}; without one the daemon refuses, so decide yourself instead. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1053,7 +1137,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        'Settle an ask when its outcome is decided: achieved when every checklist item is ticked met with neo.ask.tick (refused otherwise; the user\'s close still overrides); waiting when the next step is the human\'s (an offer to start work, or a delivered result that leaves them decisions), never achieved or abandoned while an item needs the human; settling waiting or blocked with no needs_you item and no work offered for Start adds summary as one, so the decision stays on the checklist until the human answers; blocked when only the human can unblock it (waiting or blocked with no needs_you item and no work offered must pass cite, as for neo.ask.tick needs_you); abandoned when it is no longer wanted. summary is one short sentence the ask shows: the outcome, or for waiting and blocked what the human must decide ("Merged in #6099.", "Start the composer redesign?", "Needs you: pick the release date."). evidence holds the proof (PR state, commits, checks), which the ask does not show. Achieved and abandoned are final and stop the ask\'s live work: queued work items close (done for achieved, cancelled for abandoned) and proposed work items are cancelled. Proposing, starting or continuing work under a waiting or blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user\'s close button calls this too.',
+        'Settle an ask when its outcome is decided: achieved when every checklist item is ticked met with neo.ask.tick (refused otherwise; the user\'s close still overrides); waiting when the next step is the human\'s (an offer to start work, or a delivered result that leaves them decisions), never achieved or abandoned while an item needs the human; settling waiting or blocked with no needs_you item and no work offered for Start adds summary as one, so the decision stays on the checklist until the human answers; blocked when only the human can unblock it (waiting or blocked with no needs_you item and no work offered must pass cite, as for neo.ask.tick needs_you); abandoned when it is no longer wanted. summary is one short sentence the ask shows: the outcome, or for waiting and blocked what the human must decide ("Merged in #6099.", "Start the composer redesign?", "Needs you: pick the release date."). evidence holds the proof (PR state, commits, checks), which the ask does not show. Achieved and abandoned are final and stop the ask\'s live work: queued work items close (done for achieved, cancelled for abandoned) and proposed work items are cancelled. Proposing, starting or continuing work under a waiting or blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user\'s close button calls this too. When that adds a checklist item for the human, pass action saying what they do and where.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
