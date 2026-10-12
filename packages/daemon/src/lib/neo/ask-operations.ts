@@ -1339,10 +1339,23 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'approved'
     )
     .pipe(requireNeoAskWritten, 'approved', 'result:admission')
-    .end('admission') as (
+    .pipe(
+      (receipt: AskReceipt) =>
+        receipt.ask.workIds.filter(
+          (id) =>
+            service.repo.getWork(id)?.status === 'proposed' &&
+            service.resolveWorkTarget(id).accepted
+        ),
+      'admission',
+      'startable'
+    )
+    .pipe(async (startable: string[]) => {
+      await Promise.allSettled(startable.map((id) => service.start(id)));
+    }, 'startable')
+    .endAsync('admission') as (
     input: z.infer<typeof Approve>,
     caller: OperationCaller
-  ) => AskReceipt | Rejection;
+  ) => Promise<AskReceipt | Rejection>;
   const edit = (superpipe({})('neo.ask.edit') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -1455,7 +1468,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.approve',
       description:
-        "Approve an open ask so Neo starts the work items under it without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. Its work items keep continuing while they make progress, for 48 hours; approving again after that renews the window. An approval never covers deploying to production, deleting data or other destructive steps.",
+        "Approve an open ask: the daemon starts its proposed work items at once, and Neo starts the ones proposed under it later without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. Its work items keep continuing while they make progress, for 48 hours; approving again after that renews the window. An approval never covers deploying to production, deleting data or other destructive steps.",
       inputSchema: Approve,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },

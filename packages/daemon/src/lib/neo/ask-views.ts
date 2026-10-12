@@ -117,12 +117,8 @@ export function neoAskItemAction(item: NeoAskItem): NeoAskHumanAction | null {
   };
 }
 
-export function neoCardHumanAction(
-  ask: Pick<NeoAsk, 'approvedAt'>,
-  card: NeoCardView
-): NeoAskHumanAction | null {
-  if (card.phase === 'proposed')
-    return ask.approvedAt == null ? { kind: 'start', workId: card.workId } : null;
+export function neoCardHumanAction(card: NeoCardView): NeoAskHumanAction | null {
+  if (card.phase === 'proposed') return { kind: 'start', workId: card.workId };
   if (card.primary.kind === 'retry') return { kind: 'retry', workId: card.workId };
   if (card.primary.kind === 'close') return { kind: 'close', workId: card.workId };
   return null;
@@ -144,7 +140,7 @@ export function deriveNeoAskHumanActions(
 ): NeoAskHumanAction[] {
   if (ask.status === 'achieved' || ask.status === 'abandoned') return [];
   return [
-    ...live.flatMap((card) => neoCardHumanAction(ask, card) ?? []),
+    ...live.flatMap((card) => neoCardHumanAction(card) ?? []),
     ...neoAskApproveAction(ask, live),
     ...(ask.doneItems ?? []).flatMap((item) => neoAskItemAction(item) ?? []),
   ];
