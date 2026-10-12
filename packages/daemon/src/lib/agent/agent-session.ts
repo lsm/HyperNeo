@@ -49,7 +49,12 @@ import { createNeoAskOriginResolver, isNeoFoldableNote } from '../neo/ask-origin
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { type NeoNoteFoldCandidate, planNeoNoteFold } from './neo-note-fold.ts';
-import { createNeoNoteQueueDeps, dispatchNeoNote } from '../neo/note-queue.ts';
+import {
+  createNeoNoteQueueDeps,
+  dispatchNeoNote,
+  holdNeoNotes,
+  releaseNeoNotes,
+} from '../neo/note-queue.ts';
 import { decideCoordinatorHandoff } from './coordinator-handoff.ts';
 import {
   type CallerScopeResolver,
@@ -2884,7 +2889,6 @@ export class AgentSession
 
           if (!this.dispatchNeoNote(messageUuid)) return { outcome: 'aborted' };
           const fold = this.readNeoNoteFold(messageUuid, content);
-          if (fold.uuids.length > 1) this.neoNoteFolds.set(messageUuid, fold.uuids);
           const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
           if (
             existing &&
@@ -2907,6 +2911,8 @@ export class AgentSession
             });
           }
 
+          if (fold.uuids.length > 1) this.neoNoteFolds.set(messageUuid, fold.uuids);
+          holdNeoNotes(this.session.id, fold.uuids);
           observer?.reportStage('query_ready', { generation: this.getQueryGeneration() });
           return { outcome: 'driving', acknowledgment, consumedUuids: fold.uuids };
         },
@@ -3006,6 +3012,7 @@ export class AgentSession
       if (ackTimedOut || !this.isDeliveryConsumed(messageUuid)) throw error;
     } finally {
       this.neoNoteFolds.delete(messageUuid);
+      releaseNeoNotes(this.session.id, admission.consumedUuids);
       waitSettled = true;
       clearTimeout(timeoutId);
       if (failedPoll !== undefined) clearInterval(failedPoll);

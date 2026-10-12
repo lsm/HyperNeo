@@ -159,6 +159,29 @@ export const dispatchNeoNote = (superpipe({})('neo-note-dispatch') as PipelineAP
   messageId: string
 ) => { dispatch: boolean };
 
+const heldNotes = new Map<string, Map<string, number>>();
+
+export function holdNeoNotes(sessionId: string, uuids: readonly string[]): void {
+  const held = heldNotes.get(sessionId) ?? new Map<string, number>();
+  for (const uuid of uuids) held.set(uuid, (held.get(uuid) ?? 0) + 1);
+  heldNotes.set(sessionId, held);
+}
+
+export function releaseNeoNotes(sessionId: string, uuids: readonly string[]): void {
+  const held = heldNotes.get(sessionId);
+  if (!held) return;
+  for (const uuid of uuids) {
+    const count = (held.get(uuid) ?? 0) - 1;
+    if (count > 0) held.set(uuid, count);
+    else held.delete(uuid);
+  }
+  if (held.size === 0) heldNotes.delete(sessionId);
+}
+
+export function withoutHeldNotes(queue: NeoNoteQueue, held: ReadonlySet<string>): NeoNoteQueue {
+  return { ...queue, queued: queue.queued.filter((note) => !held.has(note.uuid)) };
+}
+
 export function createNeoNoteQueueDeps(
   db: Database,
   onDiscarded: (sessionId: string, dbIds: string[]) => void = () => {}
@@ -167,10 +190,14 @@ export function createNeoNoteQueueDeps(
   const cards = new NeoRepository(db.getDatabase());
   const asks = new NeoAskRepository(db.getDatabase());
   return {
-    readQueue: (sessionId) => ({
-      queued: sdk.listQueuedSystemInputs(sessionId),
-      lastConsumedSeq: sdk.lastConsumedInputSeq(sessionId),
-    }),
+    readQueue: (sessionId) =>
+      withoutHeldNotes(
+        {
+          queued: sdk.listQueuedSystemInputs(sessionId),
+          lastConsumedSeq: sdk.lastConsumedInputSeq(sessionId),
+        },
+        new Set(heldNotes.get(sessionId)?.keys())
+      ),
     isSettled: (subject) =>
       isNeoNoteSubjectSettled(
         subject,
