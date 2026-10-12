@@ -2004,15 +2004,13 @@ export class NeoService {
     .pipe(
       (rows: NeoCardEventSubscription[]) =>
         new Map(
-          [...new Set(rows.map((row) => row.workId))].map((workId) => {
-            const work = this.repo.getWork(workId);
-            return [
-              workId,
-              work && isNeoCardLive(work)
-                ? this.packs().flatMap((pack) => pack.externalTopics?.(work) ?? [])
-                : [],
-            ] as const;
-          })
+          [...new Set(rows.map((row) => row.workId))].map(
+            (workId) =>
+              [
+                workId,
+                isNeoCardLive(this.repo.getWork(workId)) && this.cardEventsDelivered(),
+              ] as const
+          )
         ),
       'rows',
       'followed'

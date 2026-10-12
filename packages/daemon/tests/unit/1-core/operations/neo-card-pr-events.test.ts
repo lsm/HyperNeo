@@ -314,4 +314,16 @@ describe('Neo card pull request events', () => {
     expect(subscriptions()).toEqual([]);
     expect(own.listBySession('native')).toHaveLength(1);
   });
+
+  test('a PR read as merged stays followed until its merge event reaches the card', async () => {
+    const work = desktopCard();
+    attach(work);
+    service.workPrs.record(work.id, [{ ...open, state: 'MERGED' }], Date.now());
+
+    expect(service.endUnfollowedCardTopics(Date.now())).toEqual([]);
+    await event('closed', 'Merged.', { state: 'closed', merged: true });
+
+    expect(sent.map((item) => item.message)).toEqual([expect.stringContaining('7.closed')]);
+    expect(subscriptions()).toEqual([]);
+  });
 });

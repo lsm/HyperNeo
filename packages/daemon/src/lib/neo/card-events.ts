@@ -26,9 +26,9 @@ export function isNeoCardLive(
 
 export function planNeoCardTopicsEnded(
   rows: readonly NeoCardEventSubscription[],
-  followed: ReadonlyMap<string, readonly string[]>
+  followed: ReadonlyMap<string, boolean>
 ): NeoCardEventSubscription[] {
-  return rows.filter((row) => !(followed.get(row.workId) ?? []).includes(row.topic));
+  return rows.filter((row) => !followed.get(row.workId));
 }
 
 export function planNeoCardSend({ work, ref }: NeoCardSendTarget): NeoCardSend {
