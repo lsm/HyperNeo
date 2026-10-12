@@ -2839,6 +2839,8 @@ export class AgentSession
             return { outcome: 'blocked', retryAt, reason: 'limit_recovery' };
           }
 
+          if (this.networkPause.isActive()) await this.resumeNetworkPauseFor(messageUuid);
+
           if (!this.messageQueue.isRunning()) {
             const startResult = await this.lifecycleManager.ensureQueryStarted(signal);
             if (startResult === 'blocked') {

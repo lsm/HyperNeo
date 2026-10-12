@@ -19,12 +19,15 @@ export function isNetworkUnreachableError(text: string): boolean {
   return NETWORK_UNREACHABLE_RE.test(text);
 }
 
+const LOCAL_HOST_RE = /^(?:localhost|127\.|\[?::1\]?$|0\.0\.0\.0$)/;
+
 export function networkProbeHost(
   text: string,
   fallback: string | false | null = null
 ): string | null {
   const match = PROBE_HOST_RE.exec(text);
   const host = match?.[1] ?? match?.[2];
+  if (host && LOCAL_HOST_RE.test(host)) return null;
   if (host && !host.includes(':')) return host;
   return fallback === false ? null : (fallback ?? DEFAULT_PROBE_HOST);
 }
@@ -33,7 +36,7 @@ export function providerProbeHost(baseUrl: string | undefined): string | false |
   if (!baseUrl) return null;
   try {
     const host = new URL(baseUrl).hostname;
-    return /^(?:localhost|127\.|\[?::1\]?$|0\.0\.0\.0$)/.test(host) ? false : host;
+    return LOCAL_HOST_RE.test(host) ? false : host;
   } catch {
     return null;
   }

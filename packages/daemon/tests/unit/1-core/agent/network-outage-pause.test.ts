@@ -49,6 +49,7 @@ describe('networkProbeHost', () => {
     );
     expect(networkProbeHost('API Error: Connection error.', false)).toBeNull();
     expect(networkProbeHost('getaddrinfo ENOTFOUND chatgpt.com', false)).toBe('chatgpt.com');
+    expect(networkProbeHost('connect ECONNREFUSED 127.0.0.1:51234')).toBeNull();
   });
 });
 

@@ -1109,6 +1109,35 @@ describe('AgentSession', () => {
       expect(admitSpy).not.toHaveBeenCalled();
     });
 
+    it('a delivery during a network pause resends the held prompt before its own message', async () => {
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({ isProcessingDelivery: mock(() => true) }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      const resent = mock(async () => 'started' as const);
+      agentSession.lifecycleManager.startQueryAndEnqueue = resent as never;
+      const pause = (
+        agentSession as unknown as {
+          networkPause: {
+            isActive: () => boolean;
+            takePrompt: () => { uuid: string; content: string } | null;
+          };
+        }
+      ).networkPause;
+      pause.isActive = () => true;
+      pause.takePrompt = () => ({ uuid: 'held-uuid', content: 'ship it' });
+
+      await agentSession.driveDeliveryTurn('uuid-new', 'hello', null, true, () => true);
+
+      expect(resent).toHaveBeenCalledWith('held-uuid', 'ship it', undefined, { prepend: true });
+    });
+
     it('driveDeliveryTurn parks instead of reopening while limit recovery is pending', async () => {
       const retrySpy = mock(() => 'db-1');
       mockDb.getSDKMessageRepo = mock(() => ({
