@@ -1,6 +1,8 @@
 import type { NeoConcern, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
+  NEO_ASK_OUTCOME_OPTIONS,
+  NEO_ASK_OUTCOME_QUESTIONS,
   type NeoAsk,
   type NeoAskItem,
   type NeoAskItemKind,
@@ -28,6 +30,7 @@ import {
 import { LIFE_ADMIN_CHECK_CONFIRMED } from './packs/life-admin/pack.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 import { neoDaemonReadsClaim, neoHumanTickWakes } from './needs-you.ts';
+import { isNeoAskOutcomeItem } from './ask-views.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -146,11 +149,17 @@ const Tick = z.object({
   waitCard: z.string().min(1).optional(),
 });
 
-const Answer = z.object({
-  askId: z.string().min(1),
-  itemId: z.string().min(1),
-  choice: z.string().trim().min(1).max(1000),
-});
+const Answer = z
+  .object({
+    askId: z.string().min(1),
+    itemId: z.string().min(1),
+    choice: z.string().trim().min(1).max(1000).optional(),
+    answers: z
+      .array(z.enum(NEO_ASK_OUTCOME_OPTIONS as [string, ...string[]]))
+      .length(NEO_ASK_OUTCOME_QUESTIONS.length)
+      .optional(),
+  })
+  .refine((input) => !!input.choice !== !!input.answers, 'Pass either choice or answers.');
 
 const Approve = z.object({ askId: z.string().min(1) });
 const Edit = z
@@ -599,9 +608,31 @@ export function requireNeoAskQuestion(
 ): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
   const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
   if (!item) return { reason: fail(`item_not_found: ${input.itemId} is not on this checklist.`) };
-  return item.state === 'needs_you'
+  if (isNeoAskOutcomeItem(item))
+    return input.answers
+      ? { value: { ask, item } }
+      : {
+          reason: fail(
+            `outcome_answers_required: ${item.id} is a step the human did; pass answers to: ${NEO_ASK_OUTCOME_QUESTIONS.join(' ')}`
+          ),
+        };
+  if (item.state !== 'needs_you')
+    return {
+      reason: fail(`item_not_waiting: ${item.id} is ${item.state}, not waiting on an answer.`),
+    };
+  return input.choice
     ? { value: { ask, item } }
-    : { reason: fail(`item_not_waiting: ${item.id} is ${item.state}, not waiting on an answer.`) };
+    : { reason: fail(`choice_required: ${item.id} is a decision; pass choice.`) };
+}
+
+export function readNeoAskReply(input: z.infer<typeof Answer>): { choice: string; met: boolean } {
+  if (!input.answers) return { choice: input.choice ?? '', met: true };
+  return {
+    choice: NEO_ASK_OUTCOME_QUESTIONS.map(
+      (question, index) => `${question} ${input.answers?.[index]}`
+    ).join(' '),
+    met: input.answers.every((answer) => answer === NEO_ASK_OUTCOME_OPTIONS[0]),
+  };
 }
 
 export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gate<NeoAsk> {
@@ -1059,27 +1090,36 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'result:admission'
     )
     .pipe(requireNeoAskQuestion, ['input', 'admission'], 'result:admission')
+    .pipe(readNeoAskReply, 'input', 'reply')
     .pipe(
-      async (input: z.infer<typeof Answer>, target: { ask: NeoAsk; item: NeoAskItem }) => {
-        await service.deliverAskAnswer(target.ask, target.item, input.choice);
+      async (
+        target: { ask: NeoAsk; item: NeoAskItem },
+        reply: { choice: string; met: boolean }
+      ) => {
+        await service.deliverAskAnswer(target.ask, target.item, reply.choice, reply.met);
       },
-      ['input', 'admission']
+      ['admission', 'reply']
     )
     .pipe(
-      (input: z.infer<typeof Answer>, target: { ask: NeoAsk }) => {
-        service.askRecords.tickItem(
-          target.ask.id,
-          {
-            id: input.itemId,
-            state: 'met',
-            evidence: `The human answered: ${input.choice}`,
-            metBy: 'human',
-          },
-          Date.now()
-        );
+      (
+        input: z.infer<typeof Answer>,
+        target: { ask: NeoAsk },
+        reply: { choice: string; met: boolean }
+      ) => {
+        if (reply.met)
+          service.askRecords.tickItem(
+            target.ask.id,
+            {
+              id: input.itemId,
+              state: 'met',
+              evidence: `The human answered: ${reply.choice}`,
+              metBy: 'human',
+            },
+            Date.now()
+          );
         return { ask: service.askRecords.get(target.ask.id) };
       },
-      ['input', 'admission'],
+      ['input', 'admission', 'reply'],
       'answered'
     )
     .pipe(requireNeoAskWritten, 'answered', 'result:admission')
@@ -1160,7 +1200,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.answer',
       description:
-        "Answer a needs_you item of an ask: the human's choice (one of its options, or their own words) ticks the item met and is sent to the Neo session that opened the ask, which acts on it.",
+        "Answer a needs_you item of an ask: the human's choice (one of its options, or their own words) ticks the item met and is sent to the Neo session that opened the ask, which acts on it. For a step the human did (a reported item, or a needs_you action), pass answers instead: Yes or Not yet to each of 'Did it work?' and 'Is the result what you wanted?'; the item is met only when both are Yes, and Neo hears the answers either way.",
       inputSchema: Answer,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },

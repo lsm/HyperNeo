@@ -297,6 +297,7 @@ describe('projectNeoAskViews', () => {
       summary: null,
       sessions: [],
       answer: null,
+      humanActions: [],
     });
   });
 
@@ -391,6 +392,59 @@ describe('projectNeoAskViews', () => {
       settled: true,
       summary: 'Merged in #9.',
     });
+  });
+
+  test('human actions come from cards, approval and items, never from item prose', () => {
+    const input = parts({
+      work: [work('p', 'proposed'), work('r', 'failed'), work('q', 'queued')],
+      drivers: [driver('r', 'failed', { retryable: true }), driver('q', 'running')],
+      asks: [
+        ask({
+          workIds: ['p', 'r', 'q'],
+          approvalSpent: 'expired',
+          doneItems: [
+            { ...item('d', 'needs_you'), options: ['A', 'B'], kind: 'decision' },
+            { ...item('s', 'needs_you'), kind: 'action' },
+            item('m', 'reported'),
+            { ...item('w', 'needs_you'), kind: 'wait' },
+            item('x', 'pending'),
+          ],
+        }),
+      ],
+    });
+    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
+    const outcome = [
+      { question: 'Did it work?', options: ['Yes', 'Not yet'] },
+      { question: 'Is the result what you wanted?', options: ['Yes', 'Not yet'] },
+    ];
+    expect(views[0]?.humanActions).toEqual([
+      { kind: 'start', workId: 'p' },
+      { kind: 'retry', workId: 'r' },
+      { kind: 'approve', reason: 'expired' },
+      {
+        kind: 'answer',
+        itemId: 'd',
+        step: null,
+        questions: [{ question: 'd', options: ['A', 'B'] }],
+      },
+      { kind: 'answer', itemId: 's', step: 's', questions: outcome },
+      { kind: 'answer', itemId: 'm', step: 'm', questions: outcome },
+    ]);
+    expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
+  });
+
+  test('an approved ask starts its proposed cards itself, and a settled ask asks nothing', () => {
+    const input = parts({
+      work: [work('p', 'proposed'), work('q', 'queued')],
+      drivers: [driver('q', 'running', { abandoned: true })],
+      asks: [
+        ask({ workIds: ['p', 'q'], approvedAt: 5 }),
+        ask({ id: 'a2', status: 'achieved', workIds: ['p'], approvalSpent: 'expired' }),
+      ],
+    });
+    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
+    expect(views[0]?.humanActions).toEqual([{ kind: 'close', workId: 'q' }]);
+    expect(views[1]?.humanActions).toEqual([]);
   });
 
   test('the snapshot schema keeps every ask view field', () => {

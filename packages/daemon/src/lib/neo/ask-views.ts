@@ -1,12 +1,16 @@
-import type {
-  NeoAsk,
-  NeoAskAnswer,
-  NeoAskSessionView,
-  NeoAskStatus,
-  NeoAskView,
-  NeoCardGroup,
-  NeoCardView,
-  NeoWorkPrReceipt,
+import {
+  NEO_ASK_OUTCOME_OPTIONS,
+  NEO_ASK_OUTCOME_QUESTIONS,
+  type NeoAsk,
+  type NeoAskAnswer,
+  type NeoAskHumanAction,
+  type NeoAskItem,
+  type NeoAskSessionView,
+  type NeoAskStatus,
+  type NeoAskView,
+  type NeoCardGroup,
+  type NeoCardView,
+  type NeoWorkPrReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
@@ -79,6 +83,58 @@ export function neoAskAnswer(ask: NeoAsk): NeoAskAnswer | null {
     : null;
 }
 
+export function isNeoAskOutcomeItem(
+  item: Pick<NeoAskItem, 'state' | 'kind' | 'options' | 'removed'>
+): boolean {
+  if (item.removed) return false;
+  if (item.state === 'reported') return true;
+  return item.state === 'needs_you' && item.kind === 'action' && !item.options?.length;
+}
+
+export function neoAskItemAction(item: NeoAskItem): NeoAskHumanAction | null {
+  if (isNeoAskOutcomeItem(item))
+    return {
+      kind: 'answer',
+      itemId: item.id,
+      step: item.text,
+      questions: NEO_ASK_OUTCOME_QUESTIONS.map((question) => ({
+        question,
+        options: [...NEO_ASK_OUTCOME_OPTIONS],
+      })),
+    };
+  if (item.removed || item.state !== 'needs_you') return null;
+  if (!item.options?.length && item.kind !== 'decision') return null;
+  return {
+    kind: 'answer',
+    itemId: item.id,
+    step: null,
+    questions: [{ question: item.text, options: item.options ?? [] }],
+  };
+}
+
+export function neoCardHumanAction(
+  ask: Pick<NeoAsk, 'approvedAt'>,
+  card: NeoCardView
+): NeoAskHumanAction | null {
+  if (card.phase === 'proposed')
+    return ask.approvedAt == null ? { kind: 'start', workId: card.workId } : null;
+  if (card.primary.kind === 'retry') return { kind: 'retry', workId: card.workId };
+  if (card.primary.kind === 'close') return { kind: 'close', workId: card.workId };
+  return null;
+}
+
+export function deriveNeoAskHumanActions(
+  ask: NeoAsk,
+  live: readonly NeoCardView[]
+): NeoAskHumanAction[] {
+  if (ask.status === 'achieved' || ask.status === 'abandoned') return [];
+  return [
+    ...live.flatMap((card) => neoCardHumanAction(ask, card) ?? []),
+    ...(ask.approvalSpent ? [{ kind: 'approve' as const, reason: ask.approvalSpent }] : []),
+    ...(ask.doneItems ?? []).flatMap((item) => neoAskItemAction(item) ?? []),
+  ];
+}
+
 export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView {
   const truth = askScenes[ask.status];
   const settled = truth.group === 'outcomes';
@@ -113,6 +169,7 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     summary: neoAskViewSummary(ask, live, index.merged),
     sessions,
     answer: neoAskAnswer(ask),
+    humanActions: deriveNeoAskHumanActions(ask, live),
   };
 }
 
