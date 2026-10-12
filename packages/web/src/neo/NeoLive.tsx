@@ -661,6 +661,7 @@ export function NeoLive() {
                       shell.current?.querySelector('textarea')?.focus();
                     }}
                     onApprove={() => void neo.approveAsk(ask.ask.id)}
+                    onRetry={(id) => void neo.act(id, 'retry')}
                     onOpen={(id) => openScene({ kind: 'work', id })}
                     onOpenSession={(sessionId, title) => setChat({ sessionId, title })}
                     renderCard={(scene) => renderScene(scene, ask.group)}

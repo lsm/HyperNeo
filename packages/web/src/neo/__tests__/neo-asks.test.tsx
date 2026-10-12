@@ -504,6 +504,24 @@ describe('NeoAskCard', () => {
     expect(nothing.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
   });
 
+  it('puts Retry on the card face when the daemon offers it for a failed step', () => {
+    const retry = vi.fn();
+    const owned = scenes.running.slice(0, 1);
+    const id = owned[0].ref.id;
+    const view = describeAsk(ask('a', 'open', [id]), owned, {
+      humanActions: [{ kind: 'retry', workId: id }],
+    });
+    const card = render(<NeoAskCard view={view} onRetry={retry} />);
+    const title = owned[0].receipt.kind === 'work' ? owned[0].receipt.title : '';
+    fireEvent.click(card.getByRole('button', { name: `Retry ${title}` }));
+    expect(retry).toHaveBeenCalledExactlyOnceWith(id);
+    cleanup();
+    const none = render(
+      <NeoAskCard view={describeAsk(ask('a', 'open', [id]), owned)} onRetry={retry} />
+    );
+    expect(none.queryByRole('button', { name: /^Retry/ })).toBeNull();
+  });
+
   it('reads an approval’s budget from the ask and offers Approve again only when the daemon asks', () => {
     expect(neoAskApproval(ask('a', 'open', []), [])).toBeNull();
     const approved = { ...ask('a', 'open', []), approvedAt: 5 };
