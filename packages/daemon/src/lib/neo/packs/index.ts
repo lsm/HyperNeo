@@ -87,19 +87,19 @@ export function requireNeoEvidenceRefresh<
     toldAt: number | null;
   },
   now: number,
-  closedDone: string
+  closedDonePrefix: string
 ): { value: Refresh & { row: Row | null } } | { reason: 'not_due' } {
   const pr = requireNeoWorkPrRefresh(
     refresh,
     { row: card.row, session: card.session },
     now,
-    closedDone
+    closedDonePrefix
   );
   if ('value' in pr) return pr;
   const { work } = refresh;
   return card.packEvidence &&
     work.status === 'reported' &&
-    work.report !== closedDone &&
+    !work.report?.startsWith(closedDonePrefix) &&
     card.goal &&
     card.session &&
     (work.updatedAt > (card.toldAt ?? 0) || now - (card.toldAt ?? 0) >= NEO_PACK_EVIDENCE_READ_MS)
@@ -164,7 +164,9 @@ export function requireNeoPackTickable(read: {
 }): { value: NeoAsk } | { reason: null } {
   return read.ask &&
     isNeoAskLive(read.ask) &&
-    (read.ask.doneItems ?? []).some((item) => item.check && !item.removed && item.state !== 'met')
+    (read.ask.doneItems ?? []).some(
+      (item) => (item.check || item.watch?.length) && !item.removed && item.state !== 'met'
+    )
     ? { value: read.ask }
     : { reason: null };
 }
@@ -189,16 +191,20 @@ export async function readNeoAskPackTicks(
   warn: (id: string, error: unknown) => void
 ): Promise<{ id: string; evidence: string }[]> {
   const reads = await Promise.all(
-    packs
-      .filter((pack) => !ask.pack || pack.id === ask.pack)
-      .map((pack) =>
-        pack.readAskTicks?.(ask, works).catch((error: unknown) => {
+    packs.flatMap((pack) =>
+      [
+        !ask.pack || pack.id === ask.pack ? pack.readAskTicks?.(ask, works) : undefined,
+        pack.readAskWatchTicks?.(ask),
+      ].map((read) =>
+        read?.catch((error: unknown) => {
           warn(pack.id, error);
           return [];
         })
       )
+    )
   );
-  return reads.flatMap((read) => read ?? []);
+  const ticks = reads.flatMap((read) => read ?? []);
+  return ticks.filter((tick, index) => ticks.findIndex((item) => item.id === tick.id) === index);
 }
 
 export async function readNeoAskPackEvidence(

@@ -4,7 +4,9 @@ import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-ad
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import {
   createDiscoveryOperations,
+  describeOperationSignatures,
   findDescribedOperation,
+  operationSignature,
 } from '../../../../src/lib/operations/discovery';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import {
@@ -276,5 +278,41 @@ describe('operation listing by caller', () => {
     expect(findDescribedOperation(registry, 'family.mutate')).toEqual({
       value: registry.get('family.mutate')!,
     });
+  });
+});
+
+describe('operationSignature', () => {
+  test('lists input fields with optional marks, enums, unions and arrays', () => {
+    const inputSchema = z.object({
+      id: z.string(),
+      outcome: z.enum(['done', 'cancelled']),
+      tags: z.array(z.string()).optional(),
+      target: z
+        .union([
+          z.object({ verb: z.literal('send'), ref: z.string() }),
+          z.object({ verb: z.literal('start') }),
+        ])
+        .optional(),
+    });
+    expect(operationSignature({ name: 'demo.op', inputSchema })).toBe(
+      'demo.op {id: string, outcome: "done"|"cancelled", tags?: string[], target?: {verb, ref}|{verb}}'
+    );
+  });
+});
+
+describe('describeOperationSignatures', () => {
+  test('describes only the named operations the registry has, one per line', () => {
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'demo.a',
+        description: 'a',
+        inputSchema: z.object({ x: z.number() }),
+        resultSchema: z.object({}),
+        execute: async () => ({}),
+      }),
+    ]);
+    expect(describeOperationSignatures(registry, ['demo.a', 'demo.missing'])).toBe(
+      'demo.a {x: number}'
+    );
   });
 });

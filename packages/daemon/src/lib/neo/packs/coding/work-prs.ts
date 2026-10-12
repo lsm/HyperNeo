@@ -192,11 +192,11 @@ export function requireNeoWorkPrRefresh<
   refresh: Refresh,
   card: { row: Row | null; session: boolean },
   now: number,
-  closedDone: string
+  closedDonePrefix: string
 ): { value: Refresh & { row: Row } } | { reason: 'not_due' } {
   const { work } = refresh;
   return work.status === 'reported' &&
-    work.report !== closedDone &&
+    !work.report?.startsWith(closedDonePrefix) &&
     card.session &&
     card.row &&
     now - card.row.readAt >= NEO_WORK_PR_READ_MS

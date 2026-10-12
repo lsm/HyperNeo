@@ -13,7 +13,8 @@ import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-contex
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import {
-  NEO_WORK_CLOSED_DONE,
+  isNeoWorkClosedDone,
+  NEO_WORK_CLOSED_DONE_PREFIX,
   NEO_WORK_STALLED_CONTINUES,
   type NeoAsk,
   type NeoAskItem,
@@ -245,6 +246,7 @@ import {
   planNeoNeedsYouCleared,
 } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
+import { NEO_TURN_LIMIT_PREFIX, neoTurnLimitNote, planNeoTurnLimitNote } from './turn-limit.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
   NEO_WORK_FOLLOW_MAX_AGE_MS,
@@ -734,6 +736,10 @@ export class NeoService {
           await this.alignModelPreference(sessionId).catch((error) =>
             this.log.warn('Neo model preference not applied', error)
           );
+        if (binding && binding.kind !== 'worker')
+          await this.noteTurnLimit(sessionId).catch((error) =>
+            this.log.warn('Turn-limit note pending', error)
+          );
         if (binding && binding.kind !== 'worker') {
           try {
             publishNeoDirectReplyFallback(sessionId, directReplies, {
@@ -1141,7 +1147,11 @@ export class NeoService {
     };
   }
 
-  close(id: string, outcome: NeoWorkCloseOutcome): Promise<NeoWorkCloseResult> {
+  close(
+    id: string,
+    outcome: NeoWorkCloseOutcome,
+    note: string | null = null
+  ): Promise<NeoWorkCloseResult> {
     return closeNeoWork(
       {
         repo: this.repo,
@@ -1152,7 +1162,8 @@ export class NeoService {
             : this.stopDriverWork(ref, work),
       },
       id,
-      outcome
+      outcome,
+      note
     );
   }
 
@@ -1656,7 +1667,7 @@ export class NeoService {
           refresh,
           { ...card, goal: !!card.goal },
           now,
-          NEO_WORK_CLOSED_DONE
+          NEO_WORK_CLOSED_DONE_PREFIX
         ),
       ['refresh', 'card', 'now'],
       'result:refresh'
@@ -1783,11 +1794,11 @@ export class NeoService {
     );
   }
 
-  deliverAskAnswer(ask: NeoAsk, item: NeoAskItem, choice: string): Promise<void> {
+  deliverAskAnswer(ask: NeoAsk, item: NeoAskItem, choice: string, met = true): Promise<void> {
     return this.deliverToOrigin(
       ask.originSessionId,
       neoAskAnswerMessageId(ask.id, item.id, Date.now()),
-      neoAskAnswerNote(ask, item, choice),
+      neoAskAnswerNote(ask, item, choice, met),
       neoAskParent(ask)
     );
   }
@@ -1815,6 +1826,7 @@ export class NeoService {
   private get cardPrDeps(): NeoCardPrDeps {
     return {
       readPrs: (urls) => this.readPrs(urls),
+      readRefStates: (refs) => this.readRefStates(refs),
       prCandidates: (work, stored) => this.cardPrCandidates(work, stored),
       claims: this.workPrClaims,
       workPrs: this.workPrs,
@@ -2018,6 +2030,23 @@ export class NeoService {
     outcome: OperationOutcome
   ) => Promise<unknown>;
 
+  async noteTurnLimit(sessionId: string): Promise<void> {
+    const messages = this.db.getSDKMessageRepo();
+    const plan = planNeoTurnLimitNote(messages.latestTurnResults(sessionId, 2), (since) =>
+      messages.hasUserUuidPrefixSince(sessionId, NEO_TURN_LIMIT_PREFIX, since)
+    );
+    if (!plan) return;
+    await this.deliverToOrigin(
+      sessionId,
+      `${NEO_TURN_LIMIT_PREFIX}${plan.resultUuid}`,
+      neoTurnLimitNote(
+        this.askRecords.openedBy(sessionId, plan.since, plan.until),
+        this.repo.proposedBy(sessionId, plan.since, plan.until)
+      ),
+      null
+    );
+  }
+
   async clearStaleNeedsYou(): Promise<void> {
     for (const { id: askId } of this.askRecords.needingHuman()) {
       const ask = this.askRecords.get(askId);
@@ -2149,7 +2178,7 @@ export class NeoService {
   }
 
   async reconcile(id: string): Promise<void> {
-    let work = this.repo.getWork(id);
+    const work = this.repo.getWork(id);
     if (!work?.sessionId) {
       if ((work?.status === 'reported' || work?.status === 'failed') && this.driverTargets.get(id))
         await this.recoverWorkReturn(work);
@@ -2188,7 +2217,7 @@ export class NeoService {
     .endAsync('recover') as (work: NeoWork) => Promise<unknown>;
 
   private async returnReport(work: NeoWork): Promise<void> {
-    if (work.status === 'reported' && work.report === NEO_WORK_CLOSED_DONE) return;
+    if (work.status === 'reported' && isNeoWorkClosedDone(work.report)) return;
     if ((await this.checkDone(work, false)) !== 'not_checked') return;
     if (work.status === 'reported')
       await readNeoPackEvidence(

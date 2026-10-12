@@ -1,5 +1,5 @@
-import type { NeoConcern, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
 import type { DaemonInventoryLink } from './daemon-snapshot.ts';
+import type { NeoConcern, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
 import type { NeoModelPreference } from './settings.ts';
 
 export interface NeoWorkResourceReceipt {
@@ -43,7 +43,12 @@ export function neoForwardKey(
 
 export const NEO_WORK_STALLED_CONTINUES = 3;
 export const NEO_ASK_CONTINUE_WINDOW_MS = 48 * 60 * 60 * 1000;
-export const NEO_WORK_CLOSED_DONE = 'Closed as done by the user.';
+export const NEO_WORK_CLOSED_DONE_PREFIX = 'Closed as done by ';
+export const NEO_WORK_CLOSED_DONE = `${NEO_WORK_CLOSED_DONE_PREFIX}the user.`;
+
+export function isNeoWorkClosedDone(report: string | null | undefined): boolean {
+  return !!report?.startsWith(NEO_WORK_CLOSED_DONE_PREFIX);
+}
 
 export interface NeoWorkContinue {
   workId: string;
@@ -97,6 +102,8 @@ export interface NeoAskItem {
   action?: string;
   waitCard?: string;
   kind?: NeoAskItemKind;
+  question?: string;
+  watch?: string[];
 }
 
 export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';
@@ -246,7 +253,25 @@ export interface NeoAskView {
   summary: string | null;
   sessions?: NeoAskSessionView[];
   answer?: NeoAskAnswer | null;
+  humanActions?: NeoAskHumanAction[];
 }
+
+export const NEO_ASK_OUTCOME_QUESTION = 'Did it work?';
+export const NEO_ASK_OUTCOME_OPTIONS = ['Yes', 'No'];
+
+export type NeoAskHumanAction =
+  | { kind: 'start'; workId: string }
+  | { kind: 'approve'; reason: 'expired' }
+  | {
+      kind: 'answer';
+      itemId: string;
+      step: string | null;
+      question: string;
+      options: string[];
+    }
+  | { kind: 'confirm'; itemId: string; step: string }
+  | { kind: 'retry'; workId: string }
+  | { kind: 'close'; workId: string };
 
 export interface NeoAskAnswer {
   itemId: string;

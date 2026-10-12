@@ -129,6 +129,25 @@ describe('Neo isolated holder turns', () => {
     expect(queue.size()).toBe(0);
   });
 
+  test('a bound input is recorded consumed the moment its turn takes it', async () => {
+    const consumed: string[] = [];
+    const bound = new QueryRunner({
+      session: { id: 'neo:holder' },
+      db,
+      messageQueue: queue,
+      stateManager: { setProcessing: async () => {} },
+      logger: { debug: () => {} },
+      firstMessageReceived: true,
+      markHolderInputConsumed: (uuid: string) => consumed.push(uuid),
+    } as unknown as QueryRunnerContext);
+    const sent = queue.enqueueWithId('human-input', 'Next', false, { durable: true });
+    const input = bound.createMessageGeneratorWrapper(1, undefined, turn());
+    expect((await input.next()).value?.uuid).toBe('human-input');
+    expect(consumed).toEqual(['human-input']);
+    expect((await input.next()).done).toBe(true);
+    await sent;
+  });
+
   test.each(['settled', 'expired'] as const)(
     'drains a %s queued consultation once and leaves the next input runnable',
     async (state) => {

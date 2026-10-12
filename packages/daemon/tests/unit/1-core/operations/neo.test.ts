@@ -408,7 +408,11 @@ describe('Neo MVP', () => {
     });
     expect(await invoke('neo.work.start', { id: 'work' }, caller)).toMatchObject({
       kind: 'completed',
-      value: { ok: false, reason: 'This action needs the user.' },
+      value: {
+        ok: false,
+        reason:
+          'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.',
+      },
     });
     const definitions = createNeoOperations(service);
     expect(
@@ -426,6 +430,7 @@ describe('Neo MVP', () => {
       'neo.conversation.image.read',
       'neo.draft.recover',
       'neo.preferences.set',
+      'neo.ask.fold',
       'neo.ask.open',
       'neo.ask.tick',
       'neo.ask.answer',
@@ -439,6 +444,7 @@ describe('Neo MVP', () => {
       'neo.rule.save',
       'neo.session.mute',
       'neo.session.track',
+      'neo.github.read',
       'neo.pack.read',
       'neo.snapshot',
       'neo.concern.save',

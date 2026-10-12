@@ -70,6 +70,7 @@ const neo: OperationCaller = {
   role: 'neo',
   neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
 };
+const nextMessage: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'ask-2' } };
 const place = { machine: 'laptop', folder: tmpdir(), name: 'app' };
 const rule = 'Ask me before accepting red CI or a release date.';
 const cite = { rule };
@@ -261,6 +262,29 @@ describe('neo.ask operations', () => {
     expect(moved.asks).toHaveLength(1);
   });
 
+  test('a work operation answers with its ask, so Neo needs no follow-up read', async () => {
+    const askId = await openAsk();
+    const proposed = await propose('card-1', askId);
+    const card = proposed.value!.work!.id;
+    expect(proposed).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          id: askId,
+          status: 'open',
+          items: [
+            { id: 'i1', state: 'pending', text: 'merged to dev' },
+            { id: 'i2', state: 'pending', text: 'CI green' },
+          ],
+          cards: [{ id: card, title: 'Fix it', status: 'proposed' }],
+        },
+      },
+    });
+    expect(await invoke('neo.work.cancel', { id: card })).toMatchObject({
+      value: { ok: true, ask: { id: askId, cards: [{ id: card, status: 'cancelled' }] } },
+    });
+  });
+
   test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
     const askId = await openAsk();
     for (const itemId of ['i1', 'i2'])
@@ -301,8 +325,9 @@ describe('neo.ask operations', () => {
 
   test('reads one ask with its cards and their reports', async () => {
     const askId = await openAsk();
-    const other = (await invoke('neo.ask.open', { ...opening, requestKey: 'other', ask: 'Other' }))
-      .value!.ask!.id;
+    const other = (
+      await invoke('neo.ask.open', { ...opening, requestKey: 'other', ask: 'Other' }, nextMessage)
+    ).value!.ask!.id;
     const workId = (await propose('card-1', askId)).value!.work!.id;
     await propose('card-2', other);
     const queued = service.repo.transitionWork(workId, service.repo.getWork(workId)!, {
@@ -405,7 +430,7 @@ describe('neo.ask operations', () => {
     const asks = (await invoke('neo.snapshot', {})).value?.asks as NeoAsk[];
     expect(asks.find((ask) => ask.id === opened.value!.ask!.id)?.doneItems).toHaveLength(2);
 
-    const legacy = await invoke('neo.ask.open', opening);
+    const legacy = await invoke('neo.ask.open', opening, nextMessage);
     expect(legacy.value!.ask!.doneItems?.map((done) => done.text)).toEqual([
       'merged to dev',
       'CI green',
@@ -671,6 +696,35 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true, ask: { status: 'abandoned' } } });
   });
 
+  test('a step Neo settles waiting on carries its own question', async () => {
+    const askId = await openAsk();
+    const waiting = {
+      id: askId,
+      outcome: 'waiting',
+      summary: 'Try the keyboard on the phone.',
+      evidence: 'The fix is on the phone build.',
+      cite,
+      action: 'Test it on the phone',
+      kind: 'action',
+    };
+    expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('question_required') },
+    });
+    expect(
+      await invoke('neo.ask.settle', { ...waiting, question: 'Did the keyboard hide?' })
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          status: 'waiting',
+          doneItems: expect.arrayContaining([
+            expect.objectContaining({ kind: 'action', question: 'Did the keyboard hide?' }),
+          ]),
+        },
+      },
+    });
+  });
+
   test('a decision item is written only by the settle that wins the status check', async () => {
     const askId = await openAsk();
     const decision = { id: 'i3', position: 2, text: 'Pick the release date.' };
@@ -886,10 +940,60 @@ describe('neo.ask operations', () => {
     expect(delivered.mock.calls[0]?.slice(1)).toEqual([
       expect.objectContaining({ id: 'i2', text: 'CI green' }),
       'Fix CI first',
+      true,
     ]);
     expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('item_not_waiting') },
     });
+  });
+
+  test('a step the human did is asked as its own Yes/No question, met only on Yes', async () => {
+    const askId = await openAsk();
+    const user: OperationCaller = { source: 'rpc', principal: 'local' };
+    await invoke(
+      'neo.ask.tick',
+      {
+        askId,
+        itemId: 'i1',
+        state: 'needs_you',
+        evidence: 'Try the keyboard on the phone.',
+        kind: 'action',
+        action: 'Test it on the phone',
+        question: 'Did the keyboard hide?',
+      },
+      user
+    );
+    const snapshot = await invoke('neo.snapshot', {});
+    expect(
+      (
+        snapshot.value as { askViews?: { askId: string; humanActions?: unknown[] }[] }
+      ).askViews?.find((view) => view.askId === askId)?.humanActions
+    ).toContainEqual({
+      kind: 'answer',
+      itemId: 'i1',
+      step: 'merged to dev',
+      question: 'Did the keyboard hide?',
+      options: ['Yes', 'No'],
+    });
+    const delivered = mock(
+      async (_ask: NeoAsk, _item: unknown, _choice: string, _met: boolean) => {}
+    );
+    service.deliverAskAnswer = delivered;
+    const answer = { askId, itemId: 'i1', choice: 'Maybe' };
+    expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('choice_not_offered') },
+    });
+    expect(await invoke('neo.ask.answer', { ...answer, choice: 'No' }, user)).toMatchObject({
+      value: { ok: true },
+    });
+    expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({ state: 'needs_you' });
+    expect(delivered.mock.calls[0]?.slice(2)).toEqual(['No', false]);
+    await invoke('neo.ask.answer', { ...answer, choice: 'Yes' }, user);
+    expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({
+      state: 'met',
+      metBy: 'human',
+    });
+    expect(delivered.mock.calls[1]?.slice(2)).toEqual(['Yes', true]);
   });
 
   test('the user can close an ask as done even with items still open', async () => {
@@ -1035,8 +1139,8 @@ describe('neo.ask operations', () => {
 
   test('refuses a retried request key under another ask', async () => {
     const first = await openAsk();
-    const second = (await invoke('neo.ask.open', { ...opening, requestKey: 'other' })).value!.ask!
-      .id;
+    const second = (await invoke('neo.ask.open', { ...opening, requestKey: 'other' }, nextMessage))
+      .value!.ask!.id;
     await propose('card-1', first);
 
     const refused = await invoke('neo.work.propose', {
@@ -1135,6 +1239,12 @@ describe('neo.ask operations', () => {
     expect(await tick({ action: undefined })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('action_required') },
     });
+    expect(await tick({ kind: 'action' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('question_required') },
+    });
+    expect(await tick({ kind: 'action', options: ['Phone build', 'Web build'] })).toMatchObject({
+      value: { ok: true },
+    });
     expect(await tick({ kind: 'action', waitCard: 'elsewhere' })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('card_not_found') },
     });
@@ -1200,6 +1310,71 @@ describe('neo.ask operations', () => {
     await invoke('neo.ask.tick', done, human);
     await invoke('neo.ask.tick', { ...done, itemId: 'i2', evidence: 'CI run 42 green.' });
     expect(delivered).toHaveBeenCalledTimes(1);
+  });
+
+  test('one human message opens one ask; a second open names the first', async () => {
+    const askId = await openAsk();
+    expect(
+      await invoke('neo.ask.open', { ...opening, requestKey: 'fix-again', title: 'Fix it again' })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining(`ask_exists_for_message: ask ${askId}`) },
+    });
+    expect(await invoke('neo.ask.open', opening)).toMatchObject({
+      value: { ok: true, ask: { id: askId } },
+    });
+  });
+
+  test('folds a duplicate ask into another: its items and cards move and it closes superseded', async () => {
+    const targetId = await openAsk();
+    const later: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'ask-2' } };
+    const duplicate = await invoke(
+      'neo.ask.open',
+      { ...opening, requestKey: 'dup', doneWhen: '- guard merged' },
+      later
+    );
+    const sourceId = duplicate.value!.ask!.id;
+    const card = (await propose('dup-card', sourceId)).value!.work!.id;
+    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: sourceId })).toMatchObject({
+      kind: 'failed',
+    });
+    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId })).toMatchObject({
+      value: { ok: true, ask: { id: targetId, workIds: [card] } },
+    });
+    expect(service.askRecords.get(targetId)?.doneItems?.map((item) => item.text)).toEqual([
+      'merged to dev',
+      'CI green',
+      'guard merged',
+    ]);
+    expect(service.askRecords.get(sourceId)).toMatchObject({
+      status: 'abandoned',
+      outcome: `Superseded: folded into ask ${targetId}.`,
+      workIds: [],
+    });
+    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('ask_settled') },
+    });
+  });
+
+  test('a turn that hit its limit gets one note listing the asks it already opened', async () => {
+    const results = db.getSDKMessageRepo();
+    const save = (uuid: string, subtype: string) =>
+      results.saveSDKMessage('root', {
+        type: 'result',
+        subtype,
+        uuid,
+        session_id: 'root',
+      } as unknown as SDKUserMessage);
+    save('r1', 'success');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const askId = await openAsk();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    save('r2', 'error_max_turns');
+    const delivered = mock(async (..._args: unknown[]) => {});
+    (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
+    await service.noteTurnLimit('root');
+    expect(delivered).toHaveBeenCalledTimes(1);
+    expect(delivered.mock.calls[0]?.[1]).toBe('neo-turn-limit:r2');
+    expect(delivered.mock.calls[0]?.[2]).toContain(`- ask ${askId} "${opening.title}" (open`);
   });
 
   test('the human marking their own wait needs no citation', async () => {
@@ -1553,13 +1728,23 @@ describe('requireNeoAskEdit', () => {
       { id: 'i2', removed: true },
     ],
   } as unknown as NeoAsk;
-  const items = (count: number) =>
+  const items = (count: number): { text: string; check: null; watch?: string[] }[] =>
     Array.from({ length: count }, (_, i) => ({ text: `t${i}`, check: null }));
   test.each<[string, { add?: ReturnType<typeof items>; remove?: string[] }, string | null]>([
     ['an edit by the owner', { add: items(1) }, null],
     ['an item already removed', { remove: ['i2'] }, 'item_not_found'],
     ['removing the last item', { remove: ['i1'] }, 'checklist_empty'],
     ['more than twelve items', { add: items(12) }, 'checklist_full'],
+    [
+      'more than twenty watched refs',
+      {
+        add: items(3).map((item, i) => ({
+          ...item,
+          watch: Array.from({ length: 7 }, (_, n) => `https://github.com/o/r/pull/${i * 10 + n}`),
+        })),
+      },
+      'watch_full',
+    ],
   ])('%s', (_label, change, reason) => {
     const target = owned;
     const gate = requireNeoAskEdit(

@@ -26,10 +26,10 @@ export type NeoAskInput = Omit<
   | 'updatedAt'
   | 'settledAt'
 >;
-export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check'>;
+export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch'>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
-  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind'
+  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind' | 'question' | 'watch'
 > & {
   askId: string;
   removed: number;
@@ -38,10 +38,15 @@ type NeoAskItemRow = Omit<
   action: string | null;
   waitCard: string | null;
   kind: NeoAskItem['kind'] | null;
+  question: string | null;
+  watch: string | null;
 };
 
+const watchJson = (item: NeoAskItemInput) =>
+  item.watch?.length ? JSON.stringify(item.watch) : null;
+
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind`;
+  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch`;
 
 export interface NeoAskOwner {
   concernId: string;
@@ -61,10 +66,10 @@ export class NeoAskRepository {
       const opened = this.insertAsk(input, now);
       if (opened) {
         const insert = this.db.prepare(`INSERT INTO neo_ask_items
-          (ask_id, id, position, text, state, check_kind, updated_at)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?)`);
+          (ask_id, id, position, text, state, check_kind, watch, updated_at)
+          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`);
         items.forEach((item, index) =>
-          insert.run(input.id, `i${index + 1}`, index, item.text, item.check, now)
+          insert.run(input.id, `i${index + 1}`, index, item.text, item.check, watchJson(item), now)
         );
       }
       return opened;
@@ -126,6 +131,29 @@ export class NeoAskRepository {
     return link ? this.get(link.askId) : null;
   }
 
+  liveForOrigin(originSessionId: string, originMessageId: string): NeoAsk | null {
+    const row = this.db
+      .prepare(
+        `SELECT ${askColumns} FROM neo_asks
+          WHERE origin_session_id = ? AND origin_message_id = ?
+            AND status NOT IN ('achieved', 'abandoned')
+          ORDER BY created_at LIMIT 1`
+      )
+      .get(originSessionId, originMessageId) as NeoAskRow | null;
+    return row ? this.withWork([row])[0] : null;
+  }
+
+  openedBy(originSessionId: string, since: number, until: number): NeoAsk[] {
+    const rows = this.db
+      .prepare(
+        `SELECT ${askColumns} FROM neo_asks
+          WHERE origin_session_id = ? AND created_at > ? AND created_at <= ?
+          ORDER BY created_at, id`
+      )
+      .all(originSessionId, since, until) as NeoAskRow[];
+    return this.withWork(rows);
+  }
+
   listLive(): NeoAsk[] {
     const rows = this.db
       .prepare(
@@ -148,13 +176,21 @@ export class NeoAskRepository {
     askId: string,
     item: Pick<
       NeoAskItem,
-      'id' | 'state' | 'evidence' | 'metBy' | 'options' | 'action' | 'waitCard' | 'kind'
+      | 'id'
+      | 'state'
+      | 'evidence'
+      | 'metBy'
+      | 'options'
+      | 'action'
+      | 'waitCard'
+      | 'kind'
+      | 'question'
     >,
     at: number
   ): boolean {
     const changed = this.db.transaction(() => {
       const ticked = this.db
-        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, action = ?, wait_card = ?, kind = ?,
+        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, action = ?, wait_card = ?, kind = ?, question = ?,
           updated_at = ?
           WHERE ask_id = ? AND id = ? AND removed = 0`)
         .run(
@@ -165,6 +201,7 @@ export class NeoAskRepository {
           item.action ?? null,
           item.waitCard ?? null,
           item.kind ?? null,
+          item.question ?? null,
           at,
           askId,
           item.id
@@ -183,16 +220,54 @@ export class NeoAskRepository {
   ): boolean {
     this.db.transaction(() => {
       const insert = this.db.prepare(`INSERT INTO neo_ask_items
-        (ask_id, id, position, text, state, check_kind, added_at, updated_at)
-        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`);
+        (ask_id, id, position, text, state, check_kind, watch, added_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`);
       for (const item of edit.add)
-        insert.run(askId, item.id, item.position, item.text, item.check, at, at);
+        insert.run(askId, item.id, item.position, item.text, item.check, watchJson(item), at, at);
       this.db
         .prepare(`UPDATE neo_ask_items SET removed = 1, updated_at = ?
           WHERE ask_id = ? AND id IN (SELECT value FROM json_each(?))`)
         .run(at, askId, JSON.stringify(edit.remove));
       this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
     })();
+    this.notify();
+    return true;
+  }
+
+  fold(
+    source: Pick<NeoAsk, 'id' | 'status'>,
+    target: Pick<NeoAsk, 'id' | 'status'>,
+    moves: readonly { from: string; id: string; position: number }[],
+    outcome: string,
+    at: number
+  ): boolean {
+    const folded = this.db.transaction(() => {
+      const closed = this.db
+        .prepare(`UPDATE neo_asks SET status = 'abandoned', outcome = ?, evidence = ?,
+          settled_at = ?, updated_at = ?, waiting_item = NULL WHERE id = ? AND status = ?`)
+        .run(outcome, outcome, at, at, source.id, source.status).changes;
+      const kept = this.db
+        .prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ? AND status = ?')
+        .run(at, target.id, target.status).changes;
+      if (!closed || !kept) throw new Error('neo-ask-fold-lost');
+      const copy = this.db.prepare(`INSERT INTO neo_ask_items
+        (ask_id, id, position, text, state, evidence, check_kind, met_by, removed, added_at,
+         updated_at, options, decision, action, wait_card, kind)
+        SELECT ?, ?, ?, text, state, evidence, check_kind, met_by, 0, ?, ?, options, decision,
+               action, wait_card, kind
+          FROM neo_ask_items WHERE ask_id = ? AND id = ?`);
+      for (const move of moves)
+        copy.run(target.id, move.id, move.position, at, at, source.id, move.from);
+      this.db
+        .prepare('UPDATE neo_ask_work SET ask_id = ? WHERE ask_id = ?')
+        .run(target.id, source.id);
+    });
+    try {
+      folded();
+    } catch (error) {
+      if (error instanceof Error && error.message === 'neo-ask-fold-lost') return false;
+      throw error;
+    }
     this.notify();
     return true;
   }
@@ -292,6 +367,7 @@ export class NeoAskRepository {
       text: string;
       action?: string;
       kind?: NeoAskItem['kind'];
+      question?: string;
     } | null = null,
     decided = false
   ): NeoAsk | null {
@@ -317,8 +393,8 @@ export class NeoAskRepository {
         decision &&
         this.db
           .prepare(`INSERT INTO neo_ask_items
-            (ask_id, id, position, text, state, evidence, decision, action, kind, added_at, updated_at)
-            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
+            (ask_id, id, position, text, state, evidence, decision, action, kind, question, added_at, updated_at)
+            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
           .run(
             expected.id,
             decision.id,
@@ -327,6 +403,7 @@ export class NeoAskRepository {
             evidence,
             decision.action ?? null,
             decision.kind ?? 'decision',
+            decision.question ?? null,
             now,
             now
           ).changes === 0
@@ -398,15 +475,30 @@ export class NeoAskRepository {
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)
-        .map(({ askId: _askId, removed, options, decision, action, waitCard, kind, ...item }) => ({
-          ...item,
-          removed: removed === 1,
-          ...(options ? { options: JSON.parse(options) as string[] } : {}),
-          ...(decision === 1 ? { decision: true as const } : {}),
-          ...(action ? { action } : {}),
-          ...(waitCard ? { waitCard } : {}),
-          ...(kind ? { kind } : {}),
-        })),
+        .map(
+          ({
+            askId: _askId,
+            removed,
+            options,
+            decision,
+            action,
+            waitCard,
+            kind,
+            question,
+            watch,
+            ...item
+          }) => ({
+            ...item,
+            removed: removed === 1,
+            ...(options ? { options: JSON.parse(options) as string[] } : {}),
+            ...(decision === 1 ? { decision: true as const } : {}),
+            ...(action ? { action } : {}),
+            ...(waitCard ? { waitCard } : {}),
+            ...(kind ? { kind } : {}),
+            ...(question ? { question } : {}),
+            ...(watch ? { watch: JSON.parse(watch) as string[] } : {}),
+          })
+        ),
     }));
   }
 }

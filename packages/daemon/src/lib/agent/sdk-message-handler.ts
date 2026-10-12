@@ -51,6 +51,7 @@ import type { ContextTracker } from './context-tracker.ts';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { type IdleOwnerScope, isSameIdleOwner } from './idle-waiter-admission-pipeline.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
+import { isNetworkUnreachableError } from './network-outage-pause.ts';
 import { signalDeliveryConsumed } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
@@ -140,6 +141,12 @@ export interface SDKMessageHandlerContext {
     queryGeneration?: number
   ): Promise<boolean>;
 
+  onResultNetworkOutage?(
+    errorText: string,
+    userMessageUuid?: string,
+    queryGeneration?: number
+  ): Promise<boolean>;
+
   isLimitRecoveryPending?(): boolean;
 
   getQueryGeneration?(): number;
@@ -148,6 +155,23 @@ export interface SDKMessageHandlerContext {
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
+
+export function resultNetworkOutage(
+  message: SDKMessage
+): { errorText: string; userMessageUuid?: string } | null {
+  let errorText = '';
+  let userMessageUuid: string | undefined;
+  if (isSDKResultSuccess(message)) {
+    if (message.is_error !== true) return null;
+    errorText = typeof message.result === 'string' ? message.result : '';
+    userMessageUuid = message.user_message_uuid;
+  } else if (isSDKResultError(message)) {
+    errorText = Array.isArray(message.errors) ? message.errors.join('\n') : '';
+  } else {
+    return null;
+  }
+  return isNetworkUnreachableError(errorText) ? { errorText, userMessageUuid } : null;
+}
 
 export class SDKMessageHandler {
   private sdkMessageDeltaVersion: number = 0;
@@ -1133,6 +1157,17 @@ export class SDKMessageHandler {
               limitError.userMessageUuid,
               invocationGeneration ?? undefined
             )) ?? false;
+        } else {
+          const outage = resultNetworkOutage(message);
+          if (outage) {
+            limitEngaged =
+              (await this.ctx.onResultNetworkOutage?.(
+                outage.errorText,
+                outage.userMessageUuid,
+                invocationGeneration ?? undefined
+              )) ?? false;
+            resultLimitError = limitEngaged;
+          }
         }
         this.lastRateLimitInfo = null;
         this.lastSdkErrorTag = null;
