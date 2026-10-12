@@ -96,7 +96,9 @@ Each ask view lists `humanActions`, computed by the daemon on every snapshot. Th
 | `approve` | the ask's approval expired (48 h), or a card stalled per §3 |
 | `answer {itemId, options}` | a question Neo asked (below); the buttons are that question's options |
 | `retry {workId}` | existing card rules (`retryable`) |
-| `open {workId}` | the card's working session refused, or is waiting on the human; the button opens that session, where the human answers it directly |
+| `talk {workId, what}` | the card's session refused what it was asked, or said it needs the human to tell it directly (below) |
+
+`talk` is for a session that won't do what the card asks until the human tells it directly. The card says so in one plain line, naming the session and what it refused, and points at the card's own Open button: "daemon-code won't update the iMac on Neo's request. Open it and tell it yourself." Neo sets it with `neo.work.refused {workId, what}` after reading the report, and doesn't relay, repeat or argue with the session. The daemon clears it when that session next gets input from the human, and Neo is woken with the card's next report.
 
 The model has exactly one way to ask the human something: `neo.ask.question {askId, question, options[2..4]}`. It is one question about one result, worded for that step, and answered with one tap. A human-only step such as a manual test becomes a question: "Did the keyboard hide?" → Yes / No. The item is met on the positive option; otherwise it stays open and Neo is woken. Neo can withdraw its own question with a reason. A claim only the human can check (on a device, or on a machine the daemon can't read) is a question too, so there's no separate Confirm button: the buttons always come from the question.
 
