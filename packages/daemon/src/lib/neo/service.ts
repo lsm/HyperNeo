@@ -13,7 +13,8 @@ import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-contex
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import {
-  NEO_WORK_CLOSED_DONE,
+  isNeoWorkClosedDone,
+  NEO_WORK_CLOSED_DONE_PREFIX,
   NEO_WORK_STALLED_CONTINUES,
   type NeoAsk,
   type NeoAskItem,
@@ -1661,7 +1662,7 @@ export class NeoService {
           refresh,
           { ...card, goal: !!card.goal },
           now,
-          NEO_WORK_CLOSED_DONE
+          NEO_WORK_CLOSED_DONE_PREFIX
         ),
       ['refresh', 'card', 'now'],
       'result:refresh'
@@ -2193,7 +2194,7 @@ export class NeoService {
     .endAsync('recover') as (work: NeoWork) => Promise<unknown>;
 
   private async returnReport(work: NeoWork): Promise<void> {
-    if (work.status === 'reported' && work.report === NEO_WORK_CLOSED_DONE) return;
+    if (work.status === 'reported' && isNeoWorkClosedDone(work.report)) return;
     if ((await this.checkDone(work, false)) !== 'not_checked') return;
     if (work.status === 'reported')
       await readNeoPackEvidence(

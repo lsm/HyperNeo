@@ -62,8 +62,8 @@ export const closeNeoWork = (superpipe({})('neo.work.close') as PipelineAPI)
     'current'
   )
   .pipe(
-    (current: { work: NeoWork | null }, outcome: NeoWorkCloseOutcome, note: string | null) =>
-      planNeoWorkClose(current.work, outcome, note),
+    (current: { work: NeoWork | null }, outcome: NeoWorkCloseOutcome, note?: string | null) =>
+      planNeoWorkClose(current.work, outcome, note ?? null),
     ['current', 'outcome', 'note'],
     'result:closed'
   )
@@ -92,5 +92,5 @@ export const closeNeoWork = (superpipe({})('neo.work.close') as PipelineAPI)
   deps: NeoWorkCloseDeps,
   id: string,
   outcome: NeoWorkCloseOutcome,
-  note: string | null
+  note?: string | null
 ) => Promise<NeoWorkCloseResult>;
