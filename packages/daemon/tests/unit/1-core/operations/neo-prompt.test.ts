@@ -252,12 +252,22 @@ describe('Neo world briefing delivery', () => {
 });
 
 describe('Neo look-up guidance', () => {
-  test.each([null, 'saas'])('tells %s to look things up itself and change nothing', (concernId) => {
-    const prompt = neoPrompt(concernId);
+  test('tells a holder to look things up itself and change nothing', () => {
+    const prompt = neoPrompt('saas');
     expect(prompt).toContain('Do a quick look-up yourself instead of proposing work');
     expect(prompt).toContain('never change anything yourselves');
     expect(prompt).toContain('Never tell the user you have no access');
     expect(prompt).toContain('never put file contents into a fetched URL');
+  });
+
+  test('tells root Neo it has no file or repository look-ups and to hand code questions to a card', () => {
+    const prompt = neoPrompt(null);
+    expect(prompt).toContain('never change anything yourselves');
+    expect(prompt).toContain('You cannot read, search or browse files');
+    expect(prompt).toContain('continue the card with the question or propose a work card');
+    expect(prompt).not.toContain('read and search files');
+    expect(prompt).not.toContain('use cd first to pick the repository');
+    expect(prompt).not.toContain('Never tell the user you have no access');
   });
 
   test.each([null, 'saas'])(
