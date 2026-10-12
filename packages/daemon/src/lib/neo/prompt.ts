@@ -1,6 +1,7 @@
 import {
   fillPrompt,
   NEO_CAPABILITIES_BRIEFING,
+  NEO_DONE_CHECK_STEPS,
   NEO_HOLDER_CONSULTATION_RETURN,
   NEO_HOLDER_LOOK_UP,
   NEO_HOLDER_OPERATIONS,
@@ -26,6 +27,9 @@ function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
       .map((pack) => `${pack.id} — ${pack.describe}`)
       .join(' ')}`,
     'When an ask belongs to an enabled pack’s domain, pass its id as pack to neo.ask.open; its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An ask opened without a pack is generic.',
+    ...briefs.flatMap((pack) =>
+      pack.guidance ? [`\n\nGuidance for asks under the ${pack.id} pack:\n${pack.guidance}`] : []
+    ),
   ].join(' ');
 }
 
@@ -42,6 +46,7 @@ export function neoPrompt(
     snapshot_scope: concernId ? NEO_HOLDER_SNAPSHOT_SCOPE : NEO_ROOT_SNAPSHOT_SCOPE,
     rule_save: concernId ? '' : ` ${NEO_ROOT_RULE_SAVE}`,
     packs: neoPackBriefing(packs),
+    done_check_steps: NEO_DONE_CHECK_STEPS,
     operations: concernId ? NEO_HOLDER_OPERATIONS : NEO_ROOT_OPERATIONS,
     consultation_return: concernId ? NEO_HOLDER_CONSULTATION_RETURN : NEO_ROOT_CONSULTATION_RETURN,
     response_focus: NEO_RESPONSE_FOCUS_BRIEFING,

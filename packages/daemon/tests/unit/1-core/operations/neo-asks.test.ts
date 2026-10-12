@@ -1499,11 +1499,16 @@ describe('neoPrompt', () => {
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save as a rule');
   });
 
-  test('carries the enabled packs and keeps the core prompt free of coding examples', () => {
+  test('carries the enabled packs and their guidance, and keeps the core prompt free of coding examples', () => {
     const prompt = neoPrompt(null);
     expect(prompt).toContain('coding — Software work in git repositories');
     expect(prompt).toContain('pass its id as pack to neo.ask.open');
     expect(prompt).toContain('neo.pack.read {id}');
+    expect(prompt).toContain(
+      `Guidance for asks under the coding pack:\n${NEO_PACK_CODING_INSTRUCTIONS}`
+    );
+    expect(prompt).toContain('Otherwise settle the ask: neo.ask.settle');
+    const core = neoPrompt(null, []);
     for (const gone of [
       'for code usually merged, not a pull request opened',
       'Merged in #6099.',
@@ -1512,7 +1517,7 @@ describe('neoPrompt', () => {
       'HyperNeo code is done when merged to dev',
       'Fix merged to dev',
     ]) {
-      expect(prompt).not.toContain(gone);
+      expect(core).not.toContain(gone);
     }
     expect(prompt).toContain('The fix is live');
     expect(neoPrompt(null, [])).not.toContain('Domain packs');
@@ -1527,8 +1532,7 @@ describe('driverDoneCheckNote', () => {
 
   test('asks the session that opened the ask to settle it, and only that session', () => {
     const owned = driverDoneCheckNote(work, goal, 0, null, { ask, cards: [sibling] });
-    expect(owned).toContain('Otherwise settle the ask: neo.ask.settle');
-    expect(owned).toContain('end the turn without telling the human');
+    expect(owned).toContain('Follow the done-check steps in your system prompt');
     expect(JSON.parse(owned.slice(owned.indexOf('\n{'))).ask.cards).toEqual([sibling]);
     const other = driverDoneCheckNote({ ...work, originSessionId: 'holder' }, goal, 0, null, {
       ask,
@@ -1541,19 +1545,26 @@ describe('driverDoneCheckNote', () => {
 
   test('tells the owner to settle before telling the human, also once the budget is spent', () => {
     const spent = driverDoneCheckNote(work, goal, 5, 'continue_budget_spent', { ask });
-    expect(spent).toContain('Do not continue it. First tick what this report proves on ask.items');
-    expect(spent.indexOf('settle the ask')).toBeLessThan(spent.indexOf('Read the whole report'));
+    expect(spent).toContain(
+      'Do not continue it. Follow the done-check steps in your system prompt'
+    );
   });
 
-  test('embeds the ask pack guidance in a delivered note', () => {
+  test('names the ask pack, and embeds its guidance only when the system prompt lacks it', () => {
+    const fragment = { id: 'coding', instructions: NEO_PACK_CODING_INSTRUCTIONS };
+    const inPrompt = driverDoneCheckNote(work, goal, 0, null, {
+      ask: { ...ask, pack: 'coding' },
+      pack: { ...fragment, inPrompt: true },
+    });
+    expect(inPrompt).toContain('This ask works under the coding pack');
+    expect(inPrompt).not.toContain(NEO_PACK_CODING_INSTRUCTIONS);
     const noted = driverDoneCheckNote(work, goal, 0, null, {
       ask: { ...ask, pack: 'coding' },
-      pack: { id: 'coding', instructions: NEO_PACK_CODING_INSTRUCTIONS },
+      pack: fragment,
     });
-    expect(noted).toContain(`Guidance from the coding pack, which this ask works under:`);
     expect(noted).toContain(NEO_PACK_CODING_INSTRUCTIONS);
     expect(driverDoneCheckNote(work, goal, 0, null, { ask, pack: null })).not.toContain(
-      'which this ask works under'
+      'This ask works under'
     );
   });
 });

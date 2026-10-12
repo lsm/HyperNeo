@@ -608,7 +608,7 @@ export function driverDoneCheckNote(
       ? ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_OWNED, { ask_id: ask.id })}`
       : ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_FOREIGN, { ask_id: ask.id })}`;
   const packNote = pack
-    ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: pack.id })}\n${pack.instructions}`
+    ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: pack.id })}${pack.inPrompt ? '' : `\n${pack.instructions}`}`
     : '';
   const items = owned && ask ? neoNoteChecklist(ask) : [];
   const restates = (doneWhen: string | null | undefined) =>

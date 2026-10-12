@@ -1027,8 +1027,7 @@ describe('Neo work with a drivers target', () => {
       expect(notes[0][2]).toContain('neo.work.continue');
       expect(notes[0][2]).toContain('- voice works');
       expect(notes[0][2]).toContain('Skeleton builds.');
-      expect(notes[0][2]).toContain('do not tell the human yet');
-      expect(notes[0][2]).toContain(NEO_WORK_SUMMARY_NOTE);
+      expect(notes[0][2]).toContain('Follow the done-check steps in your system prompt');
 
       const still = neoWorkProgress(service.repo.getWork('work-1')!, null, null);
       for (let n = 0; n < 5; n++)
@@ -1037,7 +1036,7 @@ describe('Neo work with a drivers target', () => {
       expect(notes[1].slice(0, 2)).toEqual(['neo:root', 'work-1:done-check:5:s:5']);
       expect(notes[1][2]).toContain('continue_budget_spent');
       expect(notes[1][2]).toContain('Do not continue it.');
-      expect(notes[1][2]).toContain(NEO_WORK_SUMMARY_NOTE);
+      expect(notes[1][2]).toContain('Follow the done-check steps in your system prompt');
     } finally {
       db.close();
     }
@@ -1131,7 +1130,7 @@ describe('Neo work with a drivers target', () => {
       expect(JSON.parse(notes[0].slice(notes[0].indexOf('\n{'))).ask.cards).toEqual([
         { id: 'work-2', title: 'Ship the docs', status: 'proposed', pr: 'waiting' },
       ]);
-      expect(notes[0]).toContain('end the turn without telling the human');
+      expect(notes[0]).toContain('Follow the done-check steps in your system prompt');
     } finally {
       db.close();
     }
