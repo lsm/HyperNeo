@@ -57,6 +57,11 @@ Avatars form a tree: each avatar has at most one parent, with no fixed depth. To
 
 - The router picks the project first, then the section. For a code project it uses facts before words: a PR or issue named in the message, the repo of a linked session, the folder of a card. Then the text.
 - A new project is named after its target ("HyperNeo", "Japan trip"), never after a message's first line.
+- **A message spanning projects goes to root Neo.** The router resolves every object the message names (asks, cards, PRs, issues) to the avatar that owns it.
+  - One owner: the message goes to that avatar.
+  - Several owners: root Neo takes the message and hands each avatar its part, quoting the human's words and keeping the original message id. Each avatar acts on its own objects, and root replies once.
+  - An avatar never receives work on objects it can't access. If one is refused anyway ("cannot access another concern"), the refusal names the owner and the part is handed over without the human.
+  - On 2026-10-12 a cleanup message naming a card in main and asks in two topics went whole to one topic. That topic got "Ask not found", `work_not_found` and "This context holder cannot access another concern.", and the cleanup stalled.
 - `neo.topics.reorganize` becomes project reorganize, and runs nightly as today:
   - merge projects whose code identity matches;
   - move asks into their project and section;
@@ -71,6 +76,6 @@ Avatars form a tree: each avatar has at most one parent, with no fixed depth. To
 | 1 | Workspaces: code identity from the git remote; tool projects (HyperNeo, Codex, Claude Code, cloud) linked to one project across machines | none |
 | 1b | HyperNeo projects hold several folders, like Codex projects | none |
 | 2 | Avatars mirror projects (one per project, created when a workspace appears); rename topic/concern to project in UI, prompt and code, with a migration | 1 |
-| 3 | Router picks project then section; new projects are named after their target | 1 |
+| 3 | Router picks project then section; a message spanning projects goes to root, which hands each owner its part; new projects are named after their target | 1 |
 | 4 | Avatars nest to any depth (parent per avatar, path in the UI, move to another parent); sections from epics for code projects | 2, 3 |
 | 5 | Reorganize merges by identity, moves asks into projects and sections, asks once when unsure, saves the answer as a rule | 1, 3, 4 |
