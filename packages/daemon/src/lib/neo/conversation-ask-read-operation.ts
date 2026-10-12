@@ -16,22 +16,17 @@ import { NeoConversationAskSchema } from './conversation-ask.ts';
 import { neoImageSize } from './image-size.ts';
 import {
   NeoConversationPageInput,
+  NeoConversationPageShape,
+  neoConversationPageCursorValid,
   readNeoConversationPage,
   requirePublicationReader,
   requirePublicationConversation,
 } from './publication-read-operation.ts';
 
 type Page = z.infer<typeof NeoConversationPageInput>;
-const AskPageInput = z
-  .object({
-    conversationId: z.uuid(),
-    after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
-    limit: z.number().int().min(1).max(100).default(50),
-    before: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
-    imageRefs: z.boolean().optional(),
-  })
-  .strict()
-  .refine((page) => page.before === undefined || page.after === 0);
+const AskPageInput = NeoConversationPageShape.extend({
+  imageRefs: z.boolean().optional(),
+}).refine(neoConversationPageCursorValid);
 type AskPage = z.infer<typeof AskPageInput>;
 type Result =
   | { ok: false; reason: 'human_only' | 'conversation_not_found' }
