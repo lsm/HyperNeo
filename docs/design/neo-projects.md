@@ -12,35 +12,42 @@ Today the unit is a "topic" (in code, a "concern"). The two words are used inter
 - The local `neokai` folder, `~/tmp/HyperNeo`, their worktrees and the iMac checkout are all one repository. Nothing says so.
 - `places.ts` merges Claude Code, Codex and HyperNeo sessions only when they share a folder on the same machine.
 
-## The unit: a project
+## Two layers
 
-A **project** is whatever the work is for: something with its own outcome and its own materials. Some examples:
+The design keeps two things apart:
 
-| Kind | Example | Its materials |
-|---|---|---|
-| code | HyperNeo, neo-ios | a repository, wherever it's checked out |
-| design | the Neo app redesign | design files, a design system |
-| life | Japan trip, Spain trip, taxes 2026, Mom's school forms | documents, people, dates, bookings |
+1. **Avatars: Neo's context holders, organized by project.** An avatar holds the asks, decisions and memory for one project. Avatars form a tree under Neo: Travel can be top level or under Neo, with Japan and Spain under Travel. This is the layer the human talks to.
+2. **Workspaces: where the project actually is.** These are a HyperNeo project (the `neokai` folder on the laptop daemon), a Claude Code folder, a Codex project, a cloud agent's environment, or a design file. Each is worked by its own agent software, on any machine or in the cloud.
 
-One word everywhere: **project** in the UI, in Neo's prompt and in the code. "Topic" and "concern" retire. One-off questions that belong to no project ("what's the weather") stay in the Inbox.
+An avatar **mirrors** a project. When a workspace exists in any tool (a HyperNeo project, a Claude Code folder, a Codex project called "travel"), an avatar for it exists too. One avatar spans all of that project's workspaces, whatever tool or machine they're on. A cloud agent working on HyperNeo still reports to the same HyperNeo avatar. An avatar can also exist with no workspace at all ("Japan trip" before anything is booked).
+
+Some examples:
+
+| Avatar | Its workspaces |
+|---|---|
+| HyperNeo | `neokai` (HyperNeo project, laptop), `~/tmp/HyperNeo` and its worktrees (Claude Code), the iMac checkout (Codex), a cloud session |
+| neo-ios | the `neo-ios` folder (Claude Code), its worktrees |
+| Travel → Japan trip | none yet, or a Codex project holding the itinerary and bookings |
+| Taxes 2026, Mom's school forms | documents, people, dates |
+
+One word for the avatar's subject everywhere: **project**, in the UI, in Neo's prompt and in the code. "Topic" and "concern" retire. One-off questions that belong to no project ("what's the weather") stay in the Inbox.
 
 ## Identity
 
-Two things are the same project when they share outcome and materials. The daemon decides this from facts where it can, and Neo decides the rest.
+Two workspaces belong to the same project when they share outcome and materials. The daemon decides this from facts where it can, and Neo decides the rest.
 
-- **Code:** the normalized git remote (`github.com/lsm/HyperNeo`) is the identity. Every folder whose remote matches is a checkout of that project, on any machine and under any folder name: `neokai`, `~/tmp/HyperNeo`, `.claude/worktrees/*`, the iMac's checkout. A folder with no remote is its own project until Neo or the human links it.
+- **Code:** the normalized git remote (`github.com/lsm/HyperNeo`) is the identity. Every folder whose remote matches is a workspace of that project, on any machine, in any tool, under any folder name.
+- **Tool projects:** a HyperNeo, Codex or Claude Code project's own name and folders link it to an avatar. A Codex project with several folders maps to one avatar with all of them. HyperNeo projects support several folders too, the same way, so the mirror is one to one.
 - **Everything else:** Neo judges from the request, its people, dates and documents. When it can't tell, it asks once with `neo.ask.question` ("Spain trip: under Travel next to Japan, or on its own?"). The answer is saved as a rule, so the same question isn't asked twice.
 
-## Places and drivers
-
-A project lists its **places**: each checkout or folder, on each machine, with the agents that work there (Claude Code, Codex, HyperNeo sessions). Neo picks a place and a driver per card. For HyperNeo that can be a Claude Code session on the laptop, a Codex thread on the iMac, or a new HyperNeo session in a worktree, whichever is idle and fits.
+Neo picks a workspace and a driver per card. For HyperNeo that might be a Claude Code session on the laptop, a Codex thread on the iMac, a new HyperNeo session in a worktree, or a cloud agent, whichever is idle and fits.
 
 ## Parents and sections
 
-Projects can nest one level:
+The avatar tree nests one level below a top-level project:
 
 - **A parent groups projects that share context.** Travel holds Japan and Spain when they share a passport, loyalty accounts or companions. Business travel is a different parent: the budget, the approvals and who pays all differ. Family holds Mom's school forms once more family errands come.
-- **A section splits a large project.** For code, sections follow epics: HyperNeo → Neo (#6002), daemon, web. A section is a project with a parent, so it has its own avatar and asks.
+- **A section splits a large project.** For code, sections follow epics: HyperNeo → Neo (#6002), daemon, web. A section is an avatar with a parent; it shares the parent's workspaces.
 
 ## Routing and reorganize
 
@@ -49,7 +56,7 @@ Projects can nest one level:
 - `neo.topics.reorganize` becomes project reorganize, and runs nightly as today:
   - merge projects whose code identity matches;
   - move asks into their project and section;
-  - attach places found since the last run;
+  - attach workspaces found since the last run, in any tool;
   - ask the human once about a merge it can't decide from facts.
   - The first run turns today's topics into projects: the redesign, the network fixes and the Neo tool fixes go to HyperNeo → Neo, and the iOS spinner topic goes to neo-ios.
 
@@ -57,8 +64,9 @@ Projects can nest one level:
 
 | # | Slice | Depends on |
 |---|---|---|
-| 1 | Code project identity from the git remote; a project lists its places across machines and drivers | none |
-| 2 | Rename topic/concern to project in UI, prompt and code (with a migration) | none |
+| 1 | Workspaces: code identity from the git remote; tool projects (HyperNeo, Codex, Claude Code, cloud) linked to one project across machines | none |
+| 1b | HyperNeo projects hold several folders, like Codex projects | none |
+| 2 | Avatars mirror projects (one per project, created when a workspace appears); rename topic/concern to project in UI, prompt and code, with a migration | 1 |
 | 3 | Router picks project then section; new projects are named after their target | 1 |
 | 4 | Parents and sections; sections from epics for code projects | 1, 3 |
 | 5 | Reorganize merges by identity, moves asks into projects and sections, asks once when unsure, saves the answer as a rule | 1, 3, 4 |
