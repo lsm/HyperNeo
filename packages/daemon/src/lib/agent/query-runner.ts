@@ -701,6 +701,7 @@ export class QueryRunner {
     let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
     let processExited = false;
     let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
+    let turnEnded = false;
     let removeFlagSettingsFile: (() => void) | undefined;
 
     try {
@@ -1323,6 +1324,7 @@ export class QueryRunner {
               resolveAskOrigin
             );
 
+          turnEnded = message.type === 'result';
           try {
             if (message.type === 'result') questionInputs.endTurn();
             await this.handleSDKMessage(message, queryGeneration);
@@ -1398,6 +1400,7 @@ export class QueryRunner {
         providerFamily: isProviderSession ? 'provider' : 'anthropic',
         hasConsumedPrompt: (this._consumedUserMessages.get(queryGeneration)?.length ?? 0) > 0,
         hasQueuedPrompt: messageQueue.size() > 0,
+        turnEnded,
         lifecycle: {
           processingStatus: stateManager.getState().status,
           abortSignalAborted: this.ctx.queryAbortController?.signal.aborted === true,
@@ -1419,7 +1422,9 @@ export class QueryRunner {
         return;
       }
 
-      logger.error('Streaming query error:', error);
+      if (routeDecision.route.action === 'turn_ended_noop')
+        logger.info(`SDK process exited after its turn ended with a result: ${errorMessage}`);
+      else logger.error('Streaming query error:', error);
 
       if (
         routeDecision.route.action === 'superseded_noop' ||

@@ -16,6 +16,7 @@ function env(overrides: Partial<QueryRetryEnvironment> = {}): QueryRetryEnvironm
     providerFamily: 'anthropic',
     hasConsumedPrompt: false,
     hasQueuedPrompt: false,
+    turnEnded: false,
     lifecycle: {
       processingStatus: 'processing',
       abortSignalAborted: false,
@@ -288,6 +289,18 @@ describe('query-retry-routing', () => {
       expected: { action: 'expected_recovery_noop' },
     },
     {
+      name: 'SDK process exit after the turn ended with a result is not a crash',
+      signal: { rawText: 'Error: Claude Code process exited with code 1' },
+      env: { turnEnded: true },
+      expected: { action: 'turn_ended_noop' },
+    },
+    {
+      name: 'a non-exit error after the turn ended stays terminal',
+      signal: { rawText: 'invalid_api_key' },
+      env: { turnEnded: true },
+      expected: { action: 'terminal', category: ErrorCategory.AUTHENTICATION },
+    },
+    {
       name: 'SDK process exit outside recovery windows stays terminal',
       signal: { rawText: 'Claude Code process exited with code 1' },
       expected: { action: 'terminal', category: ErrorCategory.SYSTEM },
@@ -529,6 +542,13 @@ describe('decideQueryRetry', () => {
         skipBeginTerminalIdle: true,
         skipErrorManager: true,
       }),
+    },
+    {
+      name: 'turn_ended_noop goes idle without a terminal error report',
+      signal: { rawText: 'Claude Code process exited with code 1' },
+      env: { turnEnded: true },
+      expectedRoute: { action: 'turn_ended_noop' },
+      expectedFinalizer: finalizer({ skipBeginTerminalIdle: true, skipErrorManager: true }),
     },
     {
       name: 'aborted_noop with limit recovery pending suppresses finalizer idle',
