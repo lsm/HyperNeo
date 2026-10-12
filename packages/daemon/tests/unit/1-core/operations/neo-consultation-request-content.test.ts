@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoConsultation } from '@hyperneo/shared/types/neo-context';
 import { neoConsultationRequestContent } from '../../../../src/lib/neo/consultation-request-content.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -39,6 +40,14 @@ describe('NeoService extracted consultation request delivery', () => {
       service.repo.saveConcern({ id: 'fictional', title: 'Drafts', summary: '', context: '' }, 0);
       service.repo.reserveBinding({ sessionId: 'root', concernId: null, kind: 'neo' });
       service.repo.reserveBinding({ sessionId: 'holder', concernId: 'fictional', kind: 'concern' });
+      db.getSDKMessageRepo().saveSDKMessage('root', {
+        type: 'user',
+        uuid: 'original-ask',
+        session_id: 'root',
+        parent_tool_use_id: null,
+        inputKind: 'human',
+        message: { role: 'user', content: 'Which draft is current?' },
+      } as unknown as SDKUserMessage);
       const saved = service.consultations.reserve({ ...item })!;
       const sdkBefore = db.getDatabase().prepare('SELECT * FROM sdk_messages').all();
       await service.syncConsultation(saved.id);
@@ -72,5 +81,14 @@ describe('NeoService extracted consultation request delivery', () => {
       service.dispose();
       db.close();
     }
+  });
+});
+
+describe('neoConsultationRequestContent', () => {
+  test('a consultation from a daemon note answers Neo with neo.concern.respond, never a publication', () => {
+    const internal = neoConsultationRequestContent(item, false);
+    expect(internal).toContain('Answer with neo.concern.respond {id, answer}');
+    expect(internal).toContain('Do not publish');
+    expect(neoConsultationRequestContent(item)).toContain('call neo.publication.publish');
   });
 });

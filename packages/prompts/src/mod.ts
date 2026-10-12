@@ -72,6 +72,7 @@ import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
 import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
 import mdneoTriggerNote from './neo/trigger-note.md' with { type: 'text' };
 import mdneoReviewRequest from './neo/consultation/review-request.md' with { type: 'text' };
+import mdneoInternalRequest from './neo/consultation/internal-request.md' with { type: 'text' };
 import mdneoCardPrAttention from './neo/card-pr-attention.md' with { type: 'text' };
 import mdneoCardPrAttentionNeo from './neo/card-pr-attention-neo.md' with { type: 'text' };
 import mdneoSystemHolderConsultationReturn from './neo/system/holder-consultation-return.md' with {
@@ -376,6 +377,7 @@ const registry: Record<string, string> = {
   'neo/ask-stalled.md': mdneoAskStalled,
   'neo/trigger-note.md': mdneoTriggerNote,
   'neo/consultation/review-request.md': mdneoReviewRequest,
+  'neo/consultation/internal-request.md': mdneoInternalRequest,
   'neo/card-pr-attention.md': mdneoCardPrAttention,
   'neo/card-pr-attention-neo.md': mdneoCardPrAttentionNeo,
   'neo/system/holder-consultation-return.md': mdneoSystemHolderConsultationReturn,
@@ -567,6 +569,7 @@ export const {
   NEO_ASK_STALLED,
   NEO_TRIGGER_NOTE,
   NEO_WORK_REVIEW_REQUEST,
+  NEO_CONSULTATION_INTERNAL_REQUEST,
   NEO_ASK_MOVED,
   NEO_CARD_PR_ATTENTION,
   NEO_CARD_PR_ATTENTION_NEO,

@@ -1,4 +1,4 @@
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoAsk,
   NeoAskHumanAction,
@@ -58,6 +58,18 @@ export function neoInputTrigger(messageId: string, human: boolean): string | nul
   const forwarded = neoForwardedAskMessageId(messageId);
   if (forwarded) return `${NEO_HUMAN_TRIGGER_PREFIX}${forwarded}`;
   return human ? `${NEO_HUMAN_TRIGGER_PREFIX}${messageId}` : null;
+}
+
+export function neoConsultationTrigger(
+  consultation: Pick<NeoConsultation, 'originSessionId' | 'originMessageId'> | null,
+  isHumanInput: (input: { sessionId: string; messageId: string }) => boolean
+): string | null {
+  if (!consultation?.originMessageId) return null;
+  const origin = {
+    sessionId: consultation.originSessionId,
+    messageId: consultation.originMessageId,
+  };
+  return neoInputTrigger(origin.messageId, isHumanInput(origin));
 }
 
 export function neoHumanTriggerMessageId(triggerId: string | undefined): string | null {

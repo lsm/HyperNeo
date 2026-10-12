@@ -786,7 +786,7 @@ describe('neo.ask operations', () => {
       const input =
         name === 'neo.ask.settle'
           ? waiting
-          : { askId, question: waiting.question, options: waiting.options };
+          : { askId, question: waiting.question, options: waiting.options, kind: 'decision' };
       expect(await invoke(name, { ...input, kind: 'wait' })).toMatchObject({
         value: { ok: false, reason: expect.stringContaining('not_the_human') },
       });
@@ -822,6 +822,7 @@ describe('neo.ask operations', () => {
         askId,
         question: 'Re-approve the login fix?',
         options: ['Approve', 'Stop'],
+        kind: 'decision',
       })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('approval_on_ask') } });
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
@@ -898,6 +899,7 @@ describe('neo.ask operations', () => {
         askId,
         question: waiting.question,
         options: waiting.options,
+        kind: 'decision',
       })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('checklist_full') } });
     await invoke('neo.ask.edit', { askId, remove: ['i3'] });
@@ -981,6 +983,7 @@ describe('neo.ask operations', () => {
         askId,
         question: 'Is red CI on main acceptable?',
         options: ['Yes', 'Yes'],
+        kind: 'decision',
       })
     ).toMatchObject({ kind: 'failed', message: expect.stringContaining('Options must differ') });
     expect(
@@ -988,12 +991,14 @@ describe('neo.ask operations', () => {
         askId,
         question: 'Is red CI on main acceptable?',
         options: ['Accept it'],
+        kind: 'decision',
       })
     ).toMatchObject({ kind: 'failed' });
     const asked = {
       askId,
       question: 'Is red CI on main acceptable?',
       options: ['Accept it', 'Fix CI first'],
+      kind: 'decision',
     };
     expect(await invoke('neo.ask.question', asked, { ...neo, sessionId: 'other' })).toMatchObject({
       value: { ok: false },
@@ -1477,6 +1482,7 @@ describe('neo.ask operations', () => {
       askId,
       question: 'Is red CI on main acceptable?',
       options: ['Accept it', 'Fix CI first'],
+      kind: 'decision',
     });
     expect(service.askRecords.get(askId)?.status).toBe('waiting');
     await invoke('neo.ask.edit', { askId, remove: ['i3'] });

@@ -288,6 +288,7 @@ import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session
 import { NeoNotificationTriggerRepository } from '../../storage/repositories/neo-notification-trigger-repository.ts';
 import {
   coverNeoAskTriggers,
+  neoConsultationTrigger,
   NEO_TRIGGER_ACHIEVED_WINDOW_MS,
   NEO_TRIGGER_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
@@ -736,14 +737,7 @@ export class NeoService {
       getWork: (id) => this.repo.getWork(id),
       getConsultation: (id) => this.consultations.get(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
-      isHumanInput: (input) =>
-        this.db
-          .getSDKMessageRepo()
-          .getStoredPromptsByUuid(input.sessionId, input.messageId)
-          .some(
-            (message) =>
-              message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
-          ),
+      isHumanInput: (input) => this.isHumanInput(input),
       isTriggerPublished: (conversationId, triggerId, publicationId) =>
         this.publications.hasTrigger(conversationId, triggerId, publicationId),
       replay: (input, caller) => {
@@ -949,6 +943,16 @@ export class NeoService {
   }) {
     for (const old of [...evict, key]) this.savedRules.delete(old);
     this.savedRules.set(key, note);
+  }
+
+  private isHumanInput(input: NeoAskOrigin): boolean {
+    return this.db
+      .getSDKMessageRepo()
+      .getStoredPromptsByUuid(input.sessionId, input.messageId)
+      .some(
+        (message) =>
+          message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
+      );
   }
 
   private triggerAsks(): NeoAsk[] {
@@ -2528,7 +2532,10 @@ export class NeoService {
         );
       } else {
         await this.open(item.concernId);
-        const content = neoConsultationRequestContent(item);
+        const content = neoConsultationRequestContent(
+          item,
+          neoConsultationTrigger(item, (input) => this.isHumanInput(input)) !== null
+        );
         await this.deliver(
           item.sessionId,
           requestId,

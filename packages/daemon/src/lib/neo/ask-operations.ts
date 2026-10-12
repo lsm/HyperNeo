@@ -168,7 +168,7 @@ const Question = z.object({
   askId: z.string().min(1),
   question: z.string().trim().min(1).max(200),
   options: Options,
-  kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
+  kind: z.enum(NEO_ASK_ITEM_KINDS),
 });
 
 const Answer = z.object({
@@ -1414,7 +1414,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.question',
       description:
-        'Ask the human one question about this ask: the only way a decision, or a check only they can make, reaches them. question is one short question worded for this step; options are 2-4 short answers, which become their buttons. The question becomes its own checklist item and the ask waits on it; their answer ticks it met and is sent back to you, so act on it then. For a step only the human can check (on a device, or a machine the daemon cannot read), ask about its result with kind "action", in the words of this step and the language of the human, and put the answer that means it worked first ("这一步成功了吗？" with options "成功了", "没成功"): the first option ticks it met, any other keeps it open and tells you. No answer pair is fixed: write the options of each question for that step. Never ask for re-approval: the daemon shows Approve itself when the approval expires or a card stalls. Asking the same open question again changes nothing. Only the Neo session that opened the ask or the user can ask on it.',
+        'Ask the human one question about this ask: the only way a decision, or a check only they can make, reaches them. question is one short question worded for this step; options are 2-4 short answers, which become their buttons; kind is decision (any answer settles it) or action (a check of the result of a step, met only on its first option). The question becomes its own checklist item and the ask waits on it; their answer ticks it met and is sent back to you, so act on it then. For a step only the human can check (on a device, or a machine the daemon cannot read), ask about its result with kind "action", in the words of this step and the language of the human, and put the answer that means it worked first ("这一步成功了吗？" with options "成功了", "没成功"): the first option ticks it met, any other keeps it open and tells you. No answer pair is fixed: write the options of each question for that step. Never ask for re-approval: the daemon shows Approve itself when the approval expires or a card stalls. Asking the same open question again changes nothing. Only the Neo session that opened the ask or the user can ask on it.',
       inputSchema: Question,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

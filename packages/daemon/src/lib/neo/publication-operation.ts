@@ -13,6 +13,7 @@ import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { requirePublicationNews } from './publication-news.ts';
 import {
+  neoConsultationTrigger,
   neoInputTrigger,
   requirePublicationTrigger,
   requireUnpublishedTrigger,
@@ -60,13 +61,9 @@ export function neoPublicationTrigger(
   consultation: NeoConsultation | null,
   isHumanInput: (input: NeoAskOrigin) => boolean
 ): string | null {
-  if (!proof.turn.consultationId) return neoInputTrigger(proof.input.messageId, proof.turn.human);
-  if (!consultation?.originMessageId) return null;
-  const origin = {
-    sessionId: consultation.originSessionId,
-    messageId: consultation.originMessageId,
-  };
-  return neoInputTrigger(origin.messageId, isHumanInput(origin));
+  return proof.turn.consultationId
+    ? neoConsultationTrigger(consultation, isHumanInput)
+    : neoInputTrigger(proof.input.messageId, proof.turn.human);
 }
 
 export function reusePublicationReceipt(
