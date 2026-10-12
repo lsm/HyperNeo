@@ -1440,6 +1440,7 @@ describe('RateLimitWatchdog', () => {
         try {
           const session = {
             rateLimitWatchdog: restored,
+            networkPause: { resumeNow: async () => false },
             session: { id: 's' },
             stateManager,
             db: {
