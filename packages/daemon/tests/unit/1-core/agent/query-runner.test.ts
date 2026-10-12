@@ -3480,6 +3480,32 @@ describe('QueryRunner', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
+    it('ends the turn quietly when the process exits after a result while a system note is queued', async () => {
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(() => ({
+        close: () => {},
+        interrupt: async () => {},
+        [Symbol.asyncIterator]: async function* () {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            uuid: 'turn-result',
+          } as unknown as SDKMessage;
+          throw new Error('Claude Code process exited with code 1');
+        },
+      }));
+      const ctx = createContext({
+        messageQueue: { ...mockMessageQueue, size: mock(() => 1) } as unknown as MessageQueue,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise;
+
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('after its turn ended with a result')
+      );
+    });
+
     it('reports a process exit after a subagent result as a terminal error', async () => {
       (query as unknown as ReturnType<typeof mock>).mockImplementation(() => ({
         close: () => {},

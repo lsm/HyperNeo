@@ -308,10 +308,10 @@ describe('query-retry-routing', () => {
       expected: { action: 'expected_recovery_noop' },
     },
     {
-      name: 'SDK process exit after a result with a prompt still queued stays terminal',
+      name: 'SDK process exit after a result ends the turn even with a prompt queued',
       signal: { rawText: 'Claude Code process exited with code 1' },
       env: { turnEnded: true, hasQueuedPrompt: true },
-      expected: { action: 'terminal', category: ErrorCategory.SYSTEM },
+      expected: { action: 'turn_ended_noop' },
     },
     {
       name: 'a non-exit error after the turn ended stays terminal',
