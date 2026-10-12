@@ -191,16 +191,20 @@ export async function readNeoAskPackTicks(
   warn: (id: string, error: unknown) => void
 ): Promise<{ id: string; evidence: string }[]> {
   const reads = await Promise.all(
-    packs
-      .filter((pack) => !ask.pack || pack.id === ask.pack)
-      .map((pack) =>
-        pack.readAskTicks?.(ask, works).catch((error: unknown) => {
+    packs.flatMap((pack) =>
+      [
+        !ask.pack || pack.id === ask.pack ? pack.readAskTicks?.(ask, works) : undefined,
+        pack.readAskWatchTicks?.(ask),
+      ].map((read) =>
+        read?.catch((error: unknown) => {
           warn(pack.id, error);
           return [];
         })
       )
+    )
   );
-  return reads.flatMap((read) => read ?? []);
+  const ticks = reads.flatMap((read) => read ?? []);
+  return ticks.filter((tick, index) => ticks.findIndex((item) => item.id === tick.id) === index);
 }
 
 export async function readNeoAskPackEvidence(

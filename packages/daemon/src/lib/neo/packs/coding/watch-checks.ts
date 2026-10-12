@@ -4,6 +4,7 @@ import type { NeoRef, NeoRefState, NeoRefStateReader } from './ask-prs.ts';
 import type { NeoAskTick } from './issue-checks.ts';
 
 const NEO_WATCH_READ_MS = 2 * 60_000;
+const NEO_WATCH_REF_MAX = 20;
 const lastRead = new Map<string, number>();
 
 function refKey(url: string): string {
@@ -23,7 +24,7 @@ export function neoWatchRefs(ask: NeoAsk): NeoRef[] {
     const ref = parseGitHubRefUrl(url);
     if (ref) refs.set(refKey(url), ref);
   }
-  return [...refs.values()];
+  return [...refs.values()].slice(0, NEO_WATCH_REF_MAX);
 }
 
 function settledAs(state: NeoRefState): string | null {

@@ -9,6 +9,8 @@ import {
   neoPrRefsToLift,
 } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
 import { readNeoGithubRef } from '../../../../src/lib/neo/packs/coding/github-read.ts';
+import { readNeoAskPackTicks } from '../../../../src/lib/neo/packs/index.ts';
+import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import {
   judgeNeoWatchTicks,
   neoWatchRefs,
@@ -127,6 +129,43 @@ describe('readNeoWatchTicks', () => {
     expect(read).toHaveBeenCalledTimes(1);
     expect(await readNeoWatchTicks(ask([item('i1', [])], 'a-none'), read, 10_000)).toEqual([]);
     expect(read).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('neoWatchRefs', () => {
+  test('reads at most twenty refs per ask', () => {
+    const many = Array.from({ length: 12 }, (_, n) =>
+      item(`i${n}`, [pull(n * 10 + 1), pull(n * 10 + 2)])
+    );
+    expect(neoWatchRefs(ask(many))).toHaveLength(20);
+  });
+});
+
+describe('readNeoAskPackTicks', () => {
+  test('reads watch ticks from every pack, also on an ask under another pack', async () => {
+    const pack = (id: string, extra: Partial<NeoPack>): NeoPack =>
+      ({ id, describe: id, instructions: () => null, ...extra }) as NeoPack;
+    const coding = pack('coding', {
+      readAskTicks: async () => [{ id: 'i1', evidence: 'issue' }],
+      readAskWatchTicks: async () => [
+        { id: 'i1', evidence: 'watched' },
+        { id: 'i2', evidence: 'watched' },
+      ],
+    });
+    const life = pack('life-admin', { readAskTicks: async () => [{ id: 'i3', evidence: 'life' }] });
+    const warn = vi.fn();
+    expect(
+      await readNeoAskPackTicks([coding, life], { ...ask([]), pack: 'life-admin' }, [], warn)
+    ).toEqual([
+      { id: 'i1', evidence: 'watched' },
+      { id: 'i2', evidence: 'watched' },
+      { id: 'i3', evidence: 'life' },
+    ]);
+    expect(await readNeoAskPackTicks([coding], ask([]), [], warn)).toEqual([
+      { id: 'i1', evidence: 'issue' },
+      { id: 'i2', evidence: 'watched' },
+    ]);
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

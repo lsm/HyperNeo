@@ -258,11 +258,9 @@ export function createCodingPack(
         deps.workPrs.list(ask.workIds),
         deps.claims.forUrls(works.flatMap((work) => extractNeoWorkPrUrls(work.report)))
       ),
-    readAskTicks: async (ask: NeoAsk, works: readonly NeoWork[]) => {
-      const issues = await readNeoIssueTicks(ask, works, deps.readRefStates, Date.now());
-      const watched = await readNeoWatchTicks(ask, deps.readRefStates, Date.now());
-      return [...issues, ...watched.filter((tick) => !issues.some((item) => item.id === tick.id))];
-    },
+    readAskTicks: (ask: NeoAsk, works: readonly NeoWork[]) =>
+      readNeoIssueTicks(ask, works, deps.readRefStates, Date.now()),
+    readAskWatchTicks: (ask: NeoAsk) => readNeoWatchTicks(ask, deps.readRefStates, Date.now()),
     readAskEvidence: async (ask: NeoAsk) => {
       const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));
       const refs = neoAskCardRefs(
