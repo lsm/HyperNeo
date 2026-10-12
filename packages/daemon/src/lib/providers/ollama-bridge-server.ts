@@ -17,7 +17,7 @@ import { estimateAnthropicInputTokens } from './provider-anthropic-compat/token-
 import { createAnthropicErrorBody, type AnthropicErrorType } from './shared/error-envelope.js';
 import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
 import { Logger } from '../logger.js';
-import { createHttpWsServer } from '../runtime-server/index.js';
+import { createMessagesBridgeServer } from './anthropic-non-streaming.ts';
 
 const logger = new Logger('ollama-bridge-server');
 
@@ -369,7 +369,7 @@ export async function createOllamaAnthropicBridgeServer(
 ): Promise<OllamaBridgeServer> {
   const fetchImpl = config.fetchImpl ?? fetch;
   const baseUrl = config.baseUrl.replace(/\/$/, '').replace(/\/api\/chat\/?$/i, '');
-  const server = await createHttpWsServer({
+  const server = await createMessagesBridgeServer({
     hostname: config.hostname ?? '127.0.0.1',
     port: 0,
     idleTimeoutSeconds: 0,
@@ -412,13 +412,6 @@ export async function createOllamaAnthropicBridgeServer(
           400,
           'invalid_request_error',
           'Missing required fields: model and messages'
-        );
-      }
-      if (body.stream === false) {
-        return sendJsonError(
-          400,
-          'invalid_request_error',
-          'Only streaming responses are supported'
         );
       }
 

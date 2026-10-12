@@ -30,7 +30,7 @@ import {
   normalizeOpenAiUpstreamError,
 } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
-import { createHttpWsServer } from '../../runtime-server/index.js';
+import { createMessagesBridgeServer } from '../anthropic-non-streaming.ts';
 
 const logger = new Logger('openai-responses-bridge-server');
 
@@ -1441,7 +1441,7 @@ export async function createOpenAIResponsesBridgeServer(
     }
   };
 
-  const server = await createHttpWsServer({
+  const server = await createMessagesBridgeServer({
     hostname: '127.0.0.1',
     port: 0,
     idleTimeoutSeconds: 0,
@@ -1501,13 +1501,6 @@ export async function createOpenAIResponsesBridgeServer(
           400,
           'invalid_request_error',
           'Missing required fields: model and messages'
-        );
-      }
-      if (body.stream === false) {
-        return sendJsonError(
-          400,
-          'invalid_request_error',
-          'Only streaming responses are supported'
         );
       }
 

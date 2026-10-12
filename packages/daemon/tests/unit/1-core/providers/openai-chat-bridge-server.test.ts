@@ -585,8 +585,18 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(body.error.message).toContain('ECONNREFUSED');
     });
 
-    it.skipIf(!isBun)('rejects non-streaming requests with 400', async () => {
-      const fetchMock = mock(async () => new Response('', { status: 200 }));
+    it.skipIf(!isBun)('answers a non-streaming request with one assembled message', async () => {
+      const fetchMock = mock(
+        async () =>
+          new Response(
+            sseBody([
+              { choices: [{ delta: { content: 'Hello ' } }] },
+              { choices: [{ delta: { content: 'there.' } }] },
+              { choices: [{ delta: {}, finish_reason: 'stop' }] },
+            ]),
+            { status: 200 }
+          )
+      );
       const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
         fetchImpl: fetchMock as typeof fetch,
@@ -601,8 +611,17 @@ describe('OpenAI Chat Completions bridge server', () => {
           stream: false,
         }),
       });
-      expect(response.status).toBe(400);
-      expect(fetchMock).toHaveBeenCalledTimes(0);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('application/json');
+      const body = (await response.json()) as {
+        type: string;
+        role: string;
+        content: Array<{ type: string; text?: string }>;
+        stop_reason: string;
+      };
+      expect(body).toMatchObject({ type: 'message', role: 'assistant', stop_reason: 'end_turn' });
+      expect(body.content).toEqual([{ type: 'text', text: 'Hello there.' }]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it.skipIf(!isBun)('estimates input tokens at /v1/messages/count_tokens', async () => {

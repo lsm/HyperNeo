@@ -808,6 +808,62 @@ describe('openai-responses-bridge server', () => {
     expect(textDeltaEvents(events).join('')).toBe('A cat.');
   });
 
+  it.skipIf(!isBun)('answers a non-streaming request with one assembled message', async () => {
+    let upstreamStream: unknown;
+    server = await createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async (_url, init) => {
+        upstreamStream = (JSON.parse(String(init?.body)) as { stream?: unknown }).stream;
+        return sse([
+          {
+            event: 'response.created',
+            data: { type: 'response.created', response: { id: 'resp_1' } },
+          },
+          {
+            event: 'response.output_text.delta',
+            data: { type: 'response.output_text.delta', delta: 'hel' },
+          },
+          {
+            event: 'response.output_text.delta',
+            data: { type: 'response.output_text.delta', delta: 'lo' },
+          },
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 9, output_tokens: 2 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        stream: false,
+        messages: [{ role: 'user', content: 'Say hello.' }],
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(upstreamStream).toBe(true);
+    const body = (await resp.json()) as {
+      role: string;
+      content: Array<{ type: string; text?: string }>;
+      stop_reason: string;
+      usage: { output_tokens: number };
+    };
+    expect(body.role).toBe('assistant');
+    expect(body.content).toEqual([{ type: 'text', text: 'hello' }]);
+    expect(body.stop_reason).toBe('end_turn');
+    expect(body.usage.output_tokens).toBe(2);
+  });
+
   it.skipIf(!isBun)('streams OpenAI function calls as Anthropic tool_use blocks', async () => {
     server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
