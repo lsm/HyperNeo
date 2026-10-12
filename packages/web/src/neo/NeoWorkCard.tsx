@@ -4,6 +4,13 @@ import { useMemo } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import {
+  neoCardLabel,
+  neoCardMeta,
+  neoCardOpenLabel,
+  neoCardPrimaryAction,
+  neoCardTone,
+} from './card-view.ts';
+import {
   NeoAppMark,
   NeoChatMark,
   NeoMoreIcon,
@@ -17,13 +24,6 @@ import {
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
 import { neoAppLogo } from './work-driver.ts';
-import {
-  neoCardLabel,
-  neoCardMeta,
-  neoCardOpenLabel,
-  neoCardPrimaryAction,
-  neoCardTone,
-} from './card-view.ts';
 
 const tones = {
   success: 'text-success bg-success/10',
@@ -113,7 +113,10 @@ export function NeoWorkCard({
     ) : null;
   if (presentation === 'summary' && onOpen)
     return (
-      <div class="rounded-2xl border border-line bg-surface hover:border-accent/40">
+      <div
+        data-neo-work={work.id}
+        class="rounded-2xl border border-line bg-surface hover:border-accent/40"
+      >
         <button
           type="button"
           data-scene-open={work.id}
@@ -232,6 +235,7 @@ export function NeoWorkCard({
   return (
     <article
       aria-label={work.title}
+      data-neo-work={work.id}
       data-scene-open={openable ? work.id : undefined}
       tabIndex={openable ? 0 : undefined}
       class={`${neoCardClass}${openable ? ' cursor-pointer transition-colors hover:border-accent/40' : ''}`}

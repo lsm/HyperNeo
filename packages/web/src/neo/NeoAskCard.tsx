@@ -47,7 +47,11 @@ function StepRow({ scene, done }: { scene: NeoScene; done: boolean }) {
   const glyph = stepGlyph(scene, done);
   const title = scene.receipt.kind === 'work' ? scene.receipt.title : scene.label;
   return (
-    <div data-ask-step={scene.ref.id} class="flex min-w-0 items-baseline gap-2 text-sm">
+    <div
+      data-ask-step={scene.ref.id}
+      data-neo-work={scene.ref.id}
+      class="flex min-w-0 items-baseline gap-2 text-sm"
+    >
       <span aria-hidden="true" class={`w-3 shrink-0 text-center text-xs ${glyph.color}`}>
         {glyph.mark}
       </span>
