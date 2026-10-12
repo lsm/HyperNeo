@@ -336,8 +336,6 @@ type NeoNeedsYouCard = {
 type NeoNeedsYouPlan = ReturnType<typeof planNeoNeedsYou>;
 type NeoDoneCheckDelivery = {
   stale?: boolean;
-  ready?: boolean;
-  remind?: boolean;
   ask?: NeoAsk | null;
   followedAt?: number;
   signature?: string;
@@ -1845,10 +1843,7 @@ export class NeoService {
         planned.stand && told.row
           ? 'unchanged'
           : planned.read && card.goal
-            ? planNeoDoneCheck(planned.read.evidence, told.row, planned.read.read, now, {
-                quietSince: refresh.work.updatedAt,
-                remindable: !card.ask || card.ask.status === 'open',
-              })
+            ? planNeoDoneCheck(planned.read.evidence, told.row, planned.read.read, now)
             : 'wait',
       ['refresh', 'card', 'planned', 'told', 'now'],
       'plan'
@@ -1864,33 +1859,19 @@ export class NeoService {
     )
     .pipe(
       async (
-        refresh: { work: NeoWork; delivery: 'deliver' | 'remind' },
+        refresh: { work: NeoWork },
         card: NeoWorkPrCard,
         refreshed: NeoWorkPrRefreshed,
-        told: NeoWorkTold,
         planned: { read: NeoEvidenceRead | null }
       ) => {
         if (!card.goal) return;
-        await this.deliverDoneCheck(
-          refresh.work,
-          card.goal,
-          this.workPrs.get(refresh.work.id),
-          refresh.delivery === 'remind'
-            ? {
-                ask: card.ask,
-                ready: true,
-                remind: true,
-                followedAt: told.row?.toldAt ?? refresh.work.updatedAt,
-                signature: planned.read ? neoEvidenceSignature(planned.read.evidence) : undefined,
-              }
-            : {
-                stale: refreshed.failed || refreshed.read?.read.ok === false,
-                ask: card.ask,
-                signature: planned.read ? neoEvidenceSignature(planned.read.evidence) : undefined,
-              }
-        );
+        await this.deliverDoneCheck(refresh.work, card.goal, this.workPrs.get(refresh.work.id), {
+          stale: refreshed.failed || refreshed.read?.read.ok === false,
+          ask: card.ask,
+          signature: planned.read ? neoEvidenceSignature(planned.read.evidence) : undefined,
+        });
       },
-      ['refresh', 'card', 'refreshed', 'told', 'planned']
+      ['refresh', 'card', 'refreshed', 'planned']
     )
     .endAsync('refresh') as (
     workId: string,
@@ -2683,9 +2664,8 @@ export class NeoService {
               stalled: this.stalledWakes(work.id),
               prs: found.row?.prs,
               stale: options.stale ?? false,
-              ready: options.ready ?? false,
               ask: current.ask,
-              pack: options.remind ? null : this.askPackFragment(current.ask),
+              pack: this.askPackFragment(current.ask),
               cards: current.ask
                 ? projectNeoAskCards(
                     work.id,
@@ -2716,8 +2696,7 @@ export class NeoService {
     )
     .pipe(
       (work: NeoWork, options: NeoDoneCheckDelivery, sent: { at: number }) => {
-        if (options.signature)
-          this.workChecks.markTold(work.id, options.signature, sent.at, options.ready ?? false);
+        if (options.signature) this.workChecks.markTold(work.id, options.signature, sent.at);
       },
       ['work', 'options', 'sent']
     )

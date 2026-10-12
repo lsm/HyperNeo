@@ -1349,62 +1349,6 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('reminds Neo once when an approved green pull request sits unmerged and quiet', async () => {
-    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
-    const url = 'https://github.com/lsm/HyperNeo/pull/6013';
-    let reply: unknown = {
-      ok: true,
-      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Opened ${url}.` },
-    };
-    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
-    db.createSession(createTestSession('neo:root'));
-    service.workGoals.record('work-1', 'Lower reasoning effort', '- merged to dev');
-    fileUnderAsk(service);
-    const ready: NeoWorkPr = { url, state: 'OPEN', checks: 'passing', review: 'approved' };
-    service.readPrs = async () => [ready];
-    const notes: Array<[string, string]> = [];
-    Object.assign(service, {
-      deliver: async (_target: string, messageId: string, content: string) => {
-        notes.push([messageId, content]);
-      },
-    });
-    const quietFor = (ms: number) => {
-      const at = Date.now() - ms;
-      const sqlite = db.getDatabase();
-      sqlite.prepare('UPDATE neo_work SET updated_at = ? WHERE id = ?').run(at, 'work-1');
-      sqlite.prepare('UPDATE neo_work_prs SET read_at = 0 WHERE work_id = ?').run('work-1');
-      sqlite.prepare('UPDATE neo_work_checks SET told_at = ? WHERE work_id = ?').run(at, 'work-1');
-      return at;
-    };
-    try {
-      await service.start('work-1');
-      await service.refreshDriverWork();
-      expect(notes.map(([id]) => id)).toEqual(['work-1:done-check:0:pr:1']);
-      const signature = neoEvidenceSignature(neoWorkPrEvidence([ready]));
-      expect(service.workChecks.get('work-1')).toMatchObject({ signature, reminded: null });
-      reply = { ok: true, value: { status: 'done', lastActivityAt: 1 } };
-
-      quietFor(10 * 60_000);
-      await service.refreshDriverWork();
-      expect(notes).toHaveLength(1);
-
-      const toldAt = quietFor(31 * 60_000);
-      await service.refreshDriverWork();
-      expect(notes.map(([id]) => id)).toEqual([
-        'work-1:done-check:0:pr:1',
-        `work-1:done-check:0:pr:1:at:${toldAt}`,
-      ]);
-      expect(notes[1][1]).toContain('still open and nothing has moved');
-      expect(service.workChecks.get('work-1')).toMatchObject({ signature, reminded: signature });
-
-      quietFor(31 * 60_000);
-      await service.refreshDriverWork();
-      expect(notes).toHaveLength(2);
-    } finally {
-      db.close();
-    }
-  });
-
   test('without the coding pack enabled, a card already told is not told again', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/10';
