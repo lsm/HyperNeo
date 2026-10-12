@@ -20,7 +20,8 @@ export const FindWorkResultSchema = z.object({
   more: z.boolean().optional(),
 });
 
-const RESULT_BUDGET_CHARS = 60_000;
+export const FIND_RESULT_BUDGET_CHARS = 60_000;
+export const FIND_AGENT_RESULT_BUDGET_CHARS = 16_000;
 const TITLE_BUDGET_CHARS = 200;
 
 type FindInput = z.infer<typeof FindWorkInputSchema>;
@@ -174,10 +175,11 @@ export function fitFindBudget(
 export function combineFindResults(
   local: SourceOutcome,
   remote: SourceOutcome,
-  input: FindInput
+  input: FindInput,
+  budget = FIND_RESULT_BUDGET_CHARS
 ): FindResult {
   const merged = mergePlaceGroups([...local.groups, ...remote.groups], input.limit + 1);
-  const fitted = fitFindBudget(merged.slice(0, input.limit), RESULT_BUDGET_CHARS);
+  const fitted = fitFindBudget(merged.slice(0, input.limit), budget);
   return {
     places: fitted.places,
     unreachable: [...local.unreachable, ...remote.unreachable],
@@ -186,13 +188,17 @@ export function combineFindResults(
 }
 
 const runFindWork = (superpipe({})('find-work') as PipelineAPI)
-  .input(['input', 'deps'])
+  .input(['input', 'deps', 'budget'])
   .pipe(selectFindAdapters, ['input', 'deps'], 'adapters')
   .pipe(toFindQuery, 'input', 'query')
   .pipe(findLocally, ['adapters', 'query'], 'local')
   .pipe(findRemotely, ['input', 'deps'], 'remote')
-  .pipe(combineFindResults, ['local', 'remote', 'input'], 'result')
-  .endAsync('result') as (input: FindInput, deps: FindWorkDeps) => Promise<FindResult>;
+  .pipe(combineFindResults, ['local', 'remote', 'input', 'budget'], 'result')
+  .endAsync('result') as (
+  input: FindInput,
+  deps: FindWorkDeps,
+  budget: number
+) => Promise<FindResult>;
 
 export function createFindWorkOperation(deps: FindWorkDeps) {
   return defineOperation({
@@ -202,6 +208,11 @@ export function createFindWorkOperation(deps: FindWorkDeps) {
     inputSchema: FindWorkInputSchema,
     resultSchema: FindWorkResultSchema,
     policy: { safetyClass: 'read' },
-    execute: (input) => runFindWork(input, deps),
+    execute: (input, caller) =>
+      runFindWork(
+        input,
+        deps,
+        caller.source === 'mcp' ? FIND_AGENT_RESULT_BUDGET_CHARS : FIND_RESULT_BUDGET_CHARS
+      ),
   });
 }
