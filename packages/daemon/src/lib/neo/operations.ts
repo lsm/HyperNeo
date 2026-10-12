@@ -53,6 +53,7 @@ import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
 import { createNeoConversationAskReadOperation } from './conversation-ask-read-operation.ts';
 import { createNeoDraftRecoveryOperation } from './draft-recovery-operation.ts';
+import { compactNeoSnapshotAsks, compactNeoSnapshotCards } from './snapshot-compact.ts';
 import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import {
   admitNeoWorkOrigin,
@@ -607,6 +608,7 @@ export function createNeoOperations(service: NeoService) {
           : requested;
     const detailed = caller.source === 'rpc' || binding?.kind === 'concern';
     const cardDetail = detailed || !!focus;
+    const compact = caller.source !== 'rpc' && !focus;
     const concerns = service.repo
       .listConcerns()
       .filter((item) => (focus ? item.id === focus.concernId : !scope || item.id === scope));
@@ -691,8 +693,8 @@ export function createNeoOperations(service: NeoService) {
       sessionNoticeGroups: focus ? [] : latestNeoSessionNoticeGroups(service.sessionNoticeGroups),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
-      asks,
-      cards,
+      asks: compact ? compactNeoSnapshotAsks(asks) : asks,
+      cards: compact ? compactNeoSnapshotCards(cards) : cards,
       sessionLoad: readNeoSessionLoad(service.db.getDatabase()).slice(0, 50),
       askViews: projectNeoAskViews(
         asks,
@@ -1541,7 +1543,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests.',
+        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },
