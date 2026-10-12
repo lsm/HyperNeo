@@ -30,7 +30,7 @@ describe('searchWorkChats', () => {
       message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER,
       message_type TEXT, title TEXT, body TEXT, timestamp INTEGER)`);
     db.exec(`CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body,
-      content='message_search_content', content_rowid='id')`);
+      content='message_search_content', content_rowid='id', detail=column, tokenize='unicode61')`);
     db.exec(`CREATE TRIGGER msc_ai AFTER INSERT ON message_search_content BEGIN
       INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END`);
     db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, status TEXT, last_active_at TEXT)`);
@@ -94,6 +94,16 @@ describe('searchWorkChats', () => {
     insert('gone', null, 'archived 16px talk', 30);
     const chats = searchWorkChats(db, tables, '16px', 50);
     expect(chats.map((chat) => [chat.taskId, chat.hits])).toEqual([['t1', 2]]);
+  });
+
+  test('finds a chat by a hyphenated or underscored term instead of failing the search', () => {
+    insert('quiet', null, 'pack-evidence lands with neo_work_checks', 10);
+    expect(searchWorkChats(db, tables, 'pack-evidence', 10).map((chat) => chat.sessionId)).toEqual([
+      'quiet',
+    ]);
+    expect(
+      searchWorkChats(db, tables, 'neo_work_checks', 10).map((chat) => chat.sessionId)
+    ).toEqual(['quiet']);
   });
 
   test('finds nothing for text with no searchable terms', () => {

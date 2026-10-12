@@ -2848,7 +2848,7 @@ export class AgentSession
           this.messageQueue.remove?.(messageUuid);
         }
       }
-      throw error;
+      if (ackTimedOut || !this.isDeliveryConsumed(messageUuid)) throw error;
     } finally {
       waitSettled = true;
       clearTimeout(timeoutId);
@@ -2965,6 +2965,17 @@ export class AgentSession
         this.logger.warn('Queued-state publication failed after durable insertion:', error);
       }
     });
+  }
+
+  markHolderInputConsumed(messageUuid: string): void {
+    this.markDeliveryConsumed([messageUuid]);
+  }
+
+  private isDeliveryConsumed(messageUuid: string): boolean {
+    return (
+      this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid)?.sendStatus ===
+      'consumed'
+    );
   }
 
   private markDeliveryConsumed(uuids: string[]): void {

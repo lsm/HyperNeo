@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation';
+import {
+  createFindWorkOperation,
+  FIND_AGENT_RESULT_BUDGET_CHARS,
+} from '../../../../src/lib/drivers/find-operation';
 import {
   buildHyperneoGroups,
   createHyperneoAdapter,
@@ -9,6 +12,7 @@ import {
 import { mergePlaceGroups } from '../../../../src/lib/drivers/places';
 import type { PlaceGroup, WorkAdapter } from '../../../../src/lib/drivers/types';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
@@ -431,6 +435,34 @@ describe('work.find operation', () => {
         input: expect.objectContaining({ localOnly: true }),
       })
     );
+  });
+
+  test("keeps an agent's reply small and says more was left out, while the app gets the full budget", async () => {
+    const many: WorkAdapter = {
+      id: 'hyperneo',
+      capabilities: ['find'],
+      find: () =>
+        Array.from({ length: 50 }, (_, n) => group('imac', `/focus/project-${n}`, 'hyperneo', n)),
+    };
+    const ops = createOperationRegistry([
+      createFindWorkOperation({
+        adapters: () => [many],
+        remote: { list: () => [], invoke: async () => ({}) },
+      }),
+    ]);
+    const read = async (caller: OperationCaller) => {
+      const outcome = await invokeOperation(ops, 'work.find', { limit: 50 }, caller);
+      return outcome.kind === 'completed'
+        ? (outcome.value as { places: PlaceGroup[]; more?: boolean })
+        : null;
+    };
+    const agent = await read({ source: 'mcp', sessionId: 'neo:root' });
+    expect(JSON.stringify(agent?.places).length).toBeLessThanOrEqual(
+      FIND_AGENT_RESULT_BUDGET_CHARS
+    );
+    expect(agent?.more).toBe(true);
+    const app = await read({ source: 'rpc' });
+    expect(app?.places.length).toBeGreaterThan(agent?.places.length ?? 0);
   });
 
   test('does not ask other daemons when called with localOnly', async () => {
