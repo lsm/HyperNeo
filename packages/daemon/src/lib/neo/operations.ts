@@ -599,6 +599,7 @@ export function neoReorganizeRuntime(
     route: (ask) => router(`${ask.title}\n${ask.ask}`, ask.id),
     sessionStatus: (sessionId) =>
       neoSessionStatus(service.db.getSession(sessionId)?.processingState),
+    topicSession: (concernId) => service.repo.getBindingForConcern(concernId)?.sessionId ?? null,
     cards: (ask) => ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
     deliver: (sessionId, messageId, content, from, parent) =>
       service.deliverForward(sessionId, messageId, content, from, parent),
