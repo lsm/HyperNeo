@@ -191,6 +191,7 @@ describe('fitNeoSnapshotBudget', () => {
     focused.work = focused.work.map((item) => ({ ...item, report: 'r'.repeat(60_000) }));
     const fitted = fitNeoSnapshotBudget(focused, 40_000, { focused: true });
     expect(fitted.asks?.map((item) => item.id)).toEqual(['s0']);
+    expect(fitted.trimmed).toContain('returns the same');
     expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(40_000);
   });
 

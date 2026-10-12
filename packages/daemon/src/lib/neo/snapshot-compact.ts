@@ -177,6 +177,8 @@ function withNewestAsks(snapshot: NeoSnapshot, count: number): NeoSnapshot {
 }
 
 const SKELETON_LIST_LIMIT = 20;
+const NEO_SNAPSHOT_FOCUS_TRIMMED =
+  'This ask is too large to return whole, so its long text is cut. Calling neo.snapshot {askId} again returns the same; read a card\u2019s full report with work.read.';
 const NEO_SNAPSHOT_SKELETON =
   'This snapshot was too large even trimmed, so only ask and card identities are left. Call neo.snapshot {askId} for one ask.';
 
@@ -239,7 +241,11 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
     for (let count = fitted.asks?.length ?? 0; size(fitted) > budget && count > 1; )
       fitted = withNewestAsks(fitted, (count = Math.floor(count / 2)));
   if (size(fitted) > budget) fitted = withBareText(fitted);
-  if (size(fitted) <= budget) return { ...fitted, trimmed: NEO_SNAPSHOT_TRIMMED } as T;
+  if (size(fitted) <= budget)
+    return {
+      ...fitted,
+      trimmed: focused ? NEO_SNAPSHOT_FOCUS_TRIMMED : NEO_SNAPSHOT_TRIMMED,
+    } as T;
   fitted = withSkeleton(fitted);
   if (size(fitted) > budget) fitted = bareMinimum(fitted);
   if (size(fitted) > budget)
@@ -251,5 +257,8 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
       cards: [],
       askViews: [],
     };
-  return { ...fitted, trimmed: NEO_SNAPSHOT_SKELETON } as T;
+  return {
+    ...fitted,
+    trimmed: focused ? NEO_SNAPSHOT_FOCUS_TRIMMED : NEO_SNAPSHOT_SKELETON,
+  } as T;
 }
