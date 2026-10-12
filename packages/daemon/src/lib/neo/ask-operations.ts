@@ -363,6 +363,56 @@ export function requireNeoAskOriginFree(
     : { value: origin };
 }
 
+export type NeoAskNameable = { id: string; title: string; cardIds: string[]; refs: string[] };
+
+export function requireNeoAskHumanTurn(caller: OperationCaller): Gate<OperationCaller> {
+  return caller.source !== 'mcp' ||
+    (caller.neoTurn?.human && !caller.neoTurn.consultationId && caller.neoTurn.isLive())
+    ? { value: caller }
+    : {
+        reason: fail(
+          "Only a human message opens an ask, so add this as an item on the ask you're working on with neo.ask.edit."
+        ),
+      };
+}
+
+function githubRefForms(url: string): RegExp[] {
+  const ref = /github\.com\/([^/\s]+)\/([^/\s]+)\/(pull|issues)\/(\d+)/i.exec(url);
+  if (!ref) return [];
+  const [, owner, repo, kind, number] = ref;
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return [
+    new RegExp(`github\\.com/${escape(owner)}/${escape(repo)}/${kind}/${number}(?!\\d)`, 'i'),
+    new RegExp(`(?<![\\w/#])#${number}(?!\\d)`),
+    new RegExp(`${escape(owner)}/${escape(repo)}#${number}(?!\\d)`, 'i'),
+  ];
+}
+
+export function neoAskNamedBy(said: readonly string[], ask: NeoAskNameable): boolean {
+  const text = said.join('\n');
+  const ids = [ask.id, ...ask.cardIds].map((id) => id.toLowerCase());
+  const named = (text.match(/(?<![0-9a-z])[0-9a-f]{8}[0-9a-f-]*/gi) ?? []).some((token) => {
+    const prefix = token.toLowerCase().replace(/-+$/, '');
+    return ids.some((id) => id.startsWith(prefix));
+  });
+  return named || ask.refs.some((url) => githubRefForms(url).some((form) => form.test(text)));
+}
+
+export function requireNeoAskUnnamed(
+  origin: NeoWorkOrigin,
+  said: readonly string[],
+  asks: readonly NeoAskNameable[]
+): Gate<NeoWorkOrigin> {
+  const named = asks.find((ask) => neoAskNamedBy(said, ask));
+  return named
+    ? {
+        reason: fail(
+          `This message is about ask ${named.id} (${named.title}); change it with neo.ask.edit instead of opening a new ask.`
+        ),
+      }
+    : { value: origin };
+}
+
 export function requireNeoAskReceipt(
   input: Opening,
   opened: { ask: NeoAsk | null }
@@ -835,6 +885,23 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
         service.driverTargets.readNeedsYouSince(id) != null
     ),
   });
+  const openNeoAsksOf = (origin: NeoWorkOrigin): NeoAskNameable[] =>
+    service.askRecords
+      .listLive()
+      .filter(
+        (ask) =>
+          ask.originSessionId === origin.originSessionId &&
+          ask.originMessageId !== origin.originMessageId
+      )
+      .map((ask) => ({
+        id: ask.id,
+        title: ask.title,
+        cardIds: ask.workIds,
+        refs: [
+          ...ask.workIds.flatMap((id) => service.workPrs.get(id)?.prs.map((pr) => pr.url) ?? []),
+          ...(ask.doneItems ?? []).flatMap((item) => (item.removed ? [] : (item.watch ?? []))),
+        ],
+      }));
   const readOwnedLiveAsk = (superpipe({})('neo-ask-owned-live') as PipelineAPI)
     .input(['askId', 'caller', 'name', 'verb'])
     .pipe((askId: string) => ({ ask: service.askRecords.get(askId) }), 'askId', 'current')
@@ -881,6 +948,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'input',
       'result:admission'
     )
+    .pipe(requireNeoAskHumanTurn, 'caller', 'result:admission')
     .pipe(
       (input: z.infer<typeof Open>, caller: OperationCaller) =>
         admitNeoWorkOrigin(
@@ -900,6 +968,18 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
             : null
         ),
       ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (origin: NeoWorkOrigin, caller: OperationCaller) =>
+        requireNeoAskUnnamed(
+          origin,
+          caller.source === 'mcp' && caller.sessionId && caller.neoTurn
+            ? humanText(caller.sessionId, caller.neoTurn.messageId)
+            : [],
+          caller.source === 'mcp' ? openNeoAsksOf(origin) : []
+        ),
+      ['admission', 'caller'],
       'result:admission'
     )
     .pipe(planNeoAskItems, 'input', 'checklist')

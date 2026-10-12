@@ -319,19 +319,20 @@ describe('neo.session.track', () => {
     };
     const registry = createOperationRegistry(createNeoOperations(service));
     service.trackedSessions = new Map([[key, Date.now()]]);
-    const opened = await invokeOperation(
-      registry,
-      'neo.ask.open',
+    const askId = service.askRecords.open(
       {
-        requestKey: 'research',
+        id: crypto.randomUUID(),
+        requestKey: 'neo:root:research',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'turn-0',
         title: 'Research',
         ask: 'Research quiet models',
         doneWhen: '- done',
         doneSource: 'human',
       },
-      { ...neo, neoTurn: { ...neo.neoTurn, human: false } }
-    );
-    const askId = (opened as { value: { ask: { id: string } } }).value.ask.id;
+      [{ text: 'done', check: null }]
+    )!.id;
     const proposed = await invokeOperation(
       registry,
       'neo.work.propose',
