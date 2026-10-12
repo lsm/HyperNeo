@@ -1,109 +1,223 @@
-# Neo: the daemon derives what the human sees
+# Neo: the daemon owns state, the model writes words
 
-Status: proposal. Tracks: epic #6002.
+Status: proposal, revised after the 2026-10-12 transcript audit. Tracks: epic #6002.
 
 ## Why
 
 On 2026-10-12 the human sent Neo 25 messages. Root Neo ran 169 turns, published 415 messages, and its context was compacted 28 times. 122 of those turns started from a "work you handed off went idle" note.
 
-The same failures came back all day, each with its own patch:
+An audit of 12:30–15:14Z (root Neo plus the topic session `fe8c48f2`) found:
 
-- **Gates nobody needs.** Neo told the human to "click Start work", "approve another continuation", "confirm the stopgap rule was removed", and used needs_you to mean "wait for #6618 to merge". We patched this in turn with cites (#6592), English keyword checks (#6639), item kinds (#6646) and cleanup sweeps. Each patch closed one path, and Neo used another. The latest gate came through `neo.ask.settle waiting`, which creates a decision item and skips the approval check.
-- **Talking on every event.** Every daemon note starts a turn, and the turn usually publishes something: "CI is running", "still waiting", the same conclusion three times. #6609 caps replies per turn, but not across turns.
-- **Acting on memory instead of state.** The "approve again" gate at 14:16Z came from Neo's own compaction summary ("the parent ask's continuation budget has been exhausted after five approved continuations"). That limit hasn't existed since #6588/#6619. The daemon knew the ask was approved and nothing had stalled, but Neo decided from the summary.
+- 11 turns ended at max_turns;
+- about 200 full snapshot reads of 12–55 KB each;
+- about 150 publish attempts, roughly 60 of them refused;
+- 7 compactions;
+- about 30 "no visible output" nudges.
 
-The cause is the same each time: **human-facing state is authored by the model in prose, and the daemon then tries to validate the prose.** The fix is to have the daemon derive that state from facts it owns, and to ask the model only for words.
+The same failures kept coming back, each with its own patch (#6592 cites, #6639 keyword checks, #6646 item kinds, #6609 reply cap). Every patch closed one path, and Neo found another.
+
+The audit traced them to six causes, none of which is the model's wording:
+
+1. **Inputs aren't typed or consumed once.** Daemon notes, runtime nudges, token notices and compaction prompts reach Neo as user messages, and Neo answers them.
+   - The runtime nudges "no visible output" after Neo has already published through a tool. `reply_limit` then says "end the turn now", the nudge fires again, and the loop runs until max_turns.
+   - `error_max_turns` is retryable (`message-delivery.ts`), so the same input runs again with a fresh reply allowance.
+   - A human message that arrives mid-turn is streamed in, then dispatched again later, out of order. The duplicate ask da9506d1 came from this.
+2. **Progress is counted in continue calls, not in work.**
+   - A worker's PR (#6651) never reached `card.prs`.
+   - The idle note says "never wait on a PR that prs doesn't list; continue now", so every "waiting on CI" idle became a continue: 20 on one card.
+   - The stall counter then reported "ask the human", and Neo wrote the "approve again" gate.
+   - The same counter marked the slice-1 card stalled after the human's own correction.
+3. **Neo can't read the facts it is told to check.**
+   - `tick` refuses "reported" with "you can read this PR yourself", but no PR or issue read op exists.
+   - Neo can't read the repo; WebFetch rewrote the design doc.
+   - So items are ticked from prose. One was ticked "met" with evidence saying "pending", and the daemon accepted it.
+4. **Human-only actions block management, not risk.**
+   - `neo.work.close` and adopt are refused even when the human told Neo in chat to do exactly that. Neo then turns each refusal into a gate for the human.
+   - A raw `work.send` to the same untracked session succeeds, so the rule adds no safety.
+5. **Asks have no integrity rules.**
+   - Neo removed the original deploy items to settle "achieved".
+   - An ask opened in a system turn starts unapproved, which creates a Start gate inside approved work.
+   - There is no withdraw or fold. Overlapping asks drift apart.
+6. **Decisions travel as paraphrase.** The human said a human-only step becomes a question about the result, "did it work?" *or* "are you satisfied?". After two relays it reached the worker as two fixed questions that must both be Yes.
+
+Underneath all six: **human-facing state is authored by the model in prose, and the daemon then tries to validate the prose.** The fix is to have the daemon own every fact and every rule, and ask the model only for words.
 
 ## Principles
 
-1. **What the human must do is derived, not written.** The daemon computes every human action from facts. The model can't create a gate in prose.
-2. **When to tell the human is derived, not judged.** The daemon decides that something worth saying happened. The model writes the sentence only then.
-3. **Each turn starts from daemon state, not chat memory.** Anything that drives a decision (approval, stall, PR state, items) is read fresh. Memory never overrides it.
-4. **One owner.** All work runs under Neo's asks. Neo manages the work; the session that worked on a PR merges it, and the daemon only wakes that session when an approved, green PR sits unmerged. No side script.
+1. **Every input has a kind and is consumed once.** Human, daemon note and runtime are distinct kinds. Each input starts at most one turn and is never replayed.
+2. **What the human must do is derived, not written.** The daemon computes every human action from facts. The model can't create a gate in prose.
+3. **When to tell the human is derived, not judged.** The daemon decides that something worth saying happened. The model writes the sentence only then.
+4. **Facts come from the daemon.** PR, issue, deploy and card state are read and tracked by the daemon. The model reads them through cheap, scoped views, never from memory or a worker's word.
+5. **Progress is measured on the work.** A stall means the worker made no progress, not that Neo called continue a few times.
+6. **Neo manages work; the human decides outcomes.**
+   - Neo can open, route, continue, close and fold the work it manages.
+   - The human approves asks, answers questions and confirms what only they can see.
+   - The session that worked on a PR merges it.
+7. **Decisions travel verbatim.** A relayed decision quotes the human and cites its canonical record.
 
 ## Design
 
-### 1. Derived human actions
+### 1. Inputs and turns
 
-Each ask view lists `humanActions`, computed by the daemon on every snapshot. These are the only things a client shows as buttons:
+- Every input carries `kind`: `human`, `note` (daemon), or `runtime`. Runtime text (nudges, token notices, compaction prompts) is never shown to Neo as a message. Publication and cite checks accept only `human` input as the human's words.
+- Each input is consumed exactly once. An input streamed into a running turn is marked consumed and is not dispatched again. An older human message is never delivered after a newer one that was already handled.
+- A Neo turn may end without final text. A turn with an accepted publication, or one that ended after a refusal saying nothing more is needed, is complete. The "no visible output" nudge (from the agent runtime, not the daemon) is turned off for Neo sessions.
+- A refusal that says "stop" (`reply_limit`, `repeated_reply`) ends the query.
+- `error_max_turns` and API errors (502/529) are recorded as failed, not success, and are not blindly re-run. The daemon re-wakes Neo once from current state, with the publications already accepted for that input listed, so nothing is said twice.
+- The input-to-ask origin binding is persisted, so a daemon restart doesn't lose it (`unknown_ask_origin`).
+
+### 2. Facts the daemon tracks
+
+- An ask item can name what it depends on: `watch: [pr|issue url]`. The daemon tracks those from the GitHub events it already receives and ticks the item met on merge or close, with the event as evidence.
+- A card's PRs are attached by the daemon: from the worker session's branch or PR author, or a PR the report names, after reading it. `card.prs` is never empty while the worker has a PR open.
+- A card whose doneWhen the daemon can read (its PRs merged, its issue closed) is settled by the daemon without a Neo turn.
+- Neo gets read-only views of a PR (state, checks, review verdict on head) and an issue. It never needs a worker's word for something the daemon can read.
+- Deploys are read back by the daemon: each daemon's running commit over RPC. A deploy item is met when both daemons run a commit containing the change.
+- A model `met` tick is accepted only for items the daemon can't read. For items the daemon owns, the daemon ticks.
+
+### 3. Progress, continues and stalls
+
+- **Progress** is anything that changes the work: a new commit on the card's PR, a PR state or verdict change, a report that differs from the last one, or an item ticked.
+- **A stall** is three wakes in a row for a card with no progress. Continue calls don't count. A continue that carries new human input resets the count.
+- `neo.work.continue` is refused, with the reason, when:
+  - the card's doneWhen is met;
+  - a card PR is waiting on CI or review (the daemon wakes Neo when its verdict changes);
+  - the card was already continued in this wake.
+- A continue stays within the card's goal. New scope becomes a new card, deduped by issue or PR key.
+- A card's report is the working session's reply to the card's own message, capped at about 1.5K, and never includes the human's input. When a card targets a session the human also uses, only turns that the card's message started count as the card's idle or report.
+
+### 4. Derived human actions
+
+Each ask view lists `humanActions`, computed by the daemon on every snapshot. They are the only things a client shows as buttons:
 
 | Action | Derived from |
 |---|---|
 | `start {workId}` | a card under the ask is `proposed` and the ask isn't approved |
-| `approve` | the ask's approval expired (48 h), or a card stalled (3 continues in a row with no progress), per `readContinueBudget` |
-| `answer {itemId, options}` | Neo asked a question with options (below) |
-| `confirm {itemId}` | an item whose evidence names a machine the daemon can't read (remote daemon, device) |
-| `retry {workId}`, `close {workId}` | existing card rules (`retryable`, abandoned) |
+| `approve` | the ask's approval expired (48 h), or a card stalled per §3 |
+| `answer {itemId, options}` | a question Neo asked (below) |
+| `confirm {itemId}` | an item whose evidence names a machine the daemon can't read (a device) |
+| `retry {workId}` | existing card rules (`retryable`) |
 
-A card whose doneWhen the daemon reads itself (its PRs merged, its issue closed) is settled by the daemon without a Neo turn.
-
-The model keeps exactly one way to ask the human something: `neo.ask.question {askId, question, options[2..4]}`. It's a question with choices, answered with one tap, and it is the only human gate the model can create.
+The model has exactly one way to ask the human something: `neo.ask.question {askId, question, options[2..4]}`. It is one question about one result, worded for that step, and answered with one tap. A human-only step such as a manual test becomes a question: "Did the keyboard hide?" → Yes / No. The item is met on the positive option; otherwise it stays open and Neo is woken. Neo can withdraw its own question with a reason.
 
 Removed:
 
-- `needs_you` as a tick state, and its cite/kind/regex checks (#6592, #6639, #6646).
-- `waiting`/`blocked` settles that carry a free-text gate. An ask is waiting exactly when `humanActions` is non-empty, and blocked when a card failed with no retry left.
-- "Done" on items. An item is met by evidence the daemon or Neo reads, or by `confirm` for a remote claim.
+- `needs_you` as a tick state, and its cite, kind and regex checks;
+- `waiting`/`blocked` settles that carry a free-text gate. An ask is waiting exactly when `humanActions` is non-empty, and blocked when a card failed with no retry left;
+- "Done" on items.
 
-Clients render `humanActions` and nothing else. The prose of an item is never a button.
+### 5. Ask integrity
 
-### 2. Derived notifications
+- One request becomes one ask. When a duplicate slips through, `neo.ask.fold {from, into}` moves its items and cards and closes it as superseded.
+- An ask opened while Neo works on an approved ask inherits that approval. It never creates a Start gate inside approved work.
+- An item from the human's request can't be removed by Neo. Dropping one is a `neo.ask.question` to the human.
+- An item can point at a sub-ask, and its state follows that ask's status, so overlapping asks can't drift.
+- A card belongs to the ask it was opened for, not to whatever input triggered the turn.
+
+### 6. Who may do what
+
+- **Neo-managed** (any turn, recorded with a reason on the card):
+  - propose, start under an approved ask, continue, close and fold work it opened;
+  - follow a session the human named.
+- **Human** (from a client button, or from a live turn whose input is the human's message naming the target, using the one shared check `work.start` and `ask.approve` already use):
+  - approve an ask;
+  - answer a question;
+  - confirm an item;
+  - cancel a concern.
+- A refusal never tells Neo to ask the human for something a live human message already covers.
+- Standing rules and approvals that apply travel with the card instruction, attributed to the human, so a worker doesn't refuse a relayed approval.
+
+### 7. Notifications
 
 A publication to the human happens in three cases only:
 
-| Trigger (daemon-detected) | What Neo is asked to write |
+| Trigger (daemon-detected) | What Neo writes |
 |---|---|
 | the human sent a message | one reply to it |
 | an ask reaches achieved, or every item is met | one sentence naming the outcome |
 | an ask gains a `humanAction`, or a card fails with no retry | one sentence naming what's needed or what broke |
 
-The daemon refuses every other `neo.publication.publish`, with a reason. For each derived trigger, the daemon wakes Neo with a note that names the trigger. The publication carries the trigger's id, so it can't be repeated for the same transition.
+- The daemon refuses every other `neo.publication.publish`, with a reason. Interim "I'm checking…" posts go away.
+- For each trigger, the daemon wakes Neo with a note naming the trigger. The publication carries the trigger's id, so it can't be repeated for the same transition.
+- A publication is written in the language of the human's last message.
 
-### 3. Fewer wakes, fresh state
+### 8. Wakes and tools
 
-- Routine progress doesn't wake Neo. A PR waiting on CI or review, a check passing, a review starting: the daemon records it and nothing runs.
-- Neo wakes for a card report that needs judgement (a reported card with items left), a failure, a stall, a human tick, or a derived trigger above.
-- Each wake note carries the ask's current derived state (items, humanActions, cards with PR verdicts), and the system prompt says this state overrides anything remembered.
-- A card's report is the working session's reply to the card's own message, capped at about 1.5K, and never includes the human's input. When a card targets a session the human also uses, only turns the card's message started count as the card's idle or report. On 2026-10-12, card 0692a952 got the shared Neo iOS app session's chat as its "report" on every idle: 11 notes and 5 continues for work already done.
-- Per-topic avatars (#6579, #6604) hold their asks, and root Neo keeps cross-topic questions only. A topic's session is short-lived and starts from a snapshot, so long compacted chats don't drive decisions.
+- Routine progress doesn't wake Neo: a PR waiting on CI or review, a check passing, a review starting, or news about an item already met.
+- Neo wakes for:
+  - a card report that needs judgement;
+  - a failure;
+  - a stall;
+  - a human input;
+  - a notification trigger.
+- A wake's writes are limited to the ask that woke it.
+- Each wake note carries the ask's derived state (items, humanActions, cards with PR verdicts) and no instructions that contradict each other. The system prompt says this state overrides anything remembered.
+- `neo.snapshot` defaults to the waking ask and returns "unchanged since rev N" when nothing changed. Every mutating neo op returns the updated ask view.
+- The core neo ops' schemas are available without `operations.describe`.
+- `work.find`:
+  - escapes FTS input (hyphens and underscores fail today);
+  - caps its output;
+  - looks up by id.
+- One session ref form is accepted everywhere a target is.
+- Optional arrays default to empty, and the id field names are consistent.
 
-### 4. One owner, session-side merge
+### 9. Decisions and relays
 
-- The session that worked on a PR merges it (coding pack). For a PR left approved on its head, CLEAN, with no unresolved threads, for over 30 minutes, the daemon wakes that session to merge it, rather than merging it itself. Deploys stay where they are: the laptop through the daemon's own update hook, the iMac through its session.
-- Work goes through Neo asks. Peer sessions get work as cards, not direct messages.
+- A relayed decision quotes the human verbatim and cites its canonical record: an issue comment, or a doc path at a commit.
+- It reaches a worker as an amendment to the card's instruction through `neo.work.continue`, recorded on the card, never as a raw `work.send`.
+
+### 10. Ownership
+
+- Work goes through Neo asks. Peer sessions get work as cards.
+- The session that worked on a PR merges it. For a PR approved on its head, CLEAN, with no unresolved threads, for over 30 minutes, the daemon wakes that session to merge it rather than merging it itself. A PR that still doesn't merge is an exception to find and fix in the system. `ship.sh` retires.
+- Per-topic sessions (#6579, #6604) hold their asks, and root Neo keeps cross-topic questions only. A topic session is short-lived and starts from a snapshot.
 
 ## Slices
 
-Each slice is one PR, behaviour-tested, deployable on its own:
+Each slice is one PR, behaviour-tested, and deployable on its own. The order follows the dependencies:
 
-1. **humanActions in the ask view**, derived from existing state. Clients show them. Nothing is removed yet.
-2. **`neo.ask.question`.** Remove `needs_you` ticks and gate-carrying settles. Migrate existing needs_you items to questions (with options) or drop them.
-3. **Derived notifications:** refuse non-trigger publications, and add trigger notes.
-4. **Quiet routine wakes:** CI/review-waiting events stop starting turns. Notes carry derived state.
-5. **Merge by the working session:** the daemon wakes a card's session for its PR left approved and clean over 30 minutes. Retire `ship.sh`.
-6. **Topic sessions start fresh** from a snapshot. Root Neo keeps cross-topic questions only.
+| # | Slice | Sections | Depends on |
+|---|---|---|---|
+| 0a | Typed inputs, consume once, no nudge for Neo, stop on refusal, failed turns recorded as failed, persisted origin | §1 | none |
+| 0b | PRs attached to cards, progress-based stall, continue refusals, card report scoping | §3, §2 (card PRs) | none |
+| 1 | `humanActions` in the ask view; clients show them. `approve` uses the 0b stall. | §4 | 0b |
+| 2 | `neo.ask.question` and withdraw; remove `needs_you` and gate settles; fold, inherited approval, item-removal guard; migrate existing needs_you items | §4, §5 | 1 |
+| 3 | Derived notifications; refuse non-trigger publications | §7 | 0a, 1 |
+| 4 | Watched items and daemon ticks, read-only PR/issue views, deploy readback, daemon-settled cards | §2 | 0b |
+| 5 | Scoped snapshot with revisions, views returned from mutations, typed core ops, `work.find` fixes, one session ref | §8 (tools) | none |
+| 6 | Quiet routine wakes, one-ask writes, state-only notes | §8 (wakes) | 0b, 4 |
+| 7 | Neo-managed close, follow and fold; live-human check for human actions; rules travel with cards | §6 | 2 |
+| 8 | Merge by the working session; retire `ship.sh` | §10 | 4 |
+| 9 | Topic sessions start fresh from a snapshot | §10 | 6 |
 
-Deleted along the way: needs_you validation (cites, keyword checks, kinds, cleanup sweeps), the reply-limit cap (subsumed by triggers), and most done-check prose.
+Deleted along the way:
 
-## Relation to existing work
+- needs_you validation: cites, keyword checks, kinds, cleanup sweeps;
+- the reply-limit cap, subsumed by triggers;
+- the "no visible output" handling for Neo;
+- most done-check and idle-note prose.
 
-Open work it touches:
+## Work in flight
 
-- **#6650 / #6651 (a network outage pauses the turn):** independent, but it changes `query-runner`. Slice 4 waits for it to land.
-- **#6604 (topics reorganize):** shipped, but its first manual split of main is still pending. Slice 6 builds on it.
-- **#6544 (the human's sessions linked to asks):** a linked session waiting on the human can become a derived action later.
-- **#6574, #6568, #6024, #6507:** independent.
+- **Slice 1** (card 121bcf6f, PR #6655): can land its view and question parts now. Its `approve` derivation waits for 0b, so it doesn't turn today's continue-count stall into a button.
+- **Ask db080642** (audit fixes 1–4) maps to:
+  - fix 1 → slice 4;
+  - fix 2 → slice 5;
+  - fix 3 → slice 7;
+  - fix 4 → slices 0a and 2.
+- **#6650 / #6651 (a network outage pauses the turn):** independent, but they change `query-runner`. 0a rebases on them.
+- **Duplicate asks** da9506d1 and bf5f5310 fold into slice 2. Ask 6fa377dc's "Choose: fold the publication fix" folds into slice 3.
 
-Shipped behaviour it replaces:
+Shipped behaviour this replaces:
 
-- **#6592 (cites), #6639 (keyword checks), #6646 (item kinds), #6609 (reply cap):** removed by slices 2 and 3.
-- **Standing rule 3** (an item Neo can't verify isn't met on an agent's word) becomes `confirm`.
-- **Standing rule 4** (a human decision is its own item) becomes `neo.ask.question`.
-- **#6225 (Done for a step only the human can do, such as a manual test):** becomes a question about the result, with options: "Did the keyboard hide?" → Yes / No, or "Is the result what you wanted?" → Yes / Not yet.
-- **Merging:** whoever worked on a PR merges it. Neo manages the work; it isn't a worker. Coding-pack guidance already has the card's session run `gh pr merge`, which handles refusals. When a PR sits approved on its head and CLEAN for over 30 minutes (the case `done-check-prs-ready` detects), the daemon wakes that working session to merge it. It doesn't merge it itself. A PR that still doesn't merge is an exception: find its cause and fix it in the system, not with a fallback. `ship.sh` retires.
+- #6592, #6639, #6646 and #6609 are removed by slices 2 and 3.
+- Standing rule 3 (an item Neo can't verify isn't met on an agent's word) becomes `confirm`, and daemon ticks wherever the daemon can read.
+- Standing rule 4 (a human decision is its own item) becomes `neo.ask.question`.
+- #6225 (Done for a step only the human can do) becomes a question about the result.
 
 ## Open questions
 
-1. Do `confirm` items need a typed subject (`remote_deploy`, `device`) rather than evidence text?
-2. Should question options always include a free-text "other", answered in chat?
-3. Is three continues the right stall threshold once routine events stop waking Neo?
+1. **Deploys:** should the daemon run the iMac deploy itself (it already reads both commits), so no worker has to act on a relayed approval?
+2. **Track:** once the human naming a session in chat is enough, does the Track button still earn its place?
+3. **Confirm:** does `confirm` need a typed subject (`device`) rather than evidence text?
+4. **Stall threshold:** is three wakes without progress right once routine events stop waking Neo?
