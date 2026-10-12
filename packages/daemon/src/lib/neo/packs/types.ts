@@ -1,5 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
+import type { ExternalEvent } from '../../external-events/types.ts';
 import type { NeoEvidence, NeoEvidenceRead } from '../evidence.ts';
 
 export type NeoPackCheck = (
@@ -32,4 +33,7 @@ export interface NeoPack extends NeoPackBrief {
   readAskWatchTicks?(ask: NeoAsk): Promise<{ id: string; evidence: string }[]>;
   checks?: Record<string, NeoPackCheck>;
   workerMcpServers?: string[];
+  cardResourcesChanged?(workId: string): void;
+  externalTopics?(): string[];
+  externalEvent?(event: ExternalEvent): Promise<void>;
 }

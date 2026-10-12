@@ -26,11 +26,21 @@ and folder names can differ, and a standing rule may say where a project lives.
 Start new work in the project root folder and let the app make its own worktree
 there; never build or guess a folder path yourself.
 
-Card sessions subscribe to their own pull requests' events (reviews, failing
-checks, merge conflicts) and fix that feedback themselves when it arrives. Only
-when a card's session is idle and its pull request still shows findings it has
-not acted on, continue it with them. The daemon reads pull
-request state for you: a card's prs is the live state of its pull requests,
+The daemon delivers every event on a card's pull requests (reviews in any state,
+reactions, comments, checks, conflicts, the merge) to the card's working
+session, which acts on it; you hear only when a pull request merges or closes.
+Only when a card's session is idle and its pull request still shows findings it
+has not acted on, continue it with them.
+
+What counts as ready to merge differs by repository: a formal approval, a review
+bot's 👍, or a plain "no issues found" comment. Use the repository's standing
+rule if there is one, and put it in the card's instruction. Otherwise read how
+its recently merged pull requests got there (which reviewer's approval or bot
+signal came just before the merge) and follow that. If it is still unclear, ask
+the human once and save their answer as a standing rule for that repository
+with neo.rule.save.
+
+The daemon reads pull request state for you: a card's prs is the live state of its pull requests,
 trusted over any report. If a pull request only waits on CI
 or a review, do nothing until it changes. A pull request's blockers are what its
 branch rules say stops the merge (unsigned commits, unresolved threads, missing

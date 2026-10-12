@@ -49,6 +49,13 @@ import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-wo
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
 import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
+import { NeoCardPrSubscriptionRepository } from './packs/coding/neo-card-pr-subscription-repository.ts';
+import { planNeoCardSend } from './card-send.ts';
+import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
+import {
+  SESSION_EVENT_SCOPE,
+  SessionExternalEventStore,
+} from '../external-events/session-external-event-store.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -349,6 +356,7 @@ export class NeoService {
   readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
+  watchGithubRepo: ((owner: string, repo: string) => Promise<void>) | null = null;
   readonly workPrClaims: NeoWorkPrClaimRepository;
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
@@ -625,6 +633,13 @@ export class NeoService {
     this.builtinPacks = [
       createCodingPack({
         ...this.cardPrDeps,
+        prEvents: {
+          workPrs: this.workPrs,
+          subscriptions: new NeoCardPrSubscriptionRepository(db.getDatabase()),
+          watchRepo: async (owner, repo) => this.watchGithubRepo?.(owner, repo),
+          sendToCard: (workId, key, text) => this.sendToCard(workId, key, text),
+          warn: (message, error) => this.log.warn(message, error),
+        },
         runningPrUrls: (workIds) => this.runningPrUrls(workIds),
         cardReports: (workIds) => workIds.flatMap((id) => this.repo.getWork(id)?.report ?? []),
         readRefStates: (refs) => this.readRefStates(refs),
@@ -805,10 +820,24 @@ export class NeoService {
       ({ sessionId }) => this.forgetSession(sessionId),
       { subscriberName: 'neo-session-forget' }
     );
+    const sessionEvents = new SessionExternalEventStore(db.getDatabase());
+    const offExternal = events.subscribe(
+      'externalEvent.published',
+      async (payload: ExternalEventPublishedPayload) => {
+        const event = sessionEvents.getById(payload.eventId)?.event;
+        if (!event) return;
+        for (const pack of this.packs())
+          await pack
+            .externalEvent?.(event)
+            .catch((error) => this.log.warn(`Pack ${pack.id} external event pending`, error));
+      },
+      { subscriberName: 'neo-pack-external-events', namespaceId: SESSION_EVENT_SCOPE }
+    );
     this.unsubscribe = () => {
       offUpdated();
       offStatus();
       offDeleted();
+      offExternal();
     };
   }
 
@@ -1931,7 +1960,21 @@ export class NeoService {
       ? this.workPrs.record(workId, prs, Date.now())
       : this.workPrs.replacePrs(workId, prs);
     if (row && row.revision !== before?.revision) this.notifyChanged();
+    if (row) for (const pack of this.packs()) pack.cardResourcesChanged?.(workId);
     return row;
+  }
+
+  externalTopics(): string[] {
+    return this.packs().flatMap((pack) => pack.externalTopics?.() ?? []);
+  }
+
+  async sendToCard(workId: string, key: string, text: string): Promise<void> {
+    const work = this.repo.getWork(workId);
+    const send = planNeoCardSend({ work, ref: this.driverTargets.readRef(workId) });
+    if (!work || send.via === 'none') return;
+    if (send.via === 'session')
+      return this.deliver(send.sessionId, key, text, work.originSessionId);
+    await this.invokeAsCard(work, 'work.send', { ref: send.ref, message: text });
   }
 
   private async settleDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {

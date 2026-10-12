@@ -246,6 +246,7 @@ function createGoalAutomationSelfNagSchedules(
 
 export interface RPCHandlerDependencies {
   watchSessionRepo?: (owner: string, repo: string) => Promise<void>;
+  followSessionTopics?: (source: () => readonly string[]) => void;
   messageHub: MessageHub;
   sessionManager: SessionManager;
   authManager: AuthManager;
@@ -1444,6 +1445,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     (settings) => publishGlobalSettings(deps.internalEventBus, settings, deps.credentialManager)
   );
+  neoService.watchGithubRepo = deps.watchSessionRepo ?? null;
+  deps.followSessionTopics?.(() => neoService.externalTopics());
   neoService.filePacks = adoptNeoFilePacks(
     loadNeoFilePacks({
       root: join(getDataDir(), 'neo-packs'),

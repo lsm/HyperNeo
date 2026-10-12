@@ -10,6 +10,12 @@ import {
   type NeoRefStateReader,
 } from './ask-prs.ts';
 import { readNeoIssueTicks } from './issue-checks.ts';
+import {
+  type NeoCardPrEventDeps,
+  routeNeoCardPrEvent,
+  subscribeNeoCardPrs,
+} from './card-pr-events.ts';
+import type { ExternalEvent } from '../../../external-events/types.ts';
 import { readNeoWatchTicks } from './watch-checks.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
@@ -219,6 +225,7 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
 
 export function createCodingPack(
   deps: NeoCardPrDeps & {
+    prEvents: NeoCardPrEventDeps;
     runningPrUrls: (workIds: readonly string[]) => Promise<string[]>;
     cardReports: (workIds: readonly string[]) => string[];
     readRefStates: NeoRefStateReader;
@@ -228,6 +235,12 @@ export function createCodingPack(
     ...CODING_PACK_BRIEF,
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     checks: { [CODING_CHECK_PR_MERGED]: codingPrMergedCheck },
+    cardResourcesChanged: (workId: string) =>
+      subscribeNeoCardPrs(deps.prEvents, workId, Date.now()),
+    externalTopics: () => deps.prEvents.subscriptions.listActive().map((row) => row.topic),
+    externalEvent: async (event: ExternalEvent) => {
+      await routeNeoCardPrEvent(deps.prEvents, event);
+    },
     readEvidence: async (work: NeoWork) => {
       const { row, ok } = await readNeoCardPrs(deps, work, deps.workPrs.get(work.id), Date.now());
       return row?.prs.length
