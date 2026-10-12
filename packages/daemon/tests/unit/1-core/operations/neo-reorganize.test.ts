@@ -14,7 +14,8 @@ import {
   requireNeoAskTopic,
   requireNeoAskUnchanged,
   requireNeoTopicIdle,
-  selectNeoMainAsks,
+  requireNeoSourceIdle,
+  selectNeoReorganizableAsks,
 } from '../../../../src/lib/neo/reorganize-operation.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import type { NeoRouted } from '../../../../src/lib/neo/router.ts';
@@ -70,10 +71,19 @@ describe('admitNeoReorganizer', () => {
   });
 });
 
-describe('selectNeoMainAsks', () => {
-  test('takes only asks main opened and no topic holds', () => {
+describe('selectNeoReorganizableAsks', () => {
+  test('takes main’s asks and every topic’s asks, not asks another conversation opened', () => {
     const asks = [ask('a'), ask('b', { concernId: 'c' }), ask('c', { originSessionId: 'h' })];
-    expect(selectNeoMainAsks(asks, root).map((item) => item.id)).toEqual(['a']);
+    expect(selectNeoReorganizableAsks(asks, root).map((item) => item.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('requireNeoSourceIdle', () => {
+  test('leaves an ask whose own avatar is mid-turn', () => {
+    expect(requireNeoSourceIdle(ask('a'), 'processing')).toEqual({
+      reason: { askId: 'a', reason: 'topic_busy' },
+    });
+    expect(requireNeoSourceIdle(ask('a'), null)).toMatchObject({ value: { id: 'a' } });
   });
 });
 
@@ -114,6 +124,17 @@ describe('requireNeoAskTopic', () => {
     expect(requireNeoAskTopic(ask('a'), routed('inbox'))).toEqual({
       reason: { askId: 'a', reason: 'one_off' },
     });
+  });
+
+  test('moves a topic’s ask only to a different topic', () => {
+    const held = ask('a', { concernId: 'web' });
+    expect(requireNeoAskTopic(held, routed('drivers'))).toEqual({
+      value: { concernId: 'drivers', sessionId: 'holder:drivers' },
+    });
+    for (const choice of ['web', 'inbox', null])
+      expect(requireNeoAskTopic(held, routed(choice))).toEqual({
+        reason: { askId: 'a', reason: 'in_place' },
+      });
   });
 });
 
@@ -188,6 +209,7 @@ describe('neo.topics.reorganize', () => {
       ask: (id) => (id in current ? current[id] : (asks.find((item) => item.id === id) ?? null)),
       route: async (item) => routed(routes[item.id] ?? null),
       sessionStatus: (sessionId) => (busy.includes(sessionId) ? 'processing' : 'idle'),
+      topicSession: (concernId) => `holder:${concernId}`,
       cards: () => [],
       deliver: async (sessionId, messageId, _content, _from, parent) => {
         delivered.push({ sessionId, messageId, parent });
@@ -225,13 +247,42 @@ describe('neo.topics.reorganize', () => {
     expect(delivered).toEqual([
       {
         sessionId: 'holder:drivers',
-        messageId: neoMovedAskMessageId('a'),
+        messageId: neoMovedAskMessageId(ask('a')),
         parent: { sessionId: root, messageId: 'm-a' },
       },
     ]);
     expect(moves).toEqual([
-      { askId: 'a', concernId: 'drivers', messageId: neoMovedAskMessageId('a') },
+      { askId: 'a', concernId: 'drivers', messageId: neoMovedAskMessageId(ask('a')) },
     ]);
+  });
+
+  test('moves an off-topic ask between topics unless either avatar is mid-turn', async () => {
+    const moved = ask('a', {
+      concernId: 'web',
+      originSessionId: 'holder:web',
+      originMessageId: 'neo-moved:a:x',
+    });
+    const { deps, delivered, moves } = runtime(
+      [moved, ask('b', { concernId: 'busy', originSessionId: 'holder:busy' })],
+      { a: 'drivers', b: 'drivers' },
+      ['holder:busy']
+    );
+    expect(await invoke(deps)).toEqual({
+      ok: true,
+      moved: [{ askId: 'a', concernId: 'drivers' }],
+      stayed: [{ askId: 'b', reason: 'topic_busy' }],
+    });
+    expect(delivered).toEqual([
+      {
+        sessionId: 'holder:drivers',
+        messageId: neoMovedAskMessageId(moved),
+        parent: { sessionId: 'holder:web', messageId: 'neo-moved:a:x' },
+      },
+    ]);
+    expect(moves).toEqual([
+      { askId: 'a', concernId: 'drivers', messageId: neoMovedAskMessageId(moved) },
+    ]);
+    expect(neoMovedAskMessageId(moved)).not.toBe(neoMovedAskMessageId(ask('a')));
   });
 
   test('re-reads each ask after routing and leaves one that changed meanwhile', async () => {
