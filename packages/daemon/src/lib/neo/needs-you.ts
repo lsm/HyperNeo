@@ -71,7 +71,7 @@ export function neoDaemonReadsItem(
 
 export type NeoAskCardWait = { status: string; needsYou: boolean };
 
-const NEO_START_WORK = /\bstart work\b/i;
+const NEO_START_WORK = /\bstart work\b[^.;]*\bcard\b/i;
 
 function cardWaitsOnHuman(card: NeoAskCardWait | undefined): boolean {
   return card?.status === 'proposed' || (card?.status === 'queued' && card.needsYou);
@@ -81,12 +81,13 @@ export function planNeoNeedsYouCleared(
   ask: NeoAsk,
   cards: ReadonlyMap<string, NeoAskCardWait>
 ): { id: string; why: string }[] {
-  const proposed = ask.workIds.some((id) => cards.get(id)?.status === 'proposed');
+  const startable =
+    ask.workIds.length > 0 && !ask.workIds.some((id) => cards.get(id)?.status === 'proposed');
   return (ask.doneItems ?? []).flatMap((item) => {
     if (item.removed || item.state !== 'needs_you') return [];
     if (item.waitCard && !cardWaitsOnHuman(cards.get(item.waitCard)))
       return [{ id: item.id, why: `card ${item.waitCard} no longer waits on the human` }];
-    if (NEO_START_WORK.test(item.text) && !proposed)
+    if (!item.decision && startable && NEO_START_WORK.test(item.text))
       return [{ id: item.id, why: 'no card under this ask waits for Start work' }];
     return [];
   });

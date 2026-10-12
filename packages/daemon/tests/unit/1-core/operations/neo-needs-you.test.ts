@@ -201,6 +201,25 @@ describe('planNeoNeedsYouCleared', () => {
     ).toEqual([]);
   });
 
+  test('a decision or a chat question about starting work is never cleared', () => {
+    const done = new Map([['w2', { status: 'reported', needsYou: false }]]);
+    expect(
+      planNeoNeedsYouCleared(
+        waiting({ text: 'Needs you: start work on the redesign card?', decision: true }),
+        done
+      )
+    ).toEqual([]);
+    expect(
+      planNeoNeedsYouCleared(waiting({ text: 'Should I start work on the redesign?' }), done)
+    ).toEqual([]);
+    expect(
+      planNeoNeedsYouCleared(
+        { ...waiting({ text: 'click Start work on the deploy card' }), workIds: [] } as NeoAsk,
+        new Map()
+      )
+    ).toEqual([]);
+  });
+
   test('items that are not waiting on the human stay as they are', () => {
     const met = waiting({ state: 'met', waitCard: 'w1' });
     expect(planNeoNeedsYouCleared(met, new Map())).toEqual([]);
