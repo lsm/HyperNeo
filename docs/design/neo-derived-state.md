@@ -96,6 +96,7 @@ Each ask view lists `humanActions`, computed by the daemon on every snapshot. Th
 | `approve` | the ask's approval expired (48 h), or a card stalled per §3 |
 | `answer {itemId, options}` | a question Neo asked (below); the buttons are that question's options |
 | `retry {workId}` | existing card rules (`retryable`) |
+| `open {workId}` | the card's working session refused, or is waiting on the human; the button opens that session, where the human answers it directly |
 
 The model has exactly one way to ask the human something: `neo.ask.question {askId, question, options[2..4]}`. It is one question about one result, worded for that step, and answered with one tap. A human-only step such as a manual test becomes a question: "Did the keyboard hide?" → Yes / No. The item is met on the positive option; otherwise it stays open and Neo is woken. Neo can withdraw its own question with a reason. A claim only the human can check (on a device, or on a machine the daemon can't read) is a question too, so there's no separate Confirm button: the buttons always come from the question.
 
@@ -123,7 +124,6 @@ Removed:
   - answer a question;
   - cancel a concern.
 - A refusal never tells Neo to ask the human for something a live human message already covers.
-- Standing rules and approvals that apply travel with the card instruction, attributed to the human, so a worker doesn't refuse a relayed approval.
 
 ### 7. Notifications
 
@@ -184,7 +184,7 @@ Each slice is one PR, behaviour-tested, and deployable on its own. The order fol
 | 4 | Watched items and daemon ticks, read-only PR/issue views, deploy readback, daemon-settled cards | §2 | 0b |
 | 5 | Scoped snapshot with revisions, views returned from mutations, typed core ops, `work.find` fixes, one session ref | §8 (tools) | none |
 | 6 | Quiet routine wakes, one-ask writes, state-only notes | §8 (wakes) | 0b, 4 |
-| 7 | Neo-managed close, follow and fold; remove Track; live-human check for human actions; rules travel with cards | §6 | 2 |
+| 7 | Neo-managed close, follow and fold; remove Track; live-human check for human actions | §6 | 2 |
 | 8 | Merge by the working session; retire `ship.sh` | §10 | 4 |
 | 9 | Topic sessions start fresh from a snapshot | §10 | 6 |
 
