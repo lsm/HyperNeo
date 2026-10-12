@@ -121,13 +121,11 @@ import {
   NeoAskSchema,
   planNeoAskItems,
   planNeoCardAsk,
-  projectNeoSnapshotAsks,
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
   requireNeoWorkAskLive,
   requireNeoWorkAskOwner,
 } from './ask-operations.ts';
-import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import { neoWaitingOnHuman } from './waiting-reminders.ts';
 import {
   neoWorkSupersedeCandidates,
@@ -136,7 +134,7 @@ import {
 } from './work-supersede.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoSavedRules } from './saved-rules.ts';
-import { projectNeoCardViews } from './card-views.ts';
+import { projectNeoServiceCards } from './service-card-views.ts';
 import { NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
 import { projectNeoAskViews } from './ask-views.ts';
 import { unmutedNeoAskSessions } from './session-ask-links.ts';
@@ -824,39 +822,15 @@ export function createNeoOperations(service: NeoService) {
     const visibleWork = [...recentWork, ...olderActiveWork];
     const consultations = focus ? [] : service.consultations.list(scope ?? undefined);
     const waiters = focus ? [] : service.consultationWaiters.queued(scope ?? undefined);
-    const workIds = visibleWork.map((item) => item.id);
-    const workDrivers = service.driverTargets.receipts(workIds).map((receipt) => {
-      const since = service.uncheckedSince(receipt.workId);
-      return {
-        ...receipt,
-        ...(since === null ? {} : { uncheckedSince: since }),
-        ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
-      };
-    });
-    const workGoals = service.workGoals.list(workIds);
-    const workContinues = service.workContinues.list(workIds);
-    const workSupersessions = service.workSupersessions.list(workIds);
     const listed = focus
       ? [focus]
       : service.askRecords.list(scope === undefined ? undefined : scope);
-    const asks = projectNeoSnapshotAsks(
+    const { asks, cards, workPrs } = projectNeoServiceCards(
+      service,
       listed,
-      caller.source === 'rpc' ? 50 : 10,
-      Date.now(),
-      new Set(workIds.filter((id) => service.isContinueStalled(id)))
+      visibleWork,
+      caller.source === 'rpc' ? 50 : 10
     );
-    const workPrs = service.workPrs
-      .list(workIds)
-      .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));
-    const cards = projectNeoCardViews({
-      work: visibleWork,
-      drivers: workDrivers,
-      prs: workPrs,
-      goals: workGoals,
-      continues: workContinues,
-      supersessions: workSupersessions,
-      asks,
-    });
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,

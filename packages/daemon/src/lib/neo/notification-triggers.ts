@@ -1,0 +1,318 @@
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type {
+  NeoAsk,
+  NeoAskHumanAction,
+  NeoAskView,
+  NeoCardView,
+} from '@hyperneo/shared/types/neo-snapshot';
+import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { hashString32 } from '../runtime-hash.ts';
+import { neoForwardedAskMessageId } from './ask-forward-operation.ts';
+import { nudgedMessageId } from './ask-origin.ts';
+
+export const NEO_TRIGGER_PREFIX = 'neo-trigger:';
+export const NEO_HUMAN_TRIGGER_PREFIX = 'human:';
+export const NEO_TRIGGER_SWEEP_MS = 1_000;
+export const NEO_TRIGGER_ACHIEVED_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+export type NeoTriggerKind = 'outcome' | 'failed' | 'action';
+export interface NeoTriggerKey {
+  key: string;
+  kind: NeoTriggerKind;
+  line: string;
+}
+export interface NeoAskTrigger {
+  triggerId: string;
+  kind: NeoTriggerKind;
+  keys: string[];
+  lines: string[];
+}
+export interface NeoAskTriggerRead {
+  view: NeoAskView;
+  cards: readonly NeoCardView[];
+}
+type Card = Pick<NeoWork, 'id' | 'title' | 'updatedAt'>;
+type Rejection = { accepted: false; reason: string; detail: string };
+
+export interface NeoTriggerSweepDeps {
+  busy(ask: NeoAsk): boolean;
+  read(ask: NeoAsk): NeoAskTriggerRead | null;
+  work(id: string): Card | null;
+  deliveryRetryPending(workId: string): boolean;
+  told(askId: string): Set<string>;
+  record(askId: string, keys: readonly string[], triggerId: string | null): void;
+  wake(ask: NeoAsk, trigger: NeoAskTrigger): void;
+}
+
+export function neoTriggerMessageId(triggerId: string): string {
+  return `${NEO_TRIGGER_PREFIX}${triggerId}`;
+}
+
+export function neoInputTrigger(messageId: string, human: boolean): string | null {
+  if (messageId.startsWith(NEO_TRIGGER_PREFIX))
+    return messageId.slice(NEO_TRIGGER_PREFIX.length) || null;
+  const nudged = nudgedMessageId(messageId);
+  if (nudged) return neoInputTrigger(nudged, true);
+  const forwarded = neoForwardedAskMessageId(messageId);
+  if (forwarded) return `${NEO_HUMAN_TRIGGER_PREFIX}${forwarded}`;
+  return human ? `${NEO_HUMAN_TRIGGER_PREFIX}${messageId}` : null;
+}
+
+export function neoHumanTriggerMessageId(triggerId: string | undefined): string | null {
+  return triggerId?.startsWith(NEO_HUMAN_TRIGGER_PREFIX)
+    ? triggerId.slice(NEO_HUMAN_TRIGGER_PREFIX.length) || null
+    : null;
+}
+
+const TRIGGER_WORDS: Record<NeoTriggerKind, { what: string; sentence: string }> = {
+  outcome: { what: 'the ask reached its outcome', sentence: 'name the outcome.' },
+  failed: { what: 'a card failed with no retry left', sentence: 'say what broke.' },
+  action: { what: 'the ask needs the human', sentence: 'say what is needed from them.' },
+};
+const LAST_HUMAN_LIMIT = 300;
+
+export function neoTriggerNote(
+  ask: Pick<NeoAsk, 'id' | 'title'>,
+  trigger: NeoAskTrigger,
+  lastHuman: string | null
+): string {
+  const quoted = lastHuman?.trim().slice(0, LAST_HUMAN_LIMIT);
+  return fillPrompt(NEO_TRIGGER_NOTE, {
+    triggerId: trigger.triggerId,
+    askId: ask.id,
+    title: ask.title,
+    lines: trigger.lines.map((line) => `- ${line}`).join('\n'),
+    ...TRIGGER_WORDS[trigger.kind],
+    lastHuman: quoted ? JSON.stringify(quoted) : "(none yet; use the ask's language)",
+  });
+}
+
+const titled = (card: Card | null, workId: string) => `card "${card?.title ?? workId}"`;
+
+export function neoActionTriggerKey(
+  ask: Pick<NeoAsk, 'approvedAt'>,
+  action: NeoAskHumanAction,
+  work: (id: string) => Card | null
+): NeoTriggerKey {
+  const at = (id: string) => work(id)?.updatedAt ?? 0;
+  const key = (key: string, line: string): NeoTriggerKey => ({ key, kind: 'action', line });
+  switch (action.kind) {
+    case 'start':
+      return key(
+        `start:${action.workId}`,
+        `${titled(work(action.workId), action.workId)} waits for Start`
+      );
+    case 'retry':
+      return key(
+        `retry:${action.workId}:${at(action.workId)}`,
+        `${titled(work(action.workId), action.workId)} failed and can be retried`
+      );
+    case 'close':
+      return key(
+        `close:${action.workId}`,
+        `${titled(work(action.workId), action.workId)} can be closed`
+      );
+    case 'approve':
+      return key(
+        `approve:${action.reason}:${ask.approvedAt ?? 0}:${(action.workIds ?? []).join(',')}`,
+        action.reason === 'expired'
+          ? 'the ask’s approval expired and needs approving again'
+          : 'a card stalled and the ask needs approving again'
+      );
+    case 'answer':
+      return key(
+        `answer:${action.itemId}`,
+        `question: ${action.question} (options: ${action.options.join(' / ')})`
+      );
+    case 'confirm':
+      return key(`confirm:${action.itemId}`, `step to confirm: ${action.step}`);
+  }
+}
+
+export function isNeoCardFailedForGood(card: NeoCardView, pending: boolean): boolean {
+  return (
+    card.phase === 'failed' &&
+    !card.superseded &&
+    !card.retryable &&
+    card.primary.kind !== 'retry' &&
+    !pending
+  );
+}
+
+export function neoAskTriggerKeys(
+  ask: NeoAsk,
+  read: NeoAskTriggerRead,
+  work: (id: string) => Card | null,
+  pending: (workId: string) => boolean
+): NeoTriggerKey[] {
+  const items = (ask.doneItems ?? []).filter((item) => !item.removed);
+  const outcome =
+    ask.status === 'achieved' || (items.length > 0 && items.every((item) => item.state === 'met'));
+  if (outcome)
+    return [
+      {
+        key: `outcome:${items.length}`,
+        kind: 'outcome',
+        line: ask.status === 'achieved' ? 'the ask is achieved' : 'every item of the ask is met',
+      },
+    ];
+  if (ask.status === 'abandoned') return [];
+  const failed = read.cards
+    .filter((card) => read.view.workIds.includes(card.workId))
+    .filter((card) => isNeoCardFailedForGood(card, pending(card.workId)))
+    .map(
+      (card): NeoTriggerKey => ({
+        key: `failed:${card.workId}:${work(card.workId)?.updatedAt ?? 0}`,
+        kind: 'failed',
+        line: `${titled(work(card.workId), card.workId)} failed with no retry left`,
+      })
+    );
+  return [
+    ...failed,
+    ...(read.view.humanActions ?? []).map((action) => neoActionTriggerKey(ask, action, work)),
+  ];
+}
+
+const KIND_ORDER: readonly NeoTriggerKind[] = ['outcome', 'failed', 'action'];
+
+export function planNeoAskTrigger(
+  ask: Pick<NeoAsk, 'id'>,
+  keys: readonly NeoTriggerKey[],
+  told: ReadonlySet<string>
+): { value: NeoAskTrigger } | { reason: null } {
+  const fresh = keys.filter((key) => !told.has(key.key));
+  if (!fresh.length) return { reason: null };
+  const kind = KIND_ORDER.find((kind) => fresh.some((key) => key.kind === kind)) ?? 'action';
+  const signature = fresh
+    .map((key) => key.key)
+    .sort()
+    .join('|');
+  return {
+    value: {
+      triggerId: `${kind}:${ask.id}:${hashString32(signature).toString(36)}`,
+      kind,
+      keys: fresh.map((key) => key.key),
+      lines: keys.map((key) => key.line),
+    },
+  };
+}
+
+export function requireNeoTriggerOwnerIdle(
+  ask: NeoAsk,
+  deps: NeoTriggerSweepDeps
+): { value: NeoAsk } | { reason: null } {
+  return deps.busy(ask) ? { reason: null } : { value: ask };
+}
+
+export function requireNeoTriggerRead(
+  ask: NeoAsk,
+  deps: NeoTriggerSweepDeps
+): { value: NeoAskTriggerRead } | { reason: null } {
+  const read = deps.read(ask);
+  return read ? { value: read } : { reason: null };
+}
+
+const readKeys = (ask: NeoAsk, read: NeoAskTriggerRead, deps: NeoTriggerSweepDeps) =>
+  neoAskTriggerKeys(
+    ask,
+    read,
+    (id) => deps.work(id),
+    (id) => deps.deliveryRetryPending(id)
+  );
+
+export const noteNeoAskTrigger = (superpipe({})('neo-ask-trigger') as PipelineAPI)
+  .input(['ask', 'deps'])
+  .pipe(requireNeoTriggerOwnerIdle, ['ask', 'deps'], 'result:owner')
+  .pipe(requireNeoTriggerRead, ['owner', 'deps'], 'result:read')
+  .pipe(readKeys, ['ask', 'read', 'deps'], 'keys')
+  .pipe(
+    (ask: NeoAsk, keys: NeoTriggerKey[], deps: NeoTriggerSweepDeps) =>
+      planNeoAskTrigger(ask, keys, deps.told(ask.id)),
+    ['ask', 'keys', 'deps'],
+    'result:trigger'
+  )
+  .pipe(
+    (ask: NeoAsk, trigger: NeoAskTrigger, deps: NeoTriggerSweepDeps) => {
+      deps.record(ask.id, trigger.keys, trigger.triggerId);
+      deps.wake(ask, trigger);
+      return trigger;
+    },
+    ['ask', 'trigger', 'deps'],
+    'trigger'
+  )
+  .end('trigger') as (ask: NeoAsk, deps: NeoTriggerSweepDeps) => NeoAskTrigger | null | undefined;
+
+export const coverNeoAskTriggers = (superpipe({})('neo-ask-trigger-cover') as PipelineAPI)
+  .input(['ask', 'deps', 'kinds'])
+  .pipe(requireNeoTriggerRead, ['ask', 'deps'], 'result:read')
+  .pipe(readKeys, ['ask', 'read', 'deps'], 'keys')
+  .pipe(
+    (
+      ask: NeoAsk,
+      keys: NeoTriggerKey[],
+      kinds: readonly NeoTriggerKind[],
+      deps: NeoTriggerSweepDeps
+    ) => {
+      const covered = keys.filter((key) => kinds.includes(key.kind)).map((key) => key.key);
+      deps.record(ask.id, covered, null);
+      return covered;
+    },
+    ['ask', 'keys', 'kinds', 'deps'],
+    'covered'
+  )
+  .end('covered') as (
+  ask: NeoAsk,
+  deps: NeoTriggerSweepDeps,
+  kinds: readonly NeoTriggerKind[]
+) => string[] | null;
+
+export function requirePublicationTrigger<T>(
+  value: T,
+  draft: { triggerId?: string; interim?: true },
+  trigger: string | null
+): { value: T & { triggerId: string } } | { reason: Rejection } {
+  if (draft.interim)
+    return {
+      reason: {
+        accepted: false,
+        reason: 'interim_refused',
+        detail:
+          'Interim status posts are not published. Publish once, when you have the reply itself, or end the turn.',
+      },
+    };
+  if (!trigger)
+    return {
+      reason: {
+        accepted: false,
+        reason: 'no_trigger',
+        detail:
+          'Nothing in this turn calls for a message to the human: only a human message, an ask outcome, or something the human must do or that broke does. The daemon wakes you with a note naming the trigger when one happens. End the turn.',
+      },
+    };
+  if (draft.triggerId && draft.triggerId !== trigger)
+    return {
+      reason: {
+        accepted: false,
+        reason: 'wrong_trigger',
+        detail: `This turn's trigger is ${trigger}, not ${draft.triggerId}. Publish with triggerId ${trigger}, or omit it.`,
+      },
+    };
+  return { value: { ...value, triggerId: trigger } };
+}
+
+export function requireUnpublishedTrigger<T>(
+  value: T,
+  trigger: string,
+  published: boolean
+): { value: T } | { reason: Rejection } {
+  return published
+    ? {
+        reason: {
+          accepted: false,
+          reason: 'trigger_already_published',
+          detail: `The human already has the message for ${trigger}; a transition is told once. End the turn.`,
+        },
+      }
+    : { value };
+}

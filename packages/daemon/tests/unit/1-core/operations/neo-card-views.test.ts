@@ -404,13 +404,18 @@ describe('projectNeoAskViews', () => {
           approvalSpent: 'expired',
           doneItems: [
             { ...item('d', 'needs_you'), options: ['A', 'B'], kind: 'decision' },
-            { ...item('s', 'needs_you'), kind: 'action', question: 'Did the keyboard hide?' },
+            {
+              ...item('s', 'needs_you'),
+              kind: 'action',
+              question: 'Did the keyboard hide?',
+              options: ['It hid', 'Still showing'],
+            },
             { ...item('g', 'needs_you'), kind: 'action' },
             {
               ...item('o', 'needs_you'),
               kind: 'action',
               question: 'o',
-              options: ['Yes', 'Not yet'],
+              options: ['成功了', '没成功'],
             },
             { ...item('c', 'needs_you'), kind: 'action', waitCard: 'p' },
             item('m', 'reported'),
@@ -431,16 +436,9 @@ describe('projectNeoAskViews', () => {
         itemId: 's',
         step: 's',
         question: 'Did the keyboard hide?',
-        options: ['Yes', 'Not yet'],
+        options: ['It hid', 'Still showing'],
       },
-      {
-        kind: 'answer',
-        itemId: 'g',
-        step: 'g',
-        question: 'Did it work?',
-        options: ['Yes', 'Not yet'],
-      },
-      { kind: 'answer', itemId: 'o', step: null, question: 'o', options: ['Yes', 'Not yet'] },
+      { kind: 'answer', itemId: 'o', step: null, question: 'o', options: ['成功了', '没成功'] },
       { kind: 'confirm', itemId: 'm', step: 'm' },
     ]);
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);

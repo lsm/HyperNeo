@@ -263,7 +263,7 @@ describe('Neo turns with an ask waiting on the human', () => {
     ).toMatchObject({ asks: [{ id: 'a1' }] });
 
     expect(await reply('ask-1', '20000000-0000-4000-8000-000000000001', true)).toMatchObject({
-      value: { accepted: true },
+      value: { accepted: false, reason: 'interim_refused' },
     });
     expect(await reply('ask-1', '20000000-0000-4000-8000-000000000002')).toMatchObject({
       value: { accepted: true, created: true },

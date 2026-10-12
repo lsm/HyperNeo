@@ -212,7 +212,7 @@ describe('NeoService direct consultation return', () => {
     await service.recoverConsultations();
     expect(receiptRows()).toEqual(before);
   });
-  test('a null-origin work review retains the actual holder human session/message pair', async () => {
+  test('a work review is acted on quietly: its publication is refused and its end settles it without a root reply', async () => {
     db.getDatabase().prepare('DELETE FROM neo_consultations').run();
     prompt(holder, 'holder-human', 'human');
     const work = service.repo.proposeWork({
@@ -227,18 +227,29 @@ describe('NeoService direct consultation return', () => {
     service.repo.transitionWork(work.id, work, { status: 'reported', report: 'Claimed only' });
     const id = 'neo-work:work:review';
     reserve(id, null);
-    const publication = await publish(id);
-    expect(publication.askOrigin).toEqual({ sessionId: holder, messageId: 'holder-human' });
-    expect(publication.producerInput).toEqual({
-      sessionId: holder,
-      messageId: `neo-consult:${id}:request`,
-    });
-    db.getDatabase().prepare('DELETE FROM sdk_messages').run();
-    restart();
+    const messageId = `neo-consult:${id}:request`;
+    prompt(holder, messageId, 'system');
+    stampRequest(id);
+    const turn = new NeoHolderTurn(db, holder, { isLive: () => true }, () => {});
+    turns.push(turn);
+    expect(turn.bind(messageId)).toBe(true);
+    expect(
+      await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.publication.publish',
+        { ...draft, links: [] },
+        { source: 'mcp', sessionId: holder, role: 'neo', neoTurn: turn.identity() }
+      )
+    ).toMatchObject({ value: { accepted: false, reason: 'no_trigger' } });
+    vi.spyOn(db.getSDKMessageRepo(), 'hasTerminalResultAfter').mockReturnValue(true);
     await service.syncConsultation(id);
+    expect(service.consultations.get(id)).toMatchObject({
+      status: 'reported',
+      answer: 'The context holder reviewed the returned work.',
+    });
     expect(returned(id)).toEqual({ returned: 1 });
     expect(mailbox()).toEqual([]);
-    expect(service.consultations.get(id)?.originMessageId).toBeNull();
+    expect(service.publications.list(conversationId)).toEqual([]);
   });
   test.each([
     'missing-publication',

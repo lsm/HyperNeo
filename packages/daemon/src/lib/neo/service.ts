@@ -268,6 +268,18 @@ import {
   scheduleNeoDeliveryRetry,
 } from './delivery-retry.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
+import { NeoNotificationTriggerRepository } from '../../storage/repositories/neo-notification-trigger-repository.ts';
+import {
+  coverNeoAskTriggers,
+  NEO_TRIGGER_ACHIEVED_WINDOW_MS,
+  NEO_TRIGGER_SWEEP_MS,
+  neoHumanTriggerMessageId,
+  neoTriggerMessageId,
+  neoTriggerNote,
+  noteNeoAskTrigger,
+  type NeoTriggerSweepDeps,
+} from './notification-triggers.ts';
+import { readNeoAskTriggerView } from './service-card-views.ts';
 import {
   NEO_WORK_FOLLOW_MAX_AGE_MS,
   planNeoWorkFollow,
@@ -300,6 +312,7 @@ const dispatchNeoConsultationWaiter = (
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
 const NEO_WORK_REPORT_LIMIT = 12_000;
+const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
 
 type NeoWorkPrCard = {
   ask: NeoAsk | null;
@@ -403,6 +416,10 @@ export class NeoService {
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
   private readonly noteQueue: NeoNoteQueueDeps;
+  private readonly triggers: NeoNotificationTriggerRepository;
+  private readonly triggerDeps: NeoTriggerSweepDeps;
+  private readonly triggerCovers = new Map<string, number>();
+  private triggerTimer?: ReturnType<typeof setTimeout>;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -587,6 +604,28 @@ export class NeoService {
   ) {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
+      this.scheduleTriggerSweep();
+    };
+    this.triggers = new NeoNotificationTriggerRepository(db.getDatabase());
+    this.triggerDeps = {
+      busy: (ask) => this.isTriggerOwnerBusy(ask),
+      read: (ask) => readNeoAskTriggerView(this, ask),
+      work: (id) => this.repo.getWork(id),
+      deliveryRetryPending: (id) => isNeoDeliveryRetryPending(this.db.getJobQueueRepo(), id),
+      told: (askId) => this.triggers.told(askId),
+      record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
+      wake: (ask, trigger) =>
+        void this.open(ask.concernId)
+          .then((target) =>
+            this.deliver(
+              target,
+              neoTriggerMessageId(trigger.triggerId),
+              neoTriggerNote(ask, trigger, this.lastHumanText()),
+              target,
+              neoAskParent(ask)
+            )
+          )
+          .catch((error) => this.log.warn('Trigger note pending', error)),
     };
     this.noteQueue = createNeoNoteQueueDeps(db, (sessionId, messageIds) => {
       void events
@@ -665,6 +704,16 @@ export class NeoService {
       getWork: (id) => this.repo.getWork(id),
       getConsultation: (id) => this.consultations.get(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
+      isHumanInput: (input) =>
+        this.db
+          .getSDKMessageRepo()
+          .getStoredPromptsByUuid(input.sessionId, input.messageId)
+          .some(
+            (message) =>
+              message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
+          ),
+      isTriggerPublished: (conversationId, triggerId, publicationId) =>
+        this.publications.hasTrigger(conversationId, triggerId, publicationId),
       replay: (input, caller) => {
         const turn = caller.neoTurn;
         const item = turn?.consultationId ? this.consultations.get(turn.consultationId) : null;
@@ -712,6 +761,7 @@ export class NeoService {
         if (!receipt.accepted) return receipt;
         const publication = this.publications.get(input.conversationId, input.publicationId);
         if (!publication) throw new Error('Committed consultation publication is missing');
+        if (receipt.created) this.noteHumanReply(input);
         return { accepted: true, created: receipt.created, publication };
       },
       notify: notifyPublication,
@@ -779,6 +829,8 @@ export class NeoService {
           } catch (error) {
             this.log.warn('Direct reply fallback failed', error);
           }
+          this.coverHumanReply(sessionId);
+          this.scheduleTriggerSweep();
         }
         if (binding?.kind === 'concern' && binding.concernId)
           await this.dispatchConsultationWaiter(binding.concernId).catch((error) =>
@@ -857,6 +909,86 @@ export class NeoService {
     this.savedRules.set(key, note);
   }
 
+  private triggerAsks(): NeoAsk[] {
+    return [
+      ...this.askRecords.listLive(),
+      ...this.askRecords.achievedSince(Date.now() - NEO_TRIGGER_ACHIEVED_WINDOW_MS),
+    ];
+  }
+
+  private scheduleTriggerSweep(): void {
+    if (this.triggerTimer || this.disposed) return;
+    this.triggerTimer = setTimeout(() => {
+      this.triggerTimer = undefined;
+      this.sweepTriggers();
+    }, NEO_TRIGGER_SWEEP_MS);
+    this.triggerTimer.unref?.();
+  }
+
+  private sweepTriggers(): void {
+    if (this.disposed || !this.triggers.isSeeded()) return;
+    for (const ask of this.triggerAsks()) {
+      try {
+        noteNeoAskTrigger(ask, this.triggerDeps);
+      } catch (error) {
+        this.log.warn(`Trigger check for ask ${ask.id} failed`, error);
+      }
+    }
+  }
+
+  private seedTriggers(): void {
+    if (this.triggers.isSeeded()) return;
+    for (const ask of this.triggerAsks())
+      coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'failed', 'action']);
+    this.triggers.markSeeded(Date.now());
+  }
+
+  private isTriggerOwnerBusy(ask: NeoAsk): boolean {
+    const owner = this.repo.getBindingForConcern(ask.concernId)?.sessionId;
+    if (!owner) return true;
+    const status =
+      this.processingStatus.get(owner) ??
+      neoSessionStatus(this.db.getSession(owner)?.processingState);
+    return status !== null && status !== 'idle';
+  }
+
+  private lastHumanText(): string | null {
+    const root = this.repo.getBindingForConcern(null);
+    if (!root?.sessionId.startsWith('neo:')) return null;
+    const content = this.asks.list(root.sessionId.slice(4), 0, 1, Number.MAX_SAFE_INTEGER)?.[0]
+      ?.content;
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return null;
+    return (
+      content
+        .flatMap((block) =>
+          block.type === 'text' && typeof block.text === 'string' ? [block.text] : []
+        )
+        .join('\n')
+        .trim() || null
+    );
+  }
+
+  private noteHumanReply(input: NeoPublicationInput): void {
+    const human = neoHumanTriggerMessageId(input.triggerId);
+    const asked = human ? this.asks.find(input.conversationId, human) : null;
+    if (!asked) return;
+    const since = Date.parse(asked.createdAt);
+    const prior = this.triggerCovers.get(input.producerInput.sessionId);
+    this.triggerCovers.set(input.producerInput.sessionId, Math.min(prior ?? since, since));
+    this.coverHumanReply(input.producerInput.sessionId, false);
+  }
+
+  private coverHumanReply(sessionId: string, settled = true): void {
+    const since = this.triggerCovers.get(sessionId);
+    if (since === undefined) return;
+    if (settled) this.triggerCovers.delete(sessionId);
+    const scope = this.repo.getBindingBySession(sessionId)?.concernId ?? null;
+    for (const ask of this.triggerAsks())
+      if (ask.concernId === scope && ask.updatedAt >= since)
+        coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'action']);
+  }
+
   private appendPublication(input: NeoPublicationInput) {
     const plan = planNeoSavedRulesAppend(input, this.savedRules, {
       standingRules: neoStandingRules(this.db.getGlobalSettings?.().neo),
@@ -866,6 +998,7 @@ export class NeoService {
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
     if (receipt.accepted && receipt.created && !input.interim)
       this.spendWaitingReminders(input.producerInput);
+    if (receipt.accepted && receipt.created) this.noteHumanReply(input);
     return receipt;
   }
 
@@ -979,6 +1112,8 @@ export class NeoService {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.unsubscribe();
+    if (this.triggerTimer) clearTimeout(this.triggerTimer);
+    this.triggerTimer = undefined;
     for (const timer of this.replyRechecks.values()) clearTimeout(timer);
     this.replyRechecks.clear();
     this.processingStatus.clear();
@@ -1357,6 +1492,7 @@ export class NeoService {
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     this.resumeDirectReplies();
+    this.seedTriggers();
     await this.recoverConsultations();
     await this.clearStaleNeedsYou().catch((error) =>
       this.log.warn('Stale needs_you check pending', error)
@@ -2234,10 +2370,12 @@ export class NeoService {
       if (failure || messages.hasTerminalResultAfter(item.sessionId, requestId)) {
         item = this.consultations.finish(
           id,
-          'failed',
+          failure || !neoReviewWorkId(id) ? 'failed' : 'reported',
           failure
             ? `The context holder stopped: ${failure}.`
-            : 'The context holder ended without returning an answer.'
+            : neoReviewWorkId(id)
+              ? NEO_WORK_REVIEWED
+              : 'The context holder ended without returning an answer.'
         );
       } else {
         await this.open(item.concernId);
@@ -2268,7 +2406,7 @@ export class NeoService {
     if (route === 'inconsistent')
       throw new Error('Consultation publication return is inconsistent');
     if (route === 'pending') return;
-    if (route === 'legacy') {
+    if (route === 'legacy' && !(item.status === 'reported' && item.answer === NEO_WORK_REVIEWED)) {
       const content = neoConsultationReplyContent(item);
       if (content === null) return;
       await this.deliver(

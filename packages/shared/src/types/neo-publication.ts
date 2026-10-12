@@ -15,6 +15,7 @@ export interface NeoPublicationInput {
   readonly fullText: string;
   readonly links: readonly NeoPublicationLink[];
   readonly interim?: true;
+  readonly triggerId?: string;
   readonly askSummary?: string;
   readonly awaiting?: string;
 }
@@ -26,4 +27,7 @@ export interface NeoPublication extends NeoPublicationInput {
 
 export type NeoPublicationAppendResult =
   | { accepted: true; created: boolean; publication: NeoPublication }
-  | { accepted: false; reason: 'invalid_publication' | 'publication_conflict' };
+  | {
+      accepted: false;
+      reason: 'invalid_publication' | 'publication_conflict' | 'trigger_already_published';
+    };

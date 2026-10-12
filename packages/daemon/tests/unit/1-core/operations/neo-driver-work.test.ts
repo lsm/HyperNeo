@@ -349,10 +349,12 @@ describe('driverWorkCall', () => {
 });
 
 describe('NEO_WORK_SUMMARY_NOTE', () => {
-  test('asks for the outcome and any action in one or two sentences, evidence in fullText', () => {
-    expect(NEO_WORK_SUMMARY_NOTE).toContain('shortText is one or two short sentences');
-    expect(NEO_WORK_SUMMARY_NOTE).toContain('Keep evidence, commit ids, CI runs');
-    expect(NEO_WORK_SUMMARY_NOTE).not.toContain('2 to 4 plain lines');
+  test('acts on the report for its ask and leaves telling the human to trigger notes', () => {
+    expect(NEO_WORK_SUMMARY_NOTE).toContain('act on it for its ask');
+    expect(NEO_WORK_SUMMARY_NOTE).toContain(
+      'Do not publish: the daemon wakes you with a trigger note'
+    );
+    expect(NEO_WORK_SUMMARY_NOTE).not.toContain('neo.publication.publish');
   });
 });
 
