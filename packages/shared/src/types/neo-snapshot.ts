@@ -135,6 +135,7 @@ export interface NeoAsk {
   approvedContinueLimit?: number;
   pooled?: boolean;
   approvalSpent?: NeoAskApprovalSpent | null;
+  stalledWorkIds?: string[];
   waitingItem?: string | null;
   status: NeoAskStatus;
   outcome: string | null;
@@ -271,7 +272,7 @@ export const NEO_ASK_OUTCOME_OPTIONS = ['Yes', 'No'];
 
 export type NeoAskHumanAction =
   | { kind: 'start'; workId: string }
-  | { kind: 'approve'; reason: 'expired' }
+  | { kind: 'approve'; reason: 'expired' | 'stalled'; workIds?: string[] }
   | {
       kind: 'answer';
       itemId: string;

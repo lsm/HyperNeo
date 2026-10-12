@@ -433,7 +433,7 @@ describe('projectNeoAskViews', () => {
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
   });
 
-  test('a stalled card waits for the progress-based stall before asking for Approve', () => {
+  test('the old continue-count stall no longer asks for Approve', () => {
     const input = parts({
       work: [work('q', 'queued')],
       drivers: [driver('q', 'running')],
@@ -441,6 +441,29 @@ describe('projectNeoAskViews', () => {
     });
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
     expect(views[0]?.humanActions).toEqual([]);
+  });
+
+  test('a card stalled by three wakes without progress asks for Approve, naming the card', () => {
+    const input = parts({
+      work: [work('q', 'queued'), work('r', 'queued')],
+      drivers: [driver('q', 'running'), driver('r', 'running')],
+      asks: [ask({ workIds: ['q', 'r'], approvedAt: 5, stalledWorkIds: ['r'] })],
+    });
+    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
+    expect(views[0]?.humanActions).toEqual([
+      { kind: 'approve', reason: 'stalled', workIds: ['r'] },
+    ]);
+    expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
+  });
+
+  test('an expired approval asks once, even with a stalled card', () => {
+    const input = parts({
+      work: [work('q', 'queued')],
+      drivers: [driver('q', 'running')],
+      asks: [ask({ workIds: ['q'], approvalSpent: 'expired', stalledWorkIds: ['q'] })],
+    });
+    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
+    expect(views[0]?.humanActions).toEqual([{ kind: 'approve', reason: 'expired' }]);
   });
 
   test('an approved ask starts its proposed cards itself, and a settled ask asks nothing', () => {
