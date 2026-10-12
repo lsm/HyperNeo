@@ -58,6 +58,7 @@ import type { SessionManager } from '../session/session-manager.ts';
 import {
   createNeoAskOriginResolver,
   neoAskAnswerMessageId,
+  neoAskTickedMessageId,
   neoAskEvidenceMessageId,
   neoAskParent,
   neoConsultationParent,
@@ -236,6 +237,7 @@ import {
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import {
   neoAskAnswerNote,
+  neoAskTickedNote,
   neoAskReopensAfterClear,
   neoNeedsYouClearedNote,
   neoResumeWhy,
@@ -1770,6 +1772,15 @@ export class NeoService {
 
   pack(id: string): NeoPack | null {
     return this.installedPacks().find((pack) => pack.id === id) ?? null;
+  }
+
+  deliverAskTicked(ask: NeoAsk, item: NeoAskItem): Promise<void> {
+    return this.deliverToOrigin(
+      ask.originSessionId,
+      neoAskTickedMessageId(ask.id, item.id, Date.now()),
+      neoAskTickedNote(ask, item),
+      neoAskParent(ask)
+    );
   }
 
   deliverAskAnswer(ask: NeoAsk, item: NeoAskItem, choice: string): Promise<void> {

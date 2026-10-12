@@ -27,7 +27,7 @@ import {
 } from './packs/coding/issue-checks.ts';
 import { LIFE_ADMIN_CHECK_CONFIRMED } from './packs/life-admin/pack.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
-import { neoDaemonReadsClaim } from './needs-you.ts';
+import { neoDaemonReadsClaim, neoHumanTickWakes } from './needs-you.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -952,6 +952,12 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     )
     .pipe(requireNeoAskTick, ['input', 'admission', 'caller'], 'result:admission')
     .pipe(
+      (input: z.infer<typeof Tick>, caller: OperationCaller, target: { item: NeoAskItem }) =>
+        neoHumanTickWakes(input.state, caller.source, target.item),
+      ['input', 'caller', 'admission'],
+      'wakes'
+    )
+    .pipe(
       (target: { ask: NeoAsk }, caller: OperationCaller) =>
         readHumanWaitSources(target.ask, caller),
       ['admission', 'caller'],
@@ -1033,10 +1039,17 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     .pipe(requireNeoAskWritten, 'ticked', 'result:admission')
     .pipe(replanAsk, 'admission', 'written')
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
-    .end('admission') as (
+    .pipe(
+      async (input: z.infer<typeof Tick>, receipt: AskReceipt, wakes: boolean) => {
+        const item = receipt.ask.doneItems?.find((entry) => entry.id === input.itemId);
+        if (wakes && item) await service.deliverAskTicked(receipt.ask, item);
+      },
+      ['input', 'admission', 'wakes']
+    )
+    .endAsync('admission') as (
     input: z.infer<typeof Tick>,
     caller: OperationCaller
-  ) => AskReceipt | Rejection;
+  ) => Promise<AskReceipt | Rejection>;
   const answer = (superpipe({})('neo.ask.answer') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(

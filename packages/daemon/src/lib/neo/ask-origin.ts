@@ -25,6 +25,10 @@ export function neoAskEvidenceMessageId(askId: string, signature: string): strin
   return `neo-ask-evidence:${askId}:${hashString32(signature).toString(36)}`;
 }
 
+export function neoAskTickedMessageId(askId: string, itemId: string, at: number): string {
+  return `neo-ask-ticked:${askId}:${itemId}:${at}`;
+}
+
 export function neoAskAnswerMessageId(askId: string, itemId: string, at: number): string {
   return `neo-ask-answer:${askId}:${itemId}:${at}`;
 }
