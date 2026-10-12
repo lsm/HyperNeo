@@ -78,16 +78,20 @@ describe('readNeoWorkContinueBudget', () => {
   test('work under an approved ask keeps going while it moves, for 48 hours, with no flat count', () => {
     expect(
       readNeoWorkContinueBudget(
-        { progress: 'old', stalled: 2 },
+        { progress: 'old', stalled: 2, continuedAt: HOUR },
         'p',
         0,
         { ...approved, approvedContinues: 500 },
         13 * HOUR
       )
     ).toBeNull();
+    const stalled = { progress: 'p', stalled: 2, continuedAt: HOUR };
+    expect(readNeoWorkContinueBudget(stalled, 'p', 0, approved, 13 * HOUR)).toContain(
+      'brought no new commit'
+    );
     expect(
-      readNeoWorkContinueBudget({ progress: 'p', stalled: 2 }, 'p', 0, approved, 13 * HOUR)
-    ).toContain('brought no new commit');
+      readNeoWorkContinueBudget(stalled, 'p', 0, { ...approved, approvedAt: 2 * HOUR }, 13 * HOUR)
+    ).toBeNull();
     expect(readNeoWorkContinueBudget(null, 'p', 0, approved, 48 * HOUR)).toContain(
       'approve it again'
     );
@@ -339,7 +343,7 @@ describe('neo.work.continue', () => {
     });
   });
 
-  test('work under an approved ask counts its continues but stops only when the card stalls', async () => {
+  test('work under an approved ask stops only when the card stalls, and approving again restarts it', async () => {
     const work = reportedWork();
     const opened = service.askRecords.open({
       id: 'ask-ios',
@@ -375,8 +379,11 @@ describe('neo.work.continue', () => {
     expect(await invoke({ id: work.id, message: 'One more.' })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('brought no new commit') },
     });
-    service.askRecords.approve(opened.id, Date.now());
+    service.askRecords.approve(opened.id, Date.now() + 1);
     expect(service.askRecords.get(opened.id)?.approvedContinues).toBe(0);
+    expect(await invoke({ id: work.id, message: 'Approved again.' })).toMatchObject({
+      value: { ok: true },
+    });
   });
 
   test('the idle reply from before a continue does not close the reopened card', async () => {
