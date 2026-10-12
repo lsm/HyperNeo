@@ -176,6 +176,13 @@ describe('runtime-bound publication operation', () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
+  test('a publication with no links array publishes with none', async () => {
+    const { links: _links, ...unlinked } = draft;
+    expect(await invoke(unlinked)).toMatchObject({
+      value: { accepted: true, publication: { links: [] } },
+    });
+  });
+
   test('holder publication resolves the original ask, never a newer unrelated ask', async () => {
     const item = consultation();
     const input = `neo-consult:${item.id}:request`;
