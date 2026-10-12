@@ -1309,6 +1309,36 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setIdle();
     });
 
+    it('a restored network pause whose hold fails releases the queue', async () => {
+      mockDb.getSession = mock(
+        () =>
+          ({
+            id: 'test-session-id',
+            processingState: JSON.stringify({
+              status: 'rate_limit_cooldown',
+              retryAt: Date.now() + 30_000,
+              retryCount: 0,
+              maxRetries: 0,
+              reason: 'network',
+              heldPrompt: { uuid: 'held-uuid', content: 'ship it' },
+            }),
+          }) as never
+      );
+      spyOn(agentSession.stateManager, 'setRateLimitCooldown').mockRejectedValue(
+        new Error('publish failed')
+      );
+      const session = agentSession as unknown as {
+        armPersistedRateLimitCooldown: () => void;
+        networkPause: { isActive: () => boolean };
+      };
+
+      session.armPersistedRateLimitCooldown();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(session.networkPause.isActive()).toBe(false);
+      expect(agentSession.stateManager.getState().status).toBe('idle');
+    });
+
     it('restores an unsaved held prompt after a restart and keeps the queue held behind it', async () => {
       mockDb.getSession = mock(
         () =>

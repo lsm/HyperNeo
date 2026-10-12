@@ -989,6 +989,7 @@ export class AgentSession
             false
           )
           .catch(() => {
+            this.networkPause.stop();
             void this.stateManager.setIdle().catch(() => {});
           });
         return;
