@@ -173,32 +173,46 @@ export function planNeoPrCedes(
     .filter((row) => mine.some((own) => own.urlKey === row.urlKey && beatsNeoPrClaim(own, row)));
 }
 
-export function isNeoCardMention(
+export function isNeoCardMentionCurrent(
   card: Pick<NeoWork, 'createdAt'>,
-  named: ReadonlySet<number>,
-  pr: Pick<NeoWorkPr, 'createdAt' | 'refs' | 'state'>
+  pr: Pick<NeoWorkPr, 'createdAt' | 'state'>
 ): boolean {
-  const current = pr.state === 'OPEN' || pr.createdAt == null || pr.createdAt >= card.createdAt;
-  return current && (!named.size || (pr.refs ?? []).some((ref) => named.has(ref)));
+  return pr.state === 'OPEN' || pr.createdAt == null || pr.createdAt >= card.createdAt;
+}
+
+export function isNeoCardMentionRelated(
+  named: ReadonlySet<number>,
+  pr: Pick<NeoWorkPr, 'url' | 'refs'>
+): boolean {
+  if (!named.size) return true;
+  const own = Number(/\/pull\/(\d+)/.exec(pr.url)?.[1]);
+  return named.has(own) || (pr.refs ?? []).some((ref) => named.has(ref));
 }
 
 export function keepNeoCardPrReads(
   card: Pick<NeoWork, 'createdAt' | 'title' | 'instruction'>,
   owned: readonly NeoCardPrOwned[],
   prs: readonly NeoWorkPr[]
-): { kept: NeoCardPrOwned[]; pending: NeoCardPrOwned[]; rejected: NeoCardPrOwned[] } {
-  const sorted = { kept: [], pending: [], rejected: [] } as {
+): {
+  kept: NeoCardPrOwned[];
+  pending: NeoCardPrOwned[];
+  rejected: NeoCardPrOwned[];
+  unrelated: NeoCardPrOwned[];
+} {
+  const sorted = { kept: [], pending: [], rejected: [], unrelated: [] } as {
     kept: NeoCardPrOwned[];
     pending: NeoCardPrOwned[];
     rejected: NeoCardPrOwned[];
+    unrelated: NeoCardPrOwned[];
   };
   const named = new Set(neoTextRefs(`${card.title}\n${card.instruction}`));
   for (const candidate of owned) {
     const pr = prs.find((item) => key(item.url) === key(candidate.url));
     if (candidate.claim !== 'mentioned') sorted.kept.push(candidate);
     else if (!pr) (candidate.claimed ? sorted.kept : sorted.pending).push(candidate);
-    else if (isNeoCardMention(card, named, pr)) sorted.kept.push(candidate);
-    else sorted.rejected.push(candidate);
+    else if (!isNeoCardMentionCurrent(card, pr)) sorted.rejected.push(candidate);
+    else if (isNeoCardMentionRelated(named, pr)) sorted.kept.push(candidate);
+    else sorted.unrelated.push(candidate);
   }
   return sorted;
 }

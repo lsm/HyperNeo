@@ -303,7 +303,24 @@ describe('keepNeoCardPrReads', () => {
       ]
     );
     expect(sorted.kept.map((item) => item.url)).toEqual([pull(6607), pull(6626)]);
-    expect(sorted.rejected.map((item) => item.url)).toEqual([pull(6624), pull(6601)]);
+    expect(sorted.unrelated.map((item) => item.url)).toEqual([pull(6624), pull(6601)]);
+    expect(sorted.rejected).toEqual([]);
+  });
+
+  test('a PR the card names by its own number is related, and an unrelated one is not rejected for good', () => {
+    const named = { createdAt: 100, title: 'Land #6632', instruction: 'Merge it.' } as Pick<
+      NeoWork,
+      'createdAt' | 'title' | 'instruction'
+    >;
+    const first = keepNeoCardPrReads(
+      named,
+      [owned(6632), owned(6640)],
+      [pr(6632, 150), pr(6640, 150)]
+    );
+    expect(first.kept.map((item) => item.url)).toEqual([pull(6632)]);
+    expect(first.unrelated.map((item) => item.url)).toEqual([pull(6640)]);
+    const later = keepNeoCardPrReads(named, [owned(6640)], [{ ...pr(6640, 150), refs: [6632] }]);
+    expect(later.kept.map((item) => item.url)).toEqual([pull(6640)]);
   });
 
   test('a new mention this read could not fetch stays unclaimed until a read dates it', () => {
