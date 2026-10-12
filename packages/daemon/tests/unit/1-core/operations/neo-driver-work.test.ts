@@ -49,7 +49,6 @@ import {
 } from '../../../../src/lib/neo/operations.ts';
 import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
-import { neoWorkPrEvidence } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import { lifeAdminReportEvidence } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
