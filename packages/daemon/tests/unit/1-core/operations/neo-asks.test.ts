@@ -202,6 +202,29 @@ describe('neo.ask operations', () => {
     }
   });
 
+  test('a work operation answers with its ask, so Neo needs no follow-up read', async () => {
+    const askId = await openAsk();
+    const proposed = await propose('card-1', askId);
+    const card = proposed.value!.work!.id;
+    expect(proposed).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          id: askId,
+          status: 'open',
+          items: [
+            { id: 'i1', state: 'pending', text: 'merged to dev' },
+            { id: 'i2', state: 'pending', text: 'CI green' },
+          ],
+          cards: [{ id: card, title: 'Fix it', status: 'proposed' }],
+        },
+      },
+    });
+    expect(await invoke('neo.work.cancel', { id: card })).toMatchObject({
+      value: { ok: true, ask: { id: askId, cards: [{ id: card, status: 'cancelled' }] } },
+    });
+  });
+
   test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
     const askId = await openAsk();
     for (const itemId of ['i1', 'i2'])
