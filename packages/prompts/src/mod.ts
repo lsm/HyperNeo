@@ -80,6 +80,7 @@ import mdneoSystemHolderRole from './neo/system/holder-role.md' with { type: 'te
 import mdneoSystemHolderSnapshotScope from './neo/system/holder-snapshot-scope.md' with {
   type: 'text',
 };
+import mdneoSystemDoneCheckSteps from './neo/system/done-check-steps.md' with { type: 'text' };
 import mdneoSystemPrompt from './neo/system/prompt.md' with { type: 'text' };
 import mdneoSystemRootClarify from './neo/system/root-clarify.md' with { type: 'text' };
 import mdneoSystemRootLookUp from './neo/system/root-look-up.md' with { type: 'text' };
@@ -374,6 +375,7 @@ const registry: Record<string, string> = {
   'neo/system/holder-operations.md': mdneoSystemHolderOperations,
   'neo/system/holder-role.md': mdneoSystemHolderRole,
   'neo/system/holder-snapshot-scope.md': mdneoSystemHolderSnapshotScope,
+  'neo/system/done-check-steps.md': mdneoSystemDoneCheckSteps,
   'neo/system/prompt.md': mdneoSystemPrompt,
   'neo/system/root-clarify.md': mdneoSystemRootClarify,
   'neo/system/root-look-up.md': mdneoSystemRootLookUp,
@@ -534,6 +536,7 @@ export const {
   GITHUB_SECURITY_SYSTEM_PROMPT,
   NEO_CAPABILITIES_BRIEFING,
   NEO_RESPONSE_FOCUS_BRIEFING,
+  NEO_DONE_CHECK_STEPS,
   NEO_CATCH_UP_HEADER,
   NEO_CONSULTATION_RECEIPT_CLOSED,
   NEO_CONSULTATION_RECEIPT_PENDING,

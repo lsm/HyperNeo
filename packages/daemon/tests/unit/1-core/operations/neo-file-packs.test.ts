@@ -1,3 +1,4 @@
+import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import { describe, expect, test } from 'bun:test';
 import {
   loadNeoFilePacks,
@@ -161,6 +162,7 @@ describe('neoSettingsPackBriefs', () => {
       {
         id: 'coding',
         describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+        guidance: NEO_PACK_CODING_INSTRUCTIONS,
       },
     ]);
     adoptNeoFilePacks(

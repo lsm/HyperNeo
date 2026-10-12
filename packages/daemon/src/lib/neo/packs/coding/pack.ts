@@ -36,6 +36,7 @@ import {
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
   describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+  guidance: NEO_PACK_CODING_INSTRUCTIONS,
 };
 
 export const CODING_CHECK_PR_MERGED = 'coding.pr_merged';

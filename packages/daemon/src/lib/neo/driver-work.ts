@@ -593,9 +593,7 @@ export function driverDoneCheckNote(
         ? ` ${NEO_WORK_DONE_CHECK_PRS_READY}`
         : ` ${NEO_WORK_DONE_CHECK_PRS_LIVE}`;
   const owned = !!ask && ask.originSessionId === work.originSessionId;
-  const summary = owned
-    ? fillPrompt(NEO_WORK_DONE_CHECK_ASK_NEXT, { summary: NEO_WORK_SUMMARY_NOTE })
-    : NEO_WORK_SUMMARY_NOTE;
+  const summary = owned ? NEO_WORK_DONE_CHECK_ASK_NEXT : NEO_WORK_SUMMARY_NOTE;
   const next = budget
     ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget, summary })
     : fillPrompt(NEO_WORK_DONE_CHECK_CONTINUE, {
@@ -608,7 +606,7 @@ export function driverDoneCheckNote(
       ? ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_OWNED, { ask_id: ask.id })}`
       : ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_FOREIGN, { ask_id: ask.id })}`;
   const packNote = pack
-    ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: pack.id })}\n${pack.instructions}`
+    ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: pack.id })}${pack.inPrompt ? '' : `\n${pack.instructions}`}`
     : '';
   const items = owned && ask ? neoNoteChecklist(ask) : [];
   const restates = (doneWhen: string | null | undefined) =>
