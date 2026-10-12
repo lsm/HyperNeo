@@ -1999,7 +1999,9 @@ export class NeoService {
   ) => Promise<unknown>;
 
   async clearStaleNeedsYou(): Promise<void> {
-    for (const ask of this.askRecords.needingHuman()) {
+    for (const { id: askId } of this.askRecords.needingHuman()) {
+      const ask = this.askRecords.get(askId);
+      if (!ask) continue;
       const cards = new Map(
         ask.workIds.flatMap((id) => {
           const work = this.repo.getWork(id);
