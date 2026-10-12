@@ -2664,6 +2664,38 @@ describe('AcpQueryRunner', () => {
       expect(ctx.session.acpSessionId).toBe('acp-session-1');
     }, 5000);
 
+    test('a network outage pauses the ACP turn holding its prompt and queue instead of failing it', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('getaddrinfo ENOTFOUND chatgpt.com');
+      });
+      const { ctx, messageQueue } = createRunnerFixture({ client });
+      const onNetworkOutage = mock(async () => true);
+      ctx.onNetworkOutage = onNetworkOutage;
+      const createClient = mock(() => client as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(onNetworkOutage).toHaveBeenCalledTimes(1);
+      expect(onNetworkOutage).toHaveBeenCalledWith(
+        'Error: getaddrinfo ENOTFOUND chatgpt.com',
+        { uuid: 'user-message-1', content: [{ type: 'text', text: 'hello' }] },
+        expect.any(Number)
+      );
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(messageQueue.clear).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      expect(ctx.stateManager.beginTerminalIdle).not.toHaveBeenCalled();
+      expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
+    });
+
     test('retries transient connection errors once with prompt re-delivery', async () => {
       const transientSendPrompt = async function* (
         _prompt: unknown,

@@ -36,6 +36,7 @@ import { AcpProvider } from '../providers/acp-provider.ts';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns.ts';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery.ts';
 import { assessLimitError } from '../agent/limit-error-classifier.ts';
+import { isNetworkUnreachableError } from '../agent/network-outage-pause.ts';
 import { isMeaningfulSdkStartupProgress } from '../agent/sdk-startup-progress.ts';
 import type { SdkStartExitInfo } from '../agent/sdk-start-terminal.ts';
 import {
@@ -1109,6 +1110,7 @@ export class AcpQueryRunner {
       const errorText = String(error);
       const startupFailedByErrorResult =
         !startupWatchFirstMessageSeen &&
+        !isNetworkUnreachableError(errorText) &&
         (acpProcessExit !== null
           ? !isAcpAuthOrLimitError(errorText)
           : !isAcpProviderClassifiedError(errorText) && startupWatchSawErrorResult);
@@ -1236,6 +1238,25 @@ export class AcpQueryRunner {
     const isTransientConnectionError = TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) =>
       errorMessage.includes(substr)
     );
+
+    if (
+      !isStartupTimeout &&
+      !isQueryInterrupted &&
+      isNetworkUnreachableError(errorMessage) &&
+      !(this.ctx.isLimitRecoveryPending?.() ?? false)
+    ) {
+      logger.warn(`Model provider unreachable; pausing the ACP turn: ${errorMessage}`);
+      if (
+        await this.ctx.onNetworkOutage?.(
+          errorMessage,
+          this._lastConsumedUserMessage,
+          queryGeneration
+        )
+      ) {
+        recoveryState.rateLimitCooldownScheduled = true;
+        return;
+      }
+    }
 
     if (
       (isStartupTimeout || (isTransientConnectionError && !isQueryInterrupted)) &&

@@ -636,6 +636,41 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('network cooldown held prompt', () => {
+    const lastPersisted = () =>
+      JSON.parse(
+        updateSessionMock.mock.calls[updateSessionMock.mock.calls.length - 1][1].processingState
+      );
+
+    test('persists the held prompt with the network cooldown but never publishes it', async () => {
+      await manager.setRateLimitCooldown({
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: 5_000,
+        reason: 'network',
+        messageId: 'held-uuid',
+        heldPrompt: { uuid: 'held-uuid', content: 'ship it' },
+      });
+
+      expect(lastPersisted().heldPrompt).toEqual({ uuid: 'held-uuid', content: 'ship it' });
+      expect(manager.getState()).not.toHaveProperty('heldPrompt');
+    });
+
+    test('drops the held prompt once the session leaves the cooldown', async () => {
+      await manager.setRateLimitCooldown({
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: 5_000,
+        reason: 'network',
+        heldPrompt: { uuid: 'held-uuid', content: 'ship it' },
+      });
+      await manager.setIdle();
+      await manager.setRateLimitCooldown({ retryCount: 1, maxRetries: 3, retryAt: 9_000 });
+
+      expect(lastPersisted()).not.toHaveProperty('heldPrompt');
+    });
+  });
+
   describe('rate-limit-episode cooldown owner filter (B5e)', () => {
     test('a rate-limit cooldown bound to a stale generation is not persisted', async () => {
       manager.noteQueryOwnerGeneration(2);
