@@ -70,7 +70,7 @@ export function requirePublicationNews<T>(
       reason: {
         accepted: false,
         reason: 'reply_limit',
-        detail: `Already replied ${prior.length} times to this ask in this turn; end the turn.`,
+        detail: `Your ${prior.length} replies to this ask this turn are already delivered to the human; nothing more is needed. Do not publish or read the snapshot again; end the turn now.`,
       },
     };
   return { value };

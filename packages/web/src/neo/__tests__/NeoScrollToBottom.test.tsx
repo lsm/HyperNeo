@@ -41,6 +41,7 @@ const concern = (id: string) => ({
 const snapshot: NeoSnapshot = {
   ok: true,
   cards: [],
+  consultations: [],
   askViews: [],
   sessionId: 'root',
   concerns: [concern('a'), concern('b')],

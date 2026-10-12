@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import type { NeoAsk, NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoCardView, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import {
   compactNeoSnapshotAsks,
   compactNeoSnapshotCards,
+  fitNeoSnapshotBudget,
 } from '../../../../src/lib/neo/snapshot-compact.ts';
 
 const ask: NeoAsk = {
@@ -95,5 +96,151 @@ describe('compactNeoSnapshotCards', () => {
       doneWhen: null,
       continuedMessage: null,
     });
+  });
+});
+
+describe('fitNeoSnapshotBudget', () => {
+  const work = (id: string) => ({
+    id,
+    requestKey: id,
+    concernId: null,
+    originSessionId: 'root',
+    originMessageId: null,
+    title: id,
+    instruction: 'i'.repeat(1000),
+    sessionId: null,
+    status: 'reported' as const,
+    report: 'r'.repeat(3000),
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  const view = (askId: string) => ({
+    askId,
+    group: 'running' as const,
+    label: 'Working on it',
+    settled: false,
+    needsYou: false,
+    done: 0,
+    total: 1,
+    workIds: [],
+    doneWorkIds: [],
+    summary: null,
+  });
+  const snapshot = (open: number, settled: number): NeoSnapshot => {
+    const asks = [
+      ...Array.from({ length: open }, (_, n) => ({ ...ask, id: `o${n}`, workIds: [`ow${n}`] })),
+      ...Array.from({ length: settled }, (_, n) => ({
+        ...ask,
+        id: `s${n}`,
+        status: 'achieved' as const,
+        settledAt: 3,
+        workIds: [`sw${n}`],
+      })),
+    ];
+    const ids = asks.flatMap((item) => item.workIds);
+    return {
+      ok: true,
+      sessionId: 'neo:root',
+      concerns: [],
+      consultations: [],
+      work: ids.map(work),
+      asks,
+      cards: ids.map((id) => ({ ...card, workId: id, phase: 'reported' as const })),
+      askViews: asks.map((item) => view(item.id)),
+    };
+  };
+
+  test('leaves a snapshot under budget untouched', () => {
+    const small = snapshot(1, 1);
+    expect(fitNeoSnapshotBudget(small, 1_000_000)).toBe(small);
+  });
+
+  test('drops settled asks and their finished cards first, and says so', () => {
+    const fitted = fitNeoSnapshotBudget(snapshot(2, 8), 60_000);
+    expect(fitted.asks?.map((item) => item.id)).toEqual(['o0', 'o1']);
+    expect(fitted.work.map((item) => item.id)).toEqual(['ow0', 'ow1']);
+    expect(fitted.cards.map((item) => item.workId)).toEqual(['ow0', 'ow1']);
+    expect(fitted.askViews.map((item) => item.askId)).toEqual(['o0', 'o1']);
+    expect(fitted.trimmed).toContain('neo.snapshot {askId}');
+  });
+
+  test('cuts long text, then keeps only the newest open asks until it fits', () => {
+    const fitted = fitNeoSnapshotBudget(snapshot(20, 0), 40_000);
+    expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(40_000);
+    expect(fitted.asks?.[0].id).toBe('o0');
+    expect(fitted.trimmed).toContain(
+      `${20 - (fitted.asks?.length ?? 0)} older open asks are also left out`
+    );
+    expect(fitted.work.every((item) => item.instruction.length <= 300)).toBe(true);
+  });
+
+  test('falls back to identities when one ask alone is too big, and says so', () => {
+    const huge = snapshot(1, 0);
+    huge.asks = huge.asks?.map((item) => ({
+      ...item,
+      doneItems: Array.from({ length: 400 }, (_, n) => ({
+        ...item.doneItems![0],
+        id: `i${n}`,
+        text: 't'.repeat(200),
+        options: Array.from({ length: 10 }, () => 'o'.repeat(100)),
+      })),
+    }));
+    const fitted = fitNeoSnapshotBudget(huge, 40_000);
+    expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(40_000);
+    expect(fitted.trimmed).toContain('only ask and card identities');
+  });
+
+  test('the trimmed note never pushes the result past the budget', () => {
+    const big = snapshot(30, 30);
+    for (let budget = 2_000; budget <= 40_000; budget += 397) {
+      const fitted = fitNeoSnapshotBudget(big, budget);
+      expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(budget);
+    }
+  });
+
+  test('the last-resort fallbacks still carry the required consultations list', () => {
+    expect(fitNeoSnapshotBudget(snapshot(5, 5), 10).consultations).toEqual([]);
+    expect(fitNeoSnapshotBudget(snapshot(5, 5), 10, { focused: true }).consultations).toEqual([]);
+  });
+
+  test('a single-ask read keeps that ask even when it is settled', () => {
+    const focused = snapshot(0, 1);
+    focused.work = focused.work.map((item) => ({ ...item, report: 'r'.repeat(60_000) }));
+    const fitted = fitNeoSnapshotBudget(focused, 40_000, { focused: true });
+    expect(fitted.asks?.map((item) => item.id)).toEqual(['s0']);
+    expect(fitted.trimmed).toContain('returns the same');
+    expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(40_000);
+  });
+
+  test('stays within budget in bytes even with one ask of long checklist evidence', () => {
+    const heavy = snapshot(1, 0);
+    heavy.asks = heavy.asks?.map((item) => ({
+      ...item,
+      doneItems: Array.from({ length: 12 }, (_, n) => ({
+        ...item.doneItems![0],
+        id: `i${n}`,
+        evidence: '证'.repeat(4000),
+      })),
+    }));
+    heavy.concerns = Array.from({ length: 40 }, (_, n) => ({
+      id: `c${n}`,
+      title: `Concern ${n}`,
+      summary: '摘'.repeat(1000),
+      context: '',
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }));
+    heavy.cards = Array.from({ length: 10 }, (_, n) => ({
+      ...card,
+      workId: `ow${n}`,
+      goal: 'g'.repeat(1000),
+      doneWhen: 'd'.repeat(2000),
+      continuedMessage: 'c'.repeat(1000),
+    }));
+    heavy.concerns = heavy.concerns.map((concern) => ({ ...concern, context: '境'.repeat(4000) }));
+    const fitted = fitNeoSnapshotBudget(heavy, 40_000);
+    expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(40_000);
+    expect(fitted.asks?.[0].doneItems).toHaveLength(12);
   });
 });
