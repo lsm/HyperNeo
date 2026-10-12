@@ -83,6 +83,7 @@ import {
   driverTargetDaemon,
   NeoDriverTargetSchema,
   readNeoDriverAdapters,
+  neoNoteChecklist,
   readNeoStartFolder,
   requireNeoDriverVerb,
   requireNeoStartFolder,
@@ -291,7 +292,17 @@ const SnapshotOk = z.object({
   trimmed: z.string().optional(),
 } satisfies ZodShape<NeoSnapshot>);
 const Snapshot = z.union([Failure, SnapshotOk]);
-const WorkResult = z.union([Failure, z.object({ ok: z.literal(true), work: Work })]);
+const WorkAskView = z.object({
+  id: z.string(),
+  status: z.string(),
+  outcome: z.string().nullable(),
+  items: z.array(z.object({ id: z.string(), state: z.string(), text: z.string().optional() })),
+  cards: z.array(z.object({ id: z.string(), title: z.string(), status: z.string() })),
+});
+const WorkResult = z.union([
+  Failure,
+  z.object({ ok: z.literal(true), work: Work, ask: WorkAskView.nullable().optional() }),
+]);
 const Scope = z
   .object({ concernId: z.string().min(1).optional(), askId: z.string().min(1).optional() })
   .default({});
@@ -533,6 +544,21 @@ export function requireNeoWorkRetryCaller(work: NeoWork, caller: OperationCaller
   return requireNeoWorkProposer(work, caller, 'retry');
 }
 
+export function neoWorkAskView(
+  ask: NeoAsk | null,
+  works: readonly Pick<NeoWork, 'id' | 'title' | 'status'>[]
+): z.infer<typeof WorkAskView> | null {
+  return ask
+    ? {
+        id: ask.id,
+        status: ask.status,
+        outcome: ask.outcome,
+        items: neoNoteChecklist(ask),
+        cards: works.map(({ id, title, status }) => ({ id, title, status })),
+      }
+    : null;
+}
+
 export function neoAskScope(ask: Pick<NeoAsk, 'concernId'> | null): string | null | undefined {
   return ask ? ask.concernId : undefined;
 }
@@ -631,6 +657,19 @@ export function createNeoOperations(service: NeoService) {
       .pipe(action, ['input', 'admission'], 'admission')
       .endAsync('admission') as (input: I, caller: OperationCaller) => Promise<O | Rejection>;
   }
+  function withAskView<T extends { ok: boolean }>(result: T): T {
+    if (!result.ok || !('work' in result)) return result;
+    const work = (result as { work: NeoWork }).work;
+    const ask = service.askRecords.forWork(work.id);
+    return {
+      ...result,
+      ask: neoWorkAskView(
+        ask,
+        ask ? ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []) : []
+      ),
+    };
+  }
+
   function snapshot(caller: OperationCaller, requested?: string, askId?: string) {
     const built = buildSnapshot(caller, requested, askId);
     return built.ok && caller.source !== 'rpc'
@@ -1618,7 +1657,9 @@ export function createNeoOperations(service: NeoService) {
         if ('reason' in reserved) return reserved.reason;
         try {
           const result = await propose(input, caller);
-          return 'accepted' in result ? { ok: false as const, reason: result.reason } : result;
+          return 'accepted' in result
+            ? { ok: false as const, reason: result.reason }
+            : withAskView(result);
         } finally {
           if (reserved.value) adopting.delete(reserved.value);
         }
@@ -1640,7 +1681,7 @@ export function createNeoOperations(service: NeoService) {
       inputSchema: WorkId,
       resultSchema: WorkResult,
       policy: { safetyClass: 'human_only' },
-      execute: start,
+      execute: async (input, caller) => withAskView(await start(input, caller)),
     }),
     defineOperation({
       name: 'neo.work.continue',
@@ -1649,7 +1690,7 @@ export function createNeoOperations(service: NeoService) {
       inputSchema: Continue,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: continueWork,
+      execute: async (input, caller) => withAskView(await continueWork(input, caller)),
     }),
     defineOperation({
       name: 'neo.work.retry',
@@ -1658,7 +1699,7 @@ export function createNeoOperations(service: NeoService) {
       inputSchema: WorkId,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: retry,
+      execute: async (input, caller) => withAskView(await retry(input, caller)),
     }),
     defineOperation({
       name: 'neo.work.close',
@@ -1667,7 +1708,7 @@ export function createNeoOperations(service: NeoService) {
       inputSchema: Close,
       resultSchema: WorkResult,
       policy: { safetyClass: 'human_only' },
-      execute: close,
+      execute: async (input, caller) => withAskView(await close(input, caller)),
     }),
     defineOperation({
       name: 'neo.work.cancel',
@@ -1676,7 +1717,7 @@ export function createNeoOperations(service: NeoService) {
       inputSchema: WorkId,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: cancel,
+      execute: async (input, caller) => withAskView(await cancel(input, caller)),
     }),
   ];
 }

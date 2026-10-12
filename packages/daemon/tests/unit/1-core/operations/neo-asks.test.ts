@@ -200,6 +200,29 @@ describe('neo.ask operations', () => {
     }
   });
 
+  test('a work operation answers with its ask, so Neo needs no follow-up read', async () => {
+    const askId = await openAsk();
+    const proposed = await propose('card-1', askId);
+    const card = proposed.value!.work!.id;
+    expect(proposed).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          id: askId,
+          status: 'open',
+          items: [
+            { id: 'i1', state: 'pending', text: 'merged to dev' },
+            { id: 'i2', state: 'pending', text: 'CI green' },
+          ],
+          cards: [{ id: card, title: 'Fix it', status: 'proposed' }],
+        },
+      },
+    });
+    expect(await invoke('neo.work.cancel', { id: card })).toMatchObject({
+      value: { ok: true, ask: { id: askId, cards: [{ id: card, status: 'cancelled' }] } },
+    });
+  });
+
   test('opens one ask per request key and shows its cards in the snapshot', async () => {
     const askId = await openAsk();
     expect(await invoke('neo.ask.open', opening)).toMatchObject({
