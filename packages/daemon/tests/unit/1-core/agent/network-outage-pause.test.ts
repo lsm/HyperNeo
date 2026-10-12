@@ -47,14 +47,16 @@ describe('networkProbeHost', () => {
     expect(networkProbeHost('API Error: Connection error.', 'open.bigmodel.cn')).toBe(
       'open.bigmodel.cn'
     );
+    expect(networkProbeHost('API Error: Connection error.', false)).toBeNull();
+    expect(networkProbeHost('getaddrinfo ENOTFOUND chatgpt.com', false)).toBe('chatgpt.com');
   });
 });
 
 describe('providerProbeHost', () => {
   test('takes the provider host from its base URL, but never a local bridge', () => {
     expect(providerProbeHost('https://open.bigmodel.cn/api/anthropic')).toBe('open.bigmodel.cn');
-    expect(providerProbeHost('http://127.0.0.1:51234')).toBeNull();
-    expect(providerProbeHost('http://localhost:8080')).toBeNull();
+    expect(providerProbeHost('http://127.0.0.1:51234')).toBe(false);
+    expect(providerProbeHost('http://localhost:8080')).toBe(false);
     expect(providerProbeHost(undefined)).toBeNull();
   });
 });
@@ -100,7 +102,7 @@ describe('resultNetworkOutage', () => {
 });
 
 describe('NetworkOutagePause', () => {
-  function harness(reachable: () => boolean) {
+  function harness(reachable: () => boolean, fallback: string | false | null = null) {
     let now = 1_000;
     const timers: Array<() => void> = [];
     const events: string[] = [];
@@ -111,7 +113,7 @@ describe('NetworkOutagePause', () => {
     const resumed: unknown[] = [];
     const pause = new NetworkOutagePause({
       now: () => now,
-      fallbackHost: () => null,
+      fallbackHost: () => fallback,
       probe: async (host) => {
         events.push(`probe ${host}`);
         return reachable();
@@ -195,6 +197,18 @@ describe('NetworkOutagePause', () => {
     expect(h.events.filter((event) => event === 'popup')).toEqual(['popup']);
     expect(h.events).toContain('probe 10.0.0.5');
     expect(h.pause.isActive()).toBe(true);
+  });
+
+  test('with only a local bridge to blame, it holds without probing a host that proves nothing', async () => {
+    const h = harness(() => true, false);
+    await h.pause.start('API Error: Connection error.', prompt);
+    await h.tick(NETWORK_PROBE_EVERY_MS);
+
+    expect(h.events.filter((event) => event.startsWith('probe'))).toEqual([]);
+    expect(h.resumed).toEqual([]);
+    expect(h.pause.isActive()).toBe(true);
+    expect(await h.pause.resumeNow()).toBe(true);
+    expect(h.resumed).toEqual([prompt]);
   });
 
   test('a cancel during the popup leaves the session out of its hold', async () => {

@@ -685,7 +685,7 @@ export class AgentSession
         );
       },
       resume: async (prompt) => {
-        await this.stateManager.setIdle();
+        await this.stateManager.setIdle(prompt ? { suppressDeliveryWaiters: true } : undefined);
         if (prompt)
           await this.lifecycleManager.startQueryAndEnqueue(prompt.uuid, prompt.content, undefined, {
             prepend: true,

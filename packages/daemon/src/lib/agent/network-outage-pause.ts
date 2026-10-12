@@ -19,17 +19,21 @@ export function isNetworkUnreachableError(text: string): boolean {
   return NETWORK_UNREACHABLE_RE.test(text);
 }
 
-export function networkProbeHost(text: string, fallback: string | null = null): string {
+export function networkProbeHost(
+  text: string,
+  fallback: string | false | null = null
+): string | null {
   const match = PROBE_HOST_RE.exec(text);
   const host = match?.[1] ?? match?.[2];
-  return host && !host.includes(':') ? host : (fallback ?? DEFAULT_PROBE_HOST);
+  if (host && !host.includes(':')) return host;
+  return fallback === false ? null : (fallback ?? DEFAULT_PROBE_HOST);
 }
 
-export function providerProbeHost(baseUrl: string | undefined): string | null {
+export function providerProbeHost(baseUrl: string | undefined): string | false | null {
   if (!baseUrl) return null;
   try {
     const host = new URL(baseUrl).hostname;
-    return /^(?:localhost|127\.|\[?::1\]?$|0\.0\.0\.0$)/.test(host) ? null : host;
+    return /^(?:localhost|127\.|\[?::1\]?$|0\.0\.0\.0$)/.test(host) ? false : host;
   } catch {
     return null;
   }
@@ -68,7 +72,7 @@ export async function probeNetworkHost(host: string): Promise<boolean> {
 export interface NetworkOutageDeps {
   now(): number;
   probe(host: string): Promise<boolean>;
-  fallbackHost(): string | null;
+  fallbackHost(): string | false | null;
   schedule(run: () => void, delayMs: number): () => void;
   isHeld(): boolean;
   hold(retryAt: number, messageId: string | undefined): Promise<void>;
@@ -83,7 +87,7 @@ export class NetworkOutagePause {
   private popupShown = false;
   private active = false;
   private prompt: HeldPrompt | null = null;
-  private host = DEFAULT_PROBE_HOST;
+  private host: string | null = DEFAULT_PROBE_HOST;
   private errorText = '';
   private cancelProbe: (() => void) | null = null;
   private failedResumes = 0;
@@ -102,7 +106,11 @@ export class NetworkOutagePause {
     this.prompt = prompt ?? this.prompt;
     this.host = networkProbeHost(errorText, this.deps.fallbackHost());
     this.errorText = errorText;
-    this.deps.log(`network outage: holding the turn and probing ${this.host}`);
+    this.deps.log(
+      this.host
+        ? `network outage: holding the turn and probing ${this.host}`
+        : 'network outage: holding the turn; no host to probe, waiting for Retry Now or a new message'
+    );
     await this.holdUntil(this.deps.now() + networkProbeDelayMs(this.failedResumes));
     if (firstFailure && notify) await this.deps.notice(NETWORK_OUTAGE_NOTICE);
   }
@@ -158,7 +166,7 @@ export class NetworkOutagePause {
       this.stop();
       return;
     }
-    if (await this.deps.probe(this.host)) {
+    if (this.host !== null && (await this.deps.probe(this.host))) {
       if (!this.active) return;
       this.deps.log(`network outage: ${this.host} is reachable again; resuming the turn`);
       await this.deps.resume(this.takePrompt());
