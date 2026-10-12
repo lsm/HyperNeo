@@ -36,6 +36,7 @@ import {
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
   describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+  guidance: NEO_PACK_CODING_INSTRUCTIONS,
 };
 
 export const CODING_CHECK_PR_MERGED = 'coding.pr_merged';
@@ -65,7 +66,7 @@ type NeoCardPrPlan = { owned: NeoCardPrOwned[] };
 
 const ownedUrls = (plan: NeoCardPrPlan) => plan.owned.map((item) => item.url);
 const stripReadTimes = (prs: readonly NeoWorkPr[]) =>
-  prs.map(({ createdAt: _createdAt, title: _title, branch: _branch, ...pr }) => pr);
+  prs.map(({ createdAt: _createdAt, title: _title, branch: _branch, refs: _refs, ...pr }) => pr);
 
 export function cachedNeoCardPrRead(row: NeoWorkPrRow | null): NeoCardPrRead {
   return { row, ok: !row || row.readOkAt >= row.readAt };

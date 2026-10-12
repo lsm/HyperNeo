@@ -24,6 +24,7 @@ const taskB = { kind: 'task', id: 'draft:β/B' };
 const source: NeoSnapshot = {
   ok: true,
   cards: [],
+  consultations: [],
   askViews: [],
   sessionId: 'root',
   concerns: ['A', 'B'].map((id) => ({

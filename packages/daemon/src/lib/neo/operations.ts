@@ -59,7 +59,12 @@ import {
   createNeoConversationImageReadOperation,
 } from './conversation-ask-read-operation.ts';
 import { createNeoDraftRecoveryOperation } from './draft-recovery-operation.ts';
-import { compactNeoSnapshotAsks, compactNeoSnapshotCards } from './snapshot-compact.ts';
+import {
+  compactNeoSnapshotAsks,
+  compactNeoSnapshotCards,
+  fitNeoSnapshotBudget,
+  NEO_MCP_SNAPSHOT_BUDGET,
+} from './snapshot-compact.ts';
 import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import {
   admitNeoWorkOrigin,
@@ -283,6 +288,7 @@ const SnapshotOk = z.object({
       } satisfies ZodShape<NeoReceiptAskOrigin>)
     )
     .optional(),
+  trimmed: z.string().optional(),
 } satisfies ZodShape<NeoSnapshot>);
 const Snapshot = z.union([Failure, SnapshotOk]);
 const WorkResult = z.union([Failure, z.object({ ok: z.literal(true), work: Work })]);
@@ -625,6 +631,12 @@ export function createNeoOperations(service: NeoService) {
       .endAsync('admission') as (input: I, caller: OperationCaller) => Promise<O | Rejection>;
   }
   function snapshot(caller: OperationCaller, requested?: string, askId?: string) {
+    const built = buildSnapshot(caller, requested, askId);
+    return built.ok && caller.source !== 'rpc'
+      ? fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET, { focused: !!askId })
+      : built;
+  }
+  function buildSnapshot(caller: OperationCaller, requested?: string, askId?: string) {
     const focus = askId ? service.askRecords.get(askId) : null;
     if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
@@ -1578,7 +1590,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text.',
+        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },

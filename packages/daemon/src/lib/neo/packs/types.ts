@@ -10,11 +10,13 @@ export type NeoPackCheck = (
 export interface NeoPackBrief {
   id: string;
   describe: string;
+  guidance?: string;
 }
 
 export interface NeoPackFragment {
   id: string;
   instructions: string;
+  inPrompt?: boolean;
 }
 
 export interface NeoPack extends NeoPackBrief {

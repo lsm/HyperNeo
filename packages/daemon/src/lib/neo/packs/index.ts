@@ -16,7 +16,11 @@ export function neoEnabledPacks(settings?: { packs?: string[] }): string[] {
 let fileBriefs: readonly NeoPackBrief[] = [];
 
 export function adoptNeoFilePacks(packs: readonly NeoPack[]): readonly NeoPack[] {
-  fileBriefs = packs.map(({ id, describe }) => ({ id, describe }));
+  fileBriefs = packs.map((pack) => ({
+    id: pack.id,
+    describe: pack.describe,
+    guidance: pack.instructions(null) ?? undefined,
+  }));
   return packs;
 }
 

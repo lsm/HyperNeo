@@ -161,6 +161,7 @@ import {
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
 import {
   neoEnabledPacks,
+  neoSettingsPackBriefs,
   neoPackBriefs,
   neoPackAskCardEvidence,
   neoPackChecks,
@@ -1789,7 +1790,15 @@ export class NeoService {
   }
 
   askPackFragment(ask: NeoAsk | null | undefined): NeoPackFragment | null {
-    return neoPackFragment(ask, this.installedPacks());
+    const fragment = neoPackFragment(ask, this.installedPacks());
+    return fragment
+      ? {
+          ...fragment,
+          inPrompt: neoSettingsPackBriefs(this.db.getGlobalSettings?.().neo).some(
+            (pack) => pack.id === fragment.id && !!pack.guidance
+          ),
+        }
+      : null;
   }
 
   private get cardPrDeps(): NeoCardPrDeps {
@@ -2196,7 +2205,7 @@ export class NeoService {
         : '';
     const packNote = this.askPackFragment(this.askRecords.forWork(work.id));
     const packLine = packNote
-      ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: packNote.id })}\n${packNote.instructions}\n`
+      ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: packNote.id })}${packNote.inPrompt ? '' : `\n${packNote.instructions}`}\n`
       : '';
     const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote, summary: NEO_WORK_SUMMARY_NOTE })}${packLine}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, concernId: work.concernId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
     for (const target of targets) {
@@ -2216,7 +2225,9 @@ export class NeoService {
     stored: { prs: readonly NeoWorkPr[] } | null
   ): Promise<NeoCardPrCandidate[]> {
     const goal = this.workGoals.get(work.id);
-    const brief = [work.instruction, goal?.goal, goal?.doneWhen].filter(Boolean).join('\n');
+    const brief = [work.title, work.instruction, goal?.goal, goal?.doneWhen]
+      .filter(Boolean)
+      .join('\n');
     return planNeoCardPrCandidates({
       report: work.report,
       brief,
