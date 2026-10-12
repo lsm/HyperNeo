@@ -122,7 +122,7 @@ const Open = z
     title: z.string().trim().min(1).max(160),
     ask: z.string().trim().min(1).max(4000),
     doneWhen: z.string().trim().min(1).max(2000).optional(),
-    doneItems: z.array(Item).min(1).max(12).optional(),
+    doneItems: z.array(Item).min(1).optional(),
     doneSource: z.string().trim().min(1).max(160),
     pack: z.string().trim().min(1).max(80).optional(),
   })
@@ -185,8 +185,8 @@ const Fold = z
 const Edit = z
   .object({
     askId: z.string().min(1),
-    add: z.array(Item).max(12).default([]),
-    remove: z.array(z.string().min(1)).max(12).default([]),
+    add: z.array(Item).default([]),
+    remove: z.array(z.string().min(1)).default([]),
   })
   .refine((input) => input.add.length || input.remove.length, 'Pass items to add or remove.');
 
@@ -731,14 +731,6 @@ export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gat
     return { reason: fail(`item_not_found: ${missing.join(', ')} is not on this checklist.`) };
   const left = active.length - new Set(input.remove).size + input.add.length;
   if (left < 1) return { reason: fail('checklist_empty: keep at least one item.') };
-  if (left > Math.max(12, active.length))
-    return {
-      reason: fail(
-        active.length > 12
-          ? `checklist_full: this ask holds ${active.length} items from a fold and takes no new items until it has 12 or fewer.`
-          : 'checklist_full: an ask holds at most 12 items.'
-      ),
-    };
   const kept = active.filter((item) => !input.remove.includes(item.id));
   return countNeoAskWatches([...kept, ...input.add]) > NEO_ASK_WATCH_MAX
     ? {
@@ -749,21 +741,11 @@ export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gat
     : { value: ask };
 }
 
-export const NEO_ASK_FOLD_MAX = 24;
-
-export function requireNeoAskFoldRoom(
+export function requireNeoAskFoldTarget(
   source: NeoAsk,
   target: NeoAsk | Rejection
 ): Gate<{ source: NeoAsk; target: NeoAsk }> {
-  if ('ok' in target) return { reason: target };
-  const active = (ask: NeoAsk) => (ask.doneItems ?? []).filter((item) => !item.removed).length;
-  return active(source) + active(target) > NEO_ASK_FOLD_MAX
-    ? {
-        reason: fail(
-          `checklist_full: folding would give ask ${target.id} ${active(source) + active(target)} items; a fold keeps at most ${NEO_ASK_FOLD_MAX}.`
-        ),
-      }
-    : { value: { source, target } };
+  return 'ok' in target ? { reason: target } : { value: { source, target } };
 }
 
 export function planNeoAskFold(
@@ -1357,7 +1339,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       ['input', 'caller'],
       'target'
     )
-    .pipe(requireNeoAskFoldRoom, ['admission', 'target'], 'result:admission')
+    .pipe(requireNeoAskFoldTarget, ['admission', 'target'], 'result:admission')
     .pipe(
       (pair: { source: NeoAsk; target: NeoAsk }) => ({
         folded: service.askRecords.fold(
@@ -1388,7 +1370,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.fold',
       description:
-        "Fold one open ask into another when they are the same request, such as a duplicate opened by mistake: the folded ask's checklist items and cards move to intoAskId, and the folded ask closes as superseded. Both asks must be open and yours. Every item moves as it is, so the result may pass 12 items, up to 24; it then takes no new items until trimmed below 12.",
+        "Fold one open ask into another when they are the same request, such as a duplicate opened by mistake: the folded ask's checklist items and cards move to intoAskId, and the folded ask closes as superseded. Both asks must be open and yours. Every item moves as it is.",
       inputSchema: Fold,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
