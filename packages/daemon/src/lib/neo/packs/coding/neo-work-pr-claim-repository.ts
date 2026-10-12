@@ -63,7 +63,13 @@ export class NeoWorkPrClaimRepository {
              score = COALESCE(excluded.score, neo_work_pr_claims.score)`
       );
       claims.forEach((claim, index) =>
-        upsert.run(workId, keys[index], claim.claim, claim.claimedAt, claim.score ?? null)
+        upsert.run(
+          workId,
+          keys[index],
+          claim.claim === 'opened' ? 'branch' : claim.claim,
+          claim.claimedAt,
+          claim.score ?? null
+        )
       );
     })();
   }

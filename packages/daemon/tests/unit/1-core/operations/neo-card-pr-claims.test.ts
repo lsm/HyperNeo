@@ -3,6 +3,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   beatsNeoPrClaim,
+  hasNeoUnattachedOpenedPrs,
   keepNeoCardPrReads,
   keepNeoUnbeatenPrs,
   neoPrMatchScore,
@@ -327,8 +328,64 @@ describe('keepNeoCardPrReads', () => {
   });
 });
 
+describe('PRs the worker session opened', () => {
+  const card = { id: 'me', createdAt: 100, title: 'Fix it', instruction: 'Fix it.' };
+
+  test('count as the worker’s own claim, newest first', () => {
+    expect(
+      planNeoCardPrCandidates({
+        report: `Opened ${pull(9)}.`,
+        brief: 'Fix it.',
+        branch: [],
+        opened: [pull(7), pull(8), pull(9)],
+        stored: [],
+      })
+    ).toEqual([
+      { url: pull(9), claim: 'opened' },
+      { url: pull(8), claim: 'opened' },
+      { url: pull(7), claim: 'opened' },
+    ]);
+    expect(
+      planNeoCardPrCandidates({
+        report: null,
+        brief: 'Fix it.',
+        branch: [],
+        opened: [pull(5), pull(6), pull(7)],
+        stored: [],
+      }).map((item) => item.url)
+    ).toEqual([pull(7), pull(6)]);
+  });
+
+  test('attach while open, and an old finished one from before the card is rejected for good', () => {
+    const opened = (n: number) => ({
+      url: pull(n),
+      claim: 'opened' as const,
+      claimedAt: 200,
+      claimed: false,
+      score: null,
+    });
+    const sorted = keepNeoCardPrReads(
+      card,
+      [opened(1), opened(2), opened(3)],
+      [pr(1, 50), { ...pr(2, 50), state: 'MERGED' }, { ...pr(3, 150), state: 'MERGED' }]
+    );
+    expect(sorted.kept.map((item) => item.url)).toEqual([pull(1), pull(3)]);
+    expect(sorted.rejected.map((item) => item.url)).toEqual([pull(2)]);
+    const rows = [claim({ workId: 'me', urlKey: pull(2).toLowerCase(), claim: 'rejected' })];
+    expect(planNeoCardPrOwnership(card, [{ url: pull(2), claim: 'opened' }], rows, 300)).toEqual(
+      []
+    );
+  });
+
+  test('are read again only when one is not on the card yet', () => {
+    expect(hasNeoUnattachedOpenedPrs([pull(1)], [{ url: pull(1).toUpperCase() }])).toBe(false);
+    expect(hasNeoUnattachedOpenedPrs([pull(1), pull(2)], [{ url: pull(1) }])).toBe(true);
+    expect(hasNeoUnattachedOpenedPrs([], [])).toBe(false);
+  });
+});
+
 describe('NeoWorkPrClaimRepository', () => {
-  test('replaces one card’s claims and lists every card’s claims on a PR', async () => {
+  test('replaces one card’s claims, stores an opened PR as a branch claim, and lists every card’s claims on a PR', async () => {
     const db = await createTestDb();
     try {
       const raw = db.getDatabase();
@@ -363,7 +420,7 @@ describe('NeoWorkPrClaimRepository', () => {
           score: null,
         },
       ]);
-      repo.replace('a', [{ url: pull(1), claim: 'branch', claimedAt: 9 }]);
+      repo.replace('a', [{ url: pull(1), claim: 'opened', claimedAt: 9 }]);
       expect(repo.forUrls([pull(1), pull(2)])).toEqual(
         expect.arrayContaining([
           {

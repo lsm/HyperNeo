@@ -59,6 +59,16 @@ export interface NeoWorkContinue {
   stalled: number;
 }
 
+export interface NeoWorkWake {
+  workId: string;
+  wakes: number;
+  note: string | null;
+  progress: string | null;
+  stalled: number;
+  wokeAt: number | null;
+  continuedWake: number | null;
+}
+
 export interface NeoWorkSupersession {
   workId: string;
   supersededBy: string;

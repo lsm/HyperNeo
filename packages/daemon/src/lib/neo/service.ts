@@ -44,6 +44,7 @@ import {
 } from '../../storage/repositories/neo-work-check-repository.ts';
 import { NeoCardPrRelayRepository } from '../../storage/repositories/neo-card-pr-relay-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
+import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
 import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
 import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
@@ -91,6 +92,7 @@ import {
   readDriverOutcome,
   driverAdoptedReport,
   readDriverLive,
+  readDriverOpenedPrs,
   readDriverSendBaseline,
   neoCardSent,
   readDriverSent,
@@ -116,10 +118,17 @@ import {
 } from './driver-work.ts';
 import {
   admitNeoWorkContinue,
+  type NeoContinueCaller,
   type NeoContinueDeps,
   type NeoContinueResult,
   sendNeoWorkContinue,
 } from './continue-work.ts';
+import {
+  isNeoCardDoneWhenMet,
+  isNeoHumanInputSince,
+  neoCardStalledWakes,
+  neoCardWakeProgress,
+} from './card-wake.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
 import {
@@ -151,7 +160,11 @@ import {
   type NeoBranchPrReader,
   type NeoWorkRepoReader,
 } from './packs/coding/branch-prs.ts';
-import { planNeoCardPrCandidates, type NeoCardPrCandidate } from './packs/coding/card-pr-claims.ts';
+import {
+  hasNeoUnattachedOpenedPrs,
+  planNeoCardPrCandidates,
+  type NeoCardPrCandidate,
+} from './packs/coding/card-pr-claims.ts';
 import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
 import { planNeoCardCheck } from './card-check.ts';
 import {
@@ -325,6 +338,7 @@ export class NeoService {
   readonly driverTargets: NeoWorkDriverTargetRepository;
   readonly workGoals: NeoWorkGoalRepository;
   readonly workContinues: NeoWorkContinueRepository;
+  readonly workWakes: NeoWorkWakeRepository;
   readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
@@ -388,6 +402,7 @@ export class NeoService {
   private readonly interruptedSessions = new Set<string>();
   private readonly continuing = new Set<string>();
   private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
+  private readonly cardOpenedPrs = new Map<string, string[]>();
   private readonly followReads = new Map<string, number>();
   private readonly followWork = (superpipe({})('neo-work-follow') as PipelineAPI)
     .input(['work', 'now'])
@@ -585,6 +600,7 @@ export class NeoService {
     this.driverTargets = new NeoWorkDriverTargetRepository(db.getDatabase());
     this.workGoals = new NeoWorkGoalRepository(db.getDatabase());
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
+    this.workWakes = new NeoWorkWakeRepository(db.getDatabase());
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged);
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
@@ -1100,8 +1116,13 @@ export class NeoService {
     );
   }
 
-  async continueWork(id: string, message: string, now = Date.now()): Promise<NeoContinueResult> {
-    const admitted = admitNeoWorkContinue(this.continueDeps, id, now);
+  async continueWork(
+    id: string,
+    message: string,
+    now = Date.now(),
+    caller: NeoContinueCaller = { guarded: false, human: false }
+  ): Promise<NeoContinueResult> {
+    const admitted = admitNeoWorkContinue(this.continueDeps, id, now, caller);
     if ('ok' in admitted) return admitted;
     this.continuing.add(id);
     try {
@@ -1114,7 +1135,21 @@ export class NeoService {
   private readonly continueDeps: NeoContinueDeps = {
     readWork: (id) => this.repo.getWork(id),
     readRef: (id) => this.driverTargets.readRef(id),
-    readContinued: (id) => this.workContinues.get(id),
+    readTurn: (work, caller) => {
+      const ask = this.askRecords.forWork(work.id);
+      return {
+        guarded: caller.guarded,
+        human:
+          caller.human ||
+          isNeoHumanInputSince(
+            new NeoRoutingLogRepository(this.db.getDatabase()).lastAskedAt(work.originSessionId),
+            this.workContinues.get(work.id)?.continuedAt ?? work.createdAt
+          ),
+        doneWhenMet: isNeoCardDoneWhenMet(work, ask),
+        prs: this.workPrs.get(work.id)?.prs ?? [],
+        wake: this.workWakes.get(work.id),
+      };
+    },
     readProgress: (work) => this.workProgress(work),
     readAsk: (id) => this.askRecords.forWork(id),
     isContinuing: (id) => this.continuing.has(id),
@@ -1127,6 +1162,8 @@ export class NeoService {
     },
     recordContinue: (id, message, now, progress) =>
       this.workContinues.record(id, message, now, progress)?.count ?? null,
+    recordWakeContinue: (work, human) =>
+      this.workWakes.recordContinue(work.id, this.cardWakeProgress(work), human),
     reserveAskContinue: (ask) => this.askRecords.reserveApprovedContinue(ask.id),
     refundAskContinue: (ask) => this.askRecords.refundApprovedContinue(ask.id),
     reopen: (id, current, report) =>
@@ -1305,6 +1342,18 @@ export class NeoService {
     await this.reclaimCardPrs();
   }
 
+  private async attachOpenedPrs(workId: string): Promise<void> {
+    const work = this.repo.getWork(workId);
+    const stored = this.workPrs.get(workId);
+    if (
+      !work ||
+      !this.packs().some((pack) => pack.id === CODING_PACK_BRIEF.id) ||
+      !hasNeoUnattachedOpenedPrs(this.cardOpenedPrs.get(workId) ?? [], stored?.prs ?? [])
+    )
+      return;
+    await readNeoCardPrs(this.cardPrDeps, work, stored, Date.now());
+  }
+
   private async reclaimCardPrs(): Promise<void> {
     if (!this.packs().some((pack) => pack.id === CODING_PACK_BRIEF.id)) return;
     const works = this.workPrClaims
@@ -1334,6 +1383,9 @@ export class NeoService {
       if (work.status !== 'queued') continue;
       await this.settleDriverWork(work, ref).catch((error) =>
         this.log.warn('Driver work refresh pending', error)
+      );
+      await this.attachOpenedPrs(work.id).catch((error) =>
+        this.log.warn('Card opened pull request read pending', error)
       );
     }
     for (const { work } of cards) {
@@ -1472,7 +1524,8 @@ export class NeoService {
         }
         const note = neoCardPrNeoNote(work, attention.items, sent.reason);
         if (!note || !this.db.getSession(work.originSessionId)) return sent;
-        await this.deliverToOrigin(
+        await this.wakeCards(
+          [work.id],
           work.originSessionId,
           `neo-card-pr:${work.id}:${hashString32(relay.signature).toString(36)}`,
           note,
@@ -1580,7 +1633,8 @@ export class NeoService {
         read: { cards: ReturnType<NeoService['askIdleCards']> },
         note: { id: string }
       ) => {
-        await this.deliverToOrigin(
+        await this.wakeCards(
+          read.cards.map((card) => card.id),
           ask.originSessionId,
           note.id,
           neoAskIdleNote(ask, read.cards),
@@ -1826,7 +1880,6 @@ export class NeoService {
   private get cardPrDeps(): NeoCardPrDeps {
     return {
       readPrs: (urls) => this.readPrs(urls),
-      readRefStates: (refs) => this.readRefStates(refs),
       prCandidates: (work, stored) => this.cardPrCandidates(work, stored),
       claims: this.workPrClaims,
       workPrs: this.workPrs,
@@ -1900,19 +1953,32 @@ export class NeoService {
     return neoStalledContinues(this.workContinues.get(work.id), this.workProgress(work));
   }
 
+  private stalledWakes(workId: string): number {
+    return neoCardStalledWakes(this.workWakes.get(workId), false);
+  }
+
+  private cardWakeProgress(work: NeoWork): string {
+    return neoCardWakeProgress(this.workProgress(work), this.askRecords.forWork(work.id));
+  }
+
+  private recordCardWake(workId: string, note: string): void {
+    const work = this.repo.getWork(workId);
+    if (work && (work.status === 'queued' || work.status === 'reported'))
+      this.workWakes.recordWake(work.id, note, this.cardWakeProgress(work), Date.now());
+  }
+
   isContinueStalled(workId: string): boolean {
     const work = this.repo.getWork(workId);
     return (
       !!work &&
       (work.status === 'queued' || work.status === 'reported') &&
-      this.stalledContinues(work) >= NEO_WORK_STALLED_CONTINUES
+      this.stalledWakes(workId) >= NEO_WORK_STALLED_CONTINUES
     );
   }
 
   private continueBudget(work: NeoWork, now: number): string | null {
     return readNeoWorkContinueBudget(
-      this.workContinues.get(work.id),
-      this.workProgress(work),
+      this.stalledWakes(work.id),
       work.createdAt,
       this.askRecords.forWork(work.id),
       now
@@ -1933,7 +1999,8 @@ export class NeoService {
     }
     if (now - seen.seenAt < NEO_WORK_STALL_MS || !this.db.getSession(work.originSessionId)) return;
     const budget = this.continueBudget(work, now);
-    await this.deliverToOrigin(
+    await this.wakeCards(
+      [work.id],
       work.originSessionId,
       neoStallMessageId(work.id, live.lastActivityAt),
       driverStallNote(work, this.workDoneGoal(work.id), live.lastReply, budget),
@@ -1945,7 +2012,8 @@ export class NeoService {
     const now = Date.now();
     const reminder = decideStuckReminder(work.updatedAt, now);
     if (!reminder || !this.db.getSession(work.originSessionId)) return;
-    await this.deliverToOrigin(
+    await this.wakeCards(
+      [work.id],
       work.originSessionId,
       neoStallMessageId(work.id, reminder.due),
       driverStuckNote(
@@ -2272,6 +2340,7 @@ export class NeoService {
       report: work.report,
       brief,
       branch: await this.branchPrUrls(work.id),
+      opened: this.cardOpenedPrs.get(work.id) ?? [],
       stored: stored?.prs ?? [],
       refs: await this.cardPrRefs(work, brief),
     });
@@ -2421,7 +2490,7 @@ export class NeoService {
             continued,
             this.continueBudget(work, Date.now()),
             {
-              stalled: this.stalledContinues(work),
+              stalled: this.stalledWakes(work.id),
               prs: found.row?.prs,
               stale: options.stale ?? false,
               ready: options.ready ?? false,
@@ -2443,7 +2512,8 @@ export class NeoService {
     )
     .pipe(
       async (work: NeoWork, note: { id: string; content: string }) => {
-        await this.deliverToOrigin(
+        await this.wakeCards(
+          [work.id],
           work.originSessionId,
           note.id,
           note.content,
@@ -2503,18 +2573,35 @@ export class NeoService {
     );
   }
 
-  private invokeAsCard(work: NeoWork, name: string, input: Record<string, unknown>) {
-    return invokeOperation(
+  private async invokeAsCard(work: NeoWork, name: string, input: Record<string, unknown>) {
+    const outcome = await invokeOperation(
       this.sessions.getOperationRegistry(),
       name,
       input,
       driverWorkCaller(work)
     );
+    if (name === 'work.status') {
+      const opened = readDriverOpenedPrs(outcome);
+      if (opened.length) this.cardOpenedPrs.set(work.id, opened);
+    }
+    return outcome;
   }
 
   private consultationParent(item: NeoConsultation): NeoAskOrigin | null {
     const reviewed = neoReviewWorkId(item.id);
     return neoConsultationParent(item, reviewed ? this.repo.getWork(reviewed) : null);
+  }
+
+  private async wakeCards(
+    workIds: readonly string[],
+    originSessionId: string,
+    messageId: string,
+    content: string,
+    parent: NeoAskOrigin | null
+  ): Promise<void> {
+    const fresh = !this.hasDelivery(originSessionId, messageId);
+    await this.deliverToOrigin(originSessionId, messageId, content, parent);
+    if (fresh) for (const id of workIds) this.recordCardWake(id, messageId);
   }
 
   private deliverToOrigin(

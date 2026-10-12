@@ -166,13 +166,12 @@ export function neoStalledContinues(
 }
 
 export function readContinueBudget(
-  continued: Pick<NeoWorkContinue, 'progress' | 'stalled'> | null,
-  progress: string,
+  stalledWakes: number,
   startedAt: number | null,
   now: number
 ): string | null {
-  if (neoStalledContinues(continued, progress) >= NEO_WORK_STALLED_CONTINUES)
-    return `continue_budget_spent: the last ${NEO_WORK_STALLED_CONTINUES} continues brought no new commit, PR state, review or report; ask the human how to proceed.`;
+  if (stalledWakes >= NEO_WORK_STALLED_CONTINUES)
+    return `continue_budget_spent: your last ${NEO_WORK_STALLED_CONTINUES} wakes for this card brought no new commit, PR state, review, report or met item; tell the human what is stuck and ask how to proceed.`;
   if (startedAt !== null && now - startedAt >= NEO_WORK_CONTINUE_WINDOW_MS)
     return 'continue_budget_spent: this work started over 12 hours ago; ask the human how to proceed.';
   return null;
@@ -183,14 +182,13 @@ export function neoContinuesLeft(stalled: number): number {
 }
 
 export function readNeoWorkContinueBudget(
-  continued: Pick<NeoWorkContinue, 'progress' | 'stalled'> | null,
-  progress: string,
+  stalledWakes: number,
   startedAt: number | null,
   ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null,
   now: number
 ): string | null {
-  if (!ask || !isPooledNeoAsk(ask)) return readContinueBudget(continued, progress, startedAt, now);
-  const stalled = readContinueBudget(continued, progress, null, now);
+  if (!ask || !isPooledNeoAsk(ask)) return readContinueBudget(stalledWakes, startedAt, now);
+  const stalled = readContinueBudget(stalledWakes, null, now);
   if (stalled) return stalled;
   return neoAskApprovalSpent(ask, now) === 'expired'
     ? 'continue_budget_spent: this ask was approved over 48 hours ago; ask the human to approve it again.'

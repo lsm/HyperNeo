@@ -308,16 +308,13 @@ export function isNeoCardAsk(ask: NeoAsk | null, planned: Omit<NeoAskInput, 'id'
 export function projectNeoSnapshotAsks(
   asks: readonly NeoAsk[],
   settledLimit: number,
-  now: number,
-  stalled: ReadonlySet<string> = new Set()
+  now: number
 ): NeoAsk[] {
   const active = asks.filter((ask) => !isFinal(ask)).slice(0, ACTIVE_ASK_LIMIT);
   return [...active, ...asks.filter(isFinal).slice(0, settledLimit)].map((ask) => ({
     ...ask,
     pooled: isPooledNeoAsk(ask),
-    approvalSpent:
-      neoAskApprovalSpent(ask, now) ??
-      (isPooledNeoAsk(ask) && ask.workIds.some((id) => stalled.has(id)) ? 'continues' : null),
+    approvalSpent: neoAskApprovalSpent(ask, now),
   }));
 }
 
@@ -463,6 +460,12 @@ function requireNeoAskTick(
 ): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
   const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
   if (!item) return { reason: fail(`item_not_found: ${input.itemId} is not on this checklist.`) };
+  if (caller.source === 'mcp' && input.state === 'met' && item.watch?.length)
+    return {
+      reason: fail(
+        'daemon_ticks_watched: the daemon ticks this item itself once every watched pull request has merged and every watched issue has closed. Keep it pending.'
+      ),
+    };
   if (caller.source === 'mcp' && input.state === 'met' && isNeoAgentWord(input.evidence))
     return {
       reason: fail(
@@ -484,7 +487,7 @@ const NEO_HUMAN_TASK_REFUSALS = {
   approval:
     "approval_on_ask: re-approving continued work is the ask's Approve, not a checklist item. Tell the human the ask needs their Approve; approving it wakes you.",
   wait: 'not_the_human: a wait on a PR, merge, CI, deploy, card or anything else the daemon reads is not the human’s step. Keep the item pending; the daemon wakes you when cards report, and you tick it met once you read it.',
-  fact: 'daemon_readable: you can read this yourself (a PR, merge, CI, this machine’s deploy, a card, standing rules). Read a pull request or issue with neo.github.read {url} and tick the item met, or give the item watch: [url] with neo.ask.edit so the daemon ticks it when they merge or close; otherwise keep it pending. reported is for claims you cannot read, such as another machine’s state.',
+  fact: 'daemon_readable: the daemon reads this itself (a PR, merge, CI, this machine’s deploy, a card, standing rules). For a pull request or issue, give the item watch: [url] with neo.ask.edit and the daemon ticks it when they merge or close; otherwise keep it pending. reported is for claims you cannot read, such as another machine’s state.',
 } as const;
 
 export function neoTickWaitCard(input: z.infer<typeof Tick>): string | undefined {
@@ -680,7 +683,8 @@ export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gat
     return { reason: fail(`item_not_found: ${missing.join(', ')} is not on this checklist.`) };
   const left = active.length - new Set(input.remove).size + input.add.length;
   if (left < 1) return { reason: fail('checklist_empty: keep at least one item.') };
-  if (left > 12) return { reason: fail('checklist_full: an ask holds at most 12 items.') };
+  if (left > Math.max(12, active.length))
+    return { reason: fail('checklist_full: an ask holds at most 12 items.') };
   const kept = active.filter((item) => !input.remove.includes(item.id));
   return countNeoAskWatches([...kept, ...input.add]) > NEO_ASK_WATCH_MAX
     ? {
@@ -691,16 +695,18 @@ export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gat
     : { value: ask };
 }
 
+export const NEO_ASK_FOLD_MAX = 24;
+
 export function requireNeoAskFoldRoom(
   source: NeoAsk,
   target: NeoAsk | Rejection
 ): Gate<{ source: NeoAsk; target: NeoAsk }> {
   if ('ok' in target) return { reason: target };
   const active = (ask: NeoAsk) => (ask.doneItems ?? []).filter((item) => !item.removed).length;
-  return active(source) + active(target) > 12
+  return active(source) + active(target) > NEO_ASK_FOLD_MAX
     ? {
         reason: fail(
-          `checklist_full: folding would give ask ${target.id} ${active(source) + active(target)} items; an ask holds at most 12. Remove items that are met or no longer apply first.`
+          `checklist_full: folding would give ask ${target.id} ${active(source) + active(target)} items; a fold keeps at most ${NEO_ASK_FOLD_MAX}.`
         ),
       }
     : { value: { source, target } };
@@ -1318,7 +1324,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.fold',
       description:
-        "Fold one open ask into another when they are the same request, such as a duplicate opened by mistake: the folded ask's checklist items and cards move to intoAskId, and the folded ask closes as superseded. Both asks must be open and yours; the result holds at most 12 items.",
+        "Fold one open ask into another when they are the same request, such as a duplicate opened by mistake: the folded ask's checklist items and cards move to intoAskId, and the folded ask closes as superseded. Both asks must be open and yours. Every item moves as it is, so the result may pass 12 items, up to 24; it then takes no new items until trimmed below 12.",
       inputSchema: Fold,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

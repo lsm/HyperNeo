@@ -2,10 +2,9 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoCardPrUrls } from './branch-prs.ts';
 import { extractNeoWorkPrUrls, neoTextRefs } from './work-prs.ts';
-import { githubUrlKey, parseGitHubRefUrl } from '../../../github/parse-pr-url.ts';
-import type { NeoRef, NeoRefState } from './ask-prs.ts';
+import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 
-export type NeoPrClaim = 'branch' | 'named' | 'mentioned';
+export type NeoPrClaim = 'branch' | 'opened' | 'named' | 'mentioned';
 export type NeoCardPrCandidate = { url: string; claim: NeoPrClaim };
 export type NeoCardPrOwned = NeoCardPrCandidate & {
   claimedAt: number;
@@ -22,20 +21,22 @@ export interface NeoPrClaimRow {
   score: number | null;
 }
 
-const RANK: Record<NeoPrClaim, number> = { branch: 0, named: 1, mentioned: 2 };
+const RANK: Record<NeoPrClaim, number> = { branch: 0, opened: 0, named: 1, mentioned: 2 };
 const key = githubUrlKey;
 
 export function planNeoCardPrCandidates(input: {
   report: string | null;
   brief: string;
   branch: readonly string[];
+  opened?: readonly string[];
   stored: readonly { url: string }[];
   refs?: { named: readonly string[]; mentioned: readonly string[] };
 }): NeoCardPrCandidate[] {
   const named = new Set(
     [...extractNeoWorkPrUrls(input.brief), ...(input.refs?.named ?? [])].map(key)
   );
-  const opened = new Set(input.branch.map(key));
+  const onBranch = new Set(input.branch.map(key));
+  const opened = new Set((input.opened ?? []).map(key));
   const seen = new Set<string>();
   return neoCardPrUrls(
     [
@@ -43,15 +44,17 @@ export function planNeoCardPrCandidates(input: {
       ...(input.refs?.named ?? []),
       ...(input.refs?.mentioned ?? []),
     ],
-    input.branch
+    [...input.branch, ...[...(input.opened ?? [])].reverse()]
   ).flatMap((url) => {
     if (seen.has(key(url))) return [];
     seen.add(key(url));
-    const claim: NeoPrClaim = opened.has(key(url))
+    const claim: NeoPrClaim = onBranch.has(key(url))
       ? 'branch'
-      : named.has(key(url))
-        ? 'named'
-        : 'mentioned';
+      : opened.has(key(url))
+        ? 'opened'
+        : named.has(key(url))
+          ? 'named'
+          : 'mentioned';
     return [{ url, claim }];
   });
 }
@@ -125,7 +128,11 @@ export function planNeoCardPrOwnership(
   return candidates.flatMap((candidate) => {
     const same = claims.filter((row) => row.urlKey === key(candidate.url));
     const mine = same.find((row) => row.workId === card.id);
-    if (mine?.claim === 'rejected' && candidate.claim === 'mentioned') return [];
+    if (
+      mine?.claim === 'rejected' &&
+      (candidate.claim === 'mentioned' || candidate.claim === 'opened')
+    )
+      return [];
     const prior = mine && isRanked(mine) ? mine : undefined;
     const claim =
       prior && RANK[prior.claim] < RANK[candidate.claim] ? prior.claim : candidate.claim;
@@ -191,62 +198,6 @@ export function isNeoCardMentionRelated(
   return named.has(own) || refs.some((ref) => named.has(ref));
 }
 
-const NEO_PR_LIFT_REFS = 3;
-const repoRef = (url: string, number: number) => {
-  const repo = parseGitHubRefUrl(url);
-  return repo ? `${repo.owner}/${repo.repo}#${number}`.toLowerCase() : null;
-};
-
-export function neoPrRefsToLift(
-  card: Pick<NeoWork, 'title' | 'instruction'>,
-  owned: readonly NeoCardPrOwned[],
-  prs: readonly NeoWorkPr[]
-): NeoRef[] {
-  const named = new Set(neoTextRefs(`${card.title}\n${card.instruction}`));
-  const mentioned = new Set(
-    owned.filter((item) => item.claim === 'mentioned').map((item) => key(item.url))
-  );
-  if (!named.size) return [];
-  return prs
-    .filter((pr) => mentioned.has(key(pr.url)) && !isNeoCardMentionRelated(named, pr))
-    .flatMap((pr) => {
-      const repo = parseGitHubRefUrl(pr.url);
-      return repo
-        ? (pr.refs ?? [])
-            .slice(0, NEO_PR_LIFT_REFS)
-            .map((number) => ({ owner: repo.owner, repo: repo.repo, number }))
-        : [];
-    });
-}
-
-export function liftNeoPrParentRefs(
-  card: Pick<NeoWork, 'createdAt'>,
-  prs: readonly NeoWorkPr[],
-  states: readonly NeoRefState[]
-): NeoWorkPr[] {
-  const parents = new Map(
-    states.flatMap((state) => {
-      const own = parseGitHubRefUrl(state.url);
-      const parent = state.parent ? parseGitHubRefUrl(state.parent.url) : null;
-      const sameRepo =
-        own &&
-        parent &&
-        `${own.owner}/${own.repo}`.toLowerCase() === `${parent.owner}/${parent.repo}`.toLowerCase();
-      return state.kind === 'issue' &&
-        own &&
-        parent &&
-        sameRepo &&
-        (state.createdAt ?? 0) >= card.createdAt
-        ? [[repoRef(state.url, own.number), parent.number] as const]
-        : [];
-    })
-  );
-  return prs.map((pr) => {
-    const lifted = (pr.refs ?? []).flatMap((number) => parents.get(repoRef(pr.url, number)) ?? []);
-    return lifted.length ? { ...pr, refs: [...new Set([...(pr.refs ?? []), ...lifted])] } : pr;
-  });
-}
-
 export function keepNeoCardPrReads(
   card: Pick<NeoWork, 'createdAt' | 'title' | 'instruction'>,
   owned: readonly NeoCardPrOwned[],
@@ -260,11 +211,26 @@ export function keepNeoCardPrReads(
   const named = new Set(neoTextRefs(`${card.title}\n${card.instruction}`));
   for (const candidate of owned) {
     const pr = prs.find((item) => key(item.url) === key(candidate.url));
-    if (candidate.claim !== 'mentioned') sorted.kept.push(candidate);
+    if (
+      candidate.claim === 'opened' &&
+      pr &&
+      !candidate.claimed &&
+      !isNeoCardMentionCurrent(card, pr)
+    )
+      sorted.rejected.push(candidate);
+    else if (candidate.claim !== 'mentioned') sorted.kept.push(candidate);
     else if (!pr) (candidate.claimed ? sorted.kept : sorted.pending).push(candidate);
     else if (isNeoCardMentionCurrent(card, pr) && isNeoCardMentionRelated(named, pr))
       sorted.kept.push(candidate);
     else sorted.rejected.push(candidate);
   }
   return sorted;
+}
+
+export function hasNeoUnattachedOpenedPrs(
+  opened: readonly string[],
+  stored: readonly { url: string }[]
+): boolean {
+  const attached = new Set(stored.map((pr) => key(pr.url)));
+  return opened.some((url) => !attached.has(key(url)));
 }
