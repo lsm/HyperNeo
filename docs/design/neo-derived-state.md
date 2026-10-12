@@ -83,6 +83,7 @@ Underneath all six: **human-facing state is authored by the model in prose, and 
   - the card's doneWhen is met;
   - a card PR is waiting on CI or review (the daemon wakes Neo when its verdict changes);
   - the card was already continued in this wake.
+- **A hand-off that failed before delivery** (not delivered, CLI logged out and the like) under an approved ask is retried by the daemon, up to three times (30 s, 2 min, 10 min), without waking Neo. Only after the last attempt fails does the card show `retry`, and Neo is told once. Delivery failures are infrastructure, not a decision for the human.
 - A continue stays within the card's goal. New scope becomes a new card, deduped by issue or PR key.
 - A card's report is the working session's reply to the card's own message, capped at about 1.5K, and never includes the human's input. When a card targets a session the human also uses, only turns that the card's message started count as the card's idle or report.
 
@@ -180,6 +181,7 @@ Each slice is one PR, behaviour-tested, and deployable on its own. The order fol
 |---|---|---|---|
 | 0a | Typed inputs, consume once, no nudge for Neo, stop on refusal, failed turns recorded as failed, persisted origin | §1 | none |
 | 0b | PRs attached to cards, progress-based stall, continue refusals, card report scoping; decisions reach workers as continue amendments that quote the human and cite the record | §3, §2 (card PRs), §9 | none |
+| 0c | Daemon retries hand-offs that failed before delivery; `retry` only after the last attempt | §3 | 0b |
 | 1 | `humanActions` in the ask view; clients show them. `approve` uses the 0b stall. | §4 | 0b |
 | 2 | `neo.ask.question` and withdraw; remove `needs_you` and gate settles; fold, inherited approval, item-removal guard; migrate existing needs_you items | §4, §5 | 1 |
 | 3 | Derived notifications; refuse non-trigger publications | §7 | 0a, 1 |

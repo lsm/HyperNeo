@@ -59,6 +59,11 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import {
+  NEO_DELIVERY_RETRY_BACKOFF_MS,
+  NEO_WORK_DELIVERY_RETRY,
+  runNeoDeliveryRetry,
+} from '../../../../src/lib/neo/delivery-retry.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
@@ -3238,6 +3243,60 @@ describe('Neo work with a drivers target', () => {
       finish();
       expect(await retried).toMatchObject({ ok: true, work: { status: 'queued' } });
       expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  async function undelivered(approved: boolean) {
+    const ready = await setup({ ok: false, reason: 'not_delivered', detail: 'down' });
+    const delivered: string[] = [];
+    ready.db.createSession(createTestSession('neo:root'));
+    Object.assign(ready.service, {
+      open: async () => 'neo:root',
+      deliver: async (_target: string, messageId: string) => {
+        delivered.push(messageId);
+      },
+    });
+    const ask = fileUnderAsk(ready.service);
+    if (approved) ready.service.askRecords.approve(ask.id, Date.now());
+    const queue = ready.db.getJobQueueRepo();
+    const due = () =>
+      queue.listActiveByPayload(NEO_WORK_DELIVERY_RETRY, { workId: 'work-1' }, ['pending']);
+    return { ...ready, delivered, queue, due };
+  }
+
+  test('an approved ask’s undelivered card is retried by the daemon, then offers Retry after three failures', async () => {
+    const { db, service, calls, delivered, queue, due } = await undelivered(true);
+    try {
+      await service.start('work-1');
+      for (const backoff of NEO_DELIVERY_RETRY_BACKOFF_MS) {
+        const [job] = due();
+        expect(job.runAt - Date.now()).toBeGreaterThan(backoff - 5_000);
+        expect(service.isRetryable('work-1')).toBe(false);
+        expect(delivered).toEqual([]);
+        queue.reschedulePending(job.id, Date.now());
+        const [claimed] = queue.dequeue(NEO_WORK_DELIVERY_RETRY);
+        expect(await runNeoDeliveryRetry(claimed, service)).toEqual({ retried: true });
+      }
+      expect(due()).toEqual([]);
+      expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(4);
+      expect(service.repo.getWork('work-1')?.status).toBe('failed');
+      expect(service.isRetryable('work-1')).toBe(true);
+      expect(delivered).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('an unapproved ask’s undelivered card waits for the human’s Retry', async () => {
+    const { db, service, calls, delivered, due } = await undelivered(false);
+    try {
+      await service.start('work-1');
+      expect(due()).toEqual([]);
+      expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+      expect(service.isRetryable('work-1')).toBe(true);
+      expect(delivered).toHaveLength(1);
     } finally {
       db.close();
     }
