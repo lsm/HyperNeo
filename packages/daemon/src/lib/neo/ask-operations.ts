@@ -69,6 +69,7 @@ export const NeoAskSchema = z.object({
   approvedContinueLimit: z.number().optional(),
   pooled: z.boolean().optional(),
   approvalSpent: z.enum(['continues', 'expired']).nullable().optional(),
+  stalledWorkIds: z.array(z.string()).optional(),
   waitingItem: z.string().nullable().optional(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
@@ -308,13 +309,17 @@ export function isNeoCardAsk(ask: NeoAsk | null, planned: Omit<NeoAskInput, 'id'
 export function projectNeoSnapshotAsks(
   asks: readonly NeoAsk[],
   settledLimit: number,
-  now: number
+  now: number,
+  stalled: ReadonlySet<string> = new Set()
 ): NeoAsk[] {
   const active = asks.filter((ask) => !isFinal(ask)).slice(0, ACTIVE_ASK_LIMIT);
   return [...active, ...asks.filter(isFinal).slice(0, settledLimit)].map((ask) => ({
     ...ask,
     pooled: isPooledNeoAsk(ask),
     approvalSpent: neoAskApprovalSpent(ask, now),
+    ...(ask.workIds.some((id) => stalled.has(id))
+      ? { stalledWorkIds: ask.workIds.filter((id) => stalled.has(id)) }
+      : {}),
   }));
 }
 
@@ -1245,7 +1250,11 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'result:admission'
     )
     .pipe(
-      (ask: NeoAsk) => ({ ask: service.askRecords.approve(ask.id, Date.now()) }),
+      (ask: NeoAsk) => {
+        const approved = service.askRecords.approve(ask.id, Date.now());
+        if (approved) service.resetCardStalls(approved.workIds);
+        return { ask: approved };
+      },
       'admission',
       'approved'
     )

@@ -830,7 +830,12 @@ export function createNeoOperations(service: NeoService) {
     const listed = focus
       ? [focus]
       : service.askRecords.list(scope === undefined ? undefined : scope);
-    const asks = projectNeoSnapshotAsks(listed, caller.source === 'rpc' ? 50 : 10, Date.now());
+    const asks = projectNeoSnapshotAsks(
+      listed,
+      caller.source === 'rpc' ? 50 : 10,
+      Date.now(),
+      new Set(workIds.filter((id) => service.isContinueStalled(id)))
+    );
     const workPrs = service.workPrs
       .list(workIds)
       .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));

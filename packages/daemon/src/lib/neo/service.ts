@@ -1973,6 +1973,13 @@ export class NeoService {
       this.workWakes.recordWake(work.id, note, this.cardWakeProgress(work), Date.now());
   }
 
+  resetCardStalls(workIds: readonly string[]): void {
+    for (const id of workIds) {
+      const work = this.repo.getWork(id);
+      if (work) this.workWakes.resetStall(id, this.cardWakeProgress(work));
+    }
+  }
+
   isContinueStalled(workId: string): boolean {
     const work = this.repo.getWork(workId);
     return (

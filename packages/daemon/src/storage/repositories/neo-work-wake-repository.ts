@@ -5,9 +5,19 @@ const columns = `work_id AS workId, wakes, note, progress, stalled, woke_at AS w
   continued_wake AS continuedWake`;
 
 export class NeoWorkWakeRepository {
+  private present: boolean | null = null;
+
   constructor(private readonly db: Database) {}
 
+  private ready(): boolean {
+    this.present ??= !!this.db
+      .prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_work_wakes' AND type = 'table'")
+      .get();
+    return this.present;
+  }
+
   get(workId: string): NeoWorkWake | null {
+    if (!this.ready()) return null;
     return (
       (this.db
         .prepare(`SELECT ${columns} FROM neo_work_wakes WHERE work_id = ?`)
@@ -16,6 +26,7 @@ export class NeoWorkWakeRepository {
   }
 
   recordWake(workId: string, note: string, progress: string, at: number): NeoWorkWake | null {
+    if (!this.ready()) return null;
     this.db
       .prepare(
         `INSERT INTO neo_work_wakes(work_id, wakes, note, progress, stalled, woke_at)
@@ -31,7 +42,15 @@ export class NeoWorkWakeRepository {
     return this.get(workId);
   }
 
+  resetStall(workId: string, progress: string): void {
+    if (!this.ready()) return;
+    this.db
+      .prepare('UPDATE neo_work_wakes SET stalled = 0, progress = ? WHERE work_id = ?')
+      .run(progress, workId);
+  }
+
   recordContinue(workId: string, progress: string, human: boolean): NeoWorkWake | null {
+    if (!this.ready()) return null;
     const reset = human ? 1 : 0;
     this.db
       .prepare(
