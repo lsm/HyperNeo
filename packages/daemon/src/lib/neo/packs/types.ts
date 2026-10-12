@@ -8,6 +8,16 @@ export type NeoPackCheck = (
   evidence: readonly NeoEvidence[]
 ) => { value: string } | { reason: string };
 
+export interface NeoCardEventSubscription {
+  workId: string;
+  topic: string;
+}
+
+export interface NeoPackEventRoute {
+  workIds: string[];
+  ending: NeoCardEventSubscription[];
+}
+
 export interface NeoPackBrief {
   id: string;
   describe: string;
@@ -33,7 +43,9 @@ export interface NeoPack extends NeoPackBrief {
   readAskWatchTicks?(ask: NeoAsk): Promise<{ id: string; evidence: string }[]>;
   checks?: Record<string, NeoPackCheck>;
   workerMcpServers?: string[];
-  cardResourcesChanged?(workId: string): void;
-  externalTopics?(): string[];
-  externalEvent?(event: ExternalEvent): Promise<void>;
+  externalTopics?(work: NeoWork): string[];
+  routeExternalEvent?(
+    event: ExternalEvent,
+    subscriptions: readonly NeoCardEventSubscription[]
+  ): NeoPackEventRoute | null;
 }

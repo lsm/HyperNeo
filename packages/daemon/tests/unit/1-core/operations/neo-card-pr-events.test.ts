@@ -12,9 +12,8 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { planNeoCardSend } from '../../../../src/lib/neo/card-send.ts';
+import { planNeoCardSend } from '../../../../src/lib/neo/card-events.ts';
 import { neoCardPrTopics } from '../../../../src/lib/neo/packs/coding/card-pr-events.ts';
-import { NeoCardPrSubscriptionRepository } from '../../../../src/lib/neo/packs/coding/neo-card-pr-subscription-repository.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   createOperationRegistry,
@@ -87,8 +86,8 @@ describe('Neo card pull request events', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       bus
     );
-    service.watchGithubRepo = async (owner, repo) => {
-      watched.push(`${owner}/${repo}`);
+    service.watchExternalTopic = async (topic) => {
+      watched.push(topic);
     };
     service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
     publisher = new ExternalEventService(new SessionExternalEventStore(db.getDatabase()), bus);
@@ -117,11 +116,11 @@ describe('Neo card pull request events', () => {
 
   function attach(work: NeoWork) {
     service.workPrs.record(work.id, [open], Date.now());
-    for (const pack of service.packs()) pack.cardResourcesChanged?.(work.id);
+    service.followCardTopics(work.id);
   }
 
   function subscriptions() {
-    return new NeoCardPrSubscriptionRepository(db.getDatabase()).listActive();
+    return service.cardEvents.listActive();
   }
 
   let seq = 0;
@@ -149,8 +148,8 @@ describe('Neo card pull request events', () => {
   test('an approval, a 👍 and a plain comment each reach a desktop card session, not Neo', async () => {
     const work = desktopCard();
     attach(work);
-    expect(watched).toEqual(['lsm/hyperneo']);
-    expect(service.externalTopics()).toEqual(['github/lsm/hyperneo/pull_request/7.*']);
+    expect(watched).toEqual(['github/lsm/hyperneo/pull_request/7.*']);
+    expect(service.followedTopics()).toEqual(['github/lsm/hyperneo/pull_request/7.*']);
 
     await event('review_submitted', 'Review: APPROVED', { state: 'approved' });
     await event('reaction_added', 'Reaction: +1', { content: '+1' });
@@ -174,7 +173,7 @@ describe('Neo card pull request events', () => {
 
     expect(sent.map((item) => item.message)).toEqual([expect.stringContaining('7.closed')]);
     expect(subscriptions()).toEqual([]);
-    expect(service.externalTopics()).toEqual([]);
+    expect(service.followedTopics()).toEqual([]);
     expect(neoJobs()).toEqual([]);
   });
 
@@ -201,7 +200,7 @@ describe('Neo card pull request events', () => {
     expect(
       db.getJobQueueRepo().listActiveByPayload('mailbox', {
         'to.sessionId': 'native',
-        messageUuid: 'neo-card-pr-event:w-native:event-' + String(seq),
+        messageUuid: 'neo-card-event:w-native:event-' + String(seq),
       })
     ).toHaveLength(1);
     expect(neoJobs()).toEqual([]);

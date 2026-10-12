@@ -1,6 +1,8 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { isNeoWorkClosedDone } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkRef } from '../drivers/types.ts';
+import type { ExternalEvent } from '../external-events/types.ts';
+import type { NeoCardEventSubscription, NeoPack, NeoPackEventRoute } from './packs/types.ts';
 
 export interface NeoCardSendTarget {
   work: Pick<NeoWork, 'id' | 'status' | 'report' | 'sessionId'> | null;
@@ -17,4 +19,19 @@ export function planNeoCardSend({ work, ref }: NeoCardSendTarget): NeoCardSend {
   if (isNeoWorkClosedDone(work.report)) return { via: 'none' };
   if (ref) return { via: 'driver', ref };
   return work.sessionId ? { via: 'session', sessionId: work.sessionId } : { via: 'none' };
+}
+
+export function planNeoCardEventRoute(
+  packs: readonly Pick<NeoPack, 'routeExternalEvent'>[],
+  event: ExternalEvent,
+  subscriptions: readonly NeoCardEventSubscription[]
+): { value: NeoPackEventRoute } | { reason: 'not_followed' } {
+  const routes = packs.flatMap((pack) => pack.routeExternalEvent?.(event, subscriptions) ?? []);
+  const route = {
+    workIds: [...new Set(routes.flatMap((item) => item.workIds))],
+    ending: routes.flatMap((item) => item.ending),
+  };
+  return route.workIds.length || route.ending.length
+    ? { value: route }
+    : { reason: 'not_followed' };
 }
