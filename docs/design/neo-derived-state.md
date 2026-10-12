@@ -52,7 +52,7 @@ Underneath all six: **human-facing state is authored by the model in prose, and 
 6. **Neo manages work; the human decides outcomes.**
    - Neo can open, route, continue, close and fold the work it manages.
    - The human approves asks and answers questions, including about what only they can see.
-   - The session that worked on a PR merges it.
+   - The session that worked on a PR merges it, judging when it's ready from what the repository itself shows.
 7. **Decisions travel verbatim.** A relayed decision quotes the human and cites its canonical record.
 
 ## Design
@@ -71,6 +71,7 @@ Underneath all six: **human-facing state is authored by the model in prose, and 
 - An ask item can name what it depends on: `watch: [pr|issue url]`. The daemon tracks those from the GitHub events it already receives and ticks the item met on merge or close, with the event as evidence.
 - A card's PRs are attached by the daemon: from the worker session's branch or PR author, or a PR the report names, after reading it. `card.prs` is never empty while the worker has a PR open.
 - A card whose doneWhen the daemon can read (its PRs merged, its issue closed) is settled by the daemon without a Neo turn.
+- The coding pack, not the daemon core, subscribes each PR attached to a card to all of its events, through the daemon's external-events system, and delivers them to the card's working session in whatever tool that session runs. That covers reviews in every state, inline and plain comments, reactions such as 👍, checks, conflicts, pushes, and merge or close. It needs no configuration, and the worker doesn't have to subscribe itself. The daemon core stays generic: external events are their own system, and a pack decides which events matter for its kind of work. Without the coding pack, nothing is subscribed. This keeps ADR 0009's contract, where a pack contributes stage functions and has no lifecycle hooks. The coding pack contributes `externalTopics(cards)`, the topics to follow for the live cards, which core recomputes, and a router that names the card whose session gets an event. Core owns subscribing, unsubscribing and delivery. Today a Claude Desktop worker never hears an approval or a reaction, so approved PRs sat unmerged (#6658, neo-ios #70).
 - Neo gets read-only views of a PR (state, checks, review verdict on head) and an issue. It never needs a worker's word for something the daemon can read.
 - A deploy item is met when the daemon reads back that each daemon runs a commit containing the change.
 - A model `met` tick is accepted only for items the daemon can't read. For items the daemon owns, the daemon ticks.
@@ -171,7 +172,11 @@ A publication to the human happens in three cases only:
 ### 10. Ownership
 
 - Work goes through Neo asks. Peer sessions get work as cards.
-- The session that worked on a PR merges it. For a PR approved on its head, CLEAN, with no unresolved threads, for over 30 minutes, the daemon wakes that session to merge it rather than merging it itself. A PR that still doesn't merge is an exception to find and fix in the system. `ship.sh` retires.
+- The session that worked on a PR merges it. What counts as ready to merge in a repository is knowledge, not configuration. Review bots signal differently: a formal APPROVED, a 👍, a plain "no issues found" comment. The coding pack teaches how to find out:
+  1. Use the repository's standing rule if there is one.
+  2. Otherwise, read how its recently merged PRs got there (which reviewer's approval or which bot signal came before the merge) and follow that.
+  3. If it's still unclear, the session says so in its report. The ask's Neo then asks the human once with `neo.ask.question` and saves the answer as a standing rule for that repository, which later sessions read in step 1.
+- A PR that still doesn't merge is an exception to find and fix in the system. `ship.sh` retires.
 - Per-topic sessions (#6579, #6604) hold their asks, and root Neo keeps cross-topic questions only. A topic session is short-lived and starts from a snapshot.
 
 ## Slices
@@ -191,7 +196,7 @@ Each slice is one PR, behaviour-tested, and deployable on its own. The order fol
 | 6 | Quiet routine wakes, one-ask writes, state-only notes | §8 (wakes) | 0b, 4 |
 | 7 | Neo-managed close, follow and fold; remove Track; live-human check for human actions; `talk` via `neo.work.refused`, cleared on the session's next human input | §6, §4 (`talk`) | 0a, 2 |
 | 7b | Continue and retry another session's card in a live human turn | §6 | none |
-| 8 | Merge by the working session; retire `ship.sh` | §10 | 4 |
+| 8 | The coding pack subscribes every card PR to all its events (external events) and delivers them to the working session; the coding pack teaches how to judge readiness (standing rule, then repo history, then Neo asks once and saves); retire `ship.sh` | §2, §10 | 0b, 2 |
 | 9 | Topic sessions start fresh from a snapshot | §10 | 6 |
 
 Deleted along the way:
