@@ -9,13 +9,7 @@ export function neoCardPrTopics(prs: readonly NeoWorkPr[]): string[] {
   return prs.flatMap((pr) => {
     const parsed = pr.state === 'OPEN' ? parsePrUrl(pr.url) : null;
     if (!parsed || parsed.host.toLowerCase() !== 'github.com') return [];
-    return [
-      buildPrEventTopicPattern({
-        ...parsed,
-        owner: parsed.owner.toLowerCase(),
-        repo: parsed.repo.toLowerCase(),
-      }),
-    ];
+    return [buildPrEventTopicPattern(parsed)];
   });
 }
 

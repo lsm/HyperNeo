@@ -39,7 +39,7 @@ describe('neoCardPrTopics', () => {
         open,
         { ...open, url: 'https://github.com/lsm/HyperNeo/pull/8', state: 'MERGED' },
       ])
-    ).toEqual(['github/lsm/hyperneo/pull_request/7.*']);
+    ).toEqual(['github/lsm/HyperNeo/pull_request/7.*']);
   });
 });
 
@@ -149,8 +149,8 @@ describe('Neo card pull request events', () => {
   test('an approval, a 👍 and a plain comment each reach a desktop card session, not Neo', async () => {
     const work = desktopCard();
     attach(work);
-    expect(watched).toEqual(['github/lsm/hyperneo/pull_request/7.*']);
-    expect(service.followedTopics()).toEqual(['github/lsm/hyperneo/pull_request/7.*']);
+    expect(watched).toEqual(['github/lsm/HyperNeo/pull_request/7.*']);
+    expect(service.followedTopics()).toEqual(['github/lsm/HyperNeo/pull_request/7.*']);
 
     await event('review_submitted', 'Review: APPROVED', { state: 'approved' });
     await event('reaction_added', 'Reaction: +1', { content: '+1' });
@@ -243,7 +243,7 @@ describe('Neo card pull request events', () => {
     expect(service.endUnfollowedCardTopics(Date.now())).toEqual([]);
     db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
     expect(service.endUnfollowedCardTopics(Date.now())).toEqual([
-      { workId: 'w-live', topic: 'github/lsm/hyperneo/pull_request/7.*' },
+      { workId: 'w-live', topic: 'github/lsm/HyperNeo/pull_request/7.*' },
     ]);
     expect(service.followedTopics()).toEqual([]);
   });
@@ -257,12 +257,12 @@ describe('Neo card pull request events', () => {
     service.followCardTopics(work.id);
 
     expect(subscriptions()).toEqual([
-      { workId: work.id, topic: 'github/lsm/hyperneo/pull_request/7.*' },
+      { workId: work.id, topic: 'github/lsm/HyperNeo/pull_request/7.*' },
     ]);
     expect(watched).toHaveLength(2);
   });
 
-  test('a session that already subscribed to the pull request itself is not sent it twice', async () => {
+  test('a session that subscribed to its pull request itself hands that subscription to the card', async () => {
     const proposed = service.repo.proposeWork({
       id: 'w-legacy',
       requestKey: 'root:legacy',
@@ -273,18 +273,20 @@ describe('Neo card pull request events', () => {
       instruction: 'Fix it.',
       targetSessionId: 'native',
     });
+    const own = new SessionEventSubscriptionRepository(db.getDatabase());
+    own.upsert({ sessionId: 'native', topic: 'github/lsm/hyperneo/pull_request/7.*' });
+    own.upsert({ sessionId: 'native', topic: 'github/lsm/HyperNeo/pull_request/9.*' });
+
     attach(
       service.repo.transitionWork(proposed.id, proposed, { status: 'queued', sessionId: 'native' })!
     );
-    new SessionEventSubscriptionRepository(db.getDatabase()).upsert({
-      sessionId: 'native',
-      topic: 'github/lsm/HyperNeo/pull_request/7.*',
-    });
+    await event('reaction_added', 'Reaction: +1', { content: '+1' });
 
-    await event('review_submitted', 'Review: APPROVED', { state: 'approved' });
-
+    expect(own.listBySession('native').map((row) => row.topic)).toEqual([
+      'github/lsm/HyperNeo/pull_request/9.*',
+    ]);
     expect(
       db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'native' })
-    ).toEqual([]);
+    ).toHaveLength(1);
   });
 });

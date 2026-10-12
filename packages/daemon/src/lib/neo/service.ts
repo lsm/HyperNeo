@@ -55,9 +55,9 @@ import {
   planNeoCardEventRoute,
   planNeoCardSend,
   planNeoCardTopicsEnded,
+  planNeoSessionTopicsHandedOver,
 } from './card-events.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
-import { topicMatchesPattern } from '../external-events/topic-trie.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import type { ExternalEvent } from '../external-events/types.ts';
 import type { NeoCardEventSubscription, NeoPackEventRoute } from './packs/types.ts';
@@ -1977,7 +1977,14 @@ export class NeoService {
   followCardTopics(workId: string): void {
     const work = this.repo.getWork(workId);
     if (!work) return;
-    for (const topic of this.packs().flatMap((pack) => pack.externalTopics?.(work) ?? [])) {
+    const topics = this.packs().flatMap((pack) => pack.externalTopics?.(work) ?? []);
+    if (work.sessionId)
+      for (const row of planNeoSessionTopicsHandedOver(
+        this.sessionSubscriptions.listBySession(work.sessionId),
+        topics
+      ))
+        this.sessionSubscriptions.delete(row.sessionId, row.topic);
+    for (const topic of topics) {
       if (!this.cardEvents.subscribe(workId, topic, Date.now())) continue;
       void this.watchExternalTopic?.(topic).catch((error) =>
         this.log.warn('Card event source watch pending', error)
@@ -2041,8 +2048,7 @@ export class NeoService {
           await this.sendToCard(
             workId,
             `neo-card-event:${workId}:${event.id}`,
-            sessionEventText(event),
-            event.topic
+            sessionEventText(event)
           ).catch((error) => this.log.warn('Card event not delivered', error));
       },
       ['event', 'route']
@@ -2052,15 +2058,12 @@ export class NeoService {
     }, 'route')
     .endAsync('route') as (payload: ExternalEventPublishedPayload) => Promise<unknown>;
 
-  async sendToCard(workId: string, key: string, text: string, topic?: string): Promise<void> {
+  async sendToCard(workId: string, key: string, text: string): Promise<void> {
     const work = this.repo.getWork(workId);
     const send = planNeoCardSend({ work, ref: this.driverTargets.readRef(workId) });
     if (!work || send.via === 'none') return;
-    if (send.via === 'session') {
-      const own = this.sessionSubscriptions.listBySession(send.sessionId);
-      if (topic && own.some((row) => topicMatchesPattern(row.topic, topic))) return;
+    if (send.via === 'session')
       return this.deliver(send.sessionId, key, text, work.originSessionId);
-    }
     await this.invokeAsCard(work, 'work.send', { ref: send.ref, message: text });
   }
 

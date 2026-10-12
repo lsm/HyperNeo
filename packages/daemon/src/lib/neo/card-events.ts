@@ -51,3 +51,11 @@ export function planNeoCardEventRoute(
     ? { value: route }
     : { reason: 'not_followed' };
 }
+
+export function planNeoSessionTopicsHandedOver<Row extends { topic: string }>(
+  own: readonly Row[],
+  topics: readonly string[]
+): Row[] {
+  const owned = new Set(topics.map((topic) => topic.toLowerCase()));
+  return own.filter((row) => owned.has(row.topic.toLowerCase()));
+}
