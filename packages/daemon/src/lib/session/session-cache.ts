@@ -52,7 +52,7 @@ export class SessionCache {
       return await loadInProgress;
     }
 
-    const loadPromise = (async (): Promise<AgentSession | null> => {
+    const loadPromise = Promise.resolve().then(async (): Promise<AgentSession | null> => {
       try {
         const agentSession = await this.loadSessionAsync(sessionId);
         if (agentSession) {
@@ -69,7 +69,7 @@ export class SessionCache {
         this.sessionLoadLocks.delete(sessionId);
         this.removedWhileLoading.delete(sessionId);
       }
-    })();
+    });
     this.sessionLoadLocks.set(sessionId, loadPromise);
 
     return await loadPromise;

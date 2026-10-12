@@ -150,6 +150,21 @@ describe('SessionCache', () => {
       expect(mockLoadFromDB).toHaveBeenCalledTimes(1);
     });
 
+    it('a session whose construction asks for itself again is built once', async () => {
+      let built = 0;
+      let reentered: Promise<AgentSession | null> | null = null;
+      const reentrant = new SessionCache(() => {
+        built += 1;
+        if (built > 50) throw new RangeError('Maximum call stack size exceeded');
+        reentered ??= reentrant.getAsync('test-session-id');
+        return mockAgentSession;
+      }, mockLoadFromDB);
+
+      expect(await reentrant.getAsync('test-session-id')).toBe(mockAgentSession);
+      expect(await reentered).toBe(mockAgentSession);
+      expect(built).toBe(1);
+    });
+
     it('should return null if loadFromDB returns null', async () => {
       const result = await cache.getAsync('nonexistent');
       expect(result).toBeNull();
