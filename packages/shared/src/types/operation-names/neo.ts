@@ -14,6 +14,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.conversation.asks.read',
   'neo.conversation.image.read',
   'neo.draft.recover',
+  'neo.github.read',
   'neo.message.send',
   'neo.open',
   'neo.pack.read',

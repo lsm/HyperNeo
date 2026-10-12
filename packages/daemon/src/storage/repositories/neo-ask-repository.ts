@@ -26,10 +26,10 @@ export type NeoAskInput = Omit<
   | 'updatedAt'
   | 'settledAt'
 >;
-export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check'>;
+export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch'>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
-  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind'
+  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind' | 'watch'
 > & {
   askId: string;
   removed: number;
@@ -38,10 +38,14 @@ type NeoAskItemRow = Omit<
   action: string | null;
   waitCard: string | null;
   kind: NeoAskItem['kind'] | null;
+  watch: string | null;
 };
 
+const watchJson = (item: NeoAskItemInput) =>
+  item.watch?.length ? JSON.stringify(item.watch) : null;
+
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind`;
+  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, watch`;
 
 export interface NeoAskOwner {
   concernId: string;
@@ -61,10 +65,10 @@ export class NeoAskRepository {
       const opened = this.insertAsk(input, now);
       if (opened) {
         const insert = this.db.prepare(`INSERT INTO neo_ask_items
-          (ask_id, id, position, text, state, check_kind, updated_at)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?)`);
+          (ask_id, id, position, text, state, check_kind, watch, updated_at)
+          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`);
         items.forEach((item, index) =>
-          insert.run(input.id, `i${index + 1}`, index, item.text, item.check, now)
+          insert.run(input.id, `i${index + 1}`, index, item.text, item.check, watchJson(item), now)
         );
       }
       return opened;
@@ -194,10 +198,10 @@ export class NeoAskRepository {
   ): boolean {
     this.db.transaction(() => {
       const insert = this.db.prepare(`INSERT INTO neo_ask_items
-        (ask_id, id, position, text, state, check_kind, added_at, updated_at)
-        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`);
+        (ask_id, id, position, text, state, check_kind, watch, added_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`);
       for (const item of edit.add)
-        insert.run(askId, item.id, item.position, item.text, item.check, at, at);
+        insert.run(askId, item.id, item.position, item.text, item.check, watchJson(item), at, at);
       this.db
         .prepare(`UPDATE neo_ask_items SET removed = 1, updated_at = ?
           WHERE ask_id = ? AND id IN (SELECT value FROM json_each(?))`)
@@ -447,15 +451,28 @@ export class NeoAskRepository {
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)
-        .map(({ askId: _askId, removed, options, decision, action, waitCard, kind, ...item }) => ({
-          ...item,
-          removed: removed === 1,
-          ...(options ? { options: JSON.parse(options) as string[] } : {}),
-          ...(decision === 1 ? { decision: true as const } : {}),
-          ...(action ? { action } : {}),
-          ...(waitCard ? { waitCard } : {}),
-          ...(kind ? { kind } : {}),
-        })),
+        .map(
+          ({
+            askId: _askId,
+            removed,
+            options,
+            decision,
+            action,
+            waitCard,
+            kind,
+            watch,
+            ...item
+          }) => ({
+            ...item,
+            removed: removed === 1,
+            ...(options ? { options: JSON.parse(options) as string[] } : {}),
+            ...(decision === 1 ? { decision: true as const } : {}),
+            ...(action ? { action } : {}),
+            ...(waitCard ? { waitCard } : {}),
+            ...(kind ? { kind } : {}),
+            ...(watch ? { watch: JSON.parse(watch) as string[] } : {}),
+          })
+        ),
     }));
   }
 }

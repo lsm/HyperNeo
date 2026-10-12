@@ -1560,13 +1560,23 @@ describe('requireNeoAskEdit', () => {
       { id: 'i2', removed: true },
     ],
   } as unknown as NeoAsk;
-  const items = (count: number) =>
+  const items = (count: number): { text: string; check: null; watch?: string[] }[] =>
     Array.from({ length: count }, (_, i) => ({ text: `t${i}`, check: null }));
   test.each<[string, { add?: ReturnType<typeof items>; remove?: string[] }, string | null]>([
     ['an edit by the owner', { add: items(1) }, null],
     ['an item already removed', { remove: ['i2'] }, 'item_not_found'],
     ['removing the last item', { remove: ['i1'] }, 'checklist_empty'],
     ['more than twelve items', { add: items(12) }, 'checklist_full'],
+    [
+      'more than twenty watched refs',
+      {
+        add: items(3).map((item, i) => ({
+          ...item,
+          watch: Array.from({ length: 7 }, (_, n) => `https://github.com/o/r/pull/${i * 10 + n}`),
+        })),
+      },
+      'watch_full',
+    ],
   ])('%s', (_label, change, reason) => {
     const target = owned;
     const gate = requireNeoAskEdit(
