@@ -40,7 +40,7 @@ export function compactNeoSnapshotCards(cards: readonly NeoCardView[]): NeoCardV
 export const NEO_MCP_SNAPSHOT_BUDGET = 40_000;
 const TRIMMED_TEXT_LIMIT = 300;
 const NEO_SNAPSHOT_TRIMMED =
-  'This snapshot was trimmed to fit: settled asks and finished cards outside open asks are left out, and long text is cut. Call neo.snapshot {askId} for one ask in full.';
+  'This snapshot was trimmed to fit: settled asks and finished cards outside open asks are left out, and long text is cut. Call neo.snapshot {askId} for one ask in more detail.';
 
 const size = (snapshot: NeoSnapshot) => Buffer.byteLength(JSON.stringify(snapshot), 'utf8');
 
@@ -176,12 +176,80 @@ function withNewestAsks(snapshot: NeoSnapshot, count: number): NeoSnapshot {
   };
 }
 
-export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget: number): T {
+const SKELETON_LIST_LIMIT = 20;
+const NEO_SNAPSHOT_SKELETON =
+  'This snapshot was too large even trimmed, so only ask and card identities are left. Call neo.snapshot {askId} for one ask.';
+
+function withSkeleton(snapshot: NeoSnapshot): NeoSnapshot {
+  return {
+    ...snapshot,
+    workResources: [],
+    askOrigins: [],
+    sessionNoticeGroups: [],
+    consultations: [],
+    consultationWaiters: [],
+    concerns: snapshot.concerns.slice(0, SKELETON_LIST_LIMIT),
+    asks: snapshot.asks?.map((ask) => ({
+      ...ask,
+      doneItems: ask.doneItems
+        ?.filter((item) => !item.removed)
+        .slice(0, SKELETON_LIST_LIMIT)
+        .map(({ options: _options, ...item }) => ({
+          ...item,
+          text: item.text.slice(0, 80),
+          evidence: null,
+        })),
+    })),
+    askViews: snapshot.askViews.map(({ answer: _answer, ...view }) => ({
+      ...view,
+      summary: null,
+      sessions: [],
+    })),
+  };
+}
+
+function bareMinimum(snapshot: NeoSnapshot): NeoSnapshot {
+  return {
+    ok: true,
+    sessionId: snapshot.sessionId,
+    concerns: [],
+    work: snapshot.work.map((item) => ({ ...item, instruction: '', report: null })),
+    asks: snapshot.asks?.map((ask) => ({
+      ...ask,
+      ask: '',
+      doneItems: [],
+      evidence: null,
+      outcome: null,
+    })),
+    cards: snapshot.cards,
+    askViews: snapshot.askViews.map((view) => ({ ...view, summary: null, sessions: [] })),
+    standingRules: snapshot.standingRules,
+  };
+}
+
+export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
+  snapshot: T,
+  budget: number,
+  { focused = false }: { focused?: boolean } = {}
+): T {
   if (size(snapshot) <= budget) return snapshot;
-  let fitted = withoutSettled(snapshot);
+  let fitted: NeoSnapshot = focused ? snapshot : withoutSettled(snapshot);
   if (size(fitted) > budget) fitted = withShortText(fitted);
-  for (let count = fitted.asks?.length ?? 0; size(fitted) > budget && count > 1; )
-    fitted = withNewestAsks(fitted, (count = Math.floor(count / 2)));
+  if (!focused)
+    for (let count = fitted.asks?.length ?? 0; size(fitted) > budget && count > 1; )
+      fitted = withNewestAsks(fitted, (count = Math.floor(count / 2)));
   if (size(fitted) > budget) fitted = withBareText(fitted);
-  return { ...snapshot, ...fitted, trimmed: NEO_SNAPSHOT_TRIMMED };
+  if (size(fitted) <= budget) return { ...fitted, trimmed: NEO_SNAPSHOT_TRIMMED } as T;
+  fitted = withSkeleton(fitted);
+  if (size(fitted) > budget) fitted = bareMinimum(fitted);
+  if (size(fitted) > budget)
+    fitted = {
+      ok: true,
+      sessionId: fitted.sessionId,
+      concerns: [],
+      work: [],
+      cards: [],
+      askViews: [],
+    };
+  return { ...fitted, trimmed: NEO_SNAPSHOT_SKELETON } as T;
 }

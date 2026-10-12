@@ -605,8 +605,8 @@ export function createNeoOperations(service: NeoService) {
   }
   function snapshot(caller: OperationCaller, requested?: string, askId?: string) {
     const built = buildSnapshot(caller, requested, askId);
-    return built.ok && caller.source !== 'rpc' && !askId
-      ? fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET)
+    return built.ok && caller.source !== 'rpc'
+      ? fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET, { focused: !!askId })
       : built;
   }
   function buildSnapshot(caller: OperationCaller, requested?: string, askId?: string) {

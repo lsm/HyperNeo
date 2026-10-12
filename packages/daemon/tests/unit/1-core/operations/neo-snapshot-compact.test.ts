@@ -170,6 +170,30 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.work.every((item) => item.instruction.length <= 300)).toBe(true);
   });
 
+  test('falls back to identities when one ask alone is too big, and says so', () => {
+    const huge = snapshot(1, 0);
+    huge.asks = huge.asks?.map((item) => ({
+      ...item,
+      doneItems: Array.from({ length: 400 }, (_, n) => ({
+        ...item.doneItems![0],
+        id: `i${n}`,
+        text: 't'.repeat(200),
+        options: Array.from({ length: 10 }, () => 'o'.repeat(100)),
+      })),
+    }));
+    const fitted = fitNeoSnapshotBudget(huge, 40_000);
+    expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(40_000);
+    expect(fitted.trimmed).toContain('only ask and card identities');
+  });
+
+  test('a single-ask read keeps that ask even when it is settled', () => {
+    const focused = snapshot(0, 1);
+    focused.work = focused.work.map((item) => ({ ...item, report: 'r'.repeat(60_000) }));
+    const fitted = fitNeoSnapshotBudget(focused, 40_000, { focused: true });
+    expect(fitted.asks?.map((item) => item.id)).toEqual(['s0']);
+    expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(40_000);
+  });
+
   test('stays within budget in bytes even with one ask of long checklist evidence', () => {
     const heavy = snapshot(1, 0);
     heavy.asks = heavy.asks?.map((item) => ({
