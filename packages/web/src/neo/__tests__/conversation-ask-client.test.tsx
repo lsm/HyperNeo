@@ -3,7 +3,9 @@ import type { MessageHub } from '@hyperneo/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   presentConversationAskPage,
+  readNeoAskImages,
   readNeoConversationAsks,
+  readNeoConversationImage,
   type ConversationAskRead,
 } from '../conversation-ask-client.ts';
 import { useNeo } from '../useNeo.ts';
@@ -84,7 +86,7 @@ describe('durable conversation ask client', () => {
     );
     expect(io.request).toHaveBeenCalledExactlyOnceWith('operation.invoke', {
       name: 'neo.conversation.asks.read',
-      input: page,
+      input: { ...page, imageRefs: true },
     });
   });
 
@@ -165,7 +167,7 @@ describe('durable conversation ask client', () => {
     expect(read).toEqual({ state: 'ready', items: [ask(1, content)], nextAfter: 1 });
     expect(io.request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.conversation.asks.read',
-      input: page,
+      input: { ...page, imageRefs: true },
     });
     expect(mutable.after).toBe(99);
     expect(read.items[0].content).not.toBe(content);
@@ -269,6 +271,105 @@ describe('durable conversation ask client', () => {
     expect(await flight).toEqual({ state: 'stale' });
     const now = () => Promise.reject(new Error('connect'));
     expect(await readNeoConversationAsks(page, now, current)).toEqual(denied);
+  });
+});
+
+const ref = (fields: Record<string, unknown> = {}) => ({
+  type: 'image_ref',
+  imageId: '1:0',
+  mediaType: 'image/png',
+  bytes: 5,
+  width: 1200,
+  height: 800,
+  thumbnail: { mediaType: 'image/jpeg', data: 'dGh1bWI=' },
+  ...fields,
+});
+
+describe('conversation ask photo references', () => {
+  it('admits photo references with a thumbnail, or with none and unknown size', async () => {
+    const items = [
+      ask(1, [{ type: 'text', text: 'Look' }, ref()]),
+      ask(2, [ref({ imageId: '2:0', width: null, height: null, thumbnail: null })]),
+    ];
+    const io = transport(response(items));
+    expect(await readNeoConversationAsks(page, io.getHub, current)).toEqual({
+      state: 'ready',
+      items,
+      nextAfter: 2,
+    });
+  });
+
+  it.each([
+    { imageId: '' },
+    { imageId: 7 },
+    { mediaType: 'image/bmp' },
+    { mediaType: undefined },
+    { bytes: -1 },
+    { bytes: 1.5 },
+    { bytes: '5' },
+    { width: 0 },
+    { width: 1.5 },
+    { height: -3 },
+    { height: undefined },
+    { thumbnail: undefined },
+    { thumbnail: { mediaType: 'image/gif', data: 'dGh1bWI=' } },
+    { thumbnail: { mediaType: 'image/jpeg', data: '' } },
+    { thumbnail: { mediaType: 'image/jpeg' } },
+    { thumbnail: 'dGh1bWI=' },
+  ])('refuses a malformed photo reference %o', async (patch) => {
+    const io = transport(response([ask(1, [ref(patch)])]));
+    expect(await readNeoConversationAsks(page, io.getHub, current)).toEqual(denied);
+  });
+
+  it('reads one full photo by its reference and fails closed on anything else', async () => {
+    const full = { ok: true, imageId: '1:0', mediaType: 'image/png', data: 'ZnVsbA==' };
+    const io = transport(full);
+    expect(await readNeoConversationImage({ conversationId, imageId: '1:0' }, io.getHub)).toEqual({
+      state: 'ready',
+      image: { media_type: 'image/png', data: 'ZnVsbA==' },
+    });
+    expect(io.request).toHaveBeenCalledExactlyOnceWith('operation.invoke', {
+      name: 'neo.conversation.image.read',
+      input: { conversationId, imageId: '1:0' },
+    });
+    for (const value of [
+      { ok: false, reason: 'image_not_found' },
+      { ...full, imageId: '1:1' },
+      { ...full, mediaType: 'image/bmp' },
+      { ...full, data: '' },
+      null,
+    ])
+      expect(
+        await readNeoConversationImage({ conversationId, imageId: '1:0' }, transport(value).getHub)
+      ).toEqual(denied);
+    const broken = transport();
+    broken.request.mockRejectedValueOnce(new Error('disconnect'));
+    expect(
+      await readNeoConversationImage({ conversationId, imageId: '1:0' }, broken.getHub)
+    ).toEqual(denied);
+    expect(
+      await readNeoConversationImage({ conversationId: 'raw', imageId: '1:0' }, broken.getHub)
+    ).toEqual(denied);
+  });
+
+  it('resolves an ask’s photos in order, loading references and keeping inline photos', async () => {
+    const inline = {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/webp', data: 'aW4=' },
+    };
+    const item = ask(1, [
+      { type: 'text', text: 'Both' },
+      inline,
+      ref({ imageId: '1:2' }),
+    ]) as unknown as Parameters<typeof readNeoAskImages>[0];
+    const io = transport({ ok: true, imageId: '1:2', mediaType: 'image/png', data: 'ZnVsbA==' });
+    expect(await readNeoAskImages(item, io.getHub)).toEqual([
+      { media_type: 'image/webp', data: 'aW4=' },
+      { media_type: 'image/png', data: 'ZnVsbA==' },
+    ]);
+    expect(
+      await readNeoAskImages(item, transport({ ok: false, reason: 'image_not_found' }).getHub)
+    ).toBeNull();
   });
 });
 

@@ -1,10 +1,14 @@
 import { useState } from 'preact/hooks';
-import type { MessageImage } from '@hyperneo/shared';
-import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
+import type {
+  NeoConversationAskPageItem,
+  NeoConversationImageRef,
+} from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
 import { neoForwardKey, type NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
+import { connectionManager } from '../lib/connection-manager.ts';
+import { type NeoAskItem, readNeoConversationImage } from './conversation-ask-client.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { messageTime } from './NeoMessage.tsx';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
@@ -16,16 +20,103 @@ import type {
   NeoPublicEntry,
 } from './public-conversation.ts';
 
-export function publicAskImages(content: NeoConversationAsk['content']): MessageImage[] {
-  if (!Array.isArray(content)) return [];
-  return content.flatMap((block) =>
-    block.type === 'image' && block.source.type === 'base64'
-      ? [{ data: block.source.data, media_type: block.source.media_type }]
-      : []
+export type NeoEditUndelivered = (ask: NeoAskItem) => boolean | void | Promise<boolean | void>;
+type AskPhoto = { kind: 'inline'; src: string } | { kind: 'ref'; ref: NeoConversationImageRef };
+
+function publicAskPhotos(content: NeoAskItem['content']): AskPhoto[] {
+  if (typeof content === 'string') return [];
+  return content.flatMap((block: NeoConversationAskPageItem['content'][number]): AskPhoto[] =>
+    block.type === 'image_ref'
+      ? [{ kind: 'ref', ref: block }]
+      : projectNeoMessageImageSources([block]).map((src) => ({ kind: 'inline', src }))
   );
 }
 
-export function publicAskText(content: NeoConversationAsk['content']): string {
+function photoBox(ref: NeoConversationImageRef) {
+  if (!ref.width || !ref.height) return { width: '8rem', height: '8rem' };
+  return {
+    width: `${Math.round(ref.width * Math.min(1, 256 / ref.height))}px`,
+    aspectRatio: `${ref.width} / ${ref.height}`,
+  };
+}
+
+function RefPhoto({
+  conversationId,
+  photo,
+  label,
+}: {
+  conversationId: string;
+  photo: NeoConversationImageRef;
+  label: string;
+}) {
+  const [view, setView] = useState<
+    { state: 'idle' | 'loading' | 'failed' } | { state: 'ready'; src: string }
+  >({ state: 'idle' });
+  const box = photoBox(photo);
+  if (view.state === 'ready')
+    return (
+      <img src={view.src} alt={label} style={box} class="max-w-full rounded-xl object-contain" />
+    );
+  const load = async () => {
+    setView({ state: 'loading' });
+    const read = await readNeoConversationImage({ conversationId, imageId: photo.imageId }, () =>
+      connectionManager.getHub()
+    );
+    setView(
+      read.state === 'ready'
+        ? { state: 'ready', src: `data:${read.image.media_type};base64,${read.image.data}` }
+        : { state: 'failed' }
+    );
+  };
+  const loading = view.state === 'loading';
+  return (
+    <div class="flex max-w-full flex-col items-start gap-1">
+      <button
+        type="button"
+        aria-label={`Open ${label.toLowerCase()}`}
+        aria-busy={loading}
+        disabled={loading}
+        onClick={() => void load()}
+        style={box}
+        class="relative max-w-full cursor-zoom-in overflow-hidden rounded-xl border bg-fill-soft"
+      >
+        {photo.thumbnail ? (
+          <img
+            src={`data:${photo.thumbnail.mediaType};base64,${photo.thumbnail.data}`}
+            alt={label}
+            class="h-full w-full object-cover"
+          />
+        ) : (
+          <span
+            role="img"
+            aria-label={label}
+            class="flex h-full w-full items-center justify-center text-xs text-fg-faint"
+          >
+            Photo
+          </span>
+        )}
+        {loading && (
+          <span
+            role="status"
+            aria-label="Loading photo"
+            class="absolute inset-0 m-auto h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent text-fg-faint"
+          />
+        )}
+      </button>
+      {view.state === 'failed' && (
+        <button
+          type="button"
+          class="text-xs text-danger hover:underline"
+          onClick={() => void load()}
+        >
+          Photo could not load. Retry
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function publicAskText(content: NeoAskItem['content']): string {
   if (typeof content === 'string') return content;
   return (Array.isArray(content) ? content : [])
     .flatMap((block: unknown) => {
@@ -153,7 +244,7 @@ function PublicEntry({
   forwarders?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
-  onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
+  onEditUndelivered?: NeoEditUndelivered;
 }) {
   const ask = entry.kind === 'ask' ? entry.ask : null;
   const undelivered = ask?.delivery?.state === 'failed';
@@ -163,12 +254,12 @@ function PublicEntry({
   const [restored, setRestored] = useState(
     () => !!ask && restoredUndelivered().includes(ask.requestId)
   );
+  const [restoring, setRestoring] = useState(false);
   const short = publication?.shortText.trim() ?? '';
   const full = publication?.fullText.trim() ?? '';
   const hasDetails = !!short && !!full && full !== short;
   const text = ask ? publicAskText(ask.content) : hasDetails && !expanded ? short : full || short;
-  const images =
-    ask && Array.isArray(ask.content) ? projectNeoMessageImageSources(ask.content) : [];
+  const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : 'You';
   const replier = publication ? topics?.get(publication.producerInput.sessionId) : undefined;
@@ -223,16 +314,25 @@ function PublicEntry({
       <div
         class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'} ${undelivered ? '!border-danger' : ''}`}
       >
-        {images.length > 0 && (
+        {photos.length > 0 && (
           <div class="mb-3 flex flex-wrap gap-2">
-            {images.map((src, index) => (
-              <img
-                key={index}
-                src={src}
-                alt={`Attached photo ${index + 1}`}
-                class="max-h-64 max-w-full rounded-xl object-contain"
-              />
-            ))}
+            {photos.map((photo, index) =>
+              photo.kind === 'ref' ? (
+                <RefPhoto
+                  key={photo.ref.imageId}
+                  conversationId={ask!.conversationId}
+                  photo={photo.ref}
+                  label={`Attached photo ${index + 1}`}
+                />
+              ) : (
+                <img
+                  key={index}
+                  src={photo.src}
+                  alt={`Attached photo ${index + 1}`}
+                  class="max-h-64 max-w-full rounded-xl object-contain"
+                />
+              )
+            )}
           </div>
         )}
         {/^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
@@ -289,10 +389,18 @@ function PublicEntry({
             type="button"
             aria-label="Edit and send again"
             title="Edit and send again"
+            disabled={restoring}
             onClick={() => {
-              if (onEditUndelivered(ask!) === false) return;
-              markRestored(ask!.requestId);
-              setRestored(true);
+              const settle = (result: boolean | void) => {
+                setRestoring(false);
+                if (result === false) return;
+                markRestored(ask!.requestId);
+                setRestored(true);
+              };
+              const result = onEditUndelivered(ask!);
+              if (!(result instanceof Promise)) return settle(result);
+              setRestoring(true);
+              void result.then(settle, () => settle(false));
             }}
             class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
@@ -426,7 +534,7 @@ export function NeoPublicConversation({
   forwarders?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
-  onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
+  onEditUndelivered?: NeoEditUndelivered;
   onRetry?: () => void;
   onLoadEarlier?: () => void;
 }) {
