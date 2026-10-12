@@ -357,21 +357,35 @@ describe('NeoAskCard', () => {
     expect(card.container.querySelector('[data-ask-item="i3"] .line-through')).toBeTruthy();
   });
 
-  it('puts what needs you on the card face and marks items added later', () => {
+  it('puts only the daemon’s human actions on the card face and marks items added later', () => {
     const view = describeAsk(
       {
         ...ask('w', 'waiting', []),
         doneItems: [
           item('i1', 'met'),
-          item('i2', 'needs_you', { text: 'You pick the bar placement' }),
+          item('i2', 'needs_you', { text: 'Check the keyboard hides', kind: 'action' }),
           item('i3', 'pending', { addedAt: 5 }),
+          item('i4', 'needs_you', { text: 'Wait for #6618 to merge' }),
         ],
       },
-      []
+      [],
+      {
+        humanActions: [
+          {
+            kind: 'answer',
+            itemId: 'i2',
+            step: 'Check the keyboard hides',
+            question: 'Did it work?',
+            options: ['Yes', 'No'],
+          },
+        ],
+      }
     );
-    const card = render(<NeoAskCard view={view} />);
+    const card = render(<NeoAskCard view={view} onAnswer={vi.fn()} onDone={vi.fn()} />);
     const face = card.getByRole('list', { name: 'Needs you' });
-    expect(face.textContent).toBe('!You pick the bar placementneeds you');
+    expect(face.textContent).toBe('!Check the keyboard hidesDid it work?YesNo');
+    expect(card.queryByText('Wait for #6618 to merge')).toBeNull();
+    expect(card.queryByRole('button', { name: /^Mark done/ })).toBeNull();
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
     expect(
       card.getByRole('list', { name: 'Done when' }).querySelector('[data-ask-item="i3"]')
@@ -379,31 +393,53 @@ describe('NeoAskCard', () => {
     ).toBe('○Item i3added');
   });
 
-  it('lets you mark an item that needs you as done from the card face', () => {
-    const done = vi.fn();
+  it('answers a human-only step’s result question from the card face', () => {
+    const answer = vi.fn();
     const view = describeAsk(
       {
         ...ask('w', 'waiting', []),
-        doneItems: [
-          item('i1', 'met'),
-          item('i2', 'needs_you', { text: 'Check the keyboard hides' }),
-        ],
+        doneItems: [item('i2', 'needs_you', { text: 'Check the keyboard hides', kind: 'action' })],
       },
-      []
+      [],
+      {
+        humanActions: [
+          {
+            kind: 'answer',
+            itemId: 'i2',
+            step: 'Check the keyboard hides',
+            question: 'Did it work?',
+            options: ['Yes', 'No'],
+          },
+        ],
+      }
     );
-    const card = render(<NeoAskCard view={view} onDone={done} />);
-    fireEvent.click(card.getByRole('button', { name: 'Mark done: Check the keyboard hides' }));
-    expect(done).toHaveBeenCalledExactlyOnceWith('i2');
-    expect(card.queryByRole('button', { name: 'Mark done: Item i1' })).toBeNull();
+    const card = render(<NeoAskCard view={view} onAnswer={answer} />);
+    fireEvent.click(card.getByRole('button', { name: 'Answer Did it work?: Yes' }));
+    expect(answer).toHaveBeenCalledExactlyOnceWith('i2', 'Yes');
     cleanup();
-    const busy = render(<NeoAskCard view={view} onDone={done} disabled />);
+    const busy = render(<NeoAskCard view={view} onAnswer={answer} disabled />);
     expect(
-      (
-        busy.getByRole('button', {
-          name: 'Mark done: Check the keyboard hides',
-        }) as HTMLButtonElement
-      ).disabled
+      (busy.getByRole('button', { name: 'Answer Did it work?: No' }) as HTMLButtonElement).disabled
     ).toBe(true);
+  });
+
+  it('confirms a reported claim only when the daemon offers it', () => {
+    const done = vi.fn();
+    const reported = item('i2', 'reported', { text: 'The iMac runs the fix' });
+    const view = describeAsk({ ...ask('w', 'open', []), doneItems: [reported] }, [], {
+      humanActions: [{ kind: 'confirm', itemId: 'i2', step: 'The iMac runs the fix' }],
+    });
+    const card = render(<NeoAskCard view={view} onDone={done} />);
+    fireEvent.click(card.getByRole('button', { name: 'Confirm: The iMac runs the fix' }));
+    expect(done).toHaveBeenCalledExactlyOnceWith('i2');
+    cleanup();
+    const none = render(
+      <NeoAskCard
+        view={describeAsk({ ...ask('w', 'open', []), doneItems: [reported] }, [])}
+        onDone={done}
+      />
+    );
+    expect(none.queryByRole('button', { name: /^Confirm/ })).toBeNull();
   });
 
   it('answers a decision with its options and offers Answer in chat as the main action', () => {
@@ -414,6 +450,15 @@ describe('NeoAskCard', () => {
       options: ['Assign it', 'Leave it'],
     });
     const view = describeAsk({ ...ask('w', 'waiting', []), doneItems: [decision] }, [], {
+      humanActions: [
+        {
+          kind: 'answer',
+          itemId: 'i2',
+          step: null,
+          question: 'Assign #6545?',
+          options: ['Assign it', 'Leave it'],
+        },
+      ],
       answer: {
         itemId: 'i2',
         question: 'Assign #6545?',
@@ -437,7 +482,9 @@ describe('NeoAskCard', () => {
     );
     expect(proposed.length).toBeGreaterThan(0);
     const approve = vi.fn();
-    const view = describeAsk(ask('b', 'open', ['b1']), proposed);
+    const view = describeAsk(ask('b', 'open', ['b1']), proposed, {
+      humanActions: [{ kind: 'start', workId: 'b1' }],
+    });
     const card = render(<NeoAskCard view={view} onApprove={approve} />);
     fireEvent.click(card.getByRole('button', { name: 'Approve all steps' }));
     expect(approve).toHaveBeenCalledOnce();
@@ -457,32 +504,34 @@ describe('NeoAskCard', () => {
     expect(nothing.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
   });
 
-  it('reads an approval’s budget from the ask and offers to refill it once it runs out', () => {
-    expect(neoAskApproval(ask('a', 'open', []))).toBeNull();
+  it('reads an approval’s budget from the ask and offers Approve again only when the daemon asks', () => {
+    expect(neoAskApproval(ask('a', 'open', []), [])).toBeNull();
     const approved = { ...ask('a', 'open', []), approvedAt: 5 };
-    expect(neoAskApproval(approved)).toEqual({ line: '0 continues used', spent: false });
+    expect(neoAskApproval(approved, [])).toEqual({ line: '0 continues used', spent: false });
     const budget = {
       ...approved,
       approvedContinues: 3,
       approvedContinueLimit: 20,
       approvedUntil: 100,
     };
-    expect(neoAskApproval(budget)).toEqual({ line: '3 of 20 continues used', spent: false });
-    expect(neoAskApproval({ ...budget, approvalSpent: 'expired' as const })).toEqual({
+    expect(neoAskApproval(budget, [])).toEqual({ line: '3 of 20 continues used', spent: false });
+    expect(neoAskApproval(budget, [{ kind: 'approve', reason: 'expired' }])).toEqual({
       line: '3 of 20 continues used · approval ran out',
       spent: true,
     });
     const approve = vi.fn();
-    const spent = describeAsk(
-      { ...budget, approvedContinues: 20, approvalSpent: 'continues' as const },
-      []
-    );
-    const card = render(<NeoAskCard view={spent} onApprove={approve} />);
-    expect(card.queryByText('20 of 20 continues used · approval ran out')).toBeNull();
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(card.getByText('20 of 20 continues used · approval ran out')).toBeTruthy();
+    const counted = { ...budget, approvedContinues: 20, approvalSpent: 'continues' as const };
+    const quiet = render(<NeoAskCard view={describeAsk(counted, [])} onApprove={approve} />);
+    expect(quiet.queryByRole('button', { name: 'Approve again' })).toBeNull();
+    cleanup();
+    const expired = describeAsk({ ...counted, approvalSpent: 'expired' as const }, [], {
+      humanActions: [{ kind: 'approve', reason: 'expired' }],
+    });
+    const card = render(<NeoAskCard view={expired} onApprove={approve} />);
     fireEvent.click(card.getByRole('button', { name: 'Approve again' }));
     expect(approve).toHaveBeenCalledOnce();
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    expect(card.getByText('20 of 20 continues used · approval ran out')).toBeTruthy();
   });
 
   it('shows the done-when text for an ask opened before checklists', () => {

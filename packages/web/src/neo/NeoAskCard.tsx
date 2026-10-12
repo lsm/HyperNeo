@@ -3,6 +3,7 @@ import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
+import { neoCardOpenLabel } from './card-view.ts';
 import {
   NeoAppMark,
   NeoChatMark,
@@ -16,13 +17,14 @@ import {
 } from './NeoCardParts.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import {
+  type NeoAskItemAction,
   type NeoAskOutcome,
   type NeoAskView,
   neoAskApproval,
+  neoAskItemActions,
   neoAskOpenTarget,
 } from './neo-asks.ts';
 import type { NeoScene, NeoSceneCards } from './neo-scenes.ts';
-import { neoCardOpenLabel } from './card-view.ts';
 import { neoAppLabel, neoAppLogo, neoSessionLink } from './work-driver.ts';
 
 const tones = {
@@ -140,17 +142,7 @@ const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> =
   pending: { mark: '○', color: 'text-fg-faint' },
 };
 
-function ItemRow({
-  item,
-  onDone,
-  onAnswer,
-  disabled,
-}: {
-  item: NeoAskItem;
-  onDone?: (itemId: string) => void;
-  onAnswer?: (itemId: string, choice: string) => void;
-  disabled?: boolean;
-}) {
+function ItemRow({ item }: { item: NeoAskItem }) {
   const glyph = itemGlyphs[item.state];
   const tags = [
     item.removed && 'removed',
@@ -177,65 +169,70 @@ function ItemRow({
           </span>
         )}
       </span>
-      {onAnswer && item.state === 'needs_you' && !item.removed && item.options?.length ? (
-        <span class="flex shrink-0 flex-wrap justify-end gap-1.5">
-          {item.options.map((option) => (
-            <button
-              key={option}
-              type="button"
-              class={neoSecondaryClass}
-              disabled={disabled}
-              aria-label={`Answer ${item.text}: ${option}`}
-              onClick={() => onAnswer(item.id, option)}
-            >
-              {option}
-            </button>
-          ))}
-        </span>
-      ) : (
-        onDone &&
-        (item.state === 'needs_you' || item.state === 'reported') &&
-        !item.removed && (
-          <button
-            type="button"
-            class={neoSecondaryClass}
-            disabled={disabled}
-            aria-label={`${item.state === 'reported' ? 'Confirm' : 'Mark done'}: ${item.text}`}
-            onClick={() => onDone(item.id)}
-          >
-            {item.state === 'reported' ? 'Confirm' : 'Done'}
-          </button>
-        )
-      )}
     </li>
   );
 }
 
-function Checklist({
-  items,
-  label,
+function Checklist({ items, label }: { items: readonly NeoAskItem[]; label: string }) {
+  return (
+    <ul aria-label={label} class="space-y-1.5">
+      {items.map((item) => (
+        <ItemRow key={item.id} item={item} />
+      ))}
+    </ul>
+  );
+}
+
+function ActionRow({
+  action,
   onDone,
   onAnswer,
   disabled,
 }: {
-  items: readonly NeoAskItem[];
-  label: string;
-  onAnswer?: (itemId: string, choice: string) => void;
+  action: NeoAskItemAction;
   onDone?: (itemId: string) => void;
+  onAnswer?: (itemId: string, choice: string) => void;
   disabled?: boolean;
 }) {
+  const text = action.kind === 'confirm' ? action.step : (action.step ?? action.question);
+  const question = action.kind === 'answer' && action.step ? action.question : null;
   return (
-    <ul aria-label={label} class="space-y-1.5">
-      {items.map((item) => (
-        <ItemRow
-          key={item.id}
-          item={item}
-          onDone={onDone}
-          onAnswer={onAnswer}
-          disabled={disabled}
-        />
-      ))}
-    </ul>
+    <li data-ask-item={action.itemId} class="flex min-w-0 items-baseline gap-2 text-sm">
+      <span aria-hidden="true" class="w-3 shrink-0 text-center text-xs text-warning">
+        !
+      </span>
+      <span class="min-w-0 flex-1">
+        <span class="break-words text-fg">{text}</span>
+        {question && <span class="block break-words text-xs text-fg-muted">{question}</span>}
+      </span>
+      <span class="flex shrink-0 flex-wrap justify-end gap-1.5">
+        {action.kind === 'confirm'
+          ? onDone && (
+              <button
+                type="button"
+                class={neoSecondaryClass}
+                disabled={disabled}
+                aria-label={`Confirm: ${text}`}
+                onClick={() => onDone(action.itemId)}
+              >
+                Confirm
+              </button>
+            )
+          : onAnswer &&
+            action.options.map((option) => (
+              <button
+                key={option}
+                type="button"
+                class={neoSecondaryClass}
+                disabled={disabled}
+                aria-label={`Answer ${question ?? text}: ${option}`}
+                onClick={() => onAnswer(action.itemId, option)}
+              >
+                {option}
+              </button>
+            ))}
+      </span>
+    </li>
   );
 }
 
@@ -276,18 +273,10 @@ export function NeoAskCard({
           : 'running';
   const steps = view.scenes.length;
   const single = steps === 1 ? view.scenes[0] : undefined;
-  const needsYouItems = view.settled
-    ? []
-    : view.items.filter(
-        (item) => (item.state === 'needs_you' || item.state === 'reported') && !item.removed
-      );
-  const canApprove =
-    !view.settled &&
-    !ask.approvedAt &&
-    view.scenes.some(
-      (scene) => scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'
-    );
-  const approval = neoAskApproval(ask);
+  const itemActions = neoAskItemActions(view);
+  const canApprove = view.humanActions.some((action) => action.kind === 'start');
+  const approveAgain = view.humanActions.some((action) => action.kind === 'approve');
+  const approval = neoAskApproval(ask, view.humanActions);
   const target = neoAskOpenTarget(view, cards);
   const openName = `Open ${ask.title}`;
   const openControl =
@@ -359,15 +348,19 @@ export function NeoAskCard({
       {view.summary && (
         <p class="mt-1.5 line-clamp-2 break-words text-sm text-fg-muted">{view.summary}</p>
       )}
-      {needsYouItems.length > 0 && (
+      {itemActions.length > 0 && (
         <div data-ask-needs-you class="mt-3 rounded-lg bg-warning/10 px-3 py-2">
-          <Checklist
-            items={needsYouItems}
-            label="Needs you"
-            onDone={onDone}
-            onAnswer={onAnswer}
-            disabled={disabled}
-          />
+          <ul aria-label="Needs you" class="space-y-1.5">
+            {itemActions.map((action) => (
+              <ActionRow
+                key={action.itemId}
+                action={action}
+                onDone={onDone}
+                onAnswer={onAnswer}
+                disabled={disabled}
+              />
+            ))}
+          </ul>
         </div>
       )}
       {steps > 0 && (
@@ -403,19 +396,7 @@ export function NeoAskCard({
           {!view.settled && approval && (
             <div class="text-sm text-fg-muted">
               <p class="text-xs font-medium text-fg-faint">Approval</p>
-              <p class="mt-1 flex flex-wrap items-center gap-x-3">
-                <span>{approval.line}</span>
-                {approval.spent && onApprove && (
-                  <button
-                    type="button"
-                    class={neoPlainClass}
-                    disabled={disabled}
-                    onClick={onApprove}
-                  >
-                    Approve again
-                  </button>
-                )}
-              </p>
+              <p class="mt-1">{approval.line}</p>
             </div>
           )}
           {ask.outcome && ask.outcome.trim() !== view.summary && (
@@ -440,6 +421,17 @@ export function NeoAskCard({
           </button>
         ) : (
           openControl
+        )}
+        {approveAgain && onApprove && (
+          <button
+            type="button"
+            class={neoPrimaryClass}
+            disabled={disabled}
+            title="Work stopped until you approve again: the approval ran out."
+            onClick={onApprove}
+          >
+            Approve again
+          </button>
         )}
         {canApprove && onApprove && (
           <button
