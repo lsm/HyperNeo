@@ -18,10 +18,20 @@ export function isNetworkUnreachableError(text: string): boolean {
   return NETWORK_UNREACHABLE_RE.test(text);
 }
 
-export function networkProbeHost(text: string): string {
+export function networkProbeHost(text: string, fallback: string | null = null): string {
   const match = PROBE_HOST_RE.exec(text);
   const host = match?.[1] ?? match?.[2];
-  return host && !host.includes(':') ? host : DEFAULT_PROBE_HOST;
+  return host && !host.includes(':') ? host : (fallback ?? DEFAULT_PROBE_HOST);
+}
+
+export function providerProbeHost(baseUrl: string | undefined): string | null {
+  if (!baseUrl) return null;
+  try {
+    const host = new URL(baseUrl).hostname;
+    return /^(?:localhost|127\.|\[?::1\]?$|0\.0\.0\.0$)/.test(host) ? null : host;
+  } catch {
+    return null;
+  }
 }
 
 export function planNetworkOutageTick(
@@ -52,6 +62,7 @@ export async function probeNetworkHost(host: string): Promise<boolean> {
 export interface NetworkOutageDeps {
   now(): number;
   probe(host: string): Promise<boolean>;
+  fallbackHost(): string | null;
   schedule(run: () => void, delayMs: number): () => void;
   isHeld(): boolean;
   hold(retryAt: number, messageId: string | undefined): Promise<void>;
@@ -81,7 +92,7 @@ export class NetworkOutagePause {
     this.startedAt ??= this.deps.now();
     this.active = true;
     this.prompt = prompt ?? this.prompt;
-    this.host = networkProbeHost(errorText);
+    this.host = networkProbeHost(errorText, this.deps.fallbackHost());
     this.errorText = errorText;
     this.deps.log(`network outage: holding the turn and probing ${this.host}`);
     await this.holdUntil(this.deps.now() + NETWORK_PROBE_EVERY_MS);
@@ -148,6 +159,7 @@ export class NetworkOutagePause {
     if (plan.popup) {
       this.popupShown = true;
       await this.deps.popup(this.errorText);
+      if (!this.active) return;
     }
     await this.holdUntil(plan.nextProbeAt);
   }

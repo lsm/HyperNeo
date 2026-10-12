@@ -7,6 +7,7 @@ import {
   NetworkOutagePause,
   networkProbeHost,
   planNetworkOutageTick,
+  providerProbeHost,
 } from '../../../../src/lib/agent/network-outage-pause';
 import { resultNetworkOutage } from '../../../../src/lib/agent/sdk-message-handler';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -41,6 +42,18 @@ describe('networkProbeHost', () => {
     expect(networkProbeHost('connect ECONNREFUSED 10.0.0.5:443')).toBe('10.0.0.5');
     expect(networkProbeHost('API Error: Connection error.')).toBe('api.anthropic.com');
     expect(networkProbeHost('connect ENETUNREACH 2606:4700::1:443')).toBe('api.anthropic.com');
+    expect(networkProbeHost('API Error: Connection error.', 'open.bigmodel.cn')).toBe(
+      'open.bigmodel.cn'
+    );
+  });
+});
+
+describe('providerProbeHost', () => {
+  test('takes the provider host from its base URL, but never a local bridge', () => {
+    expect(providerProbeHost('https://open.bigmodel.cn/api/anthropic')).toBe('open.bigmodel.cn');
+    expect(providerProbeHost('http://127.0.0.1:51234')).toBeNull();
+    expect(providerProbeHost('http://localhost:8080')).toBeNull();
+    expect(providerProbeHost(undefined)).toBeNull();
   });
 });
 
@@ -83,9 +96,11 @@ describe('NetworkOutagePause', () => {
     const holds: number[] = [];
     let held = true;
     let resumeFails = false;
+    let stopOnPopup = false;
     const resumed: unknown[] = [];
     const pause = new NetworkOutagePause({
       now: () => now,
+      fallbackHost: () => null,
       probe: async (host) => {
         events.push(`probe ${host}`);
         return reachable();
@@ -106,6 +121,7 @@ describe('NetworkOutagePause', () => {
       },
       popup: async () => {
         events.push('popup');
+        if (stopOnPopup) pause.stop();
       },
       resume: async (prompt) => {
         if (resumeFails) throw new Error('Agent query did not start');
@@ -130,6 +146,9 @@ describe('NetworkOutagePause', () => {
       },
       failResume: () => {
         resumeFails = true;
+      },
+      stopOnPopup: () => {
+        stopOnPopup = true;
       },
     };
   }
@@ -165,6 +184,17 @@ describe('NetworkOutagePause', () => {
     expect(h.events.filter((event) => event === 'popup')).toEqual(['popup']);
     expect(h.events).toContain('probe 10.0.0.5');
     expect(h.pause.isActive()).toBe(true);
+  });
+
+  test('a cancel during the popup leaves the session out of its hold', async () => {
+    const h = harness(() => false);
+    h.stopOnPopup();
+    await h.pause.start('getaddrinfo ENOTFOUND chatgpt.com', prompt);
+    await h.tick(NETWORK_OUTAGE_POPUP_AFTER_MS);
+
+    expect(h.events).toContain('popup');
+    expect(h.holds).toHaveLength(1);
+    expect(h.pause.isActive()).toBe(false);
   });
 
   test('drops the pause without resuming when the human stopped the session', async () => {

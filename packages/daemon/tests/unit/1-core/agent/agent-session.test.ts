@@ -1210,6 +1210,37 @@ describe('AgentSession', () => {
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
     });
 
+    it('does not restore a network pause as a rate-limit cooldown after a restart', async () => {
+      mockDb.getSession = mock(
+        () =>
+          ({
+            id: 'test-session-id',
+            processingState: JSON.stringify({
+              status: 'rate_limit_cooldown',
+              retryAt: Date.now() + 30_000,
+              retryCount: 0,
+              maxRetries: 0,
+              reason: 'network',
+            }),
+          }) as never
+      );
+      const arm = (
+        agentSession as unknown as { armPersistedRateLimitCooldown: () => void }
+      ).armPersistedRateLimitCooldown.bind(agentSession);
+
+      arm();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(agentSession.stateManager.getState().status).toBe('idle');
+      expect(
+        (
+          agentSession as unknown as {
+            rateLimitWatchdog: { isPersistedCooldownArmed: () => boolean };
+          }
+        ).rateLimitWatchdog.isPersistedCooldownArmed()
+      ).toBe(false);
+    });
+
     it('projects a restored persisted cooldown into the processing state', async () => {
       mockDb.getSession = mock(
         () =>

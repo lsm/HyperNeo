@@ -39,6 +39,7 @@ import {
   NETWORK_OUTAGE_NOTICE,
   NetworkOutagePause,
   probeNetworkHost,
+  providerProbeHost,
 } from './network-outage-pause.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
@@ -643,6 +644,19 @@ export class AgentSession
     this.networkPause = new NetworkOutagePause({
       now: () => Date.now(),
       probe: probeNetworkHost,
+      fallbackHost: () => {
+        const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
+        try {
+          return providerProbeHost(
+            getProviderRegistry()
+              .get(provider)
+              ?.buildSdkConfig(this.session.config.model ?? 'sonnet')
+              .envVars.ANTHROPIC_BASE_URL?.toString()
+          );
+        } catch {
+          return null;
+        }
+      },
       schedule: (run, delayMs) => {
         const timer = setTimeout(run, delayMs);
         timer.unref?.();
@@ -945,7 +959,12 @@ export class AgentSession
         retryCount?: unknown;
         maxRetries?: unknown;
         exhaustedCycles?: unknown;
+        reason?: unknown;
       };
+      if (parsed.status === 'rate_limit_cooldown' && parsed.reason === 'network') {
+        void this.stateManager.setIdle().catch(() => {});
+        return;
+      }
       if (
         parsed.status === 'rate_limit_cooldown' &&
         typeof parsed.retryAt === 'number' &&
