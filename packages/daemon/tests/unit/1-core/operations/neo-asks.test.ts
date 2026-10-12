@@ -825,6 +825,16 @@ describe('neo.ask operations', () => {
       })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('approval_on_ask') } });
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
+    const unapproved = await invoke(
+      'neo.ask.open',
+      { ...opening, requestKey: 'never-approved' },
+      { source: 'rpc', principal: 'local' }
+    );
+    const unapprovedId = unapproved.value!.ask!.id;
+    expect(service.askRecords.get(unapprovedId)?.approvedAt).toBeNull();
+    expect(await invoke('neo.ask.settle', { ...renew, id: unapprovedId })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('question_required') },
+    });
 
     service.isContinueStalled = (id: string) => id === cardId;
     expect(await invoke('neo.ask.settle', renew)).toMatchObject({

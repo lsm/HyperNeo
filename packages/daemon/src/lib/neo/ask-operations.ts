@@ -666,7 +666,7 @@ export function requireNeoAskSettleCarriesNoGate<T>(
   now: number,
   value: T
 ): Gate<T> {
-  return plan.waits && !plan.approval && !plan.item && !neoAskHasHumanAction(ask, facts, now)
+  return plan.waits && !plan.item && !neoAskHasHumanAction(ask, facts, now)
     ? {
         reason: fail(
           'question_required: an ask waits only on something the human can act on. To ask them a decision, pass question and options (2-4 short answers) to this settle or call neo.ask.question; otherwise keep the work moving and leave the ask open.'
