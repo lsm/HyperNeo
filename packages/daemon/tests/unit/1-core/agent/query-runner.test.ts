@@ -3401,6 +3401,14 @@ describe('QueryRunner', () => {
       return { ctx, outcome };
     }
 
+    it('ends any network outage when a turn fails terminally for another reason', async () => {
+      const endNetworkOutage = mock(() => {});
+      await runTerminalFailure('Claude Code process exited with code 1', { endNetworkOutage });
+
+      expect(endNetworkOutage).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('suppresses terminal publication and idle when a cooldown is scheduled', async () => {
       const onRateLimitExhausted = mock(async (): Promise<boolean> => true);
 
@@ -3559,6 +3567,34 @@ describe('QueryRunner', () => {
         prepend: true,
       });
       expect(queryCalls).toBe(2);
+    });
+
+    it('pauses the turn without an error report when the provider is unreachable', async () => {
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(() => ({
+        close: () => {},
+        interrupt: async () => {},
+        [Symbol.asyncIterator]: async function* () {
+          yield* [];
+          throw new Error('TypeError: getaddrinfo ENOTFOUND chatgpt.com');
+        },
+      }));
+      const onNetworkOutage = mock(async () => true);
+      const clear = mock(() => {});
+      const ctx = createContext({
+        onNetworkOutage,
+        messageQueue: { ...mockMessageQueue, clear } as unknown as MessageQueue,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise;
+
+      expect(onNetworkOutage).toHaveBeenCalledWith(
+        expect.stringContaining('ENOTFOUND chatgpt.com'),
+        null,
+        expect.any(Number)
+      );
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(clear).not.toHaveBeenCalled();
     });
 
     it('reports a process exit after a subagent result as a terminal error', async () => {

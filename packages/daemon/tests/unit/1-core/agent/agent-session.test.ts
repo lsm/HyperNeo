@@ -1109,6 +1109,35 @@ describe('AgentSession', () => {
       expect(admitSpy).not.toHaveBeenCalled();
     });
 
+    it('a delivery during a network pause resends the held prompt before its own message', async () => {
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({ isProcessingDelivery: mock(() => true) }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      const resent = mock(async () => 'started' as const);
+      agentSession.lifecycleManager.startQueryAndEnqueue = resent as never;
+      const pause = (
+        agentSession as unknown as {
+          networkPause: {
+            isActive: () => boolean;
+            takePrompt: () => { uuid: string; content: string } | null;
+          };
+        }
+      ).networkPause;
+      pause.isActive = () => true;
+      pause.takePrompt = () => ({ uuid: 'held-uuid', content: 'ship it' });
+
+      await agentSession.driveDeliveryTurn('uuid-new', 'hello', null, true, () => true);
+
+      expect(resent).toHaveBeenCalledWith('held-uuid', 'ship it', undefined, { prepend: true });
+    });
+
     it('driveDeliveryTurn parks instead of reopening while limit recovery is pending', async () => {
       const retrySpy = mock(() => 'db-1');
       mockDb.getSDKMessageRepo = mock(() => ({
@@ -1208,6 +1237,76 @@ describe('AgentSession', () => {
       agentSession.cancelRateLimitRetry();
 
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+    });
+
+    it('a turn that ends without a network failure closes the outage clock', async () => {
+      const pause = (agentSession as unknown as { networkPause: { endOutage: () => void } })
+        .networkPause;
+      const endOutage = mock(() => {});
+      pause.endOutage = endOutage;
+
+      await agentSession.onMarkApiSuccess({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'API Error: 401 invalid_api_key',
+      } as never);
+      expect(endOutage).toHaveBeenCalledTimes(1);
+
+      await agentSession.onMarkApiSuccess({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'API Error: 502 getaddrinfo ENOTFOUND chatgpt.com',
+      } as never);
+      expect(endOutage).toHaveBeenCalledTimes(1);
+    });
+
+    it('restores a network pause as a network pause holding its prompt after a restart', async () => {
+      mockDb.getSession = mock(
+        () =>
+          ({
+            id: 'test-session-id',
+            processingState: JSON.stringify({
+              status: 'rate_limit_cooldown',
+              retryAt: Date.now() + 30_000,
+              retryCount: 0,
+              maxRetries: 0,
+              messageId: 'held-uuid',
+              reason: 'network',
+            }),
+          }) as never
+      );
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getStoredPromptsByUuid: () => [
+          { type: 'user', uuid: 'held-uuid', message: { role: 'user', content: 'ship it' } },
+        ],
+      })) as never;
+      const arm = (
+        agentSession as unknown as { armPersistedRateLimitCooldown: () => void }
+      ).armPersistedRateLimitCooldown.bind(agentSession);
+
+      arm();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const pause = (
+        agentSession as unknown as {
+          networkPause: { isActive: () => boolean; takePrompt: () => unknown };
+        }
+      ).networkPause;
+      expect(pause.isActive()).toBe(true);
+      const state = agentSession.stateManager.getState();
+      expect(state.status).toBe('rate_limit_cooldown');
+      if (state.status === 'rate_limit_cooldown') expect(state.reason).toBe('network');
+      expect(
+        (
+          agentSession as unknown as {
+            rateLimitWatchdog: { isPersistedCooldownArmed: () => boolean };
+          }
+        ).rateLimitWatchdog.isPersistedCooldownArmed()
+      ).toBe(false);
+      expect(pause.takePrompt()).toEqual({ uuid: 'held-uuid', content: 'ship it' });
+      await agentSession.stateManager.setIdle();
     });
 
     it('projects a restored persisted cooldown into the processing state', async () => {

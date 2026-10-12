@@ -35,6 +35,12 @@ import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.
 import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
 import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
+import {
+  NETWORK_OUTAGE_NOTICE,
+  NetworkOutagePause,
+  probeNetworkHost,
+  providerProbeHost,
+} from './network-outage-pause.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
@@ -234,6 +240,7 @@ import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
   boundedDeliveryGate,
+  resultNetworkOutage,
   SDKMessageHandler,
   type SDKMessageHandlerContext,
   type SuppressedResultOutcome,
@@ -362,6 +369,7 @@ export class AgentSession
   private sessionConfigHandler: SessionConfigHandler;
 
   private rateLimitWatchdog: RateLimitWatchdog;
+  private networkPause: NetworkOutagePause;
 
   queryObject: QueryLike | null = null;
   private queryPromiseValue: Promise<void> | null = null;
@@ -634,6 +642,58 @@ export class AgentSession
       }
     );
 
+    this.networkPause = new NetworkOutagePause({
+      now: () => Date.now(),
+      probe: probeNetworkHost,
+      fallbackHost: () => {
+        const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
+        try {
+          return providerProbeHost(
+            getProviderRegistry()
+              .get(provider)
+              ?.buildSdkConfig(this.session.config.model ?? 'sonnet')
+              .envVars.ANTHROPIC_BASE_URL?.toString()
+          );
+        } catch {
+          return null;
+        }
+      },
+      schedule: (run, delayMs) => {
+        const timer = setTimeout(run, delayMs);
+        timer.unref?.();
+        return () => clearTimeout(timer);
+      },
+      isHeld: () => this.stateManager.getState().status === 'rate_limit_cooldown',
+      hold: (retryAt, messageId) =>
+        this.stateManager.setRateLimitCooldown({
+          retryCount: 0,
+          maxRetries: 0,
+          retryAt,
+          reason: 'network',
+          ...(messageId !== undefined ? { messageId } : {}),
+        }),
+      notice: async (text) => {
+        await this.queryRunner.displayErrorAsAssistantMessage(text);
+      },
+      popup: async (errorText) => {
+        await this.errorManager.handleError(
+          this.session.id,
+          new Error(errorText),
+          ErrorCategory.CONNECTION,
+          NETWORK_OUTAGE_NOTICE,
+          this.stateManager.getState()
+        );
+      },
+      resume: async (prompt) => {
+        await this.stateManager.setIdle(prompt ? { suppressDeliveryWaiters: true } : undefined);
+        if (prompt)
+          await this.lifecycleManager.startQueryAndEnqueue(prompt.uuid, prompt.content, undefined, {
+            prepend: true,
+          });
+      },
+      log: (line) => this.logger.info(line),
+    });
+
     this.eventSubscriptionSetup = new EventSubscriptionSetup(this);
 
     this.stateManager.setOnIdleCallback(async (owner) => {
@@ -900,7 +960,28 @@ export class AgentSession
         retryCount?: unknown;
         maxRetries?: unknown;
         exhaustedCycles?: unknown;
+        reason?: unknown;
       };
+      if (parsed.status === 'rate_limit_cooldown' && parsed.reason === 'network') {
+        const stored =
+          typeof parsed.messageId === 'string'
+            ? this.db
+                .getSDKMessageRepo()
+                .getStoredPromptsByUuid(this.session.id, parsed.messageId)[0]
+            : undefined;
+        const content = (stored as { message?: { content?: unknown } } | undefined)?.message
+          ?.content as string | MessageContent[] | undefined;
+        void this.networkPause
+          .start(
+            'network outage carried over a daemon restart',
+            stored && content !== undefined ? { uuid: parsed.messageId as string, content } : null,
+            false
+          )
+          .catch(() => {
+            void this.stateManager.setIdle().catch(() => {});
+          });
+        return;
+      }
       if (
         parsed.status === 'rate_limit_cooldown' &&
         typeof parsed.retryAt === 'number' &&
@@ -1009,6 +1090,7 @@ export class AgentSession
   ): Promise<'started' | 'aborted'> {
     if (episodeGeneration === undefined) {
       this.rateLimitWatchdog.cancel();
+      await this.resumeNetworkPauseFor(messageId);
     } else {
       this.rateLimitWatchdog.clearPendingCooldown();
     }
@@ -1018,6 +1100,17 @@ export class AgentSession
       episodeGeneration,
       options
     );
+  }
+
+  private async resumeNetworkPauseFor(messageId: string): Promise<void> {
+    if (!this.networkPause.isActive()) return;
+    const held = this.networkPause.takePrompt();
+    if (this.stateManager.getState().status === 'rate_limit_cooldown')
+      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+    if (held && held.uuid !== messageId)
+      await this.lifecycleManager.startQueryAndEnqueue(held.uuid, held.content, undefined, {
+        prepend: true,
+      });
   }
 
   removeQueuedMessage(messageId: string): boolean {
@@ -1060,6 +1153,7 @@ export class AgentSession
     this.interruptRequests += 1;
     try {
       this.rateLimitWatchdog.cancel();
+      this.networkPause.stop();
       this.clearPendingResumeAfterCompaction();
       this.messageHandler.cancelSuppressedResultWait();
       const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
@@ -1109,6 +1203,7 @@ export class AgentSession
     hardReset?: boolean;
   }): Promise<{ success: boolean; error?: string }> {
     this.rateLimitWatchdog.cancel();
+    this.networkPause.stop();
 
     const restartQuery = options?.restartQuery ?? true;
     if (options?.hardReset && this.runtimeOptions.hardReset) {
@@ -1337,6 +1432,7 @@ export class AgentSession
   }
 
   cancelRateLimitRetry(): void {
+    this.networkPause.stop();
     runRateLimitManualCancel({
       db: this.db,
       sessionId: this.session.id,
@@ -1367,6 +1463,7 @@ export class AgentSession
   }
 
   async retryNowAfterRateLimit(): Promise<boolean> {
+    if (await this.networkPause.resumeNow()) return true;
     const persistedEpisodeMessageUuid = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
     if (this.rateLimitWatchdog.isPersistedCooldownArmed()) {
       this.rateLimitWatchdog.resumePersistedCooldown();
@@ -1728,6 +1825,7 @@ export class AgentSession
 
   async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    this.networkPause.stop();
     await this.lifecycleManager.restart(options);
   }
 
@@ -2588,6 +2686,12 @@ export class AgentSession
       return;
     }
     this.errorManager.markApiSuccess();
+    if (
+      message.type === 'result' &&
+      !(message as { parent_tool_use_id?: string | null }).parent_tool_use_id &&
+      !resultNetworkOutage(message)
+    )
+      this.networkPause.endOutage();
     if (isSDKResultSuccess(message) && message.is_error !== true) {
       const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
@@ -2621,6 +2725,33 @@ export class AgentSession
       errorText,
       this.queryRunner.resolveRetryUserMessage(userMessageUuid),
       hint,
+      queryGeneration
+    );
+  }
+
+  endNetworkOutage(): void {
+    this.networkPause.endOutage();
+  }
+
+  async onNetworkOutage(
+    errorText: string,
+    prompt: { uuid: string; content: string | MessageContent[] } | null,
+    queryGeneration?: number
+  ): Promise<boolean> {
+    if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration)
+      return false;
+    await this.networkPause.start(errorText, prompt);
+    return true;
+  }
+
+  async onResultNetworkOutage(
+    errorText: string,
+    userMessageUuid?: string,
+    queryGeneration?: number
+  ): Promise<boolean> {
+    return this.onNetworkOutage(
+      errorText,
+      this.queryRunner.resolveRetryUserMessage(userMessageUuid),
       queryGeneration
     );
   }
@@ -2707,6 +2838,8 @@ export class AgentSession
                 );
             return { outcome: 'blocked', retryAt, reason: 'limit_recovery' };
           }
+
+          if (this.networkPause.isActive()) await this.resumeNetworkPauseFor(messageUuid);
 
           if (!this.messageQueue.isRunning()) {
             const startResult = await this.lifecycleManager.ensureQueryStarted(signal);
@@ -3373,6 +3506,7 @@ export class AgentSession
     }
     this.deliveryErrorSubs.length = 0;
     this.rateLimitWatchdog.destroy();
+    this.networkPause.stop();
     await this.lifecycleManager.cleanup();
   }
 }

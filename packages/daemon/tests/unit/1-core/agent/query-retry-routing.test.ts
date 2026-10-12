@@ -289,6 +289,23 @@ describe('query-retry-routing', () => {
       expected: { action: 'expected_recovery_noop' },
     },
     {
+      name: 'an unreachable provider pauses the turn instead of failing it',
+      signal: { rawText: 'getaddrinfo ENOTFOUND chatgpt.com', isNetworkUnreachable: true },
+      expected: { action: 'network_pause' },
+    },
+    {
+      name: 'an unreachable provider after the user interrupted is not paused',
+      signal: { rawText: 'getaddrinfo ENOTFOUND chatgpt.com', isNetworkUnreachable: true },
+      env: {
+        lifecycle: {
+          processingStatus: 'interrupted',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: false,
+        },
+      },
+      expected: { action: 'terminal', category: ErrorCategory.CONNECTION },
+    },
+    {
       name: 'SDK process exit after the turn ended with a result is not a crash',
       signal: { rawText: 'Error: Claude Code process exited with code 1' },
       env: { turnEnded: true },

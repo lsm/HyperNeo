@@ -7,9 +7,16 @@ interface Props {
   retryCount: number;
   maxRetries: number;
   retryAt: number;
+  network?: boolean;
 }
 
-export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, retryAt }: Props) {
+export function RateLimitCooldownBanner({
+  sessionId,
+  retryCount,
+  maxRetries,
+  retryAt,
+  network = false,
+}: Props) {
   const [remaining, setRemaining] = useState(Math.max(0, retryAt - Date.now()));
   const [cancelling, setCancelling] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -66,13 +73,20 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
           d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
         />
       </svg>
-      <span class="text-xs flex-1">
-        <span class="font-medium">Rate limit reached.</span> Auto-retry in{' '}
-        <span class="font-mono font-medium">{formatCountdown(remaining)}</span>{' '}
-        <span class="text-warning/60">
-          (attempt {retryCount}/{maxRetries})
+      {network ? (
+        <span class="text-xs flex-1">
+          <span class="font-medium">Can't reach the model provider (network).</span> Checking again
+          in <span class="font-mono font-medium">{formatCountdown(remaining)}</span>
         </span>
-      </span>
+      ) : (
+        <span class="text-xs flex-1">
+          <span class="font-medium">Rate limit reached.</span> Auto-retry in{' '}
+          <span class="font-mono font-medium">{formatCountdown(remaining)}</span>{' '}
+          <span class="text-warning/60">
+            (attempt {retryCount}/{maxRetries})
+          </span>
+        </span>
+      )}
       <div class="flex items-center gap-1.5">
         <button
           type="button"

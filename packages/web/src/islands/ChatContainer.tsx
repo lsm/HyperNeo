@@ -1333,6 +1333,7 @@ export default function ChatContainer({
           retryCount={agentState.retryCount}
           maxRetries={agentState.maxRetries}
           retryAt={agentState.retryAt}
+          network={agentState.reason === 'network'}
         />
       )}
 

@@ -29,6 +29,22 @@ describe('RateLimitCooldownBanner', () => {
     cleanup();
   });
 
+  it('names a network outage instead of a rate limit, without an attempt count', () => {
+    render(
+      <RateLimitCooldownBanner
+        sessionId="s1"
+        retryCount={0}
+        maxRetries={0}
+        retryAt={40_000}
+        network
+      />
+    );
+    expect(screen.getByText("Can't reach the model provider (network).")).toBeTruthy();
+    expect(screen.queryByText(/Rate limit reached/)).toBeNull();
+    expect(screen.queryByText(/attempt/)).toBeNull();
+    expect(screen.getByText('Retry Now')).toBeTruthy();
+  });
+
   it('counts down while visible', async () => {
     render(
       <RateLimitCooldownBanner sessionId="s1" retryCount={1} maxRetries={5} retryAt={15_000} />

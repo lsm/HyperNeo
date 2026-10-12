@@ -46,12 +46,14 @@ export interface QueryRetryErrorSignal {
   isRateLimit: boolean;
   rateLimitHint: LimitRetryHint | null;
   apiValidationText: string | null;
+  isNetworkUnreachable?: boolean;
 }
 
 export type QueryRetryRoute =
   | { action: 'startup_timeout_retry'; redeliver: 'consumed' | 'queue' }
   | { action: 'message_not_found_retry' }
   | { action: 'transient_retry' }
+  | { action: 'network_pause' }
   | { action: 'provider_backoff'; nextAttempt: number }
   | { action: 'rate_limit_handoff'; hint: LimitRetryHint }
   | { action: 'api_validation'; text: string }
@@ -162,6 +164,12 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
   }
   if (errorSignal.isMessageNotFound && env.attempt === 0)
     return { action: 'message_not_found_retry' };
+  if (
+    errorSignal.isNetworkUnreachable &&
+    !isQueryInterrupted(errorSignal, env.lifecycle) &&
+    !limitRecoveryInFlight(env)
+  )
+    return { action: 'network_pause' };
   if (
     errorSignal.isTransientConnectionError &&
     !isQueryInterrupted(errorSignal, env.lifecycle) &&
@@ -330,6 +338,17 @@ function resolveDecision(
         finalizer: makeFinalizer({
           skipCatchIdle: true,
           skipFinalizerIdle: skipIdleDueToRecovery,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    case 'network_pause':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipQueueClear: true,
+          skipCatchIdle: true,
+          skipFinalizerIdle: skipFinalizerIdleAlways,
           skipBeginTerminalIdle: true,
           skipErrorManager: true,
         }),
