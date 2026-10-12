@@ -3449,6 +3449,92 @@ describe('QueryRunner', () => {
       );
     });
 
+    it('ends the turn without an error report when the SDK process exits after an error_max_turns result', async () => {
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(() => ({
+        close: () => {},
+        interrupt: async () => {},
+        [Symbol.asyncIterator]: async function* () {
+          yield {
+            type: 'result',
+            subtype: 'error_max_turns',
+            uuid: 'max-turns-result',
+          } as unknown as SDKMessage;
+          throw new Error('Claude Code process exited with code 1');
+        },
+      }));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise;
+
+      expect(onSDKMessageSpy.mock.calls[0][0]).toMatchObject({ subtype: 'error_max_turns' });
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('after its turn ended with a result')
+      );
+      expect(mockLogger.error).not.toHaveBeenCalledWith(
+        'Streaming query error:',
+        expect.anything()
+      );
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('reports a process exit after a subagent result as a terminal error', async () => {
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(() => ({
+        close: () => {},
+        interrupt: async () => {},
+        [Symbol.asyncIterator]: async function* () {
+          yield {
+            type: 'result',
+            subtype: 'success',
+            uuid: 'subagent-result',
+            parent_tool_use_id: 'task-1',
+          } as unknown as SDKMessage;
+          throw new Error('Claude Code process exited with code 1');
+        },
+      }));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise;
+
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledWith('Streaming query error:', expect.anything());
+    });
+
+    it('reports a process exit after the next prompt was fed as a terminal error', async () => {
+      async function* prompts() {
+        yield { message: { uuid: 'next-prompt', message: { content: 'next' } }, onSent: () => {} };
+      }
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(
+        (args: Parameters<typeof query>[0]) => ({
+          close: () => {},
+          interrupt: async () => {},
+          [Symbol.asyncIterator]: async function* () {
+            yield {
+              type: 'result',
+              subtype: 'error_max_turns',
+              uuid: 'max-turns-result',
+            } as unknown as SDKMessage;
+            await (args.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]().next();
+            throw new Error('Claude Code process exited with code 1');
+          },
+        })
+      );
+      const ctx = createContext({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: mock(() => prompts()),
+        } as unknown as MessageQueue,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise;
+
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('passes the assessed limit payload to the handoff callback', async () => {
       const resetAtMs = Date.now() + 60 * 60 * 1000;
       const cases: Array<{ errorMessage: string; hint: LimitRetryHint }> = [
