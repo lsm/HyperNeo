@@ -260,6 +260,7 @@ import {
   planNeoNeedsYouCleared,
 } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
+import { createNeoNoteQueueDeps, issueNeoNote } from './note-queue.ts';
 import { NEO_TURN_LIMIT_PREFIX, neoTurnLimitNote, planNeoTurnLimitNote } from './turn-limit.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
@@ -2702,6 +2703,7 @@ export class NeoService {
         .length
     )
       return;
+    if (!issueNeoNote(createNeoNoteQueueDeps(this.db), sessionId, messageId).issue) return;
     const outcome = await handoffPromptToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
       origin: renderAddress({ kind: 'session', sessionId: originSessionId }),

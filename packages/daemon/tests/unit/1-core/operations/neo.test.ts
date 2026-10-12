@@ -114,6 +114,8 @@ describe('Neo MVP', () => {
       getJobQueueRepo: () => queue,
       getSDKMessageRepo: () => ({
         getStoredPromptsByUuid: () => [{ type: 'user', inputKind: 'human' }],
+        listQueuedSystemInputs: () => [],
+        lastConsumedInputSeq: () => null,
         findMessageIdByUuid: (id: string, uuid: string) =>
           delivered.has(`${id}:${uuid}`) ? uuid : null,
         hasTerminalResultAfter: (id: string) => terminalSessions?.has(id) ?? terminal,
