@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import type { MessageContent, Provider } from '@hyperneo/shared';
 import { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -6,9 +6,6 @@ import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { deliverMessage } from '../../../../src/lib/agent/message-delivery';
 import { NEO_NOTE_FOLD_SEPARATOR } from '../../../../src/lib/agent/neo-note-fold';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
-import type { QueryLike } from '../../../../src/lib/agent/query-like';
-import { setModelsCache } from '../../../../src/lib/model-service';
-import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { Database } from '../../../../src/storage/database';
 import type { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import {
