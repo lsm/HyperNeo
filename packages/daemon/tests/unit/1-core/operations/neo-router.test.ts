@@ -210,27 +210,33 @@ describe('neoTopicOpenAsks', () => {
 });
 
 describe('askNeoRouteModel', () => {
-  const run = async (answers: NeoRouteVerdict[]) => {
+  const answering = (answers: NeoRouteVerdict[]) => {
     const calls: number[] = [];
-    const verdict = await askNeoRouteModel('hi', [drivers], 'ctx', false, {
+    const deps = {
       classify: async () => {
         calls.push(calls.length);
         return answers[calls.length - 1] ?? null;
       },
-    });
-    return { verdict, calls: calls.length };
+    };
+    return { deps, calls };
   };
 
   test.each(['timeout', 'failed', null] as const)(
     'asks once more when the route model gives %s',
     async (first) => {
-      expect(await run([first, drivers])).toEqual({ verdict: drivers, calls: 2 });
+      const { deps, calls } = answering([first, drivers]);
+      expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, deps)).toEqual(drivers);
+      expect(calls).toHaveLength(2);
     }
   );
 
   test('keeps an answer without retrying, and retries only once', async () => {
-    expect(await run(['main'])).toEqual({ verdict: 'main', calls: 1 });
-    expect(await run(['timeout', 'failed'])).toEqual({ verdict: 'failed', calls: 2 });
+    const answered = answering(['main']);
+    expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, answered.deps)).toBe('main');
+    expect(answered.calls).toHaveLength(1);
+    const silent = answering(['timeout', 'failed']);
+    expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, silent.deps)).toBe('failed');
+    expect(silent.calls).toHaveLength(2);
   });
 
   test('offers the inbox to the route model when it is runnable', async () => {
