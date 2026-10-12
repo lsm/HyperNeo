@@ -1038,7 +1038,9 @@ export function createNeoOperations(service: NeoService) {
       sessionId: caller.sessionId,
       messageId: caller.neoTurn.messageId,
     });
-    const ask = origin ? service.askRecords.forOrigin(origin.sessionId, origin.messageId) : null;
+    const ask = origin
+      ? service.askRecords.liveForOrigin(origin.sessionId, origin.messageId)
+      : null;
     const binding = service.repo.getBindingBySession(caller.sessionId);
     return ask && isNeoTurnAskReadable(binding, ask) ? ask.id : undefined;
   };
