@@ -1,5 +1,5 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NEO_WORK_CLOSED_DONE, type NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import { isNeoWorkClosedDone, type NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkRef, WorkStatus } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import { isNeoAskLive } from './done-check.ts';
@@ -23,7 +23,7 @@ export type NeoWorkFollowCard = {
 };
 
 const followsUp = (work: Pick<NeoWork, 'report'>, card: NeoWorkFollowCard) =>
-  card.goal && isNeoAskLive(card.ask) && work.report !== NEO_WORK_CLOSED_DONE;
+  card.goal && isNeoAskLive(card.ask) && !isNeoWorkClosedDone(work.report);
 
 export function requireNeoWorkFollow(
   work: NeoWork,
@@ -33,7 +33,7 @@ export function requireNeoWorkFollow(
   const due = card.readAt === null || now - card.readAt >= NEO_WORK_FOLLOW_READ_MS;
   const liveOpen = card.live !== null && !NEO_WORK_LIVE_FINAL.includes(card.live);
   return work.status === 'reported' &&
-    work.report !== NEO_WORK_CLOSED_DONE &&
+    !isNeoWorkClosedDone(work.report) &&
     card.ref &&
     !card.superseded &&
     (followsUp(work, card) || liveOpen) &&

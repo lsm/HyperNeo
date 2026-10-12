@@ -120,7 +120,7 @@ describe('keepNeoTrackedSessions', () => {
 describe('requireNeoTrackedAdoption', () => {
   test('says a card already follows the session instead of suggesting a send', () => {
     const adopt = { verb: 'adopt' as const, ref };
-    expect(requireNeoTrackedAdoption(adopt, new Map(), [ref], 1_000, 'ok')).toEqual({
+    expect(requireNeoTrackedAdoption(adopt, new Map(), [ref], 1_000, true, 'ok')).toEqual({
       reason: { ok: false, reason: 'A Neo card already follows this session.' },
     });
   });
@@ -129,14 +129,27 @@ describe('requireNeoTrackedAdoption', () => {
     const tracked = new Map([[key, 1_000]]);
     const send = { verb: 'send' as const, ref };
     const adopt = { verb: 'adopt' as const, ref };
-    expect(requireNeoTrackedAdoption(send, new Map(), [], 1_000, 'ok')).toEqual({ value: 'ok' });
-    expect(requireNeoTrackedAdoption(adopt, tracked, [], 2_000, 'ok')).toEqual({ value: 'ok' });
+    expect(requireNeoTrackedAdoption(send, new Map(), [], 1_000, false, 'ok')).toEqual({
+      value: 'ok',
+    });
+    expect(requireNeoTrackedAdoption(adopt, tracked, [], 2_000, false, 'ok')).toEqual({
+      value: 'ok',
+    });
     expect(
-      requireNeoTrackedAdoption(adopt, tracked, [], 1_000 + NEO_SESSION_TRACK_MS, 'ok')
+      requireNeoTrackedAdoption(adopt, tracked, [], 1_000 + NEO_SESSION_TRACK_MS, false, 'ok')
     ).toMatchObject({ reason: { ok: false } });
-    expect(requireNeoTrackedAdoption(adopt, new Map(), [], 1_000, 'ok')).toMatchObject({
+    expect(requireNeoTrackedAdoption(adopt, new Map(), [], 1_000, false, 'ok')).toMatchObject({
       reason: { ok: false },
     });
+  });
+
+  test('adopts an untracked session while answering the human who asked for it', () => {
+    const adopt = { verb: 'adopt' as const, ref };
+    expect(requireNeoTrackedAdoption(adopt, new Map(), [], 1_000, true, 'ok')).toEqual({
+      value: 'ok',
+    });
+    const refused = requireNeoTrackedAdoption(adopt, new Map(), [], 1_000, false, 'ok');
+    expect(JSON.stringify(refused)).not.toContain('ask the human');
   });
 });
 

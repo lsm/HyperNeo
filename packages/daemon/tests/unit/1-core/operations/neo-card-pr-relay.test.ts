@@ -81,6 +81,12 @@ describe('requireNeoCardPrRelay', () => {
       attention,
       null,
     ],
+    [
+      'not_in_flight',
+      { status: 'reported' as const, report: 'Closed as done by Neo: both PRs merged' },
+      attention,
+      null,
+    ],
     ['clear', { status: 'queued' as const, report: null }, null, null],
     ['told', { status: 'queued' as const, report: null }, attention, 's1'],
   ] as const)('skips with %s', (reason, work, news, told) => {
