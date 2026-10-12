@@ -130,6 +130,18 @@ Removed:
 - Human authority is the live human message, whichever Neo session receives it: in that turn root or a topic avatar may also continue or retry a card another Neo session proposed.
 - A refusal never tells Neo to ask the human for something a live human message already covers.
 
+#### Neo's tools
+
+Neo reads anything and changes nothing shared. Root and topic Neo follow the same rule, which a deterministic PreToolUse hook enforces (`look-up-guard.ts`); no model is consulted.
+
+| Tier | Covers | Hook |
+|---|---|---|
+| Free | Every tool in Neo's own folder (its coordinator cwd, plus scratch): notes, scripts written for a check, curl, git and gh reads | allows |
+| Local change | Edit or Write in a project repo, a worktree or the human's files; Bash that changes files there (`sed -i`, a redirect, `git commit`/`checkout`/`reset`/`stash`, `mv`) | allows and adds one line: hand changes to a card |
+| Shared state | `git push`; `gh pr`/`gh issue` changes; `gh api` with a non-GET method; deploying or restarting a daemon; deleting outside Neo's folder | denies, telling Neo to hand it to the card's session |
+
+Heavy checks (builds, tests, servers) are a verification card, not Neo: a check one or two commands answer, Neo does itself. Secret paths stay unreadable.
+
 ### 7. Notifications
 
 A publication to the human happens in three cases only:
@@ -198,6 +210,7 @@ Each slice is one PR, behaviour-tested, and deployable on its own. The order fol
 | 7b | Continue and retry another session's card in a live human turn | §6 | none |
 | 8 | The coding pack subscribes every card PR to all its events (external events) and delivers them to the working session; the coding pack teaches how to judge readiness (standing rule, then repo history, then Neo asks once and saves); retire `ship.sh` | §2, §10 | 0b, 2 |
 | 9 | Topic sessions start fresh from a snapshot | §10 | 6 |
+| 10 | Neo's tools: every tool, a nudge for local changes, a block for shared state, heavy checks as cards; root and topic alike; Neo's own refusal text | §6 (Neo's tools) | none |
 
 Deleted along the way:
 

@@ -3,25 +3,6 @@ import { existsSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
-export const NEO_LOOKUP_COMMANDS = [
-  'cd',
-  'gh pr view',
-  'gh pr list',
-  'gh pr checks',
-  'gh issue view',
-  'gh issue list',
-  'gh run view',
-  'gh run list',
-  'gh repo view',
-  'git log',
-  'git status',
-  'git blame',
-];
-
-export const NEO_ROOT_LOOKUP_COMMANDS = NEO_LOOKUP_COMMANDS.filter((command) =>
-  command.startsWith('gh ')
-);
-
 const SECRET_DIRS = [
   '.ssh',
   '.aws',
@@ -52,7 +33,6 @@ const SECRET_FILES = [
   '.profile',
 ];
 const SECRET_NAMES = ['.env', '.env.*', '*.pem', '*.key'];
-const UNSAFE_SHELL = /[<>`$\n\r]|(?<!&)&(?!&)|--output\b/;
 const CONTENT_EXTENSIONS = [
   'ts',
   'tsx',
@@ -109,14 +89,12 @@ const CONTENT_TYPES = [
   'vue',
   'svelte',
 ];
-const ALWAYS_ALLOWED = new Set(['WebSearch', 'WebFetch', 'AskUserQuestion']);
-const LOOKUP_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Bash']);
 
 interface LookUpScope {
   home: string;
   dataDir: string;
   cwd: string;
-  commands?: readonly string[];
+  own?: readonly string[];
 }
 
 interface LookUpPathFacts {
@@ -145,18 +123,12 @@ function readLookUpPathFacts(): LookUpPathFacts {
   };
 }
 
-export function neoSecretReadRules(scope: Pick<LookUpScope, 'dataDir' | 'home'>): string[] {
+export function neoSecretReadRules(): string[] {
   return [
     ...SECRET_DIRS.map((dir) => `~/${dir}/**`),
     ...SECRET_FILES.flatMap((file) => [`~/${file}`, `~/**/${file}`]),
     ...SECRET_NAMES.map((name) => `~/**/${name}`),
-    dataDirRule(scope.dataDir, scope.home),
   ].map((path) => `Read(${path})`);
-}
-
-function dataDirRule(dataDir: string, home: string): string {
-  const rel = relative(home, dataDir);
-  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? `~/${rel}/**` : `/${dataDir}/**`;
 }
 
 function contentGlobExtensions(glob: string): string[] | null {
@@ -209,12 +181,13 @@ export function isSecretPath(
   facts: LookUpPathFacts = readLookUpPathFacts()
 ): boolean {
   const literal = resolvePath(raw, scope);
-  return [literal, facts.realPath(literal)].some((path) => secretAt(path, scope));
+  const own = (scope.own ?? []).flatMap((root) => [root, facts.realPath(root)]);
+  return [literal, facts.realPath(literal)].some((path) => secretAt(path, { ...scope, own }));
 }
 
 function secretAt(path: string, scope: LookUpScope): boolean {
   return (
-    within(path, scope.dataDir) ||
+    (within(path, scope.dataDir) && !(scope.own ?? []).some((root) => within(path, root))) ||
     SECRET_DIRS.some((dir) => within(path, join(scope.home, dir))) ||
     SECRET_FILES.some(
       (file) => path === join(scope.home, file) || path.endsWith(`${sep}${file}`)
@@ -290,20 +263,6 @@ function shellWords(segment: string): string[] {
     .filter(Boolean);
 }
 
-const LOG_FLAG =
-  /^(--oneline|--stat|--shortstat|--name-only|--name-status|--graph|--decorate|--all|--no-merges|--merges|--reverse|--first-parent|-\d+|-n|--max-count(=\d+)?|--(since|until|after|before|author|committer|grep|format|pretty|date)=.*)$/;
-
-function metadataOnlyDenial(words: readonly string[]): string | null {
-  if (words[0] === 'git' && words[1] === 'log') {
-    const options = words.slice(2, words.includes('--') ? words.indexOf('--') : undefined);
-    const flag = options.find((word) => word.startsWith('-') && !LOG_FLAG.test(word));
-    return flag ? `git log ${flag} can print file contents; use commit metadata flags only` : null;
-  }
-  if (words[0] === 'gh' && words[1] === 'run' && words.some((word) => word.startsWith('--log')))
-    return 'run logs are not allowed';
-  return null;
-}
-
 function secretArgument(
   words: readonly string[],
   dir: string,
@@ -326,54 +285,223 @@ function secretArgument(
   );
 }
 
-export function bashDenial(
-  command: string,
-  scope: LookUpScope,
-  facts: LookUpPathFacts = readLookUpPathFacts()
-): string | null {
-  if (UNSAFE_SHELL.test(command))
-    return 'redirects, variables, substitutions, background jobs, line breaks and --output are not allowed';
-  if (/[*?[\]{}]/.test(command.replace(/'[^']*'|"[^"]*"/g, '')))
-    return 'unquoted wildcards are not allowed';
-  if (command.includes('\\')) return 'backslash escapes are not allowed';
-  const segments = shellSegments(command);
-  const unknown = segments.find(
-    (segment) =>
-      !(scope.commands ?? NEO_LOOKUP_COMMANDS).some(
-        (prefix) => segment === prefix || segment.startsWith(`${prefix} `)
-      )
-  );
-  if (unknown !== undefined) return `"${unknown}" is not a read-only look-up command`;
-  let dir = scope.cwd;
-  for (const segment of segments) {
-    const words = shellWords(segment);
-    if (words[0] === 'cd') {
-      dir = resolvePath(words[1] ?? '~', { ...scope, cwd: dir });
-      if (isSecretPath(dir, scope, facts)) return `"${words[1] ?? '~'}" may hold secrets`;
+export const NEO_LOCAL_CHANGE_NUDGE =
+  "In principle Neo doesn't change things: hand changes to a card. Read-only checks are fine.";
+
+export type NeoToolVerdict =
+  | { kind: 'allow' }
+  | { kind: 'nudge' }
+  | { kind: 'deny'; reason: string };
+
+const B = `(?:^|[\\s;&|(\`'"])`;
+const SHARED_STATE: readonly [RegExp, string][] = [
+  [new RegExp(`${B}git(?:\\s+-[Cc]\\s+\\S+)*\\s+push\\b`), 'git push'],
+  [
+    new RegExp(
+      `${B}gh\\s+pr\\s+(merge|create|close|comment|review|edit|ready|reopen|lock|unlock)\\b`
+    ),
+    'changing a pull request',
+  ],
+  [
+    new RegExp(
+      `${B}gh\\s+issue\\s+(create|comment|close|edit|reopen|delete|transfer|lock|unlock|pin|unpin)\\b`
+    ),
+    'changing an issue',
+  ],
+  [
+    new RegExp(
+      `${B}gh\\s+(release\\s+(create|delete|edit|upload)|label\\s+(create|delete|edit)|secret\\s+(set|delete)|variable\\s+(set|delete)|workflow\\s+(run|enable|disable)|run\\s+(rerun|cancel|delete)|repo\\s+(create|delete|edit|rename|archive|fork))\\b`
+    ),
+    'changing GitHub',
+  ],
+  [
+    new RegExp(
+      `${B}launchctl\\s+(kickstart|stop|start|bootout|bootstrap|load|unload|remove|kill|enable|disable)\\b`
+    ),
+    'starting or stopping a daemon',
+  ],
+  [
+    new RegExp(`${B}systemctl\\s+(start|stop|restart|reload|enable|disable|kill)\\b`),
+    'starting or stopping a service',
+  ],
+  [new RegExp(`${B}(pkill|killall|kill)\\b`), 'stopping a process'],
+  [
+    new RegExp(
+      `${B}ssh\\b[^;&|]*\\b(launchctl|systemctl|kickstart|restart|reboot|shutdown|pkill|killall|kill|deploy\\w*)\\b|${B}ssh\\b[^;&|]*update`
+    ),
+    'deploying or restarting on another machine',
+  ],
+];
+
+function ghApiChange(command: string): boolean {
+  for (const match of command.matchAll(/\bgh\s+api\b([^;&|]*)/g)) {
+    const args = match[1];
+    const method = /(?:-X|--method)[\s=]*['"]?([A-Za-z]+)/.exec(args)?.[1];
+    if (method) {
+      if (method.toUpperCase() !== 'GET') return true;
       continue;
     }
-    const metadata = metadataOnlyDenial(words);
-    if (metadata) return metadata;
-    const secret = secretArgument(words.slice(1), dir, scope, facts);
-    if (secret) return `"${secret}" may hold secrets`;
+    if (!/(?:^|\s)(-f|-F|--field|--raw-field|--input)\b/.test(args)) continue;
+    if (!/(?:^|\s)['"]?graphql\b/.test(args) || /\bmutation\b/.test(args)) return true;
   }
+  return false;
+}
+
+export function neoSharedStateAction(command: string): string | null {
+  if (ghApiChange(command)) return 'a gh api call that changes GitHub';
+  return SHARED_STATE.find(([pattern]) => pattern.test(command))?.[1] ?? null;
+}
+
+const WRAPPERS = new Set(['env', 'sudo', 'command', 'nohup', 'time', 'exec', 'xargs', 'nice']);
+const DELETES = new Set(['rm', 'rmdir', 'unlink', 'shred']);
+const LAST_TARGET = new Set(['cp', 'mv', 'ln', 'rsync', 'install']);
+const ALL_TARGETS = new Set(['touch', 'mkdir', 'chmod', 'chown', 'truncate', 'tee']);
+const GIT_DELETES = new Set(['rm', 'clean']);
+const GIT_CHANGES = new Set([
+  'add',
+  'commit',
+  'checkout',
+  'reset',
+  'stash',
+  'switch',
+  'restore',
+  'merge',
+  'rebase',
+  'cherry-pick',
+  'revert',
+  'apply',
+  'am',
+  'mv',
+  'pull',
+  'tag',
+  'branch',
+  'worktree',
+]);
+
+type LocalChange = { delete: boolean; targets: string[] };
+
+function commandWords(words: readonly string[]): string[] {
+  let start = 0;
+  while (
+    start < words.length &&
+    (WRAPPERS.has(words[start]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[start]))
+  )
+    start += 1;
+  return words.slice(start);
+}
+
+function gitChange(words: readonly string[], dir: string): LocalChange | null {
+  let at = 1;
+  let where = dir;
+  while (words[at] === '-C' || words[at] === '-c') {
+    if (words[at] === '-C' && words[at + 1]) where = resolve(dir, words[at + 1]);
+    at += 2;
+  }
+  const verb = words[at];
+  if (GIT_DELETES.has(verb)) return { delete: true, targets: [where] };
+  return GIT_CHANGES.has(verb) ? { delete: false, targets: [where] } : null;
+}
+
+function localChange(words: readonly string[], dir: string): LocalChange | null {
+  const [name, ...rest] = words;
+  const args = rest.filter((word) => !word.startsWith('-'));
+  const targets = (paths: string[]) => (paths.length ? paths : [dir]);
+  if (name === 'git') return gitChange(words, dir);
+  if (name === 'sed' && rest.some((word) => /^(-i|--in-place)/.test(word)))
+    return { delete: false, targets: targets(args.slice(1)) };
+  if (name === 'find' && rest.includes('-delete'))
+    return { delete: true, targets: targets(args.slice(0, 1)) };
+  if (DELETES.has(name)) return { delete: true, targets: targets(args) };
+  if (LAST_TARGET.has(name)) return { delete: false, targets: targets(args.slice(-1)) };
+  if (ALL_TARGETS.has(name)) return { delete: false, targets: targets(args) };
   return null;
 }
 
-interface LookUpVerdict {
-  denial: string | null;
+function redirectTargets(segment: string): string[] {
+  const masked = segment.replace(/'[^']*'|"[^"]*"/g, (quoted) => 'x'.repeat(quoted.length));
+  return [...masked.matchAll(/(?:^|[^<>&\d])\d?(?:>>?|&>)\s*([^\s;&|]+)/g)]
+    .map((match) => segment.slice(match.index + match[0].length - match[1].length).split(/\s/)[0])
+    .filter((target) => target && !target.startsWith('&'));
 }
 
-export function requireLookUpTool(
-  tool: string
-): { value: LookUpVerdict } | { reason: LookUpVerdict } {
-  if (ALWAYS_ALLOWED.has(tool) || tool.startsWith('mcp__')) return { reason: { denial: null } };
-  return LOOKUP_TOOLS.has(tool)
-    ? { value: { denial: null } }
-    : { reason: { denial: `${tool} is not a look-up tool` } };
+function ownPath(path: string, scope: LookUpScope, facts: LookUpPathFacts): boolean {
+  if (path === '/dev/null' || path.startsWith('/dev/')) return true;
+  const roots = (scope.own ?? []).flatMap((root) => [root, facts.realPath(root)]);
+  return [path, facts.realPath(path)].some((candidate) =>
+    roots.some((root) => within(candidate, root))
+  );
 }
 
-export function decideLookUp(
+function nestedCommand(words: readonly string[]): string | null {
+  const shell = ['bash', 'sh', 'zsh'].includes(words[0]);
+  const flag = words.indexOf('-c');
+  return shell && flag > 0 && words[flag + 1] ? words.slice(flag + 1).join(' ') : null;
+}
+
+export interface NeoBashFacts {
+  secret: string | null;
+  sharedState: string | null;
+  deletesOutside: boolean;
+  changesOutside: boolean;
+}
+
+function analyzeBash(
+  command: string,
+  scope: LookUpScope,
+  facts: LookUpPathFacts,
+  depth: number
+): NeoBashFacts {
+  const found: NeoBashFacts = {
+    secret: null,
+    sharedState: neoSharedStateAction(command),
+    deletesOutside: false,
+    changesOutside: false,
+  };
+  let dir = scope.cwd;
+  for (const segment of shellSegments(command)) {
+    const words = commandWords(shellWords(segment));
+    if (!words.length) continue;
+    if (words[0] === 'cd') {
+      dir = resolvePath(words[1] ?? '~', { ...scope, cwd: dir });
+      if (isSecretPath(dir, scope, facts)) found.secret ??= words[1] ?? '~';
+      continue;
+    }
+    found.secret ??= secretArgument(words.slice(1), dir, scope, facts);
+    const nested = nestedCommand(words);
+    if (nested && depth < 3) {
+      const inner = analyzeBash(nested, { ...scope, cwd: dir }, facts, depth + 1);
+      found.secret ??= inner.secret;
+      found.deletesOutside ||= inner.deletesOutside;
+      found.changesOutside ||= inner.changesOutside;
+    }
+    const here = { ...scope, cwd: dir };
+    const outside = (target: string) => !ownPath(resolvePath(target, here), scope, facts);
+    const change = localChange(words, dir);
+    if (change?.delete && change.targets.some(outside)) found.deletesOutside = true;
+    if (change?.targets.some(outside) || redirectTargets(segment).some(outside))
+      found.changesOutside = true;
+  }
+  return found;
+}
+
+export function readNeoBashFacts(
+  tool: string,
+  input: Record<string, unknown>,
+  scope: LookUpScope,
+  facts: LookUpPathFacts
+): NeoBashFacts | null {
+  return tool === 'Bash'
+    ? analyzeBash(typeof input.command === 'string' ? input.command : '', scope, facts, 0)
+    : null;
+}
+
+const NEO_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+type NeoDeny = { kind: 'deny'; reason: string };
+type NeoGate = { value: { kind: 'allow' } } | { reason: NeoDeny };
+const pass: NeoGate = { value: { kind: 'allow' } };
+const deny = (reason: string): NeoGate => ({ reason: { kind: 'deny', reason } });
+
+function readDenial(
   tool: string,
   input: Record<string, unknown>,
   scope: LookUpScope,
@@ -382,66 +510,113 @@ export function decideLookUp(
   const text = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
   if (tool === 'Read')
     return isSecretPath(text('file_path'), scope, facts) ? 'that file may hold secrets' : null;
-  if (tool === 'Grep' || tool === 'Glob') {
-    const root = text('path') || scope.cwd;
-    const pattern = staticPrefix(text('pattern'));
-    if (isSecretPath(root, scope, facts) || tooBroad(root, scope))
-      return 'search inside a project folder, not home or a secrets folder';
-    if (tool === 'Grep') return grepDenial(input);
-    return patternNamesSecret(text('pattern')) ||
-      (pattern && isSecretPath(pattern, { ...scope, cwd: resolvePath(root, scope) }, facts))
-      ? 'that pattern points at secrets'
-      : null;
-  }
-  return bashDenial(text('command'), scope, facts);
+  const root = text('path') || scope.cwd;
+  const pattern = staticPrefix(text('pattern'));
+  if (isSecretPath(root, scope, facts) || tooBroad(root, scope))
+    return 'search inside a project folder, not home or a secrets folder';
+  if (tool === 'Grep') return grepDenial(input);
+  return patternNamesSecret(text('pattern')) ||
+    (pattern && isSecretPath(pattern, { ...scope, cwd: resolvePath(root, scope) }, facts))
+    ? 'that pattern points at secrets'
+    : null;
 }
 
-function lookUpVerdict(
+function writePath(input: Record<string, unknown>): string | null {
+  return (
+    [input.file_path, input.notebook_path].find(
+      (value): value is string => typeof value === 'string' && value.length > 0
+    ) ?? null
+  );
+}
+
+export function requireNeoSecretsUntouched(
+  tool: string,
+  input: Record<string, unknown>,
+  scope: LookUpScope,
+  facts: LookUpPathFacts,
+  bash: NeoBashFacts | null
+): NeoGate {
+  if (tool === 'Read' || tool === 'Grep' || tool === 'Glob') {
+    const reason = readDenial(tool, input, scope, facts);
+    return reason ? deny(reason) : pass;
+  }
+  const path = NEO_WRITE_TOOLS.has(tool) ? writePath(input) : null;
+  if (path && isSecretPath(path, scope, facts)) return deny('that file may hold secrets');
+  return bash?.secret ? deny(`"${bash.secret}" may hold secrets`) : pass;
+}
+
+export function requireNeoSharedStateUntouched(bash: NeoBashFacts | null): NeoGate {
+  if (bash?.sharedState) return deny(`${bash.sharedState} changes shared state`);
+  return bash?.deletesOutside
+    ? deny('deleting outside your own folder changes shared files')
+    : pass;
+}
+
+export function planNeoLocalChange(
+  tool: string,
+  input: Record<string, unknown>,
+  scope: LookUpScope,
+  facts: LookUpPathFacts,
+  bash: NeoBashFacts | null
+): NeoToolVerdict {
+  const path = NEO_WRITE_TOOLS.has(tool) ? writePath(input) : null;
+  const outside = path ? !ownPath(resolvePath(path, scope), scope, facts) : !!bash?.changesOutside;
+  return outside ? { kind: 'nudge' } : { kind: 'allow' };
+}
+
+const decideNeoToolPipeline = (superpipe({})('decide-neo-tool') as PipelineAPI)
+  .input(['tool', 'input', 'scope', 'facts'])
+  .pipe(readNeoBashFacts, ['tool', 'input', 'scope', 'facts'], 'bash')
+  .pipe(requireNeoSharedStateUntouched, 'bash', 'result:verdict')
+  .pipe(requireNeoSecretsUntouched, ['tool', 'input', 'scope', 'facts', 'bash'], 'result:verdict')
+  .pipe(planNeoLocalChange, ['tool', 'input', 'scope', 'facts', 'bash'], 'verdict')
+  .end('verdict') as (
   tool: string,
   input: Record<string, unknown>,
   scope: LookUpScope,
   facts: LookUpPathFacts
-): LookUpVerdict {
-  return { denial: decideLookUp(tool, input, scope, facts) };
-}
+) => NeoToolVerdict;
 
-const admitNeoLookUp = (superpipe({})('admit-neo-look-up') as PipelineAPI)
-  .input(['tool', 'input', 'scope'])
-  .pipe(requireLookUpTool, 'tool', 'result:verdict')
-  .pipe(readLookUpPathFacts, undefined, 'facts')
-  .pipe(lookUpVerdict, ['tool', 'input', 'scope', 'facts'], 'verdict')
-  .end('verdict') as (
+export function decideNeoTool(
   tool: string,
   input: Record<string, unknown>,
-  scope: LookUpScope
-) => LookUpVerdict;
-
-export function neoLookUpDenial(
-  tool: string,
-  input: Record<string, unknown>,
-  scope: LookUpScope
-): string | null {
-  return admitNeoLookUp(tool, input, scope).denial;
+  scope: LookUpScope,
+  facts: LookUpPathFacts = readLookUpPathFacts()
+): NeoToolVerdict {
+  return decideNeoToolPipeline(tool, input, scope, facts);
 }
 
-export function neoLookUpGuard(scope: Omit<LookUpScope, 'cwd'>): HookCallback {
+export function neoToolDenialText(reason: string): string {
+  return reason.endsWith('may hold secrets') ||
+    reason.startsWith('search ') ||
+    reason.startsWith('show ') ||
+    reason.startsWith('that ')
+    ? `Neo can't do that: ${reason}.`
+    : `Neo doesn't do this: ${reason}. Hand it to the card's session (continue its card or propose one); read-only checks are fine.`;
+}
+
+export function neoToolGuard(scope: Omit<LookUpScope, 'cwd'>): HookCallback {
   return async (input) => {
     if (input.hook_event_name !== 'PreToolUse') return {};
     const pre = input as PreToolUseHookInput;
-    const reason = neoLookUpDenial(
+    const verdict = decideNeoTool(
       pre.tool_name,
       (pre.tool_input ?? {}) as Record<string, unknown>,
-      {
-        ...scope,
-        cwd: pre.cwd,
-      }
+      { ...scope, cwd: pre.cwd }
     );
-    return reason
+    if (verdict.kind === 'deny')
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse' as const,
+          permissionDecision: 'deny' as const,
+          permissionDecisionReason: neoToolDenialText(verdict.reason),
+        },
+      };
+    return verdict.kind === 'nudge'
       ? {
           hookSpecificOutput: {
             hookEventName: 'PreToolUse' as const,
-            permissionDecision: 'deny' as const,
-            permissionDecisionReason: `Neo look-ups are read-only: ${reason}.`,
+            additionalContext: NEO_LOCAL_CHANGE_NUDGE,
           },
         }
       : {};

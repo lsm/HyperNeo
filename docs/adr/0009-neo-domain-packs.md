@@ -20,7 +20,7 @@ have grown into Neo's core:
 | Decisions | `service.ts`: the PR refresh pipeline, done checks that wait while CI runs, the stalled-merge reminder, PR links in the follow pass. |
 | Checklist | The `pr_merged` item check kind (m318 CHECK constraint, op schema). |
 | Prompts | `neo/work/goal-merge.md`, `done-check-prs-{live,stale,ready}.md`; examples in `system/prompt.md` ("for code usually merged…", "Merged in #6099"); place resolution phrased as git remotes and worktrees; the merge example in `root-rule-save.md`; the `/merg/` regex in `withWorkGoal`. |
-| Neo's own reads | `look-up-guard.ts` `NEO_LOOKUP_COMMANDS` (read-only `gh` and `git`). |
+| Neo's own reads | `look-up-guard.ts` `decideNeoTool`: every tool, a nudge for local changes, a block for shared state. |
 | Drivers | Worktree placement (`planWorkPlacement`) and git-remote matching in `work.find`. |
 
 The domain-agnostic core is everything else: asks and their checklists, cards
