@@ -478,6 +478,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_input_origins',
   'neo_ask_forwards',
   'neo_card_pr_relays',
+  'neo_card_event_subscriptions',
   'neo_session_seen',
   'neo_work_checks',
   'neo_ask_checks',

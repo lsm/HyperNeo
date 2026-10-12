@@ -811,6 +811,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       internalEventBus
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
+    const sessionTopicSources: (() => readonly string[])[] = [];
+    const followedSessionTopics = () => sessionTopicSources.flatMap((source) => source());
     const spaceSessionEventSubscriptions = new SpaceSessionEventSubscriptionRepository(
       db.getDatabase()
     );
@@ -925,11 +927,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         reactiveDb,
         autoReconcileWebhooks: true,
         sessionRepoReferenced: (owner, repo) =>
-          sessionEventSubscriptions.referencesRepo(owner, repo),
+          sessionEventSubscriptions.referencesRepo(owner, repo) ||
+          followedSessionTopics().some((topic) =>
+            topic.toLowerCase().startsWith(`github/${owner}/${repo}/`.toLowerCase())
+          ),
         subscribedPullRequests: (watched) =>
           pullRequestNumbersOfTopics(
             watched.spaceId === SESSION_EVENT_SCOPE
-              ? sessionEventSubscriptions.listAll().map((subscription) => subscription.topic)
+              ? [
+                  ...sessionEventSubscriptions.listAll().map((subscription) => subscription.topic),
+                  ...followedSessionTopics(),
+                ]
               : [
                   ...spaceSessionEventSubscriptions
                     .listBySpace(watched.spaceId)
@@ -1016,6 +1024,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupTimer.start('rpc handlers + space runtime provision');
     const rpcHandlers = setupRPCHandlers({
       watchSessionRepo: async (owner, repo) => githubEventExtension?.watchSessionRepo(owner, repo),
+      followSessionTopics: (source) => sessionTopicSources.push(source),
       messageHub,
       sessionManager,
       authManager,

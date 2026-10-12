@@ -454,12 +454,15 @@ describe('withWorkGoal', () => {
     ).not.toContain('mergeStateStatus');
   });
 
-  test("tells a session whose done means merging to subscribe to its pull request's events", () => {
+  test("tells a session whose done means merging that its pull request's events reach it", () => {
     const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
-    expect(withWorkGoal('Fix it.', merged)).toContain('event.external.subscribe');
+    expect(withWorkGoal('Fix it.', merged)).toContain('with no subscription needed');
+    expect(withWorkGoal('Fix it.', merged)).not.toContain('event.external.subscribe');
     expect(
       withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
-    ).not.toContain('event.external.subscribe');
+    ).not.toContain('with no subscription needed');
+    expect(withWorkGoal('Fix it.', merged, false)).toContain('event.external.subscribe');
+    expect(withWorkGoal('Fix it.', merged, false)).not.toContain('with no subscription needed');
   });
 });
 

@@ -10,6 +10,7 @@ import {
   type NeoRefStateReader,
 } from './ask-prs.ts';
 import { readNeoIssueTicks } from './issue-checks.ts';
+import { neoCardPrTopics, routeNeoCardPrEvent } from './card-pr-events.ts';
 import { readNeoWatchTicks } from './watch-checks.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
@@ -228,6 +229,8 @@ export function createCodingPack(
     ...CODING_PACK_BRIEF,
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     checks: { [CODING_CHECK_PR_MERGED]: codingPrMergedCheck },
+    externalTopics: (work: NeoWork) => neoCardPrTopics(deps.workPrs.get(work.id)?.prs ?? []),
+    routeExternalEvent: routeNeoCardPrEvent,
     readEvidence: async (work: NeoWork) => {
       const { row, ok } = await readNeoCardPrs(deps, work, deps.workPrs.get(work.id), Date.now());
       return row?.prs.length

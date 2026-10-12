@@ -12,6 +12,7 @@ import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
 import { NeoService } from '../neo/service.ts';
+import { githubRepoOfTopic } from '../external-events/subscription-operations.ts';
 import {
   NEO_CONSULTATION_RECOVERY,
   recoverNeoConsultations,
@@ -246,6 +247,7 @@ function createGoalAutomationSelfNagSchedules(
 
 export interface RPCHandlerDependencies {
   watchSessionRepo?: (owner: string, repo: string) => Promise<void>;
+  followSessionTopics?: (source: () => readonly string[]) => void;
   messageHub: MessageHub;
   sessionManager: SessionManager;
   authManager: AuthManager;
@@ -1444,6 +1446,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     (settings) => publishGlobalSettings(deps.internalEventBus, settings, deps.credentialManager)
   );
+  neoService.watchExternalTopic = async (topic) => {
+    const repo = githubRepoOfTopic(topic);
+    if (repo) await deps.watchSessionRepo?.(repo.owner, repo.repo);
+  };
+  deps.followSessionTopics?.(() => neoService.followedTopics());
   neoService.filePacks = adoptNeoFilePacks(
     loadNeoFilePacks({
       root: join(getDataDir(), 'neo-packs'),
