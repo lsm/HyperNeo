@@ -189,6 +189,11 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.trimmed).toContain('only ask and card identities');
   });
 
+  test('the last-resort fallbacks still carry the required consultations list', () => {
+    expect(fitNeoSnapshotBudget(snapshot(5, 5), 10).consultations).toEqual([]);
+    expect(fitNeoSnapshotBudget(snapshot(5, 5), 10, { focused: true }).consultations).toEqual([]);
+  });
+
   test('a single-ask read keeps that ask even when it is settled', () => {
     const focused = snapshot(0, 1);
     focused.work = focused.work.map((item) => ({ ...item, report: 'r'.repeat(60_000) }));

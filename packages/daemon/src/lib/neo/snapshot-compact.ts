@@ -221,6 +221,7 @@ function bareMinimum(snapshot: NeoSnapshot): NeoSnapshot {
     ok: true,
     sessionId: snapshot.sessionId,
     concerns: [],
+    consultations: [],
     work: snapshot.work.map((item) => ({ ...item, instruction: '', report: null })),
     asks: snapshot.asks?.map((ask) => ({
       ...ask,
@@ -262,6 +263,7 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
       ok: true,
       sessionId: fitted.sessionId,
       concerns: [],
+      consultations: [],
       work: [],
       cards: [],
       askViews: [],
