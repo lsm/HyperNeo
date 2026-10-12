@@ -66,6 +66,21 @@ export function assembleAnthropicMessage(
   return { message: { ...message, content: blocks.filter(Boolean) } };
 }
 
+const ERROR_STATUS: Record<string, number> = {
+  invalid_request_error: 400,
+  authentication_error: 401,
+  permission_error: 403,
+  not_found_error: 404,
+  request_too_large: 413,
+  rate_limit_error: 429,
+  overloaded_error: 529,
+};
+
+export function anthropicErrorStatus(error: unknown): number {
+  const type = (error as { type?: unknown } | null)?.type;
+  return (typeof type === 'string' && ERROR_STATUS[type]) || 500;
+}
+
 async function serveNonStreaming(
   req: Request,
   upgrade: Parameters<ServerOptions['fetch']>[1],
@@ -90,7 +105,7 @@ async function serveNonStreaming(
   const assembled = assembleAnthropicMessage(await response.text());
   return 'error' in assembled
     ? new Response(JSON.stringify({ type: 'error', error: assembled.error }), {
-        status: 500,
+        status: anthropicErrorStatus(assembled.error),
         headers: { 'Content-Type': 'application/json' },
       })
     : new Response(JSON.stringify(assembled.message), {

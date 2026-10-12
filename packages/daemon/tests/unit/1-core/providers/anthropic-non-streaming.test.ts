@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { assembleAnthropicMessage } from '../../../../src/lib/providers/anthropic-non-streaming';
+import {
+  anthropicErrorStatus,
+  assembleAnthropicMessage,
+} from '../../../../src/lib/providers/anthropic-non-streaming';
 
 const sse = (events: object[]) =>
   events.map((event) => `event: x\ndata: ${JSON.stringify(event)}\n\n`).join('');
@@ -109,5 +112,17 @@ describe('assembleAnthropicMessage', () => {
         sse([{ type: 'error', error: { type: 'overloaded_error', message: 'busy' } }])
       )
     ).toEqual({ error: { type: 'overloaded_error', message: 'busy' } });
+  });
+});
+
+describe('anthropicErrorStatus', () => {
+  test.each([
+    [{ type: 'overloaded_error' }, 529],
+    [{ type: 'rate_limit_error' }, 429],
+    [{ type: 'invalid_request_error' }, 400],
+    [{ type: 'api_error' }, 500],
+    [null, 500],
+  ])('%j answers %d', (error, status) => {
+    expect(anthropicErrorStatus(error)).toBe(status);
   });
 });
