@@ -40,7 +40,29 @@ function photoBox(ref: NeoConversationImageRef) {
   };
 }
 
+const PHOTO_CACHE_CHARS = 48 * 1024 * 1024;
 const loadedPhotos = new Map<string, string>();
+let loadedPhotoChars = 0;
+
+function cachedPhoto(key: string): string | undefined {
+  const src = loadedPhotos.get(key);
+  if (src === undefined) return undefined;
+  loadedPhotos.delete(key);
+  loadedPhotos.set(key, src);
+  return src;
+}
+
+function keepPhoto(key: string, src: string) {
+  loadedPhotoChars -= loadedPhotos.get(key)?.length ?? 0;
+  loadedPhotos.delete(key);
+  loadedPhotos.set(key, src);
+  loadedPhotoChars += src.length;
+  for (const [oldest, value] of loadedPhotos) {
+    if (loadedPhotoChars <= PHOTO_CACHE_CHARS || oldest === key) break;
+    loadedPhotos.delete(oldest);
+    loadedPhotoChars -= value.length;
+  }
+}
 
 function RefPhoto({
   conversationId,
@@ -52,7 +74,7 @@ function RefPhoto({
   label: string;
 }) {
   const key = `${conversationId}/${photo.imageId}`;
-  const cached = loadedPhotos.get(key);
+  const cached = cachedPhoto(key);
   const [view, setView] = useState<
     { state: 'idle' | 'loading' | 'failed' } | { state: 'ready'; src: string }
   >(cached ? { state: 'ready', src: cached } : { state: 'idle' });
@@ -64,7 +86,7 @@ function RefPhoto({
     );
     if (read.state !== 'ready') return setView({ state: 'failed' });
     const src = `data:${read.image.media_type};base64,${read.image.data}`;
-    loadedPhotos.set(key, src);
+    keepPhoto(key, src);
     setView({ state: 'ready', src });
   };
   useEffect(() => {

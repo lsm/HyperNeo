@@ -18,9 +18,10 @@ afterEach(() => {
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = `neo:${conversationId}`;
+let refs = 0;
 const ref = (fields: Partial<NeoConversationImageRef> = {}): NeoConversationImageRef => ({
   type: 'image_ref',
-  imageId: '1:0',
+  imageId: `ref-${++refs}`,
   mediaType: 'image/png',
   bytes: 5,
   width: 1200,
@@ -48,8 +49,9 @@ const full = { ok: true, imageId: '1:0', mediaType: 'image/png', data: 'ZnVsbA==
 
 describe('public ask photo references', () => {
   it('shows a thumbnail sized from the photo, then the full photo once opened', async () => {
-    request.mockResolvedValue(full);
-    render(<NeoPublicConversation conversation={view([ref()])} />);
+    const photo = ref();
+    request.mockResolvedValue({ ...full, imageId: photo.imageId });
+    render(<NeoPublicConversation conversation={view([photo])} />);
     const open = screen.getByRole('button', { name: 'Open attached photo 1' });
     expect(open.getAttribute('style')).toContain('width: 384px');
     expect(open.getAttribute('style')).toContain('aspect-ratio: 1200 / 800');
@@ -64,7 +66,7 @@ describe('public ask photo references', () => {
     );
     expect(request).toHaveBeenCalledExactlyOnceWith('operation.invoke', {
       name: 'neo.conversation.image.read',
-      input: { conversationId, imageId: '1:0' },
+      input: { conversationId, imageId: photo.imageId },
     });
     expect(screen.queryByRole('button', { name: 'Open attached photo 1' })).toBeNull();
   });
