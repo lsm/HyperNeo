@@ -72,7 +72,7 @@ describe('public ask photo references', () => {
   it('shows a placeholder for a photo without a thumbnail', () => {
     render(
       <NeoPublicConversation
-        conversation={view([ref({ thumbnail: null, width: null, height: null })])}
+        conversation={view([ref({ imageId: '2:0', thumbnail: null, width: null, height: null })])}
       />
     );
     const placeholder = screen.getByRole('img', { name: 'Attached photo 1' });
@@ -85,7 +85,7 @@ describe('public ask photo references', () => {
   it('shows loading, then a retryable error when the full photo cannot be read', async () => {
     let fail!: (value: unknown) => void;
     request.mockImplementationOnce(() => new Promise((resolve) => (fail = resolve)));
-    render(<NeoPublicConversation conversation={view([ref()])} />);
+    render(<NeoPublicConversation conversation={view([ref({ imageId: '3:0' })])} />);
     fireEvent.click(screen.getByRole('button', { name: 'Open attached photo 1' }));
     expect(await screen.findByRole('status', { name: 'Loading photo' })).toBeTruthy();
     expect(
@@ -94,7 +94,7 @@ describe('public ask photo references', () => {
     fail({ ok: false, reason: 'image_not_found' });
     const retry = await screen.findByRole('button', { name: 'Photo could not load. Retry' });
     expect(screen.queryByRole('status', { name: 'Loading photo' })).toBeNull();
-    request.mockResolvedValueOnce(full);
+    request.mockResolvedValueOnce({ ...full, imageId: '3:0' });
     fireEvent.click(retry);
     await waitFor(() =>
       expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
@@ -102,6 +102,42 @@ describe('public ask photo references', () => {
       )
     );
     expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads the full photo by itself once it scrolls into view, and keeps it', async () => {
+    const seen: Array<() => void> = [];
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(private readonly callback: IntersectionObserverCallback) {}
+        observe() {
+          seen.push(() =>
+            this.callback(
+              [{ isIntersecting: true } as IntersectionObserverEntry],
+              this as unknown as IntersectionObserver
+            )
+          );
+        }
+        disconnect() {}
+      }
+    );
+    request.mockResolvedValue({ ...full, imageId: '5:0' });
+    const conversation = view([ref({ imageId: '5:0', thumbnail: null })]);
+    const first = render(<NeoPublicConversation conversation={conversation} />);
+    expect(request).not.toHaveBeenCalled();
+    seen[0]();
+    await waitFor(() =>
+      expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
+        'data:image/png;base64,ZnVsbA=='
+      )
+    );
+    first.unmount();
+    render(<NeoPublicConversation conversation={conversation} />);
+    expect(screen.getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
+      'data:image/png;base64,ZnVsbA=='
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 
   it('keeps inline photos from older daemons unchanged beside references', () => {
