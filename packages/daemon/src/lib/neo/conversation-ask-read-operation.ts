@@ -6,7 +6,10 @@ import type {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import type { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
+import type {
+  NeoConversationAskImageRow,
+  NeoConversationAskRepository,
+} from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { NeoConversationAskSchema } from './conversation-ask.ts';
@@ -114,30 +117,47 @@ function neoAskBlocks(item: NeoConversationAsk): AskBlock[] {
 }
 
 export function presentNeoAskImageRefs(
-  items: readonly NeoConversationAsk[]
+  items: readonly NeoConversationAsk[],
+  rows: readonly NeoConversationAskImageRow[]
 ): NeoConversationAskPageItem[] {
+  const stored = new Map(rows.map((row) => [`${row.requestId}:${row.index}`, row]));
   return items.map((item) => ({
     ...item,
     content: neoAskBlocks(item).map((block: AskBlock, index: number): PageBlock => {
       if (block.type !== 'image' || block.source.type !== 'base64') return block;
-      const read = neoImageSize(block.source.data);
+      const row = stored.get(`${item.requestId}:${index}`);
+      const read = row?.width && row.height ? null : neoImageSize(block.source.data);
       const ref: NeoConversationImageRef = {
         type: 'image_ref',
         imageId: neoConversationImageId(item.sequence, index),
         mediaType: block.source.media_type,
         bytes: Math.floor((block.source.data.length * 3) / 4),
-        width: read?.width ?? null,
-        height: read?.height ?? null,
-        thumbnail: null,
+        width: row?.width ?? read?.width ?? null,
+        height: row?.height ?? read?.height ?? null,
+        thumbnail: row?.thumbnail ?? null,
       };
       return ref;
     }),
   }));
 }
 
-function readAskImageRefs(request: AskPage, result: Result): Result {
+function readAskImageRefs(
+  request: AskPage,
+  result: Result,
+  ledger: NeoConversationAskRepository
+): Result {
   if (!result.ok || !request.imageRefs) return result;
-  return { ...result, items: presentNeoAskImageRefs(result.items as NeoConversationAsk[]) };
+  const asks = result.items as NeoConversationAsk[];
+  return {
+    ...result,
+    items: presentNeoAskImageRefs(
+      asks,
+      ledger.images(
+        result.conversationId,
+        asks.map((item) => item.requestId)
+      )
+    ),
+  };
 }
 
 const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
@@ -153,7 +173,7 @@ const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
     'page'
   )
   .pipe(readAskDelivery, ['page', 'readSendStatus'], 'page')
-  .pipe(readAskImageRefs, ['request', 'page'], 'page')
+  .pipe(readAskImageRefs, ['request', 'page', 'ledger'], 'page')
   .end('page') as (
   request: AskPage,
   caller: OperationCaller,
