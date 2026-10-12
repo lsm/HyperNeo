@@ -1591,11 +1591,12 @@ export function createNeoOperations(service: NeoService) {
     async ({ id, message }, caller) => {
       const work = service.repo.getWork(id);
       if (!work) return { ok: false as const, reason: 'work_not_found' };
-      const admission = requireNeoWorkContinuation(work, caller, isNeoHumanTurn(service, caller));
+      const humanTurn = isNeoHumanTurn(service, caller);
+      const admission = requireNeoWorkContinuation(work, caller, humanTurn);
       if ('reason' in admission) return admission.reason;
       return service.continueWork(id, message, Date.now(), {
         guarded: caller.source === 'mcp',
-        human: caller.source !== 'mcp',
+        human: caller.source !== 'mcp' || humanTurn,
       });
     }
   );
@@ -1872,7 +1873,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.continue',
       description:
-        'Send the next instruction to started work whose session stopped before its doneWhen was met, in the same session with its context. The goal and checklist are attached again. Reported work reopens as queued. Allowed while the work keeps moving: it stops after 3 continues in a row bring no new commit, PR state, review or report, or 12 hours after the work started; work under an approved ask follows the same no-progress rule for 48 hours after approval instead of 12. Past that it rejects with continue_budget_spent and you must ask the human (to approve the ask again, for approved work). Only the Neo session that proposed the work or the user can continue it.',
+        'Send the next instruction to started work whose session stopped before its doneWhen was met, in the same session with its context. The goal and checklist are attached again. Reported work reopens as queued. Allowed while the work keeps moving: it stops after 3 continues in a row bring no new commit, PR state, review or report, or 12 hours after the work started; work under an approved ask follows the same no-progress rule for 48 hours after approval instead of 12. Past that it rejects with continue_budget_spent and you must ask the human (to approve the ask again, for approved work). The Neo session that proposed the work can continue it at any time; any Neo session can while answering the human’s own chat message, and the user always can.',
       inputSchema: Continue,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1881,7 +1882,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.retry',
       description:
-        'Try a failed hand-off again on the same work item: only work that failed before its driver started it (for example the claude CLI was logged out) can be retried. The work item goes back to queued and the same approved instruction is sent to the same target. Use this instead of proposing new work for the same ask. Started work uses neo.work.continue instead. Only the Neo session that proposed the work or the user can retry it.',
+        'Try a failed hand-off again on the same work item: only work that failed before its driver started it (for example the claude CLI was logged out) can be retried. The work item goes back to queued and the same approved instruction is sent to the same target. Use this instead of proposing new work for the same ask. Started work uses neo.work.continue instead. The Neo session that proposed the work can retry it at any time; any Neo session can while answering the human’s own chat message, and the user always can.',
       inputSchema: WorkId,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
