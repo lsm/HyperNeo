@@ -24,6 +24,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.session.mute',
   'neo.session.track',
   'neo.snapshot',
+  'neo.topics.reorganize',
   'neo.work.cancel',
   'neo.work.close',
   'neo.work.continue',
