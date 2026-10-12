@@ -2,6 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoAsk,
   NeoAskAnswer,
+  NeoAskHumanAction,
   NeoAskItem,
   NeoAskSessionView,
   NeoAskView as NeoAskSnapshotView,
@@ -22,6 +23,7 @@ export type NeoAskView = {
   readonly items: readonly NeoAskItem[];
   readonly sessions: readonly NeoAskSessionView[];
   readonly answer: NeoAskAnswer | null;
+  readonly humanActions: readonly NeoAskHumanAction[];
 };
 
 export type NeoAskOpenTarget = {
@@ -74,6 +76,7 @@ export function describeNeoAskFromView(
     items: neoAskItems(ask),
     sessions: published.sessions ?? [],
     answer: published.answer ?? null,
+    humanActions: published.settled ? [] : (published.humanActions ?? []),
   };
 }
 
@@ -134,13 +137,22 @@ export function neoAskOpenTarget(
 }
 
 export function neoAskApproval(
-  ask: Pick<NeoAsk, 'approvedAt' | 'approvedContinues' | 'approvedContinueLimit' | 'approvalSpent'>
+  ask: Pick<NeoAsk, 'approvedAt' | 'approvedContinues' | 'approvedContinueLimit'>,
+  actions: readonly NeoAskHumanAction[]
 ): { line: string; spent: boolean } | null {
   if (!ask.approvedAt) return null;
   const used = ask.approvedContinues ?? 0;
   const limit = ask.approvedContinueLimit;
-  const spent = ask.approvalSpent != null;
+  const spent = actions.some((action) => action.kind === 'approve');
   const count =
     limit !== undefined ? `${used} of ${limit} continues used` : `${used} continues used`;
   return { line: spent ? `${count} · approval ran out` : count, spent };
+}
+
+export type NeoAskItemAction = Extract<NeoAskHumanAction, { kind: 'answer' | 'confirm' }>;
+
+export function neoAskItemActions(view: Pick<NeoAskView, 'humanActions'>): NeoAskItemAction[] {
+  return view.humanActions.filter(
+    (action): action is NeoAskItemAction => action.kind === 'answer' || action.kind === 'confirm'
+  );
 }
