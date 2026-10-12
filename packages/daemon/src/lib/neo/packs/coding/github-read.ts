@@ -91,9 +91,16 @@ export function presentNeoRefRead(state: NeoRefState): { value: NeoGithubReadRes
 export function presentNeoPrRead(
   read: NeoGithubReadResult,
   detail: { prs: NeoWorkPr[] | null }
-): { value: NeoGithubReadResult } {
+): { value: NeoGithubReadResult } | { reason: Failure } {
   const pr = detail.prs?.[0];
-  return read.ok && read.kind === 'pr' && pr
+  if (!pr)
+    return {
+      reason: {
+        ok: false,
+        reason: `unreadable: the checks and review of ${read.ok ? read.url : 'this pull request'} could not be read from GitHub just now; try again later.`,
+      },
+    };
+  return read.ok && read.kind === 'pr'
     ? {
         value: {
           ...read,

@@ -27,6 +27,7 @@ import {
   CODING_CHECK_ISSUE_SUB_ISSUE,
 } from './packs/coding/issue-checks.ts';
 import { LIFE_ADMIN_CHECK_CONFIRMED } from './packs/life-admin/pack.ts';
+import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 import { neoDaemonReadsClaim, neoHumanTickWakes } from './needs-you.ts';
 
@@ -122,7 +123,11 @@ const Open = z
     doneSource: z.string().trim().min(1).max(160),
     pack: z.string().trim().min(1).max(80).optional(),
   })
-  .refine((input) => input.doneWhen || input.doneItems, 'Pass doneItems, or doneWhen.');
+  .refine((input) => input.doneWhen || input.doneItems, 'Pass doneItems, or doneWhen.')
+  .refine(
+    (input) => countNeoAskWatches(input.doneItems ?? []) <= NEO_ASK_WATCH_MAX,
+    `An ask watches at most ${NEO_ASK_WATCH_MAX} pull requests and issues across its items.`
+  );
 type Opening = Omit<z.infer<typeof Open>, 'doneItems' | 'doneWhen'> & { doneWhen: string };
 const Cite = z.union([
   z.object({ said: z.string().trim().min(8, 'Quote at least a few of their words.').max(500) }),
@@ -621,8 +626,14 @@ export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gat
     return { reason: fail(`item_not_found: ${missing.join(', ')} is not on this checklist.`) };
   const left = active.length - new Set(input.remove).size + input.add.length;
   if (left < 1) return { reason: fail('checklist_empty: keep at least one item.') };
-  return left > 12
-    ? { reason: fail('checklist_full: an ask holds at most 12 items.') }
+  if (left > 12) return { reason: fail('checklist_full: an ask holds at most 12 items.') };
+  const kept = active.filter((item) => !input.remove.includes(item.id));
+  return countNeoAskWatches([...kept, ...input.add]) > NEO_ASK_WATCH_MAX
+    ? {
+        reason: fail(
+          `watch_full: an ask watches at most ${NEO_ASK_WATCH_MAX} pull requests and issues across its items.`
+        ),
+      }
     : { value: ask };
 }
 

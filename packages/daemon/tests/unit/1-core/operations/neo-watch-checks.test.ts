@@ -238,6 +238,14 @@ describe('readNeoGithubRef', () => {
       reason: expect.stringContaining('unreadable'),
     });
   });
+
+  test('says a PR is unreadable when its checks and review could not be read', async () => {
+    const result = await readNeoGithubRef(
+      { readRefStates: async () => [prState(9, 'OPEN')], readPrs: async () => null },
+      pull(9)
+    );
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('unreadable') });
+  });
 });
 
 describe('liftNeoPrParentRefs', () => {
@@ -301,6 +309,16 @@ describe('liftNeoPrParentRefs', () => {
       )
     ).toEqual([]);
     expect(liftNeoPrParentRefs(card, prs, [])).toEqual(prs);
+  });
+
+  test('lifts only a parent in the same repo as the referenced issue', () => {
+    const prs: NeoWorkPr[] = [
+      { url: pull(7), state: 'OPEN', checks: 'none', review: 'none', refs: [6650] },
+    ];
+    const elsewhere = issueState(6650, {
+      parent: { url: 'https://github.com/other/repo/issues/6002', at: 2_500 },
+    });
+    expect(liftNeoPrParentRefs(card, prs, [elsewhere])).toEqual(prs);
   });
 });
 

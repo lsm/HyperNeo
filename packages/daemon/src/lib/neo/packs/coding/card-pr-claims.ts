@@ -228,7 +228,15 @@ export function liftNeoPrParentRefs(
     states.flatMap((state) => {
       const own = parseGitHubRefUrl(state.url);
       const parent = state.parent ? parseGitHubRefUrl(state.parent.url) : null;
-      return state.kind === 'issue' && own && parent && (state.createdAt ?? 0) >= card.createdAt
+      const sameRepo =
+        own &&
+        parent &&
+        `${own.owner}/${own.repo}`.toLowerCase() === `${parent.owner}/${parent.repo}`.toLowerCase();
+      return state.kind === 'issue' &&
+        own &&
+        parent &&
+        sameRepo &&
+        (state.createdAt ?? 0) >= card.createdAt
         ? [[repoRef(state.url, own.number), parent.number] as const]
         : [];
     })

@@ -4,12 +4,16 @@ import type { NeoRef, NeoRefState, NeoRefStateReader } from './ask-prs.ts';
 import type { NeoAskTick } from './issue-checks.ts';
 
 const NEO_WATCH_READ_MS = 2 * 60_000;
-const NEO_WATCH_REF_MAX = 20;
+export const NEO_ASK_WATCH_MAX = 20;
 const lastRead = new Map<string, number>();
 
 function refKey(url: string): string {
   const ref = parseGitHubRefUrl(url);
   return ref ? `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase() : url.toLowerCase();
+}
+
+export function countNeoAskWatches(items: readonly Pick<NeoAskItem, 'watch'>[]): number {
+  return new Set(items.flatMap((item) => item.watch ?? []).map(refKey)).size;
 }
 
 export function isNeoWatchItem(item: NeoAskItem): boolean {
@@ -24,7 +28,7 @@ export function neoWatchRefs(ask: NeoAsk): NeoRef[] {
     const ref = parseGitHubRefUrl(url);
     if (ref) refs.set(refKey(url), ref);
   }
-  return [...refs.values()].slice(0, NEO_WATCH_REF_MAX);
+  return [...refs.values()].slice(0, NEO_ASK_WATCH_MAX);
 }
 
 function settledAs(state: NeoRefState): string | null {
