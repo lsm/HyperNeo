@@ -466,7 +466,7 @@ describe('projectNeoAskViews', () => {
     expect(views[0]?.humanActions).toEqual([{ kind: 'approve', reason: 'expired' }]);
   });
 
-  test('an approved ask starts its proposed cards itself, and a settled ask asks nothing', () => {
+  test('a proposed card under an approved ask keeps Start, and a settled ask asks nothing', () => {
     const input = parts({
       work: [work('p', 'proposed'), work('q', 'queued')],
       drivers: [driver('q', 'running', { abandoned: true })],
@@ -476,7 +476,10 @@ describe('projectNeoAskViews', () => {
       ],
     });
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
-    expect(views[0]?.humanActions).toEqual([{ kind: 'close', workId: 'q' }]);
+    expect(views[0]?.humanActions).toEqual([
+      { kind: 'start', workId: 'p' },
+      { kind: 'close', workId: 'q' },
+    ]);
     expect(views[1]?.humanActions).toEqual([]);
   });
 
