@@ -46,6 +46,9 @@ describe('buildNeoRoutePrompt', () => {
     expect(prompt).toContain('Reply with one JSON object and nothing else');
     expect(prompt).toContain('choice is one of: main, drivers, youtube');
     expect(prompt).toContain('answers_waiting: it answers a WAITING ON YOU question');
+    expect(prompt.indexOf('- answers_waiting:')).toBeLessThan(prompt.indexOf('- continues_turn:'));
+    expect(prompt).toContain("Choose main only when it replies to main's last message.");
+    expect(prompt).toContain('cross_topic: it asks about work across topics');
     expect(prompt).toContain('basis is the name of the rule below, exactly as written');
   });
 
@@ -155,6 +158,12 @@ describe('readNeoRouteDecision', () => {
         drivers,
       ])
     ).toEqual({ decision: 'main', confidence: 1, basis: null });
+  });
+
+  test('reads a cross-topic question as main', () => {
+    expect(
+      readNeoRouteDecision('{"choice":"main","confidence":0.7,"basis":"cross_topic"}', [youtube])
+    ).toEqual({ decision: 'main', confidence: 0.7, basis: 'cross_topic' });
   });
 
   test('keeps the rule when the model explains its basis after it', () => {

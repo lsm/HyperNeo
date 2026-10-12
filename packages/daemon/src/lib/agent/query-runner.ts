@@ -389,6 +389,7 @@ export interface QueryRunnerContext {
 
 export class QueryRunner {
   private promptSpentGeneration: number | null = null;
+  private turnEndedGeneration: number | null = null;
 
   acceptsPrompt(queryGeneration: number): boolean {
     return this.promptSpentGeneration !== queryGeneration;
@@ -694,6 +695,7 @@ export class QueryRunner {
     let holderTurn: NeoHolderTurn | undefined;
     let resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver> | undefined;
     let isAbortError = false;
+    this.turnEndedGeneration = null;
 
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
     const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;
@@ -1323,6 +1325,11 @@ export class QueryRunner {
               resolveAskOrigin
             );
 
+          this.turnEndedGeneration =
+            message.type === 'result' &&
+            !(message as SDKMessage & { parent_tool_use_id?: string | null }).parent_tool_use_id
+              ? queryGeneration
+              : null;
           try {
             if (message.type === 'result') questionInputs.endTurn();
             await this.handleSDKMessage(message, queryGeneration);
@@ -1398,6 +1405,7 @@ export class QueryRunner {
         providerFamily: isProviderSession ? 'provider' : 'anthropic',
         hasConsumedPrompt: (this._consumedUserMessages.get(queryGeneration)?.length ?? 0) > 0,
         hasQueuedPrompt: messageQueue.size() > 0,
+        turnEnded: this.turnEndedGeneration === queryGeneration,
         lifecycle: {
           processingStatus: stateManager.getState().status,
           abortSignalAborted: this.ctx.queryAbortController?.signal.aborted === true,
@@ -1419,7 +1427,9 @@ export class QueryRunner {
         return;
       }
 
-      logger.error('Streaming query error:', error);
+      if (routeDecision.route.action === 'turn_ended_noop')
+        logger.info(`SDK process exited after its turn ended with a result: ${errorMessage}`);
+      else logger.error('Streaming query error:', error);
 
       if (
         routeDecision.route.action === 'superseded_noop' ||
@@ -2108,6 +2118,7 @@ export class QueryRunner {
       startGuard?.();
       questionInputs?.recordInput(queuedMessage);
       if (holderTurn) this.promptSpentGeneration = queryGeneration;
+      this.turnEndedGeneration = null;
       yield message;
       onSent();
       if (holderTurn) return;

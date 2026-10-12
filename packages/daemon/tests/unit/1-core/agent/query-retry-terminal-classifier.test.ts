@@ -14,6 +14,7 @@ function env(overrides: Partial<QueryRetryEnvironment> = {}): QueryRetryEnvironm
     providerFamily: 'anthropic',
     hasConsumedPrompt: false,
     hasQueuedPrompt: false,
+    turnEnded: false,
     lifecycle: {
       processingStatus: 'processing',
       abortSignalAborted: false,
