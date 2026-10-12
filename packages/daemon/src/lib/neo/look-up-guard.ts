@@ -736,6 +736,20 @@ export interface NeoBashFacts {
   changesOutside: boolean;
 }
 
+const UNKNOWN_DIR = '/unknown-folder-for-neo-guard';
+
+function groupWords(words: readonly string[]): string[] {
+  const out = [...words];
+  if (out.length) out[0] = out[0].replace(/^[({]+/, '');
+  if (out.length) out[out.length - 1] = out[out.length - 1].replace(/[)}]+$/, '');
+  return out.filter(Boolean);
+}
+
+function changeDir(target: string | undefined, dir: string, scope: LookUpScope): string {
+  if (target && /[$`]/.test(target)) return UNKNOWN_DIR;
+  return resolvePath(target ?? '~', { ...scope, cwd: dir });
+}
+
 function analyzeBash(
   command: string,
   scope: LookUpScope,
@@ -749,11 +763,21 @@ function analyzeBash(
     changesOutside: false,
   };
   let dir = scope.cwd;
+  const stack: string[] = [];
   for (const segment of shellSegments(command)) {
-    const words = commandWords(shellWords(segment));
+    const words = commandWords(groupWords(shellWords(segment)));
     if (!words.length) continue;
-    if (words[0] === 'cd') {
-      dir = resolvePath(words[1] ?? '~', { ...scope, cwd: dir });
+    if (words[0] === 'popd') {
+      dir = stack.pop() ?? UNKNOWN_DIR;
+      continue;
+    }
+    if (words[0] === 'cd' || words[0] === 'pushd') {
+      if (words[0] === 'pushd') stack.push(dir);
+      dir = changeDir(
+        words.find((word, index) => index > 0 && !word.startsWith('-')),
+        dir,
+        scope
+      );
       if (isSecretPath(dir, scope, facts)) found.secret ??= words[1] ?? '~';
       continue;
     }

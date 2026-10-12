@@ -191,6 +191,11 @@ describe('the tiered Neo tool rule', () => {
     ['rm -rf src', 'deleting outside your own folder'],
     ['git clean -fd', 'deleting outside your own folder'],
     ['git -C ~/focus/app clean -fd', 'deleting outside your own folder'],
+    ['pushd ~/focus/app && rm -rf src', 'deleting outside your own folder'],
+    ['(cd ~/focus/app && rm -rf src)', 'deleting outside your own folder'],
+    ['{ cd ~/focus/app; rm -rf src; }', 'deleting outside your own folder'],
+    ['cd $APP && rm -rf src', 'deleting outside your own folder'],
+    ['pushd ~/focus/app && popd && popd && rm -rf src', 'deleting outside your own folder'],
     ['find ~/focus/app -name "*.tmp" -exec rm -rf {} +', 'deleting outside your own folder'],
     ['rsync -a --delete empty/ ~/focus/app/', 'deleting outside your own folder'],
   ])('refuses the shared-state action %s', (command, why) => {
