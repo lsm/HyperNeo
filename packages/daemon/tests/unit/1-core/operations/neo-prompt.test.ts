@@ -36,19 +36,26 @@ const LOOKUP_ALLOWED = [
 ];
 
 describe('neoCoordinatorNativeTools', () => {
-  test.each([null, 'saas', 'family'])('selects questions and look-up tools for %s', (concernId) => {
-    expect(neoCoordinatorNativeTools(concernId)).toEqual([
-      ...(concernId ? ['AskUserQuestion'] : []),
-      ...LOOKUP_TOOLS,
-    ]);
+  test.each(['saas', 'family'])('gives the %s holder questions and look-up tools', (concernId) => {
+    expect(neoCoordinatorNativeTools(concernId)).toEqual(['AskUserQuestion', ...LOOKUP_TOOLS]);
+  });
+
+  test('gives root Neo no way to read, search or browse files', () => {
+    expect(neoCoordinatorNativeTools(null)).toEqual(['WebSearch', 'WebFetch', 'Bash']);
   });
 });
 
 describe('neoCoordinatorAllowedTools', () => {
-  test.each([null, 'saas'])('auto-approves only read-only commands for %s', (concernId) => {
-    expect(neoCoordinatorAllowedTools(concernId)).toEqual([
-      ...(concernId ? ['AskUserQuestion'] : []),
-      ...LOOKUP_ALLOWED,
+  test('auto-approves only read-only commands for a holder', () => {
+    expect(neoCoordinatorAllowedTools('saas')).toEqual(['AskUserQuestion', ...LOOKUP_ALLOWED]);
+  });
+
+  test('auto-approves only gh reads for root Neo, no repository commands', () => {
+    expect(neoCoordinatorAllowedTools(null)).toEqual([
+      'WebSearch',
+      'WebFetch',
+      ...LOOKUP_ALLOWED.filter((tool) => tool.startsWith('Bash(gh ')),
+      'mcp__hyperneo-operations__invoke',
     ]);
   });
 });
@@ -245,12 +252,22 @@ describe('Neo world briefing delivery', () => {
 });
 
 describe('Neo look-up guidance', () => {
-  test.each([null, 'saas'])('tells %s to look things up itself and change nothing', (concernId) => {
-    const prompt = neoPrompt(concernId);
+  test('tells a holder to look things up itself and change nothing', () => {
+    const prompt = neoPrompt('saas');
     expect(prompt).toContain('Do a quick look-up yourself instead of proposing work');
     expect(prompt).toContain('never change anything yourselves');
     expect(prompt).toContain('Never tell the user you have no access');
     expect(prompt).toContain('never put file contents into a fetched URL');
+  });
+
+  test('tells root Neo it has no file or repository look-ups and to hand code questions to a card', () => {
+    const prompt = neoPrompt(null);
+    expect(prompt).toContain('never change anything yourselves');
+    expect(prompt).toContain('You cannot read, search or browse files');
+    expect(prompt).toContain('continue the card with the question or propose a work card');
+    expect(prompt).not.toContain('read and search files');
+    expect(prompt).not.toContain('use cd first to pick the repository');
+    expect(prompt).not.toContain('Never tell the user you have no access');
   });
 
   test.each([null, 'saas'])(
