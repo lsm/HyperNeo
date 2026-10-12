@@ -193,6 +193,27 @@ describe('conversation photos as references', () => {
     expect(JSON.stringify(result)).toContain(photo);
   });
 
+  test('reads a photo that sits after more than a hundred content blocks', async () => {
+    const late = '20000000-0000-4000-8000-000000000002';
+    ledger.append({
+      conversationId,
+      requestId: late,
+      askOrigin: { sessionId: root.sessionId, messageId: late },
+      content: [
+        ...Array.from({ length: 100 }, () => ({ type: 'text' as const, text: 'x' })),
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: photo } },
+      ],
+    });
+    expect(
+      await invokeOperation(
+        registry(),
+        'neo.conversation.image.read',
+        { conversationId, imageId: '2:100' },
+        human
+      )
+    ).toMatchObject({ value: { ok: true, imageId: '2:100', data: photo } });
+  });
+
   test('reads one full photo by its id, and refuses a missing one or a non-human caller', async () => {
     const read = (imageId: string, caller = human) =>
       invokeOperation(

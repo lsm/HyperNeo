@@ -283,7 +283,7 @@ export function createNeoConversationImageReadOperation(
     inputSchema: z
       .object({
         conversationId: z.uuid(),
-        imageId: z.string().regex(/^[1-9]\d{0,15}:\d{1,2}$/),
+        imageId: z.string().regex(/^[1-9]\d{0,15}:\d{1,6}$/),
       })
       .strict(),
     resultSchema: z.union([

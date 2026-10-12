@@ -27,7 +27,7 @@ const Input = z
       .array(
         z
           .object({
-            index: z.number().int().min(0).max(99),
+            index: z.number().int().min(0).max(999_999),
             mediaType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
             data: z.base64().max(44_000),
             width: z.number().int().positive().max(100_000).optional(),
