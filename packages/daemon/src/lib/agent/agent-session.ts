@@ -240,6 +240,7 @@ import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
   boundedDeliveryGate,
+  resultNetworkOutage,
   SDKMessageHandler,
   type SDKMessageHandlerContext,
   type SuppressedResultOutcome,
@@ -2669,8 +2670,13 @@ export class AgentSession
       return;
     }
     this.errorManager.markApiSuccess();
+    if (
+      message.type === 'result' &&
+      !(message as { parent_tool_use_id?: string | null }).parent_tool_use_id &&
+      !resultNetworkOutage(message)
+    )
+      this.networkPause.endOutage();
     if (isSDKResultSuccess(message) && message.is_error !== true) {
-      this.networkPause.succeeded();
       const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
       if (wasPending && this.stateManager.getState().status === 'rate_limit_cooldown') {
@@ -2705,6 +2711,10 @@ export class AgentSession
       hint,
       queryGeneration
     );
+  }
+
+  endNetworkOutage(): void {
+    this.networkPause.endOutage();
   }
 
   async onNetworkOutage(

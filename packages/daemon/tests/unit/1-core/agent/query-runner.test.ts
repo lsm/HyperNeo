@@ -3401,6 +3401,14 @@ describe('QueryRunner', () => {
       return { ctx, outcome };
     }
 
+    it('ends any network outage when a turn fails terminally for another reason', async () => {
+      const endNetworkOutage = mock(() => {});
+      await runTerminalFailure('Claude Code process exited with code 1', { endNetworkOutage });
+
+      expect(endNetworkOutage).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('suppresses terminal publication and idle when a cooldown is scheduled', async () => {
       const onRateLimitExhausted = mock(async (): Promise<boolean> => true);
 

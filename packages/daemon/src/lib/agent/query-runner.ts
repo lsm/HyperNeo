@@ -387,6 +387,7 @@ export interface QueryRunnerContext {
   ) => Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
+  endNetworkOutage?(): void;
   onNetworkOutage?(
     errorText: string,
     prompt: { uuid: string; content: string | MessageContent[] } | null,
@@ -1677,6 +1678,7 @@ export class QueryRunner {
             throw error;
           }
         } else if (route.action === 'terminal') {
+          this.ctx.endNetworkOutage?.();
           if (!finalizer.skipBeginTerminalIdle) {
             if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
               return;

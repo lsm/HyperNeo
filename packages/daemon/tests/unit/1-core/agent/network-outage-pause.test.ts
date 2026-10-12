@@ -262,7 +262,7 @@ describe('NetworkOutagePause', () => {
     const h = harness(() => true);
     await h.pause.start('getaddrinfo ENOTFOUND chatgpt.com', prompt);
     expect(h.pause.takePrompt()).toEqual(prompt);
-    h.pause.succeeded();
+    h.pause.endOutage();
     await h.pause.start('getaddrinfo ENOTFOUND chatgpt.com', prompt);
 
     expect(h.events.filter((event) => event.startsWith('notice'))).toHaveLength(2);

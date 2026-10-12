@@ -119,7 +119,7 @@ export class NetworkOutagePause {
     return prompt;
   }
 
-  succeeded(): void {
+  endOutage(): void {
     this.startedAt = null;
     this.popupShown = false;
     this.failedResumes = 0;
@@ -127,7 +127,7 @@ export class NetworkOutagePause {
 
   stop(): void {
     this.release();
-    this.succeeded();
+    this.endOutage();
   }
 
   private release(): void {

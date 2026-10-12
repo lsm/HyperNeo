@@ -1210,6 +1210,29 @@ describe('AgentSession', () => {
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
     });
 
+    it('a turn that ends without a network failure closes the outage clock', async () => {
+      const pause = (agentSession as unknown as { networkPause: { endOutage: () => void } })
+        .networkPause;
+      const endOutage = mock(() => {});
+      pause.endOutage = endOutage;
+
+      await agentSession.onMarkApiSuccess({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'API Error: 401 invalid_api_key',
+      } as never);
+      expect(endOutage).toHaveBeenCalledTimes(1);
+
+      await agentSession.onMarkApiSuccess({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'API Error: 502 getaddrinfo ENOTFOUND chatgpt.com',
+      } as never);
+      expect(endOutage).toHaveBeenCalledTimes(1);
+    });
+
     it('does not restore a network pause as a rate-limit cooldown after a restart', async () => {
       mockDb.getSession = mock(
         () =>
