@@ -284,7 +284,7 @@ export interface NeoSnapshot {
   publicAuthorBindings?: { sessionId: string; concernId: string; kind: 'concern' }[];
   askForwards?: NeoAskForwardView[];
   work: NeoWork[];
-  consultations?: NeoConsultation[];
+  consultations: NeoConsultation[];
   consultationWaiters?: NeoConsultationWaiter[];
   askOrigins?: NeoReceiptAskOrigin[];
   workResources?: NeoWorkResourceReceipt[];
