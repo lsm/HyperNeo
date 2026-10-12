@@ -77,9 +77,7 @@ export const MESSAGE_SEARCH_BROAD_TERM_LENGTH = 4;
 
 export function buildFtsTerms(query: string): string[] {
   return query
-    .trim()
-    .split(/\s+/)
-    .map((term) => term.replace(/[^\p{L}\p{N}_-]/gu, ''))
+    .split(/[^\p{L}\p{N}]+/u)
     .filter((term) => term.length >= MESSAGE_SEARCH_MIN_TERM_LENGTH)
     .slice(0, 12);
 }
