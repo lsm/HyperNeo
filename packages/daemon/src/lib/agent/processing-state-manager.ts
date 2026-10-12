@@ -1,4 +1,4 @@
-import type { AgentProcessingState, PendingUserQuestion } from '@hyperneo/shared';
+import type { AgentProcessingState, MessageContent, PendingUserQuestion } from '@hyperneo/shared';
 import type { SDKAssistantMessage, SDKMessage } from '@hyperneo/shared/sdk';
 import { isToolUseBlock } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database.ts';
@@ -15,6 +15,7 @@ export class ProcessingStateManager {
   private streamingStartedAt: number | null = null;
   private processingStartedAt: number | null = null;
   private isCompacting = false;
+  private heldPrompt: { uuid: string; content: string | MessageContent[] } | null = null;
   private logger: Logger;
   private onIdleCallback?: (owner?: IdleOwnerScope) => Promise<void>;
   private idleWaiters: Map<
@@ -188,7 +189,11 @@ export class ProcessingStateManager {
 
   private persistToDatabase(): void {
     try {
-      const serialized = JSON.stringify(this.processingState);
+      const serialized = JSON.stringify(
+        this.heldPrompt && this.processingState.status === 'rate_limit_cooldown'
+          ? { ...this.processingState, heldPrompt: this.heldPrompt }
+          : this.processingState
+      );
       this.db.updateSession(this.sessionId, {
         processingState: serialized,
       });
@@ -318,6 +323,7 @@ export class ProcessingStateManager {
       messageId?: string;
       manualRetry?: boolean;
       reason?: 'network';
+      heldPrompt?: { uuid: string; content: string | MessageContent[] };
     },
     ownerGeneration?: number
   ): Promise<void> {
@@ -337,6 +343,7 @@ export class ProcessingStateManager {
     };
     let writeError: unknown;
     try {
+      this.heldPrompt = state.heldPrompt ?? null;
       await this.setState(cooldownState);
     } catch (error) {
       writeError = error;
@@ -512,6 +519,7 @@ export class ProcessingStateManager {
     }
 
     this.processingState = newState;
+    if (newState.status !== 'rate_limit_cooldown') this.heldPrompt = null;
 
     this.persistToDatabase();
 

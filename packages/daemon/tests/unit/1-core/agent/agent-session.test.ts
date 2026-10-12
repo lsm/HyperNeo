@@ -1309,6 +1309,96 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setIdle();
     });
 
+    it('a restored network pause whose hold fails releases the queue', async () => {
+      mockDb.getSession = mock(
+        () =>
+          ({
+            id: 'test-session-id',
+            processingState: JSON.stringify({
+              status: 'rate_limit_cooldown',
+              retryAt: Date.now() + 30_000,
+              retryCount: 0,
+              maxRetries: 0,
+              reason: 'network',
+              heldPrompt: { uuid: 'held-uuid', content: 'ship it' },
+            }),
+          }) as never
+      );
+      spyOn(agentSession.stateManager, 'setRateLimitCooldown').mockRejectedValue(
+        new Error('publish failed')
+      );
+      const session = agentSession as unknown as {
+        armPersistedRateLimitCooldown: () => void;
+        networkPause: { isActive: () => boolean };
+      };
+
+      session.armPersistedRateLimitCooldown();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(session.networkPause.isActive()).toBe(false);
+      expect(agentSession.stateManager.getState().status).toBe('idle');
+    });
+
+    it('restores an unsaved held prompt after a restart and keeps the queue held behind it', async () => {
+      mockDb.getSession = mock(
+        () =>
+          ({
+            id: 'test-session-id',
+            processingState: JSON.stringify({
+              status: 'rate_limit_cooldown',
+              retryAt: Date.now() + 30_000,
+              retryCount: 0,
+              maxRetries: 0,
+              messageId: 'held-uuid',
+              reason: 'network',
+              heldPrompt: { uuid: 'held-uuid', content: 'ship it' },
+            }),
+          }) as never
+      );
+      const getStoredPromptsByUuid = mock(() => []);
+      mockDb.getSDKMessageRepo = mock(() => ({ getStoredPromptsByUuid })) as never;
+      const updateSession = mock(() => {});
+      mockDb.updateSession = updateSession as never;
+      const enqueue = mock(() => ({}));
+      mockDb.getJobQueueRepo = mock(() => ({
+        activeDeliveryMessageUuids: mock(() => new Set<string>()),
+        enqueue,
+      })) as never;
+      mockDb.getUserMessageIdsByStatus = mock(() => [
+        { dbId: 'db-1', uuid: 'queued-uuid', timestamp: 1 },
+      ]) as never;
+      const replay = spyOn(
+        agentSession.queryModeHandler as unknown as {
+          replayPendingMessagesForAutomaticTurnEnd: () => Promise<boolean>;
+        },
+        'replayPendingMessagesForAutomaticTurnEnd'
+      ).mockResolvedValue(true);
+      const session = agentSession as unknown as {
+        armPersistedRateLimitCooldown: () => void;
+        scheduleInitialPendingMessageReplay: () => void;
+        initialPendingReplayScheduled: boolean;
+        networkPause: { isActive: () => boolean; takePrompt: () => unknown };
+      };
+      session.initialPendingReplayScheduled = false;
+
+      session.armPersistedRateLimitCooldown();
+      session.scheduleInitialPendingMessageReplay();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(session.networkPause.isActive()).toBe(true);
+      expect(getStoredPromptsByUuid).not.toHaveBeenCalled();
+      const persisted = JSON.parse(
+        (updateSession.mock.calls.at(-1) as unknown as [string, { processingState: string }])[1]
+          .processingState
+      );
+      expect(persisted.heldPrompt).toEqual({ uuid: 'held-uuid', content: 'ship it' });
+      expect(replay).not.toHaveBeenCalled();
+      expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(session.networkPause.takePrompt()).toEqual({ uuid: 'held-uuid', content: 'ship it' });
+      await agentSession.stateManager.setIdle();
+    });
+
     it('projects a restored persisted cooldown into the processing state', async () => {
       mockDb.getSession = mock(
         () =>
