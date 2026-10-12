@@ -78,6 +78,14 @@ describe('compactNeoSnapshotCards', () => {
     expect(live.continuedMessage).toHaveLength(1000);
   });
 
+  test.each(['stopped', 'pr_setback', 'failed'] as const)(
+    'keeps the goal of a %s card Neo still has to act on',
+    (phase) => {
+      const [kept] = compactNeoSnapshotCards([{ ...card, phase, group: 'outcomes' }]);
+      expect(kept).toMatchObject({ goal: card.goal, doneWhen: card.doneWhen });
+    }
+  );
+
   test('drops the text of a finished card', () => {
     const [done] = compactNeoSnapshotCards([{ ...card, phase: 'merged', group: 'outcomes' }]);
     expect(done).toMatchObject({
