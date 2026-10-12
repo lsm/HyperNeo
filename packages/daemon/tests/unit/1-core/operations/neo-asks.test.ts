@@ -772,6 +772,34 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true, ask: { status: 'achieved' } } });
   });
 
+  test('a settled ask keeps only its identity and outcome for Neo, and its full text over RPC or by askId', async () => {
+    const askId = await openAsk();
+    await invoke(
+      'neo.ask.settle',
+      { id: askId, outcome: 'achieved', evidence: 'PR #12 merged after green CI.' },
+      { source: 'rpc', principal: 'local' }
+    );
+    const compact = (await invoke('neo.snapshot', {})).value?.asks;
+    expect(compact).toEqual([
+      expect.objectContaining({
+        id: askId,
+        title: opening.title,
+        status: 'achieved',
+        ask: '',
+        doneWhen: '',
+        evidence: null,
+        doneItems: [],
+      }),
+    ]);
+    const full = { ask: opening.ask, doneWhen: opening.doneWhen };
+    expect(
+      (await invoke('neo.snapshot', {}, { source: 'rpc', principal: 'local' })).value?.asks
+    ).toEqual([expect.objectContaining({ id: askId, ...full })]);
+    expect((await invoke('neo.snapshot', { askId })).value?.asks).toEqual([
+      expect.objectContaining({ id: askId, ...full }),
+    ]);
+  });
+
   test('an offer waits on the human, and starting its work item reopens the ask', async () => {
     const askId = await openAsk();
     const offered = (await propose('card-1', askId)).value!.work!.id;
