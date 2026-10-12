@@ -51,7 +51,7 @@ Underneath all six: **human-facing state is authored by the model in prose, and 
 5. **Progress is measured on the work.** A stall means the worker made no progress, not that Neo called continue a few times.
 6. **Neo manages work; the human decides outcomes.**
    - Neo can open, route, continue, close and fold the work it manages.
-   - The human approves asks, answers questions and confirms what only they can see.
+   - The human approves asks and answers questions, including about what only they can see.
    - The session that worked on a PR merges it.
 7. **Decisions travel verbatim.** A relayed decision quotes the human and cites its canonical record.
 
@@ -72,7 +72,7 @@ Underneath all six: **human-facing state is authored by the model in prose, and 
 - A card's PRs are attached by the daemon: from the worker session's branch or PR author, or a PR the report names, after reading it. `card.prs` is never empty while the worker has a PR open.
 - A card whose doneWhen the daemon can read (its PRs merged, its issue closed) is settled by the daemon without a Neo turn.
 - Neo gets read-only views of a PR (state, checks, review verdict on head) and an issue. It never needs a worker's word for something the daemon can read.
-- Deploys are read back by the daemon: each daemon's running commit over RPC. A deploy item is met when both daemons run a commit containing the change.
+- Deploy targets are data, not design: which machines run a daemon, how each is updated, and how its running commit is read live in config the daemon reads. A deploy item is met when every target runs a commit containing the change, read back over RPC by the daemon.
 - A model `met` tick is accepted only for items the daemon can't read. For items the daemon owns, the daemon ticks.
 
 ### 3. Progress, continues and stalls
@@ -94,17 +94,16 @@ Each ask view lists `humanActions`, computed by the daemon on every snapshot. Th
 |---|---|
 | `start {workId}` | a card under the ask is `proposed` and the ask isn't approved |
 | `approve` | the ask's approval expired (48 h), or a card stalled per §3 |
-| `answer {itemId, options}` | a question Neo asked (below) |
-| `confirm {itemId}` | an item whose evidence names a machine the daemon can't read (a device) |
+| `answer {itemId, options}` | a question Neo asked (below); the buttons are that question's options |
 | `retry {workId}` | existing card rules (`retryable`) |
 
-The model has exactly one way to ask the human something: `neo.ask.question {askId, question, options[2..4]}`. It is one question about one result, worded for that step, and answered with one tap. A human-only step such as a manual test becomes a question: "Did the keyboard hide?" → Yes / No. The item is met on the positive option; otherwise it stays open and Neo is woken. Neo can withdraw its own question with a reason.
+The model has exactly one way to ask the human something: `neo.ask.question {askId, question, options[2..4]}`. It is one question about one result, worded for that step, and answered with one tap. A human-only step such as a manual test becomes a question: "Did the keyboard hide?" → Yes / No. The item is met on the positive option; otherwise it stays open and Neo is woken. Neo can withdraw its own question with a reason. A claim only the human can check (on a device, or on a machine the daemon can't read) is a question too, so there's no separate Confirm button: the buttons always come from the question.
 
 Removed:
 
 - `needs_you` as a tick state, and its cite, kind and regex checks;
 - `waiting`/`blocked` settles that carry a free-text gate. An ask is waiting exactly when `humanActions` is non-empty, and blocked when a card failed with no retry left;
-- "Done" on items.
+- "Done" and "Confirm" on items.
 
 ### 5. Ask integrity
 
@@ -118,11 +117,10 @@ Removed:
 
 - **Neo-managed** (any turn, recorded with a reason on the card):
   - propose, start under an approved ask, continue, close and fold work it opened;
-  - follow a session the human named.
+  - follow a session the human named. The Track button and its one-hour adopt rule are removed.
 - **Human** (from a client button, or from a live turn whose input is the human's message naming the target, using the one shared check `work.start` and `ask.approve` already use):
   - approve an ask;
   - answer a question;
-  - confirm an item;
   - cancel a concern.
 - A refusal never tells Neo to ask the human for something a live human message already covers.
 - Standing rules and approvals that apply travel with the card instruction, attributed to the human, so a worker doesn't refuse a relayed approval.
@@ -186,7 +184,7 @@ Each slice is one PR, behaviour-tested, and deployable on its own. The order fol
 | 4 | Watched items and daemon ticks, read-only PR/issue views, deploy readback, daemon-settled cards | §2 | 0b |
 | 5 | Scoped snapshot with revisions, views returned from mutations, typed core ops, `work.find` fixes, one session ref | §8 (tools) | none |
 | 6 | Quiet routine wakes, one-ask writes, state-only notes | §8 (wakes) | 0b, 4 |
-| 7 | Neo-managed close, follow and fold; live-human check for human actions; rules travel with cards | §6 | 2 |
+| 7 | Neo-managed close, follow and fold; remove Track; live-human check for human actions; rules travel with cards | §6 | 2 |
 | 8 | Merge by the working session; retire `ship.sh` | §10 | 4 |
 | 9 | Topic sessions start fresh from a snapshot | §10 | 6 |
 
@@ -211,13 +209,13 @@ Deleted along the way:
 Shipped behaviour this replaces:
 
 - #6592, #6639, #6646 and #6609 are removed by slices 2 and 3.
-- Standing rule 3 (an item Neo can't verify isn't met on an agent's word) becomes `confirm`, and daemon ticks wherever the daemon can read.
+- Standing rule 3 (an item Neo can't verify isn't met on an agent's word) becomes a daemon tick wherever the daemon can read, and a question where only the human can check.
 - Standing rule 4 (a human decision is its own item) becomes `neo.ask.question`.
 - #6225 (Done for a step only the human can do) becomes a question about the result.
 
-## Open questions
+## Decided
 
-1. **Deploys:** should the daemon run the iMac deploy itself (it already reads both commits), so no worker has to act on a relayed approval?
-2. **Track:** once the human naming a session in chat is enough, does the Track button still earn its place?
-3. **Confirm:** does `confirm` need a typed subject (`device`) rather than evidence text?
-4. **Stall threshold:** is three wakes without progress right once routine events stop waking Neo?
+1. Deploy targets and how each is updated are config data the daemon reads, not a design choice.
+2. Track goes: the human naming a session in chat is enough.
+3. No typed Confirm: every human check is a question, and its options are the buttons.
+4. A stall is three wakes in a row without progress.
