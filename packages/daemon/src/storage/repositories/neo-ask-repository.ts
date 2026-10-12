@@ -37,6 +37,12 @@ type NeoAskItemRow = Omit<NeoAskItem, 'removed' | 'options' | 'decision'> & {
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
   met_by AS metBy, removed, added_at AS addedAt, options, decision`;
 
+export interface NeoAskOwner {
+  concernId: string;
+  originSessionId: string;
+  originMessageId: string;
+}
+
 export class NeoAskRepository {
   constructor(
     private readonly db: Database,
@@ -171,6 +177,16 @@ export class NeoAskRepository {
       .prepare(`UPDATE neo_asks SET ${REOPEN}, updated_at = ?
         WHERE id = ? AND status = ? RETURNING ${askColumns}`)
       .get(Date.now(), expected.id, expected.status) as NeoAskRow | null;
+    if (!row) return null;
+    this.notify();
+    return this.withWork([row])[0];
+  }
+
+  moveTo(id: string, owner: NeoAskOwner): NeoAsk | null {
+    const row = this.db
+      .prepare(`UPDATE neo_asks SET concern_id = ?, origin_session_id = ?, origin_message_id = ?
+        WHERE id = ? RETURNING ${askColumns}`)
+      .get(owner.concernId, owner.originSessionId, owner.originMessageId, id) as NeoAskRow | null;
     if (!row) return null;
     this.notify();
     return this.withWork([row])[0];

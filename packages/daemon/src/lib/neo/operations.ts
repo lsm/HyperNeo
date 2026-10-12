@@ -49,6 +49,8 @@ import { requireNeoProposal, type NeoProposal } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
 import { createNeoAskForwardOperation, neoForwardedText } from './ask-forward-operation.ts';
+import { createNeoReorganizeOperation } from './reorganize-operation.ts';
+import { neoSessionStatus } from './direct-reply-fallback.ts';
 import { createNeoRouter, reopenNeoHolder } from './router.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
@@ -1440,13 +1442,22 @@ export function createNeoOperations(service: NeoService) {
         : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
     }
   );
+  const router = createNeoRouter(service.db, service.repo, (concernId) => service.open(concernId));
   return [
-    createNeoIntakeOperation(
-      service.db,
-      service.repo,
-      service.notifyChanged,
-      createNeoRouter(service.db, service.repo, (concernId) => service.open(concernId))
-    ),
+    createNeoIntakeOperation(service.db, service.repo, service.notifyChanged, router),
+    createNeoReorganizeOperation({
+      getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
+      rootSessionId: () => service.repo.getBindingForConcern(null)?.sessionId ?? null,
+      liveAsks: () => service.askRecords.listLive(),
+      route: (ask) => router(`${ask.title}\n${ask.ask}`, ask.id),
+      sessionStatus: (sessionId) =>
+        neoSessionStatus(service.db.getSession(sessionId)?.processingState),
+      cards: (ask) => ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
+      deliver: (sessionId, messageId, content, from, parent) =>
+        service.deliverForward(sessionId, messageId, content, from, parent),
+      move: (ask, cards, owner) => service.moveAsk(ask, cards, owner),
+      log: (line) => service.logReorganize(line),
+    }),
     createNeoPublicationOperation(service.publish),
     createNeoRouteCorrectOperation(service.db, service.repo),
     createNeoAskForwardOperation({
