@@ -1959,7 +1959,7 @@ export class SDKMessageRepository {
   getDeliveryContent(
     sessionId: string,
     uuid: string
-  ): { content: string | MessageContent[]; sendStatus: SendStatus } | null {
+  ): { content: string | MessageContent[]; sendStatus: SendStatus; inputKind?: string } | null {
     const row = this.db
       .prepare(
         `SELECT sdk_message, COALESCE(send_status, 'consumed') AS send_status
@@ -1972,10 +1972,15 @@ export class SDKMessageRepository {
     try {
       const message = JSON.parse(row.sdk_message) as {
         message?: { content?: string | MessageContent[] };
+        inputKind?: string;
       };
       const content = message.message?.content ?? null;
       if (content === null) return null;
-      return { content, sendStatus: row.send_status };
+      return {
+        content,
+        sendStatus: row.send_status,
+        ...(message.inputKind ? { inputKind: message.inputKind } : {}),
+      };
     } catch {
       return null;
     }

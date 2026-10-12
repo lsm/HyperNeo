@@ -709,6 +709,22 @@ export class JobQueueRepository {
     return out;
   }
 
+  pendingDeliveryMessageUuids(sessionId: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.messageUuid') AS uuid
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND status = 'pending'
+            AND COALESCE(json_extract(payload, '$.released'), 1) = 1
+          ORDER BY priority DESC, created_at ASC,
+            COALESCE(json_extract(payload, '$.admissionRowid'), rowid) ASC`
+      )
+      .all(sessionId) as Array<{ uuid: string | null }>;
+    return rows.flatMap((row) => (typeof row.uuid === 'string' ? [row.uuid] : []));
+  }
+
   activeMailboxMessageUuids(sessionId: string): Set<string> {
     const rows = this.db
       .prepare(

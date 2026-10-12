@@ -39,6 +39,10 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
+import { createNeoAskOriginResolver, isNeoFoldableNote } from '../neo/ask-origin.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
+import { type NeoNoteFoldCandidate, planNeoNoteFold } from './neo-note-fold.ts';
 import { decideCoordinatorHandoff } from './coordinator-handoff.ts';
 import {
   type CallerScopeResolver,
@@ -2725,30 +2729,31 @@ export class AgentSession
             return { outcome: 'aborted' };
           }
 
+          const fold = this.readNeoNoteFold(messageUuid, content);
           const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
           if (
             existing &&
             this.messageQueue.hasYielded?.(messageUuid) &&
-            !this.deliveryContentMatches(existing.content, content)
+            !this.deliveryContentMatches(existing.content, fold.content)
           ) {
             return { outcome: 'aborted' };
           }
 
           let acknowledgment: Promise<void>;
-          if (existing && this.deliveryContentMatches(existing.content, content)) {
+          if (existing && this.deliveryContentMatches(existing.content, fold.content)) {
             acknowledgment = existing.acknowledgment;
           } else {
             if (existing) {
               this.messageQueue.remove(messageUuid);
               this.messageQueue.acknowledgeYielded(messageUuid, this.getQueryGeneration());
             }
-            acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+            acknowledgment = this.messageQueue.admitWithId(messageUuid, fold.content, false, {
               durable: true,
             });
           }
 
           observer?.reportStage('query_ready', { generation: this.getQueryGeneration() });
-          return { outcome: 'driving', acknowledgment, consumedUuids: [messageUuid] };
+          return { outcome: 'driving', acknowledgment, consumedUuids: fold.uuids };
         },
         signal
       )
@@ -2835,11 +2840,9 @@ export class AgentSession
         deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'ack_timeout');
         if (this.messageQueue.hasYielded?.(messageUuid)) {
           await withSessionLock(this.session.id, async () => {
-            this.markDeliveryConsumed(admission.consumedUuids);
-            await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
-            for (const uuid of admission.consumedUuids) {
-              signalDeliveryConsumed(this.session.id, uuid);
-            }
+            this.markDeliveryConsumed([messageUuid]);
+            await this.publishToolResultConsumed(this.session.id, [messageUuid]);
+            signalDeliveryConsumed(this.session.id, messageUuid);
           });
         } else {
           this.messageQueue.remove?.(messageUuid);
@@ -2981,6 +2984,47 @@ export class AgentSession
         })
         .catch(() => {});
     }
+  }
+
+  private readNeoNoteFold(
+    messageUuid: string,
+    content: string | MessageContent[]
+  ): { content: string | MessageContent[]; uuids: string[] } {
+    const jobQueue = this.db.getJobQueueRepo?.();
+    if (
+      !jobQueue ||
+      typeof content !== 'string' ||
+      !isNeoFoldableNote(messageUuid) ||
+      !neoCoordinatorBinding(this.db, this.session.id)
+    )
+      return { content, uuids: [messageUuid] };
+    const repo = this.db.getSDKMessageRepo();
+    const neo = new NeoRepository(this.db.getDatabase());
+    const inputOrigins = new NeoInputOriginRepository(this.db.getDatabase());
+    const resolve = createNeoAskOriginResolver({
+      getBinding: (id) => neo.getBindingBySession(id),
+      getPrompts: (id, uuid) => repo.getStoredPromptsByUuid(id, uuid),
+      getStamp: (sessionId, uuid) => inputOrigins.get(sessionId, uuid),
+    });
+    const keyOf = (uuid: string) => {
+      const origin = resolve({ sessionId: this.session.id, messageId: uuid });
+      return origin ? `${origin.sessionId}|${origin.messageId}` : null;
+    };
+    const head = repo.getDeliveryContent(this.session.id, messageUuid);
+    if (head?.inputKind !== 'system' || jobQueue.activeMailboxMessageUuids(this.session.id).size)
+      return { content, uuids: [messageUuid] };
+    const pending: NeoNoteFoldCandidate[] = [];
+    for (const uuid of jobQueue.pendingDeliveryMessageUuids(this.session.id)) {
+      if (uuid === messageUuid) continue;
+      if (!isNeoFoldableNote(uuid)) break;
+      const loaded = repo.getDeliveryContent(this.session.id, uuid);
+      if (loaded?.sendStatus !== 'enqueued' || loaded.inputKind !== 'system') break;
+      pending.push({ uuid, content: loaded.content, system: true, key: keyOf(uuid) });
+    }
+    return planNeoNoteFold(
+      { uuid: messageUuid, content, system: true, key: keyOf(messageUuid) },
+      pending
+    );
   }
 
   private deliveryContentMatches(
