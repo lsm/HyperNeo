@@ -50,10 +50,15 @@ import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-
 import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
-import { planNeoCardEventRoute, planNeoCardSend } from './card-events.ts';
+import {
+  isNeoCardLive,
+  planNeoCardEventRoute,
+  planNeoCardSend,
+  planNeoCardTopicsEnded,
+} from './card-events.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
 import type { ExternalEvent } from '../external-events/types.ts';
-import type { NeoPackEventRoute } from './packs/types.ts';
+import type { NeoCardEventSubscription, NeoPackEventRoute } from './packs/types.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
 import {
   SESSION_EVENT_SCOPE,
@@ -1453,6 +1458,11 @@ export class NeoService {
         this.log.warn('Reported work follow-up pending', error)
       );
     }
+    try {
+      this.endUnfollowedCardTopics(Date.now());
+    } catch (error) {
+      this.log.warn('Card event subscription sweep pending', error);
+    }
     for (const workId of this.packEvidenceWorkIds()) {
       await this.refreshWorkPrs(workId, Date.now()).catch((error) =>
         this.log.warn('Work pull request refresh pending', error)
@@ -1970,6 +1980,36 @@ export class NeoService {
       );
     }
   }
+
+  readonly endUnfollowedCardTopics = (superpipe({})('neo-card-topics-end') as PipelineAPI)
+    .input(['now'])
+    .pipe(() => this.cardEvents.listActive(), 'now', 'rows')
+    .pipe(
+      (rows: NeoCardEventSubscription[]) =>
+        new Map(
+          [...new Set(rows.map((row) => row.workId))].map((workId) => {
+            const work = this.repo.getWork(workId);
+            return [
+              workId,
+              work && isNeoCardLive(work)
+                ? this.packs().flatMap((pack) => pack.externalTopics?.(work) ?? [])
+                : [],
+            ] as const;
+          })
+        ),
+      'rows',
+      'followed'
+    )
+    .pipe(planNeoCardTopicsEnded, ['rows', 'followed'], 'ended')
+    .pipe(
+      (ended: NeoCardEventSubscription[], now: number) => {
+        for (const row of ended) this.cardEvents.end(row.workId, row.topic, now);
+        return ended;
+      },
+      ['ended', 'now'],
+      'done'
+    )
+    .end('done') as (now: number) => NeoCardEventSubscription[];
 
   followedTopics(): string[] {
     return this.cardEvents.listActive().map((row) => row.topic);

@@ -216,4 +216,34 @@ describe('Neo card pull request events', () => {
     expect(watched).toEqual([]);
     expect(sent).toEqual([]);
   });
+
+  test('a cancelled card, or one whose pack is off, stops following its pull request', async () => {
+    const cancelled = desktopCard();
+    attach(cancelled);
+    service.repo.transitionWork(cancelled.id, cancelled, { status: 'cancelled' });
+    expect(service.endUnfollowedCardTopics(Date.now())).toHaveLength(1);
+    expect(service.followedTopics()).toEqual([]);
+
+    const live = service.repo.transitionWork(
+      service.repo.proposeWork({
+        id: 'w-live',
+        requestKey: 'root:live',
+        concernId: null,
+        originSessionId: 'root',
+        originMessageId: 'm2',
+        title: 'Fix more',
+        instruction: 'Fix more.',
+        targetSessionId: 'native',
+      }).id,
+      service.repo.getWork('w-live')!,
+      { status: 'queued', sessionId: 'native' }
+    )!;
+    attach(live);
+    expect(service.endUnfollowedCardTopics(Date.now())).toEqual([]);
+    db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
+    expect(service.endUnfollowedCardTopics(Date.now())).toEqual([
+      { workId: 'w-live', topic: 'github/lsm/hyperneo/pull_request/7.*' },
+    ]);
+    expect(service.followedTopics()).toEqual([]);
+  });
 });

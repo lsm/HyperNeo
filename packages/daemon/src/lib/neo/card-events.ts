@@ -14,9 +14,25 @@ export type NeoCardSend =
   | { via: 'session'; sessionId: string }
   | { via: 'none' };
 
+export function isNeoCardLive(
+  work: Pick<NeoWork, 'status' | 'report'> | null
+): work is Pick<NeoWork, 'status' | 'report'> {
+  return (
+    !!work &&
+    (work.status === 'queued' || work.status === 'reported') &&
+    !isNeoWorkClosedDone(work.report)
+  );
+}
+
+export function planNeoCardTopicsEnded(
+  rows: readonly NeoCardEventSubscription[],
+  followed: ReadonlyMap<string, readonly string[]>
+): NeoCardEventSubscription[] {
+  return rows.filter((row) => !(followed.get(row.workId) ?? []).includes(row.topic));
+}
+
 export function planNeoCardSend({ work, ref }: NeoCardSendTarget): NeoCardSend {
-  if (!work || (work.status !== 'queued' && work.status !== 'reported')) return { via: 'none' };
-  if (isNeoWorkClosedDone(work.report)) return { via: 'none' };
+  if (!isNeoCardLive(work)) return { via: 'none' };
   if (ref) return { via: 'driver', ref };
   return work.sessionId ? { via: 'session', sessionId: work.sessionId } : { via: 'none' };
 }
