@@ -389,6 +389,12 @@ export function NeoLive() {
       setChat({ sessionId: work.sessionId, title: work.title });
       return;
     }
+    const shown = sceneGroups.some(
+      (group) =>
+        group.scenes.some((scene) => scene.ref.id === ref.id) ||
+        group.asks.some((ask) => ask.scenes.some((scene) => scene.ref.id === ref.id))
+    );
+    if (!shown) return;
     setChat(null);
     setScenesOpen(true);
     requestAnimationFrame(() => revealNeoWork(sceneSheet.current, ref.id));
