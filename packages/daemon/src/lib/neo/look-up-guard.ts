@@ -270,6 +270,7 @@ function shellWords(segment: string): string[] {
   return segment
     .replace(/'([^']*)'|"([^"]*)"/g, '$1$2')
     .split(/\s+/)
+    .map((word) => word.replace(/\\(.)/g, '$1'))
     .filter(Boolean);
 }
 
@@ -482,10 +483,17 @@ function packageScript(manifest: string, name: string): string | null {
   }
 }
 
-function scriptFile(words: readonly string[], dir: string, facts: LookUpPathFacts): string | null {
-  const read = (path: string) => facts.readText?.(resolve(dir, path)) ?? null;
+function scriptFile(
+  words: readonly string[],
+  dir: string,
+  scope: LookUpScope,
+  facts: LookUpPathFacts
+): string | null {
+  const read = (path: string) =>
+    facts.readText?.(resolvePath(path, { ...scope, cwd: dir })) ?? null;
   const [name] = words;
   const args = words.slice(1).filter((word) => !word.startsWith('-'));
+  if (name === 'source' || name === '.') return args[0] ? read(args[0]) : null;
   if (name.includes('/')) return read(name);
   if (name === 'make') {
     const makefile = read('Makefile');
@@ -526,7 +534,21 @@ function substitutions(segment: string): string[] {
   ];
 }
 
-const WRAPPERS = new Set(['env', 'sudo', 'command', 'nohup', 'time', 'exec', 'xargs', 'nice']);
+const WRAPPER_VALUE_FLAGS: Record<string, ReadonlySet<string>> = {
+  env: new Set(['-u', '-C', '-S']),
+  sudo: new Set(['-u', '-g', '-C', '-D', '-h', '-p', '-U', '-r', '-t']),
+  doas: new Set(['-u', '-C']),
+  command: new Set(),
+  nohup: new Set(),
+  time: new Set(['-o', '-f']),
+  timeout: new Set(['-s', '-k']),
+  exec: new Set(['-a']),
+  xargs: new Set(['-I', '-L', '-n', '-P', '-s', '-d', '-E']),
+  nice: new Set(['-n']),
+  stdbuf: new Set(['-i', '-o', '-e']),
+  caffeinate: new Set(['-t', '-w']),
+};
+const WRAPPER_NUMBER_ARG = new Set(['timeout']);
 const DELETES = new Set(['rm', 'rmdir', 'unlink', 'shred']);
 const LAST_TARGET = new Set(['cp', 'mv', 'ln', 'rsync', 'install']);
 const ALL_TARGETS = new Set(['touch', 'mkdir', 'chmod', 'chown', 'truncate', 'tee']);
@@ -555,13 +577,24 @@ const GIT_CHANGES = new Set([
 type LocalChange = { delete: boolean; targets: string[] };
 
 function commandWords(words: readonly string[]): string[] {
-  let start = 0;
-  while (
-    start < words.length &&
-    (WRAPPERS.has(words[start]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[start]))
-  )
-    start += 1;
-  return words.slice(start);
+  let at = 0;
+  while (at < words.length) {
+    const word = words[at];
+    const values = WRAPPER_VALUE_FLAGS[word];
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) {
+      at += 1;
+      continue;
+    }
+    if (!values) break;
+    at += 1;
+    while (
+      at < words.length &&
+      (words[at].startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[at]))
+    )
+      at += values.has(words[at]) ? 2 : 1;
+    if (WRAPPER_NUMBER_ARG.has(word) && /^\d+(\.\d+)?[smhd]?$/.test(words[at] ?? '')) at += 1;
+  }
+  return words.slice(at);
 }
 
 const GIT_LIST_FLAGS = new Set([
@@ -726,7 +759,7 @@ function analyzeBash(
     }
     found.secret ??= secretArgument(words.slice(1), dir, scope, facts);
     found.sharedState ??= neoSharedStateAction(words, segment);
-    const code = inlineCode(words) ?? scriptFile(words, dir, facts);
+    const code = inlineCode(words) ?? scriptFile(words, dir, scope, facts);
     if (code) {
       found.secret ??= secretArgument(codePaths(code), dir, scope, facts);
       if (INLINE_SHARED.test(code)) found.sharedState ??= 'code that pushes, merges or restarts';
