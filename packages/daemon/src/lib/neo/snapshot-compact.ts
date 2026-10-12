@@ -95,6 +95,26 @@ function withShortText(snapshot: NeoSnapshot): NeoSnapshot {
     concerns: snapshot.concerns.map((concern) => ({
       ...concern,
       summary: concern.summary.slice(0, TRIMMED_TEXT_LIMIT),
+      context: concern.context.slice(0, TRIMMED_TEXT_LIMIT),
+    })),
+    cards: snapshot.cards.map((card) => ({
+      ...card,
+      goal: card.goal?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
+      doneWhen: card.doneWhen?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
+      continuedMessage: card.continuedMessage?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
+    })),
+    consultations: snapshot.consultations?.map((item) => ({
+      ...item,
+      question: item.question.slice(0, TRIMMED_TEXT_LIMIT),
+      answer: item.answer?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
+    })),
+    consultationWaiters: snapshot.consultationWaiters?.map((item) => ({
+      ...item,
+      question: item.question.slice(0, TRIMMED_TEXT_LIMIT),
+    })),
+    askViews: snapshot.askViews.map((view) => ({
+      ...view,
+      ...(view.sessions ? { sessions: view.sessions.slice(0, 3) } : {}),
     })),
   };
 }
@@ -115,7 +135,27 @@ function withBareText(snapshot: NeoSnapshot): NeoSnapshot {
         evidence: null,
       })),
     })),
-    concerns: snapshot.concerns.map((concern) => ({ ...concern, summary: '' })),
+    concerns: snapshot.concerns.map((concern) => ({ ...concern, summary: '', context: '' })),
+    cards: snapshot.cards.map((card) => ({
+      ...card,
+      goal: null,
+      doneWhen: null,
+      continuedMessage: null,
+    })),
+    consultations: snapshot.consultations?.map((item) => ({
+      ...item,
+      question: '',
+      answer: null,
+    })),
+    consultationWaiters: snapshot.consultationWaiters?.map((item) => ({ ...item, question: '' })),
+    askViews: snapshot.askViews.map((view) => ({ ...view, summary: null, sessions: [] })),
+    waitingOnHuman: snapshot.waitingOnHuman && {
+      ...snapshot.waitingOnHuman,
+      asks: snapshot.waitingOnHuman.asks.map((ask) => ({
+        ...ask,
+        question: ask.question.slice(0, 80),
+      })),
+    },
   };
 }
 

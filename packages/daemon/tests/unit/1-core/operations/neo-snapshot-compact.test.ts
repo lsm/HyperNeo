@@ -189,6 +189,14 @@ describe('fitNeoSnapshotBudget', () => {
       createdAt: 1,
       updatedAt: 1,
     }));
+    heavy.cards = Array.from({ length: 10 }, (_, n) => ({
+      ...card,
+      workId: `ow${n}`,
+      goal: 'g'.repeat(1000),
+      doneWhen: 'd'.repeat(2000),
+      continuedMessage: 'c'.repeat(1000),
+    }));
+    heavy.concerns = heavy.concerns.map((concern) => ({ ...concern, context: '境'.repeat(4000) }));
     const fitted = fitNeoSnapshotBudget(heavy, 40_000);
     expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(40_000);
     expect(fitted.asks?.[0].doneItems).toHaveLength(12);
