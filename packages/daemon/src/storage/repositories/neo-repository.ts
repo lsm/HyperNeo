@@ -224,6 +224,18 @@ export class NeoRepository {
       .get(input.requestKey) as NeoWork;
   }
 
+  moveWork(
+    ids: readonly string[],
+    owner: { concernId: string; originSessionId: string; originMessageId: string }
+  ): void {
+    if (ids.length === 0) return;
+    const moved = this.db
+      .prepare(`UPDATE neo_work SET concern_id = ?, origin_session_id = ?, origin_message_id = ?
+        WHERE id IN (SELECT value FROM json_each(?))`)
+      .run(owner.concernId, owner.originSessionId, owner.originMessageId, JSON.stringify(ids));
+    if (moved.changes > 0) this.notify();
+  }
+
   transitionWork(
     id: string,
     expected: NeoWorkState,

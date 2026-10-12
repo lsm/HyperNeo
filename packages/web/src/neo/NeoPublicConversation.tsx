@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
   NeoConversationAskPageItem,
   NeoConversationImageRef,
@@ -40,6 +40,30 @@ function photoBox(ref: NeoConversationImageRef) {
   };
 }
 
+const PHOTO_CACHE_CHARS = 48 * 1024 * 1024;
+const loadedPhotos = new Map<string, string>();
+let loadedPhotoChars = 0;
+
+function cachedPhoto(key: string): string | undefined {
+  const src = loadedPhotos.get(key);
+  if (src === undefined) return undefined;
+  loadedPhotos.delete(key);
+  loadedPhotos.set(key, src);
+  return src;
+}
+
+function keepPhoto(key: string, src: string) {
+  loadedPhotoChars -= loadedPhotos.get(key)?.length ?? 0;
+  loadedPhotos.delete(key);
+  loadedPhotos.set(key, src);
+  loadedPhotoChars += src.length;
+  for (const [oldest, value] of loadedPhotos) {
+    if (loadedPhotoChars <= PHOTO_CACHE_CHARS || oldest === key) break;
+    loadedPhotos.delete(oldest);
+    loadedPhotoChars -= value.length;
+  }
+}
+
 function RefPhoto({
   conversationId,
   photo,
@@ -49,25 +73,38 @@ function RefPhoto({
   photo: NeoConversationImageRef;
   label: string;
 }) {
+  const key = `${conversationId}/${photo.imageId}`;
+  const cached = cachedPhoto(key);
   const [view, setView] = useState<
     { state: 'idle' | 'loading' | 'failed' } | { state: 'ready'; src: string }
-  >({ state: 'idle' });
-  const box = photoBox(photo);
-  if (view.state === 'ready')
-    return (
-      <img src={view.src} alt={label} style={box} class="max-w-full rounded-xl object-contain" />
-    );
+  >(cached ? { state: 'ready', src: cached } : { state: 'idle' });
+  const frame = useRef<HTMLButtonElement>(null);
   const load = async () => {
     setView({ state: 'loading' });
     const read = await readNeoConversationImage({ conversationId, imageId: photo.imageId }, () =>
       connectionManager.getHub()
     );
-    setView(
-      read.state === 'ready'
-        ? { state: 'ready', src: `data:${read.image.media_type};base64,${read.image.data}` }
-        : { state: 'failed' }
-    );
+    if (read.state !== 'ready') return setView({ state: 'failed' });
+    const src = `data:${read.image.media_type};base64,${read.image.data}`;
+    keepPhoto(key, src);
+    setView({ state: 'ready', src });
   };
+  useEffect(() => {
+    const element = frame.current;
+    if (view.state !== 'idle' || !element || typeof IntersectionObserver !== 'function') return;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      void load();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [view.state, key]);
+  const box = photoBox(photo);
+  if (view.state === 'ready')
+    return (
+      <img src={view.src} alt={label} style={box} class="max-w-full rounded-xl object-contain" />
+    );
   const loading = view.state === 'loading';
   return (
     <div class="flex max-w-full flex-col items-start gap-1">
@@ -76,6 +113,7 @@ function RefPhoto({
         aria-label={`Open ${label.toLowerCase()}`}
         aria-busy={loading}
         disabled={loading}
+        ref={frame}
         onClick={() => void load()}
         style={box}
         class="relative max-w-full cursor-zoom-in overflow-hidden rounded-xl border bg-fill-soft"

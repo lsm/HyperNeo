@@ -234,7 +234,14 @@ import {
   NeoAskCheckRepository,
   type NeoAskCheckRow,
 } from '../../storage/repositories/neo-ask-check-repository.ts';
-import { neoAskAnswerNote, planNeoNeedsYou } from './needs-you.ts';
+import {
+  neoAskAnswerNote,
+  neoAskReopensAfterClear,
+  neoNeedsYouClearedNote,
+  neoResumeWhy,
+  planNeoNeedsYou,
+  planNeoNeedsYouCleared,
+} from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
@@ -1271,6 +1278,9 @@ export class NeoService {
     this.sessionWatcher.loadSessionNoticeGroups();
     this.resumeDirectReplies();
     await this.recoverConsultations();
+    await this.clearStaleNeedsYou().catch((error) =>
+      this.log.warn('Stale needs_you check pending', error)
+    );
     for (const work of this.repo.listWork()) {
       try {
         if (work.status === 'queued') await this.start(work.id);
@@ -1948,9 +1958,9 @@ export class NeoService {
       'card'
     )
     .pipe(
-      (card: NeoNeedsYouCard) =>
-        planNeoNeedsYou(card.state, card.noted, card.ask, card.siblingsWaiting),
-      'card',
+      (card: NeoNeedsYouCard, work: NeoWork) =>
+        planNeoNeedsYou(card.state, card.noted, card.ask, card.siblingsWaiting, work.id),
+      ['card', 'work'],
       'plan'
     )
     .pipe(
@@ -1971,6 +1981,23 @@ export class NeoService {
             Date.now()
           );
         if (plan.resume.reopen) this.askRecords.reopen(plan.resume.ask);
+        if (plan.resume.items.length && this.db.getSession(plan.resume.ask.originSessionId))
+          await this.deliverToOrigin(
+            plan.resume.ask.originSessionId,
+            `neo-ask-cleared:${plan.resume.ask.id}:${plan.resume.items.join(',')}:${Date.now()}`,
+            neoNeedsYouClearedNote(
+              plan.resume.ask,
+              plan.resume.items.map((id) => ({
+                id,
+                why: neoResumeWhy(
+                  plan.resume?.ask.doneItems?.find((item) => item.id === id),
+                  work.id
+                ),
+              })),
+              plan.resume.ask.doneItems ?? []
+            ),
+            neoAskParent(plan.resume.ask)
+          );
       },
       ['work', 'ref', 'card', 'plan']
     )
@@ -1979,6 +2006,57 @@ export class NeoService {
     ref: WorkRef,
     outcome: OperationOutcome
   ) => Promise<unknown>;
+
+  async clearStaleNeedsYou(): Promise<void> {
+    for (const { id: askId } of this.askRecords.needingHuman()) {
+      const ask = this.askRecords.get(askId);
+      if (!ask) continue;
+      const cards = new Map(
+        ask.workIds.flatMap((id) => {
+          const work = this.repo.getWork(id);
+          return work
+            ? [
+                [
+                  id,
+                  {
+                    status: work.status,
+                    needsYou: this.driverTargets.readNeedsYouSince(id) != null,
+                  },
+                ] as const,
+              ]
+            : [];
+        })
+      );
+      const cleared = planNeoNeedsYouCleared(ask, cards);
+      if (cleared.length)
+        await this.wakeForClearedNeedsYou(ask, cleared).catch((error) =>
+          this.log.warn('Stale needs_you note pending', error)
+        );
+    }
+  }
+
+  private async wakeForClearedNeedsYou(
+    ask: NeoAsk,
+    cleared: readonly { id: string; why: string }[]
+  ): Promise<void> {
+    const now = Date.now();
+    for (const entry of cleared)
+      this.askRecords.tickItem(
+        ask.id,
+        { id: entry.id, state: 'pending', evidence: null, metBy: null },
+        now
+      );
+    const ticked = this.askRecords.get(ask.id);
+    if (ticked && neoAskReopensAfterClear(ticked)) this.askRecords.reopen(ticked);
+    else if (ticked) writeNeoAskTickStatus(this.askRecords, ticked, planNeoAskTickStatus(ticked));
+    if (!this.db.getSession(ask.originSessionId)) return;
+    await this.deliverToOrigin(
+      ask.originSessionId,
+      `neo-ask-cleared:${ask.id}:${cleared.map((entry) => entry.id).join(',')}:${now}`,
+      neoNeedsYouClearedNote(ask, cleared, ask.doneItems ?? []),
+      neoAskParent(ask)
+    );
+  }
 
   async recoverConsultations(): Promise<void> {
     for (const item of this.consultations.unsettled()) {
@@ -2410,9 +2488,32 @@ export class NeoService {
     messageId: string,
     content: string,
     fromSessionId: string,
-    ask: NeoAskOrigin
+    ask: NeoAskOrigin | null
   ): Promise<void> {
     return this.deliver(sessionId, messageId, content, fromSessionId, ask);
+  }
+
+  moveAsk(
+    ask: NeoAsk,
+    cards: readonly NeoWork[],
+    owner: { concernId: string; sessionId: string; messageId: string }
+  ): void {
+    const to = {
+      concernId: owner.concernId,
+      originSessionId: owner.sessionId,
+      originMessageId: owner.messageId,
+    };
+    this.db.getDatabase().transaction(() => {
+      this.askRecords.moveTo(ask.id, to);
+      this.repo.moveWork(
+        cards.map((card) => card.id),
+        to
+      );
+    })();
+  }
+
+  logReorganize(line: string): void {
+    this.log.info(line);
   }
 
   private deliver(

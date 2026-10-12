@@ -68,7 +68,13 @@ export function neoAskAnswer(ask: NeoAsk): NeoAskAnswer | null {
   const items = (ask.doneItems ?? []).filter((item) => !item.removed && item.state === 'needs_you');
   const item = items.find((entry) => entry.id === ask.waitingItem) ?? items[0];
   return item
-    ? { itemId: item.id, question: item.text, label: 'Answer in chat', options: item.options ?? [] }
+    ? {
+        itemId: item.id,
+        question: item.text,
+        label: 'Answer in chat',
+        options: item.options ?? [],
+        ...(item.action ? { action: item.action } : {}),
+      }
     : null;
 }
 
