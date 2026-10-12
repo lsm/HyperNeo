@@ -94,7 +94,7 @@ export class NetworkOutagePause {
     return this.active;
   }
 
-  async start(errorText: string, prompt: HeldPrompt | null): Promise<void> {
+  async start(errorText: string, prompt: HeldPrompt | null, notify = true): Promise<void> {
     const firstFailure = this.startedAt === null;
     if (!firstFailure && !this.active) this.failedResumes += 1;
     this.startedAt ??= this.deps.now();
@@ -104,7 +104,7 @@ export class NetworkOutagePause {
     this.errorText = errorText;
     this.deps.log(`network outage: holding the turn and probing ${this.host}`);
     await this.holdUntil(this.deps.now() + networkProbeDelayMs(this.failedResumes));
-    if (firstFailure) await this.deps.notice(NETWORK_OUTAGE_NOTICE);
+    if (firstFailure && notify) await this.deps.notice(NETWORK_OUTAGE_NOTICE);
   }
 
   async resumeNow(): Promise<boolean> {

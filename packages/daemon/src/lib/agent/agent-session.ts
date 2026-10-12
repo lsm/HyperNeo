@@ -963,7 +963,23 @@ export class AgentSession
         reason?: unknown;
       };
       if (parsed.status === 'rate_limit_cooldown' && parsed.reason === 'network') {
-        void this.stateManager.setIdle().catch(() => {});
+        const stored =
+          typeof parsed.messageId === 'string'
+            ? this.db
+                .getSDKMessageRepo()
+                .getStoredPromptsByUuid(this.session.id, parsed.messageId)[0]
+            : undefined;
+        const content = (stored as { message?: { content?: unknown } } | undefined)?.message
+          ?.content as string | MessageContent[] | undefined;
+        void this.networkPause
+          .start(
+            'network outage carried over a daemon restart',
+            stored && content !== undefined ? { uuid: parsed.messageId as string, content } : null,
+            false
+          )
+          .catch(() => {
+            void this.stateManager.setIdle().catch(() => {});
+          });
         return;
       }
       if (

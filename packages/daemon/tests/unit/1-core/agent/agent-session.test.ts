@@ -1233,7 +1233,7 @@ describe('AgentSession', () => {
       expect(endOutage).toHaveBeenCalledTimes(1);
     });
 
-    it('does not restore a network pause as a rate-limit cooldown after a restart', async () => {
+    it('restores a network pause as a network pause holding its prompt after a restart', async () => {
       mockDb.getSession = mock(
         () =>
           ({
@@ -1243,10 +1243,16 @@ describe('AgentSession', () => {
               retryAt: Date.now() + 30_000,
               retryCount: 0,
               maxRetries: 0,
+              messageId: 'held-uuid',
               reason: 'network',
             }),
           }) as never
       );
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getStoredPromptsByUuid: () => [
+          { type: 'user', uuid: 'held-uuid', message: { role: 'user', content: 'ship it' } },
+        ],
+      })) as never;
       const arm = (
         agentSession as unknown as { armPersistedRateLimitCooldown: () => void }
       ).armPersistedRateLimitCooldown.bind(agentSession);
@@ -1254,7 +1260,15 @@ describe('AgentSession', () => {
       arm();
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(agentSession.stateManager.getState().status).toBe('idle');
+      const pause = (
+        agentSession as unknown as {
+          networkPause: { isActive: () => boolean; takePrompt: () => unknown };
+        }
+      ).networkPause;
+      expect(pause.isActive()).toBe(true);
+      const state = agentSession.stateManager.getState();
+      expect(state.status).toBe('rate_limit_cooldown');
+      if (state.status === 'rate_limit_cooldown') expect(state.reason).toBe('network');
       expect(
         (
           agentSession as unknown as {
@@ -1262,6 +1276,8 @@ describe('AgentSession', () => {
           }
         ).rateLimitWatchdog.isPersistedCooldownArmed()
       ).toBe(false);
+      expect(pause.takePrompt()).toEqual({ uuid: 'held-uuid', content: 'ship it' });
+      await agentSession.stateManager.setIdle();
     });
 
     it('projects a restored persisted cooldown into the processing state', async () => {
