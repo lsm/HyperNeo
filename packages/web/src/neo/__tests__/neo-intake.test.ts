@@ -1,9 +1,10 @@
 import type { MessageHub, MessageImage } from '@hyperneo/shared';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   admitNeoDraft,
   createNeoIntakeClient,
   neoDraftPayload,
+  neoDraftThumbnails,
   requireNeoReceipt,
 } from '../neo-intake.ts';
 
@@ -351,5 +352,123 @@ describe('createNeoIntakeClient pending asks', () => {
       'Connection failed'
     );
     expect(seen.at(-1)).toEqual(['Hello:failed']);
+  });
+});
+
+describe('Neo photo thumbnails', () => {
+  const bad: MessageImage = { data: 'YmFk', media_type: 'image/png' };
+  function canvas(sizes: number[] = [100]) {
+    const qualities: number[] = [];
+    const drawn: number[][] = [];
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async (blob: Blob) => {
+        if (blob.size === 3) throw new Error('undecodable');
+        return { width: 1024, height: 512, close: vi.fn() };
+      })
+    );
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        constructor(
+          readonly width: number,
+          readonly height: number
+        ) {}
+        getContext() {
+          return {
+            fillRect: () => {},
+            drawImage: (_bitmap: unknown, ...box: number[]) => drawn.push(box),
+          };
+        }
+        async convertToBlob({ quality }: { type: string; quality: number }) {
+          qualities.push(quality);
+          const size = sizes[Math.min(qualities.length - 1, sizes.length - 1)];
+          return new Blob([new Uint8Array(size)], { type: 'image/jpeg' });
+        }
+      }
+    );
+    return { qualities, drawn };
+  }
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('adds a 256 px JPEG thumbnail at each photo’s content index with its natural size', async () => {
+    const { qualities, drawn } = canvas();
+    const submission = {
+      sessionId: 'neo:root',
+      requestId: uuid,
+      text: 'Look',
+      images: [image, image],
+    };
+    const thumbnails = await neoDraftThumbnails(submission);
+    const data = btoa(String.fromCharCode(...new Uint8Array(100)));
+    const thumb = { mediaType: 'image/jpeg', data, width: 1024, height: 512 };
+    expect(thumbnails).toEqual([
+      { index: 1, ...thumb },
+      { index: 2, ...thumb },
+    ]);
+    expect(drawn[0]).toEqual([0, 0, 256, 128]);
+    expect(qualities).toEqual([0.7, 0.7]);
+    expect(neoDraftPayload(submission, thumbnails)).toEqual({
+      ...neoDraftPayload(submission),
+      thumbnails,
+    });
+    expect(neoDraftPayload({ ...submission, images: [] }, thumbnails)).not.toHaveProperty(
+      'thumbnails'
+    );
+  });
+
+  it('lowers quality until the thumbnail fits, and skips one that never fits', async () => {
+    const { qualities } = canvas([30_000, 25_000, 20_000]);
+    const [fitted] = await neoDraftThumbnails({
+      sessionId: 'neo:root',
+      requestId: uuid,
+      text: '',
+      images: [image],
+    });
+    expect(qualities).toEqual([0.7, 0.5, 0.3]);
+    expect(fitted.index).toBe(0);
+    expect(fitted.data.length).toBeLessThanOrEqual(32 * 1024);
+    canvas([30_000]);
+    expect(
+      await neoDraftThumbnails({
+        sessionId: 'neo:root',
+        requestId: uuid,
+        text: '',
+        images: [image],
+      })
+    ).toEqual([]);
+  });
+
+  it('skips a photo whose thumbnail fails and still sends every photo', async () => {
+    canvas();
+    const { client, request } = setup();
+    const result = await client.send({ sessionId: 'neo:root', text: '', images: [bad, image] });
+    expect(result.ok).toBe(true);
+    const input = request.mock.calls[0][1].input;
+    expect(input.content).toHaveLength(2);
+    expect(input.thumbnails).toEqual([expect.objectContaining({ index: 1 })]);
+  });
+
+  it('sends without thumbnails when none can be made, as on a page without a canvas', async () => {
+    const { client, request } = setup();
+    expect((await client.send({ sessionId: 'neo:root', text: 'Hi', images: [image] })).ok).toBe(
+      true
+    );
+    expect(request.mock.calls[0][1].input).not.toHaveProperty('thumbnails');
+  });
+
+  it('retries with identical content and thumbnails under the same request id', async () => {
+    canvas();
+    const { client, request } = setup();
+    request.mockRejectedValueOnce(new Error('Disconnected'));
+    const draft = { sessionId: 'neo:root', text: 'Look', images: [image] };
+    await expect(client.send(draft)).rejects.toThrow('Disconnected');
+    expect((await client.send(draft)).ok).toBe(true);
+    const [first, second] = request.mock.calls.map((call) => call[1].input);
+    expect(second).toEqual(first);
+    expect(first.thumbnails).toEqual([expect.objectContaining({ index: 1 })]);
+    expect(vi.mocked(createImageBitmap)).toHaveBeenCalledTimes(1);
   });
 });

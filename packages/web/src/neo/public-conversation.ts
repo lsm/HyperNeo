@@ -1,17 +1,17 @@
-import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { NeoAskItem } from './conversation-ask-client.ts';
 import type { NeoAskState } from './useNeoConversationAsks.ts';
 import { publicationConversationId, type NeoPublicationState } from './useNeoPublications.ts';
 
 export type NeoPublicEntry =
-  | { kind: 'ask'; key: string; ask: NeoConversationAsk }
+  | { kind: 'ask'; key: string; ask: NeoAskItem }
   | {
       kind: 'publication';
       key: string;
       publication: NeoPublication;
-      replyTo: NeoConversationAsk | null;
+      replyTo: NeoAskItem | null;
     }
   | { kind: 'notices'; key: string; group: NeoSessionNoticeGroup };
 export type NeoPublicConversation = {
@@ -90,7 +90,7 @@ export function presentNeoPublicConversation({
   publications,
   noticeGroups = [],
 }: Sources): NeoPublicConversation {
-  const originKey = (origin: NeoConversationAsk['askOrigin']) =>
+  const originKey = (origin: NeoAskItem['askOrigin']) =>
     JSON.stringify([origin.sessionId, origin.messageId]);
   const origins = new Map(asks.items.map((ask) => [originKey(ask.askOrigin), ask]));
   const entries: NeoPublicEntry[] = [
