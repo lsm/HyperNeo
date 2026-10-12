@@ -61,6 +61,7 @@ import mdneoConsultationSettledStopped from './neo/consultation/settled-stopped.
   type: 'text',
 };
 import mdneoPublishNudge from './neo/publish-nudge.md' with { type: 'text' };
+import mdneoAskForwarded from './neo/ask-forwarded.md' with { type: 'text' };
 import mdneoRecentConversation from './neo/recent-conversation.md' with { type: 'text' };
 import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text' };
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
@@ -352,6 +353,7 @@ const registry: Record<string, string> = {
   'neo/consultation/settled-stopped.md': mdneoConsultationSettledStopped,
   'neo/consultation/settled.md': mdneoConsultationSettled,
   'neo/publish-nudge.md': mdneoPublishNudge,
+  'neo/ask-forwarded.md': mdneoAskForwarded,
   'neo/recent-conversation.md': mdneoRecentConversation,
   'neo/route-classifier.md': mdneoRouteClassifier,
   'neo/waiting-reminder.md': mdneoWaitingReminder,
@@ -533,6 +535,7 @@ export const {
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_PUBLISH_NUDGE,
+  NEO_ASK_FORWARDED,
   NEO_RECENT_CONVERSATION_HEADER,
   NEO_ROUTE_PROMPT,
   NEO_WAITING_REMINDER,

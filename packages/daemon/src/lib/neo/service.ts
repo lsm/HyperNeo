@@ -11,6 +11,7 @@ import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import {
   NEO_ASK_CONTINUE_LIMIT,
   NEO_WORK_CLOSED_DONE,
@@ -27,6 +28,8 @@ import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inv
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
+import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
+import { neoForwardedAskMessageId, neoForwardMessageId } from './ask-forward-operation.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
@@ -346,6 +349,7 @@ export class NeoService {
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   readonly inputOrigins: NeoInputOriginRepository;
+  readonly askForwards: NeoAskForwardRepository;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
   private readonly pending = new Map<string | null, Promise<string>>();
@@ -581,6 +585,7 @@ export class NeoService {
     });
     const inputOrigins = new NeoInputOriginRepository(db.getDatabase());
     this.inputOrigins = inputOrigins;
+    this.askForwards = new NeoAskForwardRepository(db.getDatabase());
     this.resolveAskOrigin = createNeoAskOriginResolver({
       getBinding: (id) => this.repo.getBindingBySession(id),
       getPrompts: (sessionId, messageId) =>
@@ -664,9 +669,10 @@ export class NeoService {
     const directReplies: NeoDirectReplyRuntime = {
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
-      recentAsks: (conversationId, id) => this.asks.recentFrom(conversationId, id, 5),
+      recentAsks: (conversationId, id) => this.recentAsksFor(conversationId, id),
       isPublished: (id, messageId) => !!this.publications.findByProducer(id, messageId),
-      startedWork: (id, messageId) => neoAskStartedWork(db, id, messageId),
+      startedWork: (id, messageId) =>
+        neoAskStartedWork(db, id, messageId) || this.forwardedAway(id, messageId),
       turnReply: (id, messageId) => readNeoTurnReply(db, id, messageId),
       hasNudge: (id, nudgeId) => this.hasDelivery(id, nudgeId),
       recheck: (id) => this.scheduleReplyRecheck(id, directReplies),
@@ -2193,7 +2199,27 @@ export class NeoService {
     return ids.some((id) => this.hasDelivery(work.originSessionId, id));
   }
 
-  private hasDelivery(sessionId: string, messageId: string): boolean {
+  recentAsksFor(conversationId: string, sessionId: string): NeoConversationAsk[] {
+    const forwarded = this.askForwards.listTo(sessionId, 5).flatMap((forward) => {
+      const ask = this.asks.find(conversationId, forward.ask.messageId);
+      return ask && ask.askOrigin.sessionId === forward.ask.sessionId
+        ? [{ ...ask, requestId: neoForwardMessageId(forward.ask, forward.hop) }]
+        : [];
+    });
+    return [...this.asks.recentFrom(conversationId, sessionId, 5), ...forwarded].sort(
+      (a, b) => a.sequence - b.sequence
+    );
+  }
+
+  forwardedAway(sessionId: string, messageId: string): boolean {
+    return this.askForwards
+      .listFrom(sessionId, neoForwardedAskMessageId(messageId) ?? messageId)
+      .some((forward) =>
+        this.hasDelivery(forward.toSessionId, neoForwardMessageId(forward.ask, forward.hop))
+      );
+  }
+
+  hasDelivery(sessionId: string, messageId: string): boolean {
     return (
       this.deliveries.has(`${sessionId}:${messageId}`) ||
       !!this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId) ||
@@ -2225,6 +2251,16 @@ export class NeoService {
     parent: NeoAskOrigin | null
   ): Promise<void> {
     return this.deliver(originSessionId, messageId, content, originSessionId, parent);
+  }
+
+  deliverForward(
+    sessionId: string,
+    messageId: string,
+    content: string,
+    fromSessionId: string,
+    ask: NeoAskOrigin
+  ): Promise<void> {
+    return this.deliver(sessionId, messageId, content, fromSessionId, ask);
   }
 
   private deliver(
