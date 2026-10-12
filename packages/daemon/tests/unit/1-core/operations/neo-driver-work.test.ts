@@ -90,13 +90,15 @@ describe('requireNeoWorkRetryCaller', () => {
     expect(requireNeoWorkRetryCaller(work, other)).toEqual({
       reason: {
         ok: false,
-        reason: 'Only the Neo session that proposed this work or the user can retry it.',
+        reason:
+          'Only the Neo session that proposed this work, Neo answering the human’s own chat message, or the user can retry it.',
       },
     });
     expect(requireNeoWorkContinuation(work, other)).toEqual({
       reason: {
         ok: false,
-        reason: 'Only the Neo session that proposed this work or the user can continue it.',
+        reason:
+          'Only the Neo session that proposed this work, Neo answering the human’s own chat message, or the user can continue it.',
       },
     });
     expect(requireNeoWorkRetryCaller(work, { source: 'mcp', sessionId: 'neo:root' })).toEqual({
