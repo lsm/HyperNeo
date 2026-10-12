@@ -146,6 +146,7 @@ const Tick = z.object({
   action: z.string().trim().min(1).max(120).optional(),
   kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
   waitCard: z.string().min(1).optional(),
+  question: z.string().trim().min(1).max(200).optional(),
 });
 
 const Answer = z.object({
@@ -456,6 +457,7 @@ export type NeoHumanTask = {
   kind?: NeoAskItemKind;
   action?: string;
   waitCard?: string;
+  question?: string;
   workIds: readonly string[];
 };
 
@@ -483,6 +485,12 @@ export function requireNeoHumanTask<T>(
     return {
       reason: fail(
         'action_required: pass action, a few words saying what the human does and where ("Choose A or B in chat", "Click Start work on card 3bce413f").'
+      ),
+    };
+  if (task.kind === 'action' && !task.waitCard && !task.question)
+    return {
+      reason: fail(
+        'question_required: pass question, one Yes/No question about the result of this step ("Did the keyboard hide?"), or waitCard when the step is on a card. Yes ticks the item met.'
       ),
     };
   return task.waitCard && !task.workIds.includes(task.waitCard)
@@ -1009,6 +1017,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
             kind: input.kind,
             action: input.action,
             waitCard: neoTickWaitCard(input),
+            question: input.question,
             workIds: target.ask.workIds,
           },
           target
@@ -1046,6 +1055,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
                   action: input.action,
                   waitCard: neoTickWaitCard(input),
                   kind: input.kind ?? (caller.source === 'mcp' ? undefined : 'decision'),
+                  question: input.kind === 'action' ? input.question : undefined,
                 }
               : {}),
           },
@@ -1180,7 +1190,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.tick',
       description:
-        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide (pass options, 2-4 short choices, when the answer is one of a few; the human taps one and neo.ask.answer sends it back to you), or back to pending. needs_you needs kind (decision when the human chooses, action when they do a step themselves; wait and approval are refused, since the daemon reads waits itself and re-approval is the ask's Approve) and action, a few words the human sees saying what to do and where ('Choose A or B in chat'). Pass waitCard, a card under this ask, when the step is on that card; the item clears when the card stops waiting. reported is refused for what the daemon reads itself (a PR, merge, CI, this machine's deploy, a card, standing rules). needs_you also takes cite: {said: the human's exact words from this ask's opening message or this turn}, {rule: a saved standing rule}, or {card: a card under this ask whose session is waiting on the human}; without one the daemon refuses, so decide yourself instead. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide (pass options, 2-4 short choices, when the answer is one of a few; the human taps one and neo.ask.answer sends it back to you), or back to pending. needs_you needs kind (decision when the human chooses, action when they do a step themselves, with question: one Yes/No question about its result, such as 'Did the keyboard hide?'; wait and approval are refused, since the daemon reads waits itself and re-approval is the ask's Approve) and action, a few words the human sees saying what to do and where ('Choose A or B in chat'). Pass waitCard, a card under this ask, when the step is on that card; the item clears when the card stops waiting. reported is refused for what the daemon reads itself (a PR, merge, CI, this machine's deploy, a card, standing rules). needs_you also takes cite: {said: the human's exact words from this ask's opening message or this turn}, {rule: a saved standing rule}, or {card: a card under this ask whose session is waiting on the human}; without one the daemon refuses, so decide yourself instead. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1189,7 +1199,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.answer',
       description:
-        "Answer a needs_you item of an ask: the human's choice (one of its options, or their own words) ticks the item met and is sent to the Neo session that opened the ask, which acts on it. A step the human did themselves (a needs_you action) is asked as 'Did it work?': Yes ticks it met, Not yet keeps it open, and Neo hears the answer either way.",
+        "Answer a needs_you item of an ask: the human's choice (one of its options, or their own words) ticks the item met and is sent to the Neo session that opened the ask, which acts on it. A step the human did themselves (a needs_you action) is asked as its one Yes/No question: Yes ticks it met, No keeps it open, and Neo hears the answer either way.",
       inputSchema: Answer,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },

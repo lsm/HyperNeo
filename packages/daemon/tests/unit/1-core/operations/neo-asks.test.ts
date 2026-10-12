@@ -813,7 +813,7 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test('a step the human did is asked as one question, met only on Yes', async () => {
+  test('a step the human did is asked as its own Yes/No question, met only on Yes', async () => {
     const askId = await openAsk();
     const user: OperationCaller = { source: 'rpc', principal: 'local' };
     await invoke(
@@ -825,9 +825,22 @@ describe('neo.ask operations', () => {
         evidence: 'Try the keyboard on the phone.',
         kind: 'action',
         action: 'Test it on the phone',
+        question: 'Did the keyboard hide?',
       },
       user
     );
+    const snapshot = await invoke('neo.snapshot', {});
+    expect(
+      (
+        snapshot.value as { askViews?: { askId: string; humanActions?: unknown[] }[] }
+      ).askViews?.find((view) => view.askId === askId)?.humanActions
+    ).toContainEqual({
+      kind: 'answer',
+      itemId: 'i1',
+      step: 'merged to dev',
+      question: 'Did the keyboard hide?',
+      options: ['Yes', 'No'],
+    });
     const delivered = mock(
       async (_ask: NeoAsk, _item: unknown, _choice: string, _met: boolean) => {}
     );
@@ -836,11 +849,11 @@ describe('neo.ask operations', () => {
     expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('choice_not_offered') },
     });
-    expect(await invoke('neo.ask.answer', { ...answer, choice: 'Not yet' }, user)).toMatchObject({
+    expect(await invoke('neo.ask.answer', { ...answer, choice: 'No' }, user)).toMatchObject({
       value: { ok: true },
     });
     expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({ state: 'needs_you' });
-    expect(delivered.mock.calls[0]?.slice(2)).toEqual(['Not yet', false]);
+    expect(delivered.mock.calls[0]?.slice(2)).toEqual(['No', false]);
     await invoke('neo.ask.answer', { ...answer, choice: 'Yes' }, user);
     expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({
       state: 'met',
@@ -1091,6 +1104,9 @@ describe('neo.ask operations', () => {
     });
     expect(await tick({ action: undefined })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('action_required') },
+    });
+    expect(await tick({ kind: 'action' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('question_required') },
     });
     expect(await tick({ kind: 'action', waitCard: 'elsewhere' })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('card_not_found') },

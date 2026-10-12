@@ -97,6 +97,7 @@ export interface NeoAskItem {
   action?: string;
   waitCard?: string;
   kind?: NeoAskItemKind;
+  question?: string;
 }
 
 export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';
@@ -250,7 +251,7 @@ export interface NeoAskView {
 }
 
 export const NEO_ASK_OUTCOME_QUESTION = 'Did it work?';
-export const NEO_ASK_OUTCOME_OPTIONS = ['Yes', 'Not yet'];
+export const NEO_ASK_OUTCOME_OPTIONS = ['Yes', 'No'];
 
 export type NeoAskHumanAction =
   | { kind: 'start'; workId: string }

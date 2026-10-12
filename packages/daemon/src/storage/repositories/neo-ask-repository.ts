@@ -29,7 +29,7 @@ export type NeoAskInput = Omit<
 export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check'>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
-  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind'
+  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind' | 'question'
 > & {
   askId: string;
   removed: number;
@@ -38,10 +38,11 @@ type NeoAskItemRow = Omit<
   action: string | null;
   waitCard: string | null;
   kind: NeoAskItem['kind'] | null;
+  question: string | null;
 };
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind`;
+  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question`;
 
 export interface NeoAskOwner {
   concernId: string;
@@ -136,13 +137,21 @@ export class NeoAskRepository {
     askId: string,
     item: Pick<
       NeoAskItem,
-      'id' | 'state' | 'evidence' | 'metBy' | 'options' | 'action' | 'waitCard' | 'kind'
+      | 'id'
+      | 'state'
+      | 'evidence'
+      | 'metBy'
+      | 'options'
+      | 'action'
+      | 'waitCard'
+      | 'kind'
+      | 'question'
     >,
     at: number
   ): boolean {
     const changed = this.db.transaction(() => {
       const ticked = this.db
-        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, action = ?, wait_card = ?, kind = ?,
+        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, action = ?, wait_card = ?, kind = ?, question = ?,
           updated_at = ?
           WHERE ask_id = ? AND id = ? AND removed = 0`)
         .run(
@@ -153,6 +162,7 @@ export class NeoAskRepository {
           item.action ?? null,
           item.waitCard ?? null,
           item.kind ?? null,
+          item.question ?? null,
           at,
           askId,
           item.id
@@ -386,15 +396,28 @@ export class NeoAskRepository {
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)
-        .map(({ askId: _askId, removed, options, decision, action, waitCard, kind, ...item }) => ({
-          ...item,
-          removed: removed === 1,
-          ...(options ? { options: JSON.parse(options) as string[] } : {}),
-          ...(decision === 1 ? { decision: true as const } : {}),
-          ...(action ? { action } : {}),
-          ...(waitCard ? { waitCard } : {}),
-          ...(kind ? { kind } : {}),
-        })),
+        .map(
+          ({
+            askId: _askId,
+            removed,
+            options,
+            decision,
+            action,
+            waitCard,
+            kind,
+            question,
+            ...item
+          }) => ({
+            ...item,
+            removed: removed === 1,
+            ...(options ? { options: JSON.parse(options) as string[] } : {}),
+            ...(decision === 1 ? { decision: true as const } : {}),
+            ...(action ? { action } : {}),
+            ...(waitCard ? { waitCard } : {}),
+            ...(kind ? { kind } : {}),
+            ...(question ? { question } : {}),
+          })
+        ),
     }));
   }
 }
