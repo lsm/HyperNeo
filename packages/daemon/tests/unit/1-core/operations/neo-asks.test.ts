@@ -200,11 +200,71 @@ describe('neo.ask operations', () => {
     expect(isNeoAskStartApproved(card, service.askRecords.get(askId), later)).toBe(true);
   });
 
-  test('an ask opened outside a human turn still waits for the human to approve it', async () => {
-    const quiet: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, human: false } };
-    const opened = await invoke('neo.ask.open', { ...opening, requestKey: 'quiet' }, quiet);
-    expect(opened.value!.ask!.approvedAt ?? null).toBeNull();
+  test('only a human message opens an ask; a note turn is told to edit the ask it works on', async () => {
+    const note: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, human: false } };
+    expect(await invoke('neo.ask.open', { ...opening, requestKey: 'quiet' }, note)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('Only a human message opens an ask') },
+    });
+    expect(await invoke('neo.ask.open', opening)).toMatchObject({ value: { ok: true } });
     expect(isNeoAskHandedOver({ source: 'rpc', principal: 'local' })).toBe(false);
+  });
+
+  test('a human message naming an open ask, its card or its PR edits that ask instead', async () => {
+    const say = (uuid: string, content: string) =>
+      db.getSDKMessageRepo().saveSDKMessage('root', {
+        type: 'user',
+        uuid,
+        session_id: 'root',
+        parent_tool_use_id: null,
+        inputKind: 'human',
+        message: { role: 'user', content },
+      } as unknown as SDKUserMessage);
+    const askId = await openAsk();
+    const card = (await propose('card-1', askId)).value!.work!.id;
+    service.workPrs.record(
+      card,
+      [
+        {
+          url: 'https://github.com/lsm/HyperNeo/pull/6670',
+          state: 'OPEN',
+          checks: 'pending',
+          review: 'none',
+        },
+      ],
+      Date.now()
+    );
+    const openFrom = (uuid: string) =>
+      invoke(
+        'neo.ask.open',
+        { ...opening, requestKey: uuid },
+        { ...neo, neoTurn: { ...neo.neoTurn!, messageId: uuid } }
+      );
+    for (const [uuid, said] of [
+      ['m-ask', `Also make ${askId.slice(0, 8)} cover the signup page.`],
+      ['m-card', `Card ${card.slice(0, 10).toUpperCase()} should rebase first.`],
+      ['m-pr', 'Address the review on lsm/HyperNeo#6670.'],
+    ]) {
+      say(uuid, said);
+      expect(await openFrom(uuid)).toMatchObject({
+        value: {
+          ok: false,
+          reason: `This message is about ask ${askId} (Fix the login bug); change it with neo.ask.edit instead of opening a new ask.`,
+        },
+      });
+    }
+    say('m-new', 'Separately, write release notes for #6671 and the 0.44 tag.');
+    expect(await openFrom('m-new')).toMatchObject({ value: { ok: true } });
+  });
+
+  test('a local user opens an ask whatever the message names', async () => {
+    const askId = await openAsk();
+    expect(
+      await invoke(
+        'neo.ask.open',
+        { ...opening, requestKey: 'local', ask: `Same as ${askId}` },
+        { source: 'rpc', principal: 'local', sessionId: 'root' }
+      )
+    ).toMatchObject({ value: { ok: true } });
   });
 
   test("a note leaves out an enabled pack's guidance, which the system prompt carries", () => {
