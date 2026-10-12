@@ -216,7 +216,8 @@ import {
   trackNeoAskIdle,
 } from './ask-idle.ts';
 import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
-import { neoCardPrAttention, requireNeoCardPrRelay } from './card-pr-relay.ts';
+import { hashString32 } from '../runtime-hash.ts';
+import { neoCardPrAttention, neoCardPrNeoNote, requireNeoCardPrRelay } from './card-pr-relay.ts';
 import {
   extractNeoCardRefs,
   readGithubRefStates,
@@ -1434,13 +1435,28 @@ export class NeoService {
     )
     .pipe(requireNeoCardPrRelay, ['work', 'attention', 'told'], 'result:relay')
     .pipe(
-      async (workId: string, relay: { signature: string; message: string }) => {
-        const sent = await this.continueWork(workId, relay.message);
-        if (sent.ok) this.cardPrRelays.markTold(workId, relay.signature, Date.now());
-        else this.log.debug(`Card ${workId} pull request news not sent: ${sent.reason}`);
+      async (
+        work: NeoWork,
+        attention: { items: string },
+        relay: { signature: string; message: string }
+      ) => {
+        const sent = await this.continueWork(work.id, relay.message);
+        if (sent.ok) {
+          this.cardPrRelays.markTold(work.id, relay.signature, Date.now());
+          return sent;
+        }
+        const note = neoCardPrNeoNote(work, attention.items, sent.reason);
+        if (!note || !this.db.getSession(work.originSessionId)) return sent;
+        await this.deliverToOrigin(
+          work.originSessionId,
+          `neo-card-pr:${work.id}:${hashString32(relay.signature).toString(36)}`,
+          note,
+          neoWorkParent(work)
+        );
+        this.cardPrRelays.markTold(work.id, relay.signature, Date.now());
         return sent;
       },
-      ['workId', 'relay'],
+      ['work', 'attention', 'relay'],
       'relay'
     )
     .endAsync('relay') as (workId: string) => Promise<unknown>;

@@ -1,4 +1,4 @@
-import { fillPrompt, NEO_CARD_PR_ATTENTION } from '@hyperneo/prompts';
+import { fillPrompt, NEO_CARD_PR_ATTENTION, NEO_CARD_PR_ATTENTION_NEO } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { NEO_WORK_CLOSED_DONE, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 
@@ -46,4 +46,21 @@ export function requireNeoCardPrRelay(
       message: fillPrompt(NEO_CARD_PR_ATTENTION, { items: attention.items }),
     },
   };
+}
+
+const NEO_CARD_PR_RETRYABLE = /already being continued/;
+
+export function neoCardPrNeoNote(
+  work: Pick<NeoWork, 'id' | 'title'>,
+  items: string,
+  refusal: string
+): string | null {
+  return NEO_CARD_PR_RETRYABLE.test(refusal)
+    ? null
+    : fillPrompt(NEO_CARD_PR_ATTENTION_NEO, {
+        title: work.title,
+        workId: work.id,
+        reason: refusal,
+        items,
+      });
 }

@@ -4,6 +4,7 @@ import type { MessageHub } from '@hyperneo/shared';
 import { NEO_WORK_CLOSED_DONE, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   neoCardPrAttention,
+  neoCardPrNeoNote,
   requireNeoCardPrRelay,
 } from '../../../../src/lib/neo/card-pr-relay.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -87,14 +88,32 @@ describe('requireNeoCardPrRelay', () => {
   });
 });
 
+describe('neoCardPrNeoNote', () => {
+  test('tells Neo when the card can never take the news, but not when it is only busy', () => {
+    const work = { id: 'w1', title: 'Fix login' };
+    expect(
+      neoCardPrNeoNote(
+        work,
+        `- ${url}: CI checks are failing`,
+        'Only started driver work can be continued.'
+      )
+    ).toContain(`- ${url}: CI checks are failing`);
+    expect(
+      neoCardPrNeoNote(work, 'items', 'This work is already being continued; wait for that first.')
+    ).toBeNull();
+  });
+});
+
 describe('NeoService relayCardPr', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
   const sent: { id: string; message: string }[] = [];
   let refuse: string | null;
+  const told: { messageId: string; content: string }[] = [];
 
   beforeEach(async () => {
     sent.length = 0;
+    told.length = 0;
     refuse = null;
     db = await createTestDb();
     service = new NeoService(
@@ -110,6 +129,9 @@ describe('NeoService relayCardPr', () => {
         return refuse
           ? { ok: false, reason: refuse }
           : { ok: true, work: service.repo.getWork(id) };
+      },
+      deliver: async (_sessionId: string, messageId: string, content: string) => {
+        told.push({ messageId, content });
       },
     });
   });
@@ -164,6 +186,18 @@ describe('NeoService relayCardPr', () => {
     await relay(workId);
     await relay(workId);
     expect(sent).toHaveLength(2);
+  });
+
+  test('tells Neo once when the card can never be continued', async () => {
+    const workId = queuedCard();
+    service.workPrs.record(workId, [pr({ checks: 'failing' })], 1);
+    refuse = 'Only started driver work can be continued.';
+    await relay(workId);
+    await relay(workId);
+    expect(sent).toHaveLength(1);
+    expect(told).toHaveLength(1);
+    expect(told[0].content).toContain(`- ${url}: CI checks are failing`);
+    expect(told[0].content).toContain('Fix login');
   });
 
   test('after a restart, does not resend a problem set it already told', async () => {
