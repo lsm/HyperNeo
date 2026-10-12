@@ -314,6 +314,12 @@ describe('query-retry-routing', () => {
       expected: { action: 'turn_ended_noop' },
     },
     {
+      name: 'SDK process exit after a prompt was fed past the result redelivers it',
+      signal: { rawText: 'Claude Code process exited with code 1' },
+      env: { turnEnded: true, hasFedPrompt: true },
+      expected: { action: 'turn_ended_redeliver' },
+    },
+    {
       name: 'a non-exit error after the turn ended stays terminal',
       signal: { rawText: 'invalid_api_key' },
       env: { turnEnded: true },
