@@ -209,7 +209,7 @@ describe('done-check note data', () => {
     expect(data.prs).toEqual([
       { url: 'u', state: 'MERGED', checks: 'passing', review: 'approved' },
     ]);
-    expect(note).toContain('more continues in a row with no new commit');
+    expect(note).toContain('more of your wakes for this card bring no new commit');
   });
   test('a done list the items do not restate stays: a preamble, or a card list of its own', () => {
     const note = (goalDoneWhen: string, askDoneWhen: string) =>
@@ -1028,10 +1028,15 @@ describe('Neo work with a drivers target', () => {
       expect(notes[0][2]).toContain('- voice works');
       expect(notes[0][2]).toContain('Skeleton builds.');
       expect(notes[0][2]).toContain('Follow the done-check steps in your system prompt');
+      expect(service.workWakes.get('work-1')).toMatchObject({
+        wakes: 1,
+        note: 'work-1:done-check:0',
+      });
 
       const still = neoWorkProgress(service.repo.getWork('work-1')!, null, null);
       for (let n = 0; n < 5; n++)
         service.workContinues.record('work-1', `Step ${n}`, Date.now(), still);
+      for (let n = 0; n < 4; n++) service.workWakes.recordWake('work-1', `idle-${n}`, 'flat', n);
       await service.reconcile('work-1');
       expect(notes[1].slice(0, 2)).toEqual(['neo:root', 'work-1:done-check:5:s:5']);
       expect(notes[1][2]).toContain('continue_budget_spent');
@@ -1725,6 +1730,35 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(branches).toContain('neo/font');
+      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('attaches the pull request a desktop worker opened while its card still runs', async () => {
+    const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_worker' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/6651';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: {
+        status: 'running',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply: 'Opened the PR; waiting on CI.',
+        openedPrs: [url],
+      },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Fix the outage pause', '- merged to dev');
+    fileUnderAsk(service);
+    service.readBranchPrs = async () => [];
+    service.readPrs = async (urls) =>
+      urls.map((item) => ({ url: item, state: 'OPEN', checks: 'pending', review: 'none' }));
+    Object.assign(service, { deliver: async () => {} });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
       expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);
     } finally {
       db.close();

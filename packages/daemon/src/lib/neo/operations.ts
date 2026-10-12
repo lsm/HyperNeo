@@ -28,7 +28,6 @@ import type {
   NeoWork,
 } from '@hyperneo/shared/types/neo-context';
 import {
-  isPooledNeoAsk,
   NEO_WORK_CLOSED_DONE_PREFIX,
   type NeoAsk,
   type NeoReceiptAskOrigin,
@@ -831,17 +830,7 @@ export function createNeoOperations(service: NeoService) {
     const listed = focus
       ? [focus]
       : service.askRecords.list(scope === undefined ? undefined : scope);
-    const asks = projectNeoSnapshotAsks(
-      listed,
-      caller.source === 'rpc' ? 50 : 10,
-      Date.now(),
-      new Set(
-        listed
-          .filter((ask) => isPooledNeoAsk(ask))
-          .flatMap((ask) => ask.workIds)
-          .filter((id) => service.isContinueStalled(id))
-      )
-    );
+    const asks = projectNeoSnapshotAsks(listed, caller.source === 'rpc' ? 50 : 10, Date.now());
     const workPrs = service.workPrs
       .list(workIds)
       .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));
@@ -1590,7 +1579,10 @@ export function createNeoOperations(service: NeoService) {
       if (!work) return { ok: false as const, reason: 'work_not_found' };
       const admission = requireNeoWorkContinuation(work, caller);
       if ('reason' in admission) return admission.reason;
-      return service.continueWork(id, message);
+      return service.continueWork(id, message, Date.now(), {
+        guarded: caller.source === 'mcp',
+        human: caller.source !== 'mcp',
+      });
     }
   );
   const retry = (superpipe({})('neo.work.retry') as PipelineAPI)

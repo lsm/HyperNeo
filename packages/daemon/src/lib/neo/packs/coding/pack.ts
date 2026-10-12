@@ -16,8 +16,6 @@ import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts
 import {
   keepNeoCardPrReads,
   keepNeoUnbeatenPrs,
-  liftNeoPrParentRefs,
-  neoPrRefsToLift,
   planNeoCardPrOwnership,
   planNeoPrCedes,
   scoreNeoCardPrs,
@@ -53,7 +51,6 @@ export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoE
 
 export interface NeoCardPrDeps {
   readPrs: NeoWorkPrReader;
-  readRefStates?: NeoRefStateReader;
   prCandidates: (work: NeoWork, stored: NeoWorkPrRow | null) => Promise<NeoCardPrCandidate[]>;
   claims: Pick<NeoWorkPrClaimRepository, 'forUrls' | 'replace' | 'drop'>;
   workPrs: Pick<NeoWorkPrRepository, 'get' | 'list' | 'recordFailedRead'>;
@@ -150,20 +147,6 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
     ['deps', 'work', 'fetched', 'now']
   )
   .pipe(
-    async (
-      deps: NeoCardPrDeps,
-      work: NeoWork,
-      plan: NeoCardPrPlan,
-      fetched: { prs: NeoWorkPr[] | null }
-    ) => {
-      const refs = neoPrRefsToLift(work, plan.owned, fetched.prs ?? []);
-      const states = refs.length && deps.readRefStates ? await deps.readRefStates(refs) : [];
-      return { prs: liftNeoPrParentRefs(work, fetched.prs ?? [], states) };
-    },
-    ['deps', 'work', 'plan', 'fetched'],
-    'lifted'
-  )
-  .pipe(
     (
       deps: NeoCardPrDeps,
       work: NeoWork,
@@ -184,11 +167,10 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
       work: NeoWork,
       current: { row: NeoWorkPrRow | null },
       unbeaten: NeoCardPrPlan & { beaten: NeoCardPrOwned[] },
-      fetched: { prs: NeoWorkPr[] | null },
-      lifted: { prs: NeoWorkPr[] }
+      fetched: { prs: NeoWorkPr[] | null }
     ) => {
       if (!fetched.prs) return { value: { row: current.row, ok: false } };
-      const { kept, pending, rejected } = keepNeoCardPrReads(work, unbeaten.owned, lifted.prs);
+      const { kept, pending, rejected } = keepNeoCardPrReads(work, unbeaten.owned, fetched.prs);
       const outmatched = unbeaten.beaten.filter((item) => item.claim === 'mentioned');
       deps.claims.replace(work.id, [
         ...kept,
@@ -206,7 +188,7 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
         },
       };
     },
-    ['deps', 'work', 'current', 'unbeaten', 'fetched', 'lifted'],
+    ['deps', 'work', 'current', 'unbeaten', 'fetched'],
     'result:read'
   )
   .pipe(

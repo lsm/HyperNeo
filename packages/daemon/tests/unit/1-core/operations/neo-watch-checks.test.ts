@@ -3,11 +3,7 @@ import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk, NeoAskItem, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoRefState } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
-import {
-  keepNeoCardPrReads,
-  liftNeoPrParentRefs,
-  neoPrRefsToLift,
-} from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
+import { keepNeoCardPrReads } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
 import { readNeoGithubRef } from '../../../../src/lib/neo/packs/coding/github-read.ts';
 import { readNeoAskPackTicks } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
@@ -248,12 +244,8 @@ describe('readNeoGithubRef', () => {
   });
 });
 
-describe('liftNeoPrParentRefs', () => {
-  const card = {
-    createdAt: 1_000,
-    title: 'Fix network outages',
-    instruction: 'File one issue under lsm/HyperNeo#6002, then fix it.',
-  };
+describe('keepNeoCardPrReads', () => {
+  const card = { createdAt: 1_000, title: 'Fix network outages', instruction: 'Fix it.' };
   const mentioned = (n: number) => ({
     url: pull(n),
     claim: 'mentioned' as const,
@@ -262,7 +254,7 @@ describe('liftNeoPrParentRefs', () => {
     score: null,
   });
 
-  test('a reported PR whose issue was filed under the named epic after the card started stays', () => {
+  test('a PR the report names attaches once read when it is current', () => {
     const prs: NeoWorkPr[] = [
       {
         url: pull(6651),
@@ -272,53 +264,11 @@ describe('liftNeoPrParentRefs', () => {
         createdAt: 3_000,
         refs: [6650],
       },
-      {
-        url: pull(6624),
-        state: 'OPEN',
-        checks: 'pending',
-        review: 'none',
-        createdAt: 3_000,
-        refs: [6610],
-      },
+      { url: pull(6600), state: 'MERGED', checks: 'passing', review: 'none', createdAt: 500 },
     ];
-    const owned = [mentioned(6651), mentioned(6624)];
-    expect(neoPrRefsToLift(card, owned, prs)).toEqual([
-      { owner: 'lsm', repo: 'HyperNeo', number: 6650 },
-      { owner: 'lsm', repo: 'HyperNeo', number: 6610 },
-    ]);
-    const lifted = liftNeoPrParentRefs(card, prs, [
-      issueState(6650, { createdAt: 2_000, parent: { url: issueUrl(6002), at: 2_500 } }),
-      issueState(6610, { createdAt: 500, parent: { url: issueUrl(6002), at: 600 } }),
-    ]);
-    expect(lifted.map((pr) => pr.refs)).toEqual([[6650, 6002], [6610]]);
-    const sorted = keepNeoCardPrReads(card, owned, lifted);
+    const sorted = keepNeoCardPrReads(card, [mentioned(6651), mentioned(6600)], prs);
     expect(sorted.kept.map((entry) => entry.url)).toEqual([pull(6651)]);
-    expect(sorted.rejected.map((entry) => entry.url)).toEqual([pull(6624)]);
-  });
-
-  test('reads nothing when the card names no issue or the PR already relates', () => {
-    const prs: NeoWorkPr[] = [
-      { url: pull(1), state: 'OPEN', checks: 'none', review: 'none', refs: [6002] },
-    ];
-    expect(neoPrRefsToLift(card, [mentioned(1)], prs)).toEqual([]);
-    expect(
-      neoPrRefsToLift(
-        { ...card, instruction: 'Fix it.' },
-        [mentioned(2)],
-        [{ ...prs[0], url: pull(2), refs: [5] }]
-      )
-    ).toEqual([]);
-    expect(liftNeoPrParentRefs(card, prs, [])).toEqual(prs);
-  });
-
-  test('lifts only a parent in the same repo as the referenced issue', () => {
-    const prs: NeoWorkPr[] = [
-      { url: pull(7), state: 'OPEN', checks: 'none', review: 'none', refs: [6650] },
-    ];
-    const elsewhere = issueState(6650, {
-      parent: { url: 'https://github.com/other/repo/issues/6002', at: 2_500 },
-    });
-    expect(liftNeoPrParentRefs(card, prs, [elsewhere])).toEqual(prs);
+    expect(sorted.rejected.map((entry) => entry.url)).toEqual([pull(6600)]);
   });
 });
 

@@ -125,6 +125,14 @@ export class NeoRoutingLogRepository {
     );
   }
 
+  lastAskedAt(targetSessionId: string): number | null {
+    if (!this.ready()) return null;
+    const row = this.db
+      .prepare('SELECT MAX(asked_at) AS at FROM neo_routing_log WHERE target_session_id = ?')
+      .get(targetSessionId) as { at: number | null } | null;
+    return row?.at ?? null;
+  }
+
   recent(limit: number): NeoRoute[] {
     if (!this.ready()) return [];
     return this.db

@@ -1,13 +1,10 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import {
-  isPooledNeoAsk,
-  type NeoAsk,
-  type NeoWorkContinue,
-} from '@hyperneo/shared/types/neo-snapshot';
+import { isPooledNeoAsk, type NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import { type DriverSent, readDriverOutcome, readNeoWorkContinueBudget } from './driver-work.ts';
+import { neoCardStalledWakes, type NeoContinueTurn, requireNeoContinueTurn } from './card-wake.ts';
 
 export type NeoContinueResult = { ok: true; work: NeoWork } | { ok: false; reason: string };
 type Rejection = Extract<NeoContinueResult, { ok: false }>;
@@ -16,8 +13,7 @@ type Delivered = Exclude<ReturnType<typeof readDriverOutcome>, { failure: string
 interface NeoContinueEvidence {
   work: NeoWork | null;
   ref: WorkRef | null;
-  continued: Pick<NeoWorkContinue, 'progress' | 'stalled'> | null;
-  progress: string;
+  turn: NeoContinueTurn;
   inFlight: boolean;
   ask: NeoAsk | null;
 }
@@ -25,12 +21,18 @@ interface NeoContinueEvidence {
 interface NeoContinueTarget {
   work: NeoWork;
   ref: WorkRef;
+  human: boolean;
+}
+
+export interface NeoContinueCaller {
+  guarded: boolean;
+  human: boolean;
 }
 
 export interface NeoContinueDeps {
   readWork(id: string): NeoWork | null;
   readRef(id: string): WorkRef | null;
-  readContinued(id: string): NeoWorkContinue | null;
+  readTurn(work: NeoWork, caller: NeoContinueCaller): NeoContinueTurn;
   readProgress(work: NeoWork): string;
   readAsk(id: string): NeoAsk | null;
   isContinuing(id: string): boolean;
@@ -42,6 +44,7 @@ export interface NeoContinueDeps {
   send(target: NeoContinueTarget, message: string): Promise<OperationOutcome>;
   recordSent(id: string, startedAt: number | null, sent: DriverSent | null): void;
   recordContinue(id: string, message: string, now: number, progress: string): number | null;
+  recordWakeContinue(work: NeoWork, human: boolean): void;
   reserveAskContinue(ask: NeoAsk): boolean;
   refundAskContinue(ask: NeoAsk): void;
   reopen(id: string, current: NeoWork, report: string): NeoWork | null;
@@ -54,13 +57,12 @@ export function requireNeoWorkContinuable(
   evidence: NeoContinueEvidence,
   now: number
 ): { value: NeoContinueTarget } | { reason: Rejection } {
-  const { work, ref } = evidence;
+  const { work, ref, turn } = evidence;
   if (!work || !ref) return reject('Only started driver work can be continued.');
   if (work.status !== 'queued' && work.status !== 'reported')
     return reject(`This work already ${work.status}; it cannot be continued.`);
   const budget = readNeoWorkContinueBudget(
-    evidence.continued,
-    evidence.progress,
+    neoCardStalledWakes(turn.wake, turn.human),
     work.createdAt,
     evidence.ask,
     now
@@ -68,7 +70,7 @@ export function requireNeoWorkContinuable(
   if (budget) return reject(budget);
   if (evidence.inFlight)
     return reject('This work is already being continued; wait for that first.');
-  return { value: { work, ref } };
+  return requireNeoContinueTurn({ work, ref, human: turn.human }, turn);
 }
 
 type NeoAskContinueReserve = { ask: NeoAsk | null; ok: boolean };
@@ -105,27 +107,29 @@ export function neoContinuedReport(count: number, message: string): string {
 }
 
 export const admitNeoWorkContinue = (superpipe({})('neo.work.continue.admit') as PipelineAPI)
-  .input(['deps', 'id', 'now'])
+  .input(['deps', 'id', 'now', 'caller'])
   .pipe(
-    (deps: NeoContinueDeps, id: string): NeoContinueEvidence => {
+    (deps: NeoContinueDeps, id: string, caller: NeoContinueCaller): NeoContinueEvidence => {
       const work = deps.readWork(id);
       return {
         work,
         ref: deps.readRef(id),
-        continued: deps.readContinued(id),
-        progress: work ? deps.readProgress(work) : '',
+        turn: work
+          ? deps.readTurn(work, caller)
+          : { guarded: false, human: false, doneWhenMet: false, prs: [], wake: null },
         inFlight: deps.isContinuing(id),
         ask: deps.readAsk(id),
       };
     },
-    ['deps', 'id'],
+    ['deps', 'id', 'caller'],
     'evidence'
   )
   .pipe(requireNeoWorkContinuable, ['evidence', 'now'], 'result:admission')
   .end('admission') as (
   deps: NeoContinueDeps,
   id: string,
-  now: number
+  now: number,
+  caller: NeoContinueCaller
 ) => NeoContinueTarget | Rejection;
 
 export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as PipelineAPI)
@@ -187,6 +191,11 @@ export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as P
     }),
     ['deps', 'target', 'message', 'now'],
     'record'
+  )
+  .pipe(
+    (deps: NeoContinueDeps, target: NeoContinueTarget) =>
+      deps.recordWakeContinue(target.work, target.human),
+    ['deps', 'target']
   )
   .pipe(
     (deps: NeoContinueDeps, target: NeoContinueTarget) => ({

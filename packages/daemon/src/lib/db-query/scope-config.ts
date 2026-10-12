@@ -468,6 +468,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_work_driver_targets',
   'neo_work_goals',
   'neo_work_continues',
+  'neo_work_wakes',
   'neo_work_supersessions',
   'neo_asks',
   'neo_ask_work',

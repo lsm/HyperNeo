@@ -1355,6 +1355,57 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test('a fold keeps every item past twelve, and the full ask can still be trimmed', async () => {
+    const targetId = await openAsk();
+    await invoke('neo.ask.edit', {
+      askId: targetId,
+      add: Array.from({ length: 9 }, (_, index) => ({ text: `slice ${index}` })),
+    });
+    const later: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'ask-2' } };
+    const duplicate = await invoke(
+      'neo.ask.open',
+      { ...opening, requestKey: 'dup', doneWhen: '- plan updated\n- stall fixed\n- merges owned' },
+      later
+    );
+    const sourceId = duplicate.value!.ask!.id;
+    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId })).toMatchObject({
+      value: { ok: true },
+    });
+    const items = service.askRecords.get(targetId)!.doneItems!;
+    expect(items.filter((item) => !item.removed)).toHaveLength(14);
+    expect(items.slice(-3).map((item) => item.text)).toEqual([
+      'plan updated',
+      'stall fixed',
+      'merges owned',
+    ]);
+    expect(
+      await invoke('neo.ask.edit', { askId: targetId, add: [{ text: 'more' }] })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('holds 14 items from a fold') },
+    });
+    expect(await invoke('neo.ask.edit', { askId: targetId, remove: ['i3'] })).toMatchObject({
+      value: { ok: true },
+    });
+  });
+
+  test('Neo cannot tick a watched item met; the daemon ticks it', async () => {
+    const askId = await openAsk();
+    await invoke('neo.ask.edit', {
+      askId,
+      add: [{ text: 'PR merged', watch: ['https://github.com/o/r/pull/9'] }],
+    });
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i3',
+        state: 'met',
+        evidence: 'neo.github.read says merged.',
+      })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('daemon_ticks_watched') },
+    });
+  });
+
   test('a turn that hit its limit gets one note listing the asks it already opened', async () => {
     const results = db.getSDKMessageRepo();
     const save = (uuid: string, subtype: string) =>
@@ -1608,15 +1659,11 @@ describe('projectNeoSnapshotAsks approval', () => {
     approvedAt: 1_000,
     workIds: ['w1', 'w2'],
   } as unknown as NeoAsk;
-  test('an approved ask with a stalled card reads spent, so the human can approve it again', () => {
-    expect(projectNeoSnapshotAsks([base], 10, 2_000, new Set(['w2']))[0].approvalSpent).toBe(
-      'continues'
-    );
-    expect(projectNeoSnapshotAsks([base], 10, 2_000, new Set())[0].approvalSpent).toBeNull();
+  test('a stalled card no longer spends the approval; only its age does', () => {
+    expect(projectNeoSnapshotAsks([base], 10, 2_000)[0].approvalSpent).toBeNull();
     expect(
-      projectNeoSnapshotAsks([{ ...base, approvedAt: null }], 10, 2_000, new Set(['w2']))[0]
-        .approvalSpent
-    ).toBeNull();
+      projectNeoSnapshotAsks([base], 10, 1_000 + NEO_ASK_CONTINUE_WINDOW_MS)[0].approvalSpent
+    ).toBe('expired');
   });
 });
 
