@@ -71,7 +71,7 @@ export function neoCoordinatorDeniedReads(): string[] {
 }
 
 export function neoCoordinatorNativeTools(concernId: string | null): string[] {
-  return concernId ? ['AskUserQuestion', ...NEO_LOOKUP_TOOLS] : NEO_ROOT_LOOKUP_TOOLS;
+  return concernId ? ['AskUserQuestion', ...NEO_LOOKUP_TOOLS] : [...NEO_ROOT_LOOKUP_TOOLS];
 }
 
 export function neoCoordinatorAllowedTools(concernId: string | null): string[] {
