@@ -593,9 +593,7 @@ export function driverDoneCheckNote(
         ? ` ${NEO_WORK_DONE_CHECK_PRS_READY}`
         : ` ${NEO_WORK_DONE_CHECK_PRS_LIVE}`;
   const owned = !!ask && ask.originSessionId === work.originSessionId;
-  const summary = owned
-    ? fillPrompt(NEO_WORK_DONE_CHECK_ASK_NEXT, { summary: NEO_WORK_SUMMARY_NOTE })
-    : NEO_WORK_SUMMARY_NOTE;
+  const summary = owned ? NEO_WORK_DONE_CHECK_ASK_NEXT : NEO_WORK_SUMMARY_NOTE;
   const next = budget
     ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget, summary })
     : fillPrompt(NEO_WORK_DONE_CHECK_CONTINUE, {
