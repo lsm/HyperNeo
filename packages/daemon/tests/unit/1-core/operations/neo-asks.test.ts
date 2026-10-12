@@ -1719,6 +1719,13 @@ describe('projectNeoSnapshotAsks approval', () => {
     approvedAt: 1_000,
     workIds: ['w1', 'w2'],
   } as unknown as NeoAsk;
+  test('names the stalled cards under each ask', () => {
+    expect(
+      projectNeoSnapshotAsks([base], 10, 2_000, new Set(['w2', 'other']))[0].stalledWorkIds
+    ).toEqual(['w2']);
+    expect(projectNeoSnapshotAsks([base], 10, 2_000)[0].stalledWorkIds).toBeUndefined();
+  });
+
   test('a stalled card no longer spends the approval; only its age does', () => {
     expect(projectNeoSnapshotAsks([base], 10, 2_000)[0].approvalSpent).toBeNull();
     expect(

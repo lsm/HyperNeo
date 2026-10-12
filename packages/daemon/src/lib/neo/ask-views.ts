@@ -128,6 +128,16 @@ export function neoCardHumanAction(
   return null;
 }
 
+export function neoAskApproveAction(
+  ask: Pick<NeoAsk, 'approvalSpent' | 'stalledWorkIds'>,
+  live: readonly Pick<NeoCardView, 'workId'>[]
+): NeoAskHumanAction[] {
+  if (ask.approvalSpent === 'expired') return [{ kind: 'approve', reason: 'expired' }];
+  const stalled = new Set(ask.stalledWorkIds ?? []);
+  const workIds = live.map((card) => card.workId).filter((id) => stalled.has(id));
+  return workIds.length ? [{ kind: 'approve', reason: 'stalled', workIds }] : [];
+}
+
 export function deriveNeoAskHumanActions(
   ask: NeoAsk,
   live: readonly NeoCardView[]
@@ -135,9 +145,7 @@ export function deriveNeoAskHumanActions(
   if (ask.status === 'achieved' || ask.status === 'abandoned') return [];
   return [
     ...live.flatMap((card) => neoCardHumanAction(ask, card) ?? []),
-    ...(ask.approvalSpent === 'expired'
-      ? [{ kind: 'approve' as const, reason: 'expired' as const }]
-      : []),
+    ...neoAskApproveAction(ask, live),
     ...(ask.doneItems ?? []).flatMap((item) => neoAskItemAction(item) ?? []),
   ];
 }
