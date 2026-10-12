@@ -3013,7 +3013,8 @@ export class AgentSession
       return origin ? `${origin.sessionId}|${origin.messageId}` : null;
     };
     const head = repo.getDeliveryContent(this.session.id, messageUuid);
-    if (head?.inputKind !== 'system') return { content, uuids: [messageUuid] };
+    if (head?.inputKind !== 'system' || jobQueue.activeMailboxMessageUuids(this.session.id).size)
+      return { content, uuids: [messageUuid] };
     const pending: NeoNoteFoldCandidate[] = [];
     for (const uuid of jobQueue.pendingDeliveryMessageUuids(this.session.id)) {
       if (uuid === messageUuid) continue;

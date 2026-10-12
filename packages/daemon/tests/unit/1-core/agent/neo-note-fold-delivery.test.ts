@@ -82,7 +82,12 @@ function saveUserMessage(
 }
 
 describe('AgentSession driveDeliveryTurn for Neo system notes', () => {
-  async function drive(sessionId: string, neo: boolean, notes: Array<[string, string]>) {
+  async function drive(
+    sessionId: string,
+    neo: boolean,
+    notes: Array<[string, string]>,
+    before?: (db: Database, sessionId: string) => void
+  ) {
     const { db, agentSession } = await makeBoundarySession(sessionId);
     const repo = db.getSDKMessageRepo();
     if (neo)
@@ -95,6 +100,7 @@ describe('AgentSession driveDeliveryTurn for Neo system notes', () => {
       saveUserMessage(repo, sessionId, uuid, 'enqueued', `note ${uuid}`, kind);
     for (const [uuid] of notes.slice(1))
       deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery' });
+    before?.(db, sessionId);
     stubLifecycleManager(agentSession, 'started');
     armNeverResolvingQuery(agentSession);
     agentSession.messageQueue.start();
@@ -143,6 +149,24 @@ describe('AgentSession driveDeliveryTurn for Neo system notes', () => {
     ]);
     expect(result.content).toBe('note w1:stall:1');
     expect(result.statuses).toEqual(['consumed', 'enqueued', 'enqueued']);
+  });
+
+  it('does not fold while a message is still waiting in the mailbox', async () => {
+    const result = await drive(
+      'neo:fold-mailbox',
+      true,
+      [
+        ['w1:stall:1', 'system'],
+        ['w2:stall:2', 'system'],
+      ],
+      (db, sessionId) =>
+        db.getJobQueueRepo().enqueue({
+          queue: 'mailbox',
+          payload: { to: { kind: 'session', sessionId }, messageUuid: 'h-waiting' },
+        })
+    );
+    expect(result.content).toBe('note w1:stall:1');
+    expect(result.statuses).toEqual(['consumed', 'enqueued']);
   });
 
   it('gives a nudge or consultation its own turn', async () => {
