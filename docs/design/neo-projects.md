@@ -44,7 +44,12 @@ Neo picks a workspace and a driver per card. For HyperNeo that might be a Claude
 
 ## Parents and sections
 
-The avatar tree nests one level below a top-level project:
+Avatars form a tree: each avatar has at most one parent, with no fixed depth. Today's avatars are one level under root Neo, and most real cases fit two levels, but the product shows why a fixed depth breaks: the HyperNeo product holds the HyperNeo repo and the neo-ios repo, and the HyperNeo repo has a Neo section. That is already three levels.
+
+- **A level is added only when it's needed:** when a project's asks split into parts that each have their own outcome, or the human groups projects. Neo never creates a level up front.
+- **Routing walks the tree one level at a time,** so depth costs nothing per decision.
+- **The UI shows the path** (HyperNeo › Neo) and lets the human move an avatar to another parent.
+
 
 - **A parent groups projects that share context.** Travel holds Japan and Spain when they share a passport, loyalty accounts or companions. Business travel is a different parent: the budget, the approvals and who pays all differ. Family holds Mom's school forms once more family errands come.
 - **A section splits a large project.** For code, sections follow epics: HyperNeo → Neo (#6002), daemon, web. A section is an avatar with a parent; it shares the parent's workspaces.
@@ -70,7 +75,3 @@ The avatar tree nests one level below a top-level project:
 | 3 | Router picks project then section; new projects are named after their target | 1 |
 | 4 | Parents and sections; sections from epics for code projects | 1, 3 |
 | 5 | Reorganize merges by identity, moves asks into projects and sections, asks once when unsure, saves the answer as a rule | 1, 3, 4 |
-
-## Open questions
-
-1. Is one level of nesting enough, or can a section have sections?
