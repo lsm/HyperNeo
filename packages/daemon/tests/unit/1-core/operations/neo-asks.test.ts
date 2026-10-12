@@ -9,6 +9,7 @@ import {
   NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
   neoAskApprovalSpent,
+  type NeoSnapshot,
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
   projectNeoSnapshotAsks,
