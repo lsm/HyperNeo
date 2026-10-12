@@ -33,6 +33,15 @@ export class NeoAskForwardRepository {
     );
   }
 
+  listRecent(limit: number): (NeoAskForward & { ask: NeoAskOrigin })[] {
+    return this.withAsk(
+      this.db
+        .prepare(`SELECT ${columns}, ask_session_id AS askSessionId, ask_message_id AS askMessageId
+          FROM neo_ask_forwards ORDER BY forwarded_at DESC LIMIT ?`)
+        .all(limit) as ForwardRow[]
+    );
+  }
+
   listTo(sessionId: string, limit: number): (NeoAskForward & { ask: NeoAskOrigin })[] {
     return this.withAsk(
       this.db

@@ -9,6 +9,7 @@ import {
   requireForwardingHolder,
   staleNeoForwardHops,
 } from '../../../../src/lib/neo/ask-forward-operation.ts';
+import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   type DaemonInternalEventMap,
@@ -308,6 +309,53 @@ describe('neo.ask.forward', () => {
   });
 });
 
+describe('neo.snapshot askForwards', () => {
+  test('shows the human recent forwards, so a reply can say which topic forwarded it', async () => {
+    const db = await createTestDb();
+    const service = new NeoService(
+      db,
+      {} as never,
+      { event: () => {} } as never,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    try {
+      service.askForwards.record(ask, {
+        hop: 0,
+        fromSessionId: garden.sessionId,
+        toSessionId: pond.sessionId,
+        toConcernId: 'pond',
+        forwardedAt: 1,
+      });
+      const registry = createOperationRegistry(createNeoOperations(service));
+      const human = await invokeOperation(
+        registry,
+        'neo.snapshot',
+        {},
+        {
+          source: 'rpc',
+          principal: 'local',
+        }
+      );
+      expect(human).toMatchObject({
+        value: {
+          askForwards: [
+            {
+              askSessionId: garden.sessionId,
+              askMessageId: 'ask-1',
+              hop: 0,
+              fromSessionId: garden.sessionId,
+              toSessionId: pond.sessionId,
+            },
+          ],
+        },
+      });
+    } finally {
+      service.dispose();
+      db.close();
+    }
+  });
+});
+
 describe('NeoService.recentAsksFor', () => {
   test('lists an ask forwarded to a holder under the forwarded note, so its reply fallback covers it', async () => {
     const db = await createTestDb();
@@ -367,6 +415,7 @@ describe('NeoAskForwardRepository', () => {
     expect(repo.record(ask, forward(0))).toBe(false);
     expect(repo.list(ask).map((item) => item.hop)).toEqual([0, 1]);
     expect(repo.list({ ...ask, messageId: 'other' })).toEqual([]);
+    expect(repo.listRecent(1)).toEqual([expect.objectContaining({ hop: 1, ask })]);
     repo.remove(ask, 1);
     expect(repo.list(ask).map((item) => item.hop)).toEqual([0]);
   });

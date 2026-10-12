@@ -26,6 +26,21 @@ export interface NeoWorkGoal {
   doneWhen: string | null;
 }
 
+export interface NeoAskForwardView {
+  askSessionId: string;
+  askMessageId: string;
+  hop: number;
+  fromSessionId: string;
+  toSessionId: string;
+}
+
+export function neoForwardKey(
+  ask: { sessionId: string; messageId: string },
+  toSessionId: string
+): string {
+  return `${ask.sessionId}|${ask.messageId}|${toSessionId}`;
+}
+
 export const NEO_WORK_STALLED_CONTINUES = 3;
 export const NEO_ASK_CONTINUE_LIMIT = 20;
 export const NEO_ASK_CONTINUE_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -269,6 +284,7 @@ export interface NeoSnapshot {
   sessionId: string | null;
   concerns: NeoConcern[];
   publicAuthorBindings?: { sessionId: string; concernId: string; kind: 'concern' }[];
+  askForwards?: NeoAskForwardView[];
   work: NeoWork[];
   consultations?: NeoConsultation[];
   consultationWaiters?: NeoConsultationWaiter[];

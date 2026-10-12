@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import type { MessageImage } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
-import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
+import { neoForwardKey, type NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
@@ -146,9 +146,11 @@ function PublicEntry({
   canOpenScene,
   onEditUndelivered,
   topics,
+  forwarders,
 }: {
   entry: NeoPublicEntry;
   topics?: ReadonlyMap<string, string>;
+  forwarders?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
@@ -169,7 +171,11 @@ function PublicEntry({
     ask && Array.isArray(ask.content) ? projectNeoMessageImageSources(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : 'You';
-  const topic = publication ? topics?.get(publication.producerInput.sessionId) : undefined;
+  const replier = publication ? topics?.get(publication.producerInput.sessionId) : undefined;
+  const forwarder = publication
+    ? forwarders?.get(neoForwardKey(publication.askOrigin, publication.producerInput.sessionId))
+    : undefined;
+  const topic = forwarder ? `${replier ?? 'Neo'} (forwarded from ${forwarder})` : replier;
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   return (
     <article
@@ -411,11 +417,13 @@ export function NeoPublicConversation({
   onLoadEarlier,
   onEditUndelivered,
   topics,
+  forwarders,
   mute,
 }: {
   conversation: Conversation;
   mute?: NeoSessionMute;
   topics?: ReadonlyMap<string, string>;
+  forwarders?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
@@ -462,6 +470,7 @@ export function NeoPublicConversation({
             canOpenScene={canOpenScene}
             onEditUndelivered={onEditUndelivered}
             topics={topics}
+            forwarders={forwarders}
           />
         )
       )}

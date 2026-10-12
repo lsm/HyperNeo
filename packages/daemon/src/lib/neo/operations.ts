@@ -129,6 +129,7 @@ import { NEO_WORK_FOLLOW_MAX_AGE_MS } from './work-follow.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
+const NEO_SNAPSHOT_FORWARDS = 100;
 const Concern = z.object({
   id: z.string(),
   title: z.string(),
@@ -208,6 +209,18 @@ const SnapshotOk = z.object({
         kind: z.literal('concern'),
       } satisfies ZodShape<NonNullable<NeoSnapshot['publicAuthorBindings']>[number]>)
     )
+    .optional(),
+  askForwards: z
+    .array(
+      z.object({
+        askSessionId: z.string(),
+        askMessageId: z.string(),
+        hop: z.number().int(),
+        fromSessionId: z.string(),
+        toSessionId: z.string(),
+      } satisfies ZodShape<NonNullable<NeoSnapshot['askForwards']>[number]>)
+    )
+    .max(NEO_SNAPSHOT_FORWARDS)
     .optional(),
   work: z.array(Work),
   standingRules: z.array(z.string()).optional(),
@@ -656,6 +669,16 @@ export function createNeoOperations(service: NeoService) {
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
       publicAuthorBindings:
         caller.source === 'rpc' ? service.repo.listConcernBindings(scope ?? undefined) : [],
+      askForwards:
+        caller.source === 'rpc'
+          ? service.askForwards.listRecent(NEO_SNAPSHOT_FORWARDS).map((forward) => ({
+              askSessionId: forward.ask.sessionId,
+              askMessageId: forward.ask.messageId,
+              hop: forward.hop,
+              fromSessionId: forward.fromSessionId,
+              toSessionId: forward.toSessionId,
+            }))
+          : [],
       concerns: concerns.map((item) => ({
         ...item,
         context: detailed ? item.context : '',
