@@ -7,7 +7,12 @@ import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
 import { readNeoCatchUp, readNeoHolderView } from './catch-up.ts';
 import { neoFolderPath } from './folder.ts';
-import { NEO_LOOKUP_COMMANDS, neoLookUpGuard, neoSecretReadRules } from './look-up-guard.ts';
+import {
+  NEO_LOOKUP_COMMANDS,
+  NEO_ROOT_LOOKUP_COMMANDS,
+  neoLookUpGuard,
+  neoSecretReadRules,
+} from './look-up-guard.ts';
 import { neoSettingsPackBriefs } from './packs/index.ts';
 import type { NeoPackBrief } from './packs/types.ts';
 import { neoPrompt } from './prompt.ts';
@@ -56,18 +61,23 @@ export function neoQueryContext(binding: NeoBinding, db: Database | undefined): 
 }
 
 const NEO_LOOKUP_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
+const NEO_ROOT_LOOKUP_TOOLS = ['WebSearch', 'WebFetch', 'Bash'];
+
+export function neoCoordinatorLookUpCommands(concernId: string | null): readonly string[] {
+  return concernId ? NEO_LOOKUP_COMMANDS : NEO_ROOT_LOOKUP_COMMANDS;
+}
 export function neoCoordinatorDeniedReads(): string[] {
   return neoSecretReadRules({ dataDir: getDataDir(), home: homedir() });
 }
 
 export function neoCoordinatorNativeTools(concernId: string | null): string[] {
-  return [...(concernId ? ['AskUserQuestion'] : []), ...NEO_LOOKUP_TOOLS];
+  return concernId ? ['AskUserQuestion', ...NEO_LOOKUP_TOOLS] : NEO_ROOT_LOOKUP_TOOLS;
 }
 
 export function neoCoordinatorAllowedTools(concernId: string | null): string[] {
   return [
     ...neoCoordinatorNativeTools(concernId).filter((tool) => tool !== 'Bash'),
-    ...NEO_LOOKUP_COMMANDS.map((command) => `Bash(${command}:*)`),
+    ...neoCoordinatorLookUpCommands(concernId).map((command) => `Bash(${command}:*)`),
     `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`,
   ];
 }
@@ -102,7 +112,15 @@ export function restrictNeoQuery(
   options.hooks = {
     ...options.hooks,
     PreToolUse: [
-      { hooks: [neoLookUpGuard({ home: homedir(), dataDir: getDataDir() })] },
+      {
+        hooks: [
+          neoLookUpGuard({
+            home: homedir(),
+            dataDir: getDataDir(),
+            commands: neoCoordinatorLookUpCommands(concernId),
+          }),
+        ],
+      },
       ...(options.hooks?.PreToolUse ?? []),
     ],
   };

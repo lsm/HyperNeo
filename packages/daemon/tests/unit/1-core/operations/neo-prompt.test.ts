@@ -36,19 +36,26 @@ const LOOKUP_ALLOWED = [
 ];
 
 describe('neoCoordinatorNativeTools', () => {
-  test.each([null, 'saas', 'family'])('selects questions and look-up tools for %s', (concernId) => {
-    expect(neoCoordinatorNativeTools(concernId)).toEqual([
-      ...(concernId ? ['AskUserQuestion'] : []),
-      ...LOOKUP_TOOLS,
-    ]);
+  test.each(['saas', 'family'])('gives the %s holder questions and look-up tools', (concernId) => {
+    expect(neoCoordinatorNativeTools(concernId)).toEqual(['AskUserQuestion', ...LOOKUP_TOOLS]);
+  });
+
+  test('gives root Neo no way to read, search or browse files', () => {
+    expect(neoCoordinatorNativeTools(null)).toEqual(['WebSearch', 'WebFetch', 'Bash']);
   });
 });
 
 describe('neoCoordinatorAllowedTools', () => {
-  test.each([null, 'saas'])('auto-approves only read-only commands for %s', (concernId) => {
-    expect(neoCoordinatorAllowedTools(concernId)).toEqual([
-      ...(concernId ? ['AskUserQuestion'] : []),
-      ...LOOKUP_ALLOWED,
+  test('auto-approves only read-only commands for a holder', () => {
+    expect(neoCoordinatorAllowedTools('saas')).toEqual(['AskUserQuestion', ...LOOKUP_ALLOWED]);
+  });
+
+  test('auto-approves only gh reads for root Neo, no repository commands', () => {
+    expect(neoCoordinatorAllowedTools(null)).toEqual([
+      'WebSearch',
+      'WebFetch',
+      ...LOOKUP_ALLOWED.filter((tool) => tool.startsWith('Bash(gh ')),
+      'mcp__hyperneo-operations__invoke',
     ]);
   });
 });
