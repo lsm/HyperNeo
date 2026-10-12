@@ -24,10 +24,11 @@ type NeoThumbnail = {
   index: number;
   mediaType: 'image/jpeg';
   data: string;
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
 };
 const THUMBNAIL_EDGE = 256;
+const THUMBNAIL_SIZE_LIMIT = 100_000;
 const THUMBNAIL_LIMIT = 32 * 1024;
 const THUMBNAIL_QUALITIES = [0.7, 0.5, 0.3];
 
@@ -85,7 +86,13 @@ async function neoPhotoThumbnail(image: MessageImage): Promise<Omit<NeoThumbnail
     for (const quality of THUMBNAIL_QUALITIES) {
       const data = await surface.encode(quality);
       if (data && data.length <= THUMBNAIL_LIMIT)
-        return { mediaType: 'image/jpeg', data, width: bitmap.width, height: bitmap.height };
+        return {
+          mediaType: 'image/jpeg',
+          data,
+          ...(Math.max(bitmap.width, bitmap.height) <= THUMBNAIL_SIZE_LIMIT
+            ? { width: bitmap.width, height: bitmap.height }
+            : {}),
+        };
     }
     return null;
   } finally {

@@ -357,14 +357,14 @@ describe('createNeoIntakeClient pending asks', () => {
 
 describe('Neo photo thumbnails', () => {
   const bad: MessageImage = { data: 'YmFk', media_type: 'image/png' };
-  function canvas(sizes: number[] = [100]) {
+  function canvas(sizes: number[] = [100], photo = { width: 1024, height: 512 }) {
     const qualities: number[] = [];
     const drawn: number[][] = [];
     vi.stubGlobal(
       'createImageBitmap',
       vi.fn(async (blob: Blob) => {
         if (blob.size === 3) throw new Error('undecodable');
-        return { width: 1024, height: 512, close: vi.fn() };
+        return { ...photo, close: vi.fn() };
       })
     );
     vi.stubGlobal(
@@ -417,6 +417,18 @@ describe('Neo photo thumbnails', () => {
     expect(neoDraftPayload({ ...submission, images: [] }, thumbnails)).not.toHaveProperty(
       'thumbnails'
     );
+  });
+
+  it('leaves out a photo size beyond what the daemon accepts', async () => {
+    canvas([100], { width: 200_000, height: 10 });
+    const [thumbnail] = await neoDraftThumbnails({
+      sessionId: 'neo:root',
+      requestId: uuid,
+      text: '',
+      images: [image],
+    });
+    expect(thumbnail).not.toHaveProperty('width');
+    expect(thumbnail).not.toHaveProperty('height');
   });
 
   it('lowers quality until the thumbnail fits, and skips one that never fits', async () => {
