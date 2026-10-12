@@ -22,6 +22,7 @@ import {
   refreshNeoDriverWork,
   scheduleDriverRefresh,
 } from '../neo/driver-refresh.ts';
+import { NEO_WORK_DELIVERY_RETRY, runNeoDeliveryRetry } from '../neo/delivery-retry.ts';
 import {
   runTurnEmbedding,
   scheduleTurnEmbedding,
@@ -1671,6 +1672,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     refreshNeoDriverWork(deps.jobQueue, neoService)
   );
   scheduleDriverRefresh(deps.jobQueue);
+  deps.jobProcessor.register(NEO_WORK_DELIVERY_RETRY, (job) =>
+    runNeoDeliveryRetry(job, neoService)
+  );
   const reorganizeTopics = createNeoTopicsReorganizer(neoReorganizeRuntime(neoService));
   const routingLog = new NeoRoutingLogRepository(deps.db.getDatabase());
   deps.jobProcessor.register(NEO_TOPICS_REORGANIZE_NIGHTLY, (job) =>

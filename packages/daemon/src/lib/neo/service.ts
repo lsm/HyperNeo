@@ -262,6 +262,11 @@ import {
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
 import { NEO_TURN_LIMIT_PREFIX, neoTurnLimitNote, planNeoTurnLimitNote } from './turn-limit.ts';
+import {
+  isNeoDeliveryRetryPending,
+  planNeoDeliveryRetry,
+  scheduleNeoDeliveryRetry,
+} from './delivery-retry.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
   NEO_WORK_FOLLOW_MAX_AGE_MS,
@@ -1294,7 +1299,23 @@ export class NeoService {
 
   isRetryable(workId: string): boolean {
     const work = this.repo.getWork(workId);
-    return !!work && 'value' in requireNeoWorkRetryable(work, this.retryCard(workId), true);
+    return (
+      !!work &&
+      'value' in requireNeoWorkRetryable(work, this.retryCard(workId), true) &&
+      !isNeoDeliveryRetryPending(this.db.getJobQueueRepo(), workId)
+    );
+  }
+
+  private deferToDeliveryRetry(work: NeoWork): boolean {
+    const plan = planNeoDeliveryRetry({
+      retryable: 'value' in requireNeoWorkRetryable(work, this.retryCard(work.id), true),
+      ask: this.askRecords.forWork(work.id),
+      retries: this.driverTargets.readRetries(work.id),
+      now: Date.now(),
+    });
+    if ('reason' in plan) return false;
+    scheduleNeoDeliveryRetry(this.db.getJobQueueRepo(), work.id, Date.now() + plan.value);
+    return true;
   }
 
   async retryWork(
@@ -2306,6 +2327,7 @@ export class NeoService {
 
   private async returnReport(work: NeoWork): Promise<void> {
     if (work.status === 'reported' && isNeoWorkClosedDone(work.report)) return;
+    if (this.deferToDeliveryRetry(work)) return;
     if ((await this.checkDone(work, false)) !== 'not_checked') return;
     if (work.status === 'reported')
       await readNeoPackEvidence(
