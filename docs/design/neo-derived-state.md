@@ -19,7 +19,7 @@ The cause is the same each time: **human-facing state is authored by the model i
 1. **What the human must do is derived, not written.** The daemon computes every human action from facts. The model can't create a gate in prose.
 2. **When to tell the human is derived, not judged.** The daemon decides that something worth saying happened. The model writes the sentence only then.
 3. **Each turn starts from daemon state, not chat memory.** Anything that drives a decision (approval, stall, PR state, items) is read fresh. Memory never overrides it.
-4. **One owner.** All work runs under Neo's asks, and merging an approved, green PR is daemon behaviour, not a side script.
+4. **One owner.** All work runs under Neo's asks. Neo manages the work; the session that worked on a PR merges it, and the daemon only wakes that session when an approved, green PR sits unmerged. No side script.
 
 ## Design
 
@@ -67,7 +67,7 @@ The daemon refuses every other `neo.publication.publish`, with a reason. For eac
 - A card's report is the working session's reply to the card's own message, capped at about 1.5K, and never includes the human's input. When a card targets a session the human also uses, only turns the card's message started count as the card's idle or report. On 2026-10-12, card 0692a952 got the shared Neo iOS app session's chat as its "report" on every idle: 11 notes and 5 continues for work already done.
 - Per-topic avatars (#6579, #6604) hold their asks, and root Neo keeps cross-topic questions only. A topic's session is short-lived and starts from a snapshot, so long compacted chats don't drive decisions.
 
-### 4. One owner, daemon-side merge
+### 4. One owner, session-side merge
 
 - The session that worked on a PR merges it (coding pack). For a PR left approved on its head, CLEAN, with no unresolved threads, for over 30 minutes, the daemon wakes that session to merge it, rather than merging it itself. Deploys stay where they are: the laptop through the daemon's own update hook, the iMac through its session.
 - Work goes through Neo asks. Peer sessions get work as cards, not direct messages.
