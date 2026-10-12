@@ -159,13 +159,41 @@ describe('Neo existing trusted human work input', () => {
     }
   );
 
+  test('closes a card while answering the human, never from a system note', async () => {
+    storeInput();
+    const work = await propose(caller());
+    const note = '00000000-0000-4000-8000-000000000012';
+    storeInput(root, 'system', note);
+    expect(
+      await invoke('neo.work.close', { id: work.id, outcome: 'cancelled' }, caller(root, note))
+    ).toMatchObject({
+      value: {
+        ok: false,
+        reason:
+          'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.',
+      },
+    });
+    expect(service.repo.getWork(work.id)?.status).toBe('proposed');
+
+    expect(
+      await invoke('neo.work.close', { id: work.id, outcome: 'cancelled' }, caller())
+    ).toMatchObject({ value: { ok: true } });
+    expect(service.repo.getWork(work.id)?.status).toBe('cancelled');
+  });
+
   test('lets Neo start the work items of an ask the user approved, on later turns', async () => {
     storeInput();
     const work = await propose(caller());
     const opened = service.askRecords.forWork(work.id)!;
     const later = caller(root, '00000000-0000-4000-8000-000000000009');
     expect(later.neoTurn?.human).toBe(false);
-    const refused = { value: { ok: false, reason: 'This action needs the user.' } };
+    const refused = {
+      value: {
+        ok: false,
+        reason:
+          'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.',
+      },
+    };
     expect(await invoke('neo.work.start', { id: work.id }, later)).toMatchObject(refused);
     expect(await invoke('neo.ask.approve', { askId: opened.id }, later)).toMatchObject(refused);
 
@@ -191,7 +219,11 @@ describe('Neo existing trusted human work input', () => {
       const claimed = { ...source, neoTurn: { ...source.neoTurn!, human: true } };
       const work = await propose(claimed);
       expect(await invoke('neo.work.start', { id: work.id }, claimed)).toMatchObject({
-        value: { ok: false, reason: 'This action needs the user.' },
+        value: {
+          ok: false,
+          reason:
+            'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.',
+        },
       });
       expect(service.repo.getWork(work.id)?.status).toBe('proposed');
       expect(jobs(work.id)).toEqual([]);
@@ -242,7 +274,11 @@ describe('Neo existing trusted human work input', () => {
     expect(source.neoTurn).toMatchObject({ human: false, consultationId: id });
     const work = await propose(source);
     expect(await invoke('neo.work.start', { id: work.id }, source)).toMatchObject({
-      value: { ok: false, reason: 'This action needs the user.' },
+      value: {
+        ok: false,
+        reason:
+          'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.',
+      },
     });
     expect(jobs(work.id)).toEqual([]);
   });
@@ -313,7 +349,9 @@ describe('Neo existing trusted human work input', () => {
       caller: local,
       human: true,
     });
-    expect(JSON.stringify(result)).toContain('This action needs the user.');
+    expect(JSON.stringify(result)).toContain(
+      'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.'
+    );
     expect(jobs(work.id)).toEqual([]);
   });
 

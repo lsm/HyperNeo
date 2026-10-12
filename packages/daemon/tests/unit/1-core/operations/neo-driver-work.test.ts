@@ -3083,7 +3083,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('Neo cannot close a work card; only the user can', async () => {
+  test('Neo cannot close a work card outside a turn answering the human', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const { db, service } = await setup({ ok: true, value: { ref } });
     try {
@@ -3098,7 +3098,11 @@ describe('Neo work with a drivers target', () => {
       );
       expect(outcome).toMatchObject({
         kind: 'completed',
-        value: { ok: false, reason: 'This action needs the user.' },
+        value: {
+          ok: false,
+          reason:
+            'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.',
+        },
       });
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
     } finally {

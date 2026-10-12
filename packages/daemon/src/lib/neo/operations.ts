@@ -537,6 +537,22 @@ export function neoAskScope(ask: Pick<NeoAsk, 'concernId'> | null): string | nul
   return ask ? ask.concernId : undefined;
 }
 
+export const NEO_HUMAN_TURN_REFUSAL =
+  'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.';
+
+function isNeoHumanTurn(service: NeoService, caller: OperationCaller): boolean {
+  if (caller.source === 'rpc' && caller.principal === 'local') return true;
+  const turn = caller.neoTurn;
+  if (!turn?.isLive() || !caller.sessionId) return false;
+  return (
+    service.db.getSession(caller.sessionId)?.status === 'active' &&
+    hasNeoHumanWorkInput(
+      caller,
+      service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId, turn.messageId)
+    )
+  );
+}
+
 function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
@@ -562,29 +578,14 @@ function admitNeoCaller(
         reason: 'Consult this concern’s holder to save corrections; Neo only has its summary.',
       },
     };
-  if (name === 'neo.work.start' || name === 'neo.ask.approve') {
-    const turn = caller.neoTurn;
-    const active = service.db.getSession(caller.sessionId!)?.status === 'active';
-    const human =
-      !!turn?.human &&
-      !turn.consultationId &&
-      turn.isLive() &&
-      hasNeoHumanWorkInput(
-        caller,
-        service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId!, turn.messageId)
-      );
-    if (!active || !(human || (askApproved && name === 'neo.work.start')))
-      return { reason: { ok: false, reason: 'This action needs the user.' } };
-  }
   if (
-    [
-      'neo.open',
-      'neo.concern.cancel',
-      'neo.work.close',
-      'neo.ask.answer',
-      'neo.session.track',
-    ].includes(name)
+    ['neo.work.start', 'neo.ask.approve', 'neo.work.close'].includes(name) &&
+    !(askApproved && name === 'neo.work.start'
+      ? service.db.getSession(caller.sessionId!)?.status === 'active'
+      : isNeoHumanTurn(service, caller))
   )
+    return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
+  if (['neo.open', 'neo.concern.cancel', 'neo.ask.answer', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
     return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
@@ -1101,6 +1102,7 @@ export function createNeoOperations(service: NeoService) {
           service.trackedSessions,
           service.followedCardRefs(Date.now()),
           Date.now(),
+          isNeoHumanTurn(service, caller),
           caller
         ),
       ['input', 'admission'],
