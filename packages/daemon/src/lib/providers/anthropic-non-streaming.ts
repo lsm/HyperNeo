@@ -11,6 +11,15 @@ type AnthropicEvent = {
   error?: unknown;
 };
 
+function parseToolInput(json: string | undefined, fallback: unknown): unknown {
+  if (!json) return fallback ?? {};
+  try {
+    return JSON.parse(json);
+  } catch {
+    return fallback ?? {};
+  }
+}
+
 export function assembleAnthropicMessage(
   sse: string
 ): { message: Record<string, unknown> } | { error: unknown } {
@@ -46,8 +55,7 @@ export function assembleAnthropicMessage(
         partialJson.set(index, `${partialJson.get(index) ?? ''}${delta.partial_json ?? ''}`);
     }
     if (event.type === 'content_block_stop' && blocks[index]?.type === 'tool_use') {
-      const json = partialJson.get(index);
-      if (json) blocks[index].input = JSON.parse(json);
+      blocks[index].input = parseToolInput(partialJson.get(index), blocks[index].input);
     }
     if (event.type === 'message_delta') {
       message = { ...message, ...(event.delta ?? {}) };
