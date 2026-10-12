@@ -287,28 +287,33 @@ describe('startEmbeddedServer', () => {
     expect(typeof err['message']).toBe('string');
   });
 
-  it('returns 400 for stream=false', async () => {
+  it('answers stream=false with one assembled Messages JSON', async () => {
     const r = await postMessages(serverUrl, {
       model: 'x',
       max_tokens: 100,
       messages: [{ role: 'user', content: 'hi' }],
       stream: false,
     });
-    expect(r.status).toBe(400);
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
+    expect(body['type']).toBe('message');
+    expect(body['role']).toBe('assistant');
+    expect(body['stop_reason']).toBe('end_turn');
+    expect(body['content']).toEqual([{ type: 'text', text: 'Hello world' }]);
   });
 
-  it('returns 400 JSON error envelope for stream=false', async () => {
+  it('answers a failed stream=false turn with a JSON error envelope', async () => {
+    session.shouldError = true;
     const r = await postMessages(serverUrl, {
       model: 'x',
       max_tokens: 100,
       messages: [{ role: 'user', content: 'hi' }],
       stream: false,
     });
-    expect(r.status).toBe(400);
+    expect(r.status).toBeGreaterThanOrEqual(400);
     const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
     expect(body['type']).toBe('error');
-    const err = body['error'] as Record<string, unknown>;
-    expect(err['type']).toBe('invalid_request_error');
+    expect((body['error'] as Record<string, unknown>)['type']).toBe('api_error');
   });
 
   it('returns 413 when body exceeds 10 MB', async () => {
