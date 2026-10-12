@@ -99,6 +99,7 @@ export const NeoAskViewSchema = z.object({
       question: z.string(),
       label: z.literal('Answer in chat'),
       options: z.array(z.string()),
+      action: z.string().optional(),
     })
     .nullable()
     .optional(),

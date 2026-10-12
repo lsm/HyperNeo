@@ -94,6 +94,8 @@ export interface NeoAskItem {
   addedAt: number | null;
   options?: string[];
   decision?: true;
+  action?: string;
+  waitCard?: string;
 }
 
 export interface NeoAsk {
@@ -247,6 +249,7 @@ export interface NeoAskAnswer {
   question: string;
   label: 'Answer in chat';
   options: string[];
+  action?: string;
 }
 
 export interface NeoReceiptAskOrigin {

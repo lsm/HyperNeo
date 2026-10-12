@@ -27,15 +27,20 @@ export type NeoAskInput = Omit<
   | 'settledAt'
 >;
 export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check'>;
-type NeoAskItemRow = Omit<NeoAskItem, 'removed' | 'options' | 'decision'> & {
+type NeoAskItemRow = Omit<
+  NeoAskItem,
+  'removed' | 'options' | 'decision' | 'action' | 'waitCard'
+> & {
   askId: string;
   removed: number;
   options: string | null;
   decision: number;
+  action: string | null;
+  waitCard: string | null;
 };
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  met_by AS metBy, removed, added_at AS addedAt, options, decision`;
+  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard`;
 
 export interface NeoAskOwner {
   concernId: string;
@@ -128,18 +133,24 @@ export class NeoAskRepository {
 
   tickItem(
     askId: string,
-    item: Pick<NeoAskItem, 'id' | 'state' | 'evidence' | 'metBy' | 'options'>,
+    item: Pick<
+      NeoAskItem,
+      'id' | 'state' | 'evidence' | 'metBy' | 'options' | 'action' | 'waitCard'
+    >,
     at: number
   ): boolean {
     const changed = this.db.transaction(() => {
       const ticked = this.db
-        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, updated_at = ?
+        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, action = ?, wait_card = ?,
+          updated_at = ?
           WHERE ask_id = ? AND id = ? AND removed = 0`)
         .run(
           item.state,
           item.evidence,
           item.metBy,
           item.options?.length ? JSON.stringify(item.options) : null,
+          item.action ?? null,
+          item.waitCard ?? null,
           at,
           askId,
           item.id
@@ -261,7 +272,7 @@ export class NeoAskRepository {
     outcome: string,
     evidence: string,
     waitingItem: string | null = null,
-    decision: { id: string; position: number; text: string } | null = null,
+    decision: { id: string; position: number; text: string; action?: string } | null = null,
     decided = false
   ): NeoAsk | null {
     const now = Date.now();
@@ -286,10 +297,18 @@ export class NeoAskRepository {
         decision &&
         this.db
           .prepare(`INSERT INTO neo_ask_items
-            (ask_id, id, position, text, state, evidence, decision, added_at, updated_at)
-            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?) ON CONFLICT DO NOTHING`)
-          .run(expected.id, decision.id, decision.position, decision.text, evidence, now, now)
-          .changes === 0
+            (ask_id, id, position, text, state, evidence, decision, action, added_at, updated_at)
+            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?) ON CONFLICT DO NOTHING`)
+          .run(
+            expected.id,
+            decision.id,
+            decision.position,
+            decision.text,
+            evidence,
+            decision.action ?? null,
+            now,
+            now
+          ).changes === 0
       )
         throw lost;
       if (settled && !decision && decided && waitingItem)
@@ -317,6 +336,16 @@ export class NeoAskRepository {
         WHERE origin_session_id = ? AND status IN ('waiting', 'blocked') ORDER BY updated_at, id`)
       .all(sessionId) as (NeoAskRow & { remindedAt: number | null })[];
     return this.withWork(rows) as (NeoAsk & { remindedAt: number | null })[];
+  }
+
+  needingHuman(): NeoAsk[] {
+    const rows = this.db
+      .prepare(`SELECT ${askColumns} FROM neo_asks a
+        WHERE status IN ('open', 'waiting', 'blocked') AND EXISTS (SELECT 1 FROM neo_ask_items i
+          WHERE i.ask_id = a.id AND i.state = 'needs_you' AND i.removed = 0)
+        ORDER BY updated_at, id`)
+      .all() as NeoAskRow[];
+    return this.withWork(rows);
   }
 
   markReminded(ids: readonly string[], at: number): void {
@@ -348,11 +377,13 @@ export class NeoAskRepository {
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)
-        .map(({ askId: _askId, removed, options, decision, ...item }) => ({
+        .map(({ askId: _askId, removed, options, decision, action, waitCard, ...item }) => ({
           ...item,
           removed: removed === 1,
           ...(options ? { options: JSON.parse(options) as string[] } : {}),
           ...(decision === 1 ? { decision: true as const } : {}),
+          ...(action ? { action } : {}),
+          ...(waitCard ? { waitCard } : {}),
         })),
     }));
   }
