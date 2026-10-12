@@ -141,7 +141,20 @@ describe('neoForwardedText', () => {
         } as never,
         ask
       )
-    ).toBe('Fix the pond pump');
+    ).toBe(
+      'Fix the pond pump\n\n(The human also attached 1 file, not forwarded; ask them to resend it if you need it.)'
+    );
+    expect(
+      neoForwardedText(
+        {
+          askOrigin: ask,
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: '' } },
+          ],
+        } as never,
+        ask
+      )
+    ).toContain('attached 1 file');
     expect(neoForwardedText({ askOrigin: { ...ask, sessionId: 'x' }, content: 'a' }, ask)).toBe(
       null
     );

@@ -68,15 +68,17 @@ export function neoForwardedText(
   origin: NeoAskOrigin
 ): string | null {
   if (!ask || ask.askOrigin.sessionId !== origin.sessionId) return null;
-  const text =
-    typeof ask.content === 'string'
-      ? ask.content
-      : ask.content
-          .flatMap((block: { type: string; text?: string }) =>
-            block.type === 'text' && block.text ? [block.text] : []
-          )
-          .join('\n');
-  return text.trim() || null;
+  if (typeof ask.content === 'string') return ask.content.trim() || null;
+  const blocks = ask.content as { type: string; text?: string }[];
+  const text = blocks
+    .flatMap((block) => (block.type === 'text' && block.text ? [block.text] : []))
+    .join('\n')
+    .trim();
+  const attached = blocks.filter((block) => block.type !== 'text').length;
+  const note = attached
+    ? `(The human also attached ${attached} file${attached === 1 ? '' : 's'}, not forwarded; ask them to resend it if you need it.)`
+    : '';
+  return [text, note].filter(Boolean).join('\n\n') || null;
 }
 
 export function neoForwardedAskMessageId(messageId: string): string | null {
