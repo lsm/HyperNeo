@@ -36,7 +36,7 @@ One word for the avatar's subject everywhere: **project**, in the UI, in Neo's p
 
 Two workspaces belong to the same project when they share outcome and materials. The daemon decides this from facts where it can, and Neo decides the rest.
 
-- **Code:** the normalized git remote (`github.com/lsm/HyperNeo`) is the identity. Every folder whose remote matches is a workspace of that project, on any machine, in any tool, under any folder name.
+- **Code:** identity is the content, not the name. A repository is known by its history (its root commit), and its remotes (`github.com/lsm/HyperNeo`) and folder names are links to it. Every folder whose history matches is a workspace of that project, on any machine, in any tool, under any folder name. When a repo moves or is renamed, the old remote stays a link for as long as it can still be found.
 - **Tool projects:** a HyperNeo, Codex or Claude Code project's own name and folders link it to an avatar. A Codex project with several folders maps to one avatar with all of them. HyperNeo projects support several folders too, the same way, so the mirror is one to one.
 - **Everything else:** Neo judges from the request, its people, dates and documents. When it can't tell, it asks once with `neo.ask.question` ("Spain trip: under Travel next to Japan, or on its own?"). The answer is saved as a rule, so the same question isn't asked twice.
 
@@ -74,4 +74,3 @@ The avatar tree nests one level below a top-level project:
 ## Open questions
 
 1. Is one level of nesting enough, or can a section have sections?
-2. When a code project moves to a new remote (rename or fork), is the old remote kept as an alias?
