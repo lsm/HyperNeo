@@ -478,12 +478,28 @@ export function adoptOwnedNeoTarget<Input extends OwnedLookupInput>(
     : input;
 }
 
+export function adoptNeoRefTarget<Input extends OwnedLookupInput>(input: Input): Input {
+  const id = ownedLookupSessionId(input);
+  return id?.startsWith('local_')
+    ? {
+        ...input,
+        targetSessionId: undefined,
+        work: { verb: 'send', ref: { adapter: 'claude-desktop', id } },
+      }
+    : input;
+}
+
+const MISSING_TARGET_HINT =
+  'target_session_not_found: no HyperNeo session has this id. A work.find ref from another adapter (a Codex thread or a Claude session) is proposed as work {verb:"send", ref} with the whole ref, never as targetSessionId.';
+
 const OWNED_TARGET_HINT =
   'target_owned_context: this session belongs to Neo itself or to Space work with no single owner. To continue Space work, propose with work {verb:"send", ref} using the ref of the task or agent from work.find; snippet session ids are only for work.read.';
 
 function explainOwnedNeoTarget<T>(
   gate: { value: T } | { reason: { reason: string } }
 ): { value: T } | { reason: { reason: string } } {
+  if ('reason' in gate && gate.reason.reason === 'target_session_not_found')
+    return { reason: { ok: false, reason: MISSING_TARGET_HINT } as Rejection };
   return 'reason' in gate && gate.reason.reason === 'target_owned_context'
     ? { reason: { ok: false, reason: OWNED_TARGET_HINT } as Rejection }
     : gate;
@@ -1070,6 +1086,7 @@ export function createNeoOperations(service: NeoService) {
       'owned'
     )
     .pipe(adoptOwnedNeoTarget, ['input', 'owned'], 'input')
+    .pipe(adoptNeoRefTarget, 'input', 'input')
     .pipe(
       ({ work }: z.infer<typeof Propose>, caller: OperationCaller) =>
         work

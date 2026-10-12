@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { adoptOwnedNeoTarget, ownedLookupSessionId } from '../../../../src/lib/neo/operations.ts';
+import {
+  adoptNeoRefTarget,
+  adoptOwnedNeoTarget,
+  ownedLookupSessionId,
+} from '../../../../src/lib/neo/operations.ts';
 
 const ref = { adapter: 'space', id: 'task-1' };
 
@@ -30,5 +34,24 @@ describe('adoptOwnedNeoTarget', () => {
     expect(adoptOwnedNeoTarget(input, { ref: null })).toBe(input);
     const explicit = { targetSessionId: 's1', work: { verb: 'send' as const, ref } };
     expect(adoptOwnedNeoTarget(explicit, { ref })).toBe(explicit);
+  });
+});
+
+describe('adoptNeoRefTarget', () => {
+  test('a Claude session id from work.find becomes a send to that session', () => {
+    expect(adoptNeoRefTarget({ targetSessionId: 'local_bc37a8ae' })).toEqual({
+      targetSessionId: undefined,
+      work: { verb: 'send', ref: { adapter: 'claude-desktop', id: 'local_bc37a8ae' } },
+    });
+  });
+  test('a HyperNeo session id, or a proposal that already names work, is left alone', () => {
+    expect(adoptNeoRefTarget({ targetSessionId: 'project' })).toEqual({
+      targetSessionId: 'project',
+    });
+    const work = { verb: 'send' as const, ref: { adapter: 'codex-desktop', id: 't1' } };
+    expect(adoptNeoRefTarget({ targetSessionId: 'local_x', work })).toEqual({
+      targetSessionId: 'local_x',
+      work,
+    });
   });
 });

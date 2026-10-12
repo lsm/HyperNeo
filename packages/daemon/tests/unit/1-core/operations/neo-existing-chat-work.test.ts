@@ -360,7 +360,12 @@ describe('Neo existing chat work', () => {
   test('unknown whitespace target is never trimmed into another session', async () => {
     expect(
       await invoke('neo.work.propose', input('A', ' project '), source('ask-A'))
-    ).toMatchObject({ value: { ok: false, reason: 'target_session_not_found' } });
+    ).toMatchObject({
+      value: {
+        ok: false,
+        reason: expect.stringMatching(/^target_session_not_found: .*work \{verb:"send", ref\}/),
+      },
+    });
     expect(service.repo.listWork()).toEqual([]);
   });
 
