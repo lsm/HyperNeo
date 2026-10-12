@@ -465,6 +465,36 @@ describe('work.find operation', () => {
     expect(app?.places.length).toBeGreaterThan(agent?.places.length ?? 0);
   });
 
+  test('looks work up by its ref id, closed or not, beyond the default place limit', async () => {
+    const queries: unknown[] = [];
+    const many: WorkAdapter = {
+      id: 'hyperneo',
+      capabilities: ['find'],
+      find: (query) => {
+        queries.push(query);
+        return Array.from({ length: 40 }, (_, n) =>
+          group('imac', `/focus/project-${n}`, 'hyperneo', n)
+        );
+      },
+    };
+    const ops = createOperationRegistry([
+      createFindWorkOperation({
+        adapters: () => [many],
+        remote: { list: () => [], invoke: async () => ({}) },
+      }),
+    ]);
+    const outcome = await invokeOperation(
+      ops,
+      'work.find',
+      { id: 'hyperneo-3' },
+      { source: 'rpc' }
+    );
+    const places =
+      outcome.kind === 'completed' ? (outcome.value as { places: PlaceGroup[] }).places : [];
+    expect(places.map((place) => place.work.map((item) => item.ref.id))).toEqual([['hyperneo-3']]);
+    expect(queries).toEqual([expect.objectContaining({ includeClosed: true, limit: 50 })]);
+  });
+
   test('does not ask other daemons when called with localOnly', async () => {
     let asked = false;
     await invokeOperation(

@@ -6,6 +6,7 @@ import { PlaceGroupSchema, type FindQuery, type PlaceGroup, type WorkAdapter } f
 
 export const FindWorkInputSchema = z.object({
   text: z.string().trim().min(1).max(200).optional(),
+  id: z.string().trim().min(1).max(200).optional(),
   folder: z.string().min(1).optional(),
   spaceId: z.string().min(1).optional(),
   adapters: z.array(z.string().min(1)).optional(),
@@ -62,13 +63,23 @@ export function selectFindAdapters(input: FindInput, deps: FindWorkDeps): WorkAd
 }
 
 export function toFindQuery(input: FindInput): FindQuery {
-  return {
-    text: input.text,
-    folder: input.folder,
-    spaceId: input.spaceId,
-    includeClosed: input.includeClosed,
-    limit: input.limit,
-  };
+  return input.id
+    ? { folder: input.folder, spaceId: input.spaceId, includeClosed: true, limit: 50 }
+    : {
+        text: input.text,
+        folder: input.folder,
+        spaceId: input.spaceId,
+        includeClosed: input.includeClosed,
+        limit: input.limit,
+      };
+}
+
+export function keepFindId(groups: readonly PlaceGroup[], id: string | undefined): PlaceGroup[] {
+  if (!id) return [...groups];
+  return groups.flatMap((group) => {
+    const work = group.work.filter((item) => item.ref.id === id);
+    return work.length ? [{ ...group, work }] : [];
+  });
 }
 
 export async function findLocally(
@@ -178,7 +189,10 @@ export function combineFindResults(
   input: FindInput,
   budget = FIND_RESULT_BUDGET_CHARS
 ): FindResult {
-  const merged = mergePlaceGroups([...local.groups, ...remote.groups], input.limit + 1);
+  const merged = keepFindId(
+    mergePlaceGroups([...local.groups, ...remote.groups], input.id ? 51 : input.limit + 1),
+    input.id
+  );
   const fitted = fitFindBudget(merged.slice(0, input.limit), budget);
   return {
     places: fitted.places,
@@ -204,7 +218,7 @@ export function createFindWorkOperation(deps: FindWorkDeps) {
   return defineOperation({
     name: 'work.find',
     description:
-      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. Snippet handles are for work.read only; to send or propose work, use the item ref.',
+      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. With id, it returns only the work whose ref id matches, closed or not, among the 50 most recent places, for example to turn a session id into its ref and place. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. Snippet handles are for work.read only; to send or propose work, use the item ref.',
     inputSchema: FindWorkInputSchema,
     resultSchema: FindWorkResultSchema,
     policy: { safetyClass: 'read' },
