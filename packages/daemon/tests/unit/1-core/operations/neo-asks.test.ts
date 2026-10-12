@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { adoptNeoFilePacks } from '../../../../src/lib/neo/packs/index.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { tmpdir } from 'node:os';
@@ -64,6 +65,7 @@ const neo: OperationCaller = {
   role: 'neo',
   neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
 };
+const nextMessage: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'ask-2' } };
 const place = { machine: 'laptop', folder: tmpdir(), name: 'app' };
 const rule = 'Ask me before accepting red CI or a release date.';
 const cite = { rule };
@@ -200,6 +202,25 @@ describe('neo.ask operations', () => {
     }
   });
 
+  test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
+    const askId = await openAsk();
+    for (const itemId of ['i1', 'i2'])
+      await invoke('neo.ask.tick', { askId, itemId, state: 'met', evidence: 'PR #12 merged.' });
+    expect(
+      await invoke('neo.ask.settle', {
+        askId,
+        outcome: 'achieved',
+        summary: 'Merged in #12.',
+        evidence: 'PR #12 merged.',
+      })
+    ).toMatchObject({ value: { ok: true, ask: { id: askId, status: 'achieved' } } });
+    const settle = createNeoOperations(service).find((op) => op.name === 'neo.ask.settle')!;
+    const schema = z.toJSONSchema(settle.inputSchema, { io: 'input' }) as {
+      properties?: Record<string, unknown>;
+    };
+    expect(Object.keys(schema.properties ?? {})).toEqual(expect.arrayContaining(['id', 'outcome']));
+  });
+
   test('opens one ask per request key and shows its cards in the snapshot', async () => {
     const askId = await openAsk();
     expect(await invoke('neo.ask.open', opening)).toMatchObject({
@@ -221,8 +242,9 @@ describe('neo.ask operations', () => {
 
   test('reads one ask with its cards and their reports', async () => {
     const askId = await openAsk();
-    const other = (await invoke('neo.ask.open', { ...opening, requestKey: 'other', ask: 'Other' }))
-      .value!.ask!.id;
+    const other = (
+      await invoke('neo.ask.open', { ...opening, requestKey: 'other', ask: 'Other' }, nextMessage)
+    ).value!.ask!.id;
     const workId = (await propose('card-1', askId)).value!.work!.id;
     await propose('card-2', other);
     const queued = service.repo.transitionWork(workId, service.repo.getWork(workId)!, {
@@ -325,7 +347,7 @@ describe('neo.ask operations', () => {
     const asks = (await invoke('neo.snapshot', {})).value?.asks as NeoAsk[];
     expect(asks.find((ask) => ask.id === opened.value!.ask!.id)?.doneItems).toHaveLength(2);
 
-    const legacy = await invoke('neo.ask.open', opening);
+    const legacy = await invoke('neo.ask.open', opening, nextMessage);
     expect(legacy.value!.ask!.doneItems?.map((done) => done.text)).toEqual([
       'merged to dev',
       'CI green',
@@ -955,8 +977,8 @@ describe('neo.ask operations', () => {
 
   test('refuses a retried request key under another ask', async () => {
     const first = await openAsk();
-    const second = (await invoke('neo.ask.open', { ...opening, requestKey: 'other' })).value!.ask!
-      .id;
+    const second = (await invoke('neo.ask.open', { ...opening, requestKey: 'other' }, nextMessage))
+      .value!.ask!.id;
     await propose('card-1', first);
 
     const refused = await invoke('neo.work.propose', {
@@ -1106,6 +1128,85 @@ describe('neo.ask operations', () => {
     expect(service.askRecords.get(askId)?.doneItems?.[1]?.waitCard).toBeUndefined();
     expect(delivered).toHaveBeenCalledTimes(1);
     expect(delivered.mock.calls[0]?.[2]).toContain(`card ${cardId} no longer waits on the human`);
+  });
+
+  test('the human marking an item met wakes Neo once, and Neo ticking it does not', async () => {
+    const askId = await openAsk();
+    const delivered = mock(async (_ask: NeoAsk, _item: unknown) => {});
+    service.deliverAskTicked = delivered;
+    const human: OperationCaller = { source: 'rpc', principal: 'local' };
+    const done = { askId, itemId: 'i1', state: 'met', evidence: 'Confirmed by the user.' };
+    expect(await invoke('neo.ask.tick', done, human)).toMatchObject({ value: { ok: true } });
+    expect(delivered).toHaveBeenCalledTimes(1);
+    expect(delivered.mock.calls[0]?.[1]).toMatchObject({ id: 'i1', state: 'met' });
+    await invoke('neo.ask.tick', done, human);
+    await invoke('neo.ask.tick', { ...done, itemId: 'i2', evidence: 'CI run 42 green.' });
+    expect(delivered).toHaveBeenCalledTimes(1);
+  });
+
+  test('one human message opens one ask; a second open names the first', async () => {
+    const askId = await openAsk();
+    expect(
+      await invoke('neo.ask.open', { ...opening, requestKey: 'fix-again', title: 'Fix it again' })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining(`ask_exists_for_message: ask ${askId}`) },
+    });
+    expect(await invoke('neo.ask.open', opening)).toMatchObject({
+      value: { ok: true, ask: { id: askId } },
+    });
+  });
+
+  test('folds a duplicate ask into another: its items and cards move and it closes superseded', async () => {
+    const targetId = await openAsk();
+    const later: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'ask-2' } };
+    const duplicate = await invoke(
+      'neo.ask.open',
+      { ...opening, requestKey: 'dup', doneWhen: '- guard merged' },
+      later
+    );
+    const sourceId = duplicate.value!.ask!.id;
+    const card = (await propose('dup-card', sourceId)).value!.work!.id;
+    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: sourceId })).toMatchObject({
+      kind: 'failed',
+    });
+    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId })).toMatchObject({
+      value: { ok: true, ask: { id: targetId, workIds: [card] } },
+    });
+    expect(service.askRecords.get(targetId)?.doneItems?.map((item) => item.text)).toEqual([
+      'merged to dev',
+      'CI green',
+      'guard merged',
+    ]);
+    expect(service.askRecords.get(sourceId)).toMatchObject({
+      status: 'abandoned',
+      outcome: `Superseded: folded into ask ${targetId}.`,
+      workIds: [],
+    });
+    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('ask_settled') },
+    });
+  });
+
+  test('a turn that hit its limit gets one note listing the asks it already opened', async () => {
+    const results = db.getSDKMessageRepo();
+    const save = (uuid: string, subtype: string) =>
+      results.saveSDKMessage('root', {
+        type: 'result',
+        subtype,
+        uuid,
+        session_id: 'root',
+      } as unknown as SDKUserMessage);
+    save('r1', 'success');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const askId = await openAsk();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    save('r2', 'error_max_turns');
+    const delivered = mock(async (..._args: unknown[]) => {});
+    (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
+    await service.noteTurnLimit('root');
+    expect(delivered).toHaveBeenCalledTimes(1);
+    expect(delivered.mock.calls[0]?.[1]).toBe('neo-turn-limit:r2');
+    expect(delivered.mock.calls[0]?.[2]).toContain(`- ask ${askId} "${opening.title}" (open`);
   });
 
   test('the human marking their own wait needs no citation', async () => {

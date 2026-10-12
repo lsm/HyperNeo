@@ -58,6 +58,7 @@ import type { SessionManager } from '../session/session-manager.ts';
 import {
   createNeoAskOriginResolver,
   neoAskAnswerMessageId,
+  neoAskTickedMessageId,
   neoAskEvidenceMessageId,
   neoAskParent,
   neoConsultationParent,
@@ -236,6 +237,7 @@ import {
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import {
   neoAskAnswerNote,
+  neoAskTickedNote,
   neoAskReopensAfterClear,
   neoNeedsYouClearedNote,
   neoResumeWhy,
@@ -243,6 +245,7 @@ import {
   planNeoNeedsYouCleared,
 } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
+import { NEO_TURN_LIMIT_PREFIX, neoTurnLimitNote, planNeoTurnLimitNote } from './turn-limit.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
   NEO_WORK_FOLLOW_MAX_AGE_MS,
@@ -731,6 +734,10 @@ export class NeoService {
         if (binding && binding.kind !== 'worker')
           await this.alignModelPreference(sessionId).catch((error) =>
             this.log.warn('Neo model preference not applied', error)
+          );
+        if (binding && binding.kind !== 'worker')
+          await this.noteTurnLimit(sessionId).catch((error) =>
+            this.log.warn('Turn-limit note pending', error)
           );
         if (binding && binding.kind !== 'worker') {
           try {
@@ -1772,6 +1779,15 @@ export class NeoService {
     return this.installedPacks().find((pack) => pack.id === id) ?? null;
   }
 
+  deliverAskTicked(ask: NeoAsk, item: NeoAskItem): Promise<void> {
+    return this.deliverToOrigin(
+      ask.originSessionId,
+      neoAskTickedMessageId(ask.id, item.id, Date.now()),
+      neoAskTickedNote(ask, item),
+      neoAskParent(ask)
+    );
+  }
+
   deliverAskAnswer(ask: NeoAsk, item: NeoAskItem, choice: string): Promise<void> {
     return this.deliverToOrigin(
       ask.originSessionId,
@@ -2006,6 +2022,23 @@ export class NeoService {
     ref: WorkRef,
     outcome: OperationOutcome
   ) => Promise<unknown>;
+
+  async noteTurnLimit(sessionId: string): Promise<void> {
+    const messages = this.db.getSDKMessageRepo();
+    const plan = planNeoTurnLimitNote(messages.latestTurnResults(sessionId, 2), (since) =>
+      messages.hasUserUuidPrefixSince(sessionId, NEO_TURN_LIMIT_PREFIX, since)
+    );
+    if (!plan) return;
+    await this.deliverToOrigin(
+      sessionId,
+      `${NEO_TURN_LIMIT_PREFIX}${plan.resultUuid}`,
+      neoTurnLimitNote(
+        this.askRecords.openedBy(sessionId, plan.since, plan.until),
+        this.repo.proposedBy(sessionId, plan.since, plan.until)
+      ),
+      null
+    );
+  }
 
   async clearStaleNeedsYou(): Promise<void> {
     for (const { id: askId } of this.askRecords.needingHuman()) {

@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import {
   neoAskReopensAfterClear,
+  neoAskTickedNote,
+  neoHumanTickWakes,
   neoDaemonReadsClaim,
   neoNeedsYouClearedNote,
   neoResumeWhy,
@@ -276,5 +278,29 @@ describe('neoAskReopensAfterClear', () => {
       neoAskReopensAfterClear({ ...blocked, doneItems: [item('i1', 'needs_you')] } as NeoAsk)
     ).toBe(false);
     expect(neoAskReopensAfterClear({ ...blocked, status: 'waiting' } as NeoAsk)).toBe(false);
+  });
+});
+
+describe('neoHumanTickWakes', () => {
+  test('wakes Neo only when someone else marks an unmet item met', () => {
+    expect(neoHumanTickWakes('met', 'rpc', { state: 'reported' })).toBe(true);
+    expect(neoHumanTickWakes('met', 'rpc', { state: 'met' })).toBe(false);
+    expect(neoHumanTickWakes('met', 'mcp', { state: 'pending' })).toBe(false);
+    expect(neoHumanTickWakes('pending', 'rpc', { state: 'needs_you' })).toBe(false);
+  });
+});
+
+describe('neoAskTickedNote', () => {
+  test('names what is still open, or says to settle when nothing is', () => {
+    const open = {
+      ...ask,
+      title: 'Ship it',
+      doneItems: [item('i1', 'met'), item('i2', 'pending')],
+    };
+    expect(neoAskTickedNote(open, item('i1', 'met'))).toContain(
+      'Still open: i2 "Item i2" (pending)'
+    );
+    const done = { ...open, doneItems: [item('i1', 'met')] };
+    expect(neoAskTickedNote(done, item('i1', 'met'))).toContain('settle the ask achieved');
   });
 });
