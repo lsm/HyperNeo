@@ -25,7 +25,8 @@ describe('Neo reply language guidance', () => {
     expect(root).toContain('Native question cards are not available to root Neo');
     expect(root).toContain('A new message is NOT a new concern');
     expect(holder).toContain('You are the context holder for concern');
-    expect(holder).toContain('never mention concerns, topics, holders, the inbox or your role');
+    expect(holder).toContain('The human sees which topic answered each message');
+    expect(holder).not.toContain('never sees holders');
     expect(holder).toContain("Reply in the language of the user's latest message.");
     expect(holder).not.toContain('分身');
     expect(holder).toContain('You cannot consult other holders');

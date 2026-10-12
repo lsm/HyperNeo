@@ -65,6 +65,7 @@ export function NeoConversation({
   onLoadEarlierPublic,
   onProgress,
   topics,
+  forwarders,
   pendingAsks,
   onRetryAsk,
   onEditAsk,
@@ -78,6 +79,7 @@ export function NeoConversation({
   onRetryAsk?: (requestId: string) => void;
   onEditAsk?: (requestId: string) => void;
   topics?: ReadonlyMap<string, string>;
+  forwarders?: ReadonlyMap<string, string>;
   sessionId: string;
   works?: NeoWork[];
   publicConversation?: PublicConversation;
@@ -150,6 +152,7 @@ export function NeoConversation({
           <NeoPublicConversation
             conversation={publicConversation}
             topics={topics}
+            forwarders={forwarders}
             canOpenScene={(ref) =>
               ref.kind === 'work' && !!onOpenPublicWork && works.some((work) => work.id === ref.id)
             }

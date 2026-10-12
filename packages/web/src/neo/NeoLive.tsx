@@ -38,6 +38,7 @@ import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { neoWorkPresentation } from './work-actions.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
+import { neoForwardKey } from '@hyperneo/shared/types/neo-snapshot';
 
 export function NeoLive() {
   const neo = useNeo();
@@ -72,6 +73,18 @@ export function NeoLive() {
       const title = concerns.find((concern) => concern.id === binding.concernId)?.title.trim();
       return title ? [[binding.sessionId, title] as const] : [];
     })
+  );
+  const forwarders = new Map(
+    (view?.askForwards ?? []).map(
+      (forward) =>
+        [
+          neoForwardKey(
+            { sessionId: forward.askSessionId, messageId: forward.askMessageId },
+            forward.toSessionId
+          ),
+          topics.get(forward.fromSessionId) ?? 'Neo',
+        ] as const
+    )
   );
   const publicConversation =
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
@@ -497,6 +510,7 @@ export function NeoLive() {
               sessionId={neo.sessionId}
               works={relevant}
               topics={topics}
+              forwarders={forwarders}
               publicConversation={publicConversation}
               onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
               onRetryPublic={retryPublicConversation}

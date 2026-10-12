@@ -65,6 +65,7 @@ import { runMigration338 } from '../../../../src/storage/schema/m338-neo-driver-
 import { runMigration339 } from '../../../../src/storage/schema/m339-neo-input-origins.ts';
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
 import { runMigration345 } from '../../../../src/storage/schema/m345-neo-work-continue-progress.ts';
+import { runMigration344 } from '../../../../src/storage/schema/m344-neo-ask-forwards.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const root: NeoBinding = {
@@ -328,6 +329,7 @@ describe('real SQLite ask lineage facade', () => {
     runMigration339(mailbox.db);
     runMigration340(mailbox.db);
     runMigration345(mailbox.db);
+    runMigration344(mailbox.db);
     db = {
       getDatabase: () => mailbox.db,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
