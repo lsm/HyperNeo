@@ -56,6 +56,7 @@ import {
   resolveCallerIdentity,
 } from '../operations/caller.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
+import { describeOperationSignatures } from '../operations/discovery.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
@@ -71,6 +72,22 @@ const SESSION_RECONCILE_INTERVAL_MS = 60_000;
 const CLEAR_CONFIRM_TIMEOUT_MS = 45_000;
 
 const MID_TURN_USAGE_REFRESH_INTERVAL_MS = 10_000;
+
+const NEO_CORE_OPERATIONS = [
+  'neo.snapshot',
+  'neo.ask.open',
+  'neo.ask.tick',
+  'neo.ask.edit',
+  'neo.ask.settle',
+  'neo.ask.approve',
+  'neo.work.propose',
+  'neo.work.start',
+  'neo.work.continue',
+  'neo.work.close',
+  'neo.publication.publish',
+  'work.find',
+  'work.read',
+] as const;
 
 export class ClearConversationCancelledError extends Error {
   constructor() {
@@ -341,7 +358,8 @@ export class AgentSession
       () => ({
         ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
         neoTurn: getTurn(),
-      })
+      }),
+      describeOperationSignatures(this.resolveOperationRegistry(), NEO_CORE_OPERATIONS)
     );
   }
 
