@@ -1156,7 +1156,7 @@ describe('Neo MVP', () => {
       agents: { coder: { description: 'work', prompt: 'work' } },
     };
     restrictNeoQuery(options, null, 'neo:runtime-test');
-    expect(options.tools).toEqual(['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash']);
+    expect(options.tools).toEqual(['WebSearch', 'WebFetch', 'Bash']);
     expect(options.additionalDirectories).toEqual([homedir()]);
     expect(options.mcpServers).toEqual({ 'hyperneo-operations': operationServer });
     expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(null));
