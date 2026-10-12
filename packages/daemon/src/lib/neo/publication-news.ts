@@ -47,7 +47,8 @@ export function requirePublicationNews<T>(
 ): { value: T } | { reason: Rejection } {
   if (prior.some((reply) => reply.publicationId === draft.publicationId)) return { value };
   const text = neoReplyText(draft.shortText);
-  if (ACKNOWLEDGEMENTS.has(text) && neoReplyText(draft.fullText) === text)
+  const empty = (value: string) => value === '' || ACKNOWLEDGEMENTS.has(value);
+  if (empty(text) && empty(neoReplyText(draft.fullText)))
     return {
       reason: {
         accepted: false,

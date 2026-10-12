@@ -471,6 +471,15 @@ describe('requirePublicationNews', () => {
     }
   );
 
+  test.each([
+    ['收到。', 'Got it.'],
+    ['👍', '👍'],
+  ])('refuses %s with full text %s', (shortText, fullText) => {
+    expect(requirePublicationNews('v', { ...reply, shortText, fullText }, [])).toMatchObject({
+      reason: { reason: 'empty_acknowledgement' },
+    });
+  });
+
   test('keeps an acknowledgement that carries details, and an identical retry', () => {
     expect(requirePublicationNews('v', { ...reply, shortText: '收到。' }, [])).toEqual({
       value: 'v',
