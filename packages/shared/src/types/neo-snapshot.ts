@@ -1,5 +1,5 @@
-import type { NeoConcern, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
 import type { DaemonInventoryLink } from './daemon-snapshot.ts';
+import type { NeoConcern, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
 import type { NeoModelPreference } from './settings.ts';
 
 export interface NeoWorkResourceReceipt {
@@ -102,6 +102,7 @@ export interface NeoAskItem {
   action?: string;
   waitCard?: string;
   kind?: NeoAskItemKind;
+  question?: string;
   watch?: string[];
 }
 
@@ -252,7 +253,25 @@ export interface NeoAskView {
   summary: string | null;
   sessions?: NeoAskSessionView[];
   answer?: NeoAskAnswer | null;
+  humanActions?: NeoAskHumanAction[];
 }
+
+export const NEO_ASK_OUTCOME_QUESTION = 'Did it work?';
+export const NEO_ASK_OUTCOME_OPTIONS = ['Yes', 'No'];
+
+export type NeoAskHumanAction =
+  | { kind: 'start'; workId: string }
+  | { kind: 'approve'; reason: 'expired' }
+  | {
+      kind: 'answer';
+      itemId: string;
+      step: string | null;
+      question: string;
+      options: string[];
+    }
+  | { kind: 'confirm'; itemId: string; step: string }
+  | { kind: 'retry'; workId: string }
+  | { kind: 'close'; workId: string };
 
 export interface NeoAskAnswer {
   itemId: string;

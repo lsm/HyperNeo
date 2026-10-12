@@ -613,6 +613,35 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true, ask: { status: 'abandoned' } } });
   });
 
+  test('a step Neo settles waiting on carries its own question', async () => {
+    const askId = await openAsk();
+    const waiting = {
+      id: askId,
+      outcome: 'waiting',
+      summary: 'Try the keyboard on the phone.',
+      evidence: 'The fix is on the phone build.',
+      cite,
+      action: 'Test it on the phone',
+      kind: 'action',
+    };
+    expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('question_required') },
+    });
+    expect(
+      await invoke('neo.ask.settle', { ...waiting, question: 'Did the keyboard hide?' })
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          status: 'waiting',
+          doneItems: expect.arrayContaining([
+            expect.objectContaining({ kind: 'action', question: 'Did the keyboard hide?' }),
+          ]),
+        },
+      },
+    });
+  });
+
   test('a decision item is written only by the settle that wins the status check', async () => {
     const askId = await openAsk();
     const decision = { id: 'i3', position: 2, text: 'Pick the release date.' };
@@ -828,10 +857,60 @@ describe('neo.ask operations', () => {
     expect(delivered.mock.calls[0]?.slice(1)).toEqual([
       expect.objectContaining({ id: 'i2', text: 'CI green' }),
       'Fix CI first',
+      true,
     ]);
     expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('item_not_waiting') },
     });
+  });
+
+  test('a step the human did is asked as its own Yes/No question, met only on Yes', async () => {
+    const askId = await openAsk();
+    const user: OperationCaller = { source: 'rpc', principal: 'local' };
+    await invoke(
+      'neo.ask.tick',
+      {
+        askId,
+        itemId: 'i1',
+        state: 'needs_you',
+        evidence: 'Try the keyboard on the phone.',
+        kind: 'action',
+        action: 'Test it on the phone',
+        question: 'Did the keyboard hide?',
+      },
+      user
+    );
+    const snapshot = await invoke('neo.snapshot', {});
+    expect(
+      (
+        snapshot.value as { askViews?: { askId: string; humanActions?: unknown[] }[] }
+      ).askViews?.find((view) => view.askId === askId)?.humanActions
+    ).toContainEqual({
+      kind: 'answer',
+      itemId: 'i1',
+      step: 'merged to dev',
+      question: 'Did the keyboard hide?',
+      options: ['Yes', 'No'],
+    });
+    const delivered = mock(
+      async (_ask: NeoAsk, _item: unknown, _choice: string, _met: boolean) => {}
+    );
+    service.deliverAskAnswer = delivered;
+    const answer = { askId, itemId: 'i1', choice: 'Maybe' };
+    expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('choice_not_offered') },
+    });
+    expect(await invoke('neo.ask.answer', { ...answer, choice: 'No' }, user)).toMatchObject({
+      value: { ok: true },
+    });
+    expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({ state: 'needs_you' });
+    expect(delivered.mock.calls[0]?.slice(2)).toEqual(['No', false]);
+    await invoke('neo.ask.answer', { ...answer, choice: 'Yes' }, user);
+    expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({
+      state: 'met',
+      metBy: 'human',
+    });
+    expect(delivered.mock.calls[1]?.slice(2)).toEqual(['Yes', true]);
   });
 
   test('the user can close an ask as done even with items still open', async () => {
@@ -1076,6 +1155,12 @@ describe('neo.ask operations', () => {
     });
     expect(await tick({ action: undefined })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('action_required') },
+    });
+    expect(await tick({ kind: 'action' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('question_required') },
+    });
+    expect(await tick({ kind: 'action', options: ['Phone build', 'Web build'] })).toMatchObject({
+      value: { ok: true },
     });
     expect(await tick({ kind: 'action', waitCard: 'elsewhere' })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('card_not_found') },

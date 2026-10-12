@@ -8,12 +8,15 @@ import { isNeoAskSettled } from './done-check.ts';
 export function neoAskAnswerNote(
   ask: Pick<NeoAsk, 'id' | 'title'>,
   item: Pick<NeoAskItem, 'id' | 'text'>,
-  choice: string
+  choice: string,
+  met = true
 ): string {
   return [
-    `The human answered a decision on ask ${ask.id} ("${ask.title}"), item ${item.id}: "${item.text}".`,
+    `The human answered ${met ? 'a decision' : 'how a step went'} on ask ${ask.id} ("${ask.title}"), item ${item.id}: "${item.text}".`,
     `Their answer: ${choice}`,
-    'The daemon ticked that item met with their answer. Act on it now: continue or propose the work it calls for under this ask, or settle the ask if nothing is left. Tell the human only what they need to know.',
+    met
+      ? 'The daemon ticked that item met with their answer. Act on it now: continue or propose the work it calls for under this ask, or settle the ask if nothing is left. Tell the human only what they need to know.'
+      : 'The item stays open: it did not work, or the result is not what they wanted. Find out why and fix it under this ask. Tell the human only what they need to know.',
   ].join('\n');
 }
 

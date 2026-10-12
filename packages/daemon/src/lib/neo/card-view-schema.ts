@@ -70,6 +70,21 @@ export const NeoCardViewSchema = z.object({
   retryable: z.boolean(),
 } satisfies ZodShape<NeoCardView>);
 
+const HumanAction = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('start'), workId: z.string() }),
+  z.object({ kind: z.literal('approve'), reason: z.literal('expired') }),
+  z.object({
+    kind: z.literal('answer'),
+    itemId: z.string(),
+    step: z.string().nullable(),
+    question: z.string(),
+    options: z.array(z.string()),
+  }),
+  z.object({ kind: z.literal('confirm'), itemId: z.string(), step: z.string() }),
+  z.object({ kind: z.literal('retry'), workId: z.string() }),
+  z.object({ kind: z.literal('close'), workId: z.string() }),
+]);
+
 export const NeoAskViewSchema = z.object({
   askId: z.string(),
   group: CardGroup,
@@ -104,4 +119,5 @@ export const NeoAskViewSchema = z.object({
     })
     .nullable()
     .optional(),
+  humanActions: z.array(HumanAction).optional(),
 } satisfies ZodShape<NeoAskView>);

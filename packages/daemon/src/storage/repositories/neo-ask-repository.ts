@@ -29,7 +29,7 @@ export type NeoAskInput = Omit<
 export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch'>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
-  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind' | 'watch'
+  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind' | 'question' | 'watch'
 > & {
   askId: string;
   removed: number;
@@ -38,6 +38,7 @@ type NeoAskItemRow = Omit<
   action: string | null;
   waitCard: string | null;
   kind: NeoAskItem['kind'] | null;
+  question: string | null;
   watch: string | null;
 };
 
@@ -45,7 +46,7 @@ const watchJson = (item: NeoAskItemInput) =>
   item.watch?.length ? JSON.stringify(item.watch) : null;
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, watch`;
+  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch`;
 
 export interface NeoAskOwner {
   concernId: string;
@@ -163,13 +164,21 @@ export class NeoAskRepository {
     askId: string,
     item: Pick<
       NeoAskItem,
-      'id' | 'state' | 'evidence' | 'metBy' | 'options' | 'action' | 'waitCard' | 'kind'
+      | 'id'
+      | 'state'
+      | 'evidence'
+      | 'metBy'
+      | 'options'
+      | 'action'
+      | 'waitCard'
+      | 'kind'
+      | 'question'
     >,
     at: number
   ): boolean {
     const changed = this.db.transaction(() => {
       const ticked = this.db
-        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, action = ?, wait_card = ?, kind = ?,
+        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, action = ?, wait_card = ?, kind = ?, question = ?,
           updated_at = ?
           WHERE ask_id = ? AND id = ? AND removed = 0`)
         .run(
@@ -180,6 +189,7 @@ export class NeoAskRepository {
           item.action ?? null,
           item.waitCard ?? null,
           item.kind ?? null,
+          item.question ?? null,
           at,
           askId,
           item.id
@@ -345,6 +355,7 @@ export class NeoAskRepository {
       text: string;
       action?: string;
       kind?: NeoAskItem['kind'];
+      question?: string;
     } | null = null,
     decided = false
   ): NeoAsk | null {
@@ -370,8 +381,8 @@ export class NeoAskRepository {
         decision &&
         this.db
           .prepare(`INSERT INTO neo_ask_items
-            (ask_id, id, position, text, state, evidence, decision, action, kind, added_at, updated_at)
-            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
+            (ask_id, id, position, text, state, evidence, decision, action, kind, question, added_at, updated_at)
+            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
           .run(
             expected.id,
             decision.id,
@@ -380,6 +391,7 @@ export class NeoAskRepository {
             evidence,
             decision.action ?? null,
             decision.kind ?? 'decision',
+            decision.question ?? null,
             now,
             now
           ).changes === 0
@@ -460,6 +472,7 @@ export class NeoAskRepository {
             action,
             waitCard,
             kind,
+            question,
             watch,
             ...item
           }) => ({
@@ -470,6 +483,7 @@ export class NeoAskRepository {
             ...(action ? { action } : {}),
             ...(waitCard ? { waitCard } : {}),
             ...(kind ? { kind } : {}),
+            ...(question ? { question } : {}),
             ...(watch ? { watch: JSON.parse(watch) as string[] } : {}),
           })
         ),

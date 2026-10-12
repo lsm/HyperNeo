@@ -1794,11 +1794,11 @@ export class NeoService {
     );
   }
 
-  deliverAskAnswer(ask: NeoAsk, item: NeoAskItem, choice: string): Promise<void> {
+  deliverAskAnswer(ask: NeoAsk, item: NeoAskItem, choice: string, met = true): Promise<void> {
     return this.deliverToOrigin(
       ask.originSessionId,
       neoAskAnswerMessageId(ask.id, item.id, Date.now()),
-      neoAskAnswerNote(ask, item, choice),
+      neoAskAnswerNote(ask, item, choice, met),
       neoAskParent(ask)
     );
   }
@@ -2178,7 +2178,7 @@ export class NeoService {
   }
 
   async reconcile(id: string): Promise<void> {
-    let work = this.repo.getWork(id);
+    const work = this.repo.getWork(id);
     if (!work?.sessionId) {
       if ((work?.status === 'reported' || work?.status === 'failed') && this.driverTargets.get(id))
         await this.recoverWorkReturn(work);
