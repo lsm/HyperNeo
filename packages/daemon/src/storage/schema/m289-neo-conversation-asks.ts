@@ -1,5 +1,4 @@
 import type { Database } from '../sqlite-compat.ts';
-import { createNeoConversationAskImageTable } from './m348-neo-conversation-ask-images.ts';
 
 export function createNeoConversationAskTable(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS neo_conversation_asks (
@@ -12,7 +11,6 @@ export function createNeoConversationAskTable(db: Database): void {
   );
   CREATE INDEX IF NOT EXISTS idx_neo_conversation_asks_cursor
     ON neo_conversation_asks(conversation_id, sequence)`);
-  createNeoConversationAskImageTable(db);
 }
 
 export function runMigration289(db: Database): void {
