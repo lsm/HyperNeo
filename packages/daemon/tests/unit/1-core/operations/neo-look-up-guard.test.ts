@@ -145,6 +145,7 @@ describe('the tiered Neo tool rule', () => {
     'gh run view 9 --log-failed',
     'cat notes.md > /scratch/copy.md',
     'bun /home/fictional/Neo/.coordinators/neo-1/check.ts',
+    "ssh box 'tail -n 50 /var/log/update.log'",
   ])('runs the read-only check %s', (command) => {
     expect(verdict('Bash', { command }, project)).toEqual({ kind: 'allow' });
   });
@@ -189,6 +190,7 @@ describe('the tiered Neo tool rule', () => {
     ['bash -c "git push"', 'git push'],
     ['rm -rf src', 'deleting outside your own folder'],
     ['git clean -fd', 'deleting outside your own folder'],
+    ['git -C ~/focus/app clean -fd', 'deleting outside your own folder'],
   ])('refuses the shared-state action %s', (command, why) => {
     expect(reason('Bash', { command }, project)).toContain(why);
   });
@@ -247,6 +249,25 @@ describe('the tiered Neo tool rule', () => {
         reason: expect.stringContaining('pushes, merges or restarts'),
       });
       expect(decideNeoTool('Bash', { command: 'bun check.ts' }, own)).toEqual({ kind: 'allow' });
+      expect(decideNeoTool('Bash', { command: './ship.sh' }, own)).toMatchObject({
+        reason: expect.stringContaining('pushes, merges or restarts'),
+      });
+      writeFileSync(
+        join(folder, 'Makefile'),
+        'build:\n\tbun run build\ndeploy:\n\tlaunchctl kickstart -k gui/501/ai.hyperneo.laptop-daemon\n'
+      );
+      writeFileSync(
+        join(folder, 'package.json'),
+        JSON.stringify({ scripts: { test: 'bun test', release: 'git push origin main' } })
+      );
+      expect(decideNeoTool('Bash', { command: 'make deploy' }, own)).toMatchObject({
+        reason: expect.stringContaining('pushes, merges or restarts'),
+      });
+      expect(decideNeoTool('Bash', { command: 'make build' }, own)).toEqual({ kind: 'allow' });
+      expect(decideNeoTool('Bash', { command: 'npm run release' }, own)).toMatchObject({
+        reason: expect.stringContaining('pushes, merges or restarts'),
+      });
+      expect(decideNeoTool('Bash', { command: 'npm test' }, own)).toEqual({ kind: 'allow' });
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }

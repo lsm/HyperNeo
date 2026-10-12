@@ -377,7 +377,7 @@ const SERVICE_VERBS: Record<string, ReadonlySet<string>> = {
 };
 const KILLERS = new Set(['kill', 'pkill', 'killall']);
 const REMOTE_RESTART =
-  /\b(launchctl|systemctl|kickstart|restart|reboot|shutdown|pkill|killall|kill|deploy\w*)\b|update/;
+  /\b(launchctl|systemctl|kickstart|restart|reboot|shutdown|pkill|killall|kill|deploy\w*)\b|[\w-]*update[\w-]*\.sh\b|\bupdate\b(?![.\w-])/;
 const INTERPRETERS = new Set([
   'node',
   'bun',
@@ -456,11 +456,56 @@ export function neoSharedStateAction(words: readonly string[], segment: string):
 
 const SHELLS = new Set(['bash', 'sh', 'zsh']);
 
+const PACKAGE_RUNNERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+
+function makeRecipe(makefile: string, targets: readonly string[]): string {
+  const lines = makefile.split('\n');
+  const wanted = targets.length
+    ? targets
+    : [lines.find((line) => /^[A-Za-z0-9_.-]+:/.test(line))?.split(':')[0] ?? ''];
+  const recipe: string[] = [];
+  let taking = false;
+  for (const line of lines) {
+    const target = /^([A-Za-z0-9_.-]+):/.exec(line)?.[1];
+    if (target) taking = wanted.includes(target);
+    else if (taking && line.startsWith('\t')) recipe.push(line);
+  }
+  return recipe.join('\n');
+}
+
+function packageScript(manifest: string, name: string): string | null {
+  try {
+    const scripts = (JSON.parse(manifest) as { scripts?: Record<string, unknown> }).scripts;
+    return typeof scripts?.[name] === 'string' ? scripts[name] : null;
+  } catch {
+    return null;
+  }
+}
+
 function scriptFile(words: readonly string[], dir: string, facts: LookUpPathFacts): string | null {
-  if (SHELLS.has(words[0]) ? shellCommandFlag(words) > 0 : !INTERPRETERS.has(words[0])) return null;
-  if (INTERPRETERS.has(words[0]) && words.some((word) => INLINE_FLAGS.has(word))) return null;
-  const path = words.slice(1).find((word) => !word.startsWith('-') && word !== 'run');
-  return path ? (facts.readText?.(resolve(dir, path)) ?? null) : null;
+  const read = (path: string) => facts.readText?.(resolve(dir, path)) ?? null;
+  const [name] = words;
+  const args = words.slice(1).filter((word) => !word.startsWith('-'));
+  if (name.includes('/')) return read(name);
+  if (name === 'make') {
+    const makefile = read('Makefile');
+    return makefile
+      ? makeRecipe(
+          makefile,
+          args.filter((word) => !word.includes('='))
+        )
+      : null;
+  }
+  if (PACKAGE_RUNNERS.has(name) && (args[0] === 'run' || (name !== 'bun' && args.length))) {
+    const script = args[0] === 'run' ? args[1] : args[0];
+    const manifest = script ? read('package.json') : null;
+    const body = manifest ? packageScript(manifest, script) : null;
+    if (body || name !== 'bun') return body;
+  }
+  if (SHELLS.has(name) ? shellCommandFlag(words) > 0 : !INTERPRETERS.has(name)) return null;
+  if (INTERPRETERS.has(name) && words.some((word) => INLINE_FLAGS.has(word))) return null;
+  const path = args.find((word) => word !== 'run');
+  return path ? read(path) : null;
 }
 
 function codePaths(code: string): string[] {
@@ -521,7 +566,7 @@ function commandWords(words: readonly string[]): string[] {
 
 function gitChange(words: readonly string[], dir: string): LocalChange | null {
   const { verb, dir: inside } = gitVerb(words);
-  const where = inside ? resolve(dir, inside) : dir;
+  const where = inside ?? dir;
   if (GIT_DELETES.has(verb ?? '')) return { delete: true, targets: [where] };
   return GIT_CHANGES.has(verb ?? '') ? { delete: false, targets: [where] } : null;
 }

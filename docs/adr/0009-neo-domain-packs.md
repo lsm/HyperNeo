@@ -57,9 +57,9 @@ follow-up and reminder pipelines, delivery bookkeeping, standing rules,
 publications and consultations. It also keeps three things that look
 domain-specific but are not packs' to change:
 
-- The lookup allowlist (`NEO_LOOKUP_COMMANDS`). It bounds what Neo's native
-  tools may run; a pack that widened it would grant privileges by being
-  installed.
+- Neo's tool rule (`decideNeoTool` in `look-up-guard.ts`). It bounds what
+  Neo's native tools may change; a pack that loosened it would grant
+  privileges by being installed.
 - Placement and git-remote matching, which belong to the driver adapters that
   start work in a folder and were just unified across Codex, Claude and
   HyperNeo (#6170, #6198). Only the prose about worktrees and remotes moves
