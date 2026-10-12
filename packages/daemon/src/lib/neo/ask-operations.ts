@@ -855,7 +855,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
         caller: OperationCaller,
         decision: ReturnType<typeof planNeoAskDecision>
       ) =>
-        decision.add
+        decision.add && !isNeoAskReplay(ask, input)
           ? requireNeoHumanTask(
               caller,
               'needs_you',

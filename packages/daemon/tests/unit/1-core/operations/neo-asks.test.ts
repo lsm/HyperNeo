@@ -824,6 +824,22 @@ describe('neo.ask operations', () => {
     ]);
   });
 
+  test('retrying an offer settle after its card started is a replay, not a new question', async () => {
+    const askId = await openAsk();
+    const offered = (await propose('card-1', askId)).value!.work!.id;
+    const offer = {
+      id: askId,
+      outcome: 'waiting',
+      summary: 'Start the login fix?',
+      evidence: 'Offered a work item; nothing started.',
+    };
+    expect(await invoke('neo.ask.settle', offer)).toMatchObject({ value: { ok: true } });
+    service.repo.transitionWork(offered, service.repo.getWork(offered)!, { status: 'queued' });
+    expect(await invoke('neo.ask.settle', offer)).toMatchObject({
+      value: { ok: true, ask: { status: 'waiting', outcome: 'Start the login fix?' } },
+    });
+  });
+
   test('an offer waits on the human, and starting its work item reopens the ask', async () => {
     const askId = await openAsk();
     const offered = (await propose('card-1', askId)).value!.work!.id;
