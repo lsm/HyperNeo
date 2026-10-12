@@ -13,7 +13,6 @@ import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-contex
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import {
-  NEO_ASK_CONTINUE_LIMIT,
   NEO_WORK_CLOSED_DONE,
   type NeoAsk,
   type NeoAskItem,
@@ -1101,8 +1100,7 @@ export class NeoService {
     },
     recordContinue: (id, message, now, progress) =>
       this.workContinues.record(id, message, now, progress)?.count ?? null,
-    reserveAskContinue: (ask) =>
-      this.askRecords.reserveApprovedContinue(ask.id, NEO_ASK_CONTINUE_LIMIT),
+    reserveAskContinue: (ask) => this.askRecords.reserveApprovedContinue(ask.id),
     refundAskContinue: (ask) => this.askRecords.refundApprovedContinue(ask.id),
     reopen: (id, current, report) =>
       this.repo.transitionWork(id, current, { status: 'queued', report }),

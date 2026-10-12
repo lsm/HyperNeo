@@ -67,24 +67,27 @@ describe('neoWorkProgress', () => {
 });
 
 describe('neoContinuesLeft', () => {
-  test("counts what is left of the approved ask's shared pool, else the card's run without progress", () => {
-    const ask = { status: 'open' as const, approvedAt: 5, approvedContinues: 6 };
-    expect(neoContinuesLeft(2, ask)).toBe(14);
-    expect(neoContinuesLeft(1, { ...ask, approvedAt: null })).toBe(2);
-    expect(neoContinuesLeft(1, { ...ask, status: 'achieved' })).toBe(2);
-    expect(neoContinuesLeft(9, null)).toBe(0);
+  test("counts what is left of the card's run without progress", () => {
+    expect(neoContinuesLeft(1)).toBe(2);
+    expect(neoContinuesLeft(9)).toBe(0);
   });
 });
 
 describe('readNeoWorkContinueBudget', () => {
   const approved = { status: 'open' as const, approvedAt: 0, approvedContinues: 0 };
-  test('work under an approved ask shares the ask budget instead of its own', () => {
+  test('work under an approved ask keeps going while it moves, for 48 hours, with no flat count', () => {
     expect(
-      readNeoWorkContinueBudget({ progress: 'p', stalled: 7 }, 'p', 0, approved, 13 * HOUR)
+      readNeoWorkContinueBudget(
+        { progress: 'old', stalled: 2 },
+        'p',
+        0,
+        { ...approved, approvedContinues: 500 },
+        13 * HOUR
+      )
     ).toBeNull();
     expect(
-      readNeoWorkContinueBudget(null, 'p', 0, { ...approved, approvedContinues: 20 }, HOUR)
-    ).toContain('approve it again');
+      readNeoWorkContinueBudget({ progress: 'p', stalled: 2 }, 'p', 0, approved, 13 * HOUR)
+    ).toContain('brought no new commit');
     expect(readNeoWorkContinueBudget(null, 'p', 0, approved, 48 * HOUR)).toContain(
       'approve it again'
     );
@@ -121,7 +124,7 @@ describe('requireNeoAskContinueReserved', () => {
       value: { ask: null, ok: true },
     });
     expect(requireNeoAskContinueReserved({ ask: null, ok: false })).toMatchObject({
-      reason: { ok: false, reason: expect.stringContaining('approve it again') },
+      reason: { ok: false, reason: expect.stringContaining('no longer approved') },
     });
   });
 });
@@ -336,7 +339,7 @@ describe('neo.work.continue', () => {
     });
   });
 
-  test('work under an approved ask spends the ask budget, and approving again refills it', async () => {
+  test('work under an approved ask counts its continues but stops only when the card stalls', async () => {
     const work = reportedWork();
     const opened = service.askRecords.open({
       id: 'ask-ios',
@@ -351,33 +354,29 @@ describe('neo.work.continue', () => {
     })!;
     service.askRecords.link(opened.id, work.id);
     service.askRecords.approve(opened.id, Date.now());
-    for (let index = 0; index < 6; index++)
+    db.getDatabase()
+      .prepare('UPDATE neo_asks SET approved_continues = 500 WHERE id = ?')
+      .run(opened.id);
+    for (let index = 0; index < 3; index++)
       expect(await invoke({ id: work.id, message: `Step ${index}.` })).toMatchObject({
         value: { ok: true },
       });
     expect(service.askRecords.get(opened.id)).toMatchObject({
-      approvedContinues: 6,
-      approvedContinueLimit: 20,
+      approvedContinues: 503,
       approvedUntil: expect.any(Number),
     });
-    expect(service.askRecords.reserveApprovedContinue(opened.id, 6)).toBe(false);
+    expect(service.askRecords.get(opened.id)?.approvedContinueLimit).toBeUndefined();
     unreachable = true;
     expect(await invoke({ id: work.id, message: 'Not delivered.' })).toMatchObject({
       value: { ok: false },
     });
-    expect(service.askRecords.get(opened.id)?.approvedContinues).toBe(6);
+    expect(service.askRecords.get(opened.id)?.approvedContinues).toBe(503);
     unreachable = false;
-    db.getDatabase()
-      .prepare('UPDATE neo_asks SET approved_continues = 20 WHERE id = ?')
-      .run(opened.id);
     expect(await invoke({ id: work.id, message: 'One more.' })).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('approve it again') },
+      value: { ok: false, reason: expect.stringContaining('brought no new commit') },
     });
     service.askRecords.approve(opened.id, Date.now());
     expect(service.askRecords.get(opened.id)?.approvedContinues).toBe(0);
-    expect(await invoke({ id: work.id, message: 'One more.' })).toMatchObject({
-      value: { ok: true },
-    });
   });
 
   test('the idle reply from before a continue does not close the reopened card', async () => {

@@ -5,7 +5,6 @@ import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import {
   isPooledNeoAsk,
-  NEO_ASK_CONTINUE_LIMIT,
   NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
   neoAskApprovalSpent,
@@ -1176,12 +1175,9 @@ describe('isPooledNeoAsk', () => {
 });
 
 describe('neoAskApprovalSpent', () => {
-  test('is spent at the continue limit or once the window has fully passed', () => {
+  test('is spent only once the window has fully passed, however many continues ran', () => {
     const at = 1_000;
-    expect(neoAskApprovalSpent({ approvedAt: at, approvedContinues: 19 }, at)).toBeNull();
-    expect(
-      neoAskApprovalSpent({ approvedAt: at, approvedContinues: NEO_ASK_CONTINUE_LIMIT }, at)
-    ).toBe('continues');
+    expect(neoAskApprovalSpent({ approvedAt: at }, at)).toBeNull();
     expect(neoAskApprovalSpent({ approvedAt: at }, at + NEO_ASK_CONTINUE_WINDOW_MS - 1)).toBeNull();
     expect(neoAskApprovalSpent({ approvedAt: at }, at + NEO_ASK_CONTINUE_WINDOW_MS)).toBe(
       'expired'

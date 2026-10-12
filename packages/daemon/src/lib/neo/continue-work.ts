@@ -7,12 +7,7 @@ import {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
-import {
-  type DriverSent,
-  NEO_ASK_CONTINUES_SPENT,
-  readDriverOutcome,
-  readNeoWorkContinueBudget,
-} from './driver-work.ts';
+import { type DriverSent, readDriverOutcome, readNeoWorkContinueBudget } from './driver-work.ts';
 
 export type NeoContinueResult = { ok: true; work: NeoWork } | { ok: false; reason: string };
 type Rejection = Extract<NeoContinueResult, { ok: false }>;
@@ -81,7 +76,11 @@ type NeoAskContinueReserve = { ask: NeoAsk | null; ok: boolean };
 export function requireNeoAskContinueReserved(
   reserved: NeoAskContinueReserve
 ): { value: NeoAskContinueReserve } | { reason: Rejection } {
-  return reserved.ok ? { value: reserved } : reject(NEO_ASK_CONTINUES_SPENT);
+  return reserved.ok
+    ? { value: reserved }
+    : reject(
+        'continue_budget_spent: this ask is no longer approved; ask the human to approve it again.'
+      );
 }
 
 export function requireNeoContinueDelivered(
