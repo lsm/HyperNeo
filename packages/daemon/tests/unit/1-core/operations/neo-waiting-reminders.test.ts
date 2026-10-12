@@ -219,8 +219,8 @@ describe('Neo turns with an ask waiting on the human', () => {
       'neo.publication.publish',
       {
         publicationId,
-        shortText: 'Done.',
-        fullText: 'Done.',
+        shortText: interim ? 'Checking.' : 'Done.',
+        fullText: interim ? 'Checking.' : 'Done.',
         links: [],
         ...(interim && { interim }),
       },

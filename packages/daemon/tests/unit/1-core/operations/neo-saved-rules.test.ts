@@ -260,10 +260,14 @@ describe('Neo reply after a rule save', () => {
     expect(await invoke('neo.publication.publish', draft)).toMatchObject({
       value: { accepted: true, created: false },
     });
-    const next = { ...draft, publicationId: '20000000-0000-4000-8000-000000000002' };
+    const next = {
+      ...draft,
+      publicationId: '20000000-0000-4000-8000-000000000002',
+      shortText: 'Kept B as well.',
+    };
     await invoke('neo.publication.publish', next);
     expect(service.publications.get(conversationId, next.publicationId)?.shortText).toBe(
-      `${reply.shortText}\n\nSaved: Keep B.`
+      'Kept B as well.\n\nSaved: Keep B.'
     );
   });
 

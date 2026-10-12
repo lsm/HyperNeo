@@ -21,6 +21,7 @@ import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
+import { neoReplyText, requirePublicationNews } from '../../../../src/lib/neo/publication-news.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
@@ -285,6 +286,33 @@ describe('runtime-bound publication operation', () => {
     expect(notify).toHaveBeenCalledTimes(2);
   });
 
+  test('refuses a bare acknowledgement, a repeat in the same turn, and replies past the turn limit', () => {
+    const id = (n: number) => `20000000-0000-4000-8000-00000000010${n}`;
+    expect(
+      publish({ ...draft, publicationId: id(1), shortText: '收到。', fullText: '收到。' }, caller())
+    ).toMatchObject({ accepted: false, reason: 'empty_acknowledgement' });
+    expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({ accepted: true });
+    expect(
+      publish({ ...draft, publicationId: id(3), shortText: 'ready view comparison' }, caller())
+    ).toMatchObject({ accepted: false, reason: 'repeated_reply' });
+    expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({
+      accepted: true,
+      created: false,
+    });
+    for (const n of [4, 5])
+      expect(
+        publish({ ...draft, publicationId: id(n), shortText: `Update ${n}.` }, caller())
+      ).toMatchObject({ accepted: true });
+    expect(
+      publish({ ...draft, publicationId: id(6), shortText: 'One more thing.' }, caller())
+    ).toMatchObject({ accepted: false, reason: 'reply_limit' });
+    expect(ledger.list(conversationId)).toHaveLength(3);
+    prompt(root.sessionId, 'next-ask');
+    expect(
+      publish({ ...draft, publicationId: id(7) }, caller(root.sessionId, 'next-ask'))
+    ).toMatchObject({ accepted: true });
+  });
+
   test('one publication id cannot be replayed under a newer producer/ask tuple', () => {
     const first = publish(draft, caller());
     prompt(root.sessionId, 'other-ask');
@@ -428,5 +456,29 @@ describe('runtime-bound publication operation', () => {
         links: Array.from({ length: 17 }, () => ({ label: 'Open', kind: 'concern', id: 'a' })),
       })
     ).toHaveProperty('reason.reason', 'invalid_publication');
+  });
+});
+
+describe('requirePublicationNews', () => {
+  const reply = { publicationId: 'p1', shortText: 'Merged #12.', fullText: 'Merged #12 to dev.' };
+
+  test.each(['收到。', '我听到了。', 'Got it!', 'ok'])(
+    'refuses the bare acknowledgement %s',
+    (text) => {
+      expect(
+        requirePublicationNews('v', { ...reply, shortText: text, fullText: text }, [])
+      ).toMatchObject({ reason: { reason: 'empty_acknowledgement' } });
+    }
+  );
+
+  test('keeps an acknowledgement that carries details, and an identical retry', () => {
+    expect(requirePublicationNews('v', { ...reply, shortText: '收到。' }, [])).toEqual({
+      value: 'v',
+    });
+    const prior = [{ publicationId: 'p1', text: neoReplyText(reply.shortText) }];
+    expect(requirePublicationNews('v', reply, prior)).toEqual({ value: 'v' });
+    expect(requirePublicationNews('v', { ...reply, publicationId: 'p2' }, prior)).toMatchObject({
+      reason: { reason: 'repeated_reply' },
+    });
   });
 });

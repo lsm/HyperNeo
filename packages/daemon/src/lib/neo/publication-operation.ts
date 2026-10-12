@@ -11,6 +11,12 @@ import type { NeoAskOrigin } from './ask-origin.ts';
 import { NeoPublicationSchema } from './publication.ts';
 import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
+import {
+  type NeoTurnReply,
+  neoTurnReplyKey,
+  recordNeoTurnReply,
+  requirePublicationNews,
+} from './publication-news.ts';
 
 const Draft = NeoPublicationSchema.omit({
   conversationId: true,
@@ -169,6 +175,7 @@ function readLinkEvidence(link: NeoPublicationLink, runtime: NeoPublicationRunti
 }
 
 export function createNeoPublisher(runtime: NeoPublicationRuntime) {
+  const turnReplies = new Map<string, NeoTurnReply[]>();
   return (superpipe({})('neo-publication-publish') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
@@ -208,6 +215,16 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'result:publication'
     )
     .pipe(
+      (proof: Proof, draft: Draft) =>
+        requirePublicationNews(
+          proof,
+          draft,
+          turnReplies.get(neoTurnReplyKey(proof.input, proof.ask)) ?? []
+        ),
+      ['publication', 'draft'],
+      'result:publication'
+    )
+    .pipe(
       (draft: Draft, proof: Proof) => {
         const input = {
           ...draft,
@@ -221,11 +238,15 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'publication'
     )
     .pipe(
-      (receipt: Receipt) => {
-        if (receipt.accepted) runtime.notify();
+      (receipt: Receipt, draft: Draft) => {
+        if (receipt.accepted) {
+          const { askOrigin, producerInput } = receipt.publication;
+          recordNeoTurnReply(turnReplies, neoTurnReplyKey(producerInput, askOrigin), draft);
+          runtime.notify();
+        }
         return receipt;
       },
-      'publication',
+      ['publication', 'draft'],
       'publication'
     )
     .end('publication') as (
@@ -238,7 +259,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Publish an explicitly authored short reply, full details and labelled Neo scene references from this live avatar input. Runtime supplies original human ask and producer attribution. Reuse publicationId only for identical retries; do not publish internal compaction or tool chatter. Set interim:true on a message sent before the answer while you are still working on it; the answer itself omits interim. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
+      'Publish an explicitly authored short reply, full details and labelled Neo scene references from this live avatar input. Runtime supplies original human ask and producer attribution. Reuse publicationId only for identical retries; do not publish internal compaction or tool chatter. A bare acknowledgement ("收到", "got it"), a repeat of an earlier reply to the same ask in this turn, or more than 3 replies to one ask in a turn is refused; when refused, end the turn. Set interim:true on a message sent before the answer while you are still working on it; the answer itself omits interim. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: z.union([
