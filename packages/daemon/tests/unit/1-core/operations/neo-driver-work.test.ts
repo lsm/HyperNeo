@@ -1,3 +1,4 @@
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
@@ -34,6 +35,8 @@ import {
   readNeoStartFolder,
   requireNeoStartFolder,
   neoWorkProgress,
+  driverDoneCheckNote,
+  neoNoteCards,
 } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -160,6 +163,71 @@ describe('isNeoReceiptUnconfirmed', () => {
     ['a later send', { inputBefore: 5_000 }, 100 + NEO_CARD_CONFIRM_MS, false],
   ])('%s', (_label, overrides, now, unconfirmed) => {
     expect(isNeoReceiptUnconfirmed({ ...card, ...overrides }, now)).toBe(unconfirmed);
+  });
+});
+
+describe('done-check note data', () => {
+  const ask = {
+    id: 'a1',
+    originSessionId: 'neo:root',
+    status: 'open',
+    doneWhen: '- merged\n- deployed',
+    doneItems: [
+      { id: 'i1', text: 'merged', state: 'met', removed: false },
+      { id: 'i2', text: 'deployed', state: 'pending', removed: false },
+      { id: 'i3', text: 'gone', state: 'pending', removed: true },
+    ],
+    workIds: ['w1'],
+  } as unknown as NeoAsk;
+  test('items carry text only until met, and the done list is not repeated', () => {
+    const note = driverDoneCheckNote(
+      { id: 'w1', title: 'Ship', report: 'Merged.', originSessionId: 'neo:root' },
+      { workId: 'w1', goal: 'Ship it', doneWhen: '- merged\n- deployed' },
+      2,
+      null,
+      {
+        ask,
+        prs: [
+          {
+            url: 'u',
+            state: 'MERGED',
+            checks: 'passing',
+            review: 'approved',
+            title: 'x',
+            createdAt: 1,
+          },
+        ],
+      }
+    );
+    const data = JSON.parse(note.slice(note.indexOf('\n{')));
+    expect(data.ask.items).toEqual([
+      { id: 'i1', state: 'met' },
+      { id: 'i2', state: 'pending', text: 'deployed' },
+    ]);
+    expect(data.doneWhen).toBeUndefined();
+    expect(data.ask.doneWhen).toBeUndefined();
+    expect(data.prs).toEqual([
+      { url: 'u', state: 'MERGED', checks: 'passing', review: 'approved' },
+    ]);
+    expect(note).toContain('more continues in a row with no new commit');
+  });
+  test('another card shows one PR verdict, the first one not done', () => {
+    const pr = (state: NeoWorkPr['state'], checks: NeoWorkPr['checks']) =>
+      ({ url: 'u', state, checks, review: 'none' }) as NeoWorkPr;
+    expect(
+      neoNoteCards([
+        {
+          id: 'w2',
+          title: 'Docs',
+          status: 'queued',
+          prs: [pr('MERGED', 'passing'), pr('OPEN', 'failing')],
+        },
+        { id: 'w3', title: 'Quiet', status: 'proposed' },
+      ])
+    ).toEqual([
+      { id: 'w2', title: 'Docs', status: 'queued', pr: 'failed' },
+      { id: 'w3', title: 'Quiet', status: 'proposed' },
+    ]);
   });
 });
 
@@ -1037,7 +1105,7 @@ describe('Neo work with a drivers target', () => {
       await service.refreshDriverWork();
       expect(notes).toHaveLength(1);
       expect(JSON.parse(notes[0].slice(notes[0].indexOf('\n{'))).ask.cards).toEqual([
-        { id: 'work-2', title: 'Ship the docs', status: 'proposed', prs: [docsPr] },
+        { id: 'work-2', title: 'Ship the docs', status: 'proposed', pr: 'waiting' },
       ]);
       expect(notes[0]).toContain('end the turn without telling the human');
     } finally {

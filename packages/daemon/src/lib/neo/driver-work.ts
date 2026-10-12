@@ -31,6 +31,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
   neoAskApprovalSpent,
+  neoWorkPrVerdict,
   NEO_WORK_STALLED_CONTINUES,
   type NeoWorkContinue,
   type NeoWorkGoal,
@@ -526,10 +527,28 @@ export function projectNeoAskCards(
     });
 }
 
-function neoAskChecklist(ask: NeoAsk): { id: string; text: string; state: string }[] {
+export function neoNoteChecklist(ask: NeoAsk): { id: string; state: string; text?: string }[] {
   return (ask.doneItems ?? [])
     .filter((item) => !item.removed)
-    .map(({ id, text, state }) => ({ id, text, state }));
+    .map(({ id, text, state }) => (state === 'met' ? { id, state } : { id, state, text }));
+}
+
+export function neoNoteCards(cards: readonly NeoAskCard[]) {
+  return cards.map(({ id, title, status, prs }) => {
+    const verdicts = (prs ?? []).map(neoWorkPrVerdict);
+    const pr = verdicts.find((verdict) => verdict !== 'done') ?? verdicts[0];
+    return { id, title, status, ...(pr ? { pr } : {}) };
+  });
+}
+
+export function neoNotePrs(prs: readonly NeoWorkPr[]) {
+  return prs.map(({ url, state, checks, review, blockers }) => ({
+    url,
+    state,
+    checks,
+    review,
+    ...(blockers?.length ? { blockers } : {}),
+  }));
 }
 
 export function driverDoneCheckNote(
@@ -580,7 +599,9 @@ export function driverDoneCheckNote(
   const packNote = pack
     ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: pack.id })}\n${pack.instructions}`
     : '';
-  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}${packNote}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, doneWhen: goal.doneWhen, continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs } : {}), ...(ask ? { ask: { id: ask.id, doneWhen: ask.doneWhen, status: ask.status, ...(owned ? { cards, items: neoAskChecklist(ask) } : {}) } } : {}) })}`;
+  const items = owned && ask ? neoNoteChecklist(ask) : [];
+  const listed = items.length > 0;
+  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}${packNote}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, ...(listed ? {} : { doneWhen: goal.doneWhen }), continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs: neoNotePrs(prs) } : {}), ...(ask ? { ask: { id: ask.id, ...(listed ? {} : { doneWhen: ask.doneWhen }), status: ask.status, ...(owned ? { cards: neoNoteCards(cards), items } : {}) } } : {}) })}`;
 }
 
 export function neoWorkDoneGoal(
