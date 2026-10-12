@@ -64,3 +64,7 @@ export function neoCardPrNeoNote(
         items,
       });
 }
+
+export function neoCardPrPending(prs: readonly NeoWorkPr[]): boolean {
+  return prs.some((pr) => pr.state === 'OPEN' && pr.checks === 'pending');
+}

@@ -394,6 +394,11 @@ describe('planNeoWorkPrBlockers', () => {
       { ...base, mergeState: 'CLEAN', detail: unsigned },
       [],
     ],
+    [
+      'unresolved threads on a pull request GitHub calls unstable',
+      { ...base, mergeState: 'UNSTABLE', detail: { commits: [], unresolved: 1 } },
+      ['1 unresolved review thread'],
+    ],
     ['a branch behind its base', { ...base, mergeState: 'BEHIND', detail: null }, ['behind dev']],
     ['conflicts', { ...base, mergeState: 'DIRTY', detail: null }, ['merge conflicts with dev']],
     [

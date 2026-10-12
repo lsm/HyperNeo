@@ -271,7 +271,7 @@ export function planNeoWorkPrBlockers(input: {
   rules: readonly BranchRule[];
   detail: PrDetail | null;
 }): string[] {
-  if (['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(input.mergeState ?? '')) return [];
+  if (['CLEAN', 'HAS_HOOKS'].includes(input.mergeState ?? '')) return [];
   const pull = input.rules.find((rule) => rule.type === 'pull_request')?.parameters;
   const unsigned = input.detail?.commits.filter((commit) => !commit.signed) ?? [];
   const unresolved = input.detail?.unresolved ?? 0;

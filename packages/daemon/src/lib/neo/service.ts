@@ -217,7 +217,12 @@ import {
 } from './ask-idle.ts';
 import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
 import { hashString32 } from '../runtime-hash.ts';
-import { neoCardPrAttention, neoCardPrNeoNote, requireNeoCardPrRelay } from './card-pr-relay.ts';
+import {
+  neoCardPrAttention,
+  neoCardPrNeoNote,
+  neoCardPrPending,
+  requireNeoCardPrRelay,
+} from './card-pr-relay.ts';
 import {
   extractNeoCardRefs,
   readGithubRefStates,
@@ -1420,17 +1425,14 @@ export class NeoService {
   private readonly relayCardPr = (superpipe({})('neo-card-pr-relay') as PipelineAPI)
     .input(['workId'])
     .pipe((workId: string) => this.repo.getWork(workId), 'workId', 'work')
+    .pipe((workId: string) => this.workPrs.get(workId)?.prs ?? [], 'workId', 'prs')
+    .pipe(neoCardPrAttention, 'prs', 'attention')
     .pipe(
-      (workId: string) => neoCardPrAttention(this.workPrs.get(workId)?.prs ?? []),
-      'workId',
-      'attention'
-    )
-    .pipe(
-      (workId: string, attention: unknown) => {
-        if (!attention) this.cardPrRelays.clear(workId);
+      (workId: string, prs: NeoWorkPr[], attention: unknown) => {
+        if (!attention && !neoCardPrPending(prs)) this.cardPrRelays.clear(workId);
         return attention ? this.cardPrRelays.get(workId) : null;
       },
-      ['workId', 'attention'],
+      ['workId', 'prs', 'attention'],
       'told'
     )
     .pipe(requireNeoCardPrRelay, ['work', 'attention', 'told'], 'result:relay')

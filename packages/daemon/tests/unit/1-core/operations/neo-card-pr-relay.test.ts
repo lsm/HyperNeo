@@ -188,6 +188,18 @@ describe('NeoService relayCardPr', () => {
     expect(sent).toHaveLength(2);
   });
 
+  test('keeps what it told while CI is pending, so unchanged threads are not sent again', async () => {
+    const workId = queuedCard();
+    const threads = { blockers: ['1 unresolved review thread'] };
+    service.workPrs.record(workId, [pr(threads)], 1);
+    await relay(workId);
+    service.workPrs.record(workId, [pr({ checks: 'pending' })], 2);
+    await relay(workId);
+    service.workPrs.record(workId, [pr(threads)], 3);
+    await relay(workId);
+    expect(sent).toHaveLength(1);
+  });
+
   test('tells Neo once when the card can never be continued', async () => {
     const workId = queuedCard();
     service.workPrs.record(workId, [pr({ checks: 'failing' })], 1);
