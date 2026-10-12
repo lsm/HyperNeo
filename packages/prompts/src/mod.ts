@@ -120,6 +120,9 @@ import mdneoWorkGoalMerge from './neo/packs/coding/goal-merge.md' with { type: '
 import mdneoPacksCodingGoalPrEvents from './neo/packs/coding/goal-pr-events.md' with {
   type: 'text',
 };
+import mdneoPacksCodingGoalPrSubscribe from './neo/packs/coding/goal-pr-subscribe.md' with {
+  type: 'text',
+};
 import mdneoPacksLifeAdminInstructions from './neo/packs/life-admin/instructions.md' with {
   type: 'text',
 };
@@ -400,6 +403,7 @@ const registry: Record<string, string> = {
   'neo/packs/coding/instructions.md': mdneoPacksCodingInstructions,
   'neo/packs/coding/goal-merge.md': mdneoWorkGoalMerge,
   'neo/packs/coding/goal-pr-events.md': mdneoPacksCodingGoalPrEvents,
+  'neo/packs/coding/goal-pr-subscribe.md': mdneoPacksCodingGoalPrSubscribe,
   'neo/packs/life-admin/instructions.md': mdneoPacksLifeAdminInstructions,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
   'neo/work/goal.md': mdneoWorkGoal,
@@ -588,6 +592,7 @@ export const {
   NEO_WORK_GOAL_DONE_WHEN,
   NEO_WORK_GOAL_MERGE,
   NEO_WORK_GOAL_PR_EVENTS,
+  NEO_WORK_GOAL_PR_SUBSCRIBE,
   NEO_WORK_GOAL_REMAINING,
   NEO_WORK_GOAL,
   NEO_WORK_NEEDS_YOU,
