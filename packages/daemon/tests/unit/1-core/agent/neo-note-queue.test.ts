@@ -103,6 +103,7 @@ type Harness = {
   service: NeoService;
   agentSession: AgentSession;
   sessionId: string;
+  failed: string[][];
 };
 
 const harnesses: Harness[] = [];
@@ -120,11 +121,20 @@ async function makeHarness(sessionId: string): Promise<Harness> {
   const db = await createTestDb();
   db.createSession(createTestSession(sessionId));
   new NeoRepository(db.getDatabase()).reserveBinding({ sessionId, kind: 'neo', concernId: null });
+  const events = new InternalEventBus<DaemonInternalEventMap>();
+  const failed: string[][] = [];
+  events.subscribe(
+    'messages.statusChanged',
+    ({ messageIds, status }) => {
+      if (status === 'failed') failed.push(messageIds);
+    },
+    { subscriberName: 'test-failed-notes' }
+  );
   const service = new NeoService(
     db,
     { createSession: vi.fn(), getSessionAsync: vi.fn() } as unknown as SessionManager,
     { event: vi.fn() } as unknown as MessageHubType,
-    new InternalEventBus<DaemonInternalEventMap>()
+    events
   );
   const agentSession = new AgentSession(
     db.getSession(sessionId)!,
@@ -143,7 +153,7 @@ async function makeHarness(sessionId: string): Promise<Harness> {
     executeDeferredRestartIfPending: mock(async () => {}),
   };
   agentSession.queryPromise = new Promise<void>(() => {});
-  const harness = { db, service, agentSession, sessionId };
+  const harness = { db, service, agentSession, sessionId, failed };
   harnesses.push(harness);
   return harness;
 }
@@ -262,6 +272,7 @@ describe('Neo note queue', () => {
     expect(statusOf(harness, 'w1:done-check:1')).toBe('failed');
     expect(statusOf(harness, 'neo-ask-evidence:a1:old')).toBe('failed');
     expect(statusOf(harness, 'w2:done-check:1')).toBe('enqueued');
+    expect(harness.failed.flat()).toHaveLength(2);
     expect(mailboxed(harness, 'w1:stall:7')).toBe(1);
     expect(mailboxed(harness, 'neo-ask-evidence:a1:new')).toBe(1);
   });

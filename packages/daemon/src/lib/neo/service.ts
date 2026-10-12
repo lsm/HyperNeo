@@ -260,7 +260,7 @@ import {
   planNeoNeedsYouCleared,
 } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
-import { createNeoNoteQueueDeps, issueNeoNote } from './note-queue.ts';
+import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
 import { NEO_TURN_LIMIT_PREFIX, neoTurnLimitNote, planNeoTurnLimitNote } from './turn-limit.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
@@ -397,6 +397,7 @@ export class NeoService {
   readonly askForwards: NeoAskForwardRepository;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
+  private readonly noteQueue: NeoNoteQueueDeps;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -582,6 +583,11 @@ export class NeoService {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
     };
+    this.noteQueue = createNeoNoteQueueDeps(db, (sessionId, messageIds) => {
+      void events
+        .publish('messages.statusChanged', { sessionId, messageIds, status: 'failed' })
+        .catch(() => {});
+    });
     this.sessionWatcher = new NeoSessionWatcher({
       db,
       rootSessionId: () => this.repo.getBindingForConcern(null)?.sessionId,
@@ -2703,7 +2709,7 @@ export class NeoService {
         .length
     )
       return;
-    if (!issueNeoNote(createNeoNoteQueueDeps(this.db), sessionId, messageId).issue) return;
+    if (!issueNeoNote(this.noteQueue, sessionId, messageId).issue) return;
     const outcome = await handoffPromptToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
       origin: renderAddress({ kind: 'session', sessionId: originSessionId }),
