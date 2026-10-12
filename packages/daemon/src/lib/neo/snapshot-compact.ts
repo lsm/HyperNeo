@@ -39,6 +39,7 @@ export function compactNeoSnapshotCards(cards: readonly NeoCardView[]): NeoCardV
 
 export const NEO_MCP_SNAPSHOT_BUDGET = 40_000;
 const TRIMMED_TEXT_LIMIT = 300;
+const TRIMMED_NOTE_RESERVE = 512;
 const NEO_SNAPSHOT_TRIMMED =
   'This snapshot was trimmed to fit: settled asks and finished cards outside open asks are left out, and long text is cut. Call neo.snapshot {askId} for one ask in more detail.';
 
@@ -242,14 +243,15 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
   { focused = false }: { focused?: boolean } = {}
 ): T {
   if (size(snapshot) <= budget) return snapshot;
+  const room = budget - TRIMMED_NOTE_RESERVE;
   let fitted: NeoSnapshot = focused ? snapshot : withoutSettled(snapshot);
-  if (size(fitted) > budget) fitted = withShortText(fitted);
+  if (size(fitted) > room) fitted = withShortText(fitted);
   const openAsks = fitted.asks?.length ?? 0;
   if (!focused)
-    for (let count = fitted.asks?.length ?? 0; size(fitted) > budget && count > 1; )
+    for (let count = fitted.asks?.length ?? 0; size(fitted) > room && count > 1; )
       fitted = withNewestAsks(fitted, (count = Math.floor(count / 2)));
-  if (size(fitted) > budget) fitted = withBareText(fitted);
-  if (size(fitted) <= budget)
+  if (size(fitted) > room) fitted = withBareText(fitted);
+  if (size(fitted) <= room)
     return {
       ...fitted,
       trimmed: focused
@@ -257,8 +259,8 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
         : neoSnapshotTrimmedNote(openAsks - (fitted.asks?.length ?? 0)),
     } as T;
   fitted = withSkeleton(fitted);
-  if (size(fitted) > budget) fitted = bareMinimum(fitted);
-  if (size(fitted) > budget)
+  if (size(fitted) > room) fitted = bareMinimum(fitted);
+  if (size(fitted) > room)
     fitted = {
       ok: true,
       sessionId: fitted.sessionId,

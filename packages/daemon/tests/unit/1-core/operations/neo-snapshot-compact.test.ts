@@ -190,6 +190,14 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.trimmed).toContain('only ask and card identities');
   });
 
+  test('the trimmed note never pushes the result past the budget', () => {
+    const big = snapshot(30, 30);
+    for (let budget = 2_000; budget <= 40_000; budget += 397) {
+      const fitted = fitNeoSnapshotBudget(big, budget);
+      expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(budget);
+    }
+  });
+
   test('the last-resort fallbacks still carry the required consultations list', () => {
     expect(fitNeoSnapshotBudget(snapshot(5, 5), 10).consultations).toEqual([]);
     expect(fitNeoSnapshotBudget(snapshot(5, 5), 10, { focused: true }).consultations).toEqual([]);
