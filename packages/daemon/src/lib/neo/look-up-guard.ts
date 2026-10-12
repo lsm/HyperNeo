@@ -486,20 +486,63 @@ function packageScript(manifest: string, name: string): string | null {
   }
 }
 
+const RUNNER_DIR_OPTIONS: Record<string, readonly string[]> = {
+  make: ['-C', '--directory'],
+  npm: ['--prefix', '-C'],
+  pnpm: ['-C', '--dir'],
+  yarn: ['--cwd'],
+  bun: ['--cwd'],
+};
+const RUNNER_VALUE_OPTIONS = new Set([
+  '-f',
+  '--file',
+  '--makefile',
+  '-j',
+  '--jobs',
+  '-l',
+  '--filter',
+  '-w',
+  '--workspace',
+]);
+
+function runnerArgs(words: readonly string[]): { args: string[]; dir?: string; file?: string } {
+  const dirOptions = RUNNER_DIR_OPTIONS[words[0]] ?? [];
+  const args: string[] = [];
+  let dir: string | undefined;
+  let file: string | undefined;
+  for (let at = 1; at < words.length; at += 1) {
+    const word = words[at];
+    const [flag, inline] = word.includes('=')
+      ? [word.slice(0, word.indexOf('=')), word.slice(word.indexOf('=') + 1)]
+      : [word, undefined];
+    if (dirOptions.includes(flag) || RUNNER_VALUE_OPTIONS.has(flag)) {
+      const value = inline ?? words[at + 1];
+      if (inline === undefined) at += 1;
+      if (dirOptions.includes(flag)) dir = value;
+      else if (['-f', '--file', '--makefile'].includes(flag)) file = value;
+      continue;
+    }
+    if (!word.startsWith('-')) args.push(word);
+  }
+  return { args, dir, file };
+}
+
 function scriptFile(
   words: readonly string[],
   dir: string,
   scope: LookUpScope,
   facts: LookUpPathFacts
 ): string | null {
+  const parsed = runnerArgs(words);
+  const base = parsed.dir ? resolvePath(parsed.dir, { ...scope, cwd: dir }) : dir;
   const read = (path: string) =>
-    facts.readText?.(resolvePath(path, { ...scope, cwd: dir })) ?? null;
+    facts.readText?.(resolvePath(path, { ...scope, cwd: base })) ?? null;
   const [name] = words;
-  const args = words.slice(1).filter((word) => !word.startsWith('-'));
+  const args = parsed.args;
   if (name === 'source' || name === '.') return args[0] ? read(args[0]) : null;
   if (name.includes('/')) return read(name);
   if (name === 'make') {
-    const makefile = read('Makefile');
+    const makefile = read(parsed.file ?? 'Makefile');
     return makefile
       ? makeRecipe(
           makefile,
@@ -532,7 +575,7 @@ function codePaths(code: string): string[] {
 
 function substitutions(segment: string): string[] {
   return [
-    ...[...segment.matchAll(/\$\(([^()]*)\)/g)].map((match) => match[1]),
+    ...[...segment.matchAll(/[$<>]\(([^()]*)\)/g)].map((match) => match[1]),
     ...[...segment.matchAll(/`([^`]*)`/g)].map((match) => match[1]),
   ];
 }
@@ -744,11 +787,58 @@ function nestedCommand(words: readonly string[]): string | null {
 export interface NeoBashFacts {
   secret: string | null;
   sharedState: string | null;
+  unchecked?: string | null;
   deletesOutside: boolean;
   changesOutside: boolean;
 }
 
 const UNKNOWN_DIR = '/unknown-folder-for-neo-guard';
+const PIPE_TO_SHELL =
+  /\|\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:sudo|env|exec|command)\s+)*(?:ba|z)?sh(?:\s+-[A-Za-z]+)*\s*(?:$|[;&|)\n])/;
+const SSH_VALUE_FLAGS = new Set([
+  '-p',
+  '-i',
+  '-l',
+  '-o',
+  '-F',
+  '-J',
+  '-L',
+  '-R',
+  '-D',
+  '-b',
+  '-c',
+  '-E',
+  '-e',
+  '-m',
+  '-O',
+  '-Q',
+  '-S',
+  '-W',
+  '-w',
+  '-B',
+  '-I',
+]);
+
+function sshRemote(words: readonly string[]): string | null {
+  if (words[0] !== 'ssh') return null;
+  let at = 1;
+  while (at < words.length && words[at].startsWith('-'))
+    at += SSH_VALUE_FLAGS.has(words[at]) ? 2 : 1;
+  const remote = words.slice(at + 1);
+  return remote.length ? remote.join(' ') : null;
+}
+
+function credentialDump(raw: readonly string[], words: readonly string[]): string | null {
+  if (raw[0] === 'env' && !words.length) return 'env';
+  if (['printenv', 'set'].includes(words[0]) && words.length <= 2) return words[0];
+  if (words[0] === 'export' && (words.length === 1 || words[1] === '-p')) return 'export';
+  if (words[0] === 'declare' && words.some((word) => /^-[a-z]*x/.test(word))) return 'declare -x';
+  if (words[0] === 'gh' && words.includes('auth')) {
+    if (words.includes('token') || words.includes('--show-token') || words.includes('-t'))
+      return 'gh auth token';
+  }
+  return null;
+}
 
 function groupWords(words: readonly string[]): string[] {
   const out = [...words];
@@ -776,8 +866,14 @@ function analyzeBash(
   };
   let dir = scope.cwd;
   const stack: string[] = [];
+  if (
+    PIPE_TO_SHELL.test(command.replace(/'[^']*'|"[^"]*"/g, (quoted) => 'x'.repeat(quoted.length)))
+  )
+    found.unchecked = 'piping text into a shell';
   for (const segment of shellSegments(command)) {
-    const words = commandWords(groupWords(shellWords(segment)));
+    const raw = groupWords(shellWords(segment));
+    const words = commandWords(raw);
+    found.secret ??= credentialDump(raw, words);
     if (!words.length) continue;
     if (words[0] === 'popd') {
       dir = stack.pop() ?? UNKNOWN_DIR;
@@ -793,20 +889,30 @@ function analyzeBash(
       if (isSecretPath(dir, scope, facts)) found.secret ??= words[1] ?? '~';
       continue;
     }
-    found.secret ??= secretArgument(words.slice(1), dir, scope, facts);
+    if (words[0] !== 'ssh') found.secret ??= secretArgument(words.slice(1), dir, scope, facts);
     found.sharedState ??= neoSharedStateAction(words, segment);
     const code = inlineCode(words) ?? scriptFile(words, dir, scope, facts);
     if (code) {
       found.secret ??= secretArgument(codePaths(code), dir, scope, facts);
       if (INLINE_SHARED.test(code)) found.sharedState ??= 'code that pushes, merges or restarts';
     }
-    const nested = [nestedCommand(words), ...substitutions(segment)].filter(
-      (inner): inner is string => !!inner
-    );
+    const remote = depth < 3 ? sshRemote(words) : null;
+    if (remote) {
+      const inner = analyzeBash(remote, { ...scope, cwd: UNKNOWN_DIR, own: [] }, facts, depth + 1);
+      found.sharedState ??=
+        inner.sharedState ?? (inner.deletesOutside ? 'deleting on another machine' : null);
+      found.unchecked ??= inner.unchecked;
+    }
+    const nested = [
+      nestedCommand(words),
+      words[0] === 'eval' ? words.slice(1).join(' ') : null,
+      ...substitutions(segment),
+    ].filter((inner): inner is string => !!inner);
     for (const text of depth < 3 ? nested : []) {
       const inner = analyzeBash(text, { ...scope, cwd: dir }, facts, depth + 1);
       found.secret ??= inner.secret;
       found.sharedState ??= inner.sharedState;
+      found.unchecked ??= inner.unchecked;
       found.deletesOutside ||= inner.deletesOutside;
       found.changesOutside ||= inner.changesOutside;
     }
@@ -883,6 +989,7 @@ export function requireNeoSecretsUntouched(
 
 export function requireNeoSharedStateUntouched(bash: NeoBashFacts | null): NeoGate {
   if (bash?.sharedState) return deny(`${bash.sharedState} changes shared state`);
+  if (bash?.unchecked) return deny(`${bash.unchecked} can't be checked`);
   return bash?.deletesOutside
     ? deny('deleting outside your own folder changes shared files')
     : pass;
