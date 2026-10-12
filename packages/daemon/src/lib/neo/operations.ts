@@ -25,12 +25,13 @@ import type {
   NeoConsultationWaiter,
   NeoWork,
 } from '@hyperneo/shared/types/neo-context';
-import type {
-  NeoAsk,
-  NeoReceiptAskOrigin,
-  NeoSnapshot,
-  NeoWaitingOnHuman,
-  NeoWorkResourceReceipt,
+import {
+  isPooledNeoAsk,
+  type NeoAsk,
+  type NeoReceiptAskOrigin,
+  type NeoSnapshot,
+  type NeoWaitingOnHuman,
+  type NeoWorkResourceReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
   NEO_STANDING_RULE_MAX_CHARS,
@@ -639,10 +640,19 @@ export function createNeoOperations(service: NeoService) {
     const workGoals = service.workGoals.list(workIds);
     const workContinues = service.workContinues.list(workIds);
     const workSupersessions = service.workSupersessions.list(workIds);
+    const listed = focus
+      ? [focus]
+      : service.askRecords.list(scope === undefined ? undefined : scope);
     const asks = projectNeoSnapshotAsks(
-      focus ? [focus] : service.askRecords.list(scope === undefined ? undefined : scope),
+      listed,
       caller.source === 'rpc' ? 50 : 10,
-      Date.now()
+      Date.now(),
+      new Set(
+        listed
+          .filter((ask) => isPooledNeoAsk(ask))
+          .flatMap((ask) => ask.workIds)
+          .filter((id) => service.isContinueStalled(id))
+      )
     );
     const workPrs = service.workPrs
       .list(workIds)

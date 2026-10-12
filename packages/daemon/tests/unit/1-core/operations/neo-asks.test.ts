@@ -1194,6 +1194,25 @@ describe('isPooledNeoAsk', () => {
   });
 });
 
+describe('projectNeoSnapshotAsks approval', () => {
+  const base = {
+    id: 'a1',
+    status: 'open',
+    approvedAt: 1_000,
+    workIds: ['w1', 'w2'],
+  } as unknown as NeoAsk;
+  test('an approved ask with a stalled card reads spent, so the human can approve it again', () => {
+    expect(projectNeoSnapshotAsks([base], 10, 2_000, new Set(['w2']))[0].approvalSpent).toBe(
+      'continues'
+    );
+    expect(projectNeoSnapshotAsks([base], 10, 2_000, new Set())[0].approvalSpent).toBeNull();
+    expect(
+      projectNeoSnapshotAsks([{ ...base, approvedAt: null }], 10, 2_000, new Set(['w2']))[0]
+        .approvalSpent
+    ).toBeNull();
+  });
+});
+
 describe('neoAskApprovalSpent', () => {
   test('is spent only once the window has fully passed, however many continues ran', () => {
     const at = 1_000;

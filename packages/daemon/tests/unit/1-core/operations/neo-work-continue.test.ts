@@ -375,7 +375,9 @@ describe('neo.work.continue', () => {
     expect(await invoke({ id: work.id, message: 'One more.' })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('brought no new commit') },
     });
+    expect(service.isContinueStalled(work.id)).toBe(true);
     service.askRecords.approve(opened.id, Date.now() + 1);
+    expect(service.isContinueStalled(work.id)).toBe(false);
     expect(service.askRecords.get(opened.id)?.approvedContinues).toBe(0);
     for (const message of ['Approved again.', 'Second.', 'Third.'])
       expect(await invoke({ id: work.id, message })).toMatchObject({ value: { ok: true } });
