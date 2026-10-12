@@ -208,6 +208,7 @@ import {
   requireNeoAskEvidenceDue,
 } from './ask-evidence.ts';
 import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
+import { neoCardPrAttention, requireNeoCardPrRelay } from './card-pr-relay.ts';
 import {
   extractNeoCardRefs,
   readGithubRefStates,
@@ -305,6 +306,7 @@ export class NeoService {
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
+  private readonly cardPrRelayed = new Map<string, string>();
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -1305,6 +1307,9 @@ export class NeoService {
       await this.refreshWorkPrs(workId, Date.now()).catch((error) =>
         this.log.warn('Work pull request refresh pending', error)
       );
+      await this.relayCardPr(workId).catch((error) =>
+        this.log.warn('Card pull request relay pending', error)
+      );
     }
     for (const ask of this.askRecords.listLive()) {
       try {
@@ -1388,6 +1393,35 @@ export class NeoService {
       return 'value' in following ? [card.ref] : [];
     });
   }
+
+  private readonly relayCardPr = (superpipe({})('neo-card-pr-relay') as PipelineAPI)
+    .input(['workId'])
+    .pipe((workId: string) => this.repo.getWork(workId), 'workId', 'work')
+    .pipe(
+      (workId: string) => neoCardPrAttention(this.workPrs.get(workId)?.prs ?? []),
+      'workId',
+      'attention'
+    )
+    .pipe(
+      (workId: string, attention: unknown) => {
+        if (!attention) this.cardPrRelayed.delete(workId);
+        return this.cardPrRelayed.get(workId);
+      },
+      ['workId', 'attention'],
+      'told'
+    )
+    .pipe(requireNeoCardPrRelay, ['work', 'attention', 'told'], 'result:relay')
+    .pipe(
+      async (workId: string, relay: { signature: string; message: string }) => {
+        this.cardPrRelayed.set(workId, relay.signature);
+        const sent = await this.continueWork(workId, relay.message);
+        if (!sent.ok) this.log.info(`Card ${workId} pull request news not sent: ${sent.reason}`);
+        return sent;
+      },
+      ['workId', 'relay'],
+      'relay'
+    )
+    .endAsync('relay') as (workId: string) => Promise<unknown>;
 
   private readonly noteAskStall = (superpipe({})('neo-ask-stall-note') as PipelineAPI)
     .input(['ask', 'now'])

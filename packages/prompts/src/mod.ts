@@ -68,6 +68,7 @@ import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text'
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
 import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
+import mdneoCardPrAttention from './neo/card-pr-attention.md' with { type: 'text' };
 import mdneoSystemHolderConsultationReturn from './neo/system/holder-consultation-return.md' with {
   type: 'text',
 };
@@ -360,6 +361,7 @@ const registry: Record<string, string> = {
   'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-evidence.md': mdneoAskEvidence,
   'neo/ask-stalled.md': mdneoAskStalled,
+  'neo/card-pr-attention.md': mdneoCardPrAttention,
   'neo/system/holder-consultation-return.md': mdneoSystemHolderConsultationReturn,
   'neo/system/holder-operations.md': mdneoSystemHolderOperations,
   'neo/system/holder-role.md': mdneoSystemHolderRole,
@@ -542,6 +544,7 @@ export const {
   NEO_SESSION_TRACK,
   NEO_ASK_EVIDENCE,
   NEO_ASK_STALLED,
+  NEO_CARD_PR_ATTENTION,
   NEO_HOLDER_CONSULTATION_RETURN,
   NEO_HOLDER_OPERATIONS,
   NEO_HOLDER_ROLE,
