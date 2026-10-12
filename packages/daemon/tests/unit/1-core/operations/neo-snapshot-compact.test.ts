@@ -169,4 +169,28 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitted.asks?.[0].id).toBe('o0');
     expect(fitted.work.every((item) => item.instruction.length <= 300)).toBe(true);
   });
+
+  test('stays within budget in bytes even with one ask of long checklist evidence', () => {
+    const heavy = snapshot(1, 0);
+    heavy.asks = heavy.asks?.map((item) => ({
+      ...item,
+      doneItems: Array.from({ length: 12 }, (_, n) => ({
+        ...item.doneItems![0],
+        id: `i${n}`,
+        evidence: '证'.repeat(4000),
+      })),
+    }));
+    heavy.concerns = Array.from({ length: 40 }, (_, n) => ({
+      id: `c${n}`,
+      title: `Concern ${n}`,
+      summary: '摘'.repeat(1000),
+      context: '',
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }));
+    const fitted = fitNeoSnapshotBudget(heavy, 40_000);
+    expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(40_000);
+    expect(fitted.asks?.[0].doneItems).toHaveLength(12);
+  });
 });

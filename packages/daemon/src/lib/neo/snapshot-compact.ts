@@ -42,7 +42,7 @@ const TRIMMED_TEXT_LIMIT = 300;
 const NEO_SNAPSHOT_TRIMMED =
   'This snapshot was trimmed to fit: settled asks and finished cards outside open asks are left out, and long text is cut. Call neo.snapshot {askId} for one ask in full.';
 
-const size = (snapshot: NeoSnapshot) => JSON.stringify(snapshot).length;
+const size = (snapshot: NeoSnapshot) => Buffer.byteLength(JSON.stringify(snapshot), 'utf8');
 
 function keepWork(snapshot: NeoSnapshot, keep: ReadonlySet<string>): NeoSnapshot {
   return {
@@ -86,7 +86,36 @@ function withShortText(snapshot: NeoSnapshot): NeoSnapshot {
       ask: ask.ask.slice(0, TRIMMED_TEXT_LIMIT),
       evidence: ask.evidence?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
       outcome: ask.outcome?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
+      doneItems: ask.doneItems?.map((item) => ({
+        ...item,
+        text: item.text.slice(0, TRIMMED_TEXT_LIMIT),
+        evidence: item.evidence?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
+      })),
     })),
+    concerns: snapshot.concerns.map((concern) => ({
+      ...concern,
+      summary: concern.summary.slice(0, TRIMMED_TEXT_LIMIT),
+    })),
+  };
+}
+
+function withBareText(snapshot: NeoSnapshot): NeoSnapshot {
+  return {
+    ...snapshot,
+    sessionNoticeGroups: [],
+    work: snapshot.work.map((item) => ({ ...item, instruction: '', report: null })),
+    asks: snapshot.asks?.map((ask) => ({
+      ...ask,
+      ask: '',
+      evidence: null,
+      outcome: null,
+      doneItems: ask.doneItems?.map((item) => ({
+        ...item,
+        text: item.text.slice(0, 80),
+        evidence: null,
+      })),
+    })),
+    concerns: snapshot.concerns.map((concern) => ({ ...concern, summary: '' })),
   };
 }
 
@@ -113,5 +142,6 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
   if (size(fitted) > budget) fitted = withShortText(fitted);
   for (let count = fitted.asks?.length ?? 0; size(fitted) > budget && count > 1; )
     fitted = withNewestAsks(fitted, (count = Math.floor(count / 2)));
+  if (size(fitted) > budget) fitted = withBareText(fitted);
   return { ...snapshot, ...fitted, trimmed: NEO_SNAPSHOT_TRIMMED };
 }
