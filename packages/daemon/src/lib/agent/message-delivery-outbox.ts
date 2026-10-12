@@ -44,6 +44,7 @@ interface PromptInput {
     injectedMidTurn?: boolean;
     admittedAt?: number;
     admissionRowid?: number;
+    priority?: number;
   };
 }
 
@@ -373,6 +374,7 @@ function enqueueDeliveryJob(
     queue: MESSAGE_DELIVERY,
     payload: { ...basePayload },
     maxRetries: DELIVERY_MAX_RETRIES,
+    ...(basePayload.priority ? { priority: basePayload.priority } : {}),
     ...(basePayload.admittedAt !== undefined ? { createdAt: basePayload.admittedAt } : {}),
   });
 }
@@ -474,6 +476,7 @@ function buildReleasedPayload(args: {
   injectedMidTurn?: boolean;
   admittedAt?: number;
   admissionRowid?: number;
+  priority?: number;
 }): ReleasedDeliveryPayload {
   return {
     sessionId: args.sessionId,
@@ -484,6 +487,7 @@ function buildReleasedPayload(args: {
     ...(args.injectedMidTurn === true ? { injectedMidTurn: true } : {}),
     ...(args.admittedAt !== undefined ? { admittedAt: args.admittedAt } : {}),
     ...(args.admissionRowid !== undefined ? { admissionRowid: args.admissionRowid } : {}),
+    ...(args.priority ? { priority: args.priority } : {}),
   };
 }
 
@@ -515,6 +519,7 @@ function buildPromptPayload(ctx: PromptHeldCtx): PromptPayloadCtx {
       released: ctx.released,
       admittedAt: ctx.delivery.admittedAt,
       admissionRowid: ctx.delivery.admissionRowid,
+      priority: ctx.delivery.priority,
     }),
   };
 }
@@ -700,6 +705,7 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
             injectedMidTurn: ctx.delivery.injectedMidTurn,
             admittedAt: ctx.delivery.admittedAt,
             admissionRowid: ctx.delivery.admissionRowid,
+            priority: ctx.delivery.priority,
           })
         );
         return { dbId: fresh.dbId, activated: true, released, countsTowardsBadge: false };
@@ -724,6 +730,7 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
           injectedMidTurn: ctx.delivery.injectedMidTurn,
           admittedAt: ctx.delivery.admittedAt,
           admissionRowid: ctx.delivery.admissionRowid,
+          priority: ctx.delivery.priority,
         }),
         released
       );
@@ -754,6 +761,7 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
           injectedMidTurn: ctx.delivery.injectedMidTurn,
           admittedAt: ctx.delivery.admittedAt,
           admissionRowid: ctx.delivery.admissionRowid,
+          priority: ctx.delivery.priority,
         })
       );
     }

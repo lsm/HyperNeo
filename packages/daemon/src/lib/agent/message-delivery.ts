@@ -32,6 +32,7 @@ export type MessageDeliveryPayload = {
   injectedMidTurn?: boolean;
   admittedAt?: number;
   admissionRowid?: number;
+  priority?: number;
 };
 
 export const MESSAGE_DELIVERY_MAX_RETRIES = (() => {
