@@ -90,7 +90,7 @@ import {
   type NeoDriverTarget,
   type NeoWorkRetryCard,
 } from './driver-work.ts';
-import { invokeOperation } from '../operations/invoke.ts';
+import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import {
@@ -489,8 +489,14 @@ export function adoptNeoRefTarget<Input extends OwnedLookupInput>(input: Input):
     : input;
 }
 
+export function isNeoWorkMissingHere(outcome: OperationOutcome | null): boolean {
+  if (outcome?.kind !== 'completed') return false;
+  const value = outcome.value as { ok?: boolean; reason?: string } | null;
+  return value?.ok === false && value.reason === 'not_found';
+}
+
 const MISSING_TARGET_HINT =
-  'target_session_not_found: no HyperNeo session has this id. A work.find ref from another adapter (a Codex thread or a Claude session) is proposed as work {verb:"send", ref} with the whole ref, never as targetSessionId.';
+  'target_session_not_found: no HyperNeo session or Claude session on this daemon has this id. A work.find ref from another adapter or daemon (a Codex thread, or a Claude session on another machine) is proposed as work {verb:"send", ref} with the whole ref, daemon included, never as targetSessionId.';
 
 const OWNED_TARGET_HINT =
   'target_owned_context: this session belongs to Neo itself or to Space work with no single owner. To continue Space work, propose with work {verb:"send", ref} using the ref of the task or agent from work.find; snippet session ids are only for work.read.';
@@ -1087,7 +1093,25 @@ export function createNeoOperations(service: NeoService) {
       'owned'
     )
     .pipe(adoptOwnedNeoTarget, ['input', 'owned'], 'input')
-    .pipe(adoptNeoRefTarget, 'input', 'input')
+    .pipe(
+      async (input: z.infer<typeof Propose>, caller: OperationCaller) => {
+        const id = ownedLookupSessionId(input);
+        if (!id?.startsWith('local_')) return input;
+        const outcome = await Promise.resolve()
+          .then(() =>
+            invokeOperation(
+              service.sessions.getOperationRegistry(),
+              'work.status',
+              { ref: { adapter: 'claude-desktop', id } },
+              caller
+            )
+          )
+          .catch(() => null);
+        return isNeoWorkMissingHere(outcome) ? input : adoptNeoRefTarget(input);
+      },
+      ['input', 'admission'],
+      'input'
+    )
     .pipe(
       ({ work }: z.infer<typeof Propose>, caller: OperationCaller) =>
         work

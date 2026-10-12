@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -11,6 +12,7 @@ import { requireNeoWorkTargetSession } from '../../../../src/lib/neo/work-target
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   createOperationRegistry,
+  defineOperation,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -255,6 +257,27 @@ describe('Neo existing chat work', () => {
       verb: 'send',
       ref: { adapter: 'claude-desktop', id: 'local_bc37a8ae-c383-46cb-a16d-cd2a3f1d3c04' },
     });
+  });
+
+  test('a Claude session id this daemon does not have is refused, not sent to the wrong machine', async () => {
+    Object.assign(sessions, {
+      getOperationRegistry: () =>
+        createOperationRegistry([
+          defineOperation({
+            name: 'work.status',
+            description: 'status',
+            inputSchema: z.object({ ref: z.unknown() }),
+            resultSchema: z.unknown(),
+            execute: async () => ({ ok: false, reason: 'not_found', detail: 'No such session.' }),
+          }),
+        ]),
+    });
+    expect(
+      await invoke('neo.work.propose', input('A', 'local_elsewhere'), source('ask-A'))
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('daemon included') },
+    });
+    expect(service.repo.listWork()).toEqual([]);
   });
 
   test('target admission keeps scope-owned runtime integrity without inventing working modes', () => {

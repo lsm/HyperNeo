@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   adoptNeoRefTarget,
+  isNeoWorkMissingHere,
   adoptOwnedNeoTarget,
   ownedLookupSessionId,
 } from '../../../../src/lib/neo/operations.ts';
@@ -53,5 +54,19 @@ describe('adoptNeoRefTarget', () => {
       targetSessionId: 'local_x',
       work,
     });
+  });
+});
+
+describe('isNeoWorkMissingHere', () => {
+  test('only a definite not_found from this daemon counts as missing', () => {
+    const completed = (value: unknown) => ({ kind: 'completed' as const, value });
+    expect(isNeoWorkMissingHere(completed({ ok: false, reason: 'not_found', detail: 'x' }))).toBe(
+      true
+    );
+    expect(isNeoWorkMissingHere(completed({ ok: true, value: {} }))).toBe(false);
+    expect(isNeoWorkMissingHere(completed({ ok: false, reason: 'unreachable', detail: 'x' }))).toBe(
+      false
+    );
+    expect(isNeoWorkMissingHere(null)).toBe(false);
   });
 });
