@@ -134,3 +134,25 @@ export function neoResumeWhy(
     ? `card ${cardId}, which it cites, no longer waits on the human`
     : `it cites no card, and card ${cardId} under this ask stopped waiting on the human, so it may be answered there`;
 }
+
+export function neoHumanTickWakes(
+  state: NeoAskItem['state'],
+  source: string,
+  before: Pick<NeoAskItem, 'state'>
+): boolean {
+  return source !== 'mcp' && state === 'met' && before.state !== 'met';
+}
+
+export function neoAskTickedNote(
+  ask: Pick<NeoAsk, 'id' | 'title' | 'doneItems'>,
+  item: Pick<NeoAskItem, 'id' | 'text'>
+): string {
+  const open = (ask.doneItems ?? []).filter((entry) => !entry.removed && entry.state !== 'met');
+  return [
+    `The human marked item ${item.id} met on ask ${ask.id} ("${ask.title}"): "${item.text}".`,
+    open.length
+      ? `Still open: ${open.map((entry) => `${entry.id} "${entry.text}" (${entry.state})`).join('; ')}. Continue the work this unblocks now.`
+      : 'Every item is met: settle the ask achieved with neo.ask.settle.',
+    'Tell the human only what they need to know.',
+  ].join('\n');
+}

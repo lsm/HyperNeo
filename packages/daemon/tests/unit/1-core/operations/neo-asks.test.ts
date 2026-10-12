@@ -1108,6 +1108,20 @@ describe('neo.ask operations', () => {
     expect(delivered.mock.calls[0]?.[2]).toContain(`card ${cardId} no longer waits on the human`);
   });
 
+  test('the human marking an item met wakes Neo once, and Neo ticking it does not', async () => {
+    const askId = await openAsk();
+    const delivered = mock(async (_ask: NeoAsk, _item: unknown) => {});
+    service.deliverAskTicked = delivered;
+    const human: OperationCaller = { source: 'rpc', principal: 'local' };
+    const done = { askId, itemId: 'i1', state: 'met', evidence: 'Confirmed by the user.' };
+    expect(await invoke('neo.ask.tick', done, human)).toMatchObject({ value: { ok: true } });
+    expect(delivered).toHaveBeenCalledTimes(1);
+    expect(delivered.mock.calls[0]?.[1]).toMatchObject({ id: 'i1', state: 'met' });
+    await invoke('neo.ask.tick', done, human);
+    await invoke('neo.ask.tick', { ...done, itemId: 'i2', evidence: 'CI run 42 green.' });
+    expect(delivered).toHaveBeenCalledTimes(1);
+  });
+
   test('the human marking their own wait needs no citation', async () => {
     const askId = await openAsk();
     expect(
