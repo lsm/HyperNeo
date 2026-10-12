@@ -19,6 +19,13 @@ import type { Database } from '../sqlite-compat.ts';
 const NEO_HUMAN_DELIVERY_PRIORITY = 1;
 
 type Row = { sequence: number; payloadJson: string; createdAt: string };
+export type NeoConversationAskImageRow = {
+  requestId?: string;
+  index: number;
+  width: number | null;
+  height: number | null;
+  thumbnail: { mediaType: string; data: string } | null;
+};
 type IntakePrompt = SDKUserMessage & { inputKind?: unknown };
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
 const page = z.object({
@@ -180,6 +187,50 @@ export class NeoConversationAskRepository {
     before?: number
   ): NeoConversationAsk[] | null {
     return read({ conversationId, after, limit, before }, this.db);
+  }
+
+  recordImages(
+    conversationId: string,
+    requestId: string,
+    images: readonly NeoConversationAskImageRow[]
+  ): void {
+    const insert = this.db.prepare(`INSERT OR IGNORE INTO neo_conversation_ask_images
+      (conversation_id, request_id, block_index, width, height, thumbnail_media_type, thumbnail_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    for (const image of images)
+      insert.run(
+        conversationId,
+        requestId,
+        image.index,
+        image.width,
+        image.height,
+        image.thumbnail?.mediaType ?? null,
+        image.thumbnail?.data ?? null
+      );
+  }
+
+  images(conversationId: string, requestIds: readonly string[]): NeoConversationAskImageRow[] {
+    if (!requestIds.length) return [];
+    const rows = this.db
+      .prepare(`SELECT request_id AS requestId, block_index AS "index", width, height,
+        thumbnail_media_type AS mediaType, thumbnail_data AS data
+        FROM neo_conversation_ask_images
+        WHERE conversation_id = ? AND request_id IN (${requestIds.map(() => '?').join(', ')})`)
+      .all(conversationId, ...requestIds) as Array<{
+      requestId: string;
+      index: number;
+      width: number | null;
+      height: number | null;
+      mediaType: string | null;
+      data: string | null;
+    }>;
+    return rows.map((row) => ({
+      requestId: row.requestId,
+      index: row.index,
+      width: row.width,
+      height: row.height,
+      thumbnail: row.mediaType && row.data ? { mediaType: row.mediaType, data: row.data } : null,
+    }));
   }
 
   findBySequence(conversationId: string, sequence: number): NeoConversationAsk | null {
