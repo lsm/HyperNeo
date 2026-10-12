@@ -56,22 +56,35 @@ describe('requireNeoCardPrRelay', () => {
 
   test('relays new PR news to a queued or reported card', () => {
     for (const status of ['queued', 'reported'] as const) {
-      const relay = requireNeoCardPrRelay({ status }, attention, undefined);
+      const relay = requireNeoCardPrRelay({ status }, attention, {});
       expect(relay).toMatchObject({ value: { signature: 's1' } });
       expect('value' in relay && relay.value.message).toContain(attention.items);
     }
-    expect(requireNeoCardPrRelay({ status: 'queued' }, attention, 's0')).toMatchObject({
+    expect(
+      requireNeoCardPrRelay({ status: 'queued' }, attention, { signature: 's0' })
+    ).toMatchObject({
       value: { signature: 's1' },
     });
+    expect(
+      requireNeoCardPrRelay({ status: 'queued' }, attention, { lastMessage: 'something else' })
+    ).toMatchObject({ value: { signature: 's1' } });
   });
 
   test.each([
-    ['not_in_flight', { status: 'cancelled' as const }, attention, undefined],
-    ['not_in_flight', null, attention, undefined],
-    ['clear', { status: 'queued' as const }, null, undefined],
-    ['told', { status: 'queued' as const }, attention, 's1'],
+    ['not_in_flight', { status: 'cancelled' as const }, attention, {}],
+    ['not_in_flight', null, attention, {}],
+    ['clear', { status: 'queued' as const }, null, {}],
+    ['told', { status: 'queued' as const }, attention, { signature: 's1' }],
   ] as const)('skips with %s', (reason, work, news, told) => {
     expect(requireNeoCardPrRelay(work, news, told)).toEqual({ reason });
+  });
+
+  test('treats the same message as the last continue as already told', () => {
+    const relay = requireNeoCardPrRelay({ status: 'queued' }, attention, {});
+    const message = 'value' in relay ? relay.value.message : '';
+    expect(
+      requireNeoCardPrRelay({ status: 'queued' }, attention, { lastMessage: message })
+    ).toEqual({ reason: 'told' });
   });
 });
 
@@ -79,9 +92,11 @@ describe('NeoService relayCardPr', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
   const sent: { id: string; message: string }[] = [];
+  let refuse: string | null;
 
   beforeEach(async () => {
     sent.length = 0;
+    refuse = null;
     db = await createTestDb();
     service = new NeoService(
       db,
@@ -93,7 +108,9 @@ describe('NeoService relayCardPr', () => {
     Object.assign(service, {
       continueWork: async (id: string, message: string) => {
         sent.push({ id, message });
-        return { ok: true, work: service.repo.getWork(id) };
+        return refuse
+          ? { ok: false, reason: refuse }
+          : { ok: true, work: service.repo.getWork(id) };
       },
     });
   });
@@ -137,6 +154,27 @@ describe('NeoService relayCardPr', () => {
     service.workPrs.record(workId, [pr({ checks: 'failing', review: 'changes_requested' })], 4);
     await relay(workId);
     expect(sent).toHaveLength(3);
+  });
+
+  test('tries again on the next sweep when the continue is refused', async () => {
+    const workId = queuedCard();
+    service.workPrs.record(workId, [pr({ checks: 'failing' })], 1);
+    refuse = 'This work is already being continued; wait for that first.';
+    await relay(workId);
+    refuse = null;
+    await relay(workId);
+    await relay(workId);
+    expect(sent).toHaveLength(2);
+  });
+
+  test('after a restart, does not resend the problem its last continue already carried', async () => {
+    const workId = queuedCard();
+    service.workPrs.record(workId, [pr({ checks: 'failing' })], 1);
+    await relay(workId);
+    service.workContinues.record(workId, sent[0].message, 1, '0|-');
+    Object.assign(service, { cardPrRelayed: new Map() });
+    await relay(workId);
+    expect(sent).toHaveLength(1);
   });
 
   test('leaves a cancelled card alone', async () => {

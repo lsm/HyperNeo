@@ -49,16 +49,13 @@ export function neoCardPrAttention(
 export function requireNeoCardPrRelay(
   work: Pick<NeoWork, 'status'> | null,
   attention: { signature: string; items: string } | null,
-  told: string | undefined
+  told: { signature?: string; lastMessage?: string | null }
 ): { value: { signature: string; message: string } } | { reason: NeoCardPrRelaySkip } {
   if (!work || (work.status !== 'queued' && work.status !== 'reported'))
     return { reason: 'not_in_flight' };
   if (!attention) return { reason: 'clear' };
-  if (attention.signature === told) return { reason: 'told' };
-  return {
-    value: {
-      signature: attention.signature,
-      message: fillPrompt(NEO_CARD_PR_ATTENTION, { items: attention.items }),
-    },
-  };
+  const message = fillPrompt(NEO_CARD_PR_ATTENTION, { items: attention.items });
+  if (attention.signature === told.signature || message === told.lastMessage)
+    return { reason: 'told' };
+  return { value: { signature: attention.signature, message } };
 }

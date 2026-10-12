@@ -1404,8 +1404,11 @@ export class NeoService {
     )
     .pipe(
       (workId: string, attention: unknown) => {
-        if (!attention) this.cardPrRelayed.delete(workId);
-        return this.cardPrRelayed.get(workId);
+        const seen = this.cardPrRelayed.get(workId);
+        if (!attention) this.cardPrRelayed.set(workId, '');
+        return seen === undefined
+          ? { lastMessage: this.workContinues.get(workId)?.lastMessage ?? null }
+          : { signature: seen };
       },
       ['workId', 'attention'],
       'told'
@@ -1413,9 +1416,9 @@ export class NeoService {
     .pipe(requireNeoCardPrRelay, ['work', 'attention', 'told'], 'result:relay')
     .pipe(
       async (workId: string, relay: { signature: string; message: string }) => {
-        this.cardPrRelayed.set(workId, relay.signature);
         const sent = await this.continueWork(workId, relay.message);
-        if (!sent.ok) this.log.info(`Card ${workId} pull request news not sent: ${sent.reason}`);
+        if (sent.ok) this.cardPrRelayed.set(workId, relay.signature);
+        else this.log.debug(`Card ${workId} pull request news not sent: ${sent.reason}`);
         return sent;
       },
       ['workId', 'relay'],
