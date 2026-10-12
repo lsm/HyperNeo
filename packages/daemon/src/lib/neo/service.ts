@@ -2470,9 +2470,32 @@ export class NeoService {
     messageId: string,
     content: string,
     fromSessionId: string,
-    ask: NeoAskOrigin
+    ask: NeoAskOrigin | null
   ): Promise<void> {
     return this.deliver(sessionId, messageId, content, fromSessionId, ask);
+  }
+
+  moveAsk(
+    ask: NeoAsk,
+    cards: readonly NeoWork[],
+    owner: { concernId: string; sessionId: string; messageId: string }
+  ): void {
+    const to = {
+      concernId: owner.concernId,
+      originSessionId: owner.sessionId,
+      originMessageId: owner.messageId,
+    };
+    this.db.getDatabase().transaction(() => {
+      this.askRecords.moveTo(ask.id, to);
+      this.repo.moveWork(
+        cards.map((card) => card.id),
+        to
+      );
+    })();
+  }
+
+  logReorganize(line: string): void {
+    this.log.info(line);
   }
 
   private deliver(

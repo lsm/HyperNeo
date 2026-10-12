@@ -68,6 +68,7 @@ import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text'
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
 import mdneoAskIdle from './neo/ask-idle.md' with { type: 'text' };
+import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
 import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
 import mdneoCardPrAttention from './neo/card-pr-attention.md' with { type: 'text' };
 import mdneoCardPrAttentionNeo from './neo/card-pr-attention-neo.md' with { type: 'text' };
@@ -365,6 +366,7 @@ const registry: Record<string, string> = {
   'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-evidence.md': mdneoAskEvidence,
   'neo/ask-idle.md': mdneoAskIdle,
+  'neo/ask-moved.md': mdneoAskMoved,
   'neo/ask-stalled.md': mdneoAskStalled,
   'neo/card-pr-attention.md': mdneoCardPrAttention,
   'neo/card-pr-attention-neo.md': mdneoCardPrAttentionNeo,
@@ -552,6 +554,7 @@ export const {
   NEO_SESSION_TRACK,
   NEO_ASK_EVIDENCE,
   NEO_ASK_STALLED,
+  NEO_ASK_MOVED,
   NEO_CARD_PR_ATTENTION,
   NEO_CARD_PR_ATTENTION_NEO,
   NEO_ASK_IDLE,
