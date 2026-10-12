@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { isNeoFoldableNote } from '../../../../src/lib/neo/ask-origin';
 import {
   NEO_NOTE_FOLD_LIMIT,
   NEO_NOTE_FOLD_SEPARATOR,
@@ -50,5 +51,22 @@ describe('planNeoNoteFold', () => {
     expect(planNeoNoteFold(human, [note('n1')])).toEqual({ content: 'hi', uuids: ['h1'] });
     const many = Array.from({ length: 20 }, (_, index) => note(`n${index + 2}`));
     expect(planNeoNoteFold(note('n1'), many).uuids).toHaveLength(NEO_NOTE_FOLD_LIMIT);
+  });
+});
+
+describe('isNeoFoldableNote', () => {
+  test.each([
+    ['neo-ask-evidence:a1:x', true],
+    ['w1:stall:1700', true],
+    ['w1:needs-you:1700', true],
+    ['neo-session-notices:1:k', true],
+    ['neo-card-pr:w1:abc', true],
+    ['neo-nudge:m1', false],
+    ['neo-consult:c1:request', false],
+    ['neo-forward:m1:0', false],
+    ['neo-ask-answer:a1:i1:5', false],
+    ['w1:return', false],
+  ])('%s folds: %s', (id, foldable) => {
+    expect(isNeoFoldableNote(id)).toBe(foldable);
   });
 });

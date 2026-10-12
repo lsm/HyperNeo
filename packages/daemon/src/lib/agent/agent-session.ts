@@ -39,7 +39,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
-import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
+import { createNeoAskOriginResolver, isNeoFoldableNote } from '../neo/ask-origin.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { planNeoNoteFold } from './neo-note-fold.ts';
@@ -3008,7 +3008,11 @@ export class AgentSession
       return origin ? `${origin.sessionId}|${origin.messageId}` : null;
     };
     const head = repo.getDeliveryContent(this.session.id, messageUuid);
-    if (head?.inputKind !== 'system' || typeof content !== 'string')
+    if (
+      head?.inputKind !== 'system' ||
+      typeof content !== 'string' ||
+      !isNeoFoldableNote(messageUuid)
+    )
       return { content, uuids: [messageUuid] };
     return planNeoNoteFold(
       {
@@ -3019,7 +3023,7 @@ export class AgentSession
       },
       jobQueue.pendingDeliveryMessageUuids(this.session.id).flatMap((uuid) => {
         const loaded = repo.getDeliveryContent(this.session.id, uuid);
-        return loaded?.sendStatus === 'enqueued'
+        return loaded?.sendStatus === 'enqueued' && isNeoFoldableNote(uuid)
           ? [
               {
                 uuid,

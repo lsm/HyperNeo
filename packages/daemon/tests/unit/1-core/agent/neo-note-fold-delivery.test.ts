@@ -122,27 +122,41 @@ describe('AgentSession driveDeliveryTurn for Neo system notes', () => {
 
   it('folds the queued notes into one turn and marks them all consumed', async () => {
     const result = await drive('neo:fold-root', true, [
-      ['n1', 'system'],
-      ['n2', 'system'],
-      ['n3', 'system'],
+      ['w1:stall:1', 'system'],
+      ['w2:stall:2', 'system'],
+      ['neo-ask-evidence:a1:x', 'system'],
     ]);
     expect(result.outcome).toEqual({ outcome: 'completed' });
-    expect(result.content).toBe(['note n1', 'note n2', 'note n3'].join(NEO_NOTE_FOLD_SEPARATOR));
+    expect(result.content).toBe(
+      ['note w1:stall:1', 'note w2:stall:2', 'note neo-ask-evidence:a1:x'].join(
+        NEO_NOTE_FOLD_SEPARATOR
+      )
+    );
     expect(result.statuses).toEqual(['consumed', 'consumed', 'consumed']);
+  });
+
+  it('gives a nudge or consultation its own turn', async () => {
+    const result = await drive('neo:fold-nudge', true, [
+      ['w1:stall:1', 'system'],
+      ['neo-nudge:m1', 'system'],
+      ['neo-consult:c1:request', 'system'],
+    ]);
+    expect(result.content).toBe('note w1:stall:1');
+    expect(result.statuses).toEqual(['consumed', 'enqueued', 'enqueued']);
   });
 
   it('leaves a queued human message and non-Neo sessions alone', async () => {
     const neo = await drive('neo:fold-human', true, [
-      ['n1', 'system'],
+      ['w1:stall:1', 'system'],
       ['h1', 'human'],
     ]);
-    expect(neo.content).toBe('note n1');
+    expect(neo.content).toBe('note w1:stall:1');
     expect(neo.statuses).toEqual(['consumed', 'enqueued']);
     const plain = await drive('plain-session', false, [
-      ['n1', 'system'],
-      ['n2', 'system'],
+      ['w1:stall:1', 'system'],
+      ['w2:stall:2', 'system'],
     ]);
-    expect(plain.content).toBe('note n1');
+    expect(plain.content).toBe('note w1:stall:1');
     expect(plain.statuses).toEqual(['consumed', 'enqueued']);
   });
 });
