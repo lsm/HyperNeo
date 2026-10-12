@@ -38,6 +38,13 @@ describe('planNeoNoteFold', () => {
     ]);
   });
 
+  test('folds a note queued twice only once', () => {
+    expect(planNeoNoteFold(note('n1'), [note('n2'), note('n2'), note('n1')]).uuids).toEqual([
+      'n1',
+      'n2',
+    ]);
+  });
+
   test('never folds into a human message, and caps one fold', () => {
     const human = { ...note('h1'), system: false, content: 'hi' };
     expect(planNeoNoteFold(human, [note('n1')])).toEqual({ content: 'hi', uuids: ['h1'] });

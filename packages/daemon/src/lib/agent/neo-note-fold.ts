@@ -18,8 +18,9 @@ export function planNeoNoteFold(
     return { content: head.content, uuids: [head.uuid] };
   const folded = pending
     .filter(
-      (note) =>
+      (note, index) =>
         note.uuid !== head.uuid &&
+        pending.findIndex((other) => other.uuid === note.uuid) === index &&
         note.system &&
         typeof note.content === 'string' &&
         note.key === head.key

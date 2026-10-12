@@ -3008,11 +3008,13 @@ export class AgentSession
       return origin ? `${origin.sessionId}|${origin.messageId}` : null;
     };
     const head = repo.getDeliveryContent(this.session.id, messageUuid);
+    if (head?.inputKind !== 'system' || typeof content !== 'string')
+      return { content, uuids: [messageUuid] };
     return planNeoNoteFold(
       {
         uuid: messageUuid,
         content,
-        system: head?.inputKind === 'system',
+        system: true,
         key: keyOf(messageUuid),
       },
       jobQueue.pendingDeliveryMessageUuids(this.session.id).flatMap((uuid) => {
