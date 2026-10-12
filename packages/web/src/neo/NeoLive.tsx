@@ -9,16 +9,16 @@ import ToastContainer from '../islands/ToastContainer.tsx';
 import { blurComposerOnTap } from '../lib/blur-composer-on-tap.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
+import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoActivity } from './NeoActivity.tsx';
 import { NeoAskCard } from './NeoAskCard.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
-import { publicAskText } from './NeoPublicConversation.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
+import { publicAskText } from './NeoPublicConversation.tsx';
 import { NeoSessionPane } from './NeoSessionPane.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
-import { readNeoAskImages } from './conversation-ask-client.ts';
 import { groupNeoAsks } from './neo-asks.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
@@ -32,6 +32,7 @@ import {
 } from './neo-scenes.ts';
 import { neoAwaitingReply } from './processing-activity.ts';
 import { neoWorkSummaries, neoWorkSummary } from './public-conversation.ts';
+import { revealNeoWork } from './reveal-work.ts';
 import { useNeo } from './useNeo.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { publicationConversationId } from './useNeoPublications.ts';
@@ -384,7 +385,13 @@ export function NeoLive() {
 
   function openScene(ref: NeoSceneRef) {
     const work = relevant.find((item) => item.id === ref.id);
-    if (work?.sessionId) setChat({ sessionId: work.sessionId, title: work.title });
+    if (work?.sessionId) {
+      setChat({ sessionId: work.sessionId, title: work.title });
+      return;
+    }
+    setChat(null);
+    setScenesOpen(true);
+    requestAnimationFrame(() => revealNeoWork(sceneSheet.current, ref.id));
   }
 
   return (
