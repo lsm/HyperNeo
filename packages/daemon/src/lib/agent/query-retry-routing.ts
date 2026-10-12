@@ -178,7 +178,7 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
   if (isSdkProcessExitError(errorSignal.rawText) && limitRecoveryInFlight(env)) {
     return { action: 'expected_recovery_noop' };
   }
-  if (env.turnEnded && isSdkProcessExitError(errorSignal.rawText))
+  if (env.turnEnded && !env.hasQueuedPrompt && isSdkProcessExitError(errorSignal.rawText))
     return { action: 'turn_ended_noop' };
   if (errorSignal.isRateLimit && env.hasRateLimitHandoff && errorSignal.rateLimitHint !== null)
     return { action: 'rate_limit_handoff', hint: errorSignal.rateLimitHint };
