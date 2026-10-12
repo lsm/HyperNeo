@@ -142,7 +142,7 @@ Neo reads anything and changes nothing shared. Root and topic Neo follow the sam
 
 Heavy checks (builds, tests, servers) are a verification card, not Neo: a check one or two commands answer, Neo does itself. Secret paths stay unreadable.
 
-The hook reads each command by its words, including `bash -c`, `$(…)`, git's global options and inline interpreter code. It stops the direct forms of a shared-state action. A script written to disguise one can still get through, so the prompt and the card hand-off carry the rest of the trust.
+The hook reads each command by its words, including `bash -c`, `$(…)`, git's and gh's global options, inline interpreter code, and the script file a command runs. It stops shared-state actions and secret paths that appear literally there. A path or command the code builds at run time can still get through, so for both secrets and shared state the prompt and the card hand-off carry the rest of the trust.
 
 ### 7. Notifications
 

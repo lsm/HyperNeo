@@ -210,8 +210,38 @@ describe('the tiered Neo tool rule', () => {
     ['echo `gh pr merge 12`', 'changing a pull request'],
     ['node -e \'require("child_process").execSync("git push")\'', 'inline code'],
     ['python3 -c \'import os; os.system("gh pr merge 12")\'', 'inline code'],
+    ['gh -R fictional/app pr merge 12', 'changing a pull request'],
+    ['gh --repo fictional/app issue close 3', 'changing an issue'],
+    ['gh gist create notes.md', 'changing GitHub'],
   ])('sees through flag, substitution and inline-code forms: %s', (command, why) => {
     expect(reason('Bash', { command }, project)).toContain(why);
+  });
+
+  test('scans inline code and the scripts it runs for secrets and shared state', () => {
+    expect(
+      reason('Bash', {
+        command: `python3 -c "print(open('/home/fictional/.ssh/id_ed25519').read())"`,
+      })
+    ).toContain('may hold secrets');
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'neo-guard-script-')));
+    try {
+      const own = { ...scope, cwd: folder, own: [folder] };
+      writeFileSync(
+        join(folder, 'leak.ts'),
+        "await Bun.file('/home/fictional/.aws/credentials').text();"
+      );
+      writeFileSync(join(folder, 'ship.sh'), 'git push origin main');
+      writeFileSync(join(folder, 'check.ts'), "await fetch('http://localhost:8399/health');");
+      expect(decideNeoTool('Bash', { command: 'bun leak.ts' }, own)).toMatchObject({
+        reason: expect.stringContaining('may hold secrets'),
+      });
+      expect(decideNeoTool('Bash', { command: 'sh ship.sh' }, own)).toMatchObject({
+        reason: expect.stringContaining('pushes, merges or restarts'),
+      });
+      expect(decideNeoTool('Bash', { command: 'bun check.ts' }, own)).toEqual({ kind: 'allow' });
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
   });
 
   test.each([

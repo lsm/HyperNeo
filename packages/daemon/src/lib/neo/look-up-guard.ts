@@ -1,5 +1,5 @@
 import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
@@ -100,7 +100,10 @@ interface LookUpScope {
 interface LookUpPathFacts {
   realPath(path: string): string;
   exists(path: string): boolean;
+  readText?(path: string): string | null;
 }
+
+const SCRIPT_READ_LIMIT = 256 * 1024;
 
 function readLookUpPathFacts(): LookUpPathFacts {
   const real = new Map<string, string>();
@@ -119,6 +122,13 @@ function readLookUpPathFacts(): LookUpPathFacts {
     exists: (path) => {
       if (!present.has(path)) present.set(path, existsSync(path));
       return present.get(path)!;
+    },
+    readText: (path) => {
+      try {
+        return statSync(path).size <= SCRIPT_READ_LIMIT ? readFileSync(path, 'utf8') : null;
+      } catch {
+        return null;
+      }
     },
   };
 }
@@ -343,6 +353,7 @@ const GH_CHANGES: Record<string, ReadonlySet<string>> = {
   workflow: new Set(['run', 'enable', 'disable']),
   run: new Set(['rerun', 'cancel', 'delete']),
   repo: new Set(['create', 'delete', 'edit', 'rename', 'archive', 'fork']),
+  gist: new Set(['create', 'edit', 'delete', 'clone']),
 };
 const GH_WHAT: Record<string, string> = {
   pr: 'changing a pull request',
@@ -415,13 +426,25 @@ function inlineCode(words: readonly string[]): string | null {
   return flag > 0 && words[flag + 1] ? words.slice(flag + 1).join(' ') : null;
 }
 
+const GH_VALUE_OPTIONS = new Set(['-R', '--repo', '--hostname']);
+
+function ghCommand(words: readonly string[]): string[] {
+  const rest: string[] = [];
+  for (let at = 1; at < words.length; at += 1) {
+    if (GH_VALUE_OPTIONS.has(words[at])) at += 1;
+    else if (!/^(-R|--repo=|--hostname=)/.test(words[at])) rest.push(words[at]);
+  }
+  return rest;
+}
+
 export function neoSharedStateAction(words: readonly string[], segment: string): string | null {
-  const [name, sub, act] = words;
+  const [name, sub] = words;
   if (name === 'git') return gitVerb(words).verb === 'push' ? 'git push' : null;
   if (name === 'gh') {
-    if (sub === 'api')
-      return ghApiChange(words.slice(2).join(' ')) ? 'a gh api call that changes GitHub' : null;
-    return GH_CHANGES[sub]?.has(act) ? (GH_WHAT[sub] ?? 'changing GitHub') : null;
+    const [command, act, ...args] = ghCommand(words);
+    if (command === 'api')
+      return ghApiChange([act, ...args].join(' ')) ? 'a gh api call that changes GitHub' : null;
+    return GH_CHANGES[command]?.has(act) ? (GH_WHAT[command] ?? 'changing GitHub') : null;
   }
   if (SERVICE_VERBS[name]?.has(sub)) return 'starting or stopping a daemon or service';
   if (KILLERS.has(name)) return 'stopping a process';
@@ -429,6 +452,26 @@ export function neoSharedStateAction(words: readonly string[], segment: string):
     return 'deploying or restarting on another machine';
   const code = inlineCode(words);
   return code && INLINE_SHARED.test(code) ? 'inline code that pushes, merges or restarts' : null;
+}
+
+const SHELLS = new Set(['bash', 'sh', 'zsh']);
+
+function scriptFile(words: readonly string[], dir: string, facts: LookUpPathFacts): string | null {
+  if (!INTERPRETERS.has(words[0]) && !SHELLS.has(words[0])) return null;
+  if (words.some((word) => INLINE_FLAGS.has(word))) return null;
+  const path = words.slice(1).find((word) => !word.startsWith('-') && word !== 'run');
+  return path ? (facts.readText?.(resolve(dir, path)) ?? null) : null;
+}
+
+function codePaths(code: string): string[] {
+  return (code.match(/[^\s'"`(),;{}[\]+]+/g) ?? []).filter(
+    (token) =>
+      token.includes('/') ||
+      token.startsWith('.') ||
+      token.startsWith('~') ||
+      /^id_/.test(token) ||
+      /\.(pem|key)$/.test(token)
+  );
 }
 
 function substitutions(segment: string): string[] {
@@ -553,6 +596,11 @@ function analyzeBash(
     }
     found.secret ??= secretArgument(words.slice(1), dir, scope, facts);
     found.sharedState ??= neoSharedStateAction(words, segment);
+    const code = inlineCode(words) ?? scriptFile(words, dir, facts);
+    if (code) {
+      found.secret ??= secretArgument(codePaths(code), dir, scope, facts);
+      if (INLINE_SHARED.test(code)) found.sharedState ??= 'code that pushes, merges or restarts';
+    }
     const nested = [nestedCommand(words), ...substitutions(segment)].filter(
       (inner): inner is string => !!inner
     );
