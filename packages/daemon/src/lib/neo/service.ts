@@ -2019,7 +2019,10 @@ export class NeoService {
         })
       );
       const cleared = planNeoNeedsYouCleared(ask, cards);
-      if (cleared.length) await this.wakeForClearedNeedsYou(ask, cleared);
+      if (cleared.length)
+        await this.wakeForClearedNeedsYou(ask, cleared).catch((error) =>
+          this.log.warn('Stale needs_you note pending', error)
+        );
     }
   }
 
