@@ -381,6 +381,21 @@ describe('PRs the worker session opened', () => {
     );
   });
 
+  test('one the brief names stays named, so an old merged one still attaches', () => {
+    const [candidate] = planNeoCardPrCandidates({
+      report: null,
+      brief: `Follow up on ${pull(4)}.`,
+      branch: [],
+      opened: [pull(4)],
+      stored: [],
+    });
+    expect(candidate).toEqual({ url: pull(4), claim: 'named' });
+    const owned = { ...candidate, claimedAt: 200, claimed: false, score: null };
+    expect(
+      keepNeoCardPrReads(card, [owned], [{ ...pr(4, 50), state: 'MERGED' }]).kept
+    ).toHaveLength(1);
+  });
+
   test('are read again only when one is not on the card yet', () => {
     expect(hasNeoUnattachedOpenedPrs([pull(1)], [{ url: pull(1).toUpperCase() }])).toBe(false);
     expect(hasNeoUnattachedOpenedPrs([pull(1), pull(2)], [{ url: pull(1) }])).toBe(true);

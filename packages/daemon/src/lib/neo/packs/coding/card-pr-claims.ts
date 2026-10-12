@@ -55,10 +55,10 @@ export function planNeoCardPrCandidates(input: {
     seen.add(key(url));
     const claim: NeoPrClaim = onBranch.has(key(url))
       ? 'branch'
-      : opened.has(key(url))
-        ? 'opened'
-        : named.has(key(url))
-          ? 'named'
+      : named.has(key(url))
+        ? 'named'
+        : opened.has(key(url))
+          ? 'opened'
           : 'mentioned';
     return [{ url, claim }];
   });
