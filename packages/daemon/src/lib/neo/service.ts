@@ -289,6 +289,7 @@ import { NeoNotificationTriggerRepository } from '../../storage/repositories/neo
 import {
   coverNeoAskTriggers,
   NEO_TRIGGER_ACHIEVED_WINDOW_MS,
+  NEO_TRIGGER_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
   neoHumanTriggerMessageId,
   neoTriggerMessageId,
@@ -650,6 +651,7 @@ export class NeoService {
             () => true,
             (error) => {
               this.log.warn('Trigger note pending; the next sweep retries it', error);
+              this.scheduleTriggerSweep(NEO_TRIGGER_RETRY_MS);
               return false;
             }
           ),
@@ -956,12 +958,12 @@ export class NeoService {
     ];
   }
 
-  private scheduleTriggerSweep(): void {
+  private scheduleTriggerSweep(delay = NEO_TRIGGER_SWEEP_MS): void {
     if (this.triggerTimer || this.disposed) return;
     this.triggerTimer = setTimeout(() => {
       this.triggerTimer = undefined;
       void this.sweepTriggers();
-    }, NEO_TRIGGER_SWEEP_MS);
+    }, delay);
     this.triggerTimer.unref?.();
   }
 

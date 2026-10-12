@@ -14,6 +14,7 @@ import { nudgedMessageId } from './ask-origin.ts';
 export const NEO_TRIGGER_PREFIX = 'neo-trigger:';
 export const NEO_HUMAN_TRIGGER_PREFIX = 'human:';
 export const NEO_TRIGGER_SWEEP_MS = 1_000;
+export const NEO_TRIGGER_RETRY_MS = 60_000;
 export const NEO_TRIGGER_ACHIEVED_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export type NeoTriggerKind = 'outcome' | 'failed' | 'action';

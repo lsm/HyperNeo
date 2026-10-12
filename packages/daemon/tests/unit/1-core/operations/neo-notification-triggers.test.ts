@@ -10,6 +10,7 @@ import {
 import {
   coverNeoAskTriggers,
   isNeoCardFailedForGood,
+  NEO_TRIGGER_RETRY_MS,
   neoAskTriggerKeys,
   neoTriggerNote,
   noteNeoAskTrigger,
@@ -326,6 +327,24 @@ describe('NeoService notification triggers', () => {
     sweep();
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(mailbox()).toHaveLength(1);
+  });
+
+  test('a failed note delivery re-arms the sweep, and the retry sends it', async () => {
+    const opened = open();
+    seed();
+    const rearm = vi.spyOn(
+      service as unknown as { scheduleTriggerSweep(delay?: number): void },
+      'scheduleTriggerSweep'
+    );
+    vi.spyOn(service, 'open').mockRejectedValueOnce(new Error('session gone'));
+    tickMet(opened);
+    rearm.mockClear();
+    await sweep();
+    expect(mailbox()).toEqual([]);
+    expect(rearm).toHaveBeenCalledWith(NEO_TRIGGER_RETRY_MS);
+    await sweep();
+    await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
+    expect(mailbox()[0].messageUuid).toMatch(/^neo-trigger:outcome:a1:/);
   });
 
   test('seeding at startup marks what is already there as told, without waking Neo', async () => {
