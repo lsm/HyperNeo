@@ -2840,11 +2840,9 @@ export class AgentSession
         deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'ack_timeout');
         if (this.messageQueue.hasYielded?.(messageUuid)) {
           await withSessionLock(this.session.id, async () => {
-            this.markDeliveryConsumed(admission.consumedUuids);
-            await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
-            for (const uuid of admission.consumedUuids) {
-              signalDeliveryConsumed(this.session.id, uuid);
-            }
+            this.markDeliveryConsumed([messageUuid]);
+            await this.publishToolResultConsumed(this.session.id, [messageUuid]);
+            signalDeliveryConsumed(this.session.id, messageUuid);
           });
         } else {
           this.messageQueue.remove?.(messageUuid);
