@@ -205,7 +205,9 @@ describe('planNeoNeedsYouCleared', () => {
     const met = waiting({ state: 'met', waitCard: 'w1' });
     expect(planNeoNeedsYouCleared(met, new Map())).toEqual([]);
   });
+});
 
+describe('neoNeedsYouClearedNote', () => {
   test('the note names each cleared item and why', () => {
     const note = neoNeedsYouClearedNote(
       { id: 'a1', title: 'Ship it' },
