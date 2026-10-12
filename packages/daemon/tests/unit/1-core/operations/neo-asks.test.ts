@@ -591,6 +591,35 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true, ask: { status: 'abandoned' } } });
   });
 
+  test('a step Neo settles waiting on carries its own question', async () => {
+    const askId = await openAsk();
+    const waiting = {
+      id: askId,
+      outcome: 'waiting',
+      summary: 'Try the keyboard on the phone.',
+      evidence: 'The fix is on the phone build.',
+      cite,
+      action: 'Test it on the phone',
+      kind: 'action',
+    };
+    expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('question_required') },
+    });
+    expect(
+      await invoke('neo.ask.settle', { ...waiting, question: 'Did the keyboard hide?' })
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          status: 'waiting',
+          doneItems: expect.arrayContaining([
+            expect.objectContaining({ kind: 'action', question: 'Did the keyboard hide?' }),
+          ]),
+        },
+      },
+    });
+  });
+
   test('a decision item is written only by the settle that wins the status check', async () => {
     const askId = await openAsk();
     const decision = { id: 'i3', position: 2, text: 'Pick the release date.' };

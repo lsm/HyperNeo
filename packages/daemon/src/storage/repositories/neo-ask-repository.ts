@@ -290,6 +290,7 @@ export class NeoAskRepository {
       text: string;
       action?: string;
       kind?: NeoAskItem['kind'];
+      question?: string;
     } | null = null,
     decided = false
   ): NeoAsk | null {
@@ -315,8 +316,8 @@ export class NeoAskRepository {
         decision &&
         this.db
           .prepare(`INSERT INTO neo_ask_items
-            (ask_id, id, position, text, state, evidence, decision, action, kind, added_at, updated_at)
-            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
+            (ask_id, id, position, text, state, evidence, decision, action, kind, question, added_at, updated_at)
+            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
           .run(
             expected.id,
             decision.id,
@@ -325,6 +326,7 @@ export class NeoAskRepository {
             evidence,
             decision.action ?? null,
             decision.kind ?? 'decision',
+            decision.question ?? null,
             now,
             now
           ).changes === 0

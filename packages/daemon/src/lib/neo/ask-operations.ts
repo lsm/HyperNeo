@@ -87,6 +87,7 @@ export const NeoAskSchema = z.object({
         action: z.string().optional(),
         waitCard: z.string().optional(),
         kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
+        question: z.string().optional(),
       })
     )
     .optional(),
@@ -129,6 +130,7 @@ const Settle = z.object({
   cite: Cite.optional(),
   action: z.string().trim().min(1).max(120).optional(),
   kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
+  question: z.string().trim().min(1).max(200).optional(),
 });
 
 const Tick = z.object({
@@ -916,6 +918,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
                 context: input.evidence,
                 kind: input.kind ?? 'decision',
                 action: input.action,
+                question: input.question,
                 workIds: ask.workIds,
               },
               ask
@@ -939,7 +942,12 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
             input.evidence,
             decision.waitingItem,
             decision.add
-              ? { ...decision.add, action: input.action, kind: input.kind ?? 'decision' }
+              ? {
+                  ...decision.add,
+                  action: input.action,
+                  kind: input.kind ?? 'decision',
+                  question: input.kind === 'action' ? input.question : undefined,
+                }
               : decision.add,
             true
           ),
