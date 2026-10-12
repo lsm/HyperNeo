@@ -71,6 +71,51 @@ export function findDescribedOperation(
   return operation ? { value: operation } : { reason: { found: false, name } };
 }
 
+type JsonSchemaNode = {
+  type?: string | string[];
+  enum?: unknown[];
+  const?: unknown;
+  anyOf?: JsonSchemaNode[];
+  oneOf?: JsonSchemaNode[];
+  items?: JsonSchemaNode;
+  properties?: Record<string, JsonSchemaNode>;
+  required?: string[];
+};
+
+function signatureType(node: JsonSchemaNode): string {
+  if (node.enum) return node.enum.map((value) => JSON.stringify(value)).join('|');
+  if (node.const !== undefined) return JSON.stringify(node.const);
+  const variants = node.anyOf ?? node.oneOf;
+  if (variants) return [...new Set(variants.map(signatureType))].join('|');
+  if (node.type === 'array') return `${signatureType(node.items ?? {})}[]`;
+  if (node.type === 'object' && node.properties)
+    return `{${Object.keys(node.properties).join(', ')}}`;
+  return Array.isArray(node.type) ? node.type.join('|') : (node.type ?? 'any');
+}
+
+export function operationSignature(
+  operation: Pick<OperationDefinition, 'name' | 'inputSchema'>
+): string {
+  const schema = z.toJSONSchema(operation.inputSchema, { io: 'input' }) as JsonSchemaNode;
+  const required = new Set(schema.required ?? []);
+  const fields = Object.entries(schema.properties ?? {}).map(
+    ([field, node]) => `${field}${required.has(field) ? '' : '?'}: ${signatureType(node)}`
+  );
+  return `${operation.name} {${fields.join(', ')}}`;
+}
+
+export function describeOperationSignatures(
+  registry: OperationRegistry,
+  names: readonly string[]
+): string {
+  return names
+    .flatMap((name) => {
+      const operation = registry.get(name);
+      return operation ? [operationSignature(operation)] : [];
+    })
+    .join('\n');
+}
+
 export function describeOperationDefinition(operation: OperationDefinition): Description {
   return {
     found: true,
