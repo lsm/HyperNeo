@@ -79,6 +79,8 @@ import mdneoSystemHolderSnapshotScope from './neo/system/holder-snapshot-scope.m
 };
 import mdneoSystemPrompt from './neo/system/prompt.md' with { type: 'text' };
 import mdneoSystemRootClarify from './neo/system/root-clarify.md' with { type: 'text' };
+import mdneoSystemRootLookUp from './neo/system/root-look-up.md' with { type: 'text' };
+import mdneoSystemHolderLookUp from './neo/system/holder-look-up.md' with { type: 'text' };
 import mdneoSystemRootConsultationReturn from './neo/system/root-consultation-return.md' with {
   type: 'text',
 };
@@ -368,6 +370,8 @@ const registry: Record<string, string> = {
   'neo/system/holder-snapshot-scope.md': mdneoSystemHolderSnapshotScope,
   'neo/system/prompt.md': mdneoSystemPrompt,
   'neo/system/root-clarify.md': mdneoSystemRootClarify,
+  'neo/system/root-look-up.md': mdneoSystemRootLookUp,
+  'neo/system/holder-look-up.md': mdneoSystemHolderLookUp,
   'neo/system/root-consultation-return.md': mdneoSystemRootConsultationReturn,
   'neo/system/root-operations.md': mdneoSystemRootOperations,
   'neo/system/root-role.md': mdneoSystemRootRole,
@@ -551,6 +555,8 @@ export const {
   NEO_HOLDER_SNAPSHOT_SCOPE,
   NEO_SYSTEM_PROMPT,
   NEO_ROOT_CLARIFY,
+  NEO_ROOT_LOOK_UP,
+  NEO_HOLDER_LOOK_UP,
   NEO_ROOT_CONSULTATION_RETURN,
   NEO_ROOT_OPERATIONS,
   NEO_ROOT_ROLE,

@@ -18,6 +18,10 @@ export const NEO_LOOKUP_COMMANDS = [
   'git blame',
 ];
 
+export const NEO_ROOT_LOOKUP_COMMANDS = NEO_LOOKUP_COMMANDS.filter((command) =>
+  command.startsWith('gh ')
+);
+
 const SECRET_DIRS = [
   '.ssh',
   '.aws',
@@ -112,6 +116,7 @@ interface LookUpScope {
   home: string;
   dataDir: string;
   cwd: string;
+  commands?: readonly string[];
 }
 
 interface LookUpPathFacts {
@@ -334,7 +339,9 @@ export function bashDenial(
   const segments = shellSegments(command);
   const unknown = segments.find(
     (segment) =>
-      !NEO_LOOKUP_COMMANDS.some((prefix) => segment === prefix || segment.startsWith(`${prefix} `))
+      !(scope.commands ?? NEO_LOOKUP_COMMANDS).some(
+        (prefix) => segment === prefix || segment.startsWith(`${prefix} `)
+      )
   );
   if (unknown !== undefined) return `"${unknown}" is not a read-only look-up command`;
   let dir = scope.cwd;

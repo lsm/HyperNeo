@@ -18,6 +18,7 @@ import {
   planNeoAskTickStatus,
   requireNeoAskDecisionRoom,
   requireNeoHumanWaitCited,
+  isNeoAskHandedOver,
   requireNeoAskEdit,
   planNeoAskWorkStops,
   planNeoCardAsk,
@@ -40,6 +41,7 @@ import {
   neoWorkDoneGoal,
   projectNeoAskCards,
 } from '../../../../src/lib/neo/driver-work.ts';
+import { isNeoAskStartApproved } from '../../../../src/lib/neo/work-origin.ts';
 import { createNeoOperations, neoAskScope } from '../../../../src/lib/neo/operations.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -157,6 +159,24 @@ describe('neo.ask operations', () => {
       askId,
     });
   }
+
+  test('an ask opened in a turn the human sent is approved, so its cards start without Start', async () => {
+    const askId = await openAsk();
+    expect(service.askRecords.get(askId)?.approvedAt).toEqual(expect.any(Number));
+    const card = service.repo.getWork((await propose('card-1', askId)).value!.work!.id)!;
+    const later: OperationCaller = {
+      ...neo,
+      neoTurn: { ...neo.neoTurn!, messageId: 'later', human: false },
+    };
+    expect(isNeoAskStartApproved(card, service.askRecords.get(askId), later)).toBe(true);
+  });
+
+  test('an ask opened outside a human turn still waits for the human to approve it', async () => {
+    const quiet: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, human: false } };
+    const opened = await invoke('neo.ask.open', { ...opening, requestKey: 'quiet' }, quiet);
+    expect(opened.value!.ask!.approvedAt ?? null).toBeNull();
+    expect(isNeoAskHandedOver({ source: 'rpc', principal: 'local' })).toBe(false);
+  });
 
   test('opens one ask per request key and shows its cards in the snapshot', async () => {
     const askId = await openAsk();

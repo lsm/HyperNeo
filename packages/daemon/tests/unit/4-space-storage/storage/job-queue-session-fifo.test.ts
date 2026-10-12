@@ -76,6 +76,32 @@ describe('JobQueueRepository — dequeueSessionFifo (dark launch)', () => {
     expect(repo.getJob(a2.id)?.status).toBe('pending');
   });
 
+  it('a higher-priority job heads its session lane ahead of older queued jobs', () => {
+    const note1 = enqueueDelivery(repo, 'sess-a', { origin: 'mailbox' });
+    const note2 = enqueueDelivery(repo, 'sess-a', { origin: 'mailbox' });
+    const human = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a', origin: 'chat' },
+      priority: 1,
+    });
+
+    expect(repo.dequeueSessionFifo('message_delivery', 5).map((job) => job.id)).toEqual([human.id]);
+    repo.complete(human.id);
+    expect(repo.dequeueSessionFifo('message_delivery', 5).map((job) => job.id)).toEqual([note1.id]);
+    expect(repo.getJob(note2.id)?.status).toBe('pending');
+  });
+
+  it('a higher-priority job still waits for the job its session is already processing', () => {
+    const note = enqueueDelivery(repo, 'sess-a', { origin: 'mailbox' });
+    expect(repo.dequeueSessionFifo('message_delivery', 5).map((job) => job.id)).toEqual([note.id]);
+    repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a', origin: 'chat' },
+      priority: 1,
+    });
+    expect(repo.dequeueSessionFifo('message_delivery', 5)).toEqual([]);
+  });
+
   it('breaks a created_at tie by rowid (insertion order)', () => {
     const first = enqueueDelivery(repo, 'sess-a');
     const second = enqueueDelivery(repo, 'sess-a');

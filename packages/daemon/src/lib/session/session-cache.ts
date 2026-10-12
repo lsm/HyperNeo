@@ -10,7 +10,7 @@ export class SessionCache {
 
   private sessionLoadLocks = new Map<string, Promise<AgentSession | null>>();
 
-  private removedWhileLoading = new Set<string>();
+  private removedWhileLoading = new Set<Promise<AgentSession | null>>();
 
   constructor(
     private createAgentSession: AgentSessionFactory,
@@ -52,11 +52,11 @@ export class SessionCache {
       return await loadInProgress;
     }
 
-    const loadPromise = (async (): Promise<AgentSession | null> => {
+    const loadPromise = Promise.resolve().then(async (): Promise<AgentSession | null> => {
       try {
         const agentSession = await this.loadSessionAsync(sessionId);
         if (agentSession) {
-          if (!this.sessions.has(sessionId) && !this.removedWhileLoading.has(sessionId)) {
+          if (!this.sessions.has(sessionId) && !this.removedWhileLoading.has(loadPromise)) {
             this.sessions.set(sessionId, agentSession);
           } else {
             await agentSession.cleanup().catch(() => {});
@@ -66,10 +66,11 @@ export class SessionCache {
       } catch {
         return null;
       } finally {
-        this.sessionLoadLocks.delete(sessionId);
-        this.removedWhileLoading.delete(sessionId);
+        this.removedWhileLoading.delete(loadPromise);
+        if (this.sessionLoadLocks.get(sessionId) === loadPromise)
+          this.sessionLoadLocks.delete(sessionId);
       }
-    })();
+    });
     this.sessionLoadLocks.set(sessionId, loadPromise);
 
     return await loadPromise;
@@ -89,8 +90,9 @@ export class SessionCache {
 
   remove(sessionId: string): void {
     this.sessions.delete(sessionId);
-    if (this.sessionLoadLocks.has(sessionId)) {
-      this.removedWhileLoading.add(sessionId);
+    const loading = this.sessionLoadLocks.get(sessionId);
+    if (loading) {
+      this.removedWhileLoading.add(loading);
     }
     this.sessionLoadLocks.delete(sessionId);
   }
