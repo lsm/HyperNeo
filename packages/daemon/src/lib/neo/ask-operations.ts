@@ -1,7 +1,6 @@
 import type { NeoConcern, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
-  NEO_ASK_OUTCOME_OPTIONS,
   type NeoAsk,
   type NeoAskItem,
   type NeoAskItemKind,
@@ -30,7 +29,7 @@ import { LIFE_ADMIN_CHECK_CONFIRMED } from './packs/life-admin/pack.ts';
 import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 import { neoDaemonReadsClaim, neoHumanTickWakes } from './needs-you.ts';
-import { isNeoAskOutcomeItem, isNeoAskOutcomeOptions } from './ask-views.ts';
+import { isNeoAskOutcomeItem } from './ask-views.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -594,7 +593,7 @@ export function planNeoAskQuestion(
   }).add;
   return {
     ...slot,
-    kind: input.kind ?? (isNeoAskOutcomeOptions(input.options) ? 'action' : 'decision'),
+    kind: input.kind ?? 'decision',
     question: input.question,
     options: [...input.options],
   };
@@ -705,10 +704,10 @@ export function requireNeoAskQuestion(
     return {
       reason: fail(`item_not_waiting: ${item.id} is ${item.state}, not waiting on an answer.`),
     };
-  return isNeoAskOutcomeItem(item) && !NEO_ASK_OUTCOME_OPTIONS.includes(input.choice)
+  return isNeoAskOutcomeItem(item) && !item.options?.includes(input.choice)
     ? {
         reason: fail(
-          `choice_not_offered: ${item.id} is a step the human did; answer ${NEO_ASK_OUTCOME_OPTIONS.join(' or ')}.`
+          `choice_not_offered: ${item.id} is a step the human did; answer ${item.options?.join(' or ')}.`
         ),
       }
     : { value: { ask, item } };
@@ -720,7 +719,7 @@ export function readNeoAskReply(
 ): { choice: string; met: boolean } {
   return {
     choice: input.choice,
-    met: !isNeoAskOutcomeItem(target.item) || input.choice === NEO_ASK_OUTCOME_OPTIONS[0],
+    met: !isNeoAskOutcomeItem(target.item) || input.choice === target.item.options?.[0],
   };
 }
 
@@ -1415,7 +1414,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.question',
       description:
-        'Ask the human one question about this ask: the only way a decision, or a check only they can make, reaches them. question is one short question worded for this step; options are 2-4 short answers, which become their buttons. The question becomes its own checklist item and the ask waits on it; their answer ticks it met and is sent back to you, so act on it then. For a step only the human can check (on a device, or a machine the daemon cannot read), ask about its result ("Did it work?", "Is the result what you wanted?") with options Yes and Not yet: Yes ticks it met, Not yet keeps it open and tells you. Never ask for re-approval: the daemon shows Approve itself when the approval expires or a card stalls. Asking the same open question again changes nothing. Only the Neo session that opened the ask or the user can ask on it.',
+        'Ask the human one question about this ask: the only way a decision, or a check only they can make, reaches them. question is one short question worded for this step; options are 2-4 short answers, which become their buttons. The question becomes its own checklist item and the ask waits on it; their answer ticks it met and is sent back to you, so act on it then. For a step only the human can check (on a device, or a machine the daemon cannot read), ask about its result with kind action and options written for that step in its own words, success first ("这一步成功了吗？" with "成功了" and "没成功"): the first option ticks it met, any other keeps it open and tells you. Never ask for re-approval: the daemon shows Approve itself when the approval expires or a card stalls. Asking the same open question again changes nothing. Only the Neo session that opened the ask or the user can ask on it.',
       inputSchema: Question,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1424,7 +1423,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.answer',
       description:
-        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met and is sent to the Neo session that opened the ask, which acts on it. A question about a step's result is answered Yes or Not yet: Yes ticks it met, Not yet keeps it open, and Neo hears the answer either way.",
+        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met and is sent to the Neo session that opened the ask, which acts on it. A question about a step's result (kind action) is answered with one of its own options: the first ticks it met, any other keeps it open, and Neo hears the answer either way.",
       inputSchema: Answer,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },
