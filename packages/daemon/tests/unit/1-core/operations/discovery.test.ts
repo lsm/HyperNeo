@@ -298,7 +298,9 @@ describe('operationSignature', () => {
       'demo.op {id: string, outcome: "done"|"cancelled", tags?: string[], target?: {verb, ref}|{verb}}'
     );
   });
+});
 
+describe('describeOperationSignatures', () => {
   test('describes only the named operations the registry has, one per line', () => {
     const registry = createOperationRegistry([
       defineOperation({
