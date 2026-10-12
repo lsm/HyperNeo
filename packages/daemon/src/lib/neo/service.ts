@@ -237,6 +237,7 @@ import {
   neoAskAnswerNote,
   neoAskReopensAfterClear,
   neoNeedsYouClearedNote,
+  neoResumeWhy,
   planNeoNeedsYou,
   planNeoNeedsYouCleared,
 } from './needs-you.ts';
@@ -1979,7 +1980,10 @@ export class NeoService {
               plan.resume.ask,
               plan.resume.items.map((id) => ({
                 id,
-                why: `card ${work.id} under this ask no longer waits on the human`,
+                why: neoResumeWhy(
+                  plan.resume?.ask.doneItems?.find((item) => item.id === id),
+                  work.id
+                ),
               })),
               plan.resume.ask.doneItems ?? []
             ),

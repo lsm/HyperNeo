@@ -107,7 +107,7 @@ export function neoNeedsYouClearedNote(
       (entry) =>
         `- ${entry.id} "${items.find((item) => item.id === entry.id)?.text ?? ''}": ${entry.why}.`
     ),
-    'Check each one now: tick it met if it is done, keep the work moving if not, or remove it if it no longer applies.',
+    'Check each one now: tick it met if it is done, needs_you again if the human still has to answer it, keep the work moving if not, or remove it if it no longer applies.',
   ].join('\n');
 }
 
@@ -116,4 +116,13 @@ export function neoAskReopensAfterClear(ask: NeoAsk): boolean {
     ask.status === 'blocked' &&
     !(ask.doneItems ?? []).some((item) => !item.removed && item.state === 'needs_you')
   );
+}
+
+export function neoResumeWhy(
+  item: Pick<NeoAskItem, 'waitCard'> | undefined,
+  cardId: string
+): string {
+  return item?.waitCard === cardId
+    ? `card ${cardId}, which it cites, no longer waits on the human`
+    : `it cites no card, and card ${cardId} under this ask stopped waiting on the human, so it may be answered there`;
 }

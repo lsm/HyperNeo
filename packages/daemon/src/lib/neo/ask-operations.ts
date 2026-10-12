@@ -458,12 +458,6 @@ export function requireNeoHumanTask<T>(
     : { value };
 }
 
-export function neoTickTaskText(input: z.infer<typeof Tick>, item: NeoAskItem): string {
-  return input.state === 'needs_you'
-    ? [item.text, input.evidence, input.action].filter(Boolean).join('\n')
-    : item.text;
-}
-
 export type NeoHumanWaitSources = {
   said: readonly string[];
   rules: readonly string[];
@@ -859,9 +853,10 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
           ? requireNeoHumanTask(
               caller,
               'needs_you',
-              [decision.add.text, input.evidence, input.action].filter(Boolean).join('\n'),
+              decision.add.text,
               input.action,
-              ask
+              ask,
+              input.evidence
             )
           : { value: ask },
       ['input', 'admission', 'caller', 'decision'],
@@ -946,7 +941,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
         requireNeoHumanTask(
           caller,
           input.state,
-          neoTickTaskText(input, target.item),
+          target.item.text,
           input.action,
           target,
           input.evidence

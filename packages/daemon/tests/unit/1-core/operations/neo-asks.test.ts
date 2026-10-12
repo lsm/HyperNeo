@@ -1004,22 +1004,23 @@ describe('neo.ask operations', () => {
 
   test('the human gets only what is theirs to do, with what to do and where', async () => {
     const askId = await openAsk();
+    await invoke('neo.ask.edit', {
+      askId,
+      add: [
+        { text: 'After #6618 merges, verify the deploy' },
+        { text: 'Approve another continuation; the shared continues are exhausted' },
+      ],
+    });
     const tick = (input: object) =>
       invoke('neo.ask.tick', { askId, itemId: 'i2', cite, action: 'Answer in chat', ...input });
     expect(
-      await tick({
-        state: 'needs_you',
-        evidence: 'After #6618 merges, verify the deploy.',
-      })
+      await tick({ itemId: 'i3', state: 'needs_you', evidence: 'Waits on the merge.' })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('not_the_human') } });
     expect(
       await tick({ itemId: 'i1', state: 'reported', evidence: 'The session says it merged.' })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('daemon_readable') } });
     expect(
-      await tick({
-        state: 'needs_you',
-        evidence: 'Approve another continuation; the shared continues are exhausted.',
-      })
+      await tick({ itemId: 'i4', state: 'needs_you', evidence: 'The card stalled.' })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('approval_on_ask') } });
     expect(
       await tick({
@@ -1028,6 +1029,12 @@ describe('neo.ask operations', () => {
         action: undefined,
       })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('action_required') } });
+    expect(
+      await tick({
+        state: 'needs_you',
+        evidence: 'Decide whether to accept red CI once the build finishes.',
+      })
+    ).toMatchObject({ value: { ok: true } });
     expect(
       await tick({ state: 'needs_you', evidence: 'Is red CI on main acceptable?' })
     ).toMatchObject({ value: { ok: true, ask: { status: 'waiting' } } });

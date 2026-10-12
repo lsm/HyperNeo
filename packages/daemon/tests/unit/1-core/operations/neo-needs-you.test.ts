@@ -4,6 +4,7 @@ import {
   neoAskReopensAfterClear,
   neoDaemonReadsItem,
   neoNeedsYouClearedNote,
+  neoResumeWhy,
   planNeoAskResume,
   planNeoNeedsYou,
   planNeoNeedsYouCleared,
@@ -264,6 +265,15 @@ describe('neoNeedsYouClearedNote', () => {
     );
     expect(note).toContain('i1 "Item i1": card w1 no longer waits on the human.');
     expect(note).toContain('ask a1 ("Ship it")');
+  });
+});
+
+describe('neoResumeWhy', () => {
+  test('names the cited card, or says an uncited question may be answered', () => {
+    expect(neoResumeWhy({ waitCard: 'w1' }, 'w1')).toBe(
+      'card w1, which it cites, no longer waits on the human'
+    );
+    expect(neoResumeWhy({}, 'w1')).toContain('it cites no card');
   });
 });
 
