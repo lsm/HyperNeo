@@ -528,6 +528,13 @@ describe('requireNeoWorkPrRefresh', () => {
     ['one read a minute ago', reported, {}, 60_000, false],
     ['one still running', { ...reported, status: 'queued' }, {}, 3 * 60_000, false],
     ['one the user closed as done', { ...reported, report: 'closed' }, {}, 3 * 60_000, false],
+    [
+      'one Neo closed with a reason',
+      { ...reported, report: 'closed: merged' },
+      {},
+      3 * 60_000,
+      false,
+    ],
     ['one without tracked pull requests', reported, { row: null }, 3 * 60_000, false],
     ['one whose Neo session is gone', reported, { session: false }, 3 * 60_000, false],
   ])('%s', (_label, work, overrides, now, refreshes) => {

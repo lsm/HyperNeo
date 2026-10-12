@@ -87,19 +87,19 @@ export function requireNeoEvidenceRefresh<
     toldAt: number | null;
   },
   now: number,
-  closedDone: string
+  closedDonePrefix: string
 ): { value: Refresh & { row: Row | null } } | { reason: 'not_due' } {
   const pr = requireNeoWorkPrRefresh(
     refresh,
     { row: card.row, session: card.session },
     now,
-    closedDone
+    closedDonePrefix
   );
   if ('value' in pr) return pr;
   const { work } = refresh;
   return card.packEvidence &&
     work.status === 'reported' &&
-    work.report !== closedDone &&
+    !work.report?.startsWith(closedDonePrefix) &&
     card.goal &&
     card.session &&
     (work.updatedAt > (card.toldAt ?? 0) || now - (card.toldAt ?? 0) >= NEO_PACK_EVIDENCE_READ_MS)

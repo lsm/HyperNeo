@@ -27,6 +27,7 @@ import type {
 } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
+  NEO_WORK_CLOSED_DONE_PREFIX,
   type NeoAsk,
   type NeoReceiptAskOrigin,
   type NeoSnapshot,
@@ -339,7 +340,11 @@ const RulesResult = z.union([
   Failure,
   z.object({ ok: z.literal(true), standingRules: z.array(z.string()) }),
 ]);
-const Close = z.object({ id: z.string().min(1), outcome: z.enum(['done', 'cancelled']) });
+const Close = z.object({
+  id: z.string().min(1),
+  outcome: z.enum(['done', 'cancelled']),
+  reason: z.string().trim().min(1).max(500).optional(),
+});
 const PackRead = z.object({ id: z.string().trim().min(1).max(80) });
 const PackReadResult = z.union([
   Failure,
@@ -454,7 +459,7 @@ export function requireNeoExecutionChoice(
         reason: {
           ok: false,
           reason:
-            'Choose where the work runs: targetSessionId for an existing chat, or work {verb:"start", adapter, place} or {verb:"send", ref} from work.find, or {verb:"adopt", ref} for a session the human tapped Track on. There is no standalone scratch session. If no project, Space or chat clearly fits, ask the human where the work belongs instead of proposing.',
+            'Choose where the work runs: targetSessionId for an existing chat, or work {verb:"start", adapter, place} or {verb:"send", ref} from work.find, or {verb:"adopt", ref} for a session the human names in chat or tapped Track on. There is no standalone scratch session. If no project, Space or chat clearly fits, ask the human where the work belongs instead of proposing.',
         },
       };
 }
@@ -537,6 +542,45 @@ export function neoAskScope(ask: Pick<NeoAsk, 'concernId'> | null): string | nul
   return ask ? ask.concernId : undefined;
 }
 
+export const NEO_HUMAN_TURN_REFUSAL =
+  'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.';
+
+export function requireNeoWorkCloser(
+  work: NeoWork | null,
+  caller: OperationCaller,
+  humanTurn: boolean,
+  outcome: 'done' | 'cancelled',
+  reason: string | undefined
+): { value: string | null } | { reason: Rejection } {
+  if (!work) return { reason: { ok: false, reason: 'work_not_found' } };
+  if (caller.source !== 'mcp') return { value: null };
+  if (caller.sessionId !== work.originSessionId && !humanTurn)
+    return {
+      reason: {
+        ok: false,
+        reason:
+          'Neo closes a card it started at any time, and any other card only while answering the human’s own chat message.',
+      },
+    };
+  if (!reason) return { reason: { ok: false, reason: 'Give a reason; the card shows it.' } };
+  return {
+    value: `${outcome === 'done' ? NEO_WORK_CLOSED_DONE_PREFIX : 'Cancelled by '}Neo: ${reason}`,
+  };
+}
+
+function isNeoHumanTurn(service: NeoService, caller: OperationCaller): boolean {
+  if (caller.source === 'rpc' && caller.principal === 'local') return true;
+  const turn = caller.neoTurn;
+  if (!turn?.isLive() || !caller.sessionId) return false;
+  return (
+    service.db.getSession(caller.sessionId)?.status === 'active' &&
+    hasNeoHumanWorkInput(
+      caller,
+      service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId, turn.messageId)
+    )
+  );
+}
+
 function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
@@ -562,29 +606,14 @@ function admitNeoCaller(
         reason: 'Consult this concern’s holder to save corrections; Neo only has its summary.',
       },
     };
-  if (name === 'neo.work.start' || name === 'neo.ask.approve') {
-    const turn = caller.neoTurn;
-    const active = service.db.getSession(caller.sessionId!)?.status === 'active';
-    const human =
-      !!turn?.human &&
-      !turn.consultationId &&
-      turn.isLive() &&
-      hasNeoHumanWorkInput(
-        caller,
-        service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId!, turn.messageId)
-      );
-    if (!active || !(human || (askApproved && name === 'neo.work.start')))
-      return { reason: { ok: false, reason: 'This action needs the user.' } };
-  }
   if (
-    [
-      'neo.open',
-      'neo.concern.cancel',
-      'neo.work.close',
-      'neo.ask.answer',
-      'neo.session.track',
-    ].includes(name)
+    ['neo.work.start', 'neo.ask.approve'].includes(name) &&
+    !(askApproved && name === 'neo.work.start'
+      ? service.db.getSession(caller.sessionId!)?.status === 'active'
+      : isNeoHumanTurn(service, caller))
   )
+    return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
+  if (['neo.open', 'neo.concern.cancel', 'neo.ask.answer', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
     return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
@@ -1101,6 +1130,7 @@ export function createNeoOperations(service: NeoService) {
           service.trackedSessions,
           service.followedCardRefs(Date.now()),
           Date.now(),
+          isNeoHumanTurn(service, caller),
           caller
         ),
       ['input', 'admission'],
@@ -1450,7 +1480,16 @@ export function createNeoOperations(service: NeoService) {
   const close = path(
     'neo.work.close',
     (_input: z.infer<typeof Close>) => undefined,
-    async ({ id, outcome }) => service.close(id, outcome)
+    async ({ id, outcome, reason }, caller) => {
+      const closer = requireNeoWorkCloser(
+        service.repo.getWork(id),
+        caller,
+        isNeoHumanTurn(service, caller),
+        outcome,
+        reason
+      );
+      return 'reason' in closer ? closer.reason : service.close(id, outcome, closer.value);
+    }
   );
   const cancel = path(
     'neo.work.cancel',
@@ -1609,7 +1648,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?} to start new work in a place from work.find (model only applies to a new HyperNeo session; set it when the human names one) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found, or {verb:"adopt", ref} to follow a session the human tapped Track on without sending it anything (that card starts on its own); starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the concern has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. A proposal to a session that already holds live cards is refused with its load and the idle sessions in the same place; split independent items across idle sessions, and pass allowBusyTarget:true only to queue behind the work of that session on purpose. This does not start execution.',
+        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?} to start new work in a place from work.find (model only applies to a new HyperNeo session; set it when the human names one) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found, or {verb:"adopt", ref} to follow a session the human names in chat or tapped Track on, without sending it anything (that card starts on its own); starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the concern has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. A proposal to a session that already holds live cards is refused with its load and the idle sessions in the same place; split independent items across idle sessions, and pass allowBusyTarget:true only to queue behind the work of that session on purpose. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1663,10 +1702,10 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.close',
       description:
-        'Close a work item as done or cancelled from any state, for the user only. Closing queued work stops the Codex or Claude work behind it. Done is recorded as a report saying the user closed it; cancelled work stays cancelled. Neo cannot close work items: when a work item looks stale, propose closing it to the user instead.',
+        'Close a work item as done or cancelled from any state. Closing queued work stops the Codex or Claude work behind it; cancelled work stays cancelled. Neo closes a card it started at any time, and any other card while answering the human’s own chat message, always with a reason, which the card shows. The user closes any card without a reason.',
       inputSchema: Close,
       resultSchema: WorkResult,
-      policy: { safetyClass: 'human_only' },
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: close,
     }),
     defineOperation({

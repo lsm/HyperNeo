@@ -1,5 +1,5 @@
 import {
-  NEO_WORK_CLOSED_DONE,
+  NEO_WORK_CLOSED_DONE_PREFIX,
   type NeoWorkDriverReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { WorkStatusSchema, type WorkRef, type WorkStatus } from '../../lib/drivers/types.ts';
@@ -92,8 +92,9 @@ export class NeoWorkDriverTargetRepository {
         JOIN neo_work w ON w.id = t.work_id
         WHERE json_extract(t.target, '$.verb') = 'adopt'
           AND (w.status IN ('proposed', 'queued')
-            OR (w.status = 'reported' AND w.updated_at > ? AND w.report IS NOT ?))`)
-      .all(reportedSince, NEO_WORK_CLOSED_DONE) as { target: string }[];
+            OR (w.status = 'reported' AND w.updated_at > ?
+              AND (w.report IS NULL OR w.report NOT LIKE ?)))`)
+      .all(reportedSince, `${NEO_WORK_CLOSED_DONE_PREFIX}%`) as { target: string }[];
     return rows.flatMap((row) => {
       const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
       return target.success && target.data.verb === 'adopt' ? [target.data.ref] : [];
