@@ -19,7 +19,7 @@ The cause is the same each time: **human-facing state is authored by the model i
 1. **What the human must do is derived, not written.** The daemon computes every human action from facts. The model can't create a gate in prose.
 2. **When to tell the human is derived, not judged.** The daemon decides that something worth saying happened. The model writes the sentence only then.
 3. **Each turn starts from daemon state, not chat memory.** Anything that drives a decision (approval, stall, PR state, items) is read fresh. Memory never overrides it.
-4. **One owner.** All work runs under Neo's asks, and merging an approved, green PR is daemon behaviour, not a side script.
+4. **One owner.** All work runs under Neo's asks. Neo manages the work; the session that worked on a PR merges it, and the daemon only wakes that session when an approved, green PR sits unmerged. No side script.
 
 ## Design
 
@@ -34,6 +34,8 @@ Each ask view lists `humanActions`, computed by the daemon on every snapshot. Th
 | `answer {itemId, options}` | Neo asked a question with options (below) |
 | `confirm {itemId}` | an item whose evidence names a machine the daemon can't read (remote daemon, device) |
 | `retry {workId}`, `close {workId}` | existing card rules (`retryable`, abandoned) |
+
+A card whose doneWhen the daemon reads itself (its PRs merged, its issue closed) is settled by the daemon without a Neo turn.
 
 The model keeps exactly one way to ask the human something: `neo.ask.question {askId, question, options[2..4]}`. It's a question with choices, answered with one tap, and it is the only human gate the model can create.
 
@@ -62,11 +64,12 @@ The daemon refuses every other `neo.publication.publish`, with a reason. For eac
 - Routine progress doesn't wake Neo. A PR waiting on CI or review, a check passing, a review starting: the daemon records it and nothing runs.
 - Neo wakes for a card report that needs judgement (a reported card with items left), a failure, a stall, a human tick, or a derived trigger above.
 - Each wake note carries the ask's current derived state (items, humanActions, cards with PR verdicts), and the system prompt says this state overrides anything remembered.
+- A card's report is the working session's reply to the card's own message, capped at about 1.5K, and never includes the human's input. When a card targets a session the human also uses, only turns the card's message started count as the card's idle or report. On 2026-10-12, card 0692a952 got the shared Neo iOS app session's chat as its "report" on every idle: 11 notes and 5 continues for work already done.
 - Per-topic avatars (#6579, #6604) hold their asks, and root Neo keeps cross-topic questions only. A topic's session is short-lived and starts from a snapshot, so long compacted chats don't drive decisions.
 
-### 4. One owner, daemon-side merge
+### 4. One owner, session-side merge
 
-- The coding pack merges a card's PR when it's approved on its head commit, CLEAN, with no unresolved threads, then records the merge. Deploys stay where they are: the laptop through the daemon's own update hook, the iMac through its session.
+- The session that worked on a PR merges it (coding pack). For a PR left approved on its head, CLEAN, with no unresolved threads, for over 30 minutes, the daemon wakes that session to merge it, rather than merging it itself. Deploys stay where they are: the laptop through the daemon's own update hook, the iMac through its session.
 - Work goes through Neo asks. Peer sessions get work as cards, not direct messages.
 
 ## Slices
@@ -77,10 +80,27 @@ Each slice is one PR, behaviour-tested, deployable on its own:
 2. **`neo.ask.question`.** Remove `needs_you` ticks and gate-carrying settles. Migrate existing needs_you items to questions (with options) or drop them.
 3. **Derived notifications:** refuse non-trigger publications, and add trigger notes.
 4. **Quiet routine wakes:** CI/review-waiting events stop starting turns. Notes carry derived state.
-5. **Daemon-side merge** in the coding pack. Retire `ship.sh`.
+5. **Merge by the working session:** the daemon wakes a card's session for its PR left approved and clean over 30 minutes. Retire `ship.sh`.
 6. **Topic sessions start fresh** from a snapshot. Root Neo keeps cross-topic questions only.
 
 Deleted along the way: needs_you validation (cites, keyword checks, kinds, cleanup sweeps), the reply-limit cap (subsumed by triggers), and most done-check prose.
+
+## Relation to existing work
+
+Open work it touches:
+
+- **#6650 / #6651 (a network outage pauses the turn):** independent, but it changes `query-runner`. Slice 4 waits for it to land.
+- **#6604 (topics reorganize):** shipped, but its first manual split of main is still pending. Slice 6 builds on it.
+- **#6544 (the human's sessions linked to asks):** a linked session waiting on the human can become a derived action later.
+- **#6574, #6568, #6024, #6507:** independent.
+
+Shipped behaviour it replaces:
+
+- **#6592 (cites), #6639 (keyword checks), #6646 (item kinds), #6609 (reply cap):** removed by slices 2 and 3.
+- **Standing rule 3** (an item Neo can't verify isn't met on an agent's word) becomes `confirm`.
+- **Standing rule 4** (a human decision is its own item) becomes `neo.ask.question`.
+- **#6225 (Done for a step only the human can do, such as a manual test):** becomes a question about the result, with options: "Did the keyboard hide?" → Yes / No, or "Is the result what you wanted?" → Yes / Not yet.
+- **Merging:** whoever worked on a PR merges it. Neo manages the work; it isn't a worker. Coding-pack guidance already has the card's session run `gh pr merge`, which handles refusals. When a PR sits approved on its head and CLEAN for over 30 minutes (the case `done-check-prs-ready` detects), the daemon wakes that working session to merge it. It doesn't merge it itself. A PR that still doesn't merge is an exception: find its cause and fix it in the system, not with a fallback. `ship.sh` retires.
 
 ## Open questions
 
