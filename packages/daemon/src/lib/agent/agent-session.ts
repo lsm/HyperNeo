@@ -39,6 +39,10 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
+import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
+import { planNeoNoteFold } from './neo-note-fold.ts';
 import { decideCoordinatorHandoff } from './coordinator-handoff.ts';
 import {
   type CallerScopeResolver,
@@ -2725,30 +2729,31 @@ export class AgentSession
             return { outcome: 'aborted' };
           }
 
+          const fold = this.readNeoNoteFold(messageUuid, content);
           const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
           if (
             existing &&
             this.messageQueue.hasYielded?.(messageUuid) &&
-            !this.deliveryContentMatches(existing.content, content)
+            !this.deliveryContentMatches(existing.content, fold.content)
           ) {
             return { outcome: 'aborted' };
           }
 
           let acknowledgment: Promise<void>;
-          if (existing && this.deliveryContentMatches(existing.content, content)) {
+          if (existing && this.deliveryContentMatches(existing.content, fold.content)) {
             acknowledgment = existing.acknowledgment;
           } else {
             if (existing) {
               this.messageQueue.remove(messageUuid);
               this.messageQueue.acknowledgeYielded(messageUuid, this.getQueryGeneration());
             }
-            acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+            acknowledgment = this.messageQueue.admitWithId(messageUuid, fold.content, false, {
               durable: true,
             });
           }
 
           observer?.reportStage('query_ready', { generation: this.getQueryGeneration() });
-          return { outcome: 'driving', acknowledgment, consumedUuids: [messageUuid] };
+          return { outcome: 'driving', acknowledgment, consumedUuids: fold.uuids };
         },
         signal
       )
@@ -2981,6 +2986,49 @@ export class AgentSession
         })
         .catch(() => {});
     }
+  }
+
+  private readNeoNoteFold(
+    messageUuid: string,
+    content: string | MessageContent[]
+  ): { content: string | MessageContent[]; uuids: string[] } {
+    const jobQueue = this.db.getJobQueueRepo?.();
+    if (!jobQueue || !neoCoordinatorBinding(this.db, this.session.id))
+      return { content, uuids: [messageUuid] };
+    const repo = this.db.getSDKMessageRepo();
+    const neo = new NeoRepository(this.db.getDatabase());
+    const inputOrigins = new NeoInputOriginRepository(this.db.getDatabase());
+    const resolve = createNeoAskOriginResolver({
+      getBinding: (id) => neo.getBindingBySession(id),
+      getPrompts: (id, uuid) => repo.getStoredPromptsByUuid(id, uuid),
+      getStamp: (sessionId, uuid) => inputOrigins.get(sessionId, uuid),
+    });
+    const keyOf = (uuid: string) => {
+      const origin = resolve({ sessionId: this.session.id, messageId: uuid });
+      return origin ? `${origin.sessionId}|${origin.messageId}` : null;
+    };
+    const head = repo.getDeliveryContent(this.session.id, messageUuid);
+    return planNeoNoteFold(
+      {
+        uuid: messageUuid,
+        content,
+        system: head?.inputKind === 'system',
+        key: keyOf(messageUuid),
+      },
+      jobQueue.pendingDeliveryMessageUuids(this.session.id).flatMap((uuid) => {
+        const loaded = repo.getDeliveryContent(this.session.id, uuid);
+        return loaded?.sendStatus === 'enqueued'
+          ? [
+              {
+                uuid,
+                content: loaded.content,
+                system: loaded.inputKind === 'system',
+                key: keyOf(uuid),
+              },
+            ]
+          : [];
+      })
+    );
   }
 
   private deliveryContentMatches(
