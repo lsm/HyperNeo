@@ -10,7 +10,14 @@ import { NEO_INBOX_ID, type NeoRouted } from './router.ts';
 const Input = z.object({}).default({});
 const Stayed = z.object({
   askId: z.string(),
-  reason: z.enum(['waiting_on_human', 'stays_main', 'one_off', 'topic_busy', 'handoff_failed']),
+  reason: z.enum([
+    'waiting_on_human',
+    'changed',
+    'stays_main',
+    'one_off',
+    'topic_busy',
+    'handoff_failed',
+  ]),
 });
 const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.literal('main_neo_only') }),
@@ -29,6 +36,7 @@ export interface NeoReorganizeRuntime {
   getBinding(sessionId: string): NeoBinding | null;
   rootSessionId(): string | null;
   liveAsks(): NeoAsk[];
+  ask(id: string): NeoAsk | null;
   route(ask: NeoAsk): Promise<NeoRouted>;
   sessionStatus(sessionId: string): string | null;
   cards(ask: NeoAsk): NeoWork[];
@@ -62,9 +70,21 @@ export function selectNeoMainAsks(asks: readonly NeoAsk[], root: string): NeoAsk
 }
 
 export function requireNeoAskMovable(ask: NeoAsk): { value: NeoAsk } | { reason: Stay } {
-  return ask.status === 'waiting'
-    ? { reason: { askId: ask.id, reason: 'waiting_on_human' } }
-    : { value: ask };
+  return ask.status === 'open'
+    ? { value: ask }
+    : { reason: { askId: ask.id, reason: 'waiting_on_human' } };
+}
+
+export function requireNeoAskUnchanged(
+  ask: NeoAsk,
+  current: NeoAsk | null,
+  root: string
+): { value: NeoAsk } | { reason: Stay } {
+  return current &&
+    ['open', 'waiting', 'blocked'].includes(current.status) &&
+    selectNeoMainAsks([current], root).length === 1
+    ? { value: current }
+    : { reason: { askId: ask.id, reason: 'changed' } };
 }
 
 export function requireNeoAskTopic(
@@ -106,14 +126,18 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
     .input(['ask', 'root'])
     .pipe(requireNeoAskMovable, 'ask', 'result:move')
     .pipe((ask: NeoAsk) => runtime.route(ask), 'ask', 'routed')
-    .pipe(requireNeoAskTopic, ['ask', 'routed'], 'result:move')
+    .pipe((ask: NeoAsk) => runtime.ask(ask.id), 'ask', 'current')
+    .pipe(requireNeoAskUnchanged, ['ask', 'current', 'root'], 'result:move')
+    .pipe(requireNeoAskMovable, 'move', 'result:move')
+    .pipe((current: NeoAsk) => current, 'move', 'fresh')
+    .pipe(requireNeoAskTopic, ['fresh', 'routed'], 'result:move')
     .pipe(
       (ask: NeoAsk, topic: Topic) =>
         requireNeoTopicIdle(ask, topic, runtime.sessionStatus(topic.sessionId)),
-      ['ask', 'move'],
+      ['fresh', 'move'],
       'result:move'
     )
-    .pipe((ask: NeoAsk) => runtime.cards(ask), 'ask', 'cards')
+    .pipe((ask: NeoAsk) => runtime.cards(ask), 'fresh', 'cards')
     .pipe(
       async (ask: NeoAsk, root: string, topic: Topic, cards: NeoWork[]) => {
         const messageId = neoMovedAskMessageId(ask.id);
@@ -132,7 +156,7 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
         );
         return { askId: ask.id, concernId: topic.concernId };
       },
-      ['ask', 'root', 'move', 'cards'],
+      ['fresh', 'root', 'move', 'cards'],
       'move'
     )
     .endAsync('move') as (ask: NeoAsk, root: string) => Promise<Moved | Stay>;
@@ -163,7 +187,7 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
   return defineOperation({
     name: 'neo.topics.reorganize',
     description:
-      'Move each live ask that main owns into the topic it belongs to: an existing topic, or a new topic and avatar the daemon creates. The ask and its cards are handed to that topic’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human, one-off asks, asks that stay with main, and asks whose topic avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. Main Neo or the human only.',
+      'Move each live ask that main owns into the topic it belongs to: an existing topic, or a new topic and avatar the daemon creates. The ask and its cards are handed to that topic’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks that stay with main, and asks whose topic avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. Main Neo or the human only.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

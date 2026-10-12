@@ -1449,6 +1449,7 @@ export function createNeoOperations(service: NeoService) {
       getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
       rootSessionId: () => service.repo.getBindingForConcern(null)?.sessionId ?? null,
       liveAsks: () => service.askRecords.listLive(),
+      ask: (id) => service.askRecords.get(id),
       route: (ask) => router(`${ask.title}\n${ask.ask}`, ask.id),
       sessionStatus: (sessionId) =>
         neoSessionStatus(service.db.getSession(sessionId)?.processingState),

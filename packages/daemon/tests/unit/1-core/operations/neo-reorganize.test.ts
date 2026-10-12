@@ -12,6 +12,7 @@ import {
   type NeoReorganizeRuntime,
   requireNeoAskMovable,
   requireNeoAskTopic,
+  requireNeoAskUnchanged,
   requireNeoTopicIdle,
   selectNeoMainAsks,
 } from '../../../../src/lib/neo/reorganize-operation.ts';
@@ -77,11 +78,28 @@ describe('selectNeoMainAsks', () => {
 });
 
 describe('requireNeoAskMovable', () => {
-  test('leaves an ask waiting on the human with main', () => {
+  test('leaves an ask waiting on or blocked on the human with main', () => {
     expect(requireNeoAskMovable(ask('a', { status: 'waiting' }))).toEqual({
       reason: { askId: 'a', reason: 'waiting_on_human' },
     });
+    expect(requireNeoAskMovable(ask('a', { status: 'blocked' }))).toEqual({
+      reason: { askId: 'a', reason: 'waiting_on_human' },
+    });
     expect(requireNeoAskMovable(ask('a'))).toMatchObject({ value: { id: 'a' } });
+  });
+});
+
+describe('requireNeoAskUnchanged', () => {
+  test('stops an ask settled, gone or re-homed while it was routed', () => {
+    const changed = { reason: { askId: 'a', reason: 'changed' as const } };
+    expect(requireNeoAskUnchanged(ask('a'), null, root)).toEqual(changed);
+    expect(requireNeoAskUnchanged(ask('a'), ask('a', { status: 'achieved' }), root)).toEqual(
+      changed
+    );
+    expect(requireNeoAskUnchanged(ask('a'), ask('a', { concernId: 'c' }), root)).toEqual(changed);
+    expect(
+      requireNeoAskUnchanged(ask('a'), ask('a', { status: 'waiting', title: 'Now' }), root)
+    ).toMatchObject({ value: { status: 'waiting', title: 'Now' } });
   });
 });
 
@@ -152,7 +170,12 @@ describe('neoMovedAskNote', () => {
 });
 
 describe('neo.topics.reorganize', () => {
-  function runtime(asks: NeoAsk[], routes: Record<string, string | null>, busy: string[] = []) {
+  function runtime(
+    asks: NeoAsk[],
+    routes: Record<string, string | null>,
+    busy: string[] = [],
+    current: Record<string, NeoAsk | null> = {}
+  ) {
     const delivered: { sessionId: string; messageId: string; parent: unknown }[] = [];
     const moves: { askId: string; concernId: string; messageId: string }[] = [];
     const deps: NeoReorganizeRuntime = {
@@ -162,6 +185,7 @@ describe('neo.topics.reorganize', () => {
           : null,
       rootSessionId: () => root,
       liveAsks: () => asks,
+      ask: (id) => (id in current ? current[id] : (asks.find((item) => item.id === id) ?? null)),
       route: async (item) => routed(routes[item.id] ?? null),
       sessionStatus: (sessionId) => (busy.includes(sessionId) ? 'processing' : 'idle'),
       cards: () => [],
@@ -208,6 +232,26 @@ describe('neo.topics.reorganize', () => {
     expect(moves).toEqual([
       { askId: 'a', concernId: 'drivers', messageId: neoMovedAskMessageId('a') },
     ]);
+  });
+
+  test('re-reads each ask after routing and leaves one that changed meanwhile', async () => {
+    const { deps, delivered, moves } = runtime(
+      [ask('a'), ask('b'), ask('c')],
+      { a: 'drivers', b: 'drivers', c: 'drivers' },
+      [],
+      { a: ask('a', { status: 'achieved' }), b: ask('b', { status: 'blocked' }), c: null }
+    );
+    expect(await invoke(deps)).toEqual({
+      ok: true,
+      moved: [],
+      stayed: [
+        { askId: 'a', reason: 'changed' },
+        { askId: 'b', reason: 'waiting_on_human' },
+        { askId: 'c', reason: 'changed' },
+      ],
+    });
+    expect(delivered).toEqual([]);
+    expect(moves).toEqual([]);
   });
 
   test('never moves an ask when the handoff note fails to reach the avatar', async () => {
