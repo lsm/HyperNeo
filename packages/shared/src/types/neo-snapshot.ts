@@ -298,6 +298,7 @@ export interface NeoSnapshot {
   askViews: NeoAskView[];
   waitingOnHuman?: NeoWaitingOnHuman;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
+  trimmed?: string;
 }
 
 export interface NeoSessionLoad {

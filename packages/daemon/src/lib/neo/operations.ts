@@ -54,7 +54,12 @@ import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
 import { createNeoConversationAskReadOperation } from './conversation-ask-read-operation.ts';
 import { createNeoDraftRecoveryOperation } from './draft-recovery-operation.ts';
-import { compactNeoSnapshotAsks, compactNeoSnapshotCards } from './snapshot-compact.ts';
+import {
+  compactNeoSnapshotAsks,
+  compactNeoSnapshotCards,
+  fitNeoSnapshotBudget,
+  NEO_MCP_SNAPSHOT_BUDGET,
+} from './snapshot-compact.ts';
 import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import {
   admitNeoWorkOrigin,
@@ -278,6 +283,7 @@ const SnapshotOk = z.object({
       } satisfies ZodShape<NeoReceiptAskOrigin>)
     )
     .optional(),
+  trimmed: z.string().optional(),
 } satisfies ZodShape<NeoSnapshot>);
 const Snapshot = z.union([Failure, SnapshotOk]);
 const WorkResult = z.union([Failure, z.object({ ok: z.literal(true), work: Work })]);
@@ -598,6 +604,12 @@ export function createNeoOperations(service: NeoService) {
       .endAsync('admission') as (input: I, caller: OperationCaller) => Promise<O | Rejection>;
   }
   function snapshot(caller: OperationCaller, requested?: string, askId?: string) {
+    const built = buildSnapshot(caller, requested, askId);
+    return built.ok && caller.source !== 'rpc' && !askId
+      ? fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET)
+      : built;
+  }
+  function buildSnapshot(caller: OperationCaller, requested?: string, askId?: string) {
     const focus = askId ? service.askRecords.get(askId) : null;
     if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;

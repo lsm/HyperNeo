@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import type { NeoAsk, NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoCardView, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import {
   compactNeoSnapshotAsks,
   compactNeoSnapshotCards,
+  fitNeoSnapshotBudget,
 } from '../../../../src/lib/neo/snapshot-compact.ts';
 
 const ask: NeoAsk = {
@@ -95,5 +96,77 @@ describe('compactNeoSnapshotCards', () => {
       doneWhen: null,
       continuedMessage: null,
     });
+  });
+});
+
+describe('fitNeoSnapshotBudget', () => {
+  const work = (id: string) => ({
+    id,
+    requestKey: id,
+    concernId: null,
+    originSessionId: 'root',
+    originMessageId: null,
+    title: id,
+    instruction: 'i'.repeat(1000),
+    sessionId: null,
+    status: 'reported' as const,
+    report: 'r'.repeat(3000),
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  const view = (askId: string) => ({
+    askId,
+    group: 'running' as const,
+    label: 'Working on it',
+    settled: false,
+    needsYou: false,
+    done: 0,
+    total: 1,
+    workIds: [],
+    doneWorkIds: [],
+    summary: null,
+  });
+  const snapshot = (open: number, settled: number): NeoSnapshot => {
+    const asks = [
+      ...Array.from({ length: open }, (_, n) => ({ ...ask, id: `o${n}`, workIds: [`ow${n}`] })),
+      ...Array.from({ length: settled }, (_, n) => ({
+        ...ask,
+        id: `s${n}`,
+        status: 'achieved' as const,
+        settledAt: 3,
+        workIds: [`sw${n}`],
+      })),
+    ];
+    const ids = asks.flatMap((item) => item.workIds);
+    return {
+      ok: true,
+      sessionId: 'neo:root',
+      concerns: [],
+      work: ids.map(work),
+      asks,
+      cards: ids.map((id) => ({ ...card, workId: id, phase: 'reported' as const })),
+      askViews: asks.map((item) => view(item.id)),
+    };
+  };
+
+  test('leaves a snapshot under budget untouched', () => {
+    const small = snapshot(1, 1);
+    expect(fitNeoSnapshotBudget(small, 1_000_000)).toBe(small);
+  });
+
+  test('drops settled asks and their finished cards first, and says so', () => {
+    const fitted = fitNeoSnapshotBudget(snapshot(2, 8), 60_000);
+    expect(fitted.asks?.map((item) => item.id)).toEqual(['o0', 'o1']);
+    expect(fitted.work.map((item) => item.id)).toEqual(['ow0', 'ow1']);
+    expect(fitted.cards.map((item) => item.workId)).toEqual(['ow0', 'ow1']);
+    expect(fitted.askViews.map((item) => item.askId)).toEqual(['o0', 'o1']);
+    expect(fitted.trimmed).toContain('neo.snapshot {askId}');
+  });
+
+  test('cuts long text, then keeps only the newest open asks until it fits', () => {
+    const fitted = fitNeoSnapshotBudget(snapshot(20, 0), 40_000);
+    expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(40_000);
+    expect(fitted.asks?.[0].id).toBe('o0');
+    expect(fitted.work.every((item) => item.instruction.length <= 300)).toBe(true);
   });
 });
