@@ -135,6 +135,16 @@ describe('AgentSession driveDeliveryTurn for Neo system notes', () => {
     expect(result.statuses).toEqual(['consumed', 'consumed', 'consumed']);
   });
 
+  it('never folds a note queued behind a human message ahead of it', async () => {
+    const result = await drive('neo:fold-behind-human', true, [
+      ['w1:stall:1', 'system'],
+      ['h1', 'human'],
+      ['w2:stall:2', 'system'],
+    ]);
+    expect(result.content).toBe('note w1:stall:1');
+    expect(result.statuses).toEqual(['consumed', 'enqueued', 'enqueued']);
+  });
+
   it('gives a nudge or consultation its own turn', async () => {
     const result = await drive('neo:fold-nudge', true, [
       ['w1:stall:1', 'system'],

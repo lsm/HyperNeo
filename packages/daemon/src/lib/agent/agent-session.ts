@@ -42,7 +42,7 @@ import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoAskOriginResolver, isNeoFoldableNote } from '../neo/ask-origin.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
-import { planNeoNoteFold } from './neo-note-fold.ts';
+import { type NeoNoteFoldCandidate, planNeoNoteFold } from './neo-note-fold.ts';
 import { decideCoordinatorHandoff } from './coordinator-handoff.ts';
 import {
   type CallerScopeResolver,
@@ -2993,7 +2993,12 @@ export class AgentSession
     content: string | MessageContent[]
   ): { content: string | MessageContent[]; uuids: string[] } {
     const jobQueue = this.db.getJobQueueRepo?.();
-    if (!jobQueue || !neoCoordinatorBinding(this.db, this.session.id))
+    if (
+      !jobQueue ||
+      typeof content !== 'string' ||
+      !isNeoFoldableNote(messageUuid) ||
+      !neoCoordinatorBinding(this.db, this.session.id)
+    )
       return { content, uuids: [messageUuid] };
     const repo = this.db.getSDKMessageRepo();
     const neo = new NeoRepository(this.db.getDatabase());
@@ -3008,32 +3013,18 @@ export class AgentSession
       return origin ? `${origin.sessionId}|${origin.messageId}` : null;
     };
     const head = repo.getDeliveryContent(this.session.id, messageUuid);
-    if (
-      head?.inputKind !== 'system' ||
-      typeof content !== 'string' ||
-      !isNeoFoldableNote(messageUuid)
-    )
-      return { content, uuids: [messageUuid] };
+    if (head?.inputKind !== 'system') return { content, uuids: [messageUuid] };
+    const pending: NeoNoteFoldCandidate[] = [];
+    for (const uuid of jobQueue.pendingDeliveryMessageUuids(this.session.id)) {
+      if (uuid === messageUuid) continue;
+      if (!isNeoFoldableNote(uuid)) break;
+      const loaded = repo.getDeliveryContent(this.session.id, uuid);
+      if (loaded?.sendStatus !== 'enqueued' || loaded.inputKind !== 'system') break;
+      pending.push({ uuid, content: loaded.content, system: true, key: keyOf(uuid) });
+    }
     return planNeoNoteFold(
-      {
-        uuid: messageUuid,
-        content,
-        system: true,
-        key: keyOf(messageUuid),
-      },
-      jobQueue.pendingDeliveryMessageUuids(this.session.id).flatMap((uuid) => {
-        const loaded = repo.getDeliveryContent(this.session.id, uuid);
-        return loaded?.sendStatus === 'enqueued' && isNeoFoldableNote(uuid)
-          ? [
-              {
-                uuid,
-                content: loaded.content,
-                system: loaded.inputKind === 'system',
-                key: keyOf(uuid),
-              },
-            ]
-          : [];
-      })
+      { uuid: messageUuid, content, system: true, key: keyOf(messageUuid) },
+      pending
     );
   }
 
