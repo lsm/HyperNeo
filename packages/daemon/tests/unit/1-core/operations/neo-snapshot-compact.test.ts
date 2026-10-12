@@ -167,6 +167,9 @@ describe('fitNeoSnapshotBudget', () => {
     const fitted = fitNeoSnapshotBudget(snapshot(20, 0), 40_000);
     expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(40_000);
     expect(fitted.asks?.[0].id).toBe('o0');
+    expect(fitted.trimmed).toContain(
+      `${20 - (fitted.asks?.length ?? 0)} older open asks are also left out`
+    );
     expect(fitted.work.every((item) => item.instruction.length <= 300)).toBe(true);
   });
 

@@ -42,6 +42,12 @@ const TRIMMED_TEXT_LIMIT = 300;
 const NEO_SNAPSHOT_TRIMMED =
   'This snapshot was trimmed to fit: settled asks and finished cards outside open asks are left out, and long text is cut. Call neo.snapshot {askId} for one ask in more detail.';
 
+export function neoSnapshotTrimmedNote(droppedOpen: number): string {
+  return droppedOpen > 0
+    ? `${NEO_SNAPSHOT_TRIMMED} ${droppedOpen} older open ${droppedOpen === 1 ? 'ask is' : 'asks are'} also left out; this is not every open ask.`
+    : NEO_SNAPSHOT_TRIMMED;
+}
+
 const size = (snapshot: NeoSnapshot) => Buffer.byteLength(JSON.stringify(snapshot), 'utf8');
 
 function keepWork(snapshot: NeoSnapshot, keep: ReadonlySet<string>): NeoSnapshot {
@@ -237,6 +243,7 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
   if (size(snapshot) <= budget) return snapshot;
   let fitted: NeoSnapshot = focused ? snapshot : withoutSettled(snapshot);
   if (size(fitted) > budget) fitted = withShortText(fitted);
+  const openAsks = fitted.asks?.length ?? 0;
   if (!focused)
     for (let count = fitted.asks?.length ?? 0; size(fitted) > budget && count > 1; )
       fitted = withNewestAsks(fitted, (count = Math.floor(count / 2)));
@@ -244,7 +251,9 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
   if (size(fitted) <= budget)
     return {
       ...fitted,
-      trimmed: focused ? NEO_SNAPSHOT_FOCUS_TRIMMED : NEO_SNAPSHOT_TRIMMED,
+      trimmed: focused
+        ? NEO_SNAPSHOT_FOCUS_TRIMMED
+        : neoSnapshotTrimmedNote(openAsks - (fitted.asks?.length ?? 0)),
     } as T;
   fitted = withSkeleton(fitted);
   if (size(fitted) > budget) fitted = bareMinimum(fitted);
