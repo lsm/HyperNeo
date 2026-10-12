@@ -291,6 +291,10 @@ function argumentPaths(word: string): string[] {
     .filter(Boolean);
 }
 
+function pathShaped(part: string): boolean {
+  return /[/.~*?[{]/.test(part) || /^id_/.test(part);
+}
+
 function secretArgument(
   words: readonly string[],
   dir: string,
@@ -305,8 +309,7 @@ function secretArgument(
       .find(
         (part) =>
           part &&
-          (secretName(basename(part)) ||
-            patternNamesSecret(part) ||
+          ((pathShaped(part) && (secretName(basename(part)) || patternNamesSecret(part))) ||
             (/^[/~]/.test(part) && isSecretPath(part, here, facts)) ||
             (facts.exists(resolvePath(part, here)) && isSecretPath(part, here, facts)))
       ) ?? null
@@ -547,6 +550,7 @@ const WRAPPER_VALUE_FLAGS: Record<string, ReadonlySet<string>> = {
   nice: new Set(['-n']),
   stdbuf: new Set(['-i', '-o', '-e']),
   caffeinate: new Set(['-t', '-w']),
+  watch: new Set(['-n', '-d']),
 };
 const WRAPPER_NUMBER_ARG = new Set(['timeout']);
 const DELETES = new Set(['rm', 'rmdir', 'unlink', 'shred']);
@@ -576,10 +580,18 @@ const GIT_CHANGES = new Set([
 
 type LocalChange = { delete: boolean; targets: string[] };
 
+const SHELL_KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'while', 'until', 'do', '!']);
+const SHELL_HEADERS = new Set(['for', 'select', 'case', 'done', 'fi', 'esac', 'function', 'in']);
+
 function commandWords(words: readonly string[]): string[] {
   let at = 0;
   while (at < words.length) {
     const word = words[at];
+    if (SHELL_KEYWORDS.has(word)) {
+      at += 1;
+      continue;
+    }
+    if (SHELL_HEADERS.has(word)) return [];
     const values = WRAPPER_VALUE_FLAGS[word];
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) {
       at += 1;

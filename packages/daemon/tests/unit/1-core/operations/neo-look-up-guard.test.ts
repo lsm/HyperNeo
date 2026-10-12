@@ -204,6 +204,8 @@ describe('the tiered Neo tool rule', () => {
 
   test.each([
     ['git commit -m "kill the stale worker"', { kind: 'nudge' }],
+    ['git commit -m "fix token expiry check"', { kind: 'nudge' }],
+    ['curl -s -d token=abc http://localhost:8399/echo', { kind: 'allow' }],
     ['grep -rn kill packages/daemon/src', { kind: 'allow' }],
     ["git log --grep='launchctl kickstart' --oneline", { kind: 'allow' }],
     ["echo 'git push later' > /scratch/todo.md", { kind: 'allow' }],
@@ -231,6 +233,12 @@ describe('the tiered Neo tool rule', () => {
     ['python3 -c \'import os; os.system("gh pr merge 12")\'', 'inline code'],
     ['gh -R fictional/app pr merge 12', 'changing a pull request'],
     ['sudo -u root git push origin main', 'git push'],
+    ['for i in 1; do git push; done', 'git push'],
+    ['while true; do launchctl kickstart -k gui/501/ai.hyperneo.laptop-daemon; done', 'daemon'],
+    ['! git push origin main', 'git push'],
+    ['if [ -d build ]; then rm -rf build; fi', 'deleting outside your own folder'],
+    ['if cd ~/focus/app; then rm -rf src; fi', 'deleting outside your own folder'],
+    ['watch -n 5 gh pr merge 12', 'changing a pull request'],
     ['env -i git push origin main', 'git push'],
     ['timeout 30 git push origin main', 'git push'],
     ['nice -n 5 gh pr merge 12', 'changing a pull request'],
