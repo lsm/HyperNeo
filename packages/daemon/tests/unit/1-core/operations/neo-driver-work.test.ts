@@ -211,6 +211,30 @@ describe('done-check note data', () => {
     ]);
     expect(note).toContain('more continues in a row with no new commit');
   });
+  test('a done list the items do not restate stays: a preamble, or a card list of its own', () => {
+    const note = (goalDoneWhen: string, askDoneWhen: string) =>
+      JSON.parse(
+        ((text) => text.slice(text.indexOf('\n{')))(
+          driverDoneCheckNote(
+            { id: 'w1', title: 'Ship', report: null, originSessionId: 'neo:root' },
+            { workId: 'w1', goal: 'Ship it', doneWhen: goalDoneWhen },
+            0,
+            null,
+            { ask: { ...ask, doneWhen: askDoneWhen } }
+          )
+        )
+      );
+    const own = note('- docs updated', '- merged\n- deployed');
+    expect(own.doneWhen).toBe('- docs updated');
+    expect(own.ask.doneWhen).toBeUndefined();
+    const preamble = note(
+      'Both, on the laptop:\n- merged\n- deployed',
+      'Both, on the laptop:\n- merged\n- deployed'
+    );
+    expect(preamble.doneWhen).toContain('on the laptop');
+    expect(preamble.ask.doneWhen).toContain('on the laptop');
+  });
+
   test('another card shows one PR verdict, the first one not done', () => {
     const pr = (state: NeoWorkPr['state'], checks: NeoWorkPr['checks']) =>
       ({ url: 'u', state, checks, review: 'none' }) as NeoWorkPr;

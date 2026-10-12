@@ -533,6 +533,17 @@ export function neoNoteChecklist(ask: NeoAsk): { id: string; state: string; text
     .map(({ id, text, state }) => (state === 'met' ? { id, state } : { id, state, text }));
 }
 
+export function isNeoDoneWhenRestated(doneWhen: string, ask: NeoAsk): boolean {
+  const texts = new Set(
+    (ask.doneItems ?? []).filter((item) => !item.removed).map((item) => item.text.trim())
+  );
+  const lines = doneWhen
+    .split('\n')
+    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean);
+  return lines.length > 0 && lines.every((line) => texts.has(line));
+}
+
 export function neoNoteCards(cards: readonly NeoAskCard[]) {
   return cards.map(({ id, title, status, prs }) => {
     const verdicts = (prs ?? []).map(neoWorkPrVerdict);
@@ -600,8 +611,9 @@ export function driverDoneCheckNote(
     ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: pack.id })}\n${pack.instructions}`
     : '';
   const items = owned && ask ? neoNoteChecklist(ask) : [];
-  const listed = items.length > 0;
-  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}${packNote}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, ...(listed ? {} : { doneWhen: goal.doneWhen }), continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs: neoNotePrs(prs) } : {}), ...(ask ? { ask: { id: ask.id, ...(listed ? {} : { doneWhen: ask.doneWhen }), status: ask.status, ...(owned ? { cards: neoNoteCards(cards), items } : {}) } } : {}) })}`;
+  const restates = (doneWhen: string | null | undefined) =>
+    !!ask && items.length > 0 && isNeoDoneWhenRestated(doneWhen ?? '', ask);
+  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}${packNote}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, ...(restates(goal.doneWhen) ? {} : { doneWhen: goal.doneWhen }), continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs: neoNotePrs(prs) } : {}), ...(ask ? { ask: { id: ask.id, ...(restates(ask.doneWhen) ? {} : { doneWhen: ask.doneWhen }), status: ask.status, ...(owned ? { cards: neoNoteCards(cards), items } : {}) } } : {}) })}`;
 }
 
 export function neoWorkDoneGoal(
