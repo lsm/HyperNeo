@@ -6,7 +6,11 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
+import {
+  type NeoConversationAskImageRow,
+  NeoConversationAskRepository,
+} from '../../storage/repositories/neo-conversation-ask-repository.ts';
+import { neoImageSize } from './image-size.ts';
 import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
@@ -19,6 +23,20 @@ const Input = z
     sessionId: MessageSessionIdSchema,
     requestId: z.uuid(),
     content: SendMessageInputSchema.shape.message.shape.message.shape.content,
+    thumbnails: z
+      .array(
+        z
+          .object({
+            index: z.number().int().min(0).max(99),
+            mediaType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+            data: z.base64().max(44_000),
+            width: z.number().int().positive().max(100_000).optional(),
+            height: z.number().int().positive().max(100_000).optional(),
+          })
+          .strict()
+      )
+      .max(20)
+      .optional(),
   })
   .superRefine((input, context) => {
     const projected = toMailboxMessage({
@@ -117,6 +135,41 @@ function persistNeoIntake(
             ? 'This request id already belongs to a different ask.'
             : 'This ask could not be admitted to the public conversation.',
       };
+}
+
+export function neoIntakeImages(input: IntakeInput): NeoConversationAskImageRow[] {
+  if (typeof input.content === 'string') return [];
+  const thumbnails = new Map((input.thumbnails ?? []).map((thumb) => [thumb.index, thumb]));
+  return input.content.flatMap((block, index) => {
+    if (block.type !== 'image' || block.source.type !== 'base64') return [];
+    const thumb = thumbnails.get(index);
+    const read = neoImageSize(block.source.data);
+    return [
+      {
+        index,
+        width: read?.width ?? thumb?.width ?? null,
+        height: read?.height ?? thumb?.height ?? null,
+        thumbnail: thumb ? { mediaType: thumb.mediaType, data: thumb.data } : null,
+      },
+    ];
+  });
+}
+
+function recordNeoIntakeImages(
+  receipt: IntakeResult,
+  input: IntakeInput,
+  conversationId: string,
+  db: Database
+): IntakeResult {
+  if (!receipt.ok) return receipt;
+  const images = neoIntakeImages(input);
+  if (images.length)
+    new NeoConversationAskRepository(db.getDatabase()).recordImages(
+      conversationId,
+      receipt.requestId,
+      images
+    );
+  return receipt;
 }
 
 function neoAskText(content: IntakeInput['content']): string {
@@ -359,6 +412,7 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     ['message', 'routed', 'db', 'conversationId'],
     'receipt'
   )
+  .pipe(recordNeoIntakeImages, ['receipt', 'input', 'conversationId', 'db'], 'receipt')
   .pipe(logNeoRoute, ['receipt', 'message', 'routed', 'conversationId', 'db'], 'receipt')
   .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify'], 'receipt')
   .endAsync('receipt') as (
@@ -379,7 +433,7 @@ export function createNeoIntakeOperation(
   return defineOperation({
     name: 'neo.message.send',
     description:
-      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered.',
+      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered. For each photo, thumbnails may carry a small preview { index, mediaType, data, width?, height? } keyed by the photo’s content index; it is stored for conversation pages and never sent to the model.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },

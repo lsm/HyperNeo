@@ -460,6 +460,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_publications',
   'neo_routing_log',
   'neo_conversation_asks',
+  'neo_conversation_ask_images',
   'neo_consultation_publications',
   'neo_session_bindings',
   'neo_work',
