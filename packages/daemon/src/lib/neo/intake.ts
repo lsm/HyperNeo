@@ -162,13 +162,15 @@ function recordNeoIntakeImages(
   db: Database
 ): IntakeResult {
   if (!receipt.ok) return receipt;
-  const images = neoIntakeImages(input);
-  if (images.length)
-    new NeoConversationAskRepository(db.getDatabase()).recordImages(
-      conversationId,
-      receipt.requestId,
-      images
-    );
+  try {
+    const images = neoIntakeImages(input);
+    if (images.length)
+      new NeoConversationAskRepository(db.getDatabase()).recordImages(
+        conversationId,
+        receipt.requestId,
+        images
+      );
+  } catch {}
   return receipt;
 }
 
