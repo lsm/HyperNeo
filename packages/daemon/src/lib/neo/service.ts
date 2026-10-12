@@ -235,6 +235,7 @@ import {
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import {
   neoAskAnswerNote,
+  neoAskReopensAfterClear,
   neoNeedsYouClearedNote,
   planNeoNeedsYou,
   planNeoNeedsYouCleared,
@@ -2028,7 +2029,8 @@ export class NeoService {
         now
       );
     const ticked = this.askRecords.get(ask.id);
-    if (ticked) writeNeoAskTickStatus(this.askRecords, ticked, planNeoAskTickStatus(ticked));
+    if (ticked && neoAskReopensAfterClear(ticked)) this.askRecords.reopen(ticked);
+    else if (ticked) writeNeoAskTickStatus(this.askRecords, ticked, planNeoAskTickStatus(ticked));
     if (!this.db.getSession(ask.originSessionId)) return;
     await this.deliverToOrigin(
       ask.originSessionId,

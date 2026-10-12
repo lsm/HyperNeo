@@ -84,10 +84,10 @@ export function planNeoNeedsYouCleared(
   const startable =
     ask.workIds.length > 0 && !ask.workIds.some((id) => cards.get(id)?.status === 'proposed');
   return (ask.doneItems ?? []).flatMap((item) => {
-    if (item.removed || item.state !== 'needs_you') return [];
+    if (item.removed || item.state !== 'needs_you' || item.decision) return [];
     if (item.waitCard && !cardWaitsOnHuman(cards.get(item.waitCard)))
       return [{ id: item.id, why: `card ${item.waitCard} no longer waits on the human` }];
-    if (!item.decision && startable && NEO_START_WORK.test(item.text))
+    if (startable && NEO_START_WORK.test(item.text))
       return [{ id: item.id, why: 'no card under this ask waits for Start work' }];
     return [];
   });
@@ -106,4 +106,11 @@ export function neoNeedsYouClearedNote(
     ),
     'Check each one now: tick it met if it is done, keep the work moving if not, or remove it if it no longer applies.',
   ].join('\n');
+}
+
+export function neoAskReopensAfterClear(ask: NeoAsk): boolean {
+  return (
+    ask.status === 'blocked' &&
+    !(ask.doneItems ?? []).some((item) => !item.removed && item.state === 'needs_you')
+  );
 }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import {
+  neoAskReopensAfterClear,
   neoDaemonReadsItem,
   neoNeedsYouClearedNote,
   planNeoAskResume,
@@ -181,6 +182,15 @@ describe('planNeoNeedsYouCleared', () => {
     ).toHaveLength(1);
   });
 
+  test('a decision waits for the human answer even after its cited card moves on', () => {
+    expect(
+      planNeoNeedsYouCleared(
+        waiting({ waitCard: 'w1', decision: true }),
+        new Map([['w1', { status: 'reported', needsYou: false }]])
+      )
+    ).toEqual([]);
+  });
+
   test('a cited card still waiting for Start or the human keeps its item', () => {
     const cited = waiting({ waitCard: 'w1' });
     expect(
@@ -235,5 +245,16 @@ describe('neoNeedsYouClearedNote', () => {
     );
     expect(note).toContain('i1 "Item i1": card w1 no longer waits on the human.');
     expect(note).toContain('ask a1 ("Ship it")');
+  });
+});
+
+describe('neoAskReopensAfterClear', () => {
+  test('a blocked ask with nothing left for the human reopens', () => {
+    const blocked = { ...ask, status: 'blocked', doneItems: [item('i1', 'pending')] } as NeoAsk;
+    expect(neoAskReopensAfterClear(blocked)).toBe(true);
+    expect(
+      neoAskReopensAfterClear({ ...blocked, doneItems: [item('i1', 'needs_you')] } as NeoAsk)
+    ).toBe(false);
+    expect(neoAskReopensAfterClear({ ...blocked, status: 'waiting' } as NeoAsk)).toBe(false);
   });
 });
