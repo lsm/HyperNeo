@@ -207,6 +207,13 @@ import {
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,
 } from './ask-evidence.ts';
+import {
+  type NeoAskIdleSeen,
+  neoAskIdleNote,
+  neoAskIdleSignature,
+  requireNeoAskIdle,
+  trackNeoAskIdle,
+} from './ask-idle.ts';
 import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
 import {
   extractNeoCardRefs,
@@ -305,6 +312,7 @@ export class NeoService {
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
+  private askIdleSeen: NeoAskIdleSeen = new Map();
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -1324,6 +1332,18 @@ export class NeoService {
         this.log.warn('Ask stall note pending', error)
       );
     }
+    const idleAsks = this.askRecords.listLive();
+    this.askIdleSeen = trackNeoAskIdle(
+      this.askIdleSeen,
+      idleAsks,
+      new Map(idleAsks.map((ask) => [ask.id, neoAskIdleSignature(ask, this.askIdleCards(ask))])),
+      Date.now()
+    );
+    for (const ask of idleAsks) {
+      await this.noteAskIdle(ask, Date.now()).catch((error) =>
+        this.log.warn('Ask idle note pending', error)
+      );
+    }
     this.pruneReadThrottles(Date.now());
     if (this.watching || this.disposed) return;
     this.watching = this.sessionWatcher
@@ -1432,6 +1452,67 @@ export class NeoService {
       ['ask', 'read', 'note']
     )
     .endAsync('stall') as (ask: NeoAsk, now: number) => Promise<unknown>;
+
+  private askIdleCards(ask: NeoAsk) {
+    return ask.workIds.flatMap((id) => {
+      const work = this.repo.getWork(id);
+      return work
+        ? [
+            {
+              id: work.id,
+              title: work.title,
+              status: work.status,
+              progress: `${this.workProgress(work)}:${this.workContinues.get(work.id)?.count ?? 0}`,
+            },
+          ]
+        : [];
+    });
+  }
+
+  private readonly noteAskIdle = (superpipe({})('neo-ask-idle-note') as PipelineAPI)
+    .input(['ask', 'now'])
+    .pipe(
+      (ask: NeoAsk, now: number) => {
+        const cards = this.askIdleCards(ask);
+        const seen = this.askIdleSeen.get(ask.id);
+        return {
+          cards,
+          session: !!this.db.getSession(ask.originSessionId),
+          since: seen?.since ?? now,
+          signature: seen?.signature ?? neoAskIdleSignature(ask, cards),
+        };
+      },
+      ['ask', 'now'],
+      'read'
+    )
+    .pipe(requireNeoAskIdle, ['ask', 'read', 'now'], 'result:idle')
+    .pipe(
+      (ask: NeoAsk, signature: string) => ({ id: neoAskEvidenceMessageId(ask.id, signature) }),
+      ['ask', 'idle'],
+      'note'
+    )
+    .pipe(
+      (ask: NeoAsk, note: { id: string }) =>
+        requireNeoAskStallUntold(this.hasDelivery(ask.originSessionId, note.id)),
+      ['ask', 'note'],
+      'result:idle'
+    )
+    .pipe(
+      async (
+        ask: NeoAsk,
+        read: { cards: ReturnType<NeoService['askIdleCards']> },
+        note: { id: string }
+      ) => {
+        await this.deliverToOrigin(
+          ask.originSessionId,
+          note.id,
+          neoAskIdleNote(ask, read.cards),
+          neoAskParent(ask)
+        );
+      },
+      ['ask', 'read', 'note']
+    )
+    .endAsync('idle') as (ask: NeoAsk, now: number) => Promise<unknown>;
 
   private readonly checkAskEvidence = (superpipe({})('neo-ask-evidence-check') as PipelineAPI)
     .input(['ask', 'now'])
