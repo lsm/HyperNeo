@@ -41,7 +41,15 @@ import {
 } from '../drivers/codex-feed.ts';
 import { ensureNeoProject, fileNeoSessions } from '../neo/folder.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
-import { createNeoOperations } from '../neo/operations.ts';
+import { createNeoOperations, neoReorganizeRuntime } from '../neo/operations.ts';
+import { createNeoTopicsReorganizer } from '../neo/reorganize-operation.ts';
+import {
+  NEO_REORGANIZE_IDLE_MS,
+  NEO_TOPICS_REORGANIZE_NIGHTLY,
+  runNeoNightlyReorganize,
+  scheduleNeoNightlyReorganize,
+} from '../neo/reorganize-nightly.ts';
+import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { loadNeoFilePacks } from '../neo/packs/file-packs.ts';
 import { adoptNeoFilePacks } from '../neo/packs/index.ts';
 import { getDataDir } from '../data-dir.ts';
@@ -1663,6 +1671,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     refreshNeoDriverWork(deps.jobQueue, neoService)
   );
   scheduleDriverRefresh(deps.jobQueue);
+  const reorganizeTopics = createNeoTopicsReorganizer(neoReorganizeRuntime(neoService));
+  const routingLog = new NeoRoutingLogRepository(deps.db.getDatabase());
+  deps.jobProcessor.register(NEO_TOPICS_REORGANIZE_NIGHTLY, (job) =>
+    runNeoNightlyReorganize(job, deps.jobQueue, {
+      now: () => Date.now(),
+      lastHumanAt: () => routingLog.recent(1)[0]?.askedAt ?? null,
+      reorganize: reorganizeTopics,
+      log: (line) => neoService.logReorganize(line),
+    })
+  );
+  scheduleNeoNightlyReorganize(deps.jobQueue, Date.now() + NEO_REORGANIZE_IDLE_MS, null);
   deps.jobProcessor.register(WORK_TURN_EMBED, () =>
     runTurnEmbedding(deps.jobQueue, deps.db.getDatabase(), deps.db.getEmbedder())
   );

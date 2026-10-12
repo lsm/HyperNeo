@@ -49,9 +49,9 @@ import { requireNeoProposal, type NeoProposal } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
 import { createNeoAskForwardOperation, neoForwardedText } from './ask-forward-operation.ts';
-import { createNeoReorganizeOperation } from './reorganize-operation.ts';
+import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import { neoSessionStatus } from './direct-reply-fallback.ts';
-import { createNeoRouter, reopenNeoHolder } from './router.ts';
+import { createNeoRouter, type NeoRouter, reopenNeoHolder } from './router.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
 import {
@@ -583,6 +583,28 @@ function admitNeoCaller(
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
     return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
   return { value: caller };
+}
+
+export function neoReorganizeRuntime(
+  service: NeoService,
+  router: NeoRouter = createNeoRouter(service.db, service.repo, (concernId) =>
+    service.open(concernId)
+  )
+): NeoReorganizeRuntime {
+  return {
+    getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
+    rootSessionId: () => service.repo.getBindingForConcern(null)?.sessionId ?? null,
+    liveAsks: () => service.askRecords.listLive(),
+    ask: (id) => service.askRecords.get(id),
+    route: (ask) => router(`${ask.title}\n${ask.ask}`, ask.id),
+    sessionStatus: (sessionId) =>
+      neoSessionStatus(service.db.getSession(sessionId)?.processingState),
+    cards: (ask) => ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
+    deliver: (sessionId, messageId, content, from, parent) =>
+      service.deliverForward(sessionId, messageId, content, from, parent),
+    move: (ask, cards, owner) => service.moveAsk(ask, cards, owner),
+    log: (line) => service.logReorganize(line),
+  };
 }
 
 export function createNeoOperations(service: NeoService) {
@@ -1448,20 +1470,7 @@ export function createNeoOperations(service: NeoService) {
   const router = createNeoRouter(service.db, service.repo, (concernId) => service.open(concernId));
   return [
     createNeoIntakeOperation(service.db, service.repo, service.notifyChanged, router),
-    createNeoReorganizeOperation({
-      getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
-      rootSessionId: () => service.repo.getBindingForConcern(null)?.sessionId ?? null,
-      liveAsks: () => service.askRecords.listLive(),
-      ask: (id) => service.askRecords.get(id),
-      route: (ask) => router(`${ask.title}\n${ask.ask}`, ask.id),
-      sessionStatus: (sessionId) =>
-        neoSessionStatus(service.db.getSession(sessionId)?.processingState),
-      cards: (ask) => ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
-      deliver: (sessionId, messageId, content, from, parent) =>
-        service.deliverForward(sessionId, messageId, content, from, parent),
-      move: (ask, cards, owner) => service.moveAsk(ask, cards, owner),
-      log: (line) => service.logReorganize(line),
-    }),
+    createNeoReorganizeOperation(neoReorganizeRuntime(service, router)),
     createNeoPublicationOperation(service.publish),
     createNeoRouteCorrectOperation(service.db, service.repo),
     createNeoAskForwardOperation({
