@@ -182,6 +182,14 @@ export class NeoConversationAskRepository {
     return read({ conversationId, after, limit, before }, this.db);
   }
 
+  findBySequence(conversationId: string, sequence: number): NeoConversationAsk | null {
+    const row = this.db
+      .prepare(`SELECT ${columns} FROM neo_conversation_asks
+      WHERE conversation_id = ? AND sequence = ?`)
+      .get(conversationId, sequence) as Row | null;
+    return row ? decode(row) : null;
+  }
+
   find(conversationId: string, requestId: string): NeoConversationAsk | null {
     const row = this.db
       .prepare(`SELECT ${columns} FROM neo_conversation_asks

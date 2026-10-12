@@ -7,16 +7,18 @@ import { Button } from '../components/ui/Button.tsx';
 import { useInputDraft } from '../hooks/useInputDraft.ts';
 import ToastContainer from '../islands/ToastContainer.tsx';
 import { blurComposerOnTap } from '../lib/blur-composer-on-tap.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { NeoActivity } from './NeoActivity.tsx';
 import { NeoAskCard } from './NeoAskCard.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
-import { publicAskImages, publicAskText } from './NeoPublicConversation.tsx';
+import { publicAskText } from './NeoPublicConversation.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoSessionPane } from './NeoSessionPane.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
+import { readNeoAskImages } from './conversation-ask-client.ts';
 import { groupNeoAsks } from './neo-asks.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
@@ -212,6 +214,10 @@ export function NeoLive() {
       />
     ) : null;
   }
+  const liveDraft = useRef(draft);
+  liveDraft.current = draft;
+  const liveSession = useRef(neo.sessionId);
+  liveSession.current = neo.sessionId;
   function writeDraft(text: string) {
     setDraft(text);
     if (currentScope.current === sceneScope) inputDraft.setContent(text);
@@ -544,17 +550,23 @@ export function NeoLive() {
                 muted: new Set(view?.mutedSessions ?? []),
                 onMute: (key, muted) => void neo.muteSession(key, muted),
               }}
-              onEditUndelivered={(ask) => {
-                if (!neo.sessionId) return false;
-                const images = publicAskImages(ask.content);
-                if (!restoreNeoImages(neo.sessionId, images)) {
+              onEditUndelivered={async (ask) => {
+                const sessionId = neo.sessionId;
+                if (!sessionId) return false;
+                const images = await readNeoAskImages(ask, () => connectionManager.getHub());
+                if (liveSession.current !== sessionId) return false;
+                if (!images) {
+                  neo.setError('Could not load this message’s photos. Please try again.');
+                  return false;
+                }
+                if (!restoreNeoImages(sessionId, images)) {
                   neo.setError(
                     'Remove some attachments first: a message can carry up to 6 files, 8 MB in all.'
                   );
                   return false;
                 }
                 const text = publicAskText(ask.content);
-                writeDraft([draft?.trim(), text].filter(Boolean).join('\n\n'));
+                writeDraft([liveDraft.current?.trim(), text].filter(Boolean).join('\n\n'));
               }}
               onLoadEarlierPublic={() => {
                 const element = scroll.current;

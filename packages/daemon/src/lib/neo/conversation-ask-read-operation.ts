@@ -1,21 +1,38 @@
-import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
+import type {
+  NeoConversationAsk,
+  NeoConversationAskPageItem,
+  NeoConversationImageRef,
+} from '@hyperneo/shared/types/neo-conversation-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import type { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { isMainNeoBinding } from './binding-roles.ts';
 import { NeoConversationAskSchema } from './conversation-ask.ts';
+import { neoImageSize } from './image-size.ts';
 import {
   NeoConversationPageInput,
+  NeoConversationPageShape,
+  neoConversationPageCursorValid,
   readNeoConversationPage,
   requirePublicationReader,
   requirePublicationConversation,
 } from './publication-read-operation.ts';
 
 type Page = z.infer<typeof NeoConversationPageInput>;
+const AskPageInput = NeoConversationPageShape.extend({
+  imageRefs: z.boolean().optional(),
+}).refine(neoConversationPageCursorValid);
+type AskPage = z.infer<typeof AskPageInput>;
 type Result =
   | { ok: false; reason: 'human_only' | 'conversation_not_found' }
-  | { ok: true; conversationId: string; items: NeoConversationAsk[]; nextAfter: number };
+  | {
+      ok: true;
+      conversationId: string;
+      items: Array<NeoConversationAsk | NeoConversationAskPageItem>;
+      nextAfter: number;
+    };
 
 const StoredAsk = z
   .preprocess(
@@ -41,6 +58,28 @@ const StoredAsk = z
     ...(delivery ? { delivery } : {}),
   }));
 
+const ImageRefSchema = z
+  .object({
+    type: z.literal('image_ref'),
+    imageId: z.string(),
+    mediaType: z.string(),
+    bytes: z.number().int().nonnegative(),
+    width: z.number().int().positive().nullable(),
+    height: z.number().int().positive().nullable(),
+    thumbnail: z.object({ mediaType: z.string(), data: z.string() }).nullable(),
+  })
+  .strict();
+
+const RefAsk = z.object({
+  conversationId: z.uuid(),
+  requestId: z.uuid(),
+  askOrigin: z.object({ sessionId: z.string(), messageId: z.uuid() }),
+  content: z.array(z.union([ImageRefSchema, z.record(z.string(), z.unknown())])),
+  sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  createdAt: z.iso.datetime(),
+  delivery: z.object({ state: z.literal('failed') }).optional(),
+});
+
 type NeoAskSendStatusReader = (sessionId: string, messageId: string) => string | null;
 
 export function presentNeoAskDelivery(
@@ -54,14 +93,56 @@ export function presentNeoAskDelivery(
 
 function readAskDelivery(result: Result, readSendStatus: NeoAskSendStatusReader): Result {
   if (!result.ok) return result;
-  const statuses = result.items.map((item) =>
+  const items = result.items as NeoConversationAsk[];
+  const statuses = items.map((item) =>
     readSendStatus(item.askOrigin.sessionId, item.askOrigin.messageId)
   );
-  return { ...result, items: presentNeoAskDelivery(result.items, statuses) };
+  return { ...result, items: presentNeoAskDelivery(items, statuses) };
+}
+
+export function neoConversationImageId(sequence: number, index: number): string {
+  return `${sequence}:${index}`;
+}
+
+type AskBlock = Exclude<NeoConversationAsk['content'], string>[number];
+type PageBlock = NeoConversationAskPageItem['content'][number];
+
+function neoAskBlocks(item: NeoConversationAsk): AskBlock[] {
+  return typeof item.content === 'string'
+    ? [{ type: 'text', text: item.content }]
+    : [...item.content];
+}
+
+export function presentNeoAskImageRefs(
+  items: readonly NeoConversationAsk[]
+): NeoConversationAskPageItem[] {
+  return items.map((item) => ({
+    ...item,
+    content: neoAskBlocks(item).map((block: AskBlock, index: number): PageBlock => {
+      if (block.type !== 'image' || block.source.type !== 'base64') return block;
+      const read = neoImageSize(block.source.data);
+      const ref: NeoConversationImageRef = {
+        type: 'image_ref',
+        imageId: neoConversationImageId(item.sequence, index),
+        mediaType: block.source.media_type,
+        bytes: Math.floor((block.source.data.length * 3) / 4),
+        width: read?.width ?? null,
+        height: read?.height ?? null,
+        thumbnail: null,
+      };
+      return ref;
+    }),
+  }));
+}
+
+function readAskImageRefs(request: AskPage, result: Result): Result {
+  if (!result.ok || !request.imageRefs) return result;
+  return { ...result, items: presentNeoAskImageRefs(result.items as NeoConversationAsk[]) };
 }
 
 const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
-  .input(['page', 'caller', 'repo', 'ledger', 'readSendStatus'])
+  .input(['request', 'caller', 'repo', 'ledger', 'readSendStatus'])
+  .pipe((request: AskPage): Page => request, 'request', 'page')
   .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
   .pipe((repo: NeoRepository) => repo.getBindingForConcern(null), 'repo', 'root')
   .pipe(requirePublicationConversation, ['page', 'root'], 'result:page')
@@ -72,8 +153,9 @@ const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
     'page'
   )
   .pipe(readAskDelivery, ['page', 'readSendStatus'], 'page')
+  .pipe(readAskImageRefs, ['request', 'page'], 'page')
   .end('page') as (
-  page: Page,
+  request: AskPage,
   caller: OperationCaller,
   repo: NeoRepository,
   ledger: NeoConversationAskRepository,
@@ -88,18 +170,109 @@ export function createNeoConversationAskReadOperation(
   return defineOperation({
     name: 'neo.conversation.asks.read',
     description:
-      'Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. Use nextAfter for later pages, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence. An ask that could not be delivered carries delivery: { state: "failed" }.',
+      'Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. Use nextAfter for later pages, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence. An ask that could not be delivered carries delivery: { state: "failed" }. With imageRefs: true, each photo comes back as { type: "image_ref", imageId, mediaType, bytes, width, height, thumbnail } instead of its full data; read the full photo with neo.conversation.image.read.',
     policy: { safetyClass: 'human_only' },
-    inputSchema: NeoConversationPageInput,
+    inputSchema: AskPageInput,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.enum(['human_only', 'conversation_not_found']) }),
       z.object({
         ok: z.literal(true),
         conversationId: z.uuid(),
-        items: z.array(StoredAsk).max(100),
+        items: z.array(z.union([StoredAsk, RefAsk])).max(100),
         nextAfter: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       }),
     ]),
     execute: async (page, caller) => read(page, caller, repo, ledger, readSendStatus),
+  });
+}
+
+type ImageInput = { conversationId: string; imageId: string };
+type ImageFailure = {
+  ok: false;
+  reason: 'human_only' | 'conversation_not_found' | 'image_not_found';
+};
+type ImageResult = ImageFailure | { ok: true; imageId: string; mediaType: string; data: string };
+
+export function requireNeoImageReader(
+  input: ImageInput,
+  caller: OperationCaller
+): { value: ImageInput } | { reason: ImageFailure } {
+  return caller.source === 'rpc' && caller.principal === 'local'
+    ? { value: input }
+    : { reason: { ok: false, reason: 'human_only' } };
+}
+
+export function requireNeoImageConversation(
+  input: ImageInput,
+  repo: NeoRepository
+): { value: ImageInput } | { reason: ImageFailure } {
+  const root = repo.getBindingForConcern(null);
+  return isMainNeoBinding(root) && root.sessionId === `neo:${input.conversationId}`
+    ? { value: input }
+    : { reason: { ok: false, reason: 'conversation_not_found' } };
+}
+
+export function readNeoConversationImage(
+  input: ImageInput,
+  ask: NeoConversationAsk | null
+): ImageResult {
+  const index = Number(input.imageId.split(':')[1]);
+  const block = Array.isArray(ask?.content) ? ask.content[index] : undefined;
+  return block?.type === 'image' && block.source.type === 'base64'
+    ? {
+        ok: true,
+        imageId: input.imageId,
+        mediaType: block.source.media_type,
+        data: block.source.data,
+      }
+    : { ok: false, reason: 'image_not_found' };
+}
+
+const readImage = (superpipe({})('neo-conversation-image-read') as PipelineAPI)
+  .input(['input', 'caller', 'repo', 'ledger'])
+  .pipe(requireNeoImageReader, ['input', 'caller'], 'result:image')
+  .pipe(requireNeoImageConversation, ['input', 'repo'], 'result:image')
+  .pipe(
+    (input: ImageInput, ledger: NeoConversationAskRepository) =>
+      ledger.findBySequence(input.conversationId, Number(input.imageId.split(':')[0])),
+    ['input', 'ledger'],
+    'ask'
+  )
+  .pipe(readNeoConversationImage, ['input', 'ask'], 'image')
+  .end('image') as (
+  input: ImageInput,
+  caller: OperationCaller,
+  repo: NeoRepository,
+  ledger: NeoConversationAskRepository
+) => ImageResult;
+
+export function createNeoConversationImageReadOperation(
+  repo: NeoRepository,
+  ledger: NeoConversationAskRepository
+) {
+  return defineOperation({
+    name: 'neo.conversation.image.read',
+    description:
+      'Read one full photo from a human ask in the current public conversation, by the imageId that neo.conversation.asks.read returns with imageRefs: true.',
+    policy: { safetyClass: 'human_only' },
+    inputSchema: z
+      .object({
+        conversationId: z.uuid(),
+        imageId: z.string().regex(/^[1-9]\d{0,15}:\d{1,6}$/),
+      })
+      .strict(),
+    resultSchema: z.union([
+      z.object({
+        ok: z.literal(false),
+        reason: z.enum(['human_only', 'conversation_not_found', 'image_not_found']),
+      }),
+      z.object({
+        ok: z.literal(true),
+        imageId: z.string(),
+        mediaType: z.string(),
+        data: z.string(),
+      }),
+    ]),
+    execute: async (input, caller) => readImage(input, caller, repo, ledger),
   });
 }
