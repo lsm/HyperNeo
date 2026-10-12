@@ -125,6 +125,34 @@ describe('Neo existing trusted human work input', () => {
     return JSON.stringify(db.getSession(target));
   }
 
+  test.each(['neo.work.retry', 'neo.work.continue'])(
+    '%s of a topic avatar’s card passes for root answering the human, not from a note',
+    async (name) => {
+      storeInput(holder);
+      const work = await propose(caller(holder));
+      const input =
+        name === 'neo.work.retry' ? { id: work.id } : { id: work.id, message: 'Again.' };
+      const verb = name === 'neo.work.retry' ? 'retry' : 'continue';
+      const proposerOnly = {
+        ok: false,
+        reason: `Only the Neo session that proposed this work, Neo answering the human’s own chat message, or the user can ${verb} it.`,
+      };
+      const note = '00000000-0000-4000-8000-000000000013';
+      storeInput(root, 'system', note);
+      expect(await invoke(name, input, caller(root, note))).toMatchObject({ value: proposerOnly });
+      storeInput();
+      expect(await invoke(name, input, caller())).toMatchObject({
+        value: {
+          ok: false,
+          reason:
+            verb === 'retry'
+              ? 'Only a hand-off that failed before it started can be retried; use neo.work.continue for started work.'
+              : 'Only started driver work can be continued.',
+        },
+      });
+    }
+  );
+
   test.each([root, holder])(
     'starts only the exact current real human input of %s through existing delivery',
     async (sessionId) => {

@@ -568,24 +568,33 @@ function requireNeoWorkCancellation(
 function requireNeoWorkProposer(
   work: NeoWork,
   caller: OperationCaller,
-  verb: 'continue' | 'retry'
+  verb: 'continue' | 'retry',
+  humanTurn: boolean
 ): { value: NeoWork } | { reason: Rejection } {
-  if (caller.source === 'mcp' && caller.sessionId !== work.originSessionId)
+  if (caller.source === 'mcp' && caller.sessionId !== work.originSessionId && !humanTurn)
     return {
       reason: {
         ok: false,
-        reason: `Only the Neo session that proposed this work or the user can ${verb} it.`,
+        reason: `Only the Neo session that proposed this work, Neo answering the human’s own chat message, or the user can ${verb} it.`,
       },
     };
   return { value: work };
 }
 
-export function requireNeoWorkContinuation(work: NeoWork, caller: OperationCaller) {
-  return requireNeoWorkProposer(work, caller, 'continue');
+export function requireNeoWorkContinuation(
+  work: NeoWork,
+  caller: OperationCaller,
+  humanTurn = false
+) {
+  return requireNeoWorkProposer(work, caller, 'continue', humanTurn);
 }
 
-export function requireNeoWorkRetryCaller(work: NeoWork, caller: OperationCaller) {
-  return requireNeoWorkProposer(work, caller, 'retry');
+export function requireNeoWorkRetryCaller(
+  work: NeoWork,
+  caller: OperationCaller,
+  humanTurn = false
+) {
+  return requireNeoWorkProposer(work, caller, 'retry', humanTurn);
 }
 
 export function isNeoTurnAskReadable(
@@ -1582,7 +1591,7 @@ export function createNeoOperations(service: NeoService) {
     async ({ id, message }, caller) => {
       const work = service.repo.getWork(id);
       if (!work) return { ok: false as const, reason: 'work_not_found' };
-      const admission = requireNeoWorkContinuation(work, caller);
+      const admission = requireNeoWorkContinuation(work, caller, isNeoHumanTurn(service, caller));
       if ('reason' in admission) return admission.reason;
       return service.continueWork(id, message, Date.now(), {
         guarded: caller.source === 'mcp',
@@ -1611,7 +1620,8 @@ export function createNeoOperations(service: NeoService) {
       'found',
       'result:retry'
     )
-    .pipe(requireNeoWorkRetryCaller, ['retry', 'caller'], 'result:retry')
+    .pipe((caller: OperationCaller) => isNeoHumanTurn(service, caller), 'caller', 'humanTurn')
+    .pipe(requireNeoWorkRetryCaller, ['retry', 'caller', 'humanTurn'], 'result:retry')
     .pipe(
       (found: NeoWorkRetryFound) => readNeoStartFolder(found.target, existsSync),
       'found',
