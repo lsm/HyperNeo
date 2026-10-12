@@ -386,6 +386,7 @@ export interface QueryRunnerContext {
   ) => Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
+  markHolderInputConsumed?(messageUuid: string): void;
 }
 
 export class QueryRunner {
@@ -2129,6 +2130,7 @@ export class QueryRunner {
           onSent();
           return;
         }
+        if (message.uuid) this.ctx.markHolderInputConsumed?.(message.uuid);
       }
       messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };

@@ -159,6 +159,9 @@ const Answer = z.object({
 });
 
 const Approve = z.object({ askId: z.string().min(1) });
+const Fold = z
+  .object({ askId: z.string().min(1), intoAskId: z.string().min(1) })
+  .refine((input) => input.askId !== input.intoAskId, 'Fold an ask into another ask.');
 const Edit = z
   .object({
     askId: z.string().min(1),
@@ -327,6 +330,20 @@ export function planNeoAskItems(input: {
 
 export function isNeoAskHandedOver(caller: OperationCaller): boolean {
   return caller.source === 'mcp' && !!caller.neoTurn?.human && caller.neoTurn.isLive();
+}
+
+export function requireNeoAskOriginFree(
+  requestKey: string,
+  origin: NeoWorkOrigin,
+  existing: NeoAsk | null
+): Gate<NeoWorkOrigin> {
+  return existing && existing.requestKey !== `${origin.originSessionId}:${requestKey}`
+    ? {
+        reason: fail(
+          `ask_exists_for_message: ask ${existing.id} ("${existing.title}") already records this message. Add to it with neo.ask.edit instead of opening another ask.`
+        ),
+      }
+    : { value: origin };
 }
 
 export function requireNeoAskReceipt(
@@ -622,6 +639,36 @@ export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gat
     : { value: ask };
 }
 
+export function requireNeoAskFoldRoom(
+  source: NeoAsk,
+  target: NeoAsk | Rejection
+): Gate<{ source: NeoAsk; target: NeoAsk }> {
+  if ('ok' in target) return { reason: target };
+  const active = (ask: NeoAsk) => (ask.doneItems ?? []).filter((item) => !item.removed).length;
+  return active(source) + active(target) > 12
+    ? {
+        reason: fail(
+          `checklist_full: folding would give ask ${target.id} ${active(source) + active(target)} items; an ask holds at most 12. Remove items that are met or no longer apply first.`
+        ),
+      }
+    : { value: { source, target } };
+}
+
+export function planNeoAskFold(
+  source: NeoAsk,
+  target: NeoAsk
+): { from: string; id: string; position: number }[] {
+  const items = target.doneItems ?? [];
+  const next = Math.max(0, ...items.map((item) => Number(item.id.slice(1)) || 0));
+  return (source.doneItems ?? [])
+    .filter((item) => !item.removed)
+    .map((item, index) => ({
+      from: item.id,
+      id: `i${next + index + 1}`,
+      position: items.length + index,
+    }));
+}
+
 export function planNeoAskEdit(
   ask: NeoAsk,
   input: z.infer<typeof Edit>
@@ -777,6 +824,18 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
           caller.sessionId ?? service.repo.getBindingForConcern(input.concernId)?.sessionId
         ),
       ['input', 'caller'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Open>, origin: NeoWorkOrigin) =>
+        requireNeoAskOriginFree(
+          input.requestKey,
+          origin,
+          origin.originMessageId
+            ? service.askRecords.liveForOrigin(origin.originSessionId, origin.originMessageId)
+            : null
+        ),
+      ['input', 'admission'],
       'result:admission'
     )
     .pipe(planNeoAskItems, 'input', 'checklist')
@@ -1144,7 +1203,57 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     input: z.infer<typeof Edit>,
     caller: OperationCaller
   ) => AskReceipt | Rejection;
+  const fold = (superpipe({})('neo.ask.fold') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof Fold>, caller: OperationCaller) =>
+        requireNeoOwnedLiveAsk(readOwnedLiveAsk(input.askId, caller, 'neo.ask.fold', 'fold')),
+      ['input', 'caller'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Fold>, caller: OperationCaller) =>
+        readOwnedLiveAsk(input.intoAskId, caller, 'neo.ask.fold', 'fold into'),
+      ['input', 'caller'],
+      'target'
+    )
+    .pipe(requireNeoAskFoldRoom, ['admission', 'target'], 'result:admission')
+    .pipe(
+      (pair: { source: NeoAsk; target: NeoAsk }) => ({
+        folded: service.askRecords.fold(
+          pair.source,
+          pair.target,
+          planNeoAskFold(pair.source, pair.target),
+          `Superseded: folded into ask ${pair.target.id}.`,
+          Date.now()
+        ),
+        ask: service.askRecords.get(pair.target.id),
+      }),
+      'admission',
+      'written'
+    )
+    .pipe(
+      (written: { folded: boolean; ask: NeoAsk | null }) =>
+        requireNeoAskWritten({ ask: written.folded ? written.ask : null }),
+      'written',
+      'result:admission'
+    )
+    .pipe(replanAsk, 'admission', 'replanned')
+    .pipe(requireNeoAskWritten, 'replanned', 'result:admission')
+    .end('admission') as (
+    input: z.infer<typeof Fold>,
+    caller: OperationCaller
+  ) => AskReceipt | Rejection;
   return [
+    defineOperation({
+      name: 'neo.ask.fold',
+      description:
+        "Fold one open ask into another when they are the same request, such as a duplicate opened by mistake: the folded ask's checklist items and cards move to intoAskId, and the folded ask closes as superseded. Both asks must be open and yours; the result holds at most 12 items.",
+      inputSchema: Fold,
+      resultSchema: AskResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => fold(input, caller),
+    }),
     defineOperation({
       name: 'neo.ask.open',
       description:

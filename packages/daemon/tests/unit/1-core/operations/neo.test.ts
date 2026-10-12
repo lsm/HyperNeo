@@ -426,6 +426,7 @@ describe('Neo MVP', () => {
       'neo.conversation.image.read',
       'neo.draft.recover',
       'neo.preferences.set',
+      'neo.ask.fold',
       'neo.ask.open',
       'neo.ask.tick',
       'neo.ask.answer',
