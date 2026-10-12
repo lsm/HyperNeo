@@ -119,15 +119,21 @@ const Cite = z.union([
   z.object({ rule: z.string().trim().min(1).max(2000) }),
   z.object({ card: z.string().trim().min(1).max(160) }),
 ]);
-const Settle = z.object({
-  id: z.string().min(1),
-  outcome: z.enum(['achieved', 'abandoned', 'blocked', 'waiting']),
-  summary: z.string().trim().min(1).max(200).optional(),
-  evidence: z.string().trim().min(1).max(4000),
-  cite: Cite.optional(),
-  action: z.string().trim().min(1).max(120).optional(),
-  kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
-});
+const Settle = z.preprocess(
+  (input) =>
+    input && typeof input === 'object' && !('id' in input) && 'askId' in input
+      ? { ...input, id: (input as { askId: unknown }).askId }
+      : input,
+  z.object({
+    id: z.string().min(1),
+    outcome: z.enum(['achieved', 'abandoned', 'blocked', 'waiting']),
+    summary: z.string().trim().min(1).max(200).optional(),
+    evidence: z.string().trim().min(1).max(4000),
+    cite: Cite.optional(),
+    action: z.string().trim().min(1).max(120).optional(),
+    kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
+  })
+);
 
 const Tick = z.object({
   askId: z.string().min(1),

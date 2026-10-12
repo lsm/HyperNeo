@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { adoptNeoFilePacks } from '../../../../src/lib/neo/packs/index.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { tmpdir } from 'node:os';
@@ -198,6 +199,25 @@ describe('neo.ask operations', () => {
     } finally {
       adoptNeoFilePacks([]);
     }
+  });
+
+  test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
+    const askId = await openAsk();
+    for (const itemId of ['i1', 'i2'])
+      await invoke('neo.ask.tick', { askId, itemId, state: 'met', evidence: 'PR #12 merged.' });
+    expect(
+      await invoke('neo.ask.settle', {
+        askId,
+        outcome: 'achieved',
+        summary: 'Merged in #12.',
+        evidence: 'PR #12 merged.',
+      })
+    ).toMatchObject({ value: { ok: true, ask: { id: askId, status: 'achieved' } } });
+    const settle = createNeoOperations(service).find((op) => op.name === 'neo.ask.settle')!;
+    const schema = z.toJSONSchema(settle.inputSchema, { io: 'input' }) as {
+      properties?: Record<string, unknown>;
+    };
+    expect(Object.keys(schema.properties ?? {})).toEqual(expect.arrayContaining(['id', 'outcome']));
   });
 
   test('opens one ask per request key and shows its cards in the snapshot', async () => {
