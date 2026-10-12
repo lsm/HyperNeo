@@ -66,7 +66,7 @@ The daemon refuses every other `neo.publication.publish`, with a reason. For eac
 
 ### 4. One owner, daemon-side merge
 
-- The card's session still merges its own PR (coding pack). The coding pack merges one itself when it's been approved on its head commit, CLEAN, with no unresolved threads, for over 30 minutes, then records the merge. Deploys stay where they are: the laptop through the daemon's own update hook, the iMac through its session.
+- The session that worked on a PR merges it (coding pack). For a PR left approved on its head, CLEAN, with no unresolved threads, for over 30 minutes, the daemon wakes that session to merge it, rather than merging it itself. Deploys stay where they are: the laptop through the daemon's own update hook, the iMac through its session.
 - Work goes through Neo asks. Peer sessions get work as cards, not direct messages.
 
 ## Slices
@@ -77,7 +77,7 @@ Each slice is one PR, behaviour-tested, deployable on its own:
 2. **`neo.ask.question`.** Remove `needs_you` ticks and gate-carrying settles. Migrate existing needs_you items to questions (with options) or drop them.
 3. **Derived notifications:** refuse non-trigger publications, and add trigger notes.
 4. **Quiet routine wakes:** CI/review-waiting events stop starting turns. Notes carry derived state.
-5. **Daemon-side merge fallback** in the coding pack, for PRs left approved and clean over 30 minutes. Retire `ship.sh`.
+5. **Merge by the working session:** the daemon wakes a card's session for its PR left approved and clean over 30 minutes. Retire `ship.sh`.
 6. **Topic sessions start fresh** from a snapshot. Root Neo keeps cross-topic questions only.
 
 Deleted along the way: needs_you validation (cites, keyword checks, kinds, cleanup sweeps), the reply-limit cap (subsumed by triggers), and most done-check prose.
@@ -96,8 +96,8 @@ Shipped behaviour it replaces:
 - **#6592 (cites), #6639 (keyword checks), #6646 (item kinds), #6609 (reply cap):** removed by slices 2 and 3.
 - **Standing rule 3** (an item Neo can't verify isn't met on an agent's word) becomes `confirm`.
 - **Standing rule 4** (a human decision is its own item) becomes `neo.ask.question`.
-- **#6225 (Done for a step only the human can do, such as a manual test):** becomes a question with options ("Did the keyboard hide?" → Yes / No).
-- **Merging:** coding-pack guidance has the card's session run `gh pr merge` itself, which handles refusals. Slice 5 keeps that. The daemon merges only a PR that has been approved on its head, CLEAN, for over 30 minutes without a merge, the case `done-check-prs-ready` already detects. `ship.sh` retires.
+- **#6225 (Done for a step only the human can do, such as a manual test):** becomes a question about the result, with options: "Did the keyboard hide?" → Yes / No, or "Is the result what you wanted?" → Yes / Not yet.
+- **Merging:** whoever worked on a PR merges it. Neo manages the work; it isn't a worker. Coding-pack guidance already has the card's session run `gh pr merge`, which handles refusals. When a PR sits approved on its head and CLEAN for over 30 minutes (the case `done-check-prs-ready` detects), the daemon wakes that working session to merge it. It doesn't merge it itself. A PR that still doesn't merge is an exception: find its cause and fix it in the system, not with a fallback. `ship.sh` retires.
 
 ## Open questions
 
