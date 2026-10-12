@@ -91,7 +91,14 @@ export function isNeoAskOutcomeItem(
     item.state === 'needs_you' &&
     item.kind === 'action' &&
     !item.waitCard &&
-    !item.options?.length
+    (!item.options?.length || isNeoAskOutcomeOptions(item.options))
+  );
+}
+
+export function isNeoAskOutcomeOptions(options: readonly string[]): boolean {
+  return (
+    options.length === NEO_ASK_OUTCOME_OPTIONS.length &&
+    options.every((option, index) => option === NEO_ASK_OUTCOME_OPTIONS[index])
   );
 }
 
@@ -102,7 +109,7 @@ export function neoAskItemAction(item: NeoAskItem): NeoAskHumanAction | null {
     return {
       kind: 'answer',
       itemId: item.id,
-      step: item.text,
+      step: item.text === item.question ? null : item.text,
       question: item.question ?? NEO_ASK_OUTCOME_QUESTION,
       options: [...NEO_ASK_OUTCOME_OPTIONS],
     };

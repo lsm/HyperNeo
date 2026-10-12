@@ -118,7 +118,7 @@ export function neoNeedsYouClearedNote(
       (entry) =>
         `- ${entry.id} "${items.find((item) => item.id === entry.id)?.text ?? ''}": ${entry.why}.`
     ),
-    'Check each one now: tick it met if it is done, needs_you again if the human still has to answer it, keep the work moving if not, or remove it if it no longer applies.',
+    'Check each one now: tick it met if it is done, ask the human with neo.ask.question if they still have to decide it, keep the work moving if not, or remove it if it no longer applies.',
   ].join('\n');
 }
 
