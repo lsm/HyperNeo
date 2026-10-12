@@ -376,6 +376,14 @@ describe('neo.work.continue', () => {
       value: { ok: false, reason: expect.stringContaining('brought no new commit') },
     });
     expect(service.isContinueStalled(work.id)).toBe(true);
+    const stalled = service.repo.getWork(work.id)!;
+    service.repo.transitionWork(work.id, stalled, { status: 'failed', report: 'Gave up.' });
+    expect(service.isContinueStalled(work.id)).toBe(false);
+    service.repo.transitionWork(work.id, service.repo.getWork(work.id)!, {
+      status: stalled.status,
+      report: stalled.report,
+    });
+    expect(service.isContinueStalled(work.id)).toBe(true);
     service.askRecords.approve(opened.id, Date.now() + 1);
     expect(service.isContinueStalled(work.id)).toBe(false);
     expect(service.askRecords.get(opened.id)?.approvedContinues).toBe(0);

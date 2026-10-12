@@ -1806,7 +1806,11 @@ export class NeoService {
 
   isContinueStalled(workId: string): boolean {
     const work = this.repo.getWork(workId);
-    return !!work && this.stalledContinues(work) >= NEO_WORK_STALLED_CONTINUES;
+    return (
+      !!work &&
+      (work.status === 'queued' || work.status === 'reported') &&
+      this.stalledContinues(work) >= NEO_WORK_STALLED_CONTINUES
+    );
   }
 
   private continueBudget(work: NeoWork, now: number): string | null {
