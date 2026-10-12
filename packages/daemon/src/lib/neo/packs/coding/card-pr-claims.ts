@@ -184,35 +184,30 @@ export function isNeoCardMentionRelated(
   named: ReadonlySet<number>,
   pr: Pick<NeoWorkPr, 'url' | 'refs'>
 ): boolean {
-  if (!named.size) return true;
+  const refs = pr.refs ?? [];
+  if (!named.size || !refs.length) return true;
   const own = Number(/\/pull\/(\d+)/.exec(pr.url)?.[1]);
-  return named.has(own) || (pr.refs ?? []).some((ref) => named.has(ref));
+  return named.has(own) || refs.some((ref) => named.has(ref));
 }
 
 export function keepNeoCardPrReads(
   card: Pick<NeoWork, 'createdAt' | 'title' | 'instruction'>,
   owned: readonly NeoCardPrOwned[],
   prs: readonly NeoWorkPr[]
-): {
-  kept: NeoCardPrOwned[];
-  pending: NeoCardPrOwned[];
-  rejected: NeoCardPrOwned[];
-  unrelated: NeoCardPrOwned[];
-} {
-  const sorted = { kept: [], pending: [], rejected: [], unrelated: [] } as {
+): { kept: NeoCardPrOwned[]; pending: NeoCardPrOwned[]; rejected: NeoCardPrOwned[] } {
+  const sorted = { kept: [], pending: [], rejected: [] } as {
     kept: NeoCardPrOwned[];
     pending: NeoCardPrOwned[];
     rejected: NeoCardPrOwned[];
-    unrelated: NeoCardPrOwned[];
   };
   const named = new Set(neoTextRefs(`${card.title}\n${card.instruction}`));
   for (const candidate of owned) {
     const pr = prs.find((item) => key(item.url) === key(candidate.url));
     if (candidate.claim !== 'mentioned') sorted.kept.push(candidate);
     else if (!pr) (candidate.claimed ? sorted.kept : sorted.pending).push(candidate);
-    else if (!isNeoCardMentionCurrent(card, pr)) sorted.rejected.push(candidate);
-    else if (isNeoCardMentionRelated(named, pr)) sorted.kept.push(candidate);
-    else sorted.unrelated.push(candidate);
+    else if (isNeoCardMentionCurrent(card, pr) && isNeoCardMentionRelated(named, pr))
+      sorted.kept.push(candidate);
+    else sorted.rejected.push(candidate);
   }
   return sorted;
 }
