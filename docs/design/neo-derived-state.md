@@ -179,14 +179,14 @@ Each slice is one PR, behaviour-tested, and deployable on its own. The order fol
 | # | Slice | Sections | Depends on |
 |---|---|---|---|
 | 0a | Typed inputs, consume once, no nudge for Neo, stop on refusal, failed turns recorded as failed, persisted origin | §1 | none |
-| 0b | PRs attached to cards, progress-based stall, continue refusals, card report scoping | §3, §2 (card PRs) | none |
+| 0b | PRs attached to cards, progress-based stall, continue refusals, card report scoping; decisions reach workers as continue amendments that quote the human and cite the record | §3, §2 (card PRs), §9 | none |
 | 1 | `humanActions` in the ask view; clients show them. `approve` uses the 0b stall. | §4 | 0b |
 | 2 | `neo.ask.question` and withdraw; remove `needs_you` and gate settles; fold, inherited approval, item-removal guard; migrate existing needs_you items | §4, §5 | 1 |
 | 3 | Derived notifications; refuse non-trigger publications | §7 | 0a, 1 |
 | 4 | Watched items and daemon ticks, read-only PR/issue views, deploy readback, daemon-settled cards | §2 | 0b |
 | 5 | Scoped snapshot with revisions, views returned from mutations, typed core ops, `work.find` fixes, one session ref | §8 (tools) | none |
 | 6 | Quiet routine wakes, one-ask writes, state-only notes | §8 (wakes) | 0b, 4 |
-| 7 | Neo-managed close, follow and fold; remove Track; live-human check for human actions | §6 | 2 |
+| 7 | Neo-managed close, follow and fold; remove Track; live-human check for human actions; `talk` via `neo.work.refused`, cleared on the session's next human input | §6, §4 (`talk`) | 0a, 2 |
 | 8 | Merge by the working session; retire `ship.sh` | §10 | 4 |
 | 9 | Topic sessions start fresh from a snapshot | §10 | 6 |
 
