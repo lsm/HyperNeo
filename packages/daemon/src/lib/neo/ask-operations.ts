@@ -1019,7 +1019,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
               ? {
                   action: input.action,
                   waitCard: neoTickWaitCard(input),
-                  kind: input.kind,
+                  kind: input.kind ?? (caller.source === 'mcp' ? undefined : 'decision'),
                 }
               : {}),
           },

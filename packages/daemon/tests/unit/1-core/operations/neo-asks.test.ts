@@ -1095,6 +1095,9 @@ describe('neo.ask operations', () => {
         { source: 'rpc', principal: 'local' }
       )
     ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(askId)?.doneItems?.[1]?.kind).toBe('decision');
+    await service.clearStaleNeedsYou();
+    expect(service.askRecords.get(askId)?.doneItems?.[1]?.state).toBe('needs_you');
   });
 
   test('edits the checklist in view: removed items stay listed, and dropping a question reopens the ask', async () => {
