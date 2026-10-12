@@ -1,4 +1,8 @@
-import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  type NeoAsk,
+  type NeoAskItem,
+  neoAskApprovalSpent,
+} from '@hyperneo/shared/types/neo-snapshot';
 import { isNeoAskSettled } from './done-check.ts';
 
 export function neoAskAnswerNote(
@@ -51,48 +55,52 @@ export function planNeoNeedsYou(
 
 const NEO_DAEMON_SUBJECT =
   /#\d+|\b(PRs?|pull requests?|merges?|merged|merging|CI|checks?|builds?|deploy\w*|cards?|standing rules?)\b/i;
-const NEO_WAIT_WORD =
-  /\b(after|once|until|wait(s|ing|ed)? (for|on|until)|pending)\b(?!\s+(you|the human|they)\b)/i;
-const NEO_CHECK_WORD = /\b(verify|confirm|check|make sure|ensure|read back)\w*\b/i;
+const NEO_CHECK_WORD =
+  /\b(verify|confirm|check|make sure|ensure|read back|after|once|until|wait\w*)\b/i;
 const NEO_DAEMON_FACT =
   /\b(merged|merge[sd]? (to|into)|PRs?|pull requests?|CI|checks? (pass|green)\w*|standing rules?|cards?)\b|\blaptop\b[^.;]*\bdeploy|\bdeploy\w*\b[^.;]*\blaptop\b/i;
 const NEO_REMOTE_FACT = /\b(iMac|tts|remote|other machine|phone|device)\b/i;
-const NEO_APPROVAL =
-  /\bapprov\w*\b[^.;]*\bcontinu\w*|\bcontinu\w*\b[^.;]*\b(exhaust\w*|limit|spent|used up)\b/i;
 
-export function neoDaemonReadsItem(
-  state: 'needs_you' | 'reported',
-  text: string,
-  context = ''
-): 'approval' | 'wait' | 'fact' | null {
-  if (state === 'needs_you' && NEO_APPROVAL.test(text)) return 'approval';
-  if (NEO_REMOTE_FACT.test(`${text}\n${context}`) || !NEO_DAEMON_SUBJECT.test(text)) return null;
-  if (NEO_WAIT_WORD.test(text)) return 'wait';
-  if (state !== 'reported') return null;
-  return NEO_CHECK_WORD.test(text) || NEO_DAEMON_FACT.test(text) ? 'fact' : null;
+export function neoDaemonReadsClaim(text: string, context = ''): boolean {
+  if (NEO_REMOTE_FACT.test(`${text}\n${context}`) || !NEO_DAEMON_SUBJECT.test(text)) return false;
+  return NEO_CHECK_WORD.test(text) || NEO_DAEMON_FACT.test(text);
 }
 
-export type NeoAskCardWait = { status: string; needsYou: boolean };
-
-const NEO_START_WORK = /\bstart work\b[^.;]*\bcard\b/i;
+export type NeoAskCardWait = { status: string; needsYou: boolean; stalled: boolean };
 
 function cardWaitsOnHuman(card: NeoAskCardWait | undefined): boolean {
   return card?.status === 'proposed' || (card?.status === 'queued' && card.needsYou);
 }
 
+function neoUnkindedItemCleared(
+  ask: NeoAsk,
+  cards: readonly NeoAskCardWait[],
+  now: number
+): string | null {
+  if (!cards.length || cards.some((card) => card.status === 'queued' && card.needsYou)) return null;
+  if (!cards.some((card) => card.status === 'proposed'))
+    return 'no card under this ask is proposed or waits on the human';
+  const approved = ask.approvedAt != null && neoAskApprovalSpent(ask, now) === null;
+  return approved && !cards.some((card) => card.stalled)
+    ? "the ask's approval is active and none of its cards has stalled"
+    : null;
+}
+
 export function planNeoNeedsYouCleared(
   ask: NeoAsk,
-  cards: ReadonlyMap<string, NeoAskCardWait>
+  cards: ReadonlyMap<string, NeoAskCardWait>,
+  now: number
 ): { id: string; why: string }[] {
-  const startable =
-    ask.workIds.length > 0 && !ask.workIds.some((id) => cards.get(id)?.status === 'proposed');
+  const own = ask.workIds.flatMap((id) => cards.get(id) ?? []);
   return (ask.doneItems ?? []).flatMap((item) => {
     if (item.removed || item.state !== 'needs_you' || item.decision) return [];
-    if (item.waitCard && !cardWaitsOnHuman(cards.get(item.waitCard)))
-      return [{ id: item.id, why: `card ${item.waitCard} no longer waits on the human` }];
-    if (startable && NEO_START_WORK.test(item.text))
-      return [{ id: item.id, why: 'no card under this ask waits for Start work' }];
-    return [];
+    if (item.waitCard)
+      return cardWaitsOnHuman(cards.get(item.waitCard))
+        ? []
+        : [{ id: item.id, why: `card ${item.waitCard} no longer waits on the human` }];
+    if (item.kind || item.options?.length) return [];
+    const why = neoUnkindedItemCleared(ask, own, now);
+    return why ? [{ id: item.id, why }] : [];
   });
 }
 

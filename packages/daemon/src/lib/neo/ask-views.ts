@@ -74,6 +74,7 @@ export function neoAskAnswer(ask: NeoAsk): NeoAskAnswer | null {
         label: 'Answer in chat',
         options: item.options ?? [],
         ...(item.action ? { action: item.action } : {}),
+        ...(item.kind ? { kind: item.kind } : {}),
       }
     : null;
 }

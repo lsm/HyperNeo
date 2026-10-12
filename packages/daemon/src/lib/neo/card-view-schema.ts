@@ -100,6 +100,7 @@ export const NeoAskViewSchema = z.object({
       label: z.literal('Answer in chat'),
       options: z.array(z.string()),
       action: z.string().optional(),
+      kind: z.enum(['decision', 'action', 'approval', 'wait']).optional(),
     })
     .nullable()
     .optional(),

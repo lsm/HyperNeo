@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import {
   neoAskReopensAfterClear,
-  neoDaemonReadsItem,
+  neoDaemonReadsClaim,
   neoNeedsYouClearedNote,
   neoResumeWhy,
   planNeoAskResume,
@@ -147,112 +147,103 @@ describe('planNeoAskResume for one card', () => {
   });
 });
 
-describe('neoDaemonReadsItem', () => {
-  test.each<[string, 'needs_you' | 'reported', string, ReturnType<typeof neoDaemonReadsItem>]>([
-    [
-      'a wait on a merge and deploy',
-      'needs_you',
-      'After #6618 merges, independently verify deployment by RPC',
-      'wait',
-    ],
-    ['a merge Neo can read', 'reported', 'Issue filed with its fix merged to dev', 'fact'],
-    [
-      'a standing rule Neo can read',
-      'reported',
-      'confirm the #6587 stopgap rule was removed',
-      'fact',
-    ],
-    [
-      'a re-approval',
-      'needs_you',
-      'Approve another continuation: 20 shared continues exhausted',
-      'approval',
-    ],
-    ['a Start click', 'needs_you', 'click Start work on the #6587 deploy card', null],
-    ['a decision about a PR', 'needs_you', 'Choose whether to merge PR #12 or close it', null],
-    ['another machine', 'reported', 'laptop and iMac deployed, read back over RPC', null],
-    ['a deploy on this machine', 'reported', 'The laptop runs the deploy', 'fact'],
-    ['a plain question', 'needs_you', 'Pick the release date', null],
-  ])('%s', (_name, state, text, expected) => {
-    expect(neoDaemonReadsItem(state, text)).toBe(expected);
+describe('neoDaemonReadsClaim', () => {
+  test.each<[string, string, boolean]>([
+    ['a merge Neo can read', 'Issue filed with its fix merged to dev', true],
+    ['a standing rule Neo can read', 'confirm the #6587 stopgap rule was removed', true],
+    ['a deploy on this machine', 'The laptop runs the deploy', true],
+    ['another machine', 'laptop and iMac deployed, read back over RPC', false],
+    ['a plain claim', 'The photos look right', false],
+  ])('%s', (_name, text, expected) => {
+    expect(neoDaemonReadsClaim(text)).toBe(expected);
   });
 
   test('evidence about another machine keeps a reported claim', () => {
-    expect(
-      neoDaemonReadsItem('reported', 'merged to dev', 'The session says the iMac is updated.')
-    ).toBeNull();
+    expect(neoDaemonReadsClaim('merged to dev', 'The session says the iMac is updated.')).toBe(
+      false
+    );
   });
 });
 
 describe('planNeoNeedsYouCleared', () => {
-  const waiting = (overrides: Partial<NeoAskItem>): NeoAsk =>
+  const now = 1_000_000;
+  const card = (status: string, needsYou = false, stalled = false) => ({
+    status,
+    needsYou,
+    stalled,
+  });
+  const waiting = (overrides: Partial<NeoAskItem>, askOverrides: Partial<NeoAsk> = {}): NeoAsk =>
     ({
       ...ask,
       workIds: ['w1', 'w2'],
+      approvedAt: null,
+      ...askOverrides,
       doneItems: [{ ...item('i1', 'needs_you'), ...overrides }],
     }) as NeoAsk;
 
   test('a cited card that started or reported clears its item', () => {
-    const cited = waiting({ waitCard: 'w1' });
-    expect(
-      planNeoNeedsYouCleared(cited, new Map([['w1', { status: 'queued', needsYou: false }]]))
-    ).toEqual([{ id: 'i1', why: 'card w1 no longer waits on the human' }]);
-    expect(
-      planNeoNeedsYouCleared(cited, new Map([['w1', { status: 'reported', needsYou: false }]]))
-    ).toHaveLength(1);
-  });
-
-  test('a decision waits for the human answer even after its cited card moves on', () => {
-    expect(
-      planNeoNeedsYouCleared(
-        waiting({ waitCard: 'w1', decision: true }),
-        new Map([['w1', { status: 'reported', needsYou: false }]])
-      )
-    ).toEqual([]);
+    const cited = waiting({ kind: 'action', waitCard: 'w1' });
+    expect(planNeoNeedsYouCleared(cited, new Map([['w1', card('queued')]]), now)).toEqual([
+      { id: 'i1', why: 'card w1 no longer waits on the human' },
+    ]);
+    expect(planNeoNeedsYouCleared(cited, new Map([['w1', card('reported')]]), now)).toHaveLength(1);
   });
 
   test('a cited card still waiting for Start or the human keeps its item', () => {
-    const cited = waiting({ waitCard: 'w1' });
+    const cited = waiting({ kind: 'action', waitCard: 'w1' });
+    expect(planNeoNeedsYouCleared(cited, new Map([['w1', card('proposed')]]), now)).toEqual([]);
+    expect(planNeoNeedsYouCleared(cited, new Map([['w1', card('queued', true)]]), now)).toEqual([]);
+  });
+
+  test('a decision, a kinded item with no card, or an item with options stays for the human', () => {
+    const done = new Map([['w2', card('reported')]]);
+    for (const overrides of [
+      { waitCard: 'w1', decision: true as const },
+      { kind: 'decision' as const },
+      { kind: 'action' as const },
+      { options: ['Yes', 'No'] },
+    ])
+      expect(planNeoNeedsYouCleared(waiting(overrides), done, now)).toEqual([]);
+  });
+
+  test('an older item without a kind clears, in any language, once no card waits on the human', () => {
+    const start = waiting({ text: '等待你在 Work 卡上点 Start work 以开始 UI 核查。' });
+    expect(planNeoNeedsYouCleared(start, new Map([['w1', card('reported')]]), now)).toEqual([
+      { id: 'i1', why: 'no card under this ask is proposed or waits on the human' },
+    ]);
+    expect(planNeoNeedsYouCleared(start, new Map([['w1', card('proposed')]]), now)).toEqual([]);
+    expect(planNeoNeedsYouCleared(start, new Map([['w1', card('queued', true)]]), now)).toEqual([]);
+  });
+
+  test('an older item clears under an active approval unless a card stalled', () => {
+    const approved = waiting({ text: 'Approve another continuation' }, { approvedAt: now - 1000 });
+    const cards = (stalled: boolean) =>
+      new Map([
+        ['w1', card('proposed')],
+        ['w2', card('queued', false, stalled)],
+      ]);
+    expect(planNeoNeedsYouCleared(approved, cards(false), now)).toEqual([
+      { id: 'i1', why: "the ask's approval is active and none of its cards has stalled" },
+    ]);
+    expect(planNeoNeedsYouCleared(approved, cards(true), now)).toEqual([]);
     expect(
-      planNeoNeedsYouCleared(cited, new Map([['w1', { status: 'proposed', needsYou: false }]]))
-    ).toEqual([]);
-    expect(
-      planNeoNeedsYouCleared(cited, new Map([['w1', { status: 'queued', needsYou: true }]]))
+      planNeoNeedsYouCleared({ ...approved, approvedAt: null } as NeoAsk, cards(false), now)
     ).toEqual([]);
   });
 
-  test('a Start work item clears once no card under the ask waits for Start', () => {
-    const start = waiting({ text: 'click Start work on the #6587 deploy card' });
-    expect(
-      planNeoNeedsYouCleared(start, new Map([['w2', { status: 'reported', needsYou: false }]]))
-    ).toEqual([{ id: 'i1', why: 'no card under this ask waits for Start work' }]);
-    expect(
-      planNeoNeedsYouCleared(start, new Map([['w2', { status: 'proposed', needsYou: false }]]))
-    ).toEqual([]);
-  });
-
-  test('a decision or a chat question about starting work is never cleared', () => {
-    const done = new Map([['w2', { status: 'reported', needsYou: false }]]);
+  test('an older item on an ask without cards stays for the human', () => {
     expect(
       planNeoNeedsYouCleared(
-        waiting({ text: 'Needs you: start work on the redesign card?', decision: true }),
-        done
-      )
-    ).toEqual([]);
-    expect(
-      planNeoNeedsYouCleared(waiting({ text: 'Should I start work on the redesign?' }), done)
-    ).toEqual([]);
-    expect(
-      planNeoNeedsYouCleared(
-        { ...waiting({ text: 'click Start work on the deploy card' }), workIds: [] } as NeoAsk,
-        new Map()
+        waiting({ text: 'Which name do you want?' }, { workIds: [] }),
+        new Map(),
+        now
       )
     ).toEqual([]);
   });
 
   test('items that are not waiting on the human stay as they are', () => {
     const met = waiting({ state: 'met', waitCard: 'w1' });
-    expect(planNeoNeedsYouCleared(met, new Map())).toEqual([]);
+    expect(planNeoNeedsYouCleared(met, new Map(), now)).toEqual([]);
   });
 });
 

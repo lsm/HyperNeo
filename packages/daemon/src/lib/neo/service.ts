@@ -2021,13 +2021,14 @@ export class NeoService {
                   {
                     status: work.status,
                     needsYou: this.driverTargets.readNeedsYouSince(id) != null,
+                    stalled: this.isContinueStalled(id),
                   },
                 ] as const,
               ]
             : [];
         })
       );
-      const cleared = planNeoNeedsYouCleared(ask, cards);
+      const cleared = planNeoNeedsYouCleared(ask, cards, Date.now());
       if (cleared.length)
         await this.wakeForClearedNeedsYou(ask, cleared).catch((error) =>
           this.log.warn('Stale needs_you note pending', error)

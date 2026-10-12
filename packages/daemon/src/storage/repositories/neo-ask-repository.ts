@@ -29,7 +29,7 @@ export type NeoAskInput = Omit<
 export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check'>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
-  'removed' | 'options' | 'decision' | 'action' | 'waitCard'
+  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind'
 > & {
   askId: string;
   removed: number;
@@ -37,10 +37,11 @@ type NeoAskItemRow = Omit<
   decision: number;
   action: string | null;
   waitCard: string | null;
+  kind: NeoAskItem['kind'] | null;
 };
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard`;
+  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind`;
 
 export interface NeoAskOwner {
   concernId: string;
@@ -135,13 +136,13 @@ export class NeoAskRepository {
     askId: string,
     item: Pick<
       NeoAskItem,
-      'id' | 'state' | 'evidence' | 'metBy' | 'options' | 'action' | 'waitCard'
+      'id' | 'state' | 'evidence' | 'metBy' | 'options' | 'action' | 'waitCard' | 'kind'
     >,
     at: number
   ): boolean {
     const changed = this.db.transaction(() => {
       const ticked = this.db
-        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, action = ?, wait_card = ?,
+        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, action = ?, wait_card = ?, kind = ?,
           updated_at = ?
           WHERE ask_id = ? AND id = ? AND removed = 0`)
         .run(
@@ -151,6 +152,7 @@ export class NeoAskRepository {
           item.options?.length ? JSON.stringify(item.options) : null,
           item.action ?? null,
           item.waitCard ?? null,
+          item.kind ?? null,
           at,
           askId,
           item.id
@@ -272,7 +274,13 @@ export class NeoAskRepository {
     outcome: string,
     evidence: string,
     waitingItem: string | null = null,
-    decision: { id: string; position: number; text: string; action?: string } | null = null,
+    decision: {
+      id: string;
+      position: number;
+      text: string;
+      action?: string;
+      kind?: NeoAskItem['kind'];
+    } | null = null,
     decided = false
   ): NeoAsk | null {
     const now = Date.now();
@@ -297,8 +305,8 @@ export class NeoAskRepository {
         decision &&
         this.db
           .prepare(`INSERT INTO neo_ask_items
-            (ask_id, id, position, text, state, evidence, decision, action, added_at, updated_at)
-            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?) ON CONFLICT DO NOTHING`)
+            (ask_id, id, position, text, state, evidence, decision, action, kind, added_at, updated_at)
+            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
           .run(
             expected.id,
             decision.id,
@@ -306,6 +314,7 @@ export class NeoAskRepository {
             decision.text,
             evidence,
             decision.action ?? null,
+            decision.kind ?? 'decision',
             now,
             now
           ).changes === 0
@@ -377,13 +386,14 @@ export class NeoAskRepository {
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)
-        .map(({ askId: _askId, removed, options, decision, action, waitCard, ...item }) => ({
+        .map(({ askId: _askId, removed, options, decision, action, waitCard, kind, ...item }) => ({
           ...item,
           removed: removed === 1,
           ...(options ? { options: JSON.parse(options) as string[] } : {}),
           ...(decision === 1 ? { decision: true as const } : {}),
           ...(action ? { action } : {}),
           ...(waitCard ? { waitCard } : {}),
+          ...(kind ? { kind } : {}),
         })),
     }));
   }
