@@ -2,25 +2,16 @@ import { fillPrompt, NEO_CARD_PR_ATTENTION } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { NEO_WORK_CLOSED_DONE, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 
-type NeoCardPrNeed = { kind: 'checks' | 'review' | 'threads' | 'conflicts'; text: string };
 type NeoCardPrRelaySkip = 'not_in_flight' | 'clear' | 'told';
 
-function needsOf(pr: NeoWorkPr): NeoCardPrNeed[] {
+function needsOf(pr: NeoWorkPr): string[] {
   if (pr.state !== 'OPEN') return [];
   const blockers = pr.blockers ?? [];
   return [
-    ...(pr.checks === 'failing'
-      ? [{ kind: 'checks' as const, text: 'CI checks are failing' }]
-      : []),
-    ...(pr.review === 'changes_requested'
-      ? [{ kind: 'review' as const, text: 'a reviewer requested changes' }]
-      : []),
-    ...blockers
-      .filter((blocker) => /unresolved review thread/.test(blocker))
-      .map((text) => ({ kind: 'threads' as const, text })),
-    ...blockers
-      .filter((blocker) => blocker.startsWith('merge conflicts'))
-      .map((text) => ({ kind: 'conflicts' as const, text })),
+    ...(pr.checks === 'failing' ? ['CI checks are failing'] : []),
+    ...(pr.review === 'changes_requested' ? ['a reviewer requested changes'] : []),
+    ...blockers.filter((blocker) => /unresolved review thread/.test(blocker)),
+    ...blockers.filter((blocker) => blocker.startsWith('merge conflicts')),
   ];
 }
 
@@ -29,27 +20,17 @@ export function neoCardPrAttention(
 ): { signature: string; items: string } | null {
   const lines = prs.flatMap((pr) => {
     const needs = needsOf(pr);
-    return needs.length
-      ? [
-          {
-            key: `${pr.url}:${needs.map((need) => need.kind).join('+')}`,
-            line: `- ${pr.url}: ${needs.map((need) => need.text).join('; ')}`,
-          },
-        ]
-      : [];
+    return needs.length ? [`- ${pr.url}: ${needs.join('; ')}`] : [];
   });
-  return lines.length
-    ? {
-        signature: lines.map((item) => item.key).join(','),
-        items: lines.map((item) => item.line).join('\n'),
-      }
-    : null;
+  if (!lines.length) return null;
+  const items = lines.join('\n');
+  return { signature: items, items };
 }
 
 export function requireNeoCardPrRelay(
   work: Pick<NeoWork, 'status' | 'report'> | null,
   attention: { signature: string; items: string } | null,
-  told: { signature?: string; lastMessage?: string | null }
+  told: string | null
 ): { value: { signature: string; message: string } } | { reason: NeoCardPrRelaySkip } {
   if (
     !work ||
@@ -58,8 +39,11 @@ export function requireNeoCardPrRelay(
   )
     return { reason: 'not_in_flight' };
   if (!attention) return { reason: 'clear' };
-  const message = fillPrompt(NEO_CARD_PR_ATTENTION, { items: attention.items });
-  if (attention.signature === told.signature || message === told.lastMessage)
-    return { reason: 'told' };
-  return { value: { signature: attention.signature, message } };
+  if (attention.signature === told) return { reason: 'told' };
+  return {
+    value: {
+      signature: attention.signature,
+      message: fillPrompt(NEO_CARD_PR_ATTENTION, { items: attention.items }),
+    },
+  };
 }

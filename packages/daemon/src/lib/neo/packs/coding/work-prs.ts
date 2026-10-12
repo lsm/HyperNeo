@@ -251,12 +251,7 @@ const DETAIL_QUERY =
   'query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}';
 
 export function wantsNeoWorkPrBlockers(pr: NeoWorkPr, base: string | undefined): boolean {
-  return (
-    !!base &&
-    pr.state === 'OPEN' &&
-    pr.review !== 'changes_requested' &&
-    (pr.checks === 'passing' || pr.checks === 'none')
-  );
+  return !!base && pr.state === 'OPEN' && pr.checks !== 'pending';
 }
 
 export function countNeoWorkPrApprovals(

@@ -41,6 +41,7 @@ import {
   NeoWorkCheckRepository,
   type NeoWorkCheckRow,
 } from '../../storage/repositories/neo-work-check-repository.ts';
+import { NeoCardPrRelayRepository } from '../../storage/repositories/neo-card-pr-relay-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
 import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
@@ -313,7 +314,7 @@ export class NeoService {
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
-  private readonly cardPrRelayed = new Map<string, string>();
+  private readonly cardPrRelays: NeoCardPrRelayRepository;
   private askIdleSeen: NeoAskIdleSeen = new Map();
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
@@ -569,6 +570,7 @@ export class NeoService {
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged);
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
+    this.cardPrRelays = new NeoCardPrRelayRepository(db.getDatabase());
     this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
     this.askChecks = new NeoAskCheckRepository(db.getDatabase());
@@ -1424,11 +1426,8 @@ export class NeoService {
     )
     .pipe(
       (workId: string, attention: unknown) => {
-        const seen = this.cardPrRelayed.get(workId);
-        if (!attention) this.cardPrRelayed.set(workId, '');
-        return seen === undefined
-          ? { lastMessage: this.workContinues.get(workId)?.lastMessage ?? null }
-          : { signature: seen };
+        if (!attention) this.cardPrRelays.clear(workId);
+        return attention ? this.cardPrRelays.get(workId) : null;
       },
       ['workId', 'attention'],
       'told'
@@ -1437,7 +1436,7 @@ export class NeoService {
     .pipe(
       async (workId: string, relay: { signature: string; message: string }) => {
         const sent = await this.continueWork(workId, relay.message);
-        if (sent.ok) this.cardPrRelayed.set(workId, relay.signature);
+        if (sent.ok) this.cardPrRelays.markTold(workId, relay.signature, Date.now());
         else this.log.debug(`Card ${workId} pull request news not sent: ${sent.reason}`);
         return sent;
       },

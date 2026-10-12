@@ -34,9 +34,15 @@ describe('neoCardPrAttention', () => {
         }),
       ])
     ).toEqual({
-      signature: `${url}:checks+review+threads+conflicts`,
+      signature: `- ${url}: CI checks are failing; a reviewer requested changes; 2 unresolved review threads; merge conflicts with dev`,
       items: `- ${url}: CI checks are failing; a reviewer requested changes; 2 unresolved review threads; merge conflicts with dev`,
     });
+  });
+
+  test('a new review thread changes the signature even when the kinds stay the same', () => {
+    const one = neoCardPrAttention([pr({ blockers: ['1 unresolved review thread'] })]);
+    const two = neoCardPrAttention([pr({ blockers: ['2 unresolved review threads'] })]);
+    expect(one?.signature).not.toBe(two?.signature);
   });
 
   test('stays quiet for a clean, pending, merged or closed PR', () => {
@@ -56,38 +62,28 @@ describe('requireNeoCardPrRelay', () => {
 
   test('relays new PR news to a queued or reported card', () => {
     for (const status of ['queued', 'reported'] as const) {
-      const relay = requireNeoCardPrRelay({ status, report: null }, attention, {});
+      const relay = requireNeoCardPrRelay({ status, report: null }, attention, null);
       expect(relay).toMatchObject({ value: { signature: 's1' } });
       expect('value' in relay && relay.value.message).toContain(attention.items);
     }
     expect(
-      requireNeoCardPrRelay({ status: 'queued', report: null }, attention, { signature: 's0' })
-    ).toMatchObject({
-      value: { signature: 's1' },
-    });
-    expect(
-      requireNeoCardPrRelay({ status: 'queued', report: null }, attention, {
-        lastMessage: 'something else',
-      })
+      requireNeoCardPrRelay({ status: 'queued', report: null }, attention, 's0')
     ).toMatchObject({ value: { signature: 's1' } });
   });
 
   test.each([
-    ['not_in_flight', { status: 'cancelled' as const, report: null }, attention, {}],
-    ['not_in_flight', null, attention, {}],
-    ['not_in_flight', { status: 'reported' as const, report: NEO_WORK_CLOSED_DONE }, attention, {}],
-    ['clear', { status: 'queued' as const, report: null }, null, {}],
-    ['told', { status: 'queued' as const, report: null }, attention, { signature: 's1' }],
+    ['not_in_flight', { status: 'cancelled' as const, report: null }, attention, null],
+    ['not_in_flight', null, attention, null],
+    [
+      'not_in_flight',
+      { status: 'reported' as const, report: NEO_WORK_CLOSED_DONE },
+      attention,
+      null,
+    ],
+    ['clear', { status: 'queued' as const, report: null }, null, null],
+    ['told', { status: 'queued' as const, report: null }, attention, 's1'],
   ] as const)('skips with %s', (reason, work, news, told) => {
     expect(requireNeoCardPrRelay(work, news, told)).toEqual({ reason });
-  });
-
-  test('treats the same message as the last continue as already told', () => {
-    const relay = requireNeoCardPrRelay({ status: 'queued', report: null }, attention, {});
-    const message = 'value' in relay ? relay.value.message : '';
-    expect(
-      requireNeoCardPrRelay({ status: 'queued', report: null }, attention, { lastMessage: message })
-    ).toEqual({ reason: 'told' });
   });
 });
 
@@ -170,12 +166,23 @@ describe('NeoService relayCardPr', () => {
     expect(sent).toHaveLength(2);
   });
 
-  test('after a restart, does not resend the problem its last continue already carried', async () => {
+  test('after a restart, does not resend a problem set it already told', async () => {
     const workId = queuedCard();
     service.workPrs.record(workId, [pr({ checks: 'failing' })], 1);
     await relay(workId);
-    service.workContinues.record(workId, sent[0].message, 1, '0|-');
-    Object.assign(service, { cardPrRelayed: new Map() });
+    service.dispose();
+    service = new NeoService(
+      db,
+      { createSession: vi.fn(), getSessionAsync: vi.fn() } as unknown as SessionManager,
+      { event: vi.fn() } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    Object.assign(service, {
+      continueWork: async (id: string, message: string) => {
+        sent.push({ id, message });
+        return { ok: true, work: service.repo.getWork(id) };
+      },
+    });
     await relay(workId);
     expect(sent).toHaveLength(1);
   });

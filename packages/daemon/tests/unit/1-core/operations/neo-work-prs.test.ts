@@ -423,7 +423,8 @@ describe('wantsNeoWorkPrBlockers', () => {
     ['an open green pull request', pr, 'dev', true],
     ['one without checks', { ...pr, checks: 'none' }, 'dev', true],
     ['one still running CI', { ...pr, checks: 'pending' }, 'dev', false],
-    ['one with changes requested', { ...pr, review: 'changes_requested' }, 'dev', false],
+    ['one with changes requested', { ...pr, review: 'changes_requested' }, 'dev', true],
+    ['one with failing CI', { ...pr, checks: 'failing' }, 'dev', true],
     ['a merged one', { ...pr, state: 'MERGED' }, 'dev', false],
     ['one whose base is unknown', pr, undefined, false],
   ])('%s', (_label, at, base, wants) => {
