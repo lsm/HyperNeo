@@ -181,7 +181,7 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
     return { action: 'expected_recovery_noop' };
   }
   if (env.turnEnded && isSdkProcessExitError(errorSignal.rawText))
-    return env.hasFedPrompt && !isQueryInterrupted(errorSignal, env.lifecycle)
+    return env.hasFedPrompt && env.lifecycle.processingStatus !== 'interrupted'
       ? { action: 'turn_ended_redeliver' }
       : { action: 'turn_ended_noop' };
   if (errorSignal.isRateLimit && env.hasRateLimitHandoff && errorSignal.rateLimitHint !== null)
