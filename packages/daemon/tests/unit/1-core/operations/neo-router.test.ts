@@ -6,8 +6,10 @@ import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import {
+  askNeoRouteModel,
   chooseNeoRoute,
   type NeoHolder,
+  type NeoRouteVerdict,
   type NeoRouterDeps,
   neoHolderProfile,
   neoRouteCandidates,
@@ -15,6 +17,7 @@ import {
   renderNeoRouteContext,
   runnableNeoHolders,
   scoreNeoHolders,
+  neoTopicOpenAsks,
   reopenNeoHolder,
   wakeNeoRoute,
 } from '../../../../src/lib/neo/router.ts';
@@ -93,7 +96,7 @@ describe('pickNeoHolder', () => {
 });
 
 describe('renderNeoRouteContext', () => {
-  test('lists main, topics with their last turn and waiting question, then recent turns', () => {
+  test("lists main, topics with their last turn and waiting question, then the topics' recent turns", () => {
     const pr = route({
       id: 2,
       destination: 'main',
@@ -117,15 +120,30 @@ describe('renderNeoRouteContext', () => {
       true
     );
     expect(context).toContain(
-      '- main: Neo itself, the default\n    last: [main] you: "is the font-size PR done?" → Still in review.'
+      '- main: Neo itself, the last resort for questions across topics or when you cannot tell\n    last: [main] you: "is the font-size PR done?" → Still in review.'
     );
     expect(context).toContain(
       '- youtube: YouTube (drivers)\n    last: [YouTube] you: "What is the post?" → A git beta.\n    WAITING ON YOU: "Draft a reply?"'
     );
     expect(context).toContain('- inbox: Self-contained one-off questions');
     expect(context.split('Recent turns (newest first):\n')[1]).toBe(
-      '- [main] you: "is the font-size PR done?" → Still in review.\n- [YouTube] you: "What is the post?" → A git beta.'
+      '- [YouTube] you: "What is the post?" → A git beta.'
     );
+  });
+
+  test("shows each topic's open asks under it", () => {
+    const context = renderNeoRouteContext(
+      [drivers, youtube],
+      [drivers, youtube],
+      [],
+      [],
+      false,
+      new Map([['youtube', ['Draft the launch post', 'Pick a thumbnail']]])
+    );
+    expect(context).toContain(
+      '- youtube: YouTube (drivers)\n    open asks: "Draft the launch post"; "Pick a thumbnail"'
+    );
+    expect(context).toContain('- drivers: Neo driver epic (drivers)\n- youtube');
   });
 
   test('keeps recent turns within the budget', () => {
@@ -172,6 +190,59 @@ describe('neoRouteCandidates', () => {
       [route({ concernId: 't5', awaiting: 'Ship it?' }), route({ concernId: 't6' })]
     );
     expect(picked.map((holder) => holder.concernId)).toEqual(['t3', 't5', 't7']);
+  });
+});
+
+describe('neoTopicOpenAsks', () => {
+  test("keeps each candidate's first five open asks, shortened", () => {
+    const asked: string[] = [];
+    const asks = neoTopicOpenAsks([drivers, youtube], {
+      openAsks: (concernId) => {
+        asked.push(concernId);
+        return concernId === 'youtube' ? ['a', 'b', 'c', 'd', 'e', 'f', 'x'.repeat(500)] : [];
+      },
+    });
+    expect(asked).toEqual(['drivers', 'youtube']);
+    expect(asks.get('drivers')).toEqual([]);
+    expect(asks.get('youtube')).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(neoTopicOpenAsks([drivers], {}).get('drivers')).toEqual([]);
+  });
+});
+
+describe('askNeoRouteModel', () => {
+  const run = async (answers: NeoRouteVerdict[]) => {
+    const calls: number[] = [];
+    const verdict = await askNeoRouteModel('hi', [drivers], 'ctx', false, {
+      classify: async () => {
+        calls.push(calls.length);
+        return answers[calls.length - 1] ?? null;
+      },
+    });
+    return { verdict, calls: calls.length };
+  };
+
+  test.each(['timeout', 'failed', null] as const)(
+    'asks once more when the route model gives %s',
+    async (first) => {
+      expect(await run([first, drivers])).toEqual({ verdict: drivers, calls: 2 });
+    }
+  );
+
+  test('keeps an answer without retrying, and retries only once', async () => {
+    expect(await run(['main'])).toEqual({ verdict: 'main', calls: 1 });
+    expect(await run(['timeout', 'failed'])).toEqual({ verdict: 'failed', calls: 2 });
+  });
+
+  test('offers the inbox to the route model when it is runnable', async () => {
+    const offered: string[][] = [];
+    await askNeoRouteModel('hi', [drivers], 'ctx', true, {
+      classify: async (_text, options) => {
+        offered.push(options.map((option) => option.concernId));
+        return 'main';
+      },
+    });
+    expect(offered).toEqual([['drivers', 'inbox']]);
+    expect(await askNeoRouteModel('hi', [drivers], 'ctx', true, {})).toBeNull();
   });
 });
 

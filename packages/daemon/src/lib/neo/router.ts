@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
+import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import {
   type NeoRoute,
@@ -9,6 +10,7 @@ import {
 import { getProviderService } from '../provider-service.ts';
 import { classifyNeoRoute, neoRouteTimeoutMs } from './route-classifier.ts';
 import { cosineSimilarity, embedQueryOrNull } from '../../storage/vector-similarity.ts';
+import { isNeoAskSettled } from './done-check.ts';
 import { fitLines } from './fit-lines.ts';
 
 const MIN_SIMILARITY = 0.55;
@@ -22,6 +24,8 @@ const TURNS_CHARS = 3_000;
 const TURN_TEXT_CHARS = 300;
 const TOPIC_SUMMARY_CHARS = 160;
 const PROFILE_VECTOR_LIMIT = 256;
+const OPEN_ASKS = 5;
+const OPEN_ASK_CHARS = 120;
 export const NEO_INBOX_ID = 'inbox';
 export const NEO_INBOX_SUMMARY = 'Self-contained one-off questions that need no continuing topic.';
 const INBOX_CHOICE: NeoHolder = {
@@ -86,6 +90,7 @@ export const NEO_ROUTE_BASES = [
   'matches_topic',
   'one_off',
   'new_subject',
+  'cross_topic',
   'unsure',
 ] as const;
 export type NeoRouteBasis = (typeof NEO_ROUTE_BASES)[number];
@@ -107,6 +112,7 @@ export interface NeoRouterDeps {
   recentTurns(): NeoRoute[];
   topicTurns(): NeoRoute[];
   recentAsks(concernId: string, limit: number): string[];
+  openAsks?(concernId: string): string[];
   embed(text: string): Promise<Float32Array | null>;
   classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteVerdict>;
   inbox?(): Promise<NeoHolder | null>;
@@ -224,12 +230,27 @@ function requireRouteQuestion(
     : { reason: { choice: null } };
 }
 
+export function neoTopicOpenAsks(
+  candidates: readonly NeoHolder[],
+  deps: Pick<NeoRouterDeps, 'openAsks'>
+): Map<string, string[]> {
+  return new Map(
+    candidates.map((holder) => [
+      holder.concernId,
+      (deps.openAsks?.(holder.concernId) ?? [])
+        .slice(0, OPEN_ASKS)
+        .map((ask) => neoExcerpt(ask, OPEN_ASK_CHARS)),
+    ])
+  );
+}
+
 export function renderNeoRouteContext(
   holders: readonly NeoHolder[],
   candidates: readonly NeoHolder[],
   recent: readonly NeoRoute[],
   latest: readonly NeoRoute[],
-  withInbox: boolean
+  withInbox: boolean,
+  openAsks: ReadonlyMap<string, readonly string[]> = new Map()
 ): string {
   const titles = new Map(holders.map((holder) => [holder.concernId, holder.title]));
   const notes = (topic: string) => {
@@ -242,17 +263,24 @@ export function renderNeoRouteContext(
         : []),
     ];
   };
+  const asks = (topic: string) => {
+    const open = openAsks.get(topic) ?? [];
+    return open.length > 0 ? [`    open asks: ${open.map((ask) => `"${ask}"`).join('; ')}`] : [];
+  };
   const topics = [
-    '- main: Neo itself, the default',
+    '- main: Neo itself, the last resort for questions across topics or when you cannot tell',
     ...notes('main'),
     ...candidates.flatMap((holder) => [
       `- ${holder.concernId}: ${holder.title}${holder.summary ? ` (${neoExcerpt(holder.summary, TOPIC_SUMMARY_CHARS)})` : ''}`,
+      ...asks(holder.concernId),
       ...notes(holder.concernId),
     ]),
     ...(withInbox ? [`- ${NEO_INBOX_ID}: ${NEO_INBOX_SUMMARY}`, ...notes(NEO_INBOX_ID)] : []),
   ];
   const turns = fitLines(
-    recent.map((route) => `- ${neoTurnLine(route, titles)}`),
+    recent
+      .filter((route) => route.concernId !== null)
+      .map((route) => `- ${neoTurnLine(route, titles)}`),
     TURNS_CHARS
   );
   return [
@@ -264,16 +292,29 @@ export function renderNeoRouteContext(
   ].join('\n');
 }
 
-async function classifyNeoAsk(
+function unanswered(verdict: NeoRouteVerdict): boolean {
+  return verdict === null || verdict === 'timeout' || verdict === 'failed';
+}
+
+export async function askNeoRouteModel(
   text: string,
   candidates: readonly NeoHolder[],
   context: string,
-  scores: readonly Score[],
   withInbox: boolean,
+  deps: Pick<NeoRouterDeps, 'classify'>
+): Promise<NeoRouteVerdict> {
+  if (!deps.classify) return null;
+  const options = [...candidates, ...(withInbox ? [INBOX_CHOICE] : [])];
+  const first = await deps.classify(text, options, context);
+  return unanswered(first) ? deps.classify(text, options, context) : first;
+}
+
+async function classifyNeoAsk(
+  text: string,
+  verdict: NeoRouteVerdict,
+  scores: readonly Score[],
   deps: NeoRouterDeps
 ): Promise<Routed> {
-  const options = [...candidates, ...(withInbox ? [INBOX_CHOICE] : [])];
-  const verdict = deps.classify ? await deps.classify(text, options, context) : null;
   const decided = verdict && typeof verdict === 'object' && 'decision' in verdict ? verdict : null;
   const chosen = decided
     ? decided.decision
@@ -327,12 +368,14 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
     'deps',
     'withInbox'
   )
+  .pipe(neoTopicOpenAsks, ['candidates', 'deps'], 'openAsks')
   .pipe(
     renderNeoRouteContext,
-    ['holders', 'candidates', 'recent', 'latest', 'withInbox'],
+    ['holders', 'candidates', 'recent', 'latest', 'withInbox', 'openAsks'],
     'context'
   )
-  .pipe(classifyNeoAsk, ['text', 'candidates', 'context', 'scores', 'withInbox', 'deps'], 'route')
+  .pipe(askNeoRouteModel, ['text', 'candidates', 'context', 'withInbox', 'deps'], 'verdict')
+  .pipe(classifyNeoAsk, ['text', 'verdict', 'scores', 'deps'], 'route')
   .endAsync('route') as (text: string, deps: NeoRouterDeps) => Promise<Routed>;
 
 export function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRouted> {
@@ -373,6 +416,7 @@ export function createNeoRouter(
   openHolder?: (concernId: string) => Promise<string>
 ): NeoRouter {
   const log = new NeoRoutingLogRepository(db.getDatabase());
+  const asks = new NeoAskRepository(db.getDatabase());
   const deps: NeoRouterDeps = {
     holders: async () => {
       const holders: NeoHolder[] = repo.listConcerns().flatMap((concern) => {
@@ -410,6 +454,11 @@ export function createNeoRouter(
     recentTurns: () => log.recent(RECENT_TURNS),
     topicTurns: () => log.latestPerTopic(),
     recentAsks: (concernId, limit) => log.recentAsks(concernId, limit),
+    openAsks: (concernId) =>
+      asks
+        .list(concernId)
+        .filter((ask) => !isNeoAskSettled(ask))
+        .map((ask) => ask.title),
     embed: async (text) =>
       process.env.NODE_ENV === 'test' ? null : embedQueryOrNull(db.getEmbedder(), text),
     classify: (text, options, context) => {
