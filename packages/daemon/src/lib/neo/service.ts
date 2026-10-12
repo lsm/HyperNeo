@@ -13,8 +13,8 @@ import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-contex
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import {
-  NEO_ASK_CONTINUE_LIMIT,
   NEO_WORK_CLOSED_DONE,
+  NEO_WORK_STALLED_CONTINUES,
   type NeoAsk,
   type NeoAskItem,
   type NeoAskSessionView,
@@ -1111,8 +1111,7 @@ export class NeoService {
     },
     recordContinue: (id, message, now, progress) =>
       this.workContinues.record(id, message, now, progress)?.count ?? null,
-    reserveAskContinue: (ask) =>
-      this.askRecords.reserveApprovedContinue(ask.id, NEO_ASK_CONTINUE_LIMIT),
+    reserveAskContinue: (ask) => this.askRecords.reserveApprovedContinue(ask.id),
     refundAskContinue: (ask) => this.askRecords.refundApprovedContinue(ask.id),
     reopen: (id, current, report) =>
       this.repo.transitionWork(id, current, { status: 'queued', report }),
@@ -1857,6 +1856,15 @@ export class NeoService {
 
   private stalledContinues(work: NeoWork): number {
     return neoStalledContinues(this.workContinues.get(work.id), this.workProgress(work));
+  }
+
+  isContinueStalled(workId: string): boolean {
+    const work = this.repo.getWork(workId);
+    return (
+      !!work &&
+      (work.status === 'queued' || work.status === 'reported') &&
+      this.stalledContinues(work) >= NEO_WORK_STALLED_CONTINUES
+    );
   }
 
   private continueBudget(work: NeoWork, now: number): string | null {

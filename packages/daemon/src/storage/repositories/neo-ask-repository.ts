@@ -1,5 +1,4 @@
 import {
-  NEO_ASK_CONTINUE_LIMIT,
   NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
   type NeoAskItem,
@@ -206,21 +205,29 @@ export class NeoAskRepository {
   }
 
   approve(id: string, at: number): NeoAsk | null {
-    const row = this.db
-      .prepare(`UPDATE neo_asks SET approved_at = ?, approved_continues = 0, updated_at = ?
-        WHERE id = ? AND status NOT IN ('achieved', 'abandoned') RETURNING ${askColumns}`)
-      .get(at, at, id) as NeoAskRow | null;
+    const row = this.db.transaction(() => {
+      const approved = this.db
+        .prepare(`UPDATE neo_asks SET approved_at = ?, approved_continues = 0, updated_at = ?
+          WHERE id = ? AND status NOT IN ('achieved', 'abandoned') RETURNING ${askColumns}`)
+        .get(at, at, id) as NeoAskRow | null;
+      if (approved)
+        this.db
+          .prepare(`UPDATE neo_work_continues SET stalled = 0, progress = NULL
+            WHERE work_id IN (SELECT work_id FROM neo_ask_work WHERE ask_id = ?)`)
+          .run(id);
+      return approved;
+    })();
     if (!row) return null;
     this.notify();
     return this.withWork([row])[0];
   }
 
-  reserveApprovedContinue(id: string, limit: number): boolean {
+  reserveApprovedContinue(id: string): boolean {
     return (
       this.db
         .prepare(`UPDATE neo_asks SET approved_continues = approved_continues + 1
-          WHERE id = ? AND approved_continues < ?`)
-        .run(id, limit).changes === 1
+          WHERE id = ? AND approved_at IS NOT NULL`)
+        .run(id).changes === 1
     );
   }
 
@@ -320,7 +327,6 @@ export class NeoAskRepository {
       ...(row.approvedAt != null
         ? {
             approvedUntil: row.approvedAt + NEO_ASK_CONTINUE_WINDOW_MS,
-            approvedContinueLimit: NEO_ASK_CONTINUE_LIMIT,
           }
         : {}),
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),

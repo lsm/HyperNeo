@@ -42,7 +42,6 @@ export function neoForwardKey(
 }
 
 export const NEO_WORK_STALLED_CONTINUES = 3;
-export const NEO_ASK_CONTINUE_LIMIT = 20;
 export const NEO_ASK_CONTINUE_WINDOW_MS = 48 * 60 * 60 * 1000;
 export const NEO_WORK_CLOSED_DONE = 'Closed as done by the user.';
 
@@ -71,11 +70,10 @@ export function isPooledNeoAsk<T extends Pick<NeoAsk, 'status' | 'approvedAt'>>(
 }
 
 export function neoAskApprovalSpent(
-  ask: Pick<NeoAsk, 'approvedAt' | 'approvedContinues'>,
+  ask: Pick<NeoAsk, 'approvedAt'>,
   now: number
 ): NeoAskApprovalSpent | null {
   if (ask.approvedAt == null) return null;
-  if ((ask.approvedContinues ?? 0) >= NEO_ASK_CONTINUE_LIMIT) return 'continues';
   return now - ask.approvedAt >= NEO_ASK_CONTINUE_WINDOW_MS ? 'expired' : null;
 }
 

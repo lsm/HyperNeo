@@ -29,7 +29,6 @@ import {
 import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
-  NEO_ASK_CONTINUE_LIMIT,
   isPooledNeoAsk,
   neoAskApprovalSpent,
   NEO_WORK_STALLED_CONTINUES,
@@ -178,15 +177,8 @@ export function readContinueBudget(
   return null;
 }
 
-export const NEO_ASK_CONTINUES_SPENT = `continue_budget_spent: the work under this approved ask used its ${NEO_ASK_CONTINUE_LIMIT} shared continues; ask the human to approve it again.`;
-
-export function neoContinuesLeft(
-  stalled: number,
-  ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null
-): number {
-  return isPooledNeoAsk(ask)
-    ? Math.max(0, NEO_ASK_CONTINUE_LIMIT - (ask.approvedContinues ?? 0))
-    : Math.max(0, NEO_WORK_STALLED_CONTINUES - stalled);
+export function neoContinuesLeft(stalled: number): number {
+  return Math.max(0, NEO_WORK_STALLED_CONTINUES - stalled);
 }
 
 export function readNeoWorkContinueBudget(
@@ -197,9 +189,9 @@ export function readNeoWorkContinueBudget(
   now: number
 ): string | null {
   if (!ask || !isPooledNeoAsk(ask)) return readContinueBudget(continued, progress, startedAt, now);
-  const spent = neoAskApprovalSpent(ask, now);
-  if (spent === 'continues') return NEO_ASK_CONTINUES_SPENT;
-  return spent === 'expired'
+  const stalled = readContinueBudget(continued, progress, null, now);
+  if (stalled) return stalled;
+  return neoAskApprovalSpent(ask, now) === 'expired'
     ? 'continue_budget_spent: this ask was approved over 48 hours ago; ask the human to approve it again.'
     : null;
 }
@@ -577,7 +569,7 @@ export function driverDoneCheckNote(
   const next = budget
     ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget, summary })
     : fillPrompt(NEO_WORK_DONE_CHECK_CONTINUE, {
-        continues_left: String(neoContinuesLeft(stalled, ask ?? null)),
+        continues_left: String(neoContinuesLeft(stalled)),
         summary,
       });
   const owner = !ask
