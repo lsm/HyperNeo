@@ -142,6 +142,7 @@ describe('fitNeoSnapshotBudget', () => {
       ok: true,
       sessionId: 'neo:root',
       concerns: [],
+      consultations: [],
       work: ids.map(work),
       asks,
       cards: ids.map((id) => ({ ...card, workId: id, phase: 'reported' as const })),
