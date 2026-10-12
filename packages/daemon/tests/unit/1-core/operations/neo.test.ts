@@ -1,4 +1,4 @@
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
@@ -1192,6 +1192,24 @@ describe('Neo MVP', () => {
         { signal: new AbortController().signal }
       );
     expect(await write(join(options.cwd!, 'check.ts'))).toEqual({});
+    const bash = (command: string) =>
+      guard(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command },
+          tool_use_id: 'tool-2',
+          session_id: 'sdk-1',
+          transcript_path: '/tmp/t.jsonl',
+          cwd: options.cwd!,
+        } as HookInput,
+        'tool-2',
+        { signal: new AbortController().signal }
+      );
+    expect(await bash(`rm -rf ${join(tmpdir(), 'another-process-file')}`)).toMatchObject({
+      hookSpecificOutput: { permissionDecision: 'deny' },
+    });
+    expect(await bash('rm -f old-check.ts')).toEqual({});
     expect(await write(join(homedir(), 'focus', 'app', 'a.ts'))).toMatchObject({
       hookSpecificOutput: { additionalContext: expect.stringContaining('hand changes to a card') },
     });

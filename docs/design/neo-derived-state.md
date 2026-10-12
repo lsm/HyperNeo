@@ -136,11 +136,13 @@ Neo reads anything and changes nothing shared. Root and topic Neo follow the sam
 
 | Tier | Covers | Hook |
 |---|---|---|
-| Free | Every tool in Neo's own folder (its coordinator cwd, plus scratch): notes, scripts written for a check, curl, git and gh reads | allows |
+| Free | Every tool in Neo's own folder (its per-session coordinator folder, which is also its scratch): notes, scripts written for a check, curl, git and gh reads | allows |
 | Local change | Edit or Write in a project repo, a worktree or the human's files; Bash that changes files there (`sed -i`, a redirect, `git commit`/`checkout`/`reset`/`stash`, `mv`) | allows and adds one line: hand changes to a card |
 | Shared state | `git push`; `gh pr`/`gh issue` changes; `gh api` with a non-GET method; deploying or restarting a daemon; deleting outside Neo's folder | denies, telling Neo to hand it to the card's session |
 
 Heavy checks (builds, tests, servers) are a verification card, not Neo: a check one or two commands answer, Neo does itself. Secret paths stay unreadable.
+
+The hook reads each command by its words, including `bash -c`, `$(…)`, git's global options and inline interpreter code. It stops the direct forms of a shared-state action. A script written to disguise one can still get through, so the prompt and the card hand-off carry the rest of the trust.
 
 ### 7. Notifications
 

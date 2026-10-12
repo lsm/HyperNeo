@@ -192,6 +192,27 @@ describe('the tiered Neo tool rule', () => {
   });
 
   test.each([
+    ['git commit -m "kill the stale worker"', { kind: 'nudge' }],
+    ['grep -rn kill packages/daemon/src', { kind: 'allow' }],
+    ["git log --grep='launchctl kickstart' --oneline", { kind: 'allow' }],
+    ["echo 'git push later' > /scratch/todo.md", { kind: 'allow' }],
+    ['dd if=/dev/zero of=disk.img bs=1 count=1', { kind: 'nudge' }],
+  ])('reads a word like kill or push only in command position: %s', (command, expected) => {
+    expect(verdict('Bash', { command }, project)).toEqual(expected);
+  });
+
+  test.each([
+    ['git --git-dir=/x/.git push', 'git push'],
+    ['git --git-dir /x/.git --work-tree /x push origin', 'git push'],
+    ['echo $(git push origin main)', 'git push'],
+    ['echo `gh pr merge 12`', 'changing a pull request'],
+    ['node -e \'require("child_process").execSync("git push")\'', 'inline code'],
+    ['python3 -c \'import os; os.system("gh pr merge 12")\'', 'inline code'],
+  ])('sees through flag, substitution and inline-code forms: %s', (command, why) => {
+    expect(reason('Bash', { command }, project)).toContain(why);
+  });
+
+  test.each([
     ['Read', { file_path: '/home/fictional/.ssh/id_ed25519' }],
     ['Edit', { file_path: '/home/fictional/focus/app/.env' }],
     ['Bash', { command: 'cat ~/.ssh/id_ed25519' }],

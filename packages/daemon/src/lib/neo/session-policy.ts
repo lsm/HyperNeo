@@ -114,7 +114,7 @@ export function restrictNeoQuery(
           neoToolGuard({
             home: homedir(),
             dataDir: getDataDir(),
-            own: [options.cwd ?? tmpdir(), tmpdir()],
+            own: options.cwd ? [options.cwd] : [],
           }),
         ],
       },

@@ -293,63 +293,132 @@ export type NeoToolVerdict =
   | { kind: 'nudge' }
   | { kind: 'deny'; reason: string };
 
-const B = `(?:^|[\\s;&|(\`'"])`;
-const SHARED_STATE: readonly [RegExp, string][] = [
-  [new RegExp(`${B}git(?:\\s+-[Cc]\\s+\\S+)*\\s+push\\b`), 'git push'],
-  [
-    new RegExp(
-      `${B}gh\\s+pr\\s+(merge|create|close|comment|review|edit|ready|reopen|lock|unlock)\\b`
-    ),
-    'changing a pull request',
-  ],
-  [
-    new RegExp(
-      `${B}gh\\s+issue\\s+(create|comment|close|edit|reopen|delete|transfer|lock|unlock|pin|unpin)\\b`
-    ),
-    'changing an issue',
-  ],
-  [
-    new RegExp(
-      `${B}gh\\s+(release\\s+(create|delete|edit|upload)|label\\s+(create|delete|edit)|secret\\s+(set|delete)|variable\\s+(set|delete)|workflow\\s+(run|enable|disable)|run\\s+(rerun|cancel|delete)|repo\\s+(create|delete|edit|rename|archive|fork))\\b`
-    ),
-    'changing GitHub',
-  ],
-  [
-    new RegExp(
-      `${B}launchctl\\s+(kickstart|stop|start|bootout|bootstrap|load|unload|remove|kill|enable|disable)\\b`
-    ),
-    'starting or stopping a daemon',
-  ],
-  [
-    new RegExp(`${B}systemctl\\s+(start|stop|restart|reload|enable|disable|kill)\\b`),
-    'starting or stopping a service',
-  ],
-  [new RegExp(`${B}(pkill|killall|kill)\\b`), 'stopping a process'],
-  [
-    new RegExp(
-      `${B}ssh\\b[^;&|]*\\b(launchctl|systemctl|kickstart|restart|reboot|shutdown|pkill|killall|kill|deploy\\w*)\\b|${B}ssh\\b[^;&|]*update`
-    ),
-    'deploying or restarting on another machine',
-  ],
-];
+const GH_CHANGES: Record<string, ReadonlySet<string>> = {
+  pr: new Set([
+    'merge',
+    'create',
+    'close',
+    'comment',
+    'review',
+    'edit',
+    'ready',
+    'reopen',
+    'lock',
+    'unlock',
+  ]),
+  issue: new Set([
+    'create',
+    'comment',
+    'close',
+    'edit',
+    'reopen',
+    'delete',
+    'transfer',
+    'lock',
+    'unlock',
+    'pin',
+    'unpin',
+  ]),
+  release: new Set(['create', 'delete', 'edit', 'upload']),
+  label: new Set(['create', 'delete', 'edit']),
+  secret: new Set(['set', 'delete']),
+  variable: new Set(['set', 'delete']),
+  workflow: new Set(['run', 'enable', 'disable']),
+  run: new Set(['rerun', 'cancel', 'delete']),
+  repo: new Set(['create', 'delete', 'edit', 'rename', 'archive', 'fork']),
+};
+const GH_WHAT: Record<string, string> = {
+  pr: 'changing a pull request',
+  issue: 'changing an issue',
+};
+const SERVICE_VERBS: Record<string, ReadonlySet<string>> = {
+  launchctl: new Set([
+    'kickstart',
+    'stop',
+    'start',
+    'bootout',
+    'bootstrap',
+    'load',
+    'unload',
+    'remove',
+    'kill',
+    'enable',
+    'disable',
+  ]),
+  systemctl: new Set(['start', 'stop', 'restart', 'reload', 'enable', 'disable', 'kill']),
+};
+const KILLERS = new Set(['kill', 'pkill', 'killall']);
+const REMOTE_RESTART =
+  /\b(launchctl|systemctl|kickstart|restart|reboot|shutdown|pkill|killall|kill|deploy\w*)\b|update/;
+const INTERPRETERS = new Set([
+  'node',
+  'bun',
+  'deno',
+  'python',
+  'python3',
+  'perl',
+  'ruby',
+  'osascript',
+]);
+const INLINE_FLAGS = new Set(['-e', '-c', '-p', '-E', '--eval', '--print', 'eval']);
+const INLINE_SHARED =
+  /\bgit\b[^\n;]*\bpush\b|\bgh\s+(pr|issue)\s+(merge|create|close|comment|review|edit)\b|\blaunchctl\s+(kickstart|stop|bootout|unload)\b|\bsystemctl\s+(restart|stop|start)\b/;
+const GIT_VALUE_OPTIONS = new Set([
+  '-C',
+  '-c',
+  '--git-dir',
+  '--work-tree',
+  '--namespace',
+  '--exec-path',
+]);
 
-function ghApiChange(command: string): boolean {
-  for (const match of command.matchAll(/\bgh\s+api\b([^;&|]*)/g)) {
-    const args = match[1];
-    const method = /(?:-X|--method)[\s=]*['"]?([A-Za-z]+)/.exec(args)?.[1];
-    if (method) {
-      if (method.toUpperCase() !== 'GET') return true;
-      continue;
-    }
-    if (!/(?:^|\s)(-f|-F|--field|--raw-field|--input)\b/.test(args)) continue;
-    if (!/(?:^|\s)['"]?graphql\b/.test(args) || /\bmutation\b/.test(args)) return true;
+function gitVerb(words: readonly string[]): { verb: string | undefined; at: number; dir?: string } {
+  let at = 1;
+  let dir: string | undefined;
+  while (at < words.length && words[at].startsWith('-')) {
+    const option = words[at];
+    if (GIT_VALUE_OPTIONS.has(option)) {
+      if (option === '-C') dir = words[at + 1];
+      at += 2;
+    } else at += 1;
   }
-  return false;
+  return { verb: words[at], at, dir };
 }
 
-export function neoSharedStateAction(command: string): string | null {
-  if (ghApiChange(command)) return 'a gh api call that changes GitHub';
-  return SHARED_STATE.find(([pattern]) => pattern.test(command))?.[1] ?? null;
+function ghApiChange(args: string): boolean {
+  const method = /(?:-X|--method)[\s=]*['"]?([A-Za-z]+)/.exec(args)?.[1];
+  if (method) return method.toUpperCase() !== 'GET';
+  if (!/(?:^|\s)(-f|-F|--field|--raw-field|--input)\b/.test(args)) return false;
+  return !/(?:^|\s)['"]?graphql\b/.test(args) || /\bmutation\b/.test(args);
+}
+
+function inlineCode(words: readonly string[]): string | null {
+  if (!INTERPRETERS.has(words[0])) return null;
+  const flag = words.findIndex((word, index) => index > 0 && INLINE_FLAGS.has(word));
+  return flag > 0 && words[flag + 1] ? words.slice(flag + 1).join(' ') : null;
+}
+
+export function neoSharedStateAction(words: readonly string[], segment: string): string | null {
+  const [name, sub, act] = words;
+  if (name === 'git') return gitVerb(words).verb === 'push' ? 'git push' : null;
+  if (name === 'gh') {
+    if (sub === 'api')
+      return ghApiChange(words.slice(2).join(' ')) ? 'a gh api call that changes GitHub' : null;
+    return GH_CHANGES[sub]?.has(act) ? (GH_WHAT[sub] ?? 'changing GitHub') : null;
+  }
+  if (SERVICE_VERBS[name]?.has(sub)) return 'starting or stopping a daemon or service';
+  if (KILLERS.has(name)) return 'stopping a process';
+  if (name === 'ssh' && REMOTE_RESTART.test(segment))
+    return 'deploying or restarting on another machine';
+  const code = inlineCode(words);
+  return code && INLINE_SHARED.test(code) ? 'inline code that pushes, merges or restarts' : null;
+}
+
+function substitutions(segment: string): string[] {
+  return [
+    ...[...segment.matchAll(/\$\(([^()]*)\)/g)].map((match) => match[1]),
+    ...[...segment.matchAll(/`([^`]*)`/g)].map((match) => match[1]),
+  ];
 }
 
 const WRAPPERS = new Set(['env', 'sudo', 'command', 'nohup', 'time', 'exec', 'xargs', 'nice']);
@@ -391,15 +460,10 @@ function commandWords(words: readonly string[]): string[] {
 }
 
 function gitChange(words: readonly string[], dir: string): LocalChange | null {
-  let at = 1;
-  let where = dir;
-  while (words[at] === '-C' || words[at] === '-c') {
-    if (words[at] === '-C' && words[at + 1]) where = resolve(dir, words[at + 1]);
-    at += 2;
-  }
-  const verb = words[at];
-  if (GIT_DELETES.has(verb)) return { delete: true, targets: [where] };
-  return GIT_CHANGES.has(verb) ? { delete: false, targets: [where] } : null;
+  const { verb, dir: inside } = gitVerb(words);
+  const where = inside ? resolve(dir, inside) : dir;
+  if (GIT_DELETES.has(verb ?? '')) return { delete: true, targets: [where] };
+  return GIT_CHANGES.has(verb ?? '') ? { delete: false, targets: [where] } : null;
 }
 
 function localChange(words: readonly string[], dir: string): LocalChange | null {
@@ -407,6 +471,10 @@ function localChange(words: readonly string[], dir: string): LocalChange | null 
   const args = rest.filter((word) => !word.startsWith('-'));
   const targets = (paths: string[]) => (paths.length ? paths : [dir]);
   if (name === 'git') return gitChange(words, dir);
+  if (name === 'dd') {
+    const out = rest.find((word) => word.startsWith('of='));
+    return out ? { delete: false, targets: [out.slice(3)] } : null;
+  }
   if (name === 'sed' && rest.some((word) => /^(-i|--in-place)/.test(word)))
     return { delete: false, targets: targets(args.slice(1)) };
   if (name === 'find' && rest.includes('-delete'))
@@ -453,7 +521,7 @@ function analyzeBash(
 ): NeoBashFacts {
   const found: NeoBashFacts = {
     secret: null,
-    sharedState: neoSharedStateAction(command),
+    sharedState: null,
     deletesOutside: false,
     changesOutside: false,
   };
@@ -467,10 +535,14 @@ function analyzeBash(
       continue;
     }
     found.secret ??= secretArgument(words.slice(1), dir, scope, facts);
-    const nested = nestedCommand(words);
-    if (nested && depth < 3) {
-      const inner = analyzeBash(nested, { ...scope, cwd: dir }, facts, depth + 1);
+    found.sharedState ??= neoSharedStateAction(words, segment);
+    const nested = [nestedCommand(words), ...substitutions(segment)].filter(
+      (inner): inner is string => !!inner
+    );
+    for (const text of depth < 3 ? nested : []) {
+      const inner = analyzeBash(text, { ...scope, cwd: dir }, facts, depth + 1);
       found.secret ??= inner.secret;
+      found.sharedState ??= inner.sharedState;
       found.deletesOutside ||= inner.deletesOutside;
       found.changesOutside ||= inner.changesOutside;
     }
