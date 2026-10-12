@@ -46,10 +46,12 @@ function webpSize(bytes: Uint8Array, view: DataView): NeoImageSize | null {
   return null;
 }
 
+const HEADER_BASE64_CHARS = 262_144;
+
 export function neoImageSize(base64: string): NeoImageSize | null {
   try {
-    const bytes = Uint8Array.from(Buffer.from(base64, 'base64'));
-    const view = new DataView(bytes.buffer);
+    const bytes = Buffer.from(base64.slice(0, HEADER_BASE64_CHARS), 'base64');
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (bytes[0] === 0x89 && bytes[1] === 0x50) return pngSize(bytes, view);
     if (bytes[0] === 0xff && bytes[1] === 0xd8) return jpegSize(bytes, view);
     if (bytes[0] === 0x47 && bytes[1] === 0x49) return gifSize(bytes, view);
