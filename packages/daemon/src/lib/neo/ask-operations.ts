@@ -11,6 +11,7 @@ import { neoStandingRules } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { GITHUB_REF_PATH } from '../github/parse-pr-url.ts';
 import type {
   NeoAskInput,
   NeoAskItemInput,
@@ -85,6 +86,7 @@ export const NeoAskSchema = z.object({
         action: z.string().optional(),
         waitCard: z.string().optional(),
         kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
+        watch: z.array(z.string()).optional(),
       })
     )
     .optional(),
@@ -97,9 +99,17 @@ const AskResult = z.union([
   Failure,
   z.object({ ok: z.literal(true), ask: NeoAskSchema, packBriefing: z.string().optional() }),
 ]);
+const WatchUrl = z
+  .string()
+  .trim()
+  .regex(
+    new RegExp(`^https://${GITHUB_REF_PATH.source}$`),
+    'Pass a GitHub pull request or issue URL.'
+  );
 const Item = z.object({
   text: z.string().trim().min(1).max(300),
   check: z.enum(NEO_ASK_CHECK_KINDS).nullable().default(null),
+  watch: z.array(WatchUrl).min(1).max(10).optional(),
 });
 const Open = z
   .object({
@@ -441,7 +451,7 @@ const NEO_HUMAN_TASK_REFUSALS = {
   approval:
     "approval_on_ask: re-approving continued work is the ask's Approve, not a checklist item. Tell the human the ask needs their Approve; approving it wakes you.",
   wait: 'not_the_human: a wait on a PR, merge, CI, deploy, card or anything else the daemon reads is not the human’s step. Keep the item pending; the daemon wakes you when cards report, and you tick it met once you read it.',
-  fact: 'daemon_readable: you can read this yourself (a PR, merge, CI, this machine’s deploy, a card, standing rules). Read it and tick the item met, or keep it pending. reported is for claims you cannot read, such as another machine’s state.',
+  fact: 'daemon_readable: you can read this yourself (a PR, merge, CI, this machine’s deploy, a card, standing rules). Read a pull request or issue with neo.github.read {url} and tick the item met, or give the item watch: [url] with neo.ask.edit so the daemon ticks it when they merge or close; otherwise keep it pending. reported is for claims you cannot read, such as another machine’s state.',
 } as const;
 
 export function neoTickWaitCard(input: z.infer<typeof Tick>): string | undefined {
@@ -1142,7 +1152,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps. Reuse requestKey only to retry this input.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself once every watched pull request has merged and every watched issue has closed, with the read states as evidence. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps. Reuse requestKey only to retry this input.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1178,7 +1188,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.edit',
       description:
-        "Change an open ask's done checklist when what done means changes: add items, or remove ones that no longer apply. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
+        "Change an open ask's done checklist when what done means changes: add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, as in neo.ask.open), or remove ones that no longer apply. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
       inputSchema: Edit,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

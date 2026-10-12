@@ -164,7 +164,9 @@ export function requireNeoPackTickable(read: {
 }): { value: NeoAsk } | { reason: null } {
   return read.ask &&
     isNeoAskLive(read.ask) &&
-    (read.ask.doneItems ?? []).some((item) => item.check && !item.removed && item.state !== 'met')
+    (read.ask.doneItems ?? []).some(
+      (item) => (item.check || item.watch?.length) && !item.removed && item.state !== 'met'
+    )
     ? { value: read.ask }
     : { reason: null };
 }

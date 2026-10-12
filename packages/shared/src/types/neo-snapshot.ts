@@ -97,6 +97,7 @@ export interface NeoAskItem {
   action?: string;
   waitCard?: string;
   kind?: NeoAskItemKind;
+  watch?: string[];
 }
 
 export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';

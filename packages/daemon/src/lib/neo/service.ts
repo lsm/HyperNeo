@@ -1815,6 +1815,7 @@ export class NeoService {
   private get cardPrDeps(): NeoCardPrDeps {
     return {
       readPrs: (urls) => this.readPrs(urls),
+      readRefStates: (refs) => this.readRefStates(refs),
       prCandidates: (work, stored) => this.cardPrCandidates(work, stored),
       claims: this.workPrClaims,
       workPrs: this.workPrs,

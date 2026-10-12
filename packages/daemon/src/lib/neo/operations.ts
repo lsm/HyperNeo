@@ -14,6 +14,7 @@ import {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { THINKING_LEVELS } from '@hyperneo/shared';
 import { z } from 'zod';
+import { NeoGithubReadResult, readNeoGithubRef } from './packs/coding/github-read.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
@@ -341,6 +342,7 @@ const RulesResult = z.union([
 ]);
 const Close = z.object({ id: z.string().min(1), outcome: z.enum(['done', 'cancelled']) });
 const PackRead = z.object({ id: z.string().trim().min(1).max(80) });
+const GithubRead = z.object({ url: z.string().trim().min(1).max(500) });
 const PackReadResult = z.union([
   Failure,
   z.object({
@@ -1464,6 +1466,11 @@ export function createNeoOperations(service: NeoService) {
       return { ok: true as const, work: service.repo.getWork(id)! };
     }
   );
+  const readGithub = path(
+    'neo.github.read',
+    (_input: z.infer<typeof GithubRead>) => undefined,
+    ({ url }) => readNeoGithubRef(service, url)
+  );
   const readPack = path(
     'neo.pack.read',
     (_input: z.infer<typeof PackRead>) => undefined,
@@ -1578,6 +1585,15 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: SessionTrackResult,
       policy: { safetyClass: 'human_only' },
       execute: (input, caller) => trackSession(input, caller, Date.now()),
+    }),
+    defineOperation({
+      name: 'neo.github.read',
+      description:
+        'Read a GitHub pull request or issue as it is now, from its URL. A pull request returns its state (OPEN, MERGED or CLOSED), checks (passing, failing, pending or none), review verdict on its current head (approved, changes_requested or none), merge blockers and title; an issue returns its state, how it closed (completed, not_planned or duplicate), the merged pull request that closed it, and its parent issue. Read-only; use it to check a PR, merge, CI or issue yourself before ticking an item met.',
+      inputSchema: GithubRead,
+      resultSchema: NeoGithubReadResult,
+      policy: { safetyClass: 'read', roles: ['neo'] },
+      execute: readGithub,
     }),
     defineOperation({
       name: 'neo.pack.read',
