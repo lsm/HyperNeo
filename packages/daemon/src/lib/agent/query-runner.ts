@@ -389,6 +389,7 @@ export interface QueryRunnerContext {
 
 export class QueryRunner {
   private promptSpentGeneration: number | null = null;
+  private turnEndedGeneration: number | null = null;
 
   acceptsPrompt(queryGeneration: number): boolean {
     return this.promptSpentGeneration !== queryGeneration;
@@ -701,7 +702,6 @@ export class QueryRunner {
     let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
     let processExited = false;
     let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
-    let turnEnded = false;
     let removeFlagSettingsFile: (() => void) | undefined;
 
     try {
@@ -1324,7 +1324,11 @@ export class QueryRunner {
               resolveAskOrigin
             );
 
-          turnEnded = message.type === 'result';
+          this.turnEndedGeneration =
+            message.type === 'result' &&
+            !(message as SDKMessage & { parent_tool_use_id?: string | null }).parent_tool_use_id
+              ? queryGeneration
+              : null;
           try {
             if (message.type === 'result') questionInputs.endTurn();
             await this.handleSDKMessage(message, queryGeneration);
@@ -1400,7 +1404,7 @@ export class QueryRunner {
         providerFamily: isProviderSession ? 'provider' : 'anthropic',
         hasConsumedPrompt: (this._consumedUserMessages.get(queryGeneration)?.length ?? 0) > 0,
         hasQueuedPrompt: messageQueue.size() > 0,
-        turnEnded,
+        turnEnded: this.turnEndedGeneration === queryGeneration,
         lifecycle: {
           processingStatus: stateManager.getState().status,
           abortSignalAborted: this.ctx.queryAbortController?.signal.aborted === true,
@@ -2113,6 +2117,7 @@ export class QueryRunner {
       startGuard?.();
       questionInputs?.recordInput(queuedMessage);
       if (holderTurn) this.promptSpentGeneration = queryGeneration;
+      this.turnEndedGeneration = null;
       yield message;
       onSent();
       if (holderTurn) return;
