@@ -259,7 +259,7 @@ function shellSegments(command: string): string[] {
   const masked = command.replace(/'[^']*'|"[^"]*"/g, (quoted) => 'x'.repeat(quoted.length));
   const segments: string[] = [];
   let start = 0;
-  for (const operator of masked.matchAll(/&&|\|\||;|\|/g)) {
+  for (const operator of masked.matchAll(/&&|\|\||;|\||&|\r?\n|\r/g)) {
     segments.push(command.slice(start, operator.index));
     start = (operator.index ?? 0) + operator[0].length;
   }
@@ -457,8 +457,8 @@ export function neoSharedStateAction(words: readonly string[], segment: string):
 const SHELLS = new Set(['bash', 'sh', 'zsh']);
 
 function scriptFile(words: readonly string[], dir: string, facts: LookUpPathFacts): string | null {
-  if (!INTERPRETERS.has(words[0]) && !SHELLS.has(words[0])) return null;
-  if (words.some((word) => INLINE_FLAGS.has(word))) return null;
+  if (SHELLS.has(words[0]) ? shellCommandFlag(words) > 0 : !INTERPRETERS.has(words[0])) return null;
+  if (INTERPRETERS.has(words[0]) && words.some((word) => INLINE_FLAGS.has(word))) return null;
   const path = words.slice(1).find((word) => !word.startsWith('-') && word !== 'run');
   return path ? (facts.readText?.(resolve(dir, path)) ?? null) : null;
 }
@@ -560,10 +560,14 @@ function ownPath(path: string, scope: LookUpScope, facts: LookUpPathFacts): bool
   );
 }
 
+function shellCommandFlag(words: readonly string[]): number {
+  if (!SHELLS.has(words[0])) return -1;
+  return words.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
+}
+
 function nestedCommand(words: readonly string[]): string | null {
-  const shell = ['bash', 'sh', 'zsh'].includes(words[0]);
-  const flag = words.indexOf('-c');
-  return shell && flag > 0 && words[flag + 1] ? words.slice(flag + 1).join(' ') : null;
+  const flag = shellCommandFlag(words);
+  return flag > 0 && words[flag + 1] ? words.slice(flag + 1).join(' ') : null;
 }
 
 export interface NeoBashFacts {
