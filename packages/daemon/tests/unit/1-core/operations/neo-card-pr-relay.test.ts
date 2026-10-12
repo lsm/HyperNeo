@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { NEO_WORK_CLOSED_DONE, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   neoCardPrAttention,
   requireNeoCardPrRelay,
@@ -56,34 +56,37 @@ describe('requireNeoCardPrRelay', () => {
 
   test('relays new PR news to a queued or reported card', () => {
     for (const status of ['queued', 'reported'] as const) {
-      const relay = requireNeoCardPrRelay({ status }, attention, {});
+      const relay = requireNeoCardPrRelay({ status, report: null }, attention, {});
       expect(relay).toMatchObject({ value: { signature: 's1' } });
       expect('value' in relay && relay.value.message).toContain(attention.items);
     }
     expect(
-      requireNeoCardPrRelay({ status: 'queued' }, attention, { signature: 's0' })
+      requireNeoCardPrRelay({ status: 'queued', report: null }, attention, { signature: 's0' })
     ).toMatchObject({
       value: { signature: 's1' },
     });
     expect(
-      requireNeoCardPrRelay({ status: 'queued' }, attention, { lastMessage: 'something else' })
+      requireNeoCardPrRelay({ status: 'queued', report: null }, attention, {
+        lastMessage: 'something else',
+      })
     ).toMatchObject({ value: { signature: 's1' } });
   });
 
   test.each([
-    ['not_in_flight', { status: 'cancelled' as const }, attention, {}],
+    ['not_in_flight', { status: 'cancelled' as const, report: null }, attention, {}],
     ['not_in_flight', null, attention, {}],
-    ['clear', { status: 'queued' as const }, null, {}],
-    ['told', { status: 'queued' as const }, attention, { signature: 's1' }],
+    ['not_in_flight', { status: 'reported' as const, report: NEO_WORK_CLOSED_DONE }, attention, {}],
+    ['clear', { status: 'queued' as const, report: null }, null, {}],
+    ['told', { status: 'queued' as const, report: null }, attention, { signature: 's1' }],
   ] as const)('skips with %s', (reason, work, news, told) => {
     expect(requireNeoCardPrRelay(work, news, told)).toEqual({ reason });
   });
 
   test('treats the same message as the last continue as already told', () => {
-    const relay = requireNeoCardPrRelay({ status: 'queued' }, attention, {});
+    const relay = requireNeoCardPrRelay({ status: 'queued', report: null }, attention, {});
     const message = 'value' in relay ? relay.value.message : '';
     expect(
-      requireNeoCardPrRelay({ status: 'queued' }, attention, { lastMessage: message })
+      requireNeoCardPrRelay({ status: 'queued', report: null }, attention, { lastMessage: message })
     ).toEqual({ reason: 'told' });
   });
 });
@@ -132,7 +135,7 @@ describe('NeoService relayCardPr', () => {
       title: 'Fix login',
       instruction: 'Fix login.',
     });
-    service.repo.transitionWork(work.id, work, { status: 'queued' });
+    service.repo.transitionWork(work.id, work, { status: 'queued', report: null });
     return work.id;
   }
 

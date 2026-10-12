@@ -1,6 +1,6 @@
 import { fillPrompt, NEO_CARD_PR_ATTENTION } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { NEO_WORK_CLOSED_DONE, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 
 type NeoCardPrNeed = { kind: 'checks' | 'review' | 'threads' | 'conflicts'; text: string };
 type NeoCardPrRelaySkip = 'not_in_flight' | 'clear' | 'told';
@@ -47,11 +47,15 @@ export function neoCardPrAttention(
 }
 
 export function requireNeoCardPrRelay(
-  work: Pick<NeoWork, 'status'> | null,
+  work: Pick<NeoWork, 'status' | 'report'> | null,
   attention: { signature: string; items: string } | null,
   told: { signature?: string; lastMessage?: string | null }
 ): { value: { signature: string; message: string } } | { reason: NeoCardPrRelaySkip } {
-  if (!work || (work.status !== 'queued' && work.status !== 'reported'))
+  if (
+    !work ||
+    (work.status !== 'queued' && work.status !== 'reported') ||
+    work.report === NEO_WORK_CLOSED_DONE
+  )
     return { reason: 'not_in_flight' };
   if (!attention) return { reason: 'clear' };
   const message = fillPrompt(NEO_CARD_PR_ATTENTION, { items: attention.items });
