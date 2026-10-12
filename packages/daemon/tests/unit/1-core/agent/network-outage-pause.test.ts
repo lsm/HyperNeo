@@ -4,7 +4,9 @@ import {
   NETWORK_OUTAGE_NOTICE,
   NETWORK_OUTAGE_POPUP_AFTER_MS,
   NETWORK_PROBE_EVERY_MS,
+  NETWORK_PROBE_MAX_MS,
   NetworkOutagePause,
+  networkProbeDelayMs,
   networkProbeHost,
   planNetworkOutageTick,
   providerProbeHost,
@@ -65,6 +67,15 @@ describe('planNetworkOutageTick', () => {
       nextProbeAt: NETWORK_OUTAGE_POPUP_AFTER_MS + NETWORK_PROBE_EVERY_MS,
     });
     expect(planNetworkOutageTick(0, NETWORK_OUTAGE_POPUP_AFTER_MS, true).popup).toBe(false);
+  });
+});
+
+describe('networkProbeDelayMs', () => {
+  test('backs off after each resume that failed again, up to five minutes', () => {
+    expect(networkProbeDelayMs(0)).toBe(NETWORK_PROBE_EVERY_MS);
+    expect(networkProbeDelayMs(1)).toBe(2 * NETWORK_PROBE_EVERY_MS);
+    expect(networkProbeDelayMs(2)).toBe(4 * NETWORK_PROBE_EVERY_MS);
+    expect(networkProbeDelayMs(20)).toBe(NETWORK_PROBE_MAX_MS);
   });
 });
 
@@ -224,6 +235,27 @@ describe('NetworkOutagePause', () => {
     await h.tick(NETWORK_PROBE_EVERY_MS);
 
     expect(h.pause.isActive()).toBe(false);
+  });
+
+  test('a resume that fails again keeps one outage, without a new notice, and backs off', async () => {
+    const h = harness(() => true);
+    await h.pause.start('getaddrinfo ENOTFOUND chatgpt.com', prompt);
+    await h.tick(NETWORK_PROBE_EVERY_MS);
+    expect(h.resumed).toEqual([prompt]);
+    await h.pause.start('getaddrinfo ENOTFOUND chatgpt.com', prompt);
+
+    expect(h.events.filter((event) => event.startsWith('notice'))).toHaveLength(1);
+    expect(h.holds.at(-1)).toBe(1_000 + NETWORK_PROBE_EVERY_MS + 2 * NETWORK_PROBE_EVERY_MS);
+  });
+
+  test('a cancel ends the outage, so the next one gets its own notice and clock', async () => {
+    const h = harness(() => false);
+    await h.pause.start('getaddrinfo ENOTFOUND chatgpt.com', prompt);
+    h.pause.stop();
+    await h.pause.start('getaddrinfo ENOTFOUND chatgpt.com', prompt);
+
+    expect(h.events.filter((event) => event.startsWith('notice'))).toHaveLength(2);
+    expect(h.holds.at(-1)).toBe(1_000 + NETWORK_PROBE_EVERY_MS);
   });
 
   test('a successful turn ends the outage, so the next one gets a fresh notice', async () => {

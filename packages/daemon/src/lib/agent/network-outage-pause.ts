@@ -4,6 +4,7 @@ export const NETWORK_OUTAGE_NOTICE =
   "Can't reach the model provider (network). Neo continues when the connection is back";
 export const NETWORK_OUTAGE_POPUP_AFTER_MS = 30 * 60 * 1000;
 export const NETWORK_PROBE_EVERY_MS = 30_000;
+export const NETWORK_PROBE_MAX_MS = 5 * 60 * 1000;
 const NETWORK_PROBE_TIMEOUT_MS = 5_000;
 const DEFAULT_PROBE_HOST = 'api.anthropic.com';
 
@@ -34,14 +35,19 @@ export function providerProbeHost(baseUrl: string | undefined): string | null {
   }
 }
 
+export function networkProbeDelayMs(failedResumes: number): number {
+  return Math.min(NETWORK_PROBE_EVERY_MS * 2 ** failedResumes, NETWORK_PROBE_MAX_MS);
+}
+
 export function planNetworkOutageTick(
   startedAt: number,
   now: number,
-  popupShown: boolean
+  popupShown: boolean,
+  failedResumes = 0
 ): { popup: boolean; nextProbeAt: number } {
   return {
     popup: !popupShown && now - startedAt >= NETWORK_OUTAGE_POPUP_AFTER_MS,
-    nextProbeAt: now + NETWORK_PROBE_EVERY_MS,
+    nextProbeAt: now + networkProbeDelayMs(failedResumes),
   };
 }
 
@@ -80,6 +86,7 @@ export class NetworkOutagePause {
   private host = DEFAULT_PROBE_HOST;
   private errorText = '';
   private cancelProbe: (() => void) | null = null;
+  private failedResumes = 0;
 
   constructor(private readonly deps: NetworkOutageDeps) {}
 
@@ -89,13 +96,14 @@ export class NetworkOutagePause {
 
   async start(errorText: string, prompt: HeldPrompt | null): Promise<void> {
     const firstFailure = this.startedAt === null;
+    if (!firstFailure && !this.active) this.failedResumes += 1;
     this.startedAt ??= this.deps.now();
     this.active = true;
     this.prompt = prompt ?? this.prompt;
     this.host = networkProbeHost(errorText, this.deps.fallbackHost());
     this.errorText = errorText;
     this.deps.log(`network outage: holding the turn and probing ${this.host}`);
-    await this.holdUntil(this.deps.now() + NETWORK_PROBE_EVERY_MS);
+    await this.holdUntil(this.deps.now() + networkProbeDelayMs(this.failedResumes));
     if (firstFailure) await this.deps.notice(NETWORK_OUTAGE_NOTICE);
   }
 
@@ -107,16 +115,22 @@ export class NetworkOutagePause {
 
   takePrompt(): HeldPrompt | null {
     const prompt = this.prompt;
-    this.stop();
+    this.release();
     return prompt;
   }
 
   succeeded(): void {
     this.startedAt = null;
     this.popupShown = false;
+    this.failedResumes = 0;
   }
 
   stop(): void {
+    this.release();
+    this.succeeded();
+  }
+
+  private release(): void {
     this.cancelProbe?.();
     this.cancelProbe = null;
     this.active = false;
@@ -154,7 +168,8 @@ export class NetworkOutagePause {
     const plan = planNetworkOutageTick(
       this.startedAt ?? this.deps.now(),
       this.deps.now(),
-      this.popupShown
+      this.popupShown,
+      this.failedResumes
     );
     if (plan.popup) {
       this.popupShown = true;
