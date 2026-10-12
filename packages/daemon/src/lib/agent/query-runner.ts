@@ -322,6 +322,7 @@ interface RetryTeardownOptions {
   guardAfterExit?: boolean;
   restartQueueIfStopped?: boolean;
   requeueConsumedList?: boolean;
+  requeueFedPrompts?: boolean;
   noticeAfterTeardown?: string;
   backoffMs?: number;
   snapshotRequeueLabel?: string;
@@ -407,6 +408,24 @@ export class QueryRunner {
 
   private _turnConsumedUserMessages: Array<{ uuid: string; content: string | MessageContent[] }> =
     [];
+
+  private fedAfterTurnEnd: Array<{
+    uuid: string;
+    content: string | MessageContent[];
+    internal: boolean;
+  }> = [];
+
+  private redeliveredFedPrompts: string[] = [];
+
+  private turnEndedState(queryGeneration: number): { turnEnded: boolean; hasFedPrompt: boolean } {
+    if (this.turnEndedGeneration !== queryGeneration)
+      return { turnEnded: false, hasFedPrompt: false };
+    if (this.fedAfterTurnEnd.length === 0) return { turnEnded: true, hasFedPrompt: false };
+    const fresh = this.fedAfterTurnEnd.every(
+      (prompt) => !this.redeliveredFedPrompts.includes(prompt.uuid)
+    );
+    return { turnEnded: fresh, hasFedPrompt: fresh };
+  }
 
   get lastConsumedUserMessage() {
     return this._lastConsumedUserMessage;
@@ -696,6 +715,7 @@ export class QueryRunner {
     let resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver> | undefined;
     let isAbortError = false;
     this.turnEndedGeneration = null;
+    this.fedAfterTurnEnd = [];
 
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
     const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;
@@ -1330,6 +1350,7 @@ export class QueryRunner {
             !(message as SDKMessage & { parent_tool_use_id?: string | null }).parent_tool_use_id
               ? queryGeneration
               : null;
+          this.fedAfterTurnEnd = [];
           try {
             if (message.type === 'result') questionInputs.endTurn();
             await this.handleSDKMessage(message, queryGeneration);
@@ -1405,7 +1426,7 @@ export class QueryRunner {
         providerFamily: isProviderSession ? 'provider' : 'anthropic',
         hasConsumedPrompt: (this._consumedUserMessages.get(queryGeneration)?.length ?? 0) > 0,
         hasQueuedPrompt: messageQueue.size() > 0,
-        turnEnded: this.turnEndedGeneration === queryGeneration,
+        ...this.turnEndedState(queryGeneration),
         lifecycle: {
           processingStatus: stateManager.getState().status,
           abortSignalAborted: this.ctx.queryAbortController?.signal.aborted === true,
@@ -1427,7 +1448,10 @@ export class QueryRunner {
         return;
       }
 
-      if (routeDecision.route.action === 'turn_ended_noop')
+      if (
+        routeDecision.route.action === 'turn_ended_noop' ||
+        routeDecision.route.action === 'turn_ended_redeliver'
+      )
         logger.info(`SDK process exited after its turn ended with a result: ${errorMessage}`);
       else logger.error('Streaming query error:', error);
 
@@ -1502,6 +1526,27 @@ export class QueryRunner {
           restartQueueIfStopped: true,
           requeueConsumedList: true,
           noticeAfterTeardown: startupRetryNotice,
+        });
+      }
+      if (routeDecision.route.action === 'turn_ended_redeliver') {
+        logger.info('Redelivering the prompts fed after the turn ended into a fresh query.');
+        runAbortController?.abort();
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
+          nextAttempt: 0,
+          recoveryState,
+          resetStartupState: true,
+          idleFirst: true,
+          routeGuard: {
+            expectedAction: 'turn_ended_redeliver',
+            retrySignal,
+            retryEnv,
+            queueRunningAtEntry,
+            abandonLabel: 'Turn-ended redelivery',
+          },
+          terminateProcesses: true,
+          guardAfterExit: true,
+          restartQueueIfStopped: true,
+          requeueFedPrompts: true,
         });
       }
       if (routeDecision.route.action === 'message_not_found_retry') {
@@ -1886,6 +1931,24 @@ export class QueryRunner {
       return state;
     };
 
+    const requeueFedPrompts = (state: RetryTeardownState): RetryTeardownState => {
+      const fed = this.fedAfterTurnEnd;
+      this.fedAfterTurnEnd = [];
+      this.redeliveredFedPrompts = [
+        ...this.redeliveredFedPrompts,
+        ...fed.map((message) => message.uuid),
+      ].slice(-32);
+      logger.warn(`Re-enqueueing ${fed.length} prompt(s) fed after the turn ended.`);
+      for (let i = fed.length - 1; i >= 0; i--) {
+        const message = fed[i];
+        if (messageQueue.requeueYielded(message.uuid)) continue;
+        messageQueue
+          .enqueueWithId(message.uuid, message.content, message.internal, { prepend: true })
+          .catch(() => {});
+      }
+      return state;
+    };
+
     const displayPostTeardownNotice = async (): Promise<void> => {
       if (options.noticeAfterTeardown === undefined) return;
       try {
@@ -1943,6 +2006,7 @@ export class QueryRunner {
       exitAwaitAbandoned: options.guardAfterExit ? () => abandon('exit await') : undefined,
       restartStoppedQueue: options.restartQueueIfStopped ? restartStoppedQueue : undefined,
       requeueConsumedList: options.requeueConsumedList ? requeueConsumedList : undefined,
+      requeueFedPrompts: options.requeueFedPrompts ? requeueFedPrompts : undefined,
       displayPostTeardownNotice:
         options.noticeAfterTeardown !== undefined ? displayPostTeardownNotice : undefined,
       publicationAbandoned:
@@ -1977,6 +2041,7 @@ export class QueryRunner {
       .pipe('!?exitAwaitAbandoned', 'state')
       .pipe('?restartStoppedQueue', 'state', 'state')
       .pipe('?requeueConsumedList', 'state', 'state')
+      .pipe('?requeueFedPrompts', 'state', 'state')
       .pipe('?displayPostTeardownNotice', 'state')
       .pipe('!?publicationAbandoned', 'state')
       .pipe('?restoreEnvAndBackoff', 'state')
@@ -2007,6 +2072,7 @@ export class QueryRunner {
         ...env,
         hasConsumedPrompt: (this._consumedUserMessages.get(queryGeneration) ?? []).length > 0,
         hasQueuedPrompt: this.ctx.messageQueue.size() > 0,
+        ...this.turnEndedState(queryGeneration),
         isCleaningUp: this.ctx.isCleaningUp(),
         isSuperseded: this.ctx.getQueryGeneration() !== queryGeneration,
         lifecycle: {
@@ -2118,7 +2184,12 @@ export class QueryRunner {
       startGuard?.();
       questionInputs?.recordInput(queuedMessage);
       if (holderTurn) this.promptSpentGeneration = queryGeneration;
-      this.turnEndedGeneration = null;
+      if (this.turnEndedGeneration === queryGeneration)
+        this.fedAfterTurnEnd.push({
+          uuid: message.uuid ?? '',
+          content: (message.message?.content ?? '') as unknown as string | MessageContent[],
+          internal: isInternal,
+        });
       yield message;
       onSent();
       if (holderTurn) return;

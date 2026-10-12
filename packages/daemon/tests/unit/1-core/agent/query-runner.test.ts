@@ -3506,6 +3506,61 @@ describe('QueryRunner', () => {
       );
     });
 
+    it('redelivers a system note fed after the result when the process then exits', async () => {
+      let queryCalls = 0;
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(
+        ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+          queryCalls += 1;
+          const firstQuery = queryCalls === 1;
+          return {
+            close: () => {},
+            interrupt: async () => {},
+            [Symbol.asyncIterator]: async function* () {
+              if (!firstQuery) return;
+              yield {
+                type: 'result',
+                subtype: 'error_max_turns',
+                uuid: 'max-turns-result',
+              } as unknown as SDKMessage;
+              await prompt[Symbol.asyncIterator]().next();
+              throw new Error('Claude Code process exited with code 1');
+            },
+          };
+        }
+      );
+      let generatorCalls = 0;
+      const ctx = createContext({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: mock(async function* () {
+            generatorCalls += 1;
+            if (generatorCalls > 1) return;
+            yield {
+              message: {
+                type: 'user',
+                uuid: 'note-uuid',
+                message: { role: 'user', content: 'system note' },
+              },
+              onSent: () => {},
+            };
+          }),
+        } as unknown as MessageQueue,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise;
+
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(mockLogger.error).not.toHaveBeenCalledWith(
+        'Streaming query error:',
+        expect.anything()
+      );
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith('note-uuid', 'system note', false, {
+        prepend: true,
+      });
+      expect(queryCalls).toBe(2);
+    });
+
     it('reports a process exit after a subagent result as a terminal error', async () => {
       (query as unknown as ReturnType<typeof mock>).mockImplementation(() => ({
         close: () => {},
@@ -3529,7 +3584,7 @@ describe('QueryRunner', () => {
       expect(mockLogger.error).toHaveBeenCalledWith('Streaming query error:', expect.anything());
     });
 
-    it('reports a process exit after the next prompt was fed as a terminal error', async () => {
+    it('reports a terminal error when the redelivered prompt meets the same exit again', async () => {
       async function* prompts() {
         yield { message: { uuid: 'next-prompt', message: { content: 'next' } }, onSent: () => {} };
       }
@@ -3558,6 +3613,7 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise;
 
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
       expect(handleErrorSpy).toHaveBeenCalledTimes(1);
     });
 

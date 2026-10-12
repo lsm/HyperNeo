@@ -8,15 +8,21 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { NeoPublicationSchema } from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 
-export const NeoConversationPageInput = z
+export const NeoConversationPageShape = z
   .object({
     conversationId: z.uuid(),
     after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
     limit: z.number().int().min(1).max(100).default(50),
     before: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   })
-  .strict()
-  .refine((page) => page.before === undefined || page.after === 0);
+  .strict();
+
+export const neoConversationPageCursorValid = (page: { before?: number; after: number }) =>
+  page.before === undefined || page.after === 0;
+
+export const NeoConversationPageInput = NeoConversationPageShape.refine(
+  neoConversationPageCursorValid
+);
 type Page = z.infer<typeof NeoConversationPageInput>;
 type Failure = { ok: false; reason: 'human_only' | 'conversation_not_found' };
 type Gate = { value: Page } | { reason: Failure };

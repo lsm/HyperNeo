@@ -276,7 +276,167 @@ describe('NeoLive durable conversation activation', () => {
     };
     render(<NeoLive />);
     fireEvent.click(await within(publicView()).findByLabelText('Edit and send again'));
-    expect(restoreImages).toHaveBeenCalledWith(root, [{ data: 'YWJj', media_type: 'image/png' }]);
+    await waitFor(() =>
+      expect(restoreImages).toHaveBeenCalledWith(root, [{ data: 'YWJj', media_type: 'image/png' }])
+    );
+  });
+
+  it('loads full photos for undelivered photo references before restoring them', async () => {
+    const reference = {
+      type: 'image_ref' as const,
+      imageId: '1:0',
+      mediaType: 'image/png',
+      bytes: 3,
+      width: 10,
+      height: 10,
+      thumbnail: null,
+    };
+    asks.value = {
+      ...asks.value,
+      items: [{ ...ask('lost'), content: [reference], delivery: { state: 'failed' } }],
+    };
+    const fallback = request.getMockImplementation() as (
+      method: string,
+      data?: Record<string, unknown>
+    ) => Promise<unknown>;
+    request.mockImplementation(async (method: string, data: Record<string, unknown> = {}) =>
+      method === 'operation.invoke' && data.name === 'neo.conversation.image.read'
+        ? { ok: true, imageId: '1:0', mediaType: 'image/png', data: 'ZnVsbA==' }
+        : fallback(method, data)
+    );
+    render(<NeoLive />);
+    fireEvent.click(await within(publicView()).findByLabelText('Edit and send again'));
+    await waitFor(() =>
+      expect(restoreImages).toHaveBeenCalledWith(root, [
+        { data: 'ZnVsbA==', media_type: 'image/png' },
+      ])
+    );
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.conversation.image.read',
+      input: { conversationId, imageId: '1:0' },
+    });
+  });
+
+  it('keeps text typed while photos load', async () => {
+    const reference = {
+      type: 'image_ref' as const,
+      imageId: '1:0',
+      mediaType: 'image/png',
+      bytes: 3,
+      width: 10,
+      height: 10,
+      thumbnail: null,
+    };
+    asks.value = {
+      ...asks.value,
+      items: [
+        {
+          ...ask('lost'),
+          content: [{ type: 'text', text: 'drop it' }, reference],
+          delivery: { state: 'failed' },
+        },
+      ],
+    };
+    const fallback = request.getMockImplementation() as (
+      method: string,
+      data?: Record<string, unknown>
+    ) => Promise<unknown>;
+    const reads: Array<() => void> = [];
+    request.mockImplementation((method: string, data: Record<string, unknown> = {}) =>
+      method === 'operation.invoke' && data.name === 'neo.conversation.image.read'
+        ? new Promise((resolve) =>
+            reads.push(() =>
+              resolve({ ok: true, imageId: '1:0', mediaType: 'image/png', data: 'ZnVsbA==' })
+            )
+          )
+        : fallback(method, data)
+    );
+    render(<NeoLive />);
+    const draft = (await screen.findByLabelText('Draft')) as HTMLTextAreaElement;
+    fireEvent.click(await within(publicView()).findByLabelText('Edit and send again'));
+    await waitFor(() => expect(reads).toHaveLength(1));
+    fireEvent.input(draft, { target: { value: 'typed meanwhile' } });
+    await act(async () => reads[0]());
+    await waitFor(() => expect(draft.value).toBe('typed meanwhile\n\ndrop it'));
+  });
+
+  it('drops a photo restore when the conversation changes while it loads', async () => {
+    asks.value = {
+      ...asks.value,
+      items: [
+        {
+          ...ask('lost'),
+          content: [
+            {
+              type: 'image_ref' as const,
+              imageId: '1:0',
+              mediaType: 'image/png',
+              bytes: 3,
+              width: 10,
+              height: 10,
+              thumbnail: null,
+            },
+          ],
+          delivery: { state: 'failed' },
+        },
+      ],
+    };
+    const fallback = request.getMockImplementation() as (
+      method: string,
+      data?: Record<string, unknown>
+    ) => Promise<unknown>;
+    let finish = () => {};
+    request.mockImplementation((method: string, data: Record<string, unknown> = {}) =>
+      method === 'operation.invoke' && data.name === 'neo.conversation.image.read'
+        ? new Promise((resolve) => {
+            finish = () =>
+              resolve({ ok: true, imageId: '1:0', mediaType: 'image/png', data: 'ZnVsbA==' });
+          })
+        : fallback(method, data)
+    );
+    render(<NeoLive />);
+    fireEvent.click(await within(publicView()).findByLabelText('Edit and send again'));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        'operation.invoke',
+        expect.objectContaining({ name: 'neo.conversation.image.read' })
+      )
+    );
+    await act(async () => {
+      sessionId.value = 'neo:20000000-0000-4000-8000-000000000002';
+    });
+    await act(async () => finish());
+    expect(restoreImages).not.toHaveBeenCalled();
+  });
+
+  it('keeps an undelivered ask editable when its full photo cannot be read', async () => {
+    asks.value = {
+      ...asks.value,
+      items: [
+        {
+          ...ask('lost'),
+          content: [
+            {
+              type: 'image_ref' as const,
+              imageId: '1:0',
+              mediaType: 'image/png',
+              bytes: 3,
+              width: null,
+              height: null,
+              thumbnail: null,
+            },
+          ],
+          delivery: { state: 'failed' },
+        },
+      ],
+    };
+    render(<NeoLive />);
+    fireEvent.click(await within(publicView()).findByLabelText('Edit and send again'));
+    await waitFor(() =>
+      expect(error.value).toBe('Could not load this message’s photos. Please try again.')
+    );
+    expect(restoreImages).not.toHaveBeenCalled();
+    expect(within(publicView()).getByLabelText('Edit and send again')).toBeTruthy();
   });
 
   it('puts an undelivered ask back in the composer after the typed draft', async () => {

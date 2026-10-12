@@ -422,6 +422,7 @@ describe('Neo MVP', () => {
       'neo.ask.forward',
       'neo.publication.read',
       'neo.conversation.asks.read',
+      'neo.conversation.image.read',
       'neo.draft.recover',
       'neo.preferences.set',
       'neo.ask.open',

@@ -1,6 +1,5 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { neoMessageImageSources } from './neo-message-images.ts';
 import type { SessionStore } from '../lib/session-store.ts';
@@ -10,6 +9,7 @@ import { connectionState } from '../lib/state.ts';
 import type { NeoPendingAsk } from './neo-intake.ts';
 import { projectNeoProcessingActivity } from './processing-activity.ts';
 import {
+  type NeoEditUndelivered,
   NeoPublicConversation,
   type NeoSessionMute,
   PendingAsk,
@@ -74,7 +74,7 @@ export function NeoConversation({
 }: {
   store: SessionStore;
   mute?: NeoSessionMute;
-  onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
+  onEditUndelivered?: NeoEditUndelivered;
   pendingAsks?: readonly NeoPendingAsk[];
   onRetryAsk?: (requestId: string) => void;
   onEditAsk?: (requestId: string) => void;

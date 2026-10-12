@@ -22,6 +22,7 @@ import {
   type ReasoningEffort,
 } from './reasoning-effort.js';
 import { runSessionStreaming, resumeSessionStreaming } from './streaming.js';
+import { collectMessageResponse } from './non-streaming.js';
 import { ContextUsageStore, countTokensResponse, estimateRequestUsage } from './context-usage.js';
 import { Logger } from '../../logger.js';
 import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
@@ -225,10 +226,7 @@ async function handleMessages(
     return;
   }
 
-  if (body.stream === false) {
-    sendJsonError(res, 400, 'invalid_request_error', 'Only streaming responses are supported');
-    return;
-  }
+  const out = body.stream === false ? collectMessageResponse(res) : res;
 
   if (body.tool_choice !== undefined) {
     logger.warn(
@@ -245,7 +243,7 @@ async function handleMessages(
       continuation = manager.findContinuation(body.messages);
     } catch (err) {
       sendJsonError(
-        res,
+        out,
         400,
         'invalid_request_error',
         err instanceof Error ? err.message : 'Invalid tool result content'
@@ -258,7 +256,7 @@ async function handleMessages(
         ensureNoImageBlocks(body.messages);
       } catch (err) {
         sendJsonError(
-          res,
+          out,
           400,
           'invalid_request_error',
           err instanceof Error ? err.message : 'Invalid request content'
@@ -275,7 +273,7 @@ async function handleMessages(
           conv.session,
           body.model,
           req,
-          res,
+          out,
           conv.registry,
           toolResults,
           () => {},
@@ -292,8 +290,8 @@ async function handleMessages(
       } catch (err) {
         logger.error('Error resuming conversation:', err);
         await manager.releaseConversation(conv);
-        if (!res.headersSent) {
-          sendJsonError(res, 500, 'api_error', 'Failed to resume session');
+        if (!out.headersSent) {
+          sendJsonError(out, 500, 'api_error', 'Failed to resume session');
         }
       }
       return;
@@ -305,7 +303,7 @@ async function handleMessages(
     prompt = formatAnthropicPrompt(body.messages);
   } catch (err) {
     sendJsonError(
-      res,
+      out,
       400,
       'invalid_request_error',
       err instanceof Error ? err.message : 'Prompt formatting failed'
@@ -326,7 +324,7 @@ async function handleMessages(
   if (hasTools) {
     await handleNewToolConversation(
       req,
-      res,
+      out,
       body,
       client,
       manager,
@@ -339,7 +337,7 @@ async function handleMessages(
   } else {
     await handlePlainRequest(
       req,
-      res,
+      out,
       body,
       client,
       contextUsageStore,

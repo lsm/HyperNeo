@@ -1,14 +1,17 @@
-import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from '../lib/connection-manager.ts';
-import { readNeoConversationAsks, type ConversationAskRead } from './conversation-ask-client.ts';
+import {
+  readNeoConversationAsks,
+  type ConversationAskRead,
+  type NeoAskItem,
+} from './conversation-ask-client.ts';
 import { publicationConversationId } from './useNeoPublications.ts';
 
 export type NeoAskState = {
   conversationId: string | null;
   status: 'idle' | 'loading' | 'ready' | 'unavailable';
-  items: readonly NeoConversationAsk[];
+  items: readonly NeoAskItem[];
   nextAfter: number;
   hasMore: boolean;
   hasEarlier: boolean;
@@ -69,7 +72,7 @@ export function syncAskDelivery(state: NeoAskState, response: ConversationAskRea
   const read = new Map(
     response.items.map((item) => [item.requestId, item.delivery?.state === 'failed'] as const)
   );
-  const stale = (item: NeoConversationAsk) =>
+  const stale = (item: NeoAskItem) =>
     read.has(item.requestId) && read.get(item.requestId) !== (item.delivery?.state === 'failed');
   if (!state.items.some(stale)) return state;
   return {

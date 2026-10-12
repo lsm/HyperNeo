@@ -144,7 +144,13 @@ const texts = () => ({
   earlier: screen.getByText(/^Earlier: /).textContent,
 });
 const readInput = () =>
-  fake.calls.filter((call) => call.name === 'neo.conversation.asks.read').map((call) => call.input);
+  fake.calls
+    .filter((call) => call.name === 'neo.conversation.asks.read')
+    .map((call) => {
+      const { imageRefs, ...page } = call.input as Record<string, unknown>;
+      expect(imageRefs).toBe(true);
+      return page;
+    });
 const readCount = () => readInput().length;
 const connected = () => fake.connections.forEach((entry) => entry('connected'));
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
