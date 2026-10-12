@@ -65,6 +65,7 @@ const neo: OperationCaller = {
   role: 'neo',
   neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
 };
+const nextMessage: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'ask-2' } };
 const place = { machine: 'laptop', folder: tmpdir(), name: 'app' };
 const rule = 'Ask me before accepting red CI or a release date.';
 const cite = { rule };
@@ -241,8 +242,9 @@ describe('neo.ask operations', () => {
 
   test('reads one ask with its cards and their reports', async () => {
     const askId = await openAsk();
-    const other = (await invoke('neo.ask.open', { ...opening, requestKey: 'other', ask: 'Other' }))
-      .value!.ask!.id;
+    const other = (
+      await invoke('neo.ask.open', { ...opening, requestKey: 'other', ask: 'Other' }, nextMessage)
+    ).value!.ask!.id;
     const workId = (await propose('card-1', askId)).value!.work!.id;
     await propose('card-2', other);
     const queued = service.repo.transitionWork(workId, service.repo.getWork(workId)!, {
@@ -345,7 +347,7 @@ describe('neo.ask operations', () => {
     const asks = (await invoke('neo.snapshot', {})).value?.asks as NeoAsk[];
     expect(asks.find((ask) => ask.id === opened.value!.ask!.id)?.doneItems).toHaveLength(2);
 
-    const legacy = await invoke('neo.ask.open', opening);
+    const legacy = await invoke('neo.ask.open', opening, nextMessage);
     expect(legacy.value!.ask!.doneItems?.map((done) => done.text)).toEqual([
       'merged to dev',
       'CI green',
@@ -1054,8 +1056,8 @@ describe('neo.ask operations', () => {
 
   test('refuses a retried request key under another ask', async () => {
     const first = await openAsk();
-    const second = (await invoke('neo.ask.open', { ...opening, requestKey: 'other' })).value!.ask!
-      .id;
+    const second = (await invoke('neo.ask.open', { ...opening, requestKey: 'other' }, nextMessage))
+      .value!.ask!.id;
     await propose('card-1', first);
 
     const refused = await invoke('neo.work.propose', {
@@ -1225,6 +1227,71 @@ describe('neo.ask operations', () => {
     await invoke('neo.ask.tick', done, human);
     await invoke('neo.ask.tick', { ...done, itemId: 'i2', evidence: 'CI run 42 green.' });
     expect(delivered).toHaveBeenCalledTimes(1);
+  });
+
+  test('one human message opens one ask; a second open names the first', async () => {
+    const askId = await openAsk();
+    expect(
+      await invoke('neo.ask.open', { ...opening, requestKey: 'fix-again', title: 'Fix it again' })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining(`ask_exists_for_message: ask ${askId}`) },
+    });
+    expect(await invoke('neo.ask.open', opening)).toMatchObject({
+      value: { ok: true, ask: { id: askId } },
+    });
+  });
+
+  test('folds a duplicate ask into another: its items and cards move and it closes superseded', async () => {
+    const targetId = await openAsk();
+    const later: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'ask-2' } };
+    const duplicate = await invoke(
+      'neo.ask.open',
+      { ...opening, requestKey: 'dup', doneWhen: '- guard merged' },
+      later
+    );
+    const sourceId = duplicate.value!.ask!.id;
+    const card = (await propose('dup-card', sourceId)).value!.work!.id;
+    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: sourceId })).toMatchObject({
+      kind: 'failed',
+    });
+    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId })).toMatchObject({
+      value: { ok: true, ask: { id: targetId, workIds: [card] } },
+    });
+    expect(service.askRecords.get(targetId)?.doneItems?.map((item) => item.text)).toEqual([
+      'merged to dev',
+      'CI green',
+      'guard merged',
+    ]);
+    expect(service.askRecords.get(sourceId)).toMatchObject({
+      status: 'abandoned',
+      outcome: `Superseded: folded into ask ${targetId}.`,
+      workIds: [],
+    });
+    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('ask_settled') },
+    });
+  });
+
+  test('a turn that hit its limit gets one note listing the asks it already opened', async () => {
+    const results = db.getSDKMessageRepo();
+    const save = (uuid: string, subtype: string) =>
+      results.saveSDKMessage('root', {
+        type: 'result',
+        subtype,
+        uuid,
+        session_id: 'root',
+      } as unknown as SDKUserMessage);
+    save('r1', 'success');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const askId = await openAsk();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    save('r2', 'error_max_turns');
+    const delivered = mock(async (..._args: unknown[]) => {});
+    (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
+    await service.noteTurnLimit('root');
+    expect(delivered).toHaveBeenCalledTimes(1);
+    expect(delivered.mock.calls[0]?.[1]).toBe('neo-turn-limit:r2');
+    expect(delivered.mock.calls[0]?.[2]).toContain(`- ask ${askId} "${opening.title}" (open`);
   });
 
   test('the human marking their own wait needs no citation', async () => {
@@ -1578,13 +1645,23 @@ describe('requireNeoAskEdit', () => {
       { id: 'i2', removed: true },
     ],
   } as unknown as NeoAsk;
-  const items = (count: number) =>
+  const items = (count: number): { text: string; check: null; watch?: string[] }[] =>
     Array.from({ length: count }, (_, i) => ({ text: `t${i}`, check: null }));
   test.each<[string, { add?: ReturnType<typeof items>; remove?: string[] }, string | null]>([
     ['an edit by the owner', { add: items(1) }, null],
     ['an item already removed', { remove: ['i2'] }, 'item_not_found'],
     ['removing the last item', { remove: ['i1'] }, 'checklist_empty'],
     ['more than twelve items', { add: items(12) }, 'checklist_full'],
+    [
+      'more than twenty watched refs',
+      {
+        add: items(3).map((item, i) => ({
+          ...item,
+          watch: Array.from({ length: 7 }, (_, n) => `https://github.com/o/r/pull/${i * 10 + n}`),
+        })),
+      },
+      'watch_full',
+    ],
   ])('%s', (_label, change, reason) => {
     const target = owned;
     const gate = requireNeoAskEdit(

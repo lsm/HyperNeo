@@ -14,7 +14,11 @@ its check so the daemon ticks it from GitHub: coding.issue_filed (the issue
 exists), coding.issue_sub_issue (it is a sub-issue of the epic the item names
 last, "linked under lsm/HyperNeo#6002") or coding.issue_closed (closed as
 completed). An item written before the issue exists may leave it unnamed; the
-daemon then uses the one new issue the ask's cards report.
+daemon then uses the one new issue the ask's cards report. An item that waits
+on particular pull requests or issues lists their URLs in watch: the daemon
+ticks it met once every watched pull request has merged and every watched issue
+has closed, so never tick it from an agent's word. To check a pull request or
+issue yourself, read it with neo.github.read {url}.
 
 Every request names its project somehow. When the human names a repository,
 prefer a place from work.find whose git remote matches that repository; product

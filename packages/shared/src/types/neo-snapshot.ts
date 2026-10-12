@@ -43,7 +43,12 @@ export function neoForwardKey(
 
 export const NEO_WORK_STALLED_CONTINUES = 3;
 export const NEO_ASK_CONTINUE_WINDOW_MS = 48 * 60 * 60 * 1000;
-export const NEO_WORK_CLOSED_DONE = 'Closed as done by the user.';
+export const NEO_WORK_CLOSED_DONE_PREFIX = 'Closed as done by ';
+export const NEO_WORK_CLOSED_DONE = `${NEO_WORK_CLOSED_DONE_PREFIX}the user.`;
+
+export function isNeoWorkClosedDone(report: string | null | undefined): boolean {
+  return !!report?.startsWith(NEO_WORK_CLOSED_DONE_PREFIX);
+}
 
 export interface NeoWorkContinue {
   workId: string;
@@ -98,6 +103,7 @@ export interface NeoAskItem {
   waitCard?: string;
   kind?: NeoAskItemKind;
   question?: string;
+  watch?: string[];
 }
 
 export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';
@@ -255,7 +261,7 @@ export const NEO_ASK_OUTCOME_OPTIONS = ['Yes', 'No'];
 
 export type NeoAskHumanAction =
   | { kind: 'start'; workId: string }
-  | { kind: 'approve'; reason: NeoAskApprovalSpent }
+  | { kind: 'approve'; reason: 'expired' }
   | {
       kind: 'answer';
       itemId: string;

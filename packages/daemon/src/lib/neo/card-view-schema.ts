@@ -72,7 +72,7 @@ export const NeoCardViewSchema = z.object({
 
 const HumanAction = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('start'), workId: z.string() }),
-  z.object({ kind: z.literal('approve'), reason: z.enum(['continues', 'expired']) }),
+  z.object({ kind: z.literal('approve'), reason: z.literal('expired') }),
   z.object({
     kind: z.literal('answer'),
     itemId: z.string(),

@@ -433,6 +433,16 @@ describe('projectNeoAskViews', () => {
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
   });
 
+  test('a stalled card waits for the progress-based stall before asking for Approve', () => {
+    const input = parts({
+      work: [work('q', 'queued')],
+      drivers: [driver('q', 'running')],
+      asks: [ask({ workIds: ['q'], approvedAt: 5, approvalSpent: 'continues' })],
+    });
+    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
+    expect(views[0]?.humanActions).toEqual([]);
+  });
+
   test('an approved ask starts its proposed cards itself, and a settled ask asks nothing', () => {
     const input = parts({
       work: [work('p', 'proposed'), work('q', 'queued')],

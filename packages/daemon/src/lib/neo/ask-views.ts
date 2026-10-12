@@ -135,7 +135,9 @@ export function deriveNeoAskHumanActions(
   if (ask.status === 'achieved' || ask.status === 'abandoned') return [];
   return [
     ...live.flatMap((card) => neoCardHumanAction(ask, card) ?? []),
-    ...(ask.approvalSpent ? [{ kind: 'approve' as const, reason: ask.approvalSpent }] : []),
+    ...(ask.approvalSpent === 'expired'
+      ? [{ kind: 'approve' as const, reason: 'expired' as const }]
+      : []),
     ...(ask.doneItems ?? []).flatMap((item) => neoAskItemAction(item) ?? []),
   ];
 }
