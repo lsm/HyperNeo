@@ -17,10 +17,12 @@ type NeoAskResume = { ask: NeoAsk; items: string[]; reopen: boolean };
 
 export function planNeoAskResume(
   ask: NeoAsk | null,
-  siblingsWaiting: boolean
+  siblingsWaiting: boolean,
+  cardId: string | null = null
 ): NeoAskResume | null {
   if (!ask || isNeoAskSettled(ask) || siblingsWaiting) return null;
-  const decided = (item: NeoAskItem) => item.decision === true;
+  const decided = (item: NeoAskItem) =>
+    item.decision === true || (!!item.waitCard && !!cardId && item.waitCard !== cardId);
   const open = (ask.doneItems ?? []).filter((item) => !item.removed && item.state === 'needs_you');
   const items = open.filter((item) => !decided(item)).map((item) => item.id);
   const confirming = (ask.doneItems ?? []).some(
@@ -35,7 +37,8 @@ export function planNeoNeedsYou(
   state: { needsYou: boolean; since: number } | null,
   noted: number | null,
   ask: NeoAsk | null,
-  siblingsWaiting = false
+  siblingsWaiting = false,
+  cardId: string | null = null
 ): { notify: number | null; record: number | null | undefined; resume: NeoAskResume | null } {
   const none = { notify: null, record: undefined, resume: null };
   if (!state) return none;
@@ -43,7 +46,7 @@ export function planNeoNeedsYou(
     return noted === null ? { notify: state.since, record: state.since, resume: null } : none;
   return noted === null
     ? none
-    : { notify: null, record: null, resume: planNeoAskResume(ask, siblingsWaiting) };
+    : { notify: null, record: null, resume: planNeoAskResume(ask, siblingsWaiting, cardId) };
 }
 
 const NEO_DAEMON_SUBJECT =

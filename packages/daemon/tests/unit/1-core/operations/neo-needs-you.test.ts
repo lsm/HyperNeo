@@ -127,6 +127,25 @@ describe('planNeoNeedsYou', () => {
   });
 });
 
+describe('planNeoAskResume for one card', () => {
+  test('keeps an item that cites another card, and the ask stays waiting on it', () => {
+    const cited = {
+      ...ask,
+      doneItems: [{ ...item('i1', 'needs_you'), waitCard: 'w2' }, item('i2', 'needs_you')],
+    } as NeoAsk;
+    expect(planNeoAskResume(cited, false, 'w1')).toEqual({
+      ask: cited,
+      items: ['i2'],
+      reopen: false,
+    });
+    expect(planNeoAskResume(cited, false, 'w2')).toEqual({
+      ask: cited,
+      items: ['i1', 'i2'],
+      reopen: true,
+    });
+  });
+});
+
 describe('neoDaemonReadsItem', () => {
   test.each<[string, 'needs_you' | 'reported', string, ReturnType<typeof neoDaemonReadsItem>]>([
     [

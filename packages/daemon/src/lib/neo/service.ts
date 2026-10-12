@@ -1948,9 +1948,9 @@ export class NeoService {
       'card'
     )
     .pipe(
-      (card: NeoNeedsYouCard) =>
-        planNeoNeedsYou(card.state, card.noted, card.ask, card.siblingsWaiting),
-      'card',
+      (card: NeoNeedsYouCard, work: NeoWork) =>
+        planNeoNeedsYou(card.state, card.noted, card.ask, card.siblingsWaiting, work.id),
+      ['card', 'work'],
       'plan'
     )
     .pipe(
@@ -1979,7 +1979,7 @@ export class NeoService {
               plan.resume.ask,
               plan.resume.items.map((id) => ({
                 id,
-                why: `card ${work.id} no longer waits on the human`,
+                why: `card ${work.id} under this ask no longer waits on the human`,
               })),
               plan.resume.ask.doneItems ?? []
             ),
