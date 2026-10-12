@@ -1154,7 +1154,7 @@ export class NeoService {
         );
         return;
       }
-      const brief = `${NEO_WORK_DELEGATED}\n${JSON.stringify({ workId: work.id, title: work.title, instruction: withWorkGoal(work.instruction, this.workDoneGoal(work.id)) })}`;
+      const brief = `${NEO_WORK_DELEGATED}\n${JSON.stringify({ workId: work.id, title: work.title, instruction: withWorkGoal(work.instruction, this.workDoneGoal(work.id), this.cardEventsDelivered()) })}`;
       await this.deliver(work.sessionId, work.id, brief, work.originSessionId);
       return;
     }
@@ -1201,7 +1201,8 @@ export class NeoService {
     readProgress: (work) => this.workProgress(work),
     readAsk: (id) => this.askRecords.forWork(id),
     isContinuing: (id) => this.continuing.has(id),
-    withGoal: (id, message) => withWorkGoal(message, this.workDoneGoal(id)),
+    withGoal: (id, message) =>
+      withWorkGoal(message, this.workDoneGoal(id), this.cardEventsDelivered()),
     readSendBaseline: ({ ref, work }, message) => this.readSendBaseline(ref, work, message),
     send: ({ ref, work }, message) => this.invokeAsCard(work, 'work.send', { ref, message }),
     recordSent: (id, startedAt, sent) => {
@@ -1271,7 +1272,12 @@ export class NeoService {
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
     if (!queued || queued.status !== 'queued') return;
     if (target.verb === 'adopt') return this.adoptDriverWork(queued, target.ref);
-    const call = driverWorkCall(target, queued, this.workDoneGoal(queued.id));
+    const call = driverWorkCall(
+      target,
+      queued,
+      this.workDoneGoal(queued.id),
+      this.cardEventsDelivered()
+    );
     const probe =
       target.verb === 'send'
         ? await this.readSendBaseline(target.ref, queued, String(call.input.message))
@@ -2021,6 +2027,10 @@ export class NeoService {
       'done'
     )
     .end('done') as (now: number) => NeoCardEventSubscription[];
+
+  cardEventsDelivered(): boolean {
+    return this.packs().some((pack) => !!pack.externalTopics);
+  }
 
   followedTopics(): string[] {
     return this.cardEvents.listActive().map((row) => row.topic);

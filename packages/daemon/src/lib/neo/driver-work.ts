@@ -14,6 +14,7 @@ import {
   NEO_WORK_GOAL_DONE_WHEN,
   NEO_WORK_GOAL_MERGE,
   NEO_WORK_GOAL_PR_EVENTS,
+  NEO_WORK_GOAL_PR_SUBSCRIBE,
   NEO_WORK_GOAL_REMAINING,
   NEO_WORK_NEEDS_YOU,
   NEO_WORK_PACK_NOTE,
@@ -195,14 +196,23 @@ export function readNeoWorkContinueBudget(
     : null;
 }
 
-export function withWorkGoal(instruction: string, goal: NeoWorkGoal | null): string {
+export function withWorkGoal(
+  instruction: string,
+  goal: NeoWorkGoal | null,
+  eventsDelivered = true
+): string {
   if (!goal?.goal && !goal?.doneWhen) return instruction;
   const tail = [
     '',
     NEO_WORK_GOAL,
     ...(goal.goal ? [fillPrompt(NEO_WORK_GOAL_ASKED, { goal: goal.goal })] : []),
     ...(goal.doneWhen ? [fillPrompt(NEO_WORK_GOAL_DONE_WHEN, { done_when: goal.doneWhen })] : []),
-    ...(/merg/i.test(goal.doneWhen ?? '') ? [NEO_WORK_GOAL_MERGE, NEO_WORK_GOAL_PR_EVENTS] : []),
+    ...(/merg/i.test(goal.doneWhen ?? '')
+      ? [
+          NEO_WORK_GOAL_MERGE,
+          eventsDelivered ? NEO_WORK_GOAL_PR_EVENTS : NEO_WORK_GOAL_PR_SUBSCRIBE,
+        ]
+      : []),
     NEO_WORK_GOAL_REMAINING,
   ].join('\n');
   return `${instruction.slice(0, Math.max(0, WORK_MESSAGE_MAX - tail.length - 1))}\n${tail}`;
@@ -211,9 +221,10 @@ export function withWorkGoal(instruction: string, goal: NeoWorkGoal | null): str
 export function driverWorkCall(
   target: NeoDriverTarget,
   work: Pick<NeoWork, 'title' | 'instruction'>,
-  goal: NeoWorkGoal | null = null
+  goal: NeoWorkGoal | null = null,
+  eventsDelivered = true
 ): { name: 'work.start' | 'work.send'; input: Record<string, unknown> } {
-  const message = withWorkGoal(work.instruction, goal);
+  const message = withWorkGoal(work.instruction, goal, eventsDelivered);
   return target.verb === 'start'
     ? {
         name: 'work.start',

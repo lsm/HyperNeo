@@ -459,6 +459,8 @@ describe('withWorkGoal', () => {
     expect(
       withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
     ).not.toContain('with no subscription needed');
+    expect(withWorkGoal('Fix it.', merged, false)).toContain('event.external.subscribe');
+    expect(withWorkGoal('Fix it.', merged, false)).not.toContain('with no subscription needed');
   });
 });
 
