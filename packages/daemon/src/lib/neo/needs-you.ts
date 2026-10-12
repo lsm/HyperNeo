@@ -77,7 +77,7 @@ function neoUnkindedItemCleared(
   cards: readonly NeoAskCardWait[],
   now: number
 ): string | null {
-  if (cards.some((card) => card.status === 'queued' && card.needsYou)) return null;
+  if (!cards.length || cards.some((card) => card.status === 'queued' && card.needsYou)) return null;
   if (!cards.some((card) => card.status === 'proposed'))
     return 'no card under this ask is proposed or waits on the human';
   const approved = ask.approvedAt != null && neoAskApprovalSpent(ask, now) === null;

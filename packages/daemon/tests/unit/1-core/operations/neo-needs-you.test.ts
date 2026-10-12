@@ -231,6 +231,16 @@ describe('planNeoNeedsYouCleared', () => {
     ).toEqual([]);
   });
 
+  test('an older item on an ask without cards stays for the human', () => {
+    expect(
+      planNeoNeedsYouCleared(
+        waiting({ text: 'Which name do you want?' }, { workIds: [] }),
+        new Map(),
+        now
+      )
+    ).toEqual([]);
+  });
+
   test('items that are not waiting on the human stay as they are', () => {
     const met = waiting({ state: 'met', waitCard: 'w1' });
     expect(planNeoNeedsYouCleared(met, new Map(), now)).toEqual([]);
