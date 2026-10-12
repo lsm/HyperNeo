@@ -1157,6 +1157,9 @@ describe('neo.ask operations', () => {
     expect(await tick({ kind: 'action' })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('question_required') },
     });
+    expect(await tick({ kind: 'action', options: ['Phone build', 'Web build'] })).toMatchObject({
+      value: { ok: true },
+    });
     expect(await tick({ kind: 'action', waitCard: 'elsewhere' })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('card_not_found') },
     });

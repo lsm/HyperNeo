@@ -466,6 +466,7 @@ export type NeoHumanTask = {
   action?: string;
   waitCard?: string;
   question?: string;
+  options?: readonly string[];
   workIds: readonly string[];
 };
 
@@ -495,7 +496,7 @@ export function requireNeoHumanTask<T>(
         'action_required: pass action, a few words saying what the human does and where ("Choose A or B in chat", "Click Start work on card 3bce413f").'
       ),
     };
-  if (task.kind === 'action' && !task.waitCard && !task.question)
+  if (task.kind === 'action' && !task.waitCard && !task.options?.length && !task.question)
     return {
       reason: fail(
         'question_required: pass question, one Yes/No question about the result of this step ("Did the keyboard hide?"), or waitCard when the step is on a card. Yes ticks the item met.'
@@ -1032,6 +1033,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
             action: input.action,
             waitCard: neoTickWaitCard(input),
             question: input.question,
+            options: input.options,
             workIds: target.ask.workIds,
           },
           target
