@@ -379,9 +379,9 @@ const SERVICE_VERBS: Record<string, ReadonlySet<string>> = {
   ]),
   systemctl: new Set(['start', 'stop', 'restart', 'reload', 'enable', 'disable', 'kill']),
 };
-const KILLERS = new Set(['kill', 'pkill', 'killall']);
-const REMOTE_RESTART =
-  /\b(launchctl|systemctl|kickstart|restart|reboot|shutdown|pkill|killall|kill|deploy\w*)\b|[\w-]*update[\w-]*\.sh\b|\bupdate\b(?![.\w-])/;
+const KILLERS = new Set(['kill', 'pkill', 'killall', 'reboot', 'shutdown', 'halt']);
+const DEPLOY_SCRIPT = /(deploy|update|restart|release)[\w.-]*\.sh$/;
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const INTERPRETERS = new Set([
   'node',
   'bun',
@@ -441,7 +441,7 @@ function ghCommand(words: readonly string[]): string[] {
   return rest;
 }
 
-export function neoSharedStateAction(words: readonly string[], segment: string): string | null {
+export function neoSharedStateAction(words: readonly string[]): string | null {
   const [name, sub] = words;
   if (name === 'git') return gitVerb(words).verb === 'push' ? 'git push' : null;
   if (name === 'gh') {
@@ -452,8 +452,6 @@ export function neoSharedStateAction(words: readonly string[], segment: string):
   }
   if (SERVICE_VERBS[name]?.has(sub)) return 'starting or stopping a daemon or service';
   if (KILLERS.has(name)) return 'stopping a process';
-  if (name === 'ssh' && REMOTE_RESTART.test(segment))
-    return 'deploying or restarting on another machine';
   const code = inlineCode(words);
   return code && INLINE_SHARED.test(code) ? 'inline code that pushes, merges or restarts' : null;
 }
@@ -726,7 +724,11 @@ function gitChange(words: readonly string[], dir: string): LocalChange | null {
   const { verb, at, dir: inside } = gitVerb(words);
   if (gitReadOnly(verb, words.slice(at + 1))) return null;
   const where = inside ?? dir;
-  if (GIT_DELETES.has(verb ?? '')) return { delete: true, targets: [where] };
+  const sub = words.slice(at + 1).find((word) => !word.startsWith('-'));
+  const removes =
+    (verb === 'worktree' && (sub === 'remove' || sub === 'prune')) ||
+    (verb === 'stash' && (sub === 'clear' || sub === 'drop'));
+  if (GIT_DELETES.has(verb ?? '') || removes) return { delete: true, targets: [where] };
   return GIT_CHANGES.has(verb ?? '') ? { delete: false, targets: [where] } : null;
 }
 
@@ -819,13 +821,14 @@ const SSH_VALUE_FLAGS = new Set([
   '-I',
 ]);
 
-function sshRemote(words: readonly string[]): string | null {
+function sshRemote(words: readonly string[]): { host: string; command: string } | null {
   if (words[0] !== 'ssh') return null;
   let at = 1;
   while (at < words.length && words[at].startsWith('-'))
     at += SSH_VALUE_FLAGS.has(words[at]) ? 2 : 1;
   const remote = words.slice(at + 1);
-  return remote.length ? remote.join(' ') : null;
+  const host = (words[at] ?? '').replace(/^[^@]*@/, '');
+  return remote.length ? { host, command: remote.join(' ') } : null;
 }
 
 function credentialDump(raw: readonly string[], words: readonly string[]): string | null {
@@ -890,7 +893,7 @@ function analyzeBash(
       continue;
     }
     if (words[0] !== 'ssh') found.secret ??= secretArgument(words.slice(1), dir, scope, facts);
-    found.sharedState ??= neoSharedStateAction(words, segment);
+    found.sharedState ??= neoSharedStateAction(words);
     const code = inlineCode(words) ?? scriptFile(words, dir, scope, facts);
     if (code) {
       found.secret ??= secretArgument(codePaths(code), dir, scope, facts);
@@ -898,9 +901,21 @@ function analyzeBash(
     }
     const remote = depth < 3 ? sshRemote(words) : null;
     if (remote) {
-      const inner = analyzeBash(remote, { ...scope, cwd: UNKNOWN_DIR, own: [] }, facts, depth + 1);
+      const local = LOCAL_HOSTS.has(remote.host);
+      const inner = analyzeBash(
+        remote.command,
+        { ...scope, cwd: UNKNOWN_DIR, own: [], ...(local ? {} : { dataDir: UNKNOWN_DIR }) },
+        facts,
+        depth + 1
+      );
+      const deploys = shellSegments(remote.command).some((part) =>
+        DEPLOY_SCRIPT.test(commandWords(shellWords(part))[0] ?? '')
+      );
+      found.secret ??= inner.secret;
       found.sharedState ??=
-        inner.sharedState ?? (inner.deletesOutside ? 'deleting on another machine' : null);
+        inner.sharedState ??
+        (deploys ? 'running a deploy or update script on another machine' : null) ??
+        (inner.deletesOutside ? 'deleting on another machine' : null);
       found.unchecked ??= inner.unchecked;
     }
     const nested = [
