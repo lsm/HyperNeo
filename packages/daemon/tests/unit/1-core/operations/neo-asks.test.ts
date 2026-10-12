@@ -1,3 +1,4 @@
+import { adoptNeoFilePacks } from '../../../../src/lib/neo/packs/index.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
@@ -176,6 +177,27 @@ describe('neo.ask operations', () => {
     const opened = await invoke('neo.ask.open', { ...opening, requestKey: 'quiet' }, quiet);
     expect(opened.value!.ask!.approvedAt ?? null).toBeNull();
     expect(isNeoAskHandedOver({ source: 'rpc', principal: 'local' })).toBe(false);
+  });
+
+  test("a note leaves out an enabled pack's guidance, which the system prompt carries", () => {
+    const filePack = {
+      id: 'inbox-triage',
+      describe: 'Inbox triage',
+      instructions: () => 'Triage the inbox.',
+    };
+    service.filePacks = adoptNeoFilePacks([filePack]);
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'inbox-triage'] } });
+    try {
+      for (const id of ['coding', 'inbox-triage'])
+        expect(service.askPackFragment({ pack: id } as NeoAsk)?.inPrompt).toBe(true);
+      db.updateGlobalSettings({ neo: { packs: ['coding'] } });
+      expect(service.askPackFragment({ pack: 'inbox-triage' } as NeoAsk)).toMatchObject({
+        instructions: 'Triage the inbox.',
+        inPrompt: false,
+      });
+    } finally {
+      adoptNeoFilePacks([]);
+    }
   });
 
   test('opens one ask per request key and shows its cards in the snapshot', async () => {

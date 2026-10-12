@@ -161,6 +161,7 @@ import {
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
 import {
   neoEnabledPacks,
+  neoSettingsPackBriefs,
   neoPackBriefs,
   neoPackAskCardEvidence,
   neoPackChecks,
@@ -1783,7 +1784,9 @@ export class NeoService {
     return fragment
       ? {
           ...fragment,
-          inPrompt: this.packBriefs().some((pack) => pack.id === fragment.id && !!pack.guidance),
+          inPrompt: neoSettingsPackBriefs(this.db.getGlobalSettings?.().neo).some(
+            (pack) => pack.id === fragment.id && !!pack.guidance
+          ),
         }
       : null;
   }
