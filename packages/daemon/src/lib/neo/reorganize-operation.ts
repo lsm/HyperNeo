@@ -121,7 +121,11 @@ export function neoMovedAskNote(ask: NeoAsk, cards: readonly NeoWork[]): string 
   })}`;
 }
 
-export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
+export type NeoReorganized = { moved: Moved[]; stayed: Stay[] };
+
+export function createNeoTopicsReorganizer(
+  runtime: NeoReorganizeRuntime
+): () => Promise<NeoReorganized> {
   const moveAsk = (superpipe({})('neo-topics-reorganize-ask') as PipelineAPI)
     .input(['ask', 'root'])
     .pipe(requireNeoAskMovable, 'ask', 'result:move')
@@ -161,16 +165,11 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
     )
     .endAsync('move') as (ask: NeoAsk, root: string) => Promise<Moved | Stay>;
 
-  const reorganize = async (caller: OperationCaller): Promise<Outcome> => {
-    const admitted = admitNeoReorganizer(
-      caller,
-      caller.sessionId ? runtime.getBinding(caller.sessionId) : null
-    );
-    if ('reason' in admitted) return admitted.reason;
+  return async () => {
     const root = runtime.rootSessionId();
     const moved: Moved[] = [];
     const stayed: Stay[] = [];
-    if (!root) return { ok: true, moved, stayed };
+    if (!root) return { moved, stayed };
     for (const ask of selectNeoMainAsks(runtime.liveAsks(), root)) {
       const result = await moveAsk(ask, root).catch((error: unknown) => {
         runtime.log(
@@ -181,13 +180,25 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
       if ('reason' in result) stayed.push(result);
       else moved.push(result);
     }
-    return { ok: true, moved, stayed };
+    return { moved, stayed };
+  };
+}
+
+export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
+  const reorganizeTopics = createNeoTopicsReorganizer(runtime);
+  const reorganize = async (caller: OperationCaller): Promise<Outcome> => {
+    const admitted = admitNeoReorganizer(
+      caller,
+      caller.sessionId ? runtime.getBinding(caller.sessionId) : null
+    );
+    if ('reason' in admitted) return admitted.reason;
+    return { ok: true, ...(await reorganizeTopics()) };
   };
 
   return defineOperation({
     name: 'neo.topics.reorganize',
     description:
-      'Move each live ask that main owns into the topic it belongs to: an existing topic, or a new topic and avatar the daemon creates. The ask and its cards are handed to that topic’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks that stay with main, and asks whose topic avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. Main Neo or the human only.',
+      'Move each live ask that main owns into the topic it belongs to: an existing topic, or a new topic and avatar the daemon creates. The ask and its cards are handed to that topic’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks that stay with main, and asks whose topic avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },
