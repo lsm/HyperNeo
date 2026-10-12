@@ -165,6 +165,22 @@ describe('SessionCache', () => {
       expect(built).toBe(1);
     });
 
+    it('an older load finishing never clears the lock of a newer load of the same session', async () => {
+      let built = 0;
+      const loads = new SessionCache(() => {
+        built += 1;
+        return mockAgentSession;
+      }, mockLoadFromDB);
+      const first = loads.getAsync('test-session-id');
+      loads.remove('test-session-id');
+      const second = loads.getAsync('test-session-id');
+      expect(await first).toBe(mockAgentSession);
+      expect(await second).toBe(mockAgentSession);
+      expect(loads.has('test-session-id')).toBe(true);
+      expect(await loads.getAsync('test-session-id')).toBe(mockAgentSession);
+      expect(built).toBe(2);
+    });
+
     it('should return null if loadFromDB returns null', async () => {
       const result = await cache.getAsync('nonexistent');
       expect(result).toBeNull();
