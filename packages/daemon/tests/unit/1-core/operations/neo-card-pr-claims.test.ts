@@ -244,7 +244,11 @@ describe('planNeoCardPrOwnership', () => {
 });
 
 describe('keepNeoCardPrReads', () => {
-  const card = { createdAt: 100 } as Pick<NeoWork, 'createdAt'>;
+  const card: Pick<NeoWork, 'createdAt' | 'title' | 'instruction'> = {
+    createdAt: 100,
+    title: 'Fix it',
+    instruction: 'Fix the bug.',
+  };
   const owned = (n: number, overrides = {}) => ({
     url: pull(n),
     claim: 'mentioned' as const,
