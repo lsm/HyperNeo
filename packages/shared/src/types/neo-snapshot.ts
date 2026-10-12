@@ -287,6 +287,8 @@ export interface NeoWaitingOnHuman {
 
 export interface NeoSnapshot {
   ok: true;
+  rev?: string;
+  scopedTo?: string;
   sessionId: string | null;
   concerns: NeoConcern[];
   publicAuthorBindings?: { sessionId: string; concernId: string; kind: 'concern' }[];

@@ -200,6 +200,40 @@ describe('neo.ask operations', () => {
     }
   });
 
+  test('a snapshot in an ask turn reads that ask, and answers unchanged when nothing moved', async () => {
+    db.getSDKMessageRepo().saveSDKMessage('root', {
+      type: 'user',
+      uuid: 'ask-1',
+      session_id: 'root',
+      parent_tool_use_id: null,
+      inputKind: 'human',
+      message: { role: 'user', content: 'Fix the login bug and get it merged.' },
+    } as unknown as SDKUserMessage);
+    const askId = await openAsk();
+    await invoke(
+      'neo.ask.open',
+      { ...opening, requestKey: 'other', title: 'Other' },
+      {
+        ...neo,
+        neoTurn: { ...neo.neoTurn!, messageId: 'ask-2' },
+      }
+    );
+    const scoped = (await invoke('neo.snapshot', {})).value as unknown as NeoSnapshot;
+    expect(scoped.scopedTo).toBe(askId);
+    expect(scoped.asks?.map((ask) => ask.id)).toEqual([askId]);
+    expect(
+      ((await invoke('neo.snapshot', { all: true })).value as unknown as NeoSnapshot).asks
+    ).toHaveLength(2);
+    expect(await invoke('neo.snapshot', { sinceRev: scoped.rev })).toMatchObject({
+      value: { ok: true, unchanged: true, rev: scoped.rev, scopedTo: askId },
+    });
+    await invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met', evidence: 'PR #12 merged.' });
+    const moved = (await invoke('neo.snapshot', { sinceRev: scoped.rev }))
+      .value as unknown as NeoSnapshot;
+    expect(moved.rev).not.toBe(scoped.rev);
+    expect(moved.asks).toHaveLength(1);
+  });
+
   test('opens one ask per request key and shows its cards in the snapshot', async () => {
     const askId = await openAsk();
     expect(await invoke('neo.ask.open', opening)).toMatchObject({

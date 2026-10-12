@@ -107,6 +107,18 @@ export class NeoAskRepository {
     return row ? this.withWork([row])[0] : null;
   }
 
+  forOrigin(sessionId: string, messageId: string): NeoAsk | null {
+    const row = this.db
+      .prepare(
+        `SELECT ${askColumns} FROM neo_asks
+          WHERE origin_session_id = ? AND origin_message_id = ?
+            AND status NOT IN ('achieved', 'abandoned')
+          ORDER BY updated_at DESC, id LIMIT 1`
+      )
+      .get(sessionId, messageId) as NeoAskRow | undefined;
+    return row ? this.withWork([row])[0] : null;
+  }
+
   forWork(workId: string): NeoAsk | null {
     const link = this.db
       .prepare('SELECT ask_id AS askId FROM neo_ask_work WHERE work_id = ?')

@@ -16,6 +16,7 @@ import { THINKING_LEVELS } from '@hyperneo/shared';
 import { z } from 'zod';
 import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
+import { hashString32 } from '../runtime-hash.ts';
 import type { NeoService } from './service.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import type { NeoWorkTarget } from '../../storage/repositories/neo-repository.ts';
@@ -289,11 +290,25 @@ const SnapshotOk = z.object({
     )
     .optional(),
   trimmed: z.string().optional(),
+  rev: z.string().optional(),
+  scopedTo: z.string().optional(),
 } satisfies ZodShape<NeoSnapshot>);
-const Snapshot = z.union([Failure, SnapshotOk]);
+const SnapshotUnchanged = z.object({
+  ok: z.literal(true),
+  unchanged: z.literal(true),
+  rev: z.string(),
+  note: z.string(),
+  scopedTo: z.string().optional(),
+});
+const Snapshot = z.union([Failure, SnapshotUnchanged, SnapshotOk]);
 const WorkResult = z.union([Failure, z.object({ ok: z.literal(true), work: Work })]);
 const Scope = z
-  .object({ concernId: z.string().min(1).optional(), askId: z.string().min(1).optional() })
+  .object({
+    concernId: z.string().min(1).optional(),
+    askId: z.string().min(1).optional(),
+    all: z.boolean().optional(),
+    sinceRev: z.string().min(1).max(40).optional(),
+  })
   .default({});
 const Save = z.object({
   id: z.string().min(1).max(100),
@@ -531,6 +546,34 @@ export function requireNeoWorkContinuation(work: NeoWork, caller: OperationCalle
 
 export function requireNeoWorkRetryCaller(work: NeoWork, caller: OperationCaller) {
   return requireNeoWorkProposer(work, caller, 'retry');
+}
+
+export function neoSnapshotRevision<T extends { ok: boolean }>(
+  snapshot: T,
+  sinceRev: string | undefined,
+  scopedTo: string | undefined
+):
+  | T
+  | (T & { rev: string; scopedTo?: string })
+  | {
+      ok: true;
+      unchanged: true;
+      rev: string;
+      note: string;
+      scopedTo?: string;
+    } {
+  if (!snapshot.ok) return snapshot;
+  const rev = hashString32(JSON.stringify(snapshot)).toString(36);
+  const scoped = scopedTo ? { scopedTo } : {};
+  return sinceRev === rev
+    ? {
+        ok: true,
+        unchanged: true,
+        rev,
+        note: `unchanged since rev ${rev}: nothing changed since your last read.`,
+        ...scoped,
+      }
+    : { ...snapshot, rev, ...scoped };
 }
 
 export function neoAskScope(ask: Pick<NeoAsk, 'concernId'> | null): string | null | undefined {
@@ -883,11 +926,35 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof SaveRules>,
     caller: OperationCaller
   ) => z.infer<typeof RulesResult>;
+  const turnAsk = (caller: OperationCaller): string | undefined => {
+    if (caller.source !== 'mcp' || !caller.sessionId || !caller.neoTurn?.messageId)
+      return undefined;
+    const origin = service.resolveAskOrigin({
+      sessionId: caller.sessionId,
+      messageId: caller.neoTurn.messageId,
+    });
+    return origin
+      ? service.askRecords.forOrigin(origin.sessionId, origin.messageId)?.id
+      : undefined;
+  };
+  const scopeOf = (input: z.infer<typeof Scope>, caller: OperationCaller) => {
+    if (input.askId || input.concernId || input.all)
+      return { askId: input.askId, scopedTo: undefined };
+    const askId = turnAsk(caller);
+    return { askId, scopedTo: askId };
+  };
   const read = path(
     'neo.snapshot',
     (input: z.infer<typeof Scope>) =>
       input.askId ? neoAskScope(service.askRecords.get(input.askId)) : input.concernId,
-    (input, caller) => snapshot(caller, input.concernId, input.askId)
+    (input, caller) => {
+      const scope = scopeOf(input, caller);
+      return neoSnapshotRevision(
+        snapshot(caller, input.concernId, scope.askId),
+        input.sinceRev,
+        scope.scopedTo
+      );
+    }
   );
   const consult = (superpipe({})('neo.concern.consult') as PipelineAPI)
     .input(['input', 'caller'])
@@ -1591,7 +1658,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut.',
+        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. In a turn that belongs to an ask, the snapshot is scoped to that ask (scopedTo says which) unless you pass askId, concernId or all: true. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },
