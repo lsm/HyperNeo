@@ -413,22 +413,19 @@ describe('projectNeoAskViews', () => {
       ],
     });
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
-    const outcome = [
-      { question: 'Did it work?', options: ['Yes', 'Not yet'] },
-      { question: 'Is the result what you wanted?', options: ['Yes', 'Not yet'] },
-    ];
     expect(views[0]?.humanActions).toEqual([
       { kind: 'start', workId: 'p' },
       { kind: 'retry', workId: 'r' },
       { kind: 'approve', reason: 'expired' },
+      { kind: 'answer', itemId: 'd', step: null, question: 'd', options: ['A', 'B'] },
       {
         kind: 'answer',
-        itemId: 'd',
-        step: null,
-        questions: [{ question: 'd', options: ['A', 'B'] }],
+        itemId: 's',
+        step: 's',
+        question: 'Did it work?',
+        options: ['Yes', 'Not yet'],
       },
-      { kind: 'answer', itemId: 's', step: 's', questions: outcome },
-      { kind: 'answer', itemId: 'm', step: 'm', questions: outcome },
+      { kind: 'confirm', itemId: 'm', step: 'm' },
     ]);
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
   });

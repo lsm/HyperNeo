@@ -1,6 +1,6 @@
 import {
   NEO_ASK_OUTCOME_OPTIONS,
-  NEO_ASK_OUTCOME_QUESTIONS,
+  NEO_ASK_OUTCOME_QUESTION,
   type NeoAsk,
   type NeoAskAnswer,
   type NeoAskHumanAction,
@@ -86,29 +86,30 @@ export function neoAskAnswer(ask: NeoAsk): NeoAskAnswer | null {
 export function isNeoAskOutcomeItem(
   item: Pick<NeoAskItem, 'state' | 'kind' | 'options' | 'removed'>
 ): boolean {
-  if (item.removed) return false;
-  if (item.state === 'reported') return true;
-  return item.state === 'needs_you' && item.kind === 'action' && !item.options?.length;
+  return (
+    !item.removed && item.state === 'needs_you' && item.kind === 'action' && !item.options?.length
+  );
 }
 
 export function neoAskItemAction(item: NeoAskItem): NeoAskHumanAction | null {
+  if (item.removed) return null;
+  if (item.state === 'reported') return { kind: 'confirm', itemId: item.id, step: item.text };
   if (isNeoAskOutcomeItem(item))
     return {
       kind: 'answer',
       itemId: item.id,
       step: item.text,
-      questions: NEO_ASK_OUTCOME_QUESTIONS.map((question) => ({
-        question,
-        options: [...NEO_ASK_OUTCOME_OPTIONS],
-      })),
+      question: NEO_ASK_OUTCOME_QUESTION,
+      options: [...NEO_ASK_OUTCOME_OPTIONS],
     };
-  if (item.removed || item.state !== 'needs_you') return null;
+  if (item.state !== 'needs_you') return null;
   if (!item.options?.length && item.kind !== 'decision') return null;
   return {
     kind: 'answer',
     itemId: item.id,
     step: null,
-    questions: [{ question: item.text, options: item.options ?? [] }],
+    question: item.text,
+    options: item.options ?? [],
   };
 }
 

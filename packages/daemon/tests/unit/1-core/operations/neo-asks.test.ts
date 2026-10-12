@@ -813,39 +813,40 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test('a step the human did is answered with Yes or Not yet, and is met only on two Yeses', async () => {
+  test('a step the human did is asked as one question, met only on Yes', async () => {
     const askId = await openAsk();
     const user: OperationCaller = { source: 'rpc', principal: 'local' };
     await invoke(
       'neo.ask.tick',
-      { askId, itemId: 'i1', state: 'reported', evidence: 'The session says the iMac runs it.' },
+      {
+        askId,
+        itemId: 'i1',
+        state: 'needs_you',
+        evidence: 'Try the keyboard on the phone.',
+        kind: 'action',
+        action: 'Test it on the phone',
+      },
       user
     );
     const delivered = mock(
       async (_ask: NeoAsk, _item: unknown, _choice: string, _met: boolean) => {}
     );
     service.deliverAskAnswer = delivered;
-    expect(
-      await invoke('neo.ask.answer', { askId, itemId: 'i1', choice: 'Yes' }, user)
-    ).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('outcome_answers_required') },
+    const answer = { askId, itemId: 'i1', choice: 'Maybe' };
+    expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('choice_not_offered') },
     });
-    const notYet = { askId, itemId: 'i1', answers: ['Yes', 'Not yet'] };
-    expect(await invoke('neo.ask.answer', notYet, user)).toMatchObject({
+    expect(await invoke('neo.ask.answer', { ...answer, choice: 'Not yet' }, user)).toMatchObject({
       value: { ok: true },
     });
-    expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({ state: 'reported' });
-    expect(delivered.mock.calls[0]?.slice(2)).toEqual([
-      'Did it work? Yes Is the result what you wanted? Not yet',
-      false,
-    ]);
-    await invoke('neo.ask.answer', { ...notYet, answers: ['Yes', 'Yes'] }, user);
+    expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({ state: 'needs_you' });
+    expect(delivered.mock.calls[0]?.slice(2)).toEqual(['Not yet', false]);
+    await invoke('neo.ask.answer', { ...answer, choice: 'Yes' }, user);
     expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({
       state: 'met',
       metBy: 'human',
     });
-    expect(delivered).toHaveBeenCalledTimes(2);
-    expect(delivered.mock.calls[1]?.[3]).toBe(true);
+    expect(delivered.mock.calls[1]?.slice(2)).toEqual(['Yes', true]);
   });
 
   test('the user can close an ask as done even with items still open', async () => {

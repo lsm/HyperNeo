@@ -249,13 +249,8 @@ export interface NeoAskView {
   humanActions?: NeoAskHumanAction[];
 }
 
-export const NEO_ASK_OUTCOME_QUESTIONS = ['Did it work?', 'Is the result what you wanted?'];
+export const NEO_ASK_OUTCOME_QUESTION = 'Did it work?';
 export const NEO_ASK_OUTCOME_OPTIONS = ['Yes', 'Not yet'];
-
-export interface NeoAskHumanQuestion {
-  question: string;
-  options: string[];
-}
 
 export type NeoAskHumanAction =
   | { kind: 'start'; workId: string }
@@ -264,8 +259,10 @@ export type NeoAskHumanAction =
       kind: 'answer';
       itemId: string;
       step: string | null;
-      questions: NeoAskHumanQuestion[];
+      question: string;
+      options: string[];
     }
+  | { kind: 'confirm'; itemId: string; step: string }
   | { kind: 'retry'; workId: string }
   | { kind: 'close'; workId: string };
 
