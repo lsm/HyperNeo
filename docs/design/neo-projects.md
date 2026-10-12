@@ -72,5 +72,5 @@ Avatars form a tree: each avatar has at most one parent, with no fixed depth. To
 | 1b | HyperNeo projects hold several folders, like Codex projects | none |
 | 2 | Avatars mirror projects (one per project, created when a workspace appears); rename topic/concern to project in UI, prompt and code, with a migration | 1 |
 | 3 | Router picks project then section; new projects are named after their target | 1 |
-| 4 | Parents and sections; sections from epics for code projects | 1, 3 |
+| 4 | Avatars nest to any depth (parent per avatar, path in the UI, move to another parent); sections from epics for code projects | 2, 3 |
 | 5 | Reorganize merges by identity, moves asks into projects and sections, asks once when unsure, saves the answer as a rule | 1, 3, 4 |
