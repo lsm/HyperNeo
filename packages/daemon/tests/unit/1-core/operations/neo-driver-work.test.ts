@@ -3083,28 +3083,35 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('Neo cannot close a work card outside a turn answering the human', async () => {
+  test('Neo closes a card it started only with a reason, which the card shows', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const { db, service } = await setup({ ok: true, value: { ref } });
     try {
       await service.start('work-1');
       db.createSession(createTestSession('neo:root'));
       service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', concernId: null });
-      const outcome = await invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
-        'neo.work.close',
-        { id: 'work-1', outcome: 'done' },
-        { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
-      );
-      expect(outcome).toMatchObject({
+      const registry = createOperationRegistry(createNeoOperations(service));
+      const neo: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
+      expect(
+        await invokeOperation(registry, 'neo.work.close', { id: 'work-1', outcome: 'done' }, neo)
+      ).toMatchObject({
         kind: 'completed',
-        value: {
-          ok: false,
-          reason:
-            'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.',
-        },
+        value: { ok: false, reason: 'Give a reason; the card shows it.' },
       });
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
+
+      expect(
+        await invokeOperation(
+          registry,
+          'neo.work.close',
+          { id: 'work-1', outcome: 'done', reason: 'both PRs merged' },
+          neo
+        )
+      ).toMatchObject({ kind: 'completed', value: { ok: true } });
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'reported',
+        report: 'Closed as done by Neo: both PRs merged',
+      });
     } finally {
       db.close();
     }

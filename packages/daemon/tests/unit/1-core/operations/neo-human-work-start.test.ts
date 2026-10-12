@@ -159,26 +159,38 @@ describe('Neo existing trusted human work input', () => {
     }
   );
 
-  test('closes a card while answering the human, never from a system note', async () => {
-    storeInput();
-    const work = await propose(caller());
+  test('closes another session’s card only while answering the human', async () => {
+    storeInput(holder);
+    const work = await propose(caller(holder));
     const note = '00000000-0000-4000-8000-000000000012';
     storeInput(root, 'system', note);
     expect(
-      await invoke('neo.work.close', { id: work.id, outcome: 'cancelled' }, caller(root, note))
+      await invoke(
+        'neo.work.close',
+        { id: work.id, outcome: 'cancelled', reason: 'duplicate' },
+        caller(root, note)
+      )
     ).toMatchObject({
       value: {
         ok: false,
         reason:
-          'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.',
+          'Neo closes a card it started at any time, and any other card only while answering the human’s own chat message.',
       },
     });
     expect(service.repo.getWork(work.id)?.status).toBe('proposed');
 
+    storeInput();
     expect(
-      await invoke('neo.work.close', { id: work.id, outcome: 'cancelled' }, caller())
+      await invoke(
+        'neo.work.close',
+        { id: work.id, outcome: 'cancelled', reason: 'the human dropped it' },
+        caller()
+      )
     ).toMatchObject({ value: { ok: true } });
-    expect(service.repo.getWork(work.id)?.status).toBe('cancelled');
+    expect(service.repo.getWork(work.id)).toMatchObject({
+      status: 'cancelled',
+      report: 'Cancelled by Neo: the human dropped it',
+    });
   });
 
   test('lets Neo start the work items of an ask the user approved, on later turns', async () => {

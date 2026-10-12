@@ -1141,7 +1141,11 @@ export class NeoService {
     };
   }
 
-  close(id: string, outcome: NeoWorkCloseOutcome): Promise<NeoWorkCloseResult> {
+  close(
+    id: string,
+    outcome: NeoWorkCloseOutcome,
+    note: string | null = null
+  ): Promise<NeoWorkCloseResult> {
     return closeNeoWork(
       {
         repo: this.repo,
@@ -1152,7 +1156,8 @@ export class NeoService {
             : this.stopDriverWork(ref, work),
       },
       id,
-      outcome
+      outcome,
+      note
     );
   }
 

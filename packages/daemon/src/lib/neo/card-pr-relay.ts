@@ -1,6 +1,6 @@
 import { fillPrompt, NEO_CARD_PR_ATTENTION, NEO_CARD_PR_ATTENTION_NEO } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NEO_WORK_CLOSED_DONE, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { isNeoWorkClosedDone, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 
 type NeoCardPrRelaySkip = 'not_in_flight' | 'clear' | 'told';
 
@@ -35,7 +35,7 @@ export function requireNeoCardPrRelay(
   if (
     !work ||
     (work.status !== 'queued' && work.status !== 'reported') ||
-    work.report === NEO_WORK_CLOSED_DONE
+    isNeoWorkClosedDone(work.report)
   )
     return { reason: 'not_in_flight' };
   if (!attention) return { reason: 'clear' };

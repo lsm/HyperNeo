@@ -22,7 +22,8 @@ export interface NeoWorkCloseDeps {
 
 export function planNeoWorkClose(
   work: NeoWork | null,
-  outcome: NeoWorkCloseOutcome
+  outcome: NeoWorkCloseOutcome,
+  note: string | null = null
 ): { value: NeoWorkClosePlan } | { reason: NeoWorkCloseResult } {
   if (!work) return { reason: { ok: false, reason: 'work_not_found' } };
   if (work.status === 'cancelled')
@@ -38,8 +39,8 @@ export function planNeoWorkClose(
       work,
       patch:
         outcome === 'done'
-          ? { status: 'reported', report: NEO_WORK_CLOSED_DONE }
-          : { status: 'cancelled' },
+          ? { status: 'reported', report: note ?? NEO_WORK_CLOSED_DONE }
+          : { status: 'cancelled', ...(note ? { report: note } : {}) },
       stopDriver: work.status === 'queued' || work.status === 'proposed',
     },
   };
@@ -54,16 +55,16 @@ export function requireNeoWorkClosed(closed: {
 }
 
 export const closeNeoWork = (superpipe({})('neo.work.close') as PipelineAPI)
-  .input(['deps', 'id', 'outcome'])
+  .input(['deps', 'id', 'outcome', 'note'])
   .pipe(
     (deps: NeoWorkCloseDeps, id: string) => ({ work: deps.repo.getWork(id) }),
     ['deps', 'id'],
     'current'
   )
   .pipe(
-    (current: { work: NeoWork | null }, outcome: NeoWorkCloseOutcome) =>
-      planNeoWorkClose(current.work, outcome),
-    ['current', 'outcome'],
+    (current: { work: NeoWork | null }, outcome: NeoWorkCloseOutcome, note: string | null) =>
+      planNeoWorkClose(current.work, outcome, note),
+    ['current', 'outcome', 'note'],
     'result:closed'
   )
   .pipe((plan: NeoWorkClosePlan) => plan, 'closed', 'plan')
@@ -90,5 +91,6 @@ export const closeNeoWork = (superpipe({})('neo.work.close') as PipelineAPI)
   .endAsync('closed') as (
   deps: NeoWorkCloseDeps,
   id: string,
-  outcome: NeoWorkCloseOutcome
+  outcome: NeoWorkCloseOutcome,
+  note: string | null
 ) => Promise<NeoWorkCloseResult>;
