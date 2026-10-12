@@ -695,6 +695,7 @@ export class QueryRunner {
     let holderTurn: NeoHolderTurn | undefined;
     let resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver> | undefined;
     let isAbortError = false;
+    this.turnEndedGeneration = null;
 
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
     const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;

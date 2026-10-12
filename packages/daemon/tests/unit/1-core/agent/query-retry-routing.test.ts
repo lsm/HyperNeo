@@ -295,6 +295,19 @@ describe('query-retry-routing', () => {
       expected: { action: 'turn_ended_noop' },
     },
     {
+      name: 'SDK process exit after a result during an armed cooldown stays expected recovery',
+      signal: { rawText: 'Claude Code process exited with code 1' },
+      env: {
+        turnEnded: true,
+        lifecycle: {
+          processingStatus: 'rate_limit_cooldown',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: false,
+        },
+      },
+      expected: { action: 'expected_recovery_noop' },
+    },
+    {
       name: 'a non-exit error after the turn ended stays terminal',
       signal: { rawText: 'invalid_api_key' },
       env: { turnEnded: true },

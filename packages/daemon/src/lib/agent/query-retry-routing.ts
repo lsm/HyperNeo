@@ -150,8 +150,6 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
   const { errorSignal, env } = input;
   if (env.isSuperseded) return { action: 'superseded_noop' };
   if (env.isCleaningUp) return { action: 'cleanup_noop' };
-  if (env.turnEnded && isSdkProcessExitError(errorSignal.rawText))
-    return { action: 'turn_ended_noop' };
   if (
     errorSignal.isStartupTimeout &&
     env.attempt === 0 &&
@@ -180,6 +178,8 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
   if (isSdkProcessExitError(errorSignal.rawText) && limitRecoveryInFlight(env)) {
     return { action: 'expected_recovery_noop' };
   }
+  if (env.turnEnded && isSdkProcessExitError(errorSignal.rawText))
+    return { action: 'turn_ended_noop' };
   if (errorSignal.isRateLimit && env.hasRateLimitHandoff && errorSignal.rateLimitHint !== null)
     return { action: 'rate_limit_handoff', hint: errorSignal.rateLimitHint };
   return {
