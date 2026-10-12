@@ -251,12 +251,7 @@ const DETAIL_QUERY =
   'query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){commits(last:50){nodes{commit{oid signature{isValid}}}} reviewThreads(first:100){nodes{isResolved}}}}}';
 
 export function wantsNeoWorkPrBlockers(pr: NeoWorkPr, base: string | undefined): boolean {
-  return (
-    !!base &&
-    pr.state === 'OPEN' &&
-    pr.review !== 'changes_requested' &&
-    (pr.checks === 'passing' || pr.checks === 'none')
-  );
+  return !!base && pr.state === 'OPEN' && pr.checks !== 'pending';
 }
 
 export function countNeoWorkPrApprovals(
@@ -276,7 +271,7 @@ export function planNeoWorkPrBlockers(input: {
   rules: readonly BranchRule[];
   detail: PrDetail | null;
 }): string[] {
-  if (['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(input.mergeState ?? '')) return [];
+  if (['CLEAN', 'HAS_HOOKS'].includes(input.mergeState ?? '')) return [];
   const pull = input.rules.find((rule) => rule.type === 'pull_request')?.parameters;
   const unsigned = input.detail?.commits.filter((commit) => !commit.signed) ?? [];
   const unresolved = input.detail?.unresolved ?? 0;

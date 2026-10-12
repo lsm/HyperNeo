@@ -41,6 +41,7 @@ import {
   NeoWorkCheckRepository,
   type NeoWorkCheckRow,
 } from '../../storage/repositories/neo-work-check-repository.ts';
+import { NeoCardPrRelayRepository } from '../../storage/repositories/neo-card-pr-relay-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
 import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
@@ -215,6 +216,13 @@ import {
   trackNeoAskIdle,
 } from './ask-idle.ts';
 import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
+import { hashString32 } from '../runtime-hash.ts';
+import {
+  neoCardPrAttention,
+  neoCardPrNeoNote,
+  neoCardPrPending,
+  requireNeoCardPrRelay,
+} from './card-pr-relay.ts';
 import {
   extractNeoCardRefs,
   readGithubRefStates,
@@ -312,6 +320,7 @@ export class NeoService {
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
+  private readonly cardPrRelays: NeoCardPrRelayRepository;
   private askIdleSeen: NeoAskIdleSeen = new Map();
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
@@ -567,6 +576,7 @@ export class NeoService {
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged);
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
+    this.cardPrRelays = new NeoCardPrRelayRepository(db.getDatabase());
     this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
     this.askChecks = new NeoAskCheckRepository(db.getDatabase());
@@ -1313,6 +1323,9 @@ export class NeoService {
       await this.refreshWorkPrs(workId, Date.now()).catch((error) =>
         this.log.warn('Work pull request refresh pending', error)
       );
+      await this.relayCardPr(workId).catch((error) =>
+        this.log.warn('Card pull request relay pending', error)
+      );
     }
     for (const ask of this.askRecords.listLive()) {
       try {
@@ -1408,6 +1421,47 @@ export class NeoService {
       return 'value' in following ? [card.ref] : [];
     });
   }
+
+  private readonly relayCardPr = (superpipe({})('neo-card-pr-relay') as PipelineAPI)
+    .input(['workId'])
+    .pipe((workId: string) => this.repo.getWork(workId), 'workId', 'work')
+    .pipe((workId: string) => this.workPrs.get(workId)?.prs ?? [], 'workId', 'prs')
+    .pipe(neoCardPrAttention, 'prs', 'attention')
+    .pipe(
+      (workId: string, prs: NeoWorkPr[], attention: unknown) => {
+        if (!attention && !neoCardPrPending(prs)) this.cardPrRelays.clear(workId);
+        return attention ? this.cardPrRelays.get(workId) : null;
+      },
+      ['workId', 'prs', 'attention'],
+      'told'
+    )
+    .pipe(requireNeoCardPrRelay, ['work', 'attention', 'told'], 'result:relay')
+    .pipe(
+      async (
+        work: NeoWork,
+        attention: { items: string },
+        relay: { signature: string; message: string }
+      ) => {
+        const sent = await this.continueWork(work.id, relay.message);
+        if (sent.ok) {
+          this.cardPrRelays.markTold(work.id, relay.signature, Date.now());
+          return sent;
+        }
+        const note = neoCardPrNeoNote(work, attention.items, sent.reason);
+        if (!note || !this.db.getSession(work.originSessionId)) return sent;
+        await this.deliverToOrigin(
+          work.originSessionId,
+          `neo-card-pr:${work.id}:${hashString32(relay.signature).toString(36)}`,
+          note,
+          neoWorkParent(work)
+        );
+        this.cardPrRelays.markTold(work.id, relay.signature, Date.now());
+        return sent;
+      },
+      ['work', 'attention', 'relay'],
+      'relay'
+    )
+    .endAsync('relay') as (workId: string) => Promise<unknown>;
 
   private readonly noteAskStall = (superpipe({})('neo-ask-stall-note') as PipelineAPI)
     .input(['ask', 'now'])
