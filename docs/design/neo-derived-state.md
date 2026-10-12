@@ -35,6 +35,8 @@ Each ask view lists `humanActions`, computed by the daemon on every snapshot. Th
 | `confirm {itemId}` | an item whose evidence names a machine the daemon can't read (remote daemon, device) |
 | `retry {workId}`, `close {workId}` | existing card rules (`retryable`, abandoned) |
 
+A card whose doneWhen the daemon reads itself (its PRs merged, its issue closed) is settled by the daemon without a Neo turn.
+
 The model keeps exactly one way to ask the human something: `neo.ask.question {askId, question, options[2..4]}`. It's a question with choices, answered with one tap, and it is the only human gate the model can create.
 
 Removed:
@@ -62,6 +64,7 @@ The daemon refuses every other `neo.publication.publish`, with a reason. For eac
 - Routine progress doesn't wake Neo. A PR waiting on CI or review, a check passing, a review starting: the daemon records it and nothing runs.
 - Neo wakes for a card report that needs judgement (a reported card with items left), a failure, a stall, a human tick, or a derived trigger above.
 - Each wake note carries the ask's current derived state (items, humanActions, cards with PR verdicts), and the system prompt says this state overrides anything remembered.
+- A card's report is the working session's reply to the card's own message, capped at about 1.5K, and never includes the human's input. When a card targets a session the human also uses, only turns the card's message started count as the card's idle or report. On 2026-10-12, card 0692a952 got the shared Neo iOS app session's chat as its "report" on every idle: 11 notes and 5 continues for work already done.
 - Per-topic avatars (#6579, #6604) hold their asks, and root Neo keeps cross-topic questions only. A topic's session is short-lived and starts from a snapshot, so long compacted chats don't drive decisions.
 
 ### 4. One owner, daemon-side merge
