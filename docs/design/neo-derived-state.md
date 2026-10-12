@@ -72,7 +72,7 @@ Underneath all six: **human-facing state is authored by the model in prose, and 
 - A card's PRs are attached by the daemon: from the worker session's branch or PR author, or a PR the report names, after reading it. `card.prs` is never empty while the worker has a PR open.
 - A card whose doneWhen the daemon can read (its PRs merged, its issue closed) is settled by the daemon without a Neo turn.
 - Neo gets read-only views of a PR (state, checks, review verdict on head) and an issue. It never needs a worker's word for something the daemon can read.
-- Deploy targets are data, not design: which machines run a daemon, how each is updated, and how its running commit is read live in config the daemon reads. A deploy item is met when every target runs a commit containing the change, read back over RPC by the daemon.
+- A deploy item is met when the daemon reads back that each daemon runs a commit containing the change.
 - A model `met` tick is accepted only for items the daemon can't read. For items the daemon owns, the daemon ticks.
 
 ### 3. Progress, continues and stalls
@@ -215,7 +215,6 @@ Shipped behaviour this replaces:
 
 ## Decided
 
-1. Deploy targets and how each is updated are config data the daemon reads, not a design choice.
-2. Track goes: the human naming a session in chat is enough.
-3. No typed Confirm: every human check is a question, and its options are the buttons.
-4. A stall is three wakes in a row without progress.
+1. Track goes: the human naming a session in chat is enough.
+2. No typed Confirm: every human check is a question, and its options are the buttons.
+3. A stall is three wakes in a row without progress.
