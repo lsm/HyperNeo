@@ -654,6 +654,7 @@ export class AgentSession
           retryCount: 0,
           maxRetries: 0,
           retryAt,
+          reason: 'network',
           ...(messageId !== undefined ? { messageId } : {}),
         }),
       notice: async (text) => {

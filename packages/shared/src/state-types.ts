@@ -113,6 +113,7 @@ export type AgentProcessingState =
       retryAt: number;
       messageId?: string;
       manualRetry?: boolean;
+      reason?: 'network';
     }
   | { status: 'interrupted' };
 
