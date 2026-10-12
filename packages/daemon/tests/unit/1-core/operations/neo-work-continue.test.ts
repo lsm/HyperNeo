@@ -466,6 +466,26 @@ describe('neo.work.continue', () => {
     expect(sent).toHaveLength(5);
   });
 
+  test('a report back from an ask-less card is a wake, so Neo can continue it again', async () => {
+    const work = reportedWork();
+    expect(await invoke({ id: work.id, message: 'First.' }, neo)).toMatchObject({
+      value: { ok: true },
+    });
+    expect(await invoke({ id: work.id, message: 'Too soon.' }, neo)).toMatchObject({
+      value: { ok: true },
+    });
+    lastActivityAt = Date.now() + 1_000;
+    await service.refreshDriverWork();
+    expect(service.repo.getWork(work.id)?.status).toBe('reported');
+    expect(service.workWakes.get(work.id)?.wakes).toBe(1);
+    expect(await invoke({ id: work.id, message: 'Next.' }, neo)).toMatchObject({
+      value: { ok: true },
+    });
+    expect(await invoke({ id: work.id, message: 'Again.' }, neo)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('already_continued') },
+    });
+  });
+
   test('a continue carrying new human input resets the stall', async () => {
     const work = reportedWork();
     stallCard(work.id);

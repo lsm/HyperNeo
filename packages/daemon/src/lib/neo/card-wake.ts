@@ -70,11 +70,8 @@ export function requireNeoContinueTurn<T>(
     return refuse(
       `waiting_on_pr: ${awaited.url} is waiting on ${awaited.checks === 'pending' ? 'CI' : 'review'}; the daemon wakes you when its verdict changes. Do not continue the card meanwhile.`
     );
-  if (
-    !turn.human &&
-    turn.wake?.continuedWake != null &&
-    turn.wake.continuedWake === turn.wake.wakes
-  )
+  const wake = turn.wake;
+  if (!turn.human && wake && wake.wakes > 0 && wake.continuedWake === wake.wakes)
     return refuse(
       'already_continued: this card was already continued in this wake; wait for its next report.'
     );

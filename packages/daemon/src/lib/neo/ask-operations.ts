@@ -1360,7 +1360,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.approve',
       description:
-        "Approve an open ask so Neo starts the work items under it without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. Its work items keep continuing while they make progress; approving again gives a card that stalled (three continues in a row with no progress) a fresh run. An approval never covers deploying to production, deleting data or other destructive steps.",
+        "Approve an open ask so Neo starts the work items under it without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. Its work items keep continuing while they make progress, for 48 hours; approving again after that renews the window. An approval never covers deploying to production, deleting data or other destructive steps.",
       inputSchema: Approve,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },

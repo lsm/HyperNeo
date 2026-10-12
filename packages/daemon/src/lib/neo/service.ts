@@ -2316,15 +2316,22 @@ export class NeoService {
       ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: packNote.id })}${packNote.inPrompt ? '' : `\n${packNote.instructions}`}\n`
       : '';
     const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote, summary: NEO_WORK_SUMMARY_NOTE })}${packLine}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, concernId: work.concernId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
+    const messageId = neoWorkReturnMessageId(
+      work.id,
+      retries,
+      this.workContinues.get(work.id)?.count ?? 0
+    );
     for (const target of targets) {
-      if (this.db.getSession(target))
-        await this.deliver(
-          target,
-          neoWorkReturnMessageId(work.id, retries, this.workContinues.get(work.id)?.count ?? 0),
-          content,
-          work.sessionId ?? work.originSessionId,
-          neoWorkParent(work)
-        );
+      if (!this.db.getSession(target)) continue;
+      const fresh = !this.hasDelivery(target, messageId);
+      await this.deliver(
+        target,
+        messageId,
+        content,
+        work.sessionId ?? work.originSessionId,
+        neoWorkParent(work)
+      );
+      if (fresh && target === work.originSessionId) this.recordCardWake(work.id, messageId);
     }
   }
 

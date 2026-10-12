@@ -96,6 +96,12 @@ describe('requireNeoContinueTurn', () => {
     });
   });
 
+  test('a continue before any wake was delivered does not block the next one', () => {
+    expect(
+      requireNeoContinueTurn('t', { ...turn, wake: { wakes: 0, continuedWake: 0, stalled: 0 } })
+    ).toEqual({ value: 't' });
+  });
+
   test('new human input lifts the once-per-wake rule, and daemon relays are not guarded', () => {
     const wake = { wakes: 2, continuedWake: 2, stalled: 0 };
     expect(requireNeoContinueTurn('t', { ...turn, wake, human: true })).toEqual({ value: 't' });
