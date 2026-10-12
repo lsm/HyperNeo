@@ -496,9 +496,10 @@ const OWNED_TARGET_HINT =
   'target_owned_context: this session belongs to Neo itself or to Space work with no single owner. To continue Space work, propose with work {verb:"send", ref} using the ref of the task or agent from work.find; snippet session ids are only for work.read.';
 
 function explainOwnedNeoTarget<T>(
-  gate: { value: T } | { reason: { reason: string } }
+  gate: { value: T } | { reason: { reason: string } },
+  candidate: { agent?: unknown }
 ): { value: T } | { reason: { reason: string } } {
-  if ('reason' in gate && gate.reason.reason === 'target_session_not_found')
+  if ('reason' in gate && gate.reason.reason === 'target_session_not_found' && !candidate.agent)
     return { reason: { ok: false, reason: MISSING_TARGET_HINT } as Rejection };
   return 'reason' in gate && gate.reason.reason === 'target_owned_context'
     ? { reason: { ok: false, reason: OWNED_TARGET_HINT } as Rejection }
@@ -1228,7 +1229,8 @@ export function createNeoOperations(service: NeoService) {
               readAgentOwner: (agent) => service.agentTargets.readOwner(agent),
               readBinding: (id) => service.repo.getBindingBySession(id),
             })
-          )
+          ),
+          candidate
         ),
       'candidate',
       'result:admission'

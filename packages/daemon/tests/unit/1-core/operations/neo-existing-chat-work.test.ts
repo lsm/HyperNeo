@@ -244,6 +244,19 @@ describe('Neo existing chat work', () => {
     });
   });
 
+  test('proposal to a Claude session id from work.find becomes a send to that session', async () => {
+    const reply = (await invoke(
+      'neo.work.propose',
+      input('A', 'local_bc37a8ae-c383-46cb-a16d-cd2a3f1d3c04'),
+      source('ask-A')
+    )) as { value: { ok: boolean; work?: { id: string }; reason?: string } };
+    expect(reply.value).toMatchObject({ ok: true });
+    expect(service.driverTargets.get(reply.value.work!.id)).toEqual({
+      verb: 'send',
+      ref: { adapter: 'claude-desktop', id: 'local_bc37a8ae-c383-46cb-a16d-cd2a3f1d3c04' },
+    });
+  });
+
   test('target admission keeps scope-owned runtime integrity without inventing working modes', () => {
     const target = { id: 'A', targetSessionId: 'project' };
     expect(
