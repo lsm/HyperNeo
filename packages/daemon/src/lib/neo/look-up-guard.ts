@@ -263,6 +263,23 @@ function shellWords(segment: string): string[] {
     .filter(Boolean);
 }
 
+function argumentPaths(word: string): string[] {
+  const flagValue = word.includes('=')
+    ? word.slice(word.indexOf('=') + 1)
+    : /^-[A-Za-z][@<]/.test(word)
+      ? word.slice(2)
+      : '';
+  const value = word.startsWith('-')
+    ? /^[@<.~/]/.test(flagValue) || flagValue.includes('/')
+      ? flagValue
+      : ''
+    : word;
+  return value
+    .split('=')
+    .map((part) => part.replace(/^[@<]+/, ''))
+    .filter(Boolean);
+}
+
 function secretArgument(
   words: readonly string[],
   dir: string,
@@ -272,7 +289,7 @@ function secretArgument(
   const here = { ...scope, cwd: dir };
   return (
     words
-      .filter((word) => !word.startsWith('-'))
+      .flatMap(argumentPaths)
       .flatMap((word) => word.split(':'))
       .find(
         (part) =>
