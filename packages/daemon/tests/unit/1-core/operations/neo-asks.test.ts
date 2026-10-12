@@ -435,6 +435,7 @@ describe('neo.ask operations', () => {
       evidence: 'Two APIs fit.',
       cite,
       action: 'Answer in chat',
+      kind: 'decision',
     });
     expect(service.askRecords.get(askId)?.status).toBe('blocked');
 
@@ -484,6 +485,7 @@ describe('neo.ask operations', () => {
         evidence: 'Is red CI on main acceptable?',
         cite,
         action: 'Answer in chat',
+        kind: 'decision',
       })
     ).toMatchObject({ value: { ok: true, ask: { status: 'waiting', outcome: 'CI green' } } });
     expect(service.askRecords.get(askId)?.doneItems?.[1]?.decision).toBeUndefined();
@@ -522,6 +524,7 @@ describe('neo.ask operations', () => {
       evidence: 'Nobody owns #6545 yet.',
       cite,
       action: 'Answer in chat',
+      kind: 'decision',
     };
     expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
       value: {
@@ -612,6 +615,7 @@ describe('neo.ask operations', () => {
       evidence: 'Two dates fit.',
       cite,
       action: 'Answer in chat',
+      kind: 'decision' as const,
     };
     expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('checklist_full') },
@@ -733,6 +737,7 @@ describe('neo.ask operations', () => {
         options: ['Accept it', 'Fix CI first'],
         cite,
         action: 'Answer in chat',
+        kind: 'decision',
       })
     ).toMatchObject({
       value: {
@@ -969,6 +974,7 @@ describe('neo.ask operations', () => {
       state: 'needs_you',
       evidence: 'Who reviews it?',
       action: 'Answer in chat',
+      kind: 'decision',
     };
     expect(
       await invoke(
@@ -1002,52 +1008,49 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true, ask: { status: 'waiting' } } });
   });
 
-  test('the human gets only what is theirs to do, with what to do and where', async () => {
+  test('the human gets only what is theirs to do, with its kind and what to do and where', async () => {
     const askId = await openAsk();
-    await invoke('neo.ask.edit', {
-      askId,
-      add: [
-        { text: 'After #6618 merges, verify the deploy' },
-        { text: 'Approve another continuation; the shared continues are exhausted' },
-      ],
-    });
     const tick = (input: object) =>
-      invoke('neo.ask.tick', { askId, itemId: 'i2', cite, action: 'Answer in chat', ...input });
-    expect(
-      await tick({ itemId: 'i3', state: 'needs_you', evidence: 'Waits on the merge.' })
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('not_the_human') } });
+      invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i2',
+        state: 'needs_you',
+        evidence: 'Is red CI on main acceptable?',
+        cite,
+        action: 'Answer in chat',
+        kind: 'decision',
+        ...input,
+      });
+    expect(await tick({ kind: 'wait' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('not_the_human') },
+    });
+    expect(await tick({ kind: 'approval' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('approval_on_ask') },
+    });
+    expect(await tick({ kind: undefined })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('kind_required') },
+    });
+    expect(await tick({ action: undefined })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('action_required') },
+    });
+    expect(await tick({ kind: 'action', waitCard: 'elsewhere' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('card_not_found') },
+    });
     expect(
       await tick({ itemId: 'i1', state: 'reported', evidence: 'The session says it merged.' })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('daemon_readable') } });
-    expect(
-      await tick({ itemId: 'i4', state: 'needs_you', evidence: 'The card stalled.' })
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('approval_on_ask') } });
-    expect(
-      await tick({
-        state: 'needs_you',
-        evidence: 'Is red CI on main acceptable?',
-        action: undefined,
-      })
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('action_required') } });
-    expect(
-      await tick({
-        state: 'needs_you',
-        evidence: 'Decide whether to accept red CI once the build finishes.',
-      })
-    ).toMatchObject({ value: { ok: true } });
-    expect(
-      await tick({ state: 'needs_you', evidence: 'Is red CI on main acceptable?' })
-    ).toMatchObject({ value: { ok: true, ask: { status: 'waiting' } } });
+    expect(await tick({})).toMatchObject({ value: { ok: true, ask: { status: 'waiting' } } });
     expect(service.askRecords.get(askId)?.doneItems?.[1]).toMatchObject({
       state: 'needs_you',
       action: 'Answer in chat',
+      kind: 'decision',
     });
     const snapshot = await invoke('neo.snapshot', {});
     expect(
       (snapshot.value as { askViews?: { askId: string; answer?: unknown }[] }).askViews?.find(
         (view) => view.askId === askId
       )?.answer
-    ).toMatchObject({ itemId: 'i2', action: 'Answer in chat' });
+    ).toMatchObject({ itemId: 'i2', action: 'Answer in chat', kind: 'decision' });
   });
 
   test('a needs_you item goes back to pending and Neo hears why once its card starts', async () => {
@@ -1061,6 +1064,7 @@ describe('neo.ask operations', () => {
         state: 'needs_you',
         evidence: 'The fix needs a go-ahead.',
         action: `Click Start work on card ${cardId}`,
+        kind: 'action',
         cite: { card: cardId },
       })
     ).toMatchObject({ value: { ok: true, ask: { status: 'waiting' } } });
@@ -1102,6 +1106,7 @@ describe('neo.ask operations', () => {
       evidence: 'Is red CI on main acceptable?',
       cite,
       action: 'Answer in chat',
+      kind: 'decision',
     });
     expect(
       await invoke('neo.ask.edit', { askId, remove: ['i2'], add: [{ text: 'Release notes' }] })

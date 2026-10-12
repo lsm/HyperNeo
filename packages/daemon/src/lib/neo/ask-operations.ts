@@ -3,6 +3,7 @@ import {
   isPooledNeoAsk,
   type NeoAsk,
   type NeoAskItem,
+  type NeoAskItemKind,
   neoAskApprovalSpent,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -26,7 +27,7 @@ import {
 } from './packs/coding/issue-checks.ts';
 import { LIFE_ADMIN_CHECK_CONFIRMED } from './packs/life-admin/pack.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
-import { neoDaemonReadsItem } from './needs-you.ts';
+import { neoDaemonReadsClaim } from './needs-you.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -45,6 +46,7 @@ const NEO_ASK_CHECK_KINDS = [
   CODING_CHECK_ISSUE_CLOSED,
   LIFE_ADMIN_CHECK_CONFIRMED,
 ] as const;
+const NEO_ASK_ITEM_KINDS = ['decision', 'action', 'approval', 'wait'] as const;
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const NeoAskSchema = z.object({
   id: z.string(),
@@ -82,6 +84,7 @@ export const NeoAskSchema = z.object({
         decision: z.literal(true).optional(),
         action: z.string().optional(),
         waitCard: z.string().optional(),
+        kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
       })
     )
     .optional(),
@@ -123,6 +126,7 @@ const Settle = z.object({
   evidence: z.string().trim().min(1).max(4000),
   cite: Cite.optional(),
   action: z.string().trim().min(1).max(120).optional(),
+  kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
 });
 
 const Tick = z.object({
@@ -138,6 +142,8 @@ const Tick = z.object({
     .optional(),
   cite: Cite.optional(),
   action: z.string().trim().min(1).max(120).optional(),
+  kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
+  waitCard: z.string().min(1).optional(),
 });
 
 const Answer = z.object({
@@ -434,27 +440,51 @@ function requireNeoAskTick(
 const NEO_HUMAN_TASK_REFUSALS = {
   approval:
     "approval_on_ask: re-approving continued work is the ask's Approve, not a checklist item. Tell the human the ask needs their Approve; approving it wakes you.",
-  wait: 'not_the_human: this waits on something the daemon reads itself (a PR, merge, CI, this machine’s deploy, a card, standing rules). Keep the item pending; the daemon wakes you when cards report, and you tick it met once you read it.',
+  wait: 'not_the_human: a wait on a PR, merge, CI, deploy, card or anything else the daemon reads is not the human’s step. Keep the item pending; the daemon wakes you when cards report, and you tick it met once you read it.',
   fact: 'daemon_readable: you can read this yourself (a PR, merge, CI, this machine’s deploy, a card, standing rules). Read it and tick the item met, or keep it pending. reported is for claims you cannot read, such as another machine’s state.',
 } as const;
+
+export function neoTickWaitCard(input: z.infer<typeof Tick>): string | undefined {
+  return input.waitCard ?? (input.cite && 'card' in input.cite ? input.cite.card : undefined);
+}
+
+export type NeoHumanTask = {
+  text: string;
+  context?: string;
+  kind?: NeoAskItemKind;
+  action?: string;
+  waitCard?: string;
+  workIds: readonly string[];
+};
 
 export function requireNeoHumanTask<T>(
   caller: OperationCaller,
   state: NeoAskItem['state'],
-  text: string,
-  action: string | undefined,
-  value: T,
-  context = ''
+  task: NeoHumanTask,
+  value: T
 ): Gate<T> {
-  if (caller.source !== 'mcp' || (state !== 'needs_you' && state !== 'reported')) return { value };
-  const reads = neoDaemonReadsItem(state, text, context);
-  if (reads) return { reason: fail(NEO_HUMAN_TASK_REFUSALS[reads]) };
-  return state === 'needs_you' && !action
-    ? {
-        reason: fail(
-          'action_required: pass action, a few words saying what the human does and where ("Choose A or B in chat", "Click Start work on card 3bce413f").'
-        ),
-      }
+  if (caller.source !== 'mcp') return { value };
+  if (state === 'reported')
+    return neoDaemonReadsClaim(task.text, task.context)
+      ? { reason: fail(NEO_HUMAN_TASK_REFUSALS.fact) }
+      : { value };
+  if (state !== 'needs_you') return { value };
+  if (!task.kind)
+    return {
+      reason: fail(
+        'kind_required: pass kind: decision when the human chooses, action when they do a step themselves, approval or wait otherwise.'
+      ),
+    };
+  if (task.kind === 'wait' || task.kind === 'approval')
+    return { reason: fail(NEO_HUMAN_TASK_REFUSALS[task.kind]) };
+  if (!task.action)
+    return {
+      reason: fail(
+        'action_required: pass action, a few words saying what the human does and where ("Choose A or B in chat", "Click Start work on card 3bce413f").'
+      ),
+    };
+  return task.waitCard && !task.workIds.includes(task.waitCard)
+    ? { reason: fail(`card_not_found: card ${task.waitCard} is not under this ask.`) }
     : { value };
 }
 
@@ -853,10 +883,14 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
           ? requireNeoHumanTask(
               caller,
               'needs_you',
-              decision.add.text,
-              input.action,
-              ask,
-              input.evidence
+              {
+                text: decision.add.text,
+                context: input.evidence,
+                kind: input.kind ?? 'decision',
+                action: input.action,
+                workIds: ask.workIds,
+              },
+              ask
             )
           : { value: ask },
       ['input', 'admission', 'caller', 'decision'],
@@ -876,7 +910,9 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
             neoAskSummary(input),
             input.evidence,
             decision.waitingItem,
-            decision.add && input.action ? { ...decision.add, action: input.action } : decision.add,
+            decision.add
+              ? { ...decision.add, action: input.action, kind: input.kind ?? 'decision' }
+              : decision.add,
             true
           ),
         };
@@ -941,10 +977,15 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
         requireNeoHumanTask(
           caller,
           input.state,
-          target.item.text,
-          input.action,
-          target,
-          input.evidence
+          {
+            text: target.item.text,
+            context: input.evidence,
+            kind: input.kind,
+            action: input.action,
+            waitCard: neoTickWaitCard(input),
+            workIds: target.ask.workIds,
+          },
+          target
         ),
       ['input', 'admission', 'caller'],
       'result:admission'
@@ -977,7 +1018,8 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
             ...(input.state === 'needs_you'
               ? {
                   action: input.action,
-                  waitCard: input.cite && 'card' in input.cite ? input.cite.card : undefined,
+                  waitCard: neoTickWaitCard(input),
+                  kind: input.kind,
                 }
               : {}),
           },
@@ -1096,7 +1138,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.tick',
       description:
-        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide (pass options, 2-4 short choices, when the answer is one of a few; the human taps one and neo.ask.answer sends it back to you), or back to pending. needs_you needs action, a few words the human sees saying what to do and where ('Choose A or B in chat'). needs_you and reported are refused for what the daemon reads itself (a PR, merge, CI, this machine's deploy, a card, standing rules) and for re-approving continued work, which is the ask's Approve. needs_you also takes cite: {said: the human's exact words from this ask's opening message or this turn}, {rule: a saved standing rule}, or {card: a card under this ask whose session is waiting on the human}; without one the daemon refuses, so decide yourself instead. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide (pass options, 2-4 short choices, when the answer is one of a few; the human taps one and neo.ask.answer sends it back to you), or back to pending. needs_you needs kind (decision when the human chooses, action when they do a step themselves; wait and approval are refused, since the daemon reads waits itself and re-approval is the ask's Approve) and action, a few words the human sees saying what to do and where ('Choose A or B in chat'). Pass waitCard, a card under this ask, when the step is on that card; the item clears when the card stops waiting. reported is refused for what the daemon reads itself (a PR, merge, CI, this machine's deploy, a card, standing rules). needs_you also takes cite: {said: the human's exact words from this ask's opening message or this turn}, {rule: a saved standing rule}, or {card: a card under this ask whose session is waiting on the human}; without one the daemon refuses, so decide yourself instead. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

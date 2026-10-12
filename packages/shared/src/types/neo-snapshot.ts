@@ -96,7 +96,10 @@ export interface NeoAskItem {
   decision?: true;
   action?: string;
   waitCard?: string;
+  kind?: NeoAskItemKind;
 }
+
+export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';
 
 export interface NeoAsk {
   id: string;
@@ -250,6 +253,7 @@ export interface NeoAskAnswer {
   label: 'Answer in chat';
   options: string[];
   action?: string;
+  kind?: NeoAskItemKind;
 }
 
 export interface NeoReceiptAskOrigin {
