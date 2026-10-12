@@ -221,34 +221,59 @@ describe('Neo existing trusted human work input', () => {
     });
   });
 
-  test('lets Neo start the work items of an ask the user approved, on later turns', async () => {
+  test('approving an ask starts its proposed cards; a card that cannot start stays proposed', async () => {
     storeInput();
-    const work = await propose(caller());
-    const opened = service.askRecords.forWork(work.id)!;
+    const first = await propose(caller());
+    const opened = service.askRecords.forWork(first.id)!;
+    const gone = 'fictional-gone-target';
+    db.createSession(createTestSession(gone));
+    const under = async (key: string, targetSessionId: string) => {
+      const result = await invoke(
+        'neo.work.propose',
+        {
+          requestKey: key,
+          concernId: null,
+          askId: opened.id,
+          title: `Fictional ${key}`,
+          instruction: 'Use only the existing fictional target.',
+          targetSessionId,
+          allowBusyTarget: true,
+        },
+        caller()
+      );
+      expect(result).toMatchObject({ value: { ok: true } });
+      return (result as { value: { work: NeoWork } }).value.work;
+    };
+    const second = await under('second', target);
+    const stuck = await under('stuck', gone);
+    db.updateSession(gone, { status: 'archived' });
+    expect(service.askRecords.get(opened.id)?.workIds).toEqual([first.id, second.id, stuck.id]);
+
     const later = caller(root, '00000000-0000-4000-8000-000000000009');
     expect(later.neoTurn?.human).toBe(false);
-    const refused = {
+    expect(await invoke('neo.ask.approve', { askId: opened.id }, later)).toMatchObject({
       value: {
         ok: false,
         reason:
           'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.',
       },
-    };
-    expect(await invoke('neo.work.start', { id: work.id }, later)).toMatchObject(refused);
-    expect(await invoke('neo.ask.approve', { askId: opened.id }, later)).toMatchObject(refused);
+    });
+    expect(service.repo.getWork(first.id)?.status).toBe('proposed');
 
     expect(await invoke('neo.ask.approve', { askId: opened.id })).toMatchObject({
       value: { ok: true, ask: { id: opened.id, approvedAt: expect.any(Number) } },
     });
-    const other = caller(holder, '00000000-0000-4000-8000-000000000010');
-    expect(await invoke('neo.work.start', { id: work.id }, other)).toMatchObject({
-      value: { ok: false },
-    });
-    const next = caller(root, '00000000-0000-4000-8000-000000000011');
-    expect(await invoke('neo.work.start', { id: work.id }, next)).toMatchObject({
-      value: { ok: true, work: { status: 'queued', sessionId: target } },
-    });
-    expect(jobs(work.id)).toHaveLength(1);
+    for (const work of [first, second]) {
+      expect(service.repo.getWork(work.id)).toMatchObject({ status: 'queued', sessionId: target });
+      expect(jobs(work.id)).toHaveLength(1);
+    }
+    expect(service.repo.getWork(stuck.id)?.status).toBe('proposed');
+    const snapshot = (await invoke('neo.snapshot', {})) as {
+      value: { askViews: { askId: string; humanActions: unknown[] }[] };
+    };
+    expect(
+      snapshot.value.askViews.find((view) => view.askId === opened.id)?.humanActions
+    ).toContainEqual({ kind: 'start', workId: stuck.id });
   });
 
   test.each(['system', 'internal_compaction', 'missing'])(

@@ -249,6 +249,7 @@ export function NeoAskCard({
   onAnswer,
   onAnswerInChat,
   onApprove,
+  onRetry,
   onOpen,
   onOpenSession,
   renderCard,
@@ -261,6 +262,7 @@ export function NeoAskCard({
   onAnswer?: (itemId: string, choice: string) => void;
   onAnswerInChat?: (question: string) => void;
   onApprove?: () => void;
+  onRetry?: (workId: string) => void;
   onOpen?: (workId: string) => void;
   onOpenSession?: (sessionId: string, title: string) => void;
   renderCard?: (scene: NeoScene) => ComponentChildren;
@@ -280,6 +282,12 @@ export function NeoAskCard({
   const itemActions = neoAskItemActions(view);
   const canApprove = view.humanActions.some((action) => action.kind === 'start');
   const approveAgain = view.humanActions.some((action) => action.kind === 'approve');
+  const retries = view.humanActions.flatMap((action) => {
+    if (action.kind !== 'retry') return [];
+    const scene = view.scenes.find((item) => item.ref.id === action.workId);
+    const title = scene?.receipt.kind === 'work' ? scene.receipt.title : (scene?.label ?? '');
+    return [{ workId: action.workId, title }];
+  });
   const approval = neoAskApproval(ask, view.humanActions);
   const target = neoAskOpenTarget(view, cards);
   const openName = `Open ${ask.title}`;
@@ -426,6 +434,20 @@ export function NeoAskCard({
         ) : (
           openControl
         )}
+        {onRetry &&
+          retries.map((retry) => (
+            <button
+              key={retry.workId}
+              type="button"
+              class={neoPrimaryClass}
+              disabled={disabled}
+              aria-label={`Retry ${retry.title}`}
+              title="This step failed before it started. Retry sends the same instruction again."
+              onClick={() => onRetry(retry.workId)}
+            >
+              Retry
+            </button>
+          ))}
         {approveAgain && onApprove && (
           <button
             type="button"
