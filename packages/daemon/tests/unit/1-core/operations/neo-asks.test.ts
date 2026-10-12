@@ -10,6 +10,7 @@ import {
   NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
   neoAskApprovalSpent,
+  type NeoSnapshot,
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
   projectNeoSnapshotAsks,
@@ -44,7 +45,11 @@ import {
   projectNeoAskCards,
 } from '../../../../src/lib/neo/driver-work.ts';
 import { isNeoAskStartApproved } from '../../../../src/lib/neo/work-origin.ts';
-import { createNeoOperations, neoAskScope } from '../../../../src/lib/neo/operations.ts';
+import {
+  createNeoOperations,
+  isNeoTurnAskReadable,
+  neoAskScope,
+} from '../../../../src/lib/neo/operations.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -112,6 +117,27 @@ describe('requireNeoHumanWaitCited', () => {
     expect(
       requireNeoHumanWaitCited({ said: 'skip the release' }, sources, true, 'v')
     ).toMatchObject({ reason: { reason: expect.stringContaining('cite_not_found') } });
+  });
+});
+
+describe('isNeoTurnAskReadable', () => {
+  test('root reads any turn ask, a holder only its own concern, anyone else none', () => {
+    expect(isNeoTurnAskReadable({ kind: 'neo', concernId: null }, { concernId: 'club' })).toBe(
+      true
+    );
+    expect(
+      isNeoTurnAskReadable({ kind: 'concern', concernId: 'club' }, { concernId: 'club' })
+    ).toBe(true);
+    expect(isNeoTurnAskReadable({ kind: 'concern', concernId: 'club' }, { concernId: null })).toBe(
+      false
+    );
+    expect(
+      isNeoTurnAskReadable({ kind: 'concern', concernId: 'club' }, { concernId: 'work' })
+    ).toBe(false);
+    expect(isNeoTurnAskReadable({ kind: 'worker', concernId: 'club' }, { concernId: 'club' })).toBe(
+      false
+    );
+    expect(isNeoTurnAskReadable(null, { concernId: null })).toBe(false);
   });
 });
 
@@ -200,6 +226,40 @@ describe('neo.ask operations', () => {
     } finally {
       adoptNeoFilePacks([]);
     }
+  });
+
+  test('a snapshot in an ask turn reads that ask, and answers unchanged when nothing moved', async () => {
+    db.getSDKMessageRepo().saveSDKMessage('root', {
+      type: 'user',
+      uuid: 'ask-1',
+      session_id: 'root',
+      parent_tool_use_id: null,
+      inputKind: 'human',
+      message: { role: 'user', content: 'Fix the login bug and get it merged.' },
+    } as unknown as SDKUserMessage);
+    const askId = await openAsk();
+    await invoke(
+      'neo.ask.open',
+      { ...opening, requestKey: 'other', title: 'Other' },
+      {
+        ...neo,
+        neoTurn: { ...neo.neoTurn!, messageId: 'ask-2' },
+      }
+    );
+    const scoped = (await invoke('neo.snapshot', {})).value as unknown as NeoSnapshot;
+    expect(scoped.scopedTo).toBe(askId);
+    expect(scoped.asks?.map((ask) => ask.id)).toEqual([askId]);
+    expect(
+      ((await invoke('neo.snapshot', { all: true })).value as unknown as NeoSnapshot).asks
+    ).toHaveLength(2);
+    expect(await invoke('neo.snapshot', { sinceRev: scoped.rev })).toMatchObject({
+      value: { ok: true, unchanged: true, rev: scoped.rev, scopedTo: askId },
+    });
+    await invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met', evidence: 'PR #12 merged.' });
+    const moved = (await invoke('neo.snapshot', { sinceRev: scoped.rev }))
+      .value as unknown as NeoSnapshot;
+    expect(moved.rev).not.toBe(scoped.rev);
+    expect(moved.asks).toHaveLength(1);
   });
 
   test('a work operation answers with its ask, so Neo needs no follow-up read', async () => {
