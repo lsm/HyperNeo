@@ -268,7 +268,7 @@ export interface NeoAskView {
 }
 
 export const NEO_ASK_OUTCOME_QUESTION = 'Did it work?';
-export const NEO_ASK_OUTCOME_OPTIONS = ['Yes', 'No'];
+export const NEO_ASK_OUTCOME_OPTIONS = ['Yes', 'Not yet'];
 
 export type NeoAskHumanAction =
   | { kind: 'start'; workId: string }

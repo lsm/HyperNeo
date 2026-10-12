@@ -5238,6 +5238,28 @@ describe('sessions.list reactive scope filter', () => {
     expect(diffs[1].rows[0].id).toBe('human-1');
   });
 
+  test('session rows leave out a network pause held prompt', () => {
+    reactiveDb.db.createSession(makeSession('paused-1'));
+    db.updateSession('paused-1', {
+      processingState: JSON.stringify({
+        status: 'rate_limit_cooldown',
+        retryAt: 5_000,
+        reason: 'network',
+        messageId: 'held-uuid',
+        heldPrompt: { uuid: 'held-uuid', content: 'ship it' },
+      }),
+    });
+
+    const rows = db.getDatabase().prepare(SESSIONS_LIST_SQL).all(0) as Array<{
+      id: string;
+      processingState: string;
+    }>;
+    const state = JSON.parse(rows.find((row) => row.id === 'paused-1')!.processingState);
+
+    expect(state).not.toHaveProperty('heldPrompt');
+    expect(state).toMatchObject({ status: 'rate_limit_cooldown', messageId: 'held-uuid' });
+  });
+
   test('space and worker session writes do not re-run the list', async () => {
     const spy = spyOnEvaluate();
     const diffs: QueryDiff<Record<string, unknown>>[] = [];

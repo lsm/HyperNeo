@@ -68,7 +68,9 @@ export function parseJsonValue(value: string | null | undefined): unknown {
 export function parseProcessingState(value: string | null | undefined): Record<string, unknown> {
   const parsed = parseJsonValue(value);
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    return parsed as Record<string, unknown>;
+    const state = { ...(parsed as Record<string, unknown>) };
+    delete state.heldPrompt;
+    return state;
   }
   return { status: value ?? 'idle' };
 }

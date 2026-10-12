@@ -83,6 +83,7 @@ const NEO_CORE_OPERATIONS = [
   'neo.snapshot',
   'neo.ask.open',
   'neo.ask.tick',
+  'neo.ask.question',
   'neo.ask.edit',
   'neo.ask.settle',
   'neo.ask.approve',
@@ -689,13 +690,13 @@ export class AgentSession
         return () => clearTimeout(timer);
       },
       isHeld: () => this.stateManager.getState().status === 'rate_limit_cooldown',
-      hold: (retryAt, messageId) =>
+      hold: (retryAt, prompt) =>
         this.stateManager.setRateLimitCooldown({
           retryCount: 0,
           maxRetries: 0,
           retryAt,
           reason: 'network',
-          ...(messageId !== undefined ? { messageId } : {}),
+          ...(prompt ? { messageId: prompt.uuid, heldPrompt: prompt } : {}),
         }),
       notice: async (text) => {
         await this.queryRunner.displayErrorAsAssistantMessage(text);
@@ -986,23 +987,17 @@ export class AgentSession
         maxRetries?: unknown;
         exhaustedCycles?: unknown;
         reason?: unknown;
+        heldPrompt?: { uuid?: unknown; content?: unknown };
       };
       if (parsed.status === 'rate_limit_cooldown' && parsed.reason === 'network') {
-        const stored =
-          typeof parsed.messageId === 'string'
-            ? this.db
-                .getSDKMessageRepo()
-                .getStoredPromptsByUuid(this.session.id, parsed.messageId)[0]
-            : undefined;
-        const content = (stored as { message?: { content?: unknown } } | undefined)?.message
-          ?.content as string | MessageContent[] | undefined;
         void this.networkPause
           .start(
             'network outage carried over a daemon restart',
-            stored && content !== undefined ? { uuid: parsed.messageId as string, content } : null,
+            this.persistedHeldPrompt(parsed),
             false
           )
           .catch(() => {
+            this.networkPause.stop();
             void this.stateManager.setIdle().catch(() => {});
           });
         return;
@@ -1042,8 +1037,29 @@ export class AgentSession
     }
   }
 
+  private persistedHeldPrompt(parsed: {
+    messageId?: unknown;
+    heldPrompt?: { uuid?: unknown; content?: unknown };
+  }): { uuid: string; content: string | MessageContent[] } | null {
+    const held = parsed.heldPrompt;
+    if (
+      typeof held?.uuid === 'string' &&
+      (typeof held.content === 'string' || Array.isArray(held.content))
+    )
+      return { uuid: held.uuid, content: held.content as string | MessageContent[] };
+    if (typeof parsed.messageId !== 'string') return null;
+    const stored = this.db
+      .getSDKMessageRepo()
+      .getStoredPromptsByUuid(this.session.id, parsed.messageId)[0] as
+      | { message?: { content?: unknown } }
+      | undefined;
+    const content = stored?.message?.content as string | MessageContent[] | undefined;
+    return content !== undefined ? { uuid: parsed.messageId, content } : null;
+  }
+
   private scheduleInitialPendingMessageReplay(): void {
     if (this.initialPendingReplayScheduled) return;
+    if (this.networkPause.isActive()) return;
     const restoredState = this.stateManager.getState();
     if (this.session.config.queryMode === 'manual') return;
     if (restoredState.status === 'waiting_for_input') return;
@@ -3227,6 +3243,7 @@ export class AgentSession
     if (decideReconcileAdmission({ processingStatus: status }).action === 'skip') {
       return 0;
     }
+    if (this.networkPause.isActive()) return 0;
 
     const reEnqueued = await withSessionLock(this.session.id, async () => {
       if (!this.stateManager.isIdleOwnerCurrent(owner)) return 0;

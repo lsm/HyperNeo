@@ -435,6 +435,7 @@ describe('Neo MVP', () => {
       'neo.ask.fold',
       'neo.ask.open',
       'neo.ask.tick',
+      'neo.ask.question',
       'neo.ask.answer',
       'neo.ask.approve',
       'neo.ask.edit',

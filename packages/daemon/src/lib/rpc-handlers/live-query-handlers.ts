@@ -1937,7 +1937,7 @@ SELECT
   s.sdk_session_id as sdkSessionId,
   s.acp_session_id as acpSessionId,
   s.available_commands as available_commands,
-  s.processing_state as processingState,
+  CASE WHEN json_valid(s.processing_state) THEN json_remove(s.processing_state, '$.heldPrompt') ELSE s.processing_state END as processingState,
   s.archived_at as archivedAt,
   s.type as type,
   s.session_context as session_context,
@@ -2012,7 +2012,7 @@ SELECT
   s.id as id,
   s.title as title,
   s.status as status,
-  s.processing_state as processingState,
+  CASE WHEN json_valid(s.processing_state) THEN json_remove(s.processing_state, '$.heldPrompt') ELSE s.processing_state END as processingState,
   -- Read the maintained counter directly instead of a correlated COUNT(*) over
   -- sdk_messages per session (previously ~92ms warm for dev-neokai, re-run every
   -- 150ms debounce). SDKMessageRepository keeps this in sync with the same

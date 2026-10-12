@@ -406,6 +406,12 @@ describe('projectNeoAskViews', () => {
             { ...item('d', 'needs_you'), options: ['A', 'B'], kind: 'decision' },
             { ...item('s', 'needs_you'), kind: 'action', question: 'Did the keyboard hide?' },
             { ...item('g', 'needs_you'), kind: 'action' },
+            {
+              ...item('o', 'needs_you'),
+              kind: 'action',
+              question: 'o',
+              options: ['Yes', 'Not yet'],
+            },
             { ...item('c', 'needs_you'), kind: 'action', waitCard: 'p' },
             item('m', 'reported'),
             { ...item('w', 'needs_you'), kind: 'wait' },
@@ -425,9 +431,16 @@ describe('projectNeoAskViews', () => {
         itemId: 's',
         step: 's',
         question: 'Did the keyboard hide?',
-        options: ['Yes', 'No'],
+        options: ['Yes', 'Not yet'],
       },
-      { kind: 'answer', itemId: 'g', step: 'g', question: 'Did it work?', options: ['Yes', 'No'] },
+      {
+        kind: 'answer',
+        itemId: 'g',
+        step: 'g',
+        question: 'Did it work?',
+        options: ['Yes', 'Not yet'],
+      },
+      { kind: 'answer', itemId: 'o', step: null, question: 'o', options: ['Yes', 'Not yet'] },
       { kind: 'confirm', itemId: 'm', step: 'm' },
     ]);
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);

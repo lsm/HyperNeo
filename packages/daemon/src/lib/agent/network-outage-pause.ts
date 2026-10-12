@@ -13,7 +13,7 @@ const NETWORK_UNREACHABLE_RE =
 const PROBE_HOST_RE =
   /\b(?:ENOTFOUND|EAI_AGAIN)\s+([a-z0-9.-]+)|\b(?:ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)\s+(\S+):\d+/i;
 
-type HeldPrompt = { uuid: string; content: string | MessageContent[] };
+export type HeldPrompt = { uuid: string; content: string | MessageContent[] };
 
 export function isNetworkUnreachableError(text: string): boolean {
   return NETWORK_UNREACHABLE_RE.test(text);
@@ -78,7 +78,7 @@ export interface NetworkOutageDeps {
   fallbackHost(): string | false | null;
   schedule(run: () => void, delayMs: number): () => void;
   isHeld(): boolean;
-  hold(retryAt: number, messageId: string | undefined): Promise<void>;
+  hold(retryAt: number, prompt: HeldPrompt | null): Promise<void>;
   notice(text: string): Promise<void>;
   popup(errorText: string): Promise<void>;
   resume(prompt: HeldPrompt | null): Promise<void>;
@@ -150,7 +150,7 @@ export class NetworkOutagePause {
 
   private async holdUntil(retryAt: number): Promise<void> {
     this.cancelProbe?.();
-    await this.deps.hold(retryAt, this.prompt?.uuid);
+    await this.deps.hold(retryAt, this.prompt);
     this.cancelProbe = this.deps.schedule(
       () =>
         void this.tick().catch((error: unknown) => {
