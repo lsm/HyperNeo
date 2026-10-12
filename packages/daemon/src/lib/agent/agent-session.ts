@@ -49,6 +49,12 @@ import { createNeoAskOriginResolver, isNeoFoldableNote } from '../neo/ask-origin
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { type NeoNoteFoldCandidate, planNeoNoteFold } from './neo-note-fold.ts';
+import {
+  createNeoNoteQueueDeps,
+  dispatchNeoNote,
+  holdNeoNotes,
+  releaseNeoNotes,
+} from '../neo/note-queue.ts';
 import { decideCoordinatorHandoff } from './coordinator-handoff.ts';
 import {
   type CallerScopeResolver,
@@ -451,6 +457,7 @@ export class AgentSession
   processExitedPromise: Promise<void> | null = null;
   private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
   private agentChildRepo: AgentChildProcessRepository | null = null;
+  private readonly neoNoteFolds = new Map<string, string[]>();
   private trackedAgentProcessExitPromises = new Map<number, Promise<void>>();
   private noPidAgentProcesses: NoPidTrackedProcess[] = [];
   private recentlyExitedAgentRootPids = new Map<number, number>();
@@ -2880,6 +2887,7 @@ export class AgentSession
             return { outcome: 'aborted' };
           }
 
+          if (!this.dispatchNeoNote(messageUuid)) return { outcome: 'aborted' };
           const fold = this.readNeoNoteFold(messageUuid, content);
           const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
           if (
@@ -2903,6 +2911,8 @@ export class AgentSession
             });
           }
 
+          if (fold.uuids.length > 1) this.neoNoteFolds.set(messageUuid, fold.uuids);
+          holdNeoNotes(this.session.id, fold.uuids);
           observer?.reportStage('query_ready', { generation: this.getQueryGeneration() });
           return { outcome: 'driving', acknowledgment, consumedUuids: fold.uuids };
         },
@@ -2991,8 +3001,8 @@ export class AgentSession
         deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'ack_timeout');
         if (this.messageQueue.hasYielded?.(messageUuid)) {
           await withSessionLock(this.session.id, async () => {
-            this.markDeliveryConsumed([messageUuid]);
-            await this.publishToolResultConsumed(this.session.id, [messageUuid]);
+            this.markDeliveryConsumed(admission.consumedUuids);
+            await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
             signalDeliveryConsumed(this.session.id, messageUuid);
           });
         } else {
@@ -3001,6 +3011,8 @@ export class AgentSession
       }
       if (ackTimedOut || !this.isDeliveryConsumed(messageUuid)) throw error;
     } finally {
+      this.neoNoteFolds.delete(messageUuid);
+      releaseNeoNotes(this.session.id, admission.consumedUuids);
       waitSettled = true;
       clearTimeout(timeoutId);
       if (failedPoll !== undefined) clearInterval(failedPoll);
@@ -3119,7 +3131,19 @@ export class AgentSession
   }
 
   markHolderInputConsumed(messageUuid: string): void {
-    this.markDeliveryConsumed([messageUuid]);
+    const fold = this.neoNoteFolds.get(messageUuid) ?? [messageUuid];
+    this.neoNoteFolds.delete(messageUuid);
+    this.markDeliveryConsumed(fold);
+  }
+
+  private dispatchNeoNote(messageUuid: string): boolean {
+    if (!neoCoordinatorBinding(this.db, this.session.id)) return true;
+    const deps = createNeoNoteQueueDeps(this.db, (sessionId, messageIds) => {
+      void this.internalEventBus
+        .publish('messages.statusChanged', { sessionId, messageIds, status: 'failed' })
+        .catch(() => {});
+    });
+    return dispatchNeoNote(deps, this.session.id, messageUuid).dispatch;
   }
 
   private isDeliveryConsumed(messageUuid: string): boolean {
