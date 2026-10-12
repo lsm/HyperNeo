@@ -127,6 +127,7 @@ Removed:
   - approve an ask;
   - answer a question;
   - cancel a concern.
+- Human authority is the live human message, whichever Neo session receives it: in that turn root or a topic avatar may also continue or retry a card another Neo session proposed.
 - A refusal never tells Neo to ask the human for something a live human message already covers.
 
 ### 7. Notifications
@@ -194,6 +195,7 @@ Each slice is one PR, behaviour-tested, and deployable on its own. The order fol
 | 5 | Scoped snapshot with revisions, views returned from mutations, typed core ops, `work.find` fixes, one session ref | §8 (tools) | none |
 | 6 | Quiet routine wakes, one-ask writes, state-only notes | §8 (wakes) | 0b, 4 |
 | 7 | Neo-managed close, follow and fold; remove Track; live-human check for human actions; `talk` via `neo.work.refused`, cleared on the session's next human input | §6, §4 (`talk`) | 0a, 2 |
+| 7b | Continue and retry another session's card in a live human turn | §6 | none |
 | 8 | The daemon subscribes to every card PR's events and delivers them to the working session; the coding pack teaches how to judge readiness (standing rule, then repo history, then ask once and save); retire `ship.sh` | §2, §10 | 0b |
 | 9 | Topic sessions start fresh from a snapshot | §10 | 6 |
 
