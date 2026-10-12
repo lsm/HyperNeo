@@ -2140,6 +2140,34 @@ export class SDKMessageRepository {
     return row?.status ?? null;
   }
 
+  latestTurnResults(
+    sessionId: string,
+    limit: number
+  ): { uuid: string | null; subtype: string | null; timestamp: string }[] {
+    return this.db
+      .prepare(
+        `SELECT sdk_uuid AS uuid, message_subtype AS subtype, timestamp FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'result'
+           ORDER BY timestamp DESC LIMIT ?`
+      )
+      .all(sessionId, limit) as {
+      uuid: string | null;
+      subtype: string | null;
+      timestamp: string;
+    }[];
+  }
+
+  hasUserUuidPrefixSince(sessionId: string, prefix: string, since: string): boolean {
+    return !!this.db
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+           WHERE session_id = ? AND timestamp > ? AND message_type = 'user'
+             AND substr(sdk_uuid, 1, ?) = ?
+           LIMIT 1`
+      )
+      .get(sessionId, since, prefix.length, prefix);
+  }
+
   findMessageIdByUuid(sessionId: string, uuid: string): string | null {
     const row = this.db
       .prepare(

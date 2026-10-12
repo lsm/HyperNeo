@@ -114,6 +114,29 @@ export class NeoAskRepository {
     return link ? this.get(link.askId) : null;
   }
 
+  liveForOrigin(originSessionId: string, originMessageId: string): NeoAsk | null {
+    const row = this.db
+      .prepare(
+        `SELECT ${askColumns} FROM neo_asks
+          WHERE origin_session_id = ? AND origin_message_id = ?
+            AND status NOT IN ('achieved', 'abandoned')
+          ORDER BY created_at LIMIT 1`
+      )
+      .get(originSessionId, originMessageId) as NeoAskRow | null;
+    return row ? this.withWork([row])[0] : null;
+  }
+
+  openedBy(originSessionId: string, since: number, until: number): NeoAsk[] {
+    const rows = this.db
+      .prepare(
+        `SELECT ${askColumns} FROM neo_asks
+          WHERE origin_session_id = ? AND created_at > ? AND created_at <= ?
+          ORDER BY created_at, id`
+      )
+      .all(originSessionId, since, until) as NeoAskRow[];
+    return this.withWork(rows);
+  }
+
   listLive(): NeoAsk[] {
     const rows = this.db
       .prepare(
@@ -181,6 +204,44 @@ export class NeoAskRepository {
         .run(at, askId, JSON.stringify(edit.remove));
       this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
     })();
+    this.notify();
+    return true;
+  }
+
+  fold(
+    source: Pick<NeoAsk, 'id' | 'status'>,
+    target: Pick<NeoAsk, 'id' | 'status'>,
+    moves: readonly { from: string; id: string; position: number }[],
+    outcome: string,
+    at: number
+  ): boolean {
+    const folded = this.db.transaction(() => {
+      const closed = this.db
+        .prepare(`UPDATE neo_asks SET status = 'abandoned', outcome = ?, evidence = ?,
+          settled_at = ?, updated_at = ?, waiting_item = NULL WHERE id = ? AND status = ?`)
+        .run(outcome, outcome, at, at, source.id, source.status).changes;
+      const kept = this.db
+        .prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ? AND status = ?')
+        .run(at, target.id, target.status).changes;
+      if (!closed || !kept) throw new Error('neo-ask-fold-lost');
+      const copy = this.db.prepare(`INSERT INTO neo_ask_items
+        (ask_id, id, position, text, state, evidence, check_kind, met_by, removed, added_at,
+         updated_at, options, decision, action, wait_card, kind)
+        SELECT ?, ?, ?, text, state, evidence, check_kind, met_by, 0, ?, ?, options, decision,
+               action, wait_card, kind
+          FROM neo_ask_items WHERE ask_id = ? AND id = ?`);
+      for (const move of moves)
+        copy.run(target.id, move.id, move.position, at, at, source.id, move.from);
+      this.db
+        .prepare('UPDATE neo_ask_work SET ask_id = ? WHERE ask_id = ?')
+        .run(target.id, source.id);
+    });
+    try {
+      folded();
+    } catch (error) {
+      if (error instanceof Error && error.message === 'neo-ask-fold-lost') return false;
+      throw error;
+    }
     this.notify();
     return true;
   }

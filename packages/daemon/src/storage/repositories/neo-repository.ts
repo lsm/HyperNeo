@@ -170,6 +170,16 @@ export class NeoRepository {
     })[];
   }
 
+  proposedBy(originSessionId: string, since: number, until: number): NeoWork[] {
+    return this.db
+      .prepare(
+        `SELECT ${workColumns} FROM neo_work
+          WHERE origin_session_id = ? AND created_at > ? AND created_at <= ?
+          ORDER BY created_at, id`
+      )
+      .all(originSessionId, since, until) as NeoWork[];
+  }
+
   listWork(concernId?: string | null): NeoWork[] {
     const condition = concernId === undefined ? '' : 'WHERE concern_id IS ?';
     return this.db
