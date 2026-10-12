@@ -50,7 +50,6 @@ Avatars form a tree: each avatar has at most one parent, with no fixed depth. To
 - **Routing walks the tree one level at a time,** so depth costs nothing per decision.
 - **The UI shows the path** (HyperNeo › Neo) and lets the human move an avatar to another parent.
 
-
 - **A parent groups projects that share context.** Travel holds Japan and Spain when they share a passport, loyalty accounts or companions. Business travel is a different parent: the budget, the approvals and who pays all differ. Family holds Mom's school forms once more family errands come.
 - **A section splits a large project.** For code, sections follow epics: HyperNeo → Neo (#6002), daemon, web. A section is an avatar with a parent; it shares the parent's workspaces.
 
