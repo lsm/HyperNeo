@@ -20,105 +20,7 @@ export function admitNeoDraft<T extends NeoDraft>(
   return { value: submission };
 }
 
-type NeoThumbnail = {
-  index: number;
-  mediaType: 'image/jpeg';
-  data: string;
-  width?: number;
-  height?: number;
-};
-const THUMBNAIL_EDGE = 256;
-const THUMBNAIL_SIZE_LIMIT = 100_000;
-const THUMBNAIL_LIMIT = 32 * 1024;
-const THUMBNAIL_QUALITIES = [0.7, 0.5, 0.3];
-
-function base64Bytes(data: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
-}
-
-function bytesBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let start = 0; start < bytes.length; start += 0x8000)
-    binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
-  return btoa(binary);
-}
-
-function thumbnailSurface(width: number, height: number) {
-  if (typeof OffscreenCanvas === 'function') {
-    const canvas = new OffscreenCanvas(width, height);
-    return {
-      context: canvas.getContext('2d'),
-      encode: async (quality: number) => {
-        const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
-        return blob.type === 'image/jpeg'
-          ? bytesBase64(new Uint8Array(await blob.arrayBuffer()))
-          : null;
-      },
-    };
-  }
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  return {
-    context: canvas.getContext('2d'),
-    encode: async (quality: number) => {
-      const url = canvas.toDataURL('image/jpeg', quality);
-      const prefix = 'data:image/jpeg;base64,';
-      return url.startsWith(prefix) ? url.slice(prefix.length) : null;
-    },
-  };
-}
-
-async function neoPhotoThumbnail(image: MessageImage): Promise<Omit<NeoThumbnail, 'index'> | null> {
-  if (typeof createImageBitmap !== 'function') return null;
-  const bitmap = await createImageBitmap(
-    new Blob([base64Bytes(image.data)], { type: image.media_type })
-  );
-  try {
-    const scale = Math.min(1, THUMBNAIL_EDGE / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const surface = thumbnailSurface(width, height);
-    if (!surface.context) return null;
-    surface.context.fillStyle = 'white';
-    surface.context.fillRect(0, 0, width, height);
-    surface.context.drawImage(bitmap, 0, 0, width, height);
-    for (const quality of THUMBNAIL_QUALITIES) {
-      const data = await surface.encode(quality);
-      if (data && data.length <= THUMBNAIL_LIMIT)
-        return {
-          mediaType: 'image/jpeg',
-          data,
-          ...(Math.max(bitmap.width, bitmap.height) <= THUMBNAIL_SIZE_LIMIT
-            ? { width: bitmap.width, height: bitmap.height }
-            : {}),
-        };
-    }
-    return null;
-  } finally {
-    bitmap.close();
-  }
-}
-
-const thumbnailsMade = new WeakMap<Submission, Promise<NeoThumbnail[]>>();
-
-export function neoDraftThumbnails(submission: Submission): Promise<NeoThumbnail[]> {
-  const made = thumbnailsMade.get(submission);
-  if (made) return made;
-  const offset = submission.text.trim() ? 1 : 0;
-  const making = Promise.all(
-    (submission.images ?? []).map((image, index) =>
-      neoPhotoThumbnail(image).then(
-        (thumbnail): NeoThumbnail[] => (thumbnail ? [{ index: offset + index, ...thumbnail }] : []),
-        (): NeoThumbnail[] => []
-      )
-    )
-  ).then((thumbnails) => thumbnails.flat());
-  thumbnailsMade.set(submission, making);
-  return making;
-}
-
-export function neoDraftPayload(submission: Submission, thumbnails: readonly NeoThumbnail[] = []) {
+export function neoDraftPayload(submission: Submission) {
   const { sessionId, requestId, text, images } = submission;
   return {
     sessionId,
@@ -132,7 +34,6 @@ export function neoDraftPayload(submission: Submission, thumbnails: readonly Neo
           })),
         ]
       : text,
-    ...(images?.length && thumbnails.length ? { thumbnails: [...thumbnails] } : {}),
   };
 }
 
@@ -169,8 +70,7 @@ export function requireNeoReceipt(
 export const submitNeoDraft = (superpipe({})('neo-submit-draft') as PipelineAPI)
   .input(['submission', 'getHub'])
   .pipe(admitNeoDraft, 'submission', 'result:receipt')
-  .pipe(neoDraftThumbnails, 'receipt', 'thumbnails')
-  .pipe(neoDraftPayload, ['receipt', 'thumbnails'], 'payload')
+  .pipe(neoDraftPayload, 'receipt', 'payload')
   .pipe((getHub: () => Promise<MessageHub>) => getHub(), 'getHub', 'hub')
   .pipe(
     (payload: ReturnType<typeof neoDraftPayload>, hub: MessageHub) =>
