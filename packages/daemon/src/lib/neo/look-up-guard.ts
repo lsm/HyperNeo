@@ -277,7 +277,7 @@ function shellWords(segment: string): string[] {
 function argumentPaths(word: string): string[] {
   const flagValue = word.includes('=')
     ? word.slice(word.indexOf('=') + 1)
-    : /^-[A-Za-z][@<]/.test(word)
+    : /^-[A-Za-z][@<.~/]/.test(word)
       ? word.slice(2)
       : '';
   const value = word.startsWith('-')
@@ -287,7 +287,7 @@ function argumentPaths(word: string): string[] {
     : word;
   return value
     .split('=')
-    .map((part) => part.replace(/^[@<]+/, ''))
+    .map((part) => part.replace(/^(?:\d?>>?|&>>?|[@<])+/, ''))
     .filter(Boolean);
 }
 
@@ -893,6 +893,9 @@ function analyzeBash(
       continue;
     }
     if (words[0] !== 'ssh') found.secret ??= secretArgument(words.slice(1), dir, scope, facts);
+    found.secret ??= secretArgument(redirectTargets(segment), dir, scope, facts);
+    if (/<</.test(segment) && (SHELLS.has(words[0]) || words[0] === 'ssh'))
+      found.unchecked ??= 'feeding a heredoc to a shell';
     found.sharedState ??= neoSharedStateAction(words);
     const code = inlineCode(words) ?? scriptFile(words, dir, scope, facts);
     if (code) {
@@ -900,6 +903,14 @@ function analyzeBash(
       if (INLINE_SHARED.test(code)) found.sharedState ??= 'code that pushes, merges or restarts';
     }
     const remote = depth < 3 ? sshRemote(words) : null;
+    if (words[0] === 'ssh' && !remote) found.unchecked ??= 'an ssh session without a command';
+    const remoteShell = remote ? commandWords(shellWords(remote.command)) : [];
+    if (
+      SHELLS.has(remoteShell[0]) &&
+      shellCommandFlag(remoteShell) < 0 &&
+      !remoteShell.slice(1).some((word) => !word.startsWith('-'))
+    )
+      found.unchecked ??= 'piping text into a remote shell';
     if (remote) {
       const local = LOCAL_HOSTS.has(remote.host);
       const inner = analyzeBash(
