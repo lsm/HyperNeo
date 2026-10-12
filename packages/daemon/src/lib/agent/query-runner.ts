@@ -51,6 +51,7 @@ import {
 } from './query-retry-routing.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
+import { isNetworkUnreachableError } from './network-outage-pause.ts';
 import {
   DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS,
   getSdkStartInactivityBackstopMs,
@@ -386,6 +387,11 @@ export interface QueryRunnerContext {
   ) => Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
+  onNetworkOutage?(
+    errorText: string,
+    prompt: { uuid: string; content: string | MessageContent[] } | null,
+    queryGeneration?: number
+  ): Promise<boolean>;
 }
 
 export class QueryRunner {
@@ -1419,6 +1425,7 @@ export class QueryRunner {
             }
           : null,
         apiValidationText: this.parseApiValidationError(error)?.text ?? null,
+        isNetworkUnreachable: isNetworkUnreachableError(errorMessage),
       };
       const retryEnv: QueryRetryEnvironment = {
         attempt: retryAttempt,
@@ -1444,6 +1451,16 @@ export class QueryRunner {
         logger.info(
           'SDK process exit during rate-limit recovery: attributing the CLI process exit ' +
             'to the in-flight recovery restart; no error report.'
+        );
+        return;
+      }
+
+      if (routeDecision.route.action === 'network_pause') {
+        logger.warn(`Model provider unreachable; pausing the turn: ${errorMessage}`);
+        await this.ctx.onNetworkOutage?.(
+          errorMessage,
+          this._lastConsumedUserMessage,
+          queryGeneration
         );
         return;
       }

@@ -35,6 +35,11 @@ import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.
 import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
 import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
+import {
+  NETWORK_OUTAGE_NOTICE,
+  NetworkOutagePause,
+  probeNetworkHost,
+} from './network-outage-pause.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
@@ -362,6 +367,7 @@ export class AgentSession
   private sessionConfigHandler: SessionConfigHandler;
 
   private rateLimitWatchdog: RateLimitWatchdog;
+  private networkPause: NetworkOutagePause;
 
   queryObject: QueryLike | null = null;
   private queryPromiseValue: Promise<void> | null = null;
@@ -633,6 +639,43 @@ export class AgentSession
         );
       }
     );
+
+    this.networkPause = new NetworkOutagePause({
+      now: () => Date.now(),
+      probe: probeNetworkHost,
+      schedule: (run, delayMs) => {
+        const timer = setTimeout(run, delayMs);
+        return () => clearTimeout(timer);
+      },
+      isHeld: () => this.stateManager.getState().status === 'rate_limit_cooldown',
+      hold: (retryAt, messageId) =>
+        this.stateManager.setRateLimitCooldown({
+          retryCount: 0,
+          maxRetries: 0,
+          retryAt,
+          ...(messageId !== undefined ? { messageId } : {}),
+        }),
+      notice: async (text) => {
+        await this.queryRunner.displayErrorAsAssistantMessage(text);
+      },
+      popup: async (errorText) => {
+        await this.errorManager.handleError(
+          this.session.id,
+          new Error(errorText),
+          ErrorCategory.CONNECTION,
+          NETWORK_OUTAGE_NOTICE,
+          this.stateManager.getState()
+        );
+      },
+      resume: async (prompt) => {
+        await this.stateManager.setIdle();
+        if (prompt)
+          await this.lifecycleManager.startQueryAndEnqueue(prompt.uuid, prompt.content, undefined, {
+            prepend: true,
+          });
+      },
+      log: (line) => this.logger.info(line),
+    });
 
     this.eventSubscriptionSetup = new EventSubscriptionSetup(this);
 
@@ -1009,6 +1052,7 @@ export class AgentSession
   ): Promise<'started' | 'aborted'> {
     if (episodeGeneration === undefined) {
       this.rateLimitWatchdog.cancel();
+      await this.resumeNetworkPauseFor(messageId);
     } else {
       this.rateLimitWatchdog.clearPendingCooldown();
     }
@@ -1018,6 +1062,17 @@ export class AgentSession
       episodeGeneration,
       options
     );
+  }
+
+  private async resumeNetworkPauseFor(messageId: string): Promise<void> {
+    if (!this.networkPause.isActive()) return;
+    const held = this.networkPause.takePrompt();
+    if (this.stateManager.getState().status === 'rate_limit_cooldown')
+      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+    if (held && held.uuid !== messageId)
+      await this.lifecycleManager.startQueryAndEnqueue(held.uuid, held.content, undefined, {
+        prepend: true,
+      });
   }
 
   removeQueuedMessage(messageId: string): boolean {
@@ -1060,6 +1115,7 @@ export class AgentSession
     this.interruptRequests += 1;
     try {
       this.rateLimitWatchdog.cancel();
+      this.networkPause.stop();
       this.clearPendingResumeAfterCompaction();
       this.messageHandler.cancelSuppressedResultWait();
       const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
@@ -1109,6 +1165,7 @@ export class AgentSession
     hardReset?: boolean;
   }): Promise<{ success: boolean; error?: string }> {
     this.rateLimitWatchdog.cancel();
+    this.networkPause.stop();
 
     const restartQuery = options?.restartQuery ?? true;
     if (options?.hardReset && this.runtimeOptions.hardReset) {
@@ -1728,6 +1785,7 @@ export class AgentSession
 
   async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    this.networkPause.stop();
     await this.lifecycleManager.restart(options);
   }
 
@@ -2589,6 +2647,7 @@ export class AgentSession
     }
     this.errorManager.markApiSuccess();
     if (isSDKResultSuccess(message) && message.is_error !== true) {
+      this.networkPause.succeeded();
       const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
       if (wasPending && this.stateManager.getState().status === 'rate_limit_cooldown') {
@@ -2621,6 +2680,29 @@ export class AgentSession
       errorText,
       this.queryRunner.resolveRetryUserMessage(userMessageUuid),
       hint,
+      queryGeneration
+    );
+  }
+
+  async onNetworkOutage(
+    errorText: string,
+    prompt: { uuid: string; content: string | MessageContent[] } | null,
+    queryGeneration?: number
+  ): Promise<boolean> {
+    if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration)
+      return false;
+    await this.networkPause.start(errorText, prompt);
+    return true;
+  }
+
+  async onResultNetworkOutage(
+    errorText: string,
+    userMessageUuid?: string,
+    queryGeneration?: number
+  ): Promise<boolean> {
+    return this.onNetworkOutage(
+      errorText,
+      this.queryRunner.resolveRetryUserMessage(userMessageUuid),
       queryGeneration
     );
   }
@@ -3362,6 +3444,7 @@ export class AgentSession
     }
     this.deliveryErrorSubs.length = 0;
     this.rateLimitWatchdog.destroy();
+    this.networkPause.stop();
     await this.lifecycleManager.cleanup();
   }
 }
