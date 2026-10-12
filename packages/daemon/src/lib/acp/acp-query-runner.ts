@@ -1202,6 +1202,29 @@ export class AcpQueryRunner {
     }
   }
 
+  private reopenConsumedDelivery(messageUuid: string): boolean {
+    const sessionId = this.ctx.session.id;
+    const deliveryRepo = this.ctx.db.getSDKMessageRepo?.();
+    const batchMembers =
+      this.ctx.db.getJobQueueRepo?.()?.getActiveDeliveryBatchUuids?.(sessionId, messageUuid) ?? [];
+    const uuidsToRestore = [messageUuid, ...batchMembers.filter((u) => u !== messageUuid)];
+    const restoredIds: string[] = [];
+    for (const uuid of uuidsToRestore) {
+      const restoredId =
+        deliveryRepo?.reopenDeliveryByUuid(sessionId, uuid) ??
+        deliveryRepo?.markDeliveryRetryableByUuid(sessionId, uuid) ??
+        null;
+      if (restoredId) restoredIds.push(restoredId);
+    }
+    if (restoredIds.length === 0) return false;
+    this.ctx.internalEventBus.publishAsync('messages.statusChanged', {
+      sessionId,
+      messageIds: restoredIds,
+      status: 'enqueued',
+    });
+    return true;
+  }
+
   private async handleRunError(
     error: unknown,
     queryGeneration: number,
@@ -1246,13 +1269,9 @@ export class AcpQueryRunner {
       !(this.ctx.isLimitRecoveryPending?.() ?? false)
     ) {
       logger.warn(`Model provider unreachable; pausing the ACP turn: ${errorMessage}`);
-      if (
-        await this.ctx.onNetworkOutage?.(
-          errorMessage,
-          this._lastConsumedUserMessage,
-          queryGeneration
-        )
-      ) {
+      const heldPrompt = this._lastConsumedUserMessage;
+      if (await this.ctx.onNetworkOutage?.(errorMessage, heldPrompt, queryGeneration)) {
+        if (heldPrompt) this.reopenConsumedDelivery(heldPrompt.uuid);
         recoveryState.rateLimitCooldownScheduled = true;
         return;
       }
@@ -1282,26 +1301,7 @@ export class AcpQueryRunner {
 
       const lastMsg = this._lastConsumedUserMessage;
       if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
-        const deliveryRepo = this.ctx.db.getSDKMessageRepo?.();
-        const batchMembers =
-          this.ctx.db
-            .getJobQueueRepo?.()
-            ?.getActiveDeliveryBatchUuids?.(session.id, lastMsg.uuid) ?? [];
-        const uuidsToRestore = [lastMsg.uuid, ...batchMembers.filter((u) => u !== lastMsg.uuid)];
-        const restoredIds: string[] = [];
-        for (const uuid of uuidsToRestore) {
-          const restoredId =
-            deliveryRepo?.reopenDeliveryByUuid(session.id, uuid) ??
-            deliveryRepo?.markDeliveryRetryableByUuid(session.id, uuid) ??
-            null;
-          if (restoredId) restoredIds.push(restoredId);
-        }
-        if (restoredIds.length > 0) {
-          this.ctx.internalEventBus.publishAsync('messages.statusChanged', {
-            sessionId: session.id,
-            messageIds: restoredIds,
-            status: 'enqueued',
-          });
+        if (this.reopenConsumedDelivery(lastMsg.uuid)) {
           messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
           this._lastConsumedUserMessage = null;
         } else if (messageQueue.requeueYielded(lastMsg.uuid)) {

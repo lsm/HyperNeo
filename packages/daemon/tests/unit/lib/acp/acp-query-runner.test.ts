@@ -2671,10 +2671,14 @@ describe('AcpQueryRunner', () => {
         callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
       ) {
         callbacks?.onSubmitted?.();
-        callbacks?.onAccepted?.();
         throw new Error('getaddrinfo ENOTFOUND chatgpt.com');
       });
       const { ctx, messageQueue } = createRunnerFixture({ client });
+      const reopenDeliveryByUuid = mock((_sessionId: string, uuid: string) => `row-${uuid}`);
+      (ctx.db as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        reopenDeliveryByUuid,
+        markDeliveryRetryableByUuid: mock(() => null),
+      });
       const onNetworkOutage = mock(async () => true);
       ctx.onNetworkOutage = onNetworkOutage;
       const createClient = mock(() => client as unknown as AcpClient);
@@ -2690,6 +2694,12 @@ describe('AcpQueryRunner', () => {
         expect.any(Number)
       );
       expect(createClient).toHaveBeenCalledTimes(1);
+      expect(
+        (ctx.messageHandler as unknown as { markACPDeliveryFailed: ReturnType<typeof mock> })
+          .markACPDeliveryFailed
+      ).toHaveBeenCalledWith('user-message-1');
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith('session-1', 'user-message-1');
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
       expect(messageQueue.clear).not.toHaveBeenCalled();
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
       expect(ctx.stateManager.beginTerminalIdle).not.toHaveBeenCalled();
