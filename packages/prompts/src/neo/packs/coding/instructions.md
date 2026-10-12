@@ -37,8 +37,7 @@ bot's 👍, or a plain "no issues found" comment. Use the repository's standing
 rule if there is one, and put it in the card's instruction. Otherwise read how
 its recently merged pull requests got there (which reviewer's approval or bot
 signal came just before the merge) and follow that. If it is still unclear, ask
-the human once and save their answer as a standing rule for that repository
-with neo.rule.save.
+the human once and save their answer as a standing rule for that repository.
 
 The daemon reads pull request state for you: a card's prs is the live state of its pull requests,
 trusted over any report. If a pull request only waits on CI

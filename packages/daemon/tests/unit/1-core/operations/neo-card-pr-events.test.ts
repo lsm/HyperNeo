@@ -20,6 +20,7 @@ import {
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const PR = 'https://github.com/lsm/HyperNeo/pull/7';
@@ -245,5 +246,45 @@ describe('Neo card pull request events', () => {
       { workId: 'w-live', topic: 'github/lsm/hyperneo/pull_request/7.*' },
     ]);
     expect(service.followedTopics()).toEqual([]);
+  });
+
+  test('a pull request that is open again is followed again', async () => {
+    const work = desktopCard();
+    attach(work);
+    await event('closed', 'Closed.', { state: 'closed' });
+    expect(subscriptions()).toEqual([]);
+
+    service.followCardTopics(work.id);
+
+    expect(subscriptions()).toEqual([
+      { workId: work.id, topic: 'github/lsm/hyperneo/pull_request/7.*' },
+    ]);
+    expect(watched).toHaveLength(2);
+  });
+
+  test('a session that already subscribed to the pull request itself is not sent it twice', async () => {
+    const proposed = service.repo.proposeWork({
+      id: 'w-legacy',
+      requestKey: 'root:legacy',
+      concernId: null,
+      originSessionId: 'root',
+      originMessageId: 'm3',
+      title: 'Fix it',
+      instruction: 'Fix it.',
+      targetSessionId: 'native',
+    });
+    attach(
+      service.repo.transitionWork(proposed.id, proposed, { status: 'queued', sessionId: 'native' })!
+    );
+    new SessionEventSubscriptionRepository(db.getDatabase()).upsert({
+      sessionId: 'native',
+      topic: 'github/lsm/HyperNeo/pull_request/7.*',
+    });
+
+    await event('review_submitted', 'Review: APPROVED', { state: 'approved' });
+
+    expect(
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'native' })
+    ).toEqual([]);
   });
 });

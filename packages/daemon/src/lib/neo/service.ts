@@ -57,6 +57,8 @@ import {
   planNeoCardTopicsEnded,
 } from './card-events.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
+import { topicMatchesPattern } from '../external-events/topic-trie.ts';
+import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import type { ExternalEvent } from '../external-events/types.ts';
 import type { NeoCardEventSubscription, NeoPackEventRoute } from './packs/types.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
@@ -366,6 +368,7 @@ export class NeoService {
   readonly workPrs: NeoWorkPrRepository;
   readonly cardEvents: NeoCardEventSubscriptionRepository;
   private readonly sessionEvents: SessionExternalEventStore;
+  private readonly sessionSubscriptions: SessionEventSubscriptionRepository;
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
   readonly workPrClaims: NeoWorkPrClaimRepository;
   readonly workChecks: NeoWorkCheckRepository;
@@ -638,6 +641,7 @@ export class NeoService {
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
     this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
+    this.sessionSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     this.cardPrRelays = new NeoCardPrRelayRepository(db.getDatabase());
     this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
@@ -2037,7 +2041,8 @@ export class NeoService {
           await this.sendToCard(
             workId,
             `neo-card-event:${workId}:${event.id}`,
-            sessionEventText(event)
+            sessionEventText(event),
+            event.topic
           ).catch((error) => this.log.warn('Card event not delivered', error));
       },
       ['event', 'route']
@@ -2047,12 +2052,15 @@ export class NeoService {
     }, 'route')
     .endAsync('route') as (payload: ExternalEventPublishedPayload) => Promise<unknown>;
 
-  async sendToCard(workId: string, key: string, text: string): Promise<void> {
+  async sendToCard(workId: string, key: string, text: string, topic?: string): Promise<void> {
     const work = this.repo.getWork(workId);
     const send = planNeoCardSend({ work, ref: this.driverTargets.readRef(workId) });
     if (!work || send.via === 'none') return;
-    if (send.via === 'session')
+    if (send.via === 'session') {
+      const own = this.sessionSubscriptions.listBySession(send.sessionId);
+      if (topic && own.some((row) => topicMatchesPattern(row.topic, topic))) return;
       return this.deliver(send.sessionId, key, text, work.originSessionId);
+    }
     await this.invokeAsCard(work, 'work.send', { ref: send.ref, message: text });
   }
 

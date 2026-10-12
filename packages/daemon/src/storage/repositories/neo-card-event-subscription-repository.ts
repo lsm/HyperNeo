@@ -9,7 +9,8 @@ export class NeoCardEventSubscriptionRepository {
       this.db
         .prepare(
           `INSERT INTO neo_card_event_subscriptions(work_id, topic, created_at) VALUES (?, ?, ?)
-           ON CONFLICT(work_id, topic) DO NOTHING`
+           ON CONFLICT(work_id, topic) DO UPDATE SET ended_at = NULL, created_at = excluded.created_at
+           WHERE ended_at IS NOT NULL`
         )
         .run(workId, topic, at).changes > 0
     );
