@@ -1982,7 +1982,7 @@ export class NeoService {
 
   followCardTopics(workId: string): void {
     const work = this.repo.getWork(workId);
-    if (!work) return;
+    if (!work || !isNeoCardLive(work)) return;
     const topics = this.packs().flatMap((pack) => pack.externalTopics?.(work) ?? []);
     if (work.sessionId)
       for (const row of planNeoSessionTopicsHandedOver(

@@ -289,4 +289,29 @@ describe('Neo card pull request events', () => {
       db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'native' })
     ).toHaveLength(1);
   });
+
+  test("a finished card neither follows its pull request nor takes the session's own subscription", async () => {
+    const proposed = service.repo.proposeWork({
+      id: 'w-done',
+      requestKey: 'root:done',
+      concernId: null,
+      originSessionId: 'root',
+      originMessageId: 'm4',
+      title: 'Fix it',
+      instruction: 'Fix it.',
+      targetSessionId: 'native',
+    });
+    const queued = service.repo.transitionWork(proposed.id, proposed, {
+      status: 'queued',
+      sessionId: 'native',
+    })!;
+    const cancelled = service.repo.transitionWork(queued.id, queued, { status: 'cancelled' })!;
+    const own = new SessionEventSubscriptionRepository(db.getDatabase());
+    own.upsert({ sessionId: 'native', topic: 'github/lsm/HyperNeo/pull_request/7.*' });
+
+    attach(cancelled);
+
+    expect(subscriptions()).toEqual([]);
+    expect(own.listBySession('native')).toHaveLength(1);
+  });
 });
