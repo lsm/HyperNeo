@@ -144,9 +144,11 @@ describe('planNeoAskTrigger', () => {
 });
 
 describe('noteNeoAskTrigger', () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
   function sweepDeps(read: { view: NeoAskView; cards: NeoCardView[] }, busy = false) {
     const told = new Map<string, Set<string>>();
     const wakes: NeoAskTrigger[] = [];
+    const delivery = { ok: true };
     const deps: NeoTriggerSweepDeps = {
       busy: () => busy,
       read: () => read,
@@ -154,47 +156,68 @@ describe('noteNeoAskTrigger', () => {
       deliveryRetryPending: () => false,
       told: (askId) => new Set(told.get(askId)),
       record: (askId, keys) => told.set(askId, new Set([...(told.get(askId) ?? []), ...keys])),
-      wake: (_ask, trigger) => wakes.push(trigger),
+      wake: async (_ask, trigger) => {
+        wakes.push(trigger);
+        return delivery.ok;
+      },
     };
-    return { deps, wakes };
+    return { deps, wakes, delivery };
   }
   const startRead = { view: view({ humanActions: [{ kind: 'start', workId: 'w1' }] }), cards: [] };
 
-  test('wakes Neo once per transition: a repeated sweep of the same state never wakes again', () => {
+  test('wakes Neo once per transition: a repeated sweep of the same state never wakes again', async () => {
     const { deps, wakes } = sweepDeps(startRead);
-    expect(noteNeoAskTrigger(ask, deps)).toMatchObject({ kind: 'action', keys: ['start:w1'] });
-    expect(noteNeoAskTrigger(ask, deps)).toBeNull();
-    expect(noteNeoAskTrigger(ask, deps)).toBeNull();
+    expect(await noteNeoAskTrigger(ask, deps)).toMatchObject({
+      kind: 'action',
+      keys: ['start:w1'],
+    });
+    await settle();
+    expect(await noteNeoAskTrigger(ask, deps)).toBeNull();
+    expect(await noteNeoAskTrigger(ask, deps)).toBeNull();
     expect(wakes).toHaveLength(1);
     expect(wakes[0].lines).toEqual(['card "Card w1" waits for Start']);
   });
 
-  test('a new action on the same ask is a new trigger with its own id', () => {
+  test('a note that fails to deliver stays untold, and the next sweep sends it again', async () => {
+    const { deps, wakes, delivery } = sweepDeps(startRead);
+    delivery.ok = false;
+    await noteNeoAskTrigger(ask, deps);
+    await settle();
+    expect(deps.told(ask.id).size).toBe(0);
+    delivery.ok = true;
+    await noteNeoAskTrigger(ask, deps);
+    await settle();
+    expect(wakes.map((wake) => wake.triggerId)).toEqual([wakes[0].triggerId, wakes[0].triggerId]);
+    expect(await noteNeoAskTrigger(ask, deps)).toBeNull();
+  });
+
+  test('a new action on the same ask is a new trigger with its own id', async () => {
     const read = { view: view({ humanActions: [{ kind: 'start', workId: 'w1' }] }), cards: [] };
     const { deps, wakes } = sweepDeps(read);
-    noteNeoAskTrigger(ask, deps);
+    await noteNeoAskTrigger(ask, deps);
+    await settle();
     read.view = view({
       humanActions: [
         { kind: 'start', workId: 'w1' },
         { kind: 'answer', itemId: 'i3', step: null, question: 'Ship it?', options: ['Yes', 'No'] },
       ],
     });
-    noteNeoAskTrigger(ask, deps);
+    await noteNeoAskTrigger(ask, deps);
     expect(wakes.map((wake) => wake.keys)).toEqual([['start:w1'], ['answer:i3']]);
     expect(wakes[1].lines).toContain('question: Ship it? (options: Yes / No)');
     expect(wakes[0].triggerId).not.toBe(wakes[1].triggerId);
   });
 
-  test('waits while the session that owns the ask is busy', () => {
+  test('waits while the session that owns the ask is busy', async () => {
     const { deps, wakes } = sweepDeps(startRead, true);
-    expect(noteNeoAskTrigger(ask, deps)).toBeFalsy();
+    expect(await noteNeoAskTrigger(ask, deps)).toBeFalsy();
     expect(wakes).toEqual([]);
   });
 
-  test('a human reply covers what it answered, so no trigger note follows it', () => {
+  test('a human reply covers what it answered, so no trigger note follows it', async () => {
     const { deps, wakes } = sweepDeps(startRead);
     expect(coverNeoAskTriggers(ask, deps, ['action', 'outcome'])).toEqual(['start:w1']);
-    expect(noteNeoAskTrigger(ask, deps)).toBeNull();
+    expect(await noteNeoAskTrigger(ask, deps)).toBeNull();
     expect(wakes).toEqual([]);
   });
 });
@@ -265,7 +288,7 @@ describe('NeoService notification triggers', () => {
       { id: opened.doneItems![0].id, state: 'met', evidence: 'merged', metBy: 'neo' },
       Date.now()
     );
-  const sweep = () => (service as unknown as { sweepTriggers(): void }).sweepTriggers();
+  const sweep = () => (service as unknown as { sweepTriggers(): Promise<void> }).sweepTriggers();
   const seed = () => (service as unknown as { seedTriggers(): void }).seedTriggers();
 
   beforeEach(async () => {

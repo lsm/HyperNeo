@@ -42,7 +42,7 @@ export interface NeoTriggerSweepDeps {
   deliveryRetryPending(workId: string): boolean;
   told(askId: string): Set<string>;
   record(askId: string, keys: readonly string[], triggerId: string | null): void;
-  wake(ask: NeoAsk, trigger: NeoAskTrigger): void;
+  wake(ask: NeoAsk, trigger: NeoAskTrigger): Promise<boolean>;
 }
 
 export function neoTriggerMessageId(triggerId: string): string {
@@ -233,15 +233,18 @@ export const noteNeoAskTrigger = (superpipe({})('neo-ask-trigger') as PipelineAP
     'result:trigger'
   )
   .pipe(
-    (ask: NeoAsk, trigger: NeoAskTrigger, deps: NeoTriggerSweepDeps) => {
+    async (ask: NeoAsk, trigger: NeoAskTrigger, deps: NeoTriggerSweepDeps) => {
+      if (!(await deps.wake(ask, trigger))) return null;
       deps.record(ask.id, trigger.keys, trigger.triggerId);
-      deps.wake(ask, trigger);
       return trigger;
     },
     ['ask', 'trigger', 'deps'],
     'trigger'
   )
-  .end('trigger') as (ask: NeoAsk, deps: NeoTriggerSweepDeps) => NeoAskTrigger | null | undefined;
+  .endAsync('trigger') as (
+  ask: NeoAsk,
+  deps: NeoTriggerSweepDeps
+) => Promise<NeoAskTrigger | null | undefined>;
 
 export const coverNeoAskTriggers = (superpipe({})('neo-ask-trigger-cover') as PipelineAPI)
   .input(['ask', 'deps', 'kinds'])

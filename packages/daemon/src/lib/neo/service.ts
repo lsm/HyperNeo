@@ -615,7 +615,7 @@ export class NeoService {
       told: (askId) => this.triggers.told(askId),
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
       wake: (ask, trigger) =>
-        void this.open(ask.concernId)
+        this.open(ask.concernId)
           .then((target) =>
             this.deliver(
               target,
@@ -625,7 +625,13 @@ export class NeoService {
               neoAskParent(ask)
             )
           )
-          .catch((error) => this.log.warn('Trigger note pending', error)),
+          .then(
+            () => true,
+            (error) => {
+              this.log.warn('Trigger note pending; the next sweep retries it', error);
+              return false;
+            }
+          ),
     };
     this.noteQueue = createNeoNoteQueueDeps(db, (sessionId, messageIds) => {
       void events
@@ -920,16 +926,16 @@ export class NeoService {
     if (this.triggerTimer || this.disposed) return;
     this.triggerTimer = setTimeout(() => {
       this.triggerTimer = undefined;
-      this.sweepTriggers();
+      void this.sweepTriggers();
     }, NEO_TRIGGER_SWEEP_MS);
     this.triggerTimer.unref?.();
   }
 
-  private sweepTriggers(): void {
+  private async sweepTriggers(): Promise<void> {
     if (this.disposed || !this.triggers.isSeeded()) return;
     for (const ask of this.triggerAsks()) {
       try {
-        noteNeoAskTrigger(ask, this.triggerDeps);
+        await noteNeoAskTrigger(ask, this.triggerDeps);
       } catch (error) {
         this.log.warn(`Trigger check for ask ${ask.id} failed`, error);
       }
