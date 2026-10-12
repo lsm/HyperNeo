@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { adoptNeoFilePacks } from '../../../../src/lib/neo/packs/index.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { tmpdir } from 'node:os';
@@ -44,7 +45,11 @@ import {
   projectNeoAskCards,
 } from '../../../../src/lib/neo/driver-work.ts';
 import { isNeoAskStartApproved } from '../../../../src/lib/neo/work-origin.ts';
-import { createNeoOperations, neoAskScope } from '../../../../src/lib/neo/operations.ts';
+import {
+  createNeoOperations,
+  isNeoTurnAskReadable,
+  neoAskScope,
+} from '../../../../src/lib/neo/operations.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -111,6 +116,27 @@ describe('requireNeoHumanWaitCited', () => {
     expect(
       requireNeoHumanWaitCited({ said: 'skip the release' }, sources, true, 'v')
     ).toMatchObject({ reason: { reason: expect.stringContaining('cite_not_found') } });
+  });
+});
+
+describe('isNeoTurnAskReadable', () => {
+  test('root reads any turn ask, a holder only its own concern, anyone else none', () => {
+    expect(isNeoTurnAskReadable({ kind: 'neo', concernId: null }, { concernId: 'club' })).toBe(
+      true
+    );
+    expect(
+      isNeoTurnAskReadable({ kind: 'concern', concernId: 'club' }, { concernId: 'club' })
+    ).toBe(true);
+    expect(isNeoTurnAskReadable({ kind: 'concern', concernId: 'club' }, { concernId: null })).toBe(
+      false
+    );
+    expect(
+      isNeoTurnAskReadable({ kind: 'concern', concernId: 'club' }, { concernId: 'work' })
+    ).toBe(false);
+    expect(isNeoTurnAskReadable({ kind: 'worker', concernId: 'club' }, { concernId: 'club' })).toBe(
+      false
+    );
+    expect(isNeoTurnAskReadable(null, { concernId: null })).toBe(false);
   });
 });
 
@@ -233,6 +259,25 @@ describe('neo.ask operations', () => {
       .value as unknown as NeoSnapshot;
     expect(moved.rev).not.toBe(scoped.rev);
     expect(moved.asks).toHaveLength(1);
+  });
+
+  test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
+    const askId = await openAsk();
+    for (const itemId of ['i1', 'i2'])
+      await invoke('neo.ask.tick', { askId, itemId, state: 'met', evidence: 'PR #12 merged.' });
+    expect(
+      await invoke('neo.ask.settle', {
+        askId,
+        outcome: 'achieved',
+        summary: 'Merged in #12.',
+        evidence: 'PR #12 merged.',
+      })
+    ).toMatchObject({ value: { ok: true, ask: { id: askId, status: 'achieved' } } });
+    const settle = createNeoOperations(service).find((op) => op.name === 'neo.ask.settle')!;
+    const schema = z.toJSONSchema(settle.inputSchema, { io: 'input' }) as {
+      properties?: Record<string, unknown>;
+    };
+    expect(Object.keys(schema.properties ?? {})).toEqual(expect.arrayContaining(['id', 'outcome']));
   });
 
   test('opens one ask per request key and shows its cards in the snapshot', async () => {

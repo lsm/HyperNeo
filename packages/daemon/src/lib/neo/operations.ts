@@ -548,6 +548,18 @@ export function requireNeoWorkRetryCaller(work: NeoWork, caller: OperationCaller
   return requireNeoWorkProposer(work, caller, 'retry');
 }
 
+export function isNeoTurnAskReadable(
+  binding: { kind: string; concernId: string | null } | null,
+  ask: Pick<NeoAsk, 'concernId'>
+): boolean {
+  return (
+    binding?.kind === 'neo' ||
+    (binding?.kind === 'concern' &&
+      binding.concernId !== null &&
+      ask.concernId === binding.concernId)
+  );
+}
+
 export function neoSnapshotRevision<T extends { ok: boolean }>(
   snapshot: T,
   sinceRev: string | undefined,
@@ -933,9 +945,9 @@ export function createNeoOperations(service: NeoService) {
       sessionId: caller.sessionId,
       messageId: caller.neoTurn.messageId,
     });
-    return origin
-      ? service.askRecords.forOrigin(origin.sessionId, origin.messageId)?.id
-      : undefined;
+    const ask = origin ? service.askRecords.forOrigin(origin.sessionId, origin.messageId) : null;
+    const binding = service.repo.getBindingBySession(caller.sessionId);
+    return ask && isNeoTurnAskReadable(binding, ask) ? ask.id : undefined;
   };
   const scopeOf = (input: z.infer<typeof Scope>, caller: OperationCaller) => {
     if (input.askId || input.concernId || input.all)
