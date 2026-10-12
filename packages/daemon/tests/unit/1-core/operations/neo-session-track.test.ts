@@ -316,7 +316,7 @@ describe('neo.session.track', () => {
         doneWhen: '- done',
         doneSource: 'human',
       },
-      neo
+      { ...neo, neoTurn: { ...neo.neoTurn, human: false } }
     );
     const askId = (opened as { value: { ask: { id: string } } }).value.ask.id;
     const proposed = await invokeOperation(
