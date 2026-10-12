@@ -16,6 +16,8 @@ const GhPrSchema = z.object({
   url: z.string(),
   createdAt: z.string().optional(),
   title: z.string().optional(),
+  body: z.string().optional(),
+  closingIssuesReferences: z.array(z.object({ number: z.number() })).optional(),
   headRefName: z.string().optional(),
   mergeStateStatus: z.string().optional(),
   baseRefName: z.string().optional(),
@@ -64,6 +66,12 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
   if (!parsed.success) return null;
   const { url, state, headRefOid, reviews, statusCheckRollup, createdAt, title, headRefName } =
     parsed.data;
+  const refs = [
+    ...new Set([
+      ...neoTextRefs(`${title ?? ''}\n${parsed.data.body ?? ''}`),
+      ...(parsed.data.closingIssuesReferences ?? []).map((issue) => issue.number),
+    ]),
+  ];
   const results = statusCheckRollup.map(checkResult);
   const checks = results.includes('pending')
     ? 'pending'
@@ -87,7 +95,12 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
     ...(Number.isFinite(created) ? { createdAt: created } : {}),
     ...(title ? { title } : {}),
     ...(headRefName ? { branch: headRefName } : {}),
+    ...(refs.length ? { refs } : {}),
   };
+}
+
+export function neoTextRefs(text: string): number[] {
+  return [...text.matchAll(/(?:#|\/(?:issues|pull)\/)(\d+)\b/g)].map((match) => Number(match[1]));
 }
 
 export const isNeoWorkPrWaiting = (prs: readonly NeoWorkPr[]) =>
@@ -342,7 +355,7 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
           'view',
           url,
           '--json',
-          'url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,title,headRefName',
+          'url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,title,headRefName,body,closingIssuesReferences',
         ],
         spawnImpl,
         'graphql'

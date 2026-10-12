@@ -1,7 +1,7 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoCardPrUrls } from './branch-prs.ts';
-import { extractNeoWorkPrUrls } from './work-prs.ts';
+import { extractNeoWorkPrUrls, neoTextRefs } from './work-prs.ts';
 import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 
 export type NeoPrClaim = 'branch' | 'named' | 'mentioned';
@@ -173,8 +173,25 @@ export function planNeoPrCedes(
     .filter((row) => mine.some((own) => own.urlKey === row.urlKey && beatsNeoPrClaim(own, row)));
 }
 
-export function keepNeoCardPrReads(
+export function isNeoCardMentionCurrent(
   card: Pick<NeoWork, 'createdAt'>,
+  pr: Pick<NeoWorkPr, 'createdAt' | 'state'>
+): boolean {
+  return pr.state === 'OPEN' || pr.createdAt == null || pr.createdAt >= card.createdAt;
+}
+
+export function isNeoCardMentionRelated(
+  named: ReadonlySet<number>,
+  pr: Pick<NeoWorkPr, 'url' | 'refs'>
+): boolean {
+  const refs = pr.refs ?? [];
+  if (!named.size || !refs.length) return true;
+  const own = Number(/\/pull\/(\d+)/.exec(pr.url)?.[1]);
+  return named.has(own) || refs.some((ref) => named.has(ref));
+}
+
+export function keepNeoCardPrReads(
+  card: Pick<NeoWork, 'createdAt' | 'title' | 'instruction'>,
   owned: readonly NeoCardPrOwned[],
   prs: readonly NeoWorkPr[]
 ): { kept: NeoCardPrOwned[]; pending: NeoCardPrOwned[]; rejected: NeoCardPrOwned[] } {
@@ -183,13 +200,14 @@ export function keepNeoCardPrReads(
     pending: NeoCardPrOwned[];
     rejected: NeoCardPrOwned[];
   };
+  const named = new Set(neoTextRefs(`${card.title}\n${card.instruction}`));
   for (const candidate of owned) {
     const pr = prs.find((item) => key(item.url) === key(candidate.url));
-    if (candidate.claimed || candidate.claim !== 'mentioned') sorted.kept.push(candidate);
-    else if (!pr) sorted.pending.push(candidate);
-    else if (pr.state !== 'OPEN' && pr.createdAt != null && pr.createdAt < card.createdAt)
-      sorted.rejected.push(candidate);
-    else sorted.kept.push(candidate);
+    if (candidate.claim !== 'mentioned') sorted.kept.push(candidate);
+    else if (!pr) (candidate.claimed ? sorted.kept : sorted.pending).push(candidate);
+    else if (isNeoCardMentionCurrent(card, pr) && isNeoCardMentionRelated(named, pr))
+      sorted.kept.push(candidate);
+    else sorted.rejected.push(candidate);
   }
   return sorted;
 }

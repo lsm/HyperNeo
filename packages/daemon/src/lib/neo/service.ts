@@ -2215,7 +2215,9 @@ export class NeoService {
     stored: { prs: readonly NeoWorkPr[] } | null
   ): Promise<NeoCardPrCandidate[]> {
     const goal = this.workGoals.get(work.id);
-    const brief = [work.instruction, goal?.goal, goal?.doneWhen].filter(Boolean).join('\n');
+    const brief = [work.title, work.instruction, goal?.goal, goal?.doneWhen]
+      .filter(Boolean)
+      .join('\n');
     return planNeoCardPrCandidates({
       report: work.report,
       brief,
