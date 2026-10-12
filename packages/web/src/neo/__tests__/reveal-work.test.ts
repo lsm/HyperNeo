@@ -22,7 +22,9 @@ describe('revealNeoWork', () => {
     expect(revealNeoWork(root, 'missing', vi.fn())).toBe(false);
     expect(revealNeoWork(null, 'missing', vi.fn())).toBe(false);
   });
+});
 
+describe('neoWorkAnchorSelector', () => {
   it('escapes quotes in an id', () => {
     expect(neoWorkAnchorSelector('a"b')).toBe('[data-neo-work="a\\"b"]');
   });
