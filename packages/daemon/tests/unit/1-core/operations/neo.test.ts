@@ -1,8 +1,9 @@
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import type { MessageHub } from '@hyperneo/shared';
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import type { HookInput, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import type { Database } from '../../../../src/storage/database.ts';
@@ -1155,7 +1156,7 @@ describe('Neo MVP', () => {
     expect(snapshot.value.work.some((item) => item.id === withdrawn.id)).toBe(false);
   });
 
-  test('query restriction keeps only look-up tools and drops plugins, settings and extra MCP servers', () => {
+  test('query restriction gives Neo its tools and guard and drops plugins, settings and extra MCP servers', async () => {
     const operationServer = { type: 'stdio' as const, command: 'operations' };
     const options: Options = {
       tools: ['Bash', 'Read', 'Edit', 'Write'],
@@ -1166,7 +1167,7 @@ describe('Neo MVP', () => {
       agents: { coder: { description: 'work', prompt: 'work' } },
     };
     restrictNeoQuery(options, null, 'neo:runtime-test');
-    expect(options.tools).toEqual(['WebSearch', 'WebFetch', 'Bash']);
+    expect(options.tools).toEqual(neoCoordinatorNativeTools(null));
     expect(options.additionalDirectories).toEqual([homedir()]);
     expect(options.mcpServers).toEqual({ 'hyperneo-operations': operationServer });
     expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(null));
@@ -1176,6 +1177,43 @@ describe('Neo MVP', () => {
     expect(options.agents).toEqual({});
     expect(options.cwd).toBe(neoCoordinatorRuntimePath('neo:runtime-test'));
     expect(options.cwd).not.toBe(process.cwd());
+    const guard = options.hooks!.PreToolUse![0].hooks[0];
+    const write = (file_path: string) =>
+      guard(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Write',
+          tool_input: { file_path, content: 'x' },
+          tool_use_id: 'tool-1',
+          session_id: 'sdk-1',
+          transcript_path: '/tmp/t.jsonl',
+          cwd: options.cwd!,
+        } as HookInput,
+        'tool-1',
+        { signal: new AbortController().signal }
+      );
+    expect(await write(join(options.cwd!, 'check.ts'))).toEqual({});
+    const bash = (command: string) =>
+      guard(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command },
+          tool_use_id: 'tool-2',
+          session_id: 'sdk-1',
+          transcript_path: '/tmp/t.jsonl',
+          cwd: options.cwd!,
+        } as HookInput,
+        'tool-2',
+        { signal: new AbortController().signal }
+      );
+    expect(await bash(`rm -rf ${join(tmpdir(), 'another-process-file')}`)).toMatchObject({
+      hookSpecificOutput: { permissionDecision: 'deny' },
+    });
+    expect(await bash('rm -f old-check.ts')).toEqual({});
+    expect(await write(join(homedir(), 'focus', 'app', 'a.ts'))).toMatchObject({
+      hookSpecificOutput: { additionalContext: expect.stringContaining('hand changes to a card') },
+    });
   });
 
   async function consultation() {

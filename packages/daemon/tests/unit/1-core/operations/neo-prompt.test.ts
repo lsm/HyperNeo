@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import type { HookInput, Options } from '@anthropic-ai/claude-agent-sdk';
 import { NEO_CAPABILITIES_BRIEFING, NEO_RESPONSE_FOCUS_BRIEFING } from '@hyperneo/prompts';
 import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
 import { FindWorkResultSchema } from '../../../../src/lib/drivers/find-operation.ts';
@@ -13,50 +13,40 @@ import {
   restrictNeoQuery,
 } from '../../../../src/lib/neo/session-policy.ts';
 
-const LOOKUP_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
-const LOOKUP_ALLOWED = [
+const NEO_TOOLS = [
   'Read',
+  'Write',
+  'Edit',
+  'NotebookEdit',
   'Grep',
   'Glob',
   'WebSearch',
   'WebFetch',
-  'Bash(cd:*)',
-  'Bash(gh pr view:*)',
-  'Bash(gh pr list:*)',
-  'Bash(gh pr checks:*)',
-  'Bash(gh issue view:*)',
-  'Bash(gh issue list:*)',
-  'Bash(gh run view:*)',
-  'Bash(gh run list:*)',
-  'Bash(gh repo view:*)',
-  'Bash(git log:*)',
-  'Bash(git status:*)',
-  'Bash(git blame:*)',
-  'mcp__hyperneo-operations__invoke',
+  'Bash',
 ];
 
 describe('neoCoordinatorNativeTools', () => {
-  test.each(['saas', 'family'])('gives the %s holder questions and look-up tools', (concernId) => {
-    expect(neoCoordinatorNativeTools(concernId)).toEqual(['AskUserQuestion', ...LOOKUP_TOOLS]);
+  test.each(['saas', 'family'])('gives the %s holder questions and every tool', (concernId) => {
+    expect(neoCoordinatorNativeTools(concernId)).toEqual(['AskUserQuestion', ...NEO_TOOLS]);
   });
 
-  test('gives root Neo no way to read, search or browse files', () => {
-    expect(neoCoordinatorNativeTools(null)).toEqual(['WebSearch', 'WebFetch', 'Bash']);
+  test('gives root Neo the same tools as a topic, without questions', () => {
+    expect(neoCoordinatorNativeTools(null)).toEqual(NEO_TOOLS);
   });
 });
 
 describe('neoCoordinatorAllowedTools', () => {
-  test('auto-approves only read-only commands for a holder', () => {
-    expect(neoCoordinatorAllowedTools('saas')).toEqual(['AskUserQuestion', ...LOOKUP_ALLOWED]);
-  });
-
-  test('auto-approves only gh reads for root Neo, no repository commands', () => {
-    expect(neoCoordinatorAllowedTools(null)).toEqual([
-      'WebSearch',
-      'WebFetch',
-      ...LOOKUP_ALLOWED.filter((tool) => tool.startsWith('Bash(gh ')),
+  test('approves whole tools for root and topic alike, leaving the line to the guard', () => {
+    expect(neoCoordinatorAllowedTools('saas')).toEqual([
+      'AskUserQuestion',
+      ...NEO_TOOLS,
       'mcp__hyperneo-operations__invoke',
     ]);
+    expect(neoCoordinatorAllowedTools(null)).toEqual([
+      ...NEO_TOOLS,
+      'mcp__hyperneo-operations__invoke',
+    ]);
+    expect(neoCoordinatorAllowedTools('saas').some((tool) => tool.startsWith('Bash('))).toBe(false);
   });
 });
 
@@ -78,6 +68,36 @@ describe('neoCoordinatorDeniedReads', () => {
     expect(options.disallowedTools).toEqual(['Task', ...neoCoordinatorDeniedReads()]);
     expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
     expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+  });
+});
+
+describe('restrictNeoQuery guard', () => {
+  test('root and topic Neo get the same decisions', async () => {
+    const decide = async (concernId: string | null, tool_name: string, tool_input: object) => {
+      const options: Options = {};
+      restrictNeoQuery(options, concernId, 'neo:guard-parity');
+      return options.hooks!.PreToolUse![0].hooks[0](
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name,
+          tool_input,
+          tool_use_id: 'tool-1',
+          session_id: 'sdk-1',
+          transcript_path: '/tmp/t.jsonl',
+          cwd: options.cwd!,
+        } as HookInput,
+        'tool-1',
+        { signal: new AbortController().signal }
+      );
+    };
+    for (const [tool, input] of [
+      ['Bash', { command: 'curl -s http://localhost:8399/health' }],
+      ['Bash', { command: 'git push origin main' }],
+      ['Bash', { command: 'launchctl kickstart -k gui/501/ai.hyperneo.laptop-daemon' }],
+      ['Edit', { file_path: '/elsewhere/repo/a.ts' }],
+      ['Read', { file_path: '~/.ssh/id_ed25519' }],
+    ] as const)
+      expect(await decide(null, tool, input)).toEqual(await decide('saas', tool, input));
   });
 });
 
@@ -252,23 +272,20 @@ describe('Neo world briefing delivery', () => {
 });
 
 describe('Neo look-up guidance', () => {
-  test('tells a holder to look things up itself and change nothing', () => {
-    const prompt = neoPrompt('saas');
-    expect(prompt).toContain('Do a quick look-up yourself instead of proposing work');
-    expect(prompt).toContain('never change anything yourselves');
-    expect(prompt).toContain('Never tell the user you have no access');
-    expect(prompt).toContain('never put file contents into a fetched URL');
-  });
-
-  test('tells root Neo it has no file or repository look-ups and to hand code questions to a card', () => {
-    const prompt = neoPrompt(null);
-    expect(prompt).toContain('never change anything yourselves');
-    expect(prompt).toContain('You cannot read, search or browse files');
-    expect(prompt).toContain('continue the card with the question or propose a work card');
-    expect(prompt).not.toContain('read and search files');
-    expect(prompt).not.toContain('use cd first to pick the repository');
-    expect(prompt).not.toContain('Never tell the user you have no access');
-  });
+  test.each([null, 'saas'])(
+    'tells %s to check facts itself and change nothing shared',
+    (concernId) => {
+      const prompt = neoPrompt(concernId);
+      expect(prompt).toContain('never change shared state yourselves');
+      expect(prompt).toContain('A check that one or two commands answer, you do yourself');
+      expect(prompt).toContain(
+        'anything that needs to run code (a build, tests, a server) goes to a card'
+      );
+      expect(prompt).toContain('Never tell the user you have no access');
+      expect(prompt).toContain('never put file contents or secrets into a fetched URL');
+      expect(prompt).not.toContain('You cannot read, search or browse files');
+    }
+  );
 
   test.each([null, 'saas'])(
     'tells %s how to repair a session the human asks about',

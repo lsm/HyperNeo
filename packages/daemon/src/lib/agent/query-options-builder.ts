@@ -1009,7 +1009,7 @@ export class QueryOptionsBuilder {
     }
 
     const bashScopePrefixes = extractBashScopePrefixes(this.ctx.session.config.allowedTools ?? []);
-    if (bashScopePrefixes.length > 0) {
+    if (bashScopePrefixes.length > 0 && !neoCoordinatorBinding(this.ctx.db, this.ctx.session.id)) {
       preToolUse.push({
         matcher: 'Bash',
         hooks: [createBashScopeHook(bashScopePrefixes)],

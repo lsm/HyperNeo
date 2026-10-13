@@ -7,12 +7,7 @@ import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
 import { readNeoCatchUp, readNeoHolderView } from './catch-up.ts';
 import { neoFolderPath } from './folder.ts';
-import {
-  NEO_LOOKUP_COMMANDS,
-  NEO_ROOT_LOOKUP_COMMANDS,
-  neoLookUpGuard,
-  neoSecretReadRules,
-} from './look-up-guard.ts';
+import { neoSecretReadRules, neoToolGuard } from './look-up-guard.ts';
 import { neoSettingsPackBriefs } from './packs/index.ts';
 import type { NeoPackBrief } from './packs/types.ts';
 import { neoPrompt } from './prompt.ts';
@@ -60,26 +55,28 @@ export function neoQueryContext(binding: NeoBinding, db: Database | undefined): 
   return binding.kind === 'neo' ? readNeoCatchUp(neoDb) : readNeoHolderView(neoDb);
 }
 
-const NEO_LOOKUP_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
-const NEO_ROOT_LOOKUP_TOOLS = ['WebSearch', 'WebFetch', 'Bash'];
+const NEO_TOOLS = [
+  'Read',
+  'Write',
+  'Edit',
+  'NotebookEdit',
+  'Grep',
+  'Glob',
+  'WebSearch',
+  'WebFetch',
+  'Bash',
+];
 
-export function neoCoordinatorLookUpCommands(concernId: string | null): readonly string[] {
-  return concernId ? NEO_LOOKUP_COMMANDS : NEO_ROOT_LOOKUP_COMMANDS;
-}
 export function neoCoordinatorDeniedReads(): string[] {
-  return neoSecretReadRules({ dataDir: getDataDir(), home: homedir() });
+  return neoSecretReadRules();
 }
 
 export function neoCoordinatorNativeTools(concernId: string | null): string[] {
-  return concernId ? ['AskUserQuestion', ...NEO_LOOKUP_TOOLS] : [...NEO_ROOT_LOOKUP_TOOLS];
+  return concernId ? ['AskUserQuestion', ...NEO_TOOLS] : [...NEO_TOOLS];
 }
 
 export function neoCoordinatorAllowedTools(concernId: string | null): string[] {
-  return [
-    ...neoCoordinatorNativeTools(concernId).filter((tool) => tool !== 'Bash'),
-    ...neoCoordinatorLookUpCommands(concernId).map((command) => `Bash(${command}:*)`),
-    `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`,
-  ];
+  return [...neoCoordinatorNativeTools(concernId), `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`];
 }
 
 export function restrictNeoQuery(
@@ -114,10 +111,10 @@ export function restrictNeoQuery(
     PreToolUse: [
       {
         hooks: [
-          neoLookUpGuard({
+          neoToolGuard({
             home: homedir(),
             dataDir: getDataDir(),
-            commands: neoCoordinatorLookUpCommands(concernId),
+            own: options.cwd ? [options.cwd] : [],
           }),
         ],
       },
