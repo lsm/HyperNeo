@@ -4,8 +4,17 @@ import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 
 export const NEO_ASK_IDLE_MS = 20 * 60_000;
 
-type NeoAskIdleCard = Pick<NeoWork, 'id' | 'title' | 'status'> & { progress: string };
-type NeoAskIdleSkip = 'not_open' | 'no_session' | 'no_pending' | 'not_in_flight' | 'moving';
+type NeoAskIdleCard = Pick<NeoWork, 'id' | 'title' | 'status'> & {
+  progress: string;
+  awaited?: boolean;
+};
+type NeoAskIdleSkip =
+  | 'not_open'
+  | 'no_session'
+  | 'no_pending'
+  | 'not_in_flight'
+  | 'awaiting_pr'
+  | 'moving';
 export type NeoAskIdleSeen = ReadonlyMap<string, { signature: string; since: number }>;
 
 export function neoAskIdleSignature(
@@ -45,8 +54,11 @@ export function requireNeoAskIdle(
   if (!read.session) return { reason: 'no_session' };
   if (!(ask.doneItems ?? []).some((item) => !item.removed && item.state === 'pending'))
     return { reason: 'no_pending' };
-  if (!read.cards.some((card) => card.status === 'queued' || card.status === 'reported'))
-    return { reason: 'not_in_flight' };
+  const inFlight = read.cards.filter(
+    (card) => card.status === 'queued' || card.status === 'reported'
+  );
+  if (!inFlight.length) return { reason: 'not_in_flight' };
+  if (inFlight.every((card) => card.awaited)) return { reason: 'awaiting_pr' };
   if (now - read.since < NEO_ASK_IDLE_MS) return { reason: 'moving' };
   return { value: `idle:${read.signature}` };
 }

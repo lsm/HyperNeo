@@ -28,11 +28,16 @@ const item = (id: string, state: NeoAskItem['state'], removed = false): NeoAskIt
   removed,
   addedAt: null,
 });
-const card = (status: 'proposed' | 'queued' | 'reported' | 'failed', progress = '0|-:0') => ({
+const card = (
+  status: 'proposed' | 'queued' | 'reported' | 'failed',
+  progress = '0|-:0',
+  awaited = false
+) => ({
   id: 'w1',
   title: 'Fix login',
   status,
   progress,
+  awaited,
 });
 const now = 10 * NEO_ASK_IDLE_MS;
 const open = { status: 'open' as const, doneItems: [item('i1', 'pending'), item('i2', 'met')] };
@@ -47,6 +52,12 @@ describe('requireNeoAskIdle', () => {
   test('wakes Neo for an open ask with pending items whose in-flight cards sat still 20 minutes', () => {
     expect(requireNeoAskIdle(open, read([card('queued')]), now)).toEqual({ value: 'idle:sig' });
     expect(requireNeoAskIdle(open, read([card('reported')]), now)).toEqual({ value: 'idle:sig' });
+  });
+
+  test('still wakes when one in-flight card is idle beside another waiting on its PR', () => {
+    expect(
+      requireNeoAskIdle(open, read([card('queued', '0|-:0', true), card('reported')]), now)
+    ).toEqual({ value: 'idle:sig' });
   });
 
   test.each<
@@ -65,6 +76,7 @@ describe('requireNeoAskIdle', () => {
       read([card('queued')]),
     ],
     ['not_in_flight', open, read([card('proposed'), card('failed')])],
+    ['awaiting_pr', open, read([card('queued', '0|-:0', true), card('reported', '0|-:0', true)])],
   ])('skips with %s', (reason, ask, input) => {
     expect(requireNeoAskIdle(ask, input, now)).toEqual({ reason });
   });
