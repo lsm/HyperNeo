@@ -418,6 +418,17 @@ function githubRefForms(url: string): RegExp[] {
   ];
 }
 
+const NEO_ASK_TITLE_MIN = 4;
+
+export function neoAskTitleNamedIn(text: string, rawTitle: string): boolean {
+  const title = rawTitle.trim();
+  if ([...title].length < NEO_ASK_TITLE_MIN) return false;
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const before = /^\w/.test(title) ? '(?<!\\w)' : '';
+  const after = /\w$/.test(title) ? '(?!\\w)' : '';
+  return new RegExp(`${before}${escaped}${after}`).test(text);
+}
+
 export function neoAskNamedBy(said: readonly string[], ask: NeoAskNameable): boolean {
   const text = said.join('\n');
   const ids = [ask.id, ...ask.cardIds].map((id) => id.toLowerCase());
@@ -425,7 +436,11 @@ export function neoAskNamedBy(said: readonly string[], ask: NeoAskNameable): boo
     const prefix = token.toLowerCase().replace(/-+$/, '');
     return ids.some((id) => id.startsWith(prefix));
   });
-  return named || ask.refs.some((url) => githubRefForms(url).some((form) => form.test(text)));
+  return (
+    named ||
+    neoAskTitleNamedIn(text, ask.title) ||
+    ask.refs.some((url) => githubRefForms(url).some((form) => form.test(text)))
+  );
 }
 
 export function requireNeoAskUnnamed(
