@@ -1523,6 +1523,7 @@ export class NeoService {
         this.log.warn('Card pull request relay pending', error)
       );
     }
+    this.forgetUnfollowedAskTopics();
     for (const ask of this.askRecords.listLive()) {
       this.followAskTopics(ask);
       try {
@@ -2078,6 +2079,12 @@ export class NeoService {
       ...this.cardEvents.listActive().map((row) => row.topic),
       ...neoPackAskTopics(this.packs(), this.askRecords.listLive()),
     ];
+  }
+
+  private forgetUnfollowedAskTopics(): void {
+    const followed = new Set(neoPackAskTopics(this.packs(), this.askRecords.listLive()));
+    for (const topic of this.watchedAskTopics)
+      if (!followed.has(topic)) this.watchedAskTopics.delete(topic);
   }
 
   private followAskTopics(ask: NeoAsk): void {
