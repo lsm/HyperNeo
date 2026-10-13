@@ -2457,21 +2457,15 @@ export class NeoService {
       'states'
     )
     .pipe(
-      (askId: string) => {
+      async (askId: string, states: Awaited<ReturnType<NeoRefStateReader>>) => {
         const ask = this.askRecords.get(askId);
-        return ask && isNeoAskLive(ask) ? { value: ask } : { reason: undefined };
-      },
-      'askId',
-      'result:ask'
-    )
-    .pipe(
-      async (ask: NeoAsk, states: Awaited<ReturnType<NeoRefStateReader>>) => {
+        if (!ask || !isNeoAskLive(ask)) return;
         const cleared = this.prQuestionWithdrawalPolicy
           .plan(ask.doneItems ?? [], states)
           .map((entry) => ({ id: entry.id, why: entry.evidence }));
         if (cleared.length) await this.wakeForClearedNeedsYou(ask, cleared, true);
       },
-      ['ask', 'states'],
+      ['askId', 'states'],
       'withdrawn'
     )
     .endAsync('withdrawn') as (askId: string) => Promise<void>;

@@ -1791,6 +1791,53 @@ describe('neo.ask operations', () => {
       expect(delivered).toHaveBeenCalledTimes(1);
     });
 
+    test('does not yield between final revalidation and persistence', async () => {
+      const { askId } = await waitingQuestion();
+      service.readRefStates = async () => [terminal];
+      const get = service.askRecords.get.bind(service.askRecords);
+      const tick = service.askRecords.tickItem.bind(service.askRecords);
+      let reads = 0;
+      let yielded = false;
+      const writeBoundaries: boolean[] = [];
+      service.askRecords.get = (id) => {
+        const ask = get(id);
+        if (++reads === 2)
+          queueMicrotask(() => {
+            yielded = true;
+          });
+        return ask;
+      };
+      service.askRecords.tickItem = (...args) => {
+        writeBoundaries.push(yielded);
+        return tick(...args);
+      };
+      await service.withdrawObsoletePrQuestions(askId);
+      expect(writeBoundaries).toEqual([false]);
+    });
+
+    test.each(['action', 'approval'] as const)(
+      'preserves unanswered %s questions after PR merge',
+      async (kind) => {
+        const { askId, delivered } = await waitingQuestion();
+        service.askRecords.tickItem(
+          askId,
+          {
+            id: 'i3',
+            state: 'needs_you',
+            evidence: 'Human action still required',
+            metBy: null,
+            kind,
+          },
+          Date.now()
+        );
+        const before = service.askRecords.get(askId);
+        service.readRefStates = async () => [terminal];
+        await service.withdrawObsoletePrQuestions(askId);
+        expect(service.askRecords.get(askId)).toEqual(before);
+        expect(delivered).not.toHaveBeenCalled();
+      }
+    );
+
     test('skips GitHub for outcomes without a referenced question', async () => {
       const askId = await openAsk();
       service.readRefStates = mock(async () => []);

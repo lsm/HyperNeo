@@ -9,7 +9,13 @@ const key = (ref: NeoRef) => `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCas
 
 function candidates(items: readonly NeoAskItem[]): Candidate[] {
   return items.flatMap((item) => {
-    if (item.removed || item.state !== 'needs_you') return [];
+    if (
+      item.removed ||
+      item.state !== 'needs_you' ||
+      item.kind === 'action' ||
+      item.kind === 'approval'
+    )
+      return [];
     const text = [item.text, item.question, ...(item.watch ?? [])].filter(Boolean).join('\n');
     const refs = extractNeoAskRefs(
       {
