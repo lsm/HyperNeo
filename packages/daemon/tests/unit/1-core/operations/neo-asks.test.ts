@@ -748,7 +748,8 @@ describe('neo.ask operations', () => {
       await invoke('neo.ask.settle', {
         ...waiting,
         question: 'Did the keyboard hide?',
-        options: ['Yes', 'Not yet'],
+        options: ['It hid', 'Still showing'],
+        kind: 'action',
       })
     ).toMatchObject({
       value: {
@@ -761,7 +762,7 @@ describe('neo.ask operations', () => {
               id: 'i3',
               kind: 'action',
               question: 'Did the keyboard hide?',
-              options: ['Yes', 'Not yet'],
+              options: ['It hid', 'Still showing'],
             }),
           ]),
         },
@@ -1065,21 +1066,23 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test('a step only the human can check is asked about its result, met only on Yes', async () => {
+  test('a result check carries its own options and is met only on its first', async () => {
     const askId = await openAsk();
     const user: OperationCaller = { source: 'rpc', principal: 'local' };
     expect(
       await invoke('neo.ask.question', {
         askId,
-        question: 'Did the keyboard hide?',
-        options: ['Yes', 'Not yet'],
+        question: '这一步成功了吗？',
+        options: ['成功了', '没成功'],
+        kind: 'action',
       })
     ).toMatchObject({
       value: { ok: true, ask: { status: 'waiting', waitingItem: 'i3' } },
     });
     expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
       kind: 'action',
-      question: 'Did the keyboard hide?',
+      question: '这一步成功了吗？',
+      options: ['成功了', '没成功'],
     });
     const snapshot = await invoke('neo.snapshot', {});
     expect(
@@ -1090,29 +1093,43 @@ describe('neo.ask operations', () => {
       kind: 'answer',
       itemId: 'i3',
       step: null,
-      question: 'Did the keyboard hide?',
-      options: ['Yes', 'Not yet'],
+      question: '这一步成功了吗？',
+      options: ['成功了', '没成功'],
     });
     const delivered = mock(
       async (_ask: NeoAsk, _item: unknown, _choice: string, _met: boolean) => {}
     );
     service.deliverAskAnswer = delivered;
-    const answer = { askId, itemId: 'i3', choice: 'Maybe' };
+    const answer = { askId, itemId: 'i3', choice: 'Yes' };
     expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('choice_not_offered') },
+      value: { ok: false, reason: expect.stringContaining('成功了 or 没成功') },
     });
-    expect(await invoke('neo.ask.answer', { ...answer, choice: 'Not yet' }, user)).toMatchObject({
+    expect(await invoke('neo.ask.answer', { ...answer, choice: '没成功' }, user)).toMatchObject({
       value: { ok: true, ask: { status: 'waiting' } },
     });
     expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({ state: 'needs_you' });
-    expect(delivered.mock.calls[0]?.slice(2)).toEqual(['Not yet', false]);
-    await invoke('neo.ask.answer', { ...answer, choice: 'Yes' }, user);
+    expect(delivered.mock.calls[0]?.slice(2)).toEqual(['没成功', false]);
+    await invoke('neo.ask.answer', { ...answer, choice: '成功了' }, user);
     expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
       state: 'met',
       metBy: 'human',
     });
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
-    expect(delivered.mock.calls[1]?.slice(2)).toEqual(['Yes', true]);
+    expect(delivered.mock.calls[1]?.slice(2)).toEqual(['成功了', true]);
+  });
+
+  test('a question without kind is a decision, whatever its options say', async () => {
+    const askId = await openAsk();
+    const user: OperationCaller = { source: 'rpc', principal: 'local' };
+    await invoke('neo.ask.question', {
+      askId,
+      question: 'Did the keyboard hide?',
+      options: ['Yes', 'Not yet'],
+    });
+    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({ kind: 'decision' });
+    service.deliverAskAnswer = mock(async () => {});
+    await invoke('neo.ask.answer', { askId, itemId: 'i3', choice: 'Not yet' }, user);
+    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({ state: 'met' });
   });
 
   test('the user can close an ask as done even with items still open', async () => {
