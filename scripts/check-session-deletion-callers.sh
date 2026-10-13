@@ -40,6 +40,8 @@ ALLOWLIST=(
     # The UI RPC handlers
     "packages/daemon/src/lib/rpc-handlers/session-handlers.ts"
     "packages/daemon/src/lib/rpc-handlers/room-handlers.ts"
+    # Human-requested driver archive, gated by a live human turn and idle session.
+    "packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts"
 
 
     # Task archive pipeline (UI-initiated via task.archive event cascade)

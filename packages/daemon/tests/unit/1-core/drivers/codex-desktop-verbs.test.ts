@@ -217,6 +217,57 @@ describe('codex-desktop adapter status and send', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+  test.each(['idle', 'active', 'systemError', 'notLoaded'])(
+    'archives only an idle Codex thread (%s)',
+    async (status) => {
+      const calls: string[] = [];
+      let closed = false;
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          calls.push(method);
+          expect(params.threadId).toBe('idle');
+          return method === 'thread/read'
+            ? { thread: { id: 'idle', status: { type: status } } }
+            : {};
+        },
+        close: () => {
+          closed = true;
+        },
+      }));
+      const result = await driver.archive!({ adapter: driver.id, id: 'idle' }, () => null);
+      expect(result.ok).toBe(status === 'idle' || status === 'notLoaded');
+      expect(calls).toEqual(result.ok ? ['thread/read', 'thread/archive'] : ['thread/read']);
+      expect(closed).toBe(true);
+    }
+  );
+
+  test('a running rollout, late refusal and an already archived thread never call thread/archive', async () => {
+    const calls: string[] = [];
+    const driver = adapter(0, '', async () => ({
+      call: async (method, params) => {
+        calls.push(method);
+        return { thread: { id: params.threadId, status: { type: 'idle' } } };
+      },
+      close: () => {},
+    }));
+    expect(await driver.archive!({ adapter: driver.id, id: 'busy' }, () => null)).toMatchObject({
+      ok: false,
+      reason: 'busy',
+    });
+    expect(
+      await driver.archive!({ adapter: driver.id, id: 'idle' }, () => ({
+        ok: false,
+        reason: 'live_card',
+        detail: 'new',
+      }))
+    ).toMatchObject({ ok: false, reason: 'live_card' });
+    expect(await driver.archive!({ adapter: driver.id, id: 'old' }, () => null)).toEqual({
+      ok: true,
+      value: { archived: false },
+    });
+    expect(calls).toEqual(['thread/read', 'thread/read']);
+  });
+
   function adapter(
     exitCode = 0,
     stderr = '',

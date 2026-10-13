@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHyperneoAdapter } from '../../../../src/lib/drivers/hyperneo-adapter';
+import type { ArchiveAdmission } from '../../../../src/lib/drivers/types';
 import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -26,6 +27,13 @@ function control(db: Database, events: string[]) {
       interrupt: (sessionId: string) => {
         events.push(`interrupt ${sessionId}`);
         return true;
+      },
+      archive: async (ref: { id: string }, admit: ArchiveAdmission) => {
+        const refused = admit();
+        if (refused) return refused;
+        db.prepare("UPDATE sessions SET status = 'archived' WHERE id = ?").run(ref.id);
+        events.push(`archive ${ref.id}`);
+        return { ok: true as const, value: { archived: true } };
       },
     },
     neoFolder: () => '/data/Neo',
@@ -104,6 +112,32 @@ describe('hyperneo adapter send and status', () => {
   }
 
   const ref = (id: string) => ({ adapter: 'hyperneo', id });
+
+  test('archives an idle session but rejects live turns and owned Space sessions', async () => {
+    const driver = adapter();
+    expect(await driver.archive!(ref('idle'), () => null)).toMatchObject({ ok: true });
+    expect(await driver.status!(ref('idle'))).toMatchObject({ value: { status: 'stopped' } });
+    expect(await driver.archive!(ref('busy'), () => null)).toMatchObject({
+      ok: false,
+      reason: 'busy',
+    });
+    expect(await driver.archive!(ref('space'), () => null)).toMatchObject({
+      ok: false,
+      reason: 'not_found',
+    });
+    expect(events).toEqual(['archive idle']);
+  });
+
+  test('checks admission again immediately before the lifecycle effect', async () => {
+    let admitted = 0;
+    expect(
+      await adapter().archive!(ref('idle'), () =>
+        ++admitted === 1 ? null : { ok: false, reason: 'live_card', detail: 'new' }
+      )
+    ).toMatchObject({ ok: false, reason: 'live_card' });
+    expect(events).toEqual([]);
+    expect(await adapter().status!(ref('idle'))).toMatchObject({ value: { status: 'done' } });
+  });
   const from = { from: 'session:neo:root', caller: { source: 'rpc' as const } };
 
   test('status returns the session with its last top-level reply and when it came', async () => {

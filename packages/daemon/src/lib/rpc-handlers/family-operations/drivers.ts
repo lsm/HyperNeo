@@ -2,6 +2,7 @@ import { mirrorNeoWorkspaceProjects } from '../../neo/project-mirror.ts';
 import { existsSync, mkdirSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
+import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
 import {
   ACP_AGENTS,
@@ -39,6 +40,8 @@ import type { PlaceGroup, WorkAdapter } from '../../drivers/types.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { readNeoSessionLoad } from '../../neo/session-load.ts';
+import { createNeoSessionArchiveOperation } from '../../neo/session-archive-operation.ts';
+import { reject } from '../../drivers/work-operations.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
@@ -110,9 +113,33 @@ async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
   return checkoutAt((await new WorktreeManager().detectGitSupport(folder)).gitRoot);
 }
 
-function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
+export function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
   const { sessionManager, internalEventBus } = context.deps;
   return {
+    archive: async (ref, admit) => {
+      const session = sessionManager.getSessionFromDB(ref.id);
+      if (!session) return reject('not_found', 'The session is gone.');
+      if (context.deps.db.listChildSessions(ref.id).length)
+        return reject('unsupported', 'Archive sessions with clones in the session UI.');
+      if (session.worktree) {
+        const manager = sessionManager.getWorktreeManager();
+        const commits = await manager.getCommitsAhead(session.worktree);
+        const git = await simpleGit(session.workspacePath!).status();
+        if (commits.hasCommitsAhead || !git.isClean())
+          return reject(
+            'unsupported',
+            'The worktree has changes or cannot be verified; archive it in the session UI.'
+          );
+      }
+      const refused = admit();
+      if (refused) return refused;
+      const processing = sessionManager.getCachedSession(ref.id)?.getProcessingState().status;
+      if (processing && !['idle', 'interrupted'].includes(processing))
+        return reject('busy', 'The HyperNeo session still has a live turn.');
+      if (session.status === 'archived') return { ok: true, value: { archived: false } };
+      await sessionManager.archiveSessionResources(ref.id, 'ui_session_archive');
+      return { ok: true, value: { archived: true } };
+    },
     create: (workspacePath, title, model) =>
       createDriverSession(sessionManager, workspacePath, title, model),
     model: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.model ?? null,
@@ -398,6 +425,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   return [
     createFindWorkOperation(deps),
     ...createWorkVerbOperations(deps),
+    createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
     createReadWorkOperation({ readTurns, remote: remoteDaemons, daemonName: machine }),
   ];
 }

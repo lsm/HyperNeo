@@ -1,5 +1,6 @@
 import { CLAUDE_DESKTOP_OPENING, CLAUDE_DESKTOP_RELAY, fillPrompt } from '@hyperneo/prompts';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
+import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -20,6 +21,7 @@ import type {
   WorkRef,
   WorkStatus,
   WorkSummary,
+  ArchiveAdmission,
 } from './types.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
@@ -824,7 +826,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
   const reused = { ...deps, liveSessions: reuseLiveSessions(deps.liveSessions, Date.now) };
   return {
     id: 'claude-desktop',
-    capabilities: ['find', 'start', 'send', 'status'],
+    capabilities: ['find', 'start', 'send', 'status', 'archive'],
     find: async (query) =>
       runClaudeDesktopFind(
         query,
@@ -835,5 +837,47 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
     start: (request) => runClaudeDesktopStart(request, deps),
     send: (ref, message) => runClaudeDesktopSend(ref, message, deps, cache),
     status: (ref, since) => runClaudeDesktopStatus(ref, reused, cache, since),
+    archive: (ref, admit) => archiveClaudeSession(ref, admit, deps),
   };
+}
+
+async function archiveClaudeSession(
+  ref: WorkRef,
+  admit: ArchiveAdmission,
+  deps: ClaudeDesktopAdapterDeps
+): Promise<Result<{ archived: boolean }>> {
+  const records: ClaudeRecordCache = new Map();
+  await readClaudeDesktopRecords(deps.sessionsDir, records);
+  const paths = [...records].filter(([, entry]) =>
+    entry.records.some((record) => record.sessionId === ref.id)
+  );
+  if (paths.length !== 1) return reject('not_found', 'Expected exactly one Claude session record.');
+  const live = await deps.liveSessions();
+  const path = paths[0][0];
+  const original = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  const record = RecordSchema.parse(original);
+  if (record.sessionId !== ref.id) return reject('not_found', 'The Claude session changed.');
+  if (
+    record.cliSessionId &&
+    live.some(
+      (session) =>
+        session.sessionId === record.cliSessionId &&
+        !['idle', 'done', 'completed'].includes(session.status)
+    )
+  )
+    return reject('busy', 'The Claude session still has a live turn.');
+  const refused = admit();
+  if (refused) return refused;
+  if (record.isArchived) return { ok: true, value: { archived: false } };
+  const temporary = `${path}.${crypto.randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, JSON.stringify({ ...original, isArchived: true }), {
+      flag: 'wx',
+      mode: 0o600,
+    });
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+  return { ok: true, value: { archived: true } };
 }

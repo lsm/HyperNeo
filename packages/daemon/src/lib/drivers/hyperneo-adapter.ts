@@ -62,6 +62,7 @@ export interface HyperneoSessionRow {
 }
 
 export interface HyperneoSessionControl {
+  archive?: WorkAdapter['archive'];
   create(workspacePath: string, title: string, model?: string): Promise<string>;
   model(sessionId: string): string | null;
   chooseWorktree(sessionId: string): Promise<void>;
@@ -521,7 +522,14 @@ const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
     id: 'hyperneo',
-    capabilities: ['find', 'start', 'send', 'status', 'stop'],
+    capabilities: [
+      'find',
+      'start',
+      'send',
+      'status',
+      'stop',
+      ...(deps.sessions.archive ? ['archive' as const] : []),
+    ],
     find: async (query) =>
       runHyperneoFind(
         query,
@@ -532,5 +540,21 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
     status: async (ref, since) => runHyperneoStatus(ref, deps, since),
     stop: async (ref) => runHyperneoStop(ref, deps),
+    archive: async (ref, admit) => {
+      const check = () => {
+        const found = requireHyperneoSession(ref, deps);
+        if ('reason' in found) return found.reason;
+        return ['running', 'queued', 'needs_you'].includes(
+          hyperneoWorkStatus(found.value.status, found.value.processing)
+        )
+          ? reject('busy', 'The HyperNeo session still has a live turn.')
+          : admit();
+      };
+      const refused = check();
+      if (refused) return refused;
+      return (
+        deps.sessions.archive?.(ref, check) ?? reject('unsupported', 'Archive is unavailable.')
+      );
+    },
   };
 }

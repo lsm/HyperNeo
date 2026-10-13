@@ -22,6 +22,14 @@ export function routeNeoCardPrEvent(
     (row) => row.topic.startsWith('github/') && topicMatchesPattern(row.topic, event.topic)
   );
   if (!matched.length) return null;
+  if (
+    /^(review_|comment_)/.test(externalEventTopicSuffix(event.topic)) &&
+    typeof event.payload.body === 'string' &&
+    /(?:^|\n)_🤖 Addressed by \[(?:Claude Code|Codex)\]\(https:\/\/(?:claude\.com\/claude-code|(?:chatgpt\.com|openai\.com)\/codex)\)_\s*$/.test(
+      event.payload.body
+    )
+  )
+    return null;
   const closed =
     'value' in
     requireClosedPrEvent({ record: { event, state: 'published', createdAt: 0, updatedAt: 0 } });

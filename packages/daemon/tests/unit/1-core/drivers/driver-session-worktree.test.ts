@@ -10,7 +10,74 @@ import {
 import {
   createDriverSession,
   newestAvailableModel,
+  hyperneoSessionControl,
 } from '../../../../src/lib/rpc-handlers/family-operations/drivers.ts';
+
+describe('hyperneoSessionControl archive', () => {
+  test.each(['idle', 'busy', 'clones', 'late_refusal', 'archived'])(
+    'uses the preserving lifecycle only for an admitted idle session (%s)',
+    async (state) => {
+      const archived: string[] = [];
+      const session = { id: 'session', status: state === 'archived' ? 'archived' : 'active' };
+      const controls = hyperneoSessionControl({
+        deps: {
+          db: { listChildSessions: () => (state === 'clones' ? [{ id: 'child' }] : []) },
+          sessionManager: {
+            getSessionFromDB: () => session,
+            getCachedSession: () => ({
+              getProcessingState: () => ({ status: state === 'busy' ? 'processing' : 'idle' }),
+            }),
+            archiveSessionResources: async (id: string, trigger: string) => {
+              archived.push(`${id}:${trigger}`);
+            },
+          },
+        },
+      } as never);
+      const result = await controls.archive!({ adapter: 'hyperneo', id: 'session' }, () =>
+        state === 'late_refusal' ? { ok: false, reason: 'live_card', detail: 'new' } : null
+      );
+      expect(result.ok).toBe(state === 'idle' || state === 'archived');
+      expect(archived).toEqual(state === 'idle' ? ['session:ui_session_archive'] : []);
+      if (state === 'archived') expect(result).toMatchObject({ value: { archived: false } });
+    }
+  );
+
+  test('a dirty worktree is never removed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'archive-worktree-'));
+    const { simpleGit } = await import('simple-git');
+    try {
+      await simpleGit(dir).init();
+      writeFileSync(join(dir, 'keep.txt'), 'unsaved work');
+      const archived: string[] = [];
+      const controls = hyperneoSessionControl({
+        deps: {
+          db: { listChildSessions: () => [] },
+          sessionManager: {
+            getSessionFromDB: () => ({
+              id: 'session',
+              status: 'active',
+              workspacePath: dir,
+              worktree: { branch: 'work' },
+            }),
+            getWorktreeManager: () => ({
+              getCommitsAhead: async () => ({ hasCommitsAhead: false }),
+            }),
+            archiveSessionResources: async (id: string) => {
+              archived.push(id);
+            },
+          },
+        },
+      } as never);
+      expect(
+        await controls.archive!({ adapter: 'hyperneo', id: 'session' }, () => null)
+      ).toMatchObject({ ok: false, reason: 'unsupported' });
+      expect(archived).toEqual([]);
+      expect(await simpleGit(dir).status()).toMatchObject({ not_added: ['keep.txt'] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 function sessionManager(
   isGitRepo: boolean,

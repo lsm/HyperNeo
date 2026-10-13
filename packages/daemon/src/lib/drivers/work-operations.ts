@@ -22,7 +22,7 @@ import {
   type WorkRejection,
 } from './types.ts';
 
-type RoutedVerb = 'start' | 'send' | 'status' | 'stop';
+type RoutedVerb = 'start' | 'send' | 'status' | 'stop' | 'archive';
 type Route<Verb extends RoutedVerb> =
   | { daemon: string }
   | { local: NonNullable<WorkAdapter[Verb]>; supportsStartEffort?: boolean };
@@ -69,7 +69,7 @@ export const WorkAdaptersResultSchema = workResultSchema(
   z.array(
     z.object({
       id: z.string(),
-      capabilities: z.array(z.enum(['find', 'start', 'send', 'status', 'stop'])),
+      capabilities: z.array(z.enum(['find', 'start', 'send', 'status', 'stop', 'archive'])),
     })
   )
 );
@@ -333,7 +333,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.adapters',
       description:
-        'List the work adapters on this daemon, or on the attached daemon named by daemon, with the verbs each can do: find, start, send, status, stop. Start new work only with an adapter that can start, and send only through one that can send.',
+        'List the work adapters on this daemon, or on the attached daemon named by daemon, with the verbs each can do: find, start, send, status, stop, archive. Archive uses neo.session.archive and requires a human request in a live turn. Start new work only with an adapter that can start, and send only through one that can send.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
