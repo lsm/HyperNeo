@@ -42,6 +42,7 @@ import { neoWorkPresentation } from './work-actions.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 import { neoForwardKey } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoQuote } from './neo-intake.ts';
 
 export function NeoLive() {
   const neo = useNeo();
@@ -55,6 +56,9 @@ export function NeoLive() {
   const [replyProgress, setReplyProgress] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
+  const [quoted, setQuoted] = useState<{ scope: string; quote: NeoQuote } | null>(null);
+  const quote = quoted?.scope === neo.sessionId ? quoted.quote : undefined;
+  useEffect(() => setQuoted(null), [neo.sessionId]);
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
   const reloadBuffer = useRef(createNeoDraftReloadBuffer()).current;
   const acceptedCleanups = useRef(new Map<string, () => Promise<void>>()).current;
@@ -525,6 +529,7 @@ export function NeoLive() {
           )}
           {conversationReady && neo.sessionId ? (
             <NeoConversation
+              onQuote={ready ? (quote) => setQuoted({ scope: neo.sessionId!, quote }) : undefined}
               store={neo.store}
               sessionId={neo.sessionId}
               works={relevant}
@@ -555,9 +560,13 @@ export function NeoLive() {
                     );
                   return;
                 }
-                if (!neo.discardSend(requestId)) return;
+                const restored = neo.discardSend(requestId);
+                if (!restored) return;
                 acceptedCleanups.delete(requestId);
-                writeDraft(failed.text);
+                writeDraft(restored.text);
+                setQuoted(
+                  restored.quote ? { scope: restored.sessionId, quote: restored.quote } : null
+                );
               }}
               mute={{
                 muted: new Set(view?.mutedSessions ?? []),
@@ -728,6 +737,8 @@ export function NeoLive() {
           />
           {ready && neo.sessionId && (
             <NeoComposer
+              quote={quote}
+              onCancelQuote={() => setQuoted(null)}
               key={neo.sessionId}
               store={neo.store}
               sessionId={neo.sessionId}
@@ -754,6 +765,7 @@ export function NeoLive() {
                 const sessionId = neo.sessionId ?? '';
                 const captured = reloadBuffer.read(sessionId);
                 setDraft('');
+                setQuoted(null);
                 const cleanup = async () => {
                   await inputDraft.clearSubmitted(sessionId, submitted);
                   if (captured?.text === submitted) reloadBuffer.forget(sessionId, captured.id);

@@ -6,7 +6,7 @@ import type { SessionStore } from '../lib/session-store.ts';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { connectionState } from '../lib/state.ts';
-import type { NeoPendingAsk } from './neo-intake.ts';
+import type { NeoPendingAsk, NeoQuote } from './neo-intake.ts';
 import { projectNeoProcessingActivity } from './processing-activity.ts';
 import {
   type NeoEditUndelivered,
@@ -71,8 +71,10 @@ export function NeoConversation({
   onEditAsk,
   onEditUndelivered,
   mute,
+  onQuote,
 }: {
   store: SessionStore;
+  onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
   onEditUndelivered?: NeoEditUndelivered;
   pendingAsks?: readonly NeoPendingAsk[];
@@ -164,6 +166,7 @@ export function NeoConversation({
             onLoadEarlier={onLoadEarlierPublic}
             onEditUndelivered={onEditUndelivered}
             mute={mute}
+            onQuote={onQuote}
           />
         )}
         {pendingAsks
