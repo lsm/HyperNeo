@@ -41,8 +41,9 @@ other edits bump the ask; a stale in-flight tick cannot verify a changed definit
 
 A worker report, report prefix, or Neo's assertion alone cannot tick a dependency outcome.
 Registered checks tick items through the existing daemon event/timed-read paths. Evidence
-accepted by those checks must verify the item's exact outcome. Explicit human answers use `neo.ask.question`
-and are bound to the question's item definition and revision. There is no new confirm flow.
+accepted for prerequisites must come from an independent check or an explicit human answer
+through `neo.ask.question`, bound to the item's definition and revision. `met` or `metBy`
+alone is insufficient. Non-independent ticks can retain their existing checklist behavior.
 
 For already-met items, admission validates the evidence against the current outcome definition.
 An unrelated ask edit may preserve unchanged verified items; an outcome or binding edit
@@ -77,7 +78,10 @@ Make check kinds pack-registered. `NeoPack.checks` already provides the contribu
 remove the hard-coded operation enum, shared closed union, and database CHECK constraint that
 restrict kinds to today's packs. Core validates nonnull kinds against checks registered by
 loaded packs, rejects collisions, and keeps the operation result schemas compatible with
-pack-qualified strings. The migration preserves existing items.
+pack-qualified strings. Each registration declares its evidence independence; missing metadata
+defaults to non-independent. Admission rechecks the declaration and tick provenance; independent
+checks cannot fall back to worker assertions. Changed/unloaded registrations cannot grandfather
+evidence into eligibility. The migration preserves items; human eligibility needs a question answer.
 
 An item explicitly configured without an automatic check is met only by a human through
 `neo.ask.question`. A persisted nonnull check whose pack is unavailable remains blocked with
@@ -180,11 +184,10 @@ resource-owning execution seam; packs supply domain preparation requirements.
 | Pack | Outcome checks | Preparation |
 | --- | --- | --- |
 | coding | Existing `coding.pr_merged`, issue/deployment checks, and watch readers | Fetch and prepare a fresh required target-branch checkout. |
-| life-admin | Existing `life-admin.confirmed`; no behavior change in these slices | None required. |
+| life-admin | Existing `life-admin.confirmed`, declared non-independent; prerequisites require a human question answer until #6768 supplies independent verification | None required. |
 | future packs, such as legal | Register their own checks and evidence readers | Their own stage or none. |
 
-Life-admin confirmation evidence is a separate audit/fix in [#6768](https://github.com/lsm/HyperNeo/issues/6768).
-
+Life-admin evidence is a separate audit/fix: [#6768](https://github.com/lsm/HyperNeo/issues/6768).
 ### Coding pack
 
 Reuse `packs/coding/work-prs.ts`, `ask-prs.ts`, and the existing issue/watch/deployment readers.
@@ -302,11 +305,9 @@ update this graph before dispatch rather than coding around its unmerged branch.
 | F2 — build fresh-base preparation (#6769) | Reuse preparation characterization; build pure target/ref and ancestry decisions plus fetch/checkout effect stages through the existing seam. | None; does not wait for D | Failed fetch creates no worker; checkout uses required remote target; user's checkout remains intact. |
 | F3 — wire fresh coding starts | Replace the existing preparation call with the coding pack stage for every coding card, including independent cards. | F2 | Driver integration proves fresh remote base and no local-HEAD fallback. |
 
-No default pin-only or extract-only issue is needed where existing suites and seams suffice.
-In F2, R1, and K1, reuse characterization first and add missing test cases before the build;
-tests ride their owning slice. If a real missing seam needs extraction or a substantial Pin
-rung is needed, measure and create that separate predecessor PR under ADR 0004. Keep Build
-and Wire separate. F3 can land before D. No deployment is part of this track.
+Reuse characterization first in F2/R1/K1; missing tests ride the slice. Only a measured missing
+seam or substantial Pin rung adds a separate ADR 0004 predecessor. Keep Build/Wire separate.
+F3 can land before D. No deployment is part of this track.
 
 ### Slice 1: outcomes, revisions, and registered checks
 
@@ -314,7 +315,7 @@ and Wire separate. F3 can land before D. No deployment is part of this track.
 | --- | --- | --- | --- |
 | R1 — build ask revision storage | Reuse outcome characterization; add revision/approved_revision and definition-hash storage with pure material-edit decisions. | D | Migration/backfill tests; material versus nonmaterial changes; legacy evidence cannot unlock work. |
 | R2 — wire revision-safe mutations | Route edits, approval, daemon ticks, and human answers through revision/hash checks and atomic derived-view returns. | R1, #6750 | Stale ticks and approval rejected; unchanged-item evidence survives unrelated edits. |
-| K1 — build check registry | Reuse existing check tests; build pure loaded-pack validation and string schemas; migrate the hard-coded DB constraint. | R1 | Existing kinds preserved; unknown/colliding kinds rejected; unloaded kinds remain blocked. |
+| K1 — build check registry | Build pure loaded-pack validation, evidence-independence metadata and string schemas; migrate the hard-coded DB constraint. | R1 | Unknown/colliding kinds rejected; missing metadata is non-independent; existing kinds preserved. |
 | K2 — wire registered checks | Swap operation validation/check dispatch to the registry, retaining existing checks' behavior. | K1, R2 | Loaded-pack checks work through the operations door; no life-admin behavior change. |
 | B1 — build outcome bindings | Add deliveredBy persistence and pure validation; extend #6754's fold with binding remapping/invalidation. | R2, #6754 | Missing/foreign cards rejected; changed bindings clear evidence; fold preserves card identity. |
 | B2 — wire binding operations | Add deliveredBy to neo.ask.open/edit and transactional fold behavior, returning updated views. | B1, K2 | Real operation tests prove atomic bindings/revisions and target-ask approval isolation. |
@@ -324,7 +325,7 @@ and Wire separate. F3 can land before D. No deployment is part of this track.
 | ID / issue purpose | Rung and concrete steps | Required merged PRs | Acceptance evidence |
 | --- | --- | --- | --- |
 | G1 — build dependency graph | Add edge storage and pure DAG/blocker decisions; validate both endpoints' bound outcomes transactionally. | B2 | Chain/fan-in/fan-out, cycles, empty/removed outcomes, cross-ask ownership and cancellation tests. |
-| A1 — build admission pipeline | Compose pure admission gates and effects; reuse #6749's live retargeting and pack evidence; extend target-row claims and uncertain state. | G1, F3, #6747; #6749 already merged | Blocked decisions produce zero worker effects; existing retargeting preserved; competing claims cannot both win. |
+| A1 — build admission pipeline | Compose pure gates/effects, including independent-check or recorded-human-answer eligibility; reuse #6749 retargeting; extend claims/uncertain state. | G1, F3, #6747; #6749 already merged | Self-attested met items cannot unlock dependents; human question answers can; duplicate claims and blocked worker effects prevented. |
 | A2 — wire direct start paths | Route public Start and adoption through admission, preserving #6763's model/effort contract. | A1, #6763 | Direct/adopt tests cover blocked, retargeted, stale, uncertain, and configuration-refused attempts. |
 | A3 — wire approval and recovery | Route approval fan-out, pre-delivery retries, and recovery through the same pipeline. | A2 | Every remaining start path respects dependencies and cancellation; no Promise.allSettled bypass. |
 | Q1 — build dependency wake jobs | Register durable Neo admission jobs and atomic item-met/enqueue changes using enqueueUniquePending. | A3 | Duplicate events, queue restart, cancellation, and stale revisions cannot double-dispatch. |
