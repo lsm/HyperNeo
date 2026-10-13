@@ -2438,6 +2438,38 @@ export class NeoService {
     );
   }
 
+  readonly withdrawObsoletePrQuestions = (superpipe({})('neo-withdraw-pr-questions') as PipelineAPI)
+    .input(['askId'])
+    .pipe(
+      (askId: string) => {
+        const ask = this.askRecords.get(askId);
+        return ask && isNeoAskLive(ask) ? { value: ask } : { reason: undefined };
+      },
+      'askId',
+      'result:ask'
+    )
+    .pipe(
+      async (ask: NeoAsk) => {
+        const refs = this.prQuestionWithdrawalPolicy.refs(ask.doneItems ?? []);
+        return refs.length ? this.readRefStates(refs) : [];
+      },
+      'ask',
+      'states'
+    )
+    .pipe(
+      async (askId: string, states: Awaited<ReturnType<NeoRefStateReader>>) => {
+        const ask = this.askRecords.get(askId);
+        if (!ask || !isNeoAskLive(ask)) return;
+        const cleared = this.prQuestionWithdrawalPolicy
+          .plan(ask.doneItems ?? [], states)
+          .map((entry) => ({ id: entry.id, why: entry.evidence }));
+        if (cleared.length) await this.wakeForClearedNeedsYou(ask, cleared, true);
+      },
+      ['askId', 'states'],
+      'withdrawn'
+    )
+    .endAsync('withdrawn') as (askId: string) => Promise<void>;
+
   async clearStaleNeedsYou(): Promise<void> {
     for (const { id: askId } of this.askRecords.needingHuman()) {
       const ask = this.askRecords.get(askId);
@@ -2469,15 +2501,27 @@ export class NeoService {
 
   private async wakeForClearedNeedsYou(
     ask: NeoAsk,
-    cleared: readonly { id: string; why: string }[]
+    cleared: readonly { id: string; why: string }[],
+    withdrawQuestions = false
   ): Promise<void> {
     const now = Date.now();
     for (const entry of cleared)
       this.askRecords.tickItem(
         ask.id,
-        { id: entry.id, state: 'pending', evidence: null, metBy: null },
+        {
+          id: entry.id,
+          state: 'pending',
+          evidence: withdrawQuestions ? entry.why : null,
+          metBy: withdrawQuestions ? 'daemon' : null,
+        },
         now
       );
+    if (withdrawQuestions) {
+      const remove = cleared
+        .filter((entry) => ask.doneItems?.some((item) => item.id === entry.id && item.decision))
+        .map((entry) => entry.id);
+      if (remove.length) this.askRecords.editItems(ask.id, { add: [], remove }, now);
+    }
     const ticked = this.askRecords.get(ask.id);
     if (ticked && neoAskReopensAfterClear(ticked)) this.askRecords.reopen(ticked);
     else if (ticked) writeNeoAskTickStatus(this.askRecords, ticked, planNeoAskTickStatus(ticked));
@@ -2485,7 +2529,9 @@ export class NeoService {
     await this.deliverToOrigin(
       ask.originSessionId,
       `neo-ask-cleared:${ask.id}:${cleared.map((entry) => entry.id).join(',')}:${now}`,
-      neoNeedsYouClearedNote(ask, cleared, ask.doneItems ?? []),
+      withdrawQuestions
+        ? `The daemon withdrew obsolete PR questions on ask ${ask.id}. Standalone questions were removed; original outcome items remain pending.\n${cleared.map((entry) => `${entry.id}: ${entry.why}`).join('\n')}`
+        : neoNeedsYouClearedNote(ask, cleared, ask.doneItems ?? []),
       neoAskParent(ask)
     );
   }
