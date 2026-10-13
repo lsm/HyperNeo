@@ -307,6 +307,36 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test('an ask operation answers with the derived view, its human actions included', async () => {
+    const askId = await openAsk();
+    const card = (await propose('card-1', askId)).value!.work!.id;
+    const asked = await invoke('neo.ask.question', {
+      askId,
+      question: 'Own data dir or attach?',
+      options: ['Own dir', 'Attach'],
+    });
+    expect(asked).toMatchObject({
+      value: {
+        ok: true,
+        view: {
+          id: askId,
+          cards: [{ id: card, title: 'Fix it', status: 'proposed' }],
+          humanActions: expect.arrayContaining([
+            expect.objectContaining({ kind: 'answer', options: ['Own dir', 'Attach'] }),
+          ]),
+        },
+      },
+    });
+    expect(await invoke('neo.work.cancel', { id: card })).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          humanActions: expect.arrayContaining([expect.objectContaining({ kind: 'answer' })]),
+        },
+      },
+    });
+  });
+
   test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
     const askId = await openAsk();
     for (const itemId of ['i1', 'i2'])

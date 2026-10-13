@@ -137,7 +137,7 @@ import {
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoSavedRules } from './saved-rules.ts';
 import { projectNeoCardViews } from './card-views.ts';
-import { NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
+import { NeoAskStateViewSchema, NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
 import { projectNeoAskViews } from './ask-views.ts';
 import { unmutedNeoAskSessions } from './session-ask-links.ts';
 import { NEO_WORK_FOLLOW_MAX_AGE_MS } from './work-follow.ts';
@@ -303,13 +303,7 @@ const SnapshotUnchanged = z.object({
   scopedTo: z.string().optional(),
 });
 const Snapshot = z.union([Failure, SnapshotUnchanged, SnapshotOk]);
-const WorkAskView = z.object({
-  id: z.string(),
-  status: z.string(),
-  outcome: z.string().nullable(),
-  items: z.array(z.object({ id: z.string(), state: z.string(), text: z.string().optional() })),
-  cards: z.array(z.object({ id: z.string(), title: z.string(), status: z.string() })),
-});
+const WorkAskView = NeoAskStateViewSchema;
 const WorkResult = z.union([
   Failure,
   z.object({ ok: z.literal(true), work: Work, ask: WorkAskView.nullable().optional() }),
@@ -639,7 +633,8 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
 
 export function neoWorkAskView(
   ask: NeoAsk | null,
-  works: readonly Pick<NeoWork, 'id' | 'title' | 'status'>[]
+  works: readonly Pick<NeoWork, 'id' | 'title' | 'status'>[],
+  humanActions: z.infer<typeof WorkAskView>['humanActions'] = []
 ): z.infer<typeof WorkAskView> | null {
   return ask
     ? {
@@ -648,6 +643,7 @@ export function neoWorkAskView(
         outcome: ask.outcome,
         items: neoNoteChecklist(ask),
         cards: works.map(({ id, title, status }) => ({ id, title, status })),
+        humanActions,
       }
     : null;
 }
@@ -777,14 +773,52 @@ export function createNeoOperations(service: NeoService) {
   function withAskView<T extends { ok: boolean }>(result: T): T {
     if (!result.ok || !('work' in result)) return result;
     const work = (result as { work: NeoWork }).work;
-    const ask = service.askRecords.forWork(work.id);
-    return {
-      ...result,
-      ask: neoWorkAskView(
-        ask,
-        ask ? ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []) : []
-      ),
-    };
+    return { ...result, ask: askView(service.askRecords.forWork(work.id)) };
+  }
+  function askView(ask: NeoAsk | null): z.infer<typeof WorkAskView> | null {
+    if (!ask) return null;
+    const work = ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []);
+    const asks = projectNeoSnapshotAsks(
+      [ask],
+      1,
+      Date.now(),
+      new Set(ask.workIds.filter((id) => service.isContinueStalled(id)))
+    );
+    const { workPrs, cards } = projectCards(work, asks);
+    const [view] = projectNeoAskViews(asks, cards, workPrs, unmutedAskSessions());
+    return neoWorkAskView(ask, work, view?.humanActions ?? []);
+  }
+  function unmutedAskSessions() {
+    return unmutedNeoAskSessions(
+      service.askSessions,
+      service.db.getGlobalSettings?.().neo?.mutedSessions ?? []
+    );
+  }
+  function projectCards(visibleWork: NeoWork[], asks: NeoAsk[]) {
+    const workIds = visibleWork.map((item) => item.id);
+    const workPrs = service.workPrs
+      .list(workIds)
+      .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));
+    const cards = projectNeoCardViews({
+      work: visibleWork,
+      drivers: workDrivers(workIds),
+      prs: workPrs,
+      goals: service.workGoals.list(workIds),
+      continues: service.workContinues.list(workIds),
+      supersessions: service.workSupersessions.list(workIds),
+      asks,
+    });
+    return { workPrs, cards };
+  }
+  function workDrivers(workIds: string[]) {
+    return service.driverTargets.receipts(workIds).map((receipt) => {
+      const since = service.uncheckedSince(receipt.workId);
+      return {
+        ...receipt,
+        ...(since === null ? {} : { uncheckedSince: since }),
+        ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
+      };
+    });
   }
 
   function snapshot(caller: OperationCaller, requested?: string, askId?: string) {
@@ -825,17 +859,6 @@ export function createNeoOperations(service: NeoService) {
     const consultations = focus ? [] : service.consultations.list(scope ?? undefined);
     const waiters = focus ? [] : service.consultationWaiters.queued(scope ?? undefined);
     const workIds = visibleWork.map((item) => item.id);
-    const workDrivers = service.driverTargets.receipts(workIds).map((receipt) => {
-      const since = service.uncheckedSince(receipt.workId);
-      return {
-        ...receipt,
-        ...(since === null ? {} : { uncheckedSince: since }),
-        ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
-      };
-    });
-    const workGoals = service.workGoals.list(workIds);
-    const workContinues = service.workContinues.list(workIds);
-    const workSupersessions = service.workSupersessions.list(workIds);
     const listed = focus
       ? [focus]
       : service.askRecords.list(scope === undefined ? undefined : scope);
@@ -845,18 +868,7 @@ export function createNeoOperations(service: NeoService) {
       Date.now(),
       new Set(workIds.filter((id) => service.isContinueStalled(id)))
     );
-    const workPrs = service.workPrs
-      .list(workIds)
-      .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));
-    const cards = projectNeoCardViews({
-      work: visibleWork,
-      drivers: workDrivers,
-      prs: workPrs,
-      goals: workGoals,
-      continues: workContinues,
-      supersessions: workSupersessions,
-      asks,
-    });
+    const { workPrs, cards } = projectCards(visibleWork, asks);
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
@@ -897,15 +909,7 @@ export function createNeoOperations(service: NeoService) {
       asks: compact ? compactNeoSnapshotAsks(asks) : asks,
       cards: compact ? compactNeoSnapshotCards(cards) : cards,
       sessionLoad: readNeoSessionLoad(service.db.getDatabase()).slice(0, 50),
-      askViews: projectNeoAskViews(
-        asks,
-        cards,
-        workPrs,
-        unmutedNeoAskSessions(
-          service.askSessions,
-          service.db.getGlobalSettings?.().neo?.mutedSessions ?? []
-        )
-      ),
+      askViews: projectNeoAskViews(asks, cards, workPrs, unmutedAskSessions()),
       workResources: visibleWork.map((item) => ({
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,
@@ -1731,8 +1735,10 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     createNeoPreferenceOperation(service),
-    ...createNeoAskOperations(service, (caller, name, concernId) =>
-      admitNeoCaller(service, caller, name, concernId)
+    ...createNeoAskOperations(
+      service,
+      (caller, name, concernId) => admitNeoCaller(service, caller, name, concernId),
+      askView
     ),
     defineOperation({
       name: 'neo.concern.cancel',
