@@ -784,6 +784,7 @@ const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   return {
     id: 'codex-desktop',
+    supportsStartEffort: true,
     capabilities: ['find', 'start', 'send', 'status', 'stop'],
     find: async (query) =>
       runCodexFind(
