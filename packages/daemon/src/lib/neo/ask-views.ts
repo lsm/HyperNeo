@@ -89,7 +89,7 @@ export function isNeoAskOutcomeItem(
     item.state === 'needs_you' &&
     item.kind === 'action' &&
     !item.waitCard &&
-    (item.options?.length ?? 0) >= 2
+    !!item.options?.length
   );
 }
 

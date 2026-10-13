@@ -748,7 +748,8 @@ describe('neo.ask operations', () => {
       await invoke('neo.ask.settle', {
         ...waiting,
         question: 'Did the keyboard hide?',
-        options: ['Yes', 'Not yet'],
+        options: ['It hid', 'Still showing'],
+        kind: 'action',
       })
     ).toMatchObject({
       value: {
@@ -761,7 +762,7 @@ describe('neo.ask operations', () => {
               id: 'i3',
               kind: 'action',
               question: 'Did the keyboard hide?',
-              options: ['Yes', 'Not yet'],
+              options: ['It hid', 'Still showing'],
             }),
           ]),
         },
@@ -1069,7 +1070,7 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test('a step only the human can check is asked with its own options, met only on the first', async () => {
+  test('a result check carries its own options and is met only on its first', async () => {
     const askId = await openAsk();
     const user: OperationCaller = { source: 'rpc', principal: 'local' };
     expect(
@@ -1105,7 +1106,7 @@ describe('neo.ask operations', () => {
     service.deliverAskAnswer = delivered;
     const answer = { askId, itemId: 'i3', choice: 'Yes' };
     expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('成功了 / 没成功') },
+      value: { ok: false, reason: expect.stringContaining('成功了 or 没成功') },
     });
     expect(await invoke('neo.ask.answer', { ...answer, choice: '没成功' }, user)).toMatchObject({
       value: { ok: true, ask: { status: 'waiting' } },
@@ -1119,6 +1120,18 @@ describe('neo.ask operations', () => {
     });
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
     expect(delivered.mock.calls[1]?.slice(2)).toEqual(['成功了', true]);
+  });
+
+  test('a question must say its kind, so a result check is never taken for a decision', async () => {
+    const askId = await openAsk();
+    expect(
+      await invoke('neo.ask.question', {
+        askId,
+        question: 'Did the keyboard hide?',
+        options: ['Yes', 'Not yet'],
+      })
+    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
   });
 
   test('the user can close an ask as done even with items still open', async () => {

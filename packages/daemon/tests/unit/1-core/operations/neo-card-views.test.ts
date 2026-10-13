@@ -407,15 +407,15 @@ describe('projectNeoAskViews', () => {
             {
               ...item('s', 'needs_you'),
               kind: 'action',
-              question: 'Did the keyboard hide?',
-              options: ['It hid', 'Still showing'],
+              question: '这一步成功了吗？',
+              options: ['成功了', '没成功'],
             },
             { ...item('g', 'needs_you'), kind: 'action' },
             {
               ...item('o', 'needs_you'),
               kind: 'action',
               question: 'o',
-              options: ['成功了', '没成功'],
+              options: ['It hid', 'Still showing'],
             },
             { ...item('c', 'needs_you'), kind: 'action', waitCard: 'p' },
             item('m', 'reported'),
@@ -435,10 +435,16 @@ describe('projectNeoAskViews', () => {
         kind: 'answer',
         itemId: 's',
         step: 's',
-        question: 'Did the keyboard hide?',
+        question: '这一步成功了吗？',
+        options: ['成功了', '没成功'],
+      },
+      {
+        kind: 'answer',
+        itemId: 'o',
+        step: null,
+        question: 'o',
         options: ['It hid', 'Still showing'],
       },
-      { kind: 'answer', itemId: 'o', step: null, question: 'o', options: ['成功了', '没成功'] },
       { kind: 'confirm', itemId: 'm', step: 'm' },
     ]);
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
