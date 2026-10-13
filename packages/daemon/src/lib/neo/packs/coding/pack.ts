@@ -1,6 +1,7 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { ExternalEvent } from '../../../external-events/types.ts';
 import type { NeoEvidence } from '../../evidence.ts';
 import type { NeoPack, NeoPackBrief, NeoPackCheck } from '../types.ts';
 import {
@@ -11,7 +12,8 @@ import {
 } from './ask-prs.ts';
 import { readNeoIssueTicks } from './issue-checks.ts';
 import { neoCardPrTopics, routeNeoCardPrEvent } from './card-pr-events.ts';
-import { readNeoWatchTicks } from './watch-checks.ts';
+import { readNeoWatchEventTicks, readNeoWatchTicks, neoWatchTopics } from './watch-checks.ts';
+import { readNeoDeployTicks, type NeoDeployReader } from './deploy-checks.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
 import {
@@ -223,6 +225,7 @@ export function createCodingPack(
     runningPrUrls: (workIds: readonly string[]) => Promise<string[]>;
     cardReports: (workIds: readonly string[]) => string[];
     readRefStates: NeoRefStateReader;
+    readDeploys: NeoDeployReader;
   }
 ): NeoPack {
   return {
@@ -243,9 +246,19 @@ export function createCodingPack(
         deps.workPrs.list(ask.workIds),
         deps.claims.forUrls(works.flatMap((work) => extractNeoWorkPrUrls(work.report)))
       ),
-    readAskTicks: (ask: NeoAsk, works: readonly NeoWork[]) =>
-      readNeoIssueTicks(ask, works, deps.readRefStates, Date.now()),
+    readAskTicks: async (ask: NeoAsk, works: readonly NeoWork[]) => [
+      ...(await readNeoIssueTicks(ask, works, deps.readRefStates, Date.now())),
+      ...(await readNeoDeployTicks(
+        ask,
+        deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url)),
+        deps.readDeploys,
+        Date.now()
+      )),
+    ],
     readAskWatchTicks: (ask: NeoAsk) => readNeoWatchTicks(ask, deps.readRefStates, Date.now()),
+    readAskEventTicks: (ask: NeoAsk, event: ExternalEvent) =>
+      readNeoWatchEventTicks(ask, event, deps.readRefStates),
+    askTopics: neoWatchTopics,
     readAskEvidence: async (ask: NeoAsk) => {
       const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));
       const refs = neoAskCardRefs(

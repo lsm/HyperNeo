@@ -112,6 +112,7 @@ import { runMigration353 } from './m353-neo-work-wakes.ts';
 import { runMigration354 } from './m354-neo-ask-needs-you-questions.ts';
 import { runMigration355 } from './m355-neo-card-event-subscriptions.ts';
 import { runMigration356 } from './m356-neo-notification-triggers.ts';
+import { runMigration357 } from './m357-neo-ask-item-deploy-check.ts';
 
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
@@ -789,6 +790,7 @@ export function runMigrations(
   run(migrationMarkerKey(354), () => runMigration354(db));
   run(migrationMarkerKey(355), () => runMigration355(db));
   run(migrationMarkerKey(356), () => runMigration356(db));
+  run(migrationMarkerKey(357), () => runMigration357(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

@@ -1,5 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import type { ExternalEvent } from '../../external-events/types.ts';
 import { isNeoAskLive } from '../done-check.ts';
 import { combineNeoEvidenceReads, type NeoEvidence, type NeoEvidenceRead } from '../evidence.ts';
 import { CODING_PACK_BRIEF } from './coding/pack.ts';
@@ -205,6 +206,28 @@ export async function readNeoAskPackTicks(
   );
   const ticks = reads.flatMap((read) => read ?? []);
   return ticks.filter((tick, index) => ticks.findIndex((item) => item.id === tick.id) === index);
+}
+
+export async function readNeoAskEventTicks(
+  packs: readonly NeoPack[],
+  ask: NeoAsk,
+  event: ExternalEvent,
+  warn: (id: string, error: unknown) => void
+): Promise<{ id: string; evidence: string }[]> {
+  const reads = await Promise.all(
+    packs.map((pack) =>
+      pack.readAskEventTicks?.(ask, event).catch((error: unknown) => {
+        warn(pack.id, error);
+        return [];
+      })
+    )
+  );
+  const ticks = reads.flatMap((read) => read ?? []);
+  return ticks.filter((tick, index) => ticks.findIndex((item) => item.id === tick.id) === index);
+}
+
+export function neoPackAskTopics(packs: readonly NeoPack[], asks: readonly NeoAsk[]): string[] {
+  return [...new Set(asks.flatMap((ask) => packs.flatMap((pack) => pack.askTopics?.(ask) ?? [])))];
 }
 
 export async function readNeoAskPackEvidence(

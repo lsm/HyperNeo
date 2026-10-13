@@ -69,6 +69,30 @@ export function neoDaemonReadsClaim(text: string, context = ''): boolean {
   return NEO_CHECK_WORD.test(text) || NEO_DAEMON_FACT.test(text);
 }
 
+const NEO_DAEMON_CHECKS: ReadonlySet<string> = new Set([
+  'coding.pr_merged',
+  'coding.issue_filed',
+  'coding.issue_sub_issue',
+  'coding.issue_closed',
+  'coding.deployed',
+]);
+const NEO_REF_NAMED =
+  /github\.com\/[\w.-]+\/[\w.-]+\/(pull|issues)\/\d+|[\w.-]+\/[\w.-]+#\d+\b|(?<![\w&])#\d+\b/i;
+const NEO_REF_SETTLES = /\b(merg\w*|clos\w*|land\w*)\b/i;
+const NEO_DEPLOY = /\b(re-?)?deploy\w*\b|\brolled? out\b|\bruns? (the )?(new |latest )?commit\b/i;
+const NEO_DEVICE = /\b(phone|iPhone|iPad|device|TestFlight|App Store)\b/i;
+
+export type NeoDaemonTickPath = 'check' | 'watch' | 'needs_deploy_check' | 'needs_watch';
+
+export function neoDaemonTickPath(
+  item: Pick<NeoAskItem, 'text' | 'check' | 'watch'>
+): NeoDaemonTickPath | null {
+  if (item.check && NEO_DAEMON_CHECKS.has(item.check)) return 'check';
+  if (item.watch?.length) return 'watch';
+  if (NEO_DEPLOY.test(item.text) && !NEO_DEVICE.test(item.text)) return 'needs_deploy_check';
+  return NEO_REF_NAMED.test(item.text) && NEO_REF_SETTLES.test(item.text) ? 'needs_watch' : null;
+}
+
 export type NeoAskCardWait = { status: string; needsYou: boolean; stalled: boolean };
 
 function cardWaitsOnHuman(card: NeoAskCardWait | undefined): boolean {

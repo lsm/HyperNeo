@@ -1448,6 +1448,56 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test("an agent's word or Neo's tick never meets an item the daemon reads", async () => {
+    const askId = await openAsk();
+    await invoke('neo.ask.edit', {
+      askId,
+      add: [
+        { text: 'Deployed to the laptop and the iMac' },
+        { text: 'lsm/HyperNeo#6700 merged' },
+        { text: 'Running on both daemons', check: 'coding.deployed' },
+        { text: 'The copy reads well' },
+      ],
+    });
+    const tick = (itemId: string, state: 'met' | 'reported', evidence: string) =>
+      invoke('neo.ask.tick', { askId, itemId, state, evidence });
+    for (const [itemId, state, code] of [
+      ['i3', 'met', 'daemon_reads_deploy'],
+      ['i3', 'reported', 'daemon_reads_deploy'],
+      ['i4', 'met', 'daemon_reads_github'],
+      ['i5', 'met', 'daemon_ticks_check'],
+      ['i5', 'reported', 'daemon_ticks_check'],
+    ] as const)
+      expect(await tick(itemId, state, 'Deployed on both, I read it.')).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining(code) },
+      });
+    expect(await tick('i6', 'met', 'I read the page; the copy is clear.')).toMatchObject({
+      value: { ok: true },
+    });
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        track: [
+          { itemId: 'i3', check: 'coding.deployed' },
+          { itemId: 'i4', watch: ['https://github.com/lsm/HyperNeo/pull/6700'] },
+        ],
+      })
+    ).toMatchObject({ value: { ok: true } });
+    const items = service.askRecords.get(askId)!.doneItems!;
+    expect(items.find((item) => item.id === 'i3')).toMatchObject({
+      check: 'coding.deployed',
+      state: 'pending',
+    });
+    expect(items.find((item) => item.id === 'i4')?.watch).toEqual([
+      'https://github.com/lsm/HyperNeo/pull/6700',
+    ]);
+    expect(
+      await invoke('neo.ask.edit', { askId, track: [{ itemId: 'i6', check: 'coding.deployed' }] })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('item_not_trackable') },
+    });
+  });
+
   test('a turn that hit its limit gets one note listing the asks it already opened', async () => {
     const results = db.getSDKMessageRepo();
     const save = (uuid: string, subtype: string) =>
@@ -1812,8 +1862,22 @@ describe('requireNeoAskEdit', () => {
   } as unknown as NeoAsk;
   const items = (count: number): { text: string; check: null; watch?: string[] }[] =>
     Array.from({ length: count }, (_, i) => ({ text: `t${i}`, check: null }));
-  test.each<[string, { add?: ReturnType<typeof items>; remove?: string[] }, string | null]>([
+  type Track = { itemId: string; check: 'coding.deployed' | null; watch?: string[] }[];
+  test.each<
+    [string, { add?: ReturnType<typeof items>; remove?: string[]; track?: Track }, string | null]
+  >([
     ['an edit by the owner', { add: items(1) }, null],
+    ['tracking an open item', { track: [{ itemId: 'i1', check: 'coding.deployed' }] }, null],
+    [
+      'tracking a removed item',
+      { track: [{ itemId: 'i2', check: 'coding.deployed' }] },
+      'item_not_trackable',
+    ],
+    [
+      'tracking an item it removes',
+      { add: items(1), remove: ['i1'], track: [{ itemId: 'i1', check: 'coding.deployed' }] },
+      'item_not_trackable',
+    ],
     ['an item already removed', { remove: ['i2'] }, 'item_not_found'],
     ['removing the last item', { remove: ['i1'] }, 'checklist_empty'],
     ['forty more items', { add: items(40) }, null],
@@ -1830,7 +1894,12 @@ describe('requireNeoAskEdit', () => {
   ])('%s', (_label, change, reason) => {
     const target = owned;
     const gate = requireNeoAskEdit(
-      { askId: 'a1', add: change.add ?? [], remove: change.remove ?? [] },
+      {
+        askId: 'a1',
+        add: change.add ?? [],
+        remove: change.remove ?? [],
+        track: change.track ?? [],
+      },
       target
     );
     const expected: unknown = reason
@@ -1854,8 +1923,13 @@ describe('planNeoAskEdit', () => {
         askId: 'a1',
         add: [{ text: 'Docs', check: null }],
         remove: ['i1', 'i1'],
+        track: [],
       })
-    ).toEqual({ add: [{ text: 'Docs', check: null, id: 'i3', position: 2 }], remove: ['i1'] });
+    ).toEqual({
+      add: [{ text: 'Docs', check: null, id: 'i3', position: 2 }],
+      remove: ['i1'],
+      track: [],
+    });
   });
 });
 

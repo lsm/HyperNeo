@@ -102,6 +102,7 @@ export interface NeoAskItem {
     | 'coding.issue_filed'
     | 'coding.issue_sub_issue'
     | 'coding.issue_closed'
+    | 'coding.deployed'
     | 'life-admin.confirmed'
     | null;
   metBy: 'neo' | 'daemon' | 'human' | null;

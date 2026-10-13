@@ -27,8 +27,14 @@ import {
 } from './packs/coding/issue-checks.ts';
 import { LIFE_ADMIN_CHECK_CONFIRMED } from './packs/life-admin/pack.ts';
 import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
+import { CODING_CHECK_DEPLOYED } from './packs/coding/deploy-checks.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
-import { neoDaemonReadsClaim, neoHumanTickWakes } from './needs-you.ts';
+import {
+  neoDaemonReadsClaim,
+  neoDaemonTickPath,
+  neoHumanTickWakes,
+  type NeoDaemonTickPath,
+} from './needs-you.ts';
 import { isNeoAskOutcomeItem } from './ask-views.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -46,6 +52,7 @@ const NEO_ASK_CHECK_KINDS = [
   CODING_CHECK_ISSUE_FILED,
   CODING_CHECK_ISSUE_SUB_ISSUE,
   CODING_CHECK_ISSUE_CLOSED,
+  CODING_CHECK_DEPLOYED,
   LIFE_ADMIN_CHECK_CONFIRMED,
 ] as const;
 const NEO_ASK_ITEM_KINDS = ['decision', 'action', 'approval', 'wait'] as const;
@@ -186,8 +193,22 @@ const Edit = z
     askId: z.string().min(1),
     add: z.array(Item).default([]),
     remove: z.array(z.string().min(1)).default([]),
+    track: z
+      .array(
+        z
+          .object({
+            itemId: z.string().min(1),
+            check: z.enum(NEO_ASK_CHECK_KINDS).nullable().default(null),
+            watch: z.array(WatchUrl).min(1).max(10).optional(),
+          })
+          .refine((item) => item.check || item.watch, 'Pass check or watch.')
+      )
+      .default([]),
   })
-  .refine((input) => input.add.length || input.remove.length, 'Pass items to add or remove.');
+  .refine(
+    (input) => input.add.length || input.remove.length || input.track.length,
+    'Pass items to add, remove or track.'
+  );
 
 const fail = (reason: string): Rejection => ({ ok: false, reason });
 
@@ -476,6 +497,18 @@ function requireNeoAskChecklistMet(
     : { value: ask };
 }
 
+const NEO_TRACK_HOW =
+  'Keep it pending; neo.ask.edit {askId, track: [{itemId, ...}]} tells the daemon what to read.';
+
+const NEO_DAEMON_TICK_REFUSALS: Record<NeoDaemonTickPath, string> = {
+  check:
+    'daemon_ticks_check: the daemon ticks this item itself from what it reads (GitHub, and for coding.deployed the commit each daemon runs). Keep it pending; an agent’s word or your tick never makes it met.',
+  watch:
+    'daemon_ticks_watched: the daemon ticks this item itself once every watched pull request has merged and every watched issue has closed. Keep it pending.',
+  needs_deploy_check: `daemon_reads_deploy: the daemon reads which commit each daemon runs, so a deploy is never met on a tick or an agent's report. Give the item check coding.deployed (and watch: [the pull request URLs] when they are not this ask's card PRs); the daemon ticks it once every daemon runs a commit containing them. ${NEO_TRACK_HOW}`,
+  needs_watch: `daemon_reads_github: the daemon reads this pull request or issue itself. Give the item watch: [its URL]; the daemon ticks it once it merges or closes. ${NEO_TRACK_HOW}`,
+};
+
 const NEO_AGENT_WORD =
   /\b(agent|session|worker)(['’]s)? (report|says|said|claims?|reports|reported)\b|\breported by\b|\baccording to the (agent|session|worker)\b|\bnot (independently )?(readable|verifiable|verified|checkable)\b|\b(can(no|')t|unable to) (verify|check|read)\b/i;
 
@@ -495,12 +528,9 @@ function requireNeoAskTick(
         'needs_you_removed: ask the human with neo.ask.question {askId, question, options}. A decision is its own item, so never tick an outcome item needs_you; keep it pending.'
       ),
     };
-  if (caller.source === 'mcp' && input.state === 'met' && item.watch?.length)
-    return {
-      reason: fail(
-        'daemon_ticks_watched: the daemon ticks this item itself once every watched pull request has merged and every watched issue has closed. Keep it pending.'
-      ),
-    };
+  const path =
+    caller.source === 'mcp' && input.state !== 'pending' ? neoDaemonTickPath(item) : null;
+  if (path) return { reason: fail(NEO_DAEMON_TICK_REFUSALS[path]) };
   if (caller.source === 'mcp' && input.state === 'met' && isNeoAgentWord(input.evidence))
     return {
       reason: fail(
@@ -516,7 +546,7 @@ const NEO_HUMAN_TASK_REFUSALS = {
   approval:
     "approval_on_ask: re-approving continued work is the ask's Approve, not a question. The daemon shows Approve itself when the approval expires or a card stalls; approving it wakes you.",
   wait: 'not_the_human: a wait on a PR, merge, CI, deploy, card or anything else the daemon reads is not the human’s step. Keep the item pending; the daemon wakes you when cards report, and you tick it met once you read it.',
-  fact: 'daemon_readable: the daemon reads this itself (a PR, merge, CI, this machine’s deploy, a card, standing rules). For a pull request or issue, give the item watch: [url] with neo.ask.edit and the daemon ticks it when they merge or close; otherwise keep it pending. reported is for claims you cannot read, such as another machine’s state.',
+  fact: 'daemon_readable: the daemon reads this itself (a PR, merge, CI, a deploy, a card, standing rules). For a pull request or issue, give the item watch: [url] with neo.ask.edit track and the daemon ticks it when they merge or close; otherwise keep it pending. reported is for claims you cannot read, such as a device.',
 } as const;
 
 export function requireNeoReportedReadable<T>(
@@ -590,6 +620,7 @@ export function planNeoAskQuestion(
     askId: ask.id,
     add: [{ text: input.question, check: null }],
     remove: [],
+    track: [],
   }).add;
   return {
     ...slot,
@@ -606,7 +637,7 @@ export function requireNeoAskQuestionRoom<T>(
 ): Gate<T> {
   if (!item) return { value };
   const room = requireNeoAskEdit(
-    { askId: ask.id, add: [{ text: item.text, check: null }], remove: [] },
+    { askId: ask.id, add: [{ text: item.text, check: null }], remove: [], track: [] },
     ask
   );
   return 'reason' in room ? room : { value };
@@ -730,7 +761,25 @@ export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gat
     return { reason: fail(`item_not_found: ${missing.join(', ')} is not on this checklist.`) };
   const left = active.length - new Set(input.remove).size + input.add.length;
   if (left < 1) return { reason: fail('checklist_empty: keep at least one item.') };
-  const kept = active.filter((item) => !input.remove.includes(item.id));
+  const untracked = input.track.filter(
+    (entry) =>
+      !active.some(
+        (item) =>
+          item.id === entry.itemId && item.state !== 'met' && !input.remove.includes(item.id)
+      )
+  );
+  if (untracked.length)
+    return {
+      reason: fail(
+        `item_not_trackable: ${untracked.map((entry) => entry.itemId).join(', ')} is not an open item on this checklist.`
+      ),
+    };
+  const kept = active
+    .filter((item) => !input.remove.includes(item.id))
+    .map((item) => ({
+      ...item,
+      watch: input.track.find((entry) => entry.itemId === item.id)?.watch ?? item.watch,
+    }));
   return countNeoAskWatches([...kept, ...input.add]) > NEO_ASK_WATCH_MAX
     ? {
         reason: fail(
@@ -765,7 +814,11 @@ export function planNeoAskFold(
 export function planNeoAskEdit(
   ask: NeoAsk,
   input: z.infer<typeof Edit>
-): { add: (NeoAskItemInput & { id: string; position: number })[]; remove: string[] } {
+): {
+  add: (NeoAskItemInput & { id: string; position: number })[];
+  remove: string[];
+  track: z.infer<typeof Edit>['track'];
+} {
   const items = ask.doneItems ?? [];
   const next = Math.max(0, ...items.map((item) => Number(item.id.slice(1)) || 0));
   return {
@@ -775,6 +828,7 @@ export function planNeoAskEdit(
       position: items.length + index,
     })),
     remove: [...new Set(input.remove)],
+    track: input.track,
   };
 }
 
@@ -1378,7 +1432,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself once every watched pull request has merged and every watched issue has closed, with the read states as evidence. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps. Reuse requestKey only to retry this input.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps. Reuse requestKey only to retry this input.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1387,7 +1441,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.tick',
       description:
-        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), or back to pending. needs_you is refused: a decision or a check only the human can make is its own item, asked with neo.ask.question. reported is refused for what the daemon reads itself (a PR, merge, CI, this machine's deploy, a card, standing rules). Only the Neo session that opened the ask or the user can tick it.",
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, only for an item the daemon cannot read (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but nobody can read it (a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), or back to pending. met and reported are refused for what the daemon reads: an item with watch or a GitHub or deploy check is ticked by the daemon, and an item naming a pull request, issue or deploy needs watch or check coding.deployed first (neo.ask.edit track). needs_you is refused: a decision or a check only the human can make is its own item, asked with neo.ask.question. reported is also refused for anything else the daemon reads itself (CI, a card, standing rules). Only the Neo session that opened the ask or the user can tick it.",
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1423,7 +1477,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.edit',
       description:
-        "Change an open ask's done checklist when what done means changes: add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, as in neo.ask.open), or remove ones that no longer apply. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
+        "Change an open ask's done checklist when what done means changes: add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply, or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
       inputSchema: Edit,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

@@ -1908,6 +1908,62 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('settles a card whose PRs merged without a Neo turn when the rest waits on GitHub', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/6265';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Merged ${url}.` },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Regenerate icons', '- merged to dev');
+    const opened = service.askRecords.open(
+      {
+        id: 'ask-icons-settle',
+        requestKey: 'neo:root:icons-settle',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'ask-1',
+        title: 'Icons',
+        ask: 'Regenerate the icons',
+        doneWhen: '- merged to dev',
+        doneSource: 'human',
+      },
+      [
+        { text: 'Icons merged to dev', check: 'coding.pr_merged' },
+        {
+          text: 'Android icons merged',
+          check: null,
+          watch: ['https://github.com/lsm/neo-ios/pull/9'],
+        },
+      ]
+    )!;
+    service.askRecords.link(opened.id, 'work-1');
+    service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
+    service.readRefStates = async () => [];
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, _id: string, content: string) => {
+        notes.push(content);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.askRecords.get(opened.id)?.doneItems?.map((item) => item.state)).toEqual([
+        'met',
+        'pending',
+      ]);
+      const work = service.repo.getWork('work-1')!;
+      expect(work.status).toBe('reported');
+      expect(work.report).toStartWith(`Closed as done by the daemon: ${url} merged`);
+      expect(work.report).toContain(`Merged ${url}.`);
+      expect(notes.filter((note) => note.includes('handed off went idle'))).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('leaves a merged-PR item alone while a sibling card under the ask has an open PR', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6265';
