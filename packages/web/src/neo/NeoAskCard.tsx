@@ -214,7 +214,7 @@ function ActionRow({
               <button
                 key={option}
                 type="button"
-                class={`${neoSecondaryClass} max-w-full whitespace-normal text-left`}
+                class={`${neoSecondaryClass} max-w-full whitespace-normal break-words text-left`}
                 disabled={disabled}
                 aria-label={`Answer ${question ?? text}: ${option}`}
                 onClick={() => onAnswer(action.itemId, option)}
