@@ -191,7 +191,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     rerender(quote);
     const input = await screen.findByRole('textbox', { name: 'Message Neo' });
     expect(input).toHaveProperty('value', 'typed first\nspoken second');
-    expect(screen.getByRole('region', { name: 'Quoted message' }).textContent).toContain(
+    expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(
       'Earlier answer'
     );
     fireEvent.click(buttonNamed('Send message'));
@@ -213,11 +213,11 @@ describe('NeoComposer and NeoVoice send integration', () => {
       anchor: 'source',
     });
     await screen.findByRole('button', { name: 'Stop recording and add it to your draft' });
-    fireEvent.click(buttonNamed('Cancel quote'));
+    fireEvent.click(buttonNamed('Remove reply'));
     expect(onCancelQuote).toHaveBeenCalledTimes(1);
     rerender();
     await awaitRecordingComposer();
-    expect(screen.queryByRole('region', { name: 'Quoted message' })).toBeNull();
+    expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull();
     fireEvent.click(sendControl());
     await waitFor(() => expect(asks()).toHaveLength(1));
     expect(asks()[0][1].input.content).toBe('typed first\nspoken second');
@@ -309,11 +309,11 @@ describe('NeoComposer and NeoVoice send integration', () => {
       expect(asks()[1][1].input).toEqual(original);
       expect(current.value).toBe('new reply');
       if (quoted) {
-        expect(screen.getByRole('region', { name: 'Quoted message' }).textContent).toContain(
+        expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(
           'New source'
         );
       } else {
-        expect(screen.queryByRole('region', { name: 'Quoted message' })).toBeNull();
+        expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull();
       }
       expect(onDraft).not.toHaveBeenCalledWith('');
     }
@@ -351,7 +351,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
       expect(asks()).toHaveLength(1);
       expect(current.value).toBe('typed first');
       if (change === 'quote') {
-        expect(screen.getByRole('region', { name: 'Quoted message' }).textContent).toContain(
+        expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(
           'Selected while sending'
         );
       }

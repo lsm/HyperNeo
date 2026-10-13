@@ -209,28 +209,30 @@ export function NeoComposer({
       {quote && (
         <div
           role="region"
-          aria-label="Quoted message"
-          class="mb-3 flex gap-2 rounded-xl border-l-2 border-accent bg-fill-soft p-3"
+          aria-label={`Replying to ${quote.author}: ${neoQuoteExcerpt(quote.text)}`}
+          class="mb-2 flex items-start gap-2.5 rounded-xl bg-surface py-1.5 pl-2.5"
         >
+          <span
+            aria-hidden="true"
+            class={`w-[3px] self-stretch rounded-full ${quote.author === 'You' ? 'bg-[var(--neo-user-accent)]' : 'bg-accent'}`}
+          />
           <div class="min-w-0 flex-1">
-            <p id="neo-quote-label" role="status" class="mb-1 text-xs font-medium text-accent">
+            <p id="neo-quote-label" role="status" class="text-xs font-medium text-fg-muted">
               Replying to {quote.author}
             </p>
-            <blockquote class="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-sm text-fg-muted">
-              {neoQuoteExcerpt(quote.text)}
-            </blockquote>
+            <p class="line-clamp-2 break-words text-sm text-fg">{neoQuoteExcerpt(quote.text)}</p>
           </div>
           <button
             type="button"
-            aria-label="Cancel quote"
-            title="Cancel quote (Esc)"
-            class="self-start rounded-full p-1.5 text-fg-muted hover:bg-fill-strong hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            aria-label="Remove reply"
+            title="Remove reply (Esc)"
+            class="p-2 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             onClick={() => {
               onCancelQuote?.();
               thought.current?.focus();
             }}
           >
-            <NeoIcon name="close" class="!h-4 !w-4" />
+            <NeoIcon name="close" class="!h-3 !w-3" />
           </button>
         </div>
       )}

@@ -18,6 +18,7 @@ const paths = {
   edit: 'M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3Z',
   stop: 'M7 7h10v10H7z',
   back: 'm12 5-7 7 7 7M5 12h14',
+  reply: 'm9 17-5-5 5-5M20 18v-2a4 4 0 0 0-4-4H4',
 };
 
 export function NeoIcon({

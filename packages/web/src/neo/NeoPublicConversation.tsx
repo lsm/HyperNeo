@@ -429,19 +429,6 @@ function PublicEntry({
         <p class="mt-1 px-1 text-right text-xs text-danger">{NOT_DELIVERED}</p>
       )}
       <div class={`mt-1 flex items-center gap-3 ${ask ? 'justify-end' : ''}`}>
-        {onQuote && (ask ? text : full || text).trim() && (
-          <button
-            type="button"
-            aria-label={ask ? 'Quote your message' : 'Quote Neo’s message'}
-            title="Quote reply"
-            class="rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            onClick={() =>
-              onQuote({ author: ask ? 'You' : 'Neo', text: ask ? text : full || text, anchor })
-            }
-          >
-            <NeoIcon name="back" class="!h-4 !w-4" />
-          </button>
-        )}
         {undelivered && onEditUndelivered && !restored && (
           <button
             type="button"
@@ -470,6 +457,19 @@ function PublicEntry({
           label={ask ? 'Copy your message' : 'Copy Neo’s message'}
           disabled={!text.trim()}
         />
+        {onQuote && (ask ? text : full || text).trim() && (
+          <button
+            type="button"
+            aria-label={ask ? 'Reply to your message' : 'Reply to Neo’s message'}
+            title="Reply"
+            class="rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            onClick={() =>
+              onQuote({ author: ask ? 'You' : 'Neo', text: ask ? text : full || text, anchor })
+            }
+          >
+            <NeoIcon name="reply" class="!h-4 !w-4" />
+          </button>
+        )}
       </div>
     </article>
   );
