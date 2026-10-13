@@ -1,4 +1,5 @@
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { externalEventTopicSuffix } from '../../../external-events/event-tiers.ts';
 import { requireClosedPrEvent } from '../../../external-events/session-subscription-close.ts';
 import { topicMatchesPattern } from '../../../external-events/topic-trie.ts';
 import type { ExternalEvent } from '../../../external-events/types.ts';
@@ -21,11 +22,19 @@ export function routeNeoCardPrEvent(
     (row) => row.topic.startsWith('github/') && topicMatchesPattern(row.topic, event.topic)
   );
   if (!matched.length) return null;
-  const closed = requireClosedPrEvent({
-    record: { event, state: 'published', createdAt: 0, updatedAt: 0 },
-  });
+  const closed =
+    'value' in
+    requireClosedPrEvent({ record: { event, state: 'published', createdAt: 0, updatedAt: 0 } });
+  if (!closed && !isNeoCardPrActionable(externalEventTopicSuffix(event.topic))) return null;
   return {
     workIds: [...new Set(matched.map((row) => row.workId))],
-    ending: 'value' in closed ? matched : [],
+    ending: closed ? matched : [],
   };
+}
+
+const NEO_CARD_PR_ACTIONABLE =
+  /^(review_|comment_|reaction_)|^(check|suite)_failed$|^status_(failure|error)$|^merge_conflict$/;
+
+export function isNeoCardPrActionable(action: string): boolean {
+  return NEO_CARD_PR_ACTIONABLE.test(action);
 }

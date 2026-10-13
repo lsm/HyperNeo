@@ -35,6 +35,28 @@ describe('requireNeoWorkFollow', () => {
     ['a card under an ask that waits on the human', work, { ask: { status: 'waiting' } }, true],
     ['a card still running', { ...work, status: 'queued' }, {}, false],
     ['a card the user closed as done', { ...work, report: NEO_WORK_CLOSED_DONE }, {}, false],
+    [
+      'a card whose ask has every item met',
+      work,
+      {
+        ask: {
+          status: 'open',
+          doneItems: [
+            {
+              id: 'i1',
+              text: 'Merged',
+              state: 'met',
+              evidence: 'merged',
+              check: null,
+              metBy: 'daemon',
+              removed: false,
+            },
+          ],
+        },
+        live: 'running',
+      },
+      false,
+    ],
     ['a card with no driver ref', work, { ref: null }, false],
     ['a card with no done list', work, { goal: false }, false],
     ['an achieved ask', work, { ask: { status: 'achieved' } }, false],
