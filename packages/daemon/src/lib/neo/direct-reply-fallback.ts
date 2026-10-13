@@ -47,6 +47,10 @@ export function neoSessionStatus(processingState: string | undefined): string | 
   }
 }
 
+export function neoNoteDeliveryMode(status: string | null | undefined): 'defer' | 'immediate' {
+  return status === 'processing' || status === 'queued' ? 'defer' : 'immediate';
+}
+
 export function neoIdleReplySessions(
   bindings: readonly (NeoBinding | null)[],
   readStatus: (sessionId: string) => string | null

@@ -99,6 +99,7 @@ import {
   NEO_PUBLISH_NUDGE,
   type NeoDirectReplyRuntime,
   neoIdleReplySessions,
+  neoNoteDeliveryMode,
   neoSessionStatus,
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
@@ -161,7 +162,11 @@ import { neoFolderPath } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
 import type { NeoPackFragment } from './packs/types.ts';
 import { createNeoPublisher } from './publication-operation.ts';
-import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
+import {
+  neoCoordinatorAllowedTools,
+  neoCoordinatorBinding,
+  neoCoordinatorNativeTools,
+} from './session-policy.ts';
 import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
 import { createNeoWorkReporter } from './work-report.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
@@ -2959,6 +2964,12 @@ export class NeoService {
         parent_tool_use_id: null,
         inputKind: 'system',
       },
+      deliveryMode: neoCoordinatorBinding(this.db, sessionId)
+        ? neoNoteDeliveryMode(
+            this.processingStatus.get(sessionId) ??
+              neoSessionStatus(this.db.getSession(sessionId)?.processingState)
+          )
+        : 'immediate',
       jobQueue: queue,
     });
     if (outcome.kind === 'rejected') throw new Error(outcome.reason);

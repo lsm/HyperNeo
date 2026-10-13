@@ -21,6 +21,7 @@ export interface MailboxDeliveryDeps {
   publishFailed?(sessionId: string, dbMessageId: string): Promise<void>;
   publishDeferredStatus?(sessionId: string, dbMessageId: string): Promise<void>;
   scheduleDeferredReplay?(sessionId: string): void | Promise<void>;
+  defersFor?(sessionId: string, entry: MailboxEntry): boolean;
 }
 
 export function createMailboxDeadHandler(logError: (message: string) => void) {
@@ -39,16 +40,25 @@ function readAdmissionRowid(db: BunDatabase, jobId: string): number | undefined 
 
 export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHandler {
   return async (job) => {
-    const entry = parseMailboxEntry(job.payload);
-    if (entry === null) {
+    const parsed = parseMailboxEntry(job.payload);
+    if (parsed === null) {
       throw new DeadLetterImmediatelyError('mailbox: corrupt entry payload');
     }
-    if (entry.to.kind !== 'session') {
+    if (parsed.to.kind !== 'session') {
       throw new DeadLetterImmediatelyError(
         'mailbox: agent address reached delivery — resolution belongs upstream'
       );
     }
-    const target = entry.to.sessionId;
+    const to = parsed.to;
+    const target = to.sessionId;
+    const entry = {
+      ...parsed,
+      to,
+      deliveryMode:
+        parsed.deliveryMode === 'defer' || deps.defersFor?.(target, parsed)
+          ? ('defer' as const)
+          : parsed.deliveryMode,
+    };
     if (mailboxEntryExpired(entry, Date.now())) {
       throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }

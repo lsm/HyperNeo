@@ -36,7 +36,7 @@ export function sessionSdkPath(
 }
 
 export function neoCoordinatorBinding(
-  db: Database | undefined,
+  db: Pick<Database, 'getDatabase'> | undefined,
   sessionId: string
 ): NeoBinding | null {
   if (!sessionId.startsWith('neo:') || !db) return null;
