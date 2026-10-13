@@ -35,8 +35,8 @@ describe('migration space reclaim', () => {
       PRAGMA auto_vacuum = NONE;
       PRAGMA journal_mode = WAL;
       PRAGMA foreign_keys = ON;
-      CREATE TABLE sessions (id TEXT PRIMARY KEY);
-      INSERT INTO sessions VALUES ('session');
+      CREATE TABLE sessions (id TEXT PRIMARY KEY, status TEXT DEFAULT 'active');
+      INSERT INTO sessions (id) VALUES ('session');
       CREATE TABLE sdk_messages (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -47,6 +47,11 @@ describe('migration space reclaim', () => {
         send_status TEXT DEFAULT 'consumed'
           CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
         task_id TEXT,
+        is_renderable INTEGER NOT NULL DEFAULT 1,
+        is_terminal INTEGER NOT NULL DEFAULT 0,
+        parent_tool_use_id TEXT,
+        conversation_turn_index INTEGER,
+        sdk_uuid TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
       CREATE INDEX idx_sdk_messages_session_timestamp
@@ -144,6 +149,7 @@ describe('migration space reclaim', () => {
       { migrationKey: 'migration_212' },
       { migrationKey: 'migration_243' },
       { migrationKey: 'migration_246' },
+      { migrationKey: 'migration_359' },
     ]);
     const afterRewrite = db
       .prepare(`
@@ -170,7 +176,7 @@ describe('migration space reclaim', () => {
     expect(reclaim).toEqual({
       kind: 'reclaimed',
       freelistBefore: freelistBefore.freelist_count,
-      reclaimedMigrations: 5,
+      reclaimedMigrations: 6,
     });
     expect(db.prepare('PRAGMA main.freelist_count').get()).toEqual(freelistBefore);
     expect(
