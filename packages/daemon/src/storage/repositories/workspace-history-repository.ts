@@ -98,7 +98,14 @@ export class WorkspaceHistoryRepository {
   }
 
   remove(path: string): boolean {
-    const result = this.db.prepare('DELETE FROM workspace_history WHERE path = ?').run(path);
-    return result.changes > 0;
+    return this.db.transaction(() => {
+      const result = this.db.prepare('DELETE FROM workspace_history WHERE path = ?').run(path);
+      this.db
+        .prepare(`DELETE FROM workspace_projects WHERE NOT EXISTS (
+        SELECT 1 FROM workspace_project_folders WHERE project_id = workspace_projects.id
+      )`)
+        .run();
+      return result.changes > 0;
+    })();
   }
 }

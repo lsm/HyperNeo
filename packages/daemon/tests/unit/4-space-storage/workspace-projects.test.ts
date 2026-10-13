@@ -116,6 +116,37 @@ describe('workspace project folders', () => {
     expect(repo.get(third)).toBeNull();
   });
 
+  test('adds to a persisted project after its first member vanished but still validates the new directory', async () => {
+    const first = join(dir, 'a');
+    const second = join(dir, 'b');
+    const added = join(dir, 'c');
+    for (const folder of [first, second, added]) mkdirSync(folder);
+    repo.addProjectFolder(first, second, 'Product');
+    const project = repo.projects()[0];
+    rmSync(first, { recursive: true });
+    const registry = createOperationRegistry([createProjectFolderOperation(repo)]);
+    const invoke = (path: string) =>
+      invokeOperation(
+        registry,
+        'work.project.addFolder',
+        { projectPath: first, path },
+        { source: 'rpc' }
+      );
+    expect(await invoke(join(dir, 'missing'))).toMatchObject({
+      kind: 'completed',
+      value: { accepted: false },
+    });
+    expect(repo.projects()).toEqual([project]);
+    expect(await invoke(added)).toMatchObject({ kind: 'completed', value: { accepted: true } });
+    expect(repo.projects()).toEqual([{ ...project, folders: [first, second, added] }]);
+    expect(repo.remove(first)).toBe(true);
+    expect(repo.projects()[0].id).toBe(project.id);
+    repo.remove(second);
+    repo.remove(added);
+    expect(repo.projects()).toEqual([]);
+    expect(db.prepare('SELECT id FROM workspace_projects').all()).toEqual([]);
+  });
+
   test('driver discovery carries one tool project identity on all folders and matches its name', async () => {
     repo.addProjectFolder('/code', '/docs', 'Product');
     const places = ['/code', '/docs'].map((folder) => ({

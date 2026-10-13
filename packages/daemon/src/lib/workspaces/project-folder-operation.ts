@@ -3,16 +3,21 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository.ts';
 import { defineOperation } from '../operations/registry.ts';
-import { validateWorkspaceDirectory } from '../workspace-path.ts';
+import { normalizeWorkspacePath, validateWorkspaceDirectory } from '../workspace-path.ts';
 
 const Input = z.object({ projectPath: z.string().trim().min(1), path: z.string().trim().min(1) });
 const Rejected = z.object({ accepted: z.literal(false), reason: z.string() });
 type Plan = { projectPath: string; path: string; name: string };
 
-async function validateFolders(input: z.infer<typeof Input>) {
+async function validateFolders(
+  input: z.infer<typeof Input>,
+  repository: WorkspaceHistoryRepository
+) {
   try {
+    const normalized = normalizeWorkspacePath(input.projectPath);
+    const known = repository.projects().some((project) => project.folders.includes(normalized));
     const [projectPath, path] = await Promise.all([
-      validateWorkspaceDirectory(input.projectPath),
+      known ? normalized : validateWorkspaceDirectory(normalized),
       validateWorkspaceDirectory(input.path),
     ]);
     return { value: { projectPath, path, name: basename(projectPath) || projectPath } };
@@ -23,7 +28,7 @@ async function validateFolders(input: z.infer<typeof Input>) {
 
 const addProjectFolder = (superpipe({})('workspace-project-add-folder') as PipelineAPI)
   .input(['input', 'repository'])
-  .pipe(validateFolders, 'input', 'result:result')
+  .pipe(validateFolders, ['input', 'repository'], 'result:result')
   .pipe(
     (plan: Plan, repository: WorkspaceHistoryRepository) =>
       repository.addProjectFolder(plan.projectPath, plan.path, plan.name)
