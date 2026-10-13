@@ -14,7 +14,7 @@ import { messageTime } from './NeoMessage.tsx';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 import { neoMessageAnchor } from './reply-context.ts';
 import { neoAppLabel, neoSessionLink } from './work-driver.ts';
-import type { NeoPendingAsk } from './neo-intake.ts';
+import type { NeoPendingAsk, NeoQuote } from './neo-intake.ts';
 import type {
   NeoPublicConversation as Conversation,
   NeoPublicEntry,
@@ -276,10 +276,12 @@ function PublicEntry({
   onEditUndelivered,
   topics,
   forwarders,
+  onQuote,
 }: {
   entry: NeoPublicEntry;
   topics?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
+  onQuote?: (quote: NeoQuote) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   onEditUndelivered?: NeoEditUndelivered;
@@ -306,9 +308,14 @@ function PublicEntry({
     : undefined;
   const topic = forwarder ? `${replier ?? 'Neo'} (forwarded from ${forwarder})` : replier;
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
+  const anchor = ask
+    ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId)
+    : publication
+      ? neoMessageAnchor(publication.conversationId, `publication-${publication.publicationId}`)
+      : '';
   return (
     <article
-      id={ask ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId) : undefined}
+      id={anchor || undefined}
       data-public-entry={entry.key}
       class={`neo-arrive neo-message w-fit break-words ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%]'}`}
     >
@@ -422,6 +429,19 @@ function PublicEntry({
         <p class="mt-1 px-1 text-right text-xs text-danger">{NOT_DELIVERED}</p>
       )}
       <div class={`mt-1 flex items-center gap-3 ${ask ? 'justify-end' : ''}`}>
+        {onQuote && (ask ? text : full || text).trim() && (
+          <button
+            type="button"
+            aria-label={ask ? 'Quote your message' : 'Quote Neo’s message'}
+            title="Quote reply"
+            class="rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft"
+            onClick={() =>
+              onQuote({ author: ask ? 'You' : 'Neo', text: ask ? text : full || text, anchor })
+            }
+          >
+            <NeoIcon name="back" class="!h-4 !w-4" />
+          </button>
+        )}
         {undelivered && onEditUndelivered && !restored && (
           <button
             type="button"
@@ -565,8 +585,10 @@ export function NeoPublicConversation({
   topics,
   forwarders,
   mute,
+  onQuote,
 }: {
   conversation: Conversation;
+  onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
   topics?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
@@ -617,6 +639,7 @@ export function NeoPublicConversation({
             onEditUndelivered={onEditUndelivered}
             topics={topics}
             forwarders={forwarders}
+            onQuote={onQuote}
           />
         )
       )}

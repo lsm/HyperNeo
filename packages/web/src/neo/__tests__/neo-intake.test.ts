@@ -44,6 +44,50 @@ describe('admitNeoDraft', () => {
 });
 
 describe('neoDraftPayload', () => {
+  it('quotes every source line and keeps the reply outside the quote', () => {
+    expect(
+      neoDraftPayload({
+        sessionId: 'neo:root',
+        requestId: uuid,
+        text: 'Please explain',
+        quote: {
+          author: 'Neo',
+          text: '**Answer**\r\n\r\n> nested\n```js\ncode\n```',
+          anchor: 'neo-message-source',
+        },
+      })
+    ).toEqual({
+      sessionId: 'neo:root',
+      requestId: uuid,
+      content:
+        'Replying to [Neo](#neo-message-source):\n\n> **Answer**\n> \n> > nested\n> ```js\n> code\n> ```\n\nPlease explain',
+    });
+  });
+
+  it('includes quote context before an image-only reply without adding protocol fields', () => {
+    const payload = neoDraftPayload(
+      {
+        sessionId: 'neo:root',
+        requestId: uuid,
+        text: '',
+        images: [image],
+        quote: { author: 'You', text: 'Which photo?', anchor: 'neo-message-question' },
+      },
+      [{ index: 1, mediaType: 'image/jpeg', data: 'thumb' }]
+    );
+    expect(payload).toEqual({
+      sessionId: 'neo:root',
+      requestId: uuid,
+      content: [
+        { type: 'text', text: 'Replying to [You](#neo-message-question):\n\n> Which photo?\n\n' },
+        {
+          type: 'image',
+          source: { type: 'base64', data: image.data, media_type: image.media_type },
+        },
+      ],
+      thumbnails: [{ index: 1, mediaType: 'image/jpeg', data: 'thumb' }],
+    });
+  });
   it('keeps text-file Markdown as exact source content', () => {
     const text = '  ### Attached file: notes.md\n\n```text\nHello\n```  ';
     expect(neoDraftPayload({ sessionId: 'neo:root', requestId: uuid, text })).toEqual({
@@ -98,6 +142,39 @@ describe('requireNeoReceipt', () => {
 });
 
 describe('Neo intake submission lifecycle', () => {
+  it('snapshots quote context and gives different sources different retry identities', async () => {
+    const { client, request } = setup();
+    request.mockRejectedValue(new Error('offline'));
+    const quote = { author: 'Neo' as const, text: 'Original', anchor: 'source-1' };
+    const draft = { sessionId: 'neo:root', text: 'Explain', quote };
+    await expect(client.send(draft)).rejects.toThrow('offline');
+    const first = request.mock.calls[0][1].input;
+    quote.text = 'Changed after submission';
+    await expect(client.retry(first.requestId)).rejects.toThrow('offline');
+    expect(request.mock.calls[1][1].input).toEqual(first);
+    await expect(
+      client.send({ ...draft, quote: { ...quote, text: 'Original', anchor: 'source-2' } })
+    ).rejects.toThrow('offline');
+    expect(request.mock.calls[2][1].input.requestId).not.toBe(first.requestId);
+    expect(client.discard(first.requestId)).toEqual({
+      sessionId: 'neo:root',
+      text: 'Explain',
+      images: undefined,
+      quote: { author: 'Neo', text: 'Original', anchor: 'source-1' },
+    });
+  });
+
+  it('does not admit a quote alone as a new message', async () => {
+    const { client, request } = setup();
+    expect(
+      await client.send({
+        sessionId: 'neo:root',
+        text: '',
+        quote: { author: 'You', text: 'Earlier', anchor: 'source' },
+      })
+    ).toHaveProperty('ok', false);
+    expect(request).not.toHaveBeenCalled();
+  });
   it('sends on a plain-HTTP page where crypto.randomUUID is missing', async () => {
     const original = globalThis.crypto.randomUUID;
     Object.defineProperty(globalThis.crypto, 'randomUUID', {

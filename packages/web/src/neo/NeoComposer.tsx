@@ -14,7 +14,7 @@ import { NeoIcon } from './NeoIcon.tsx';
 import { type NeoPreference, NeoPreferences } from './NeoPreferences.tsx';
 import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
 import { attachmentMessage, NEO_FILE_ACCEPT, useNeoAttachments } from './neo-attachments.ts';
-import type { createNeoIntakeClient } from './neo-intake.ts';
+import type { createNeoIntakeClient, NeoQuote } from './neo-intake.ts';
 import { useCoarsePointer } from './useCoarsePointer.ts';
 import { VoiceDraftPreview } from '../components/voice/VoiceDraftPreview.tsx';
 
@@ -36,8 +36,12 @@ export function NeoComposer({
   onSend,
   preference,
   onPreferenceSaved,
+  quote,
+  onCancelQuote,
 }: {
   preference?: NeoPreference;
+  quote?: NeoQuote;
+  onCancelQuote?: () => void;
   onPreferenceSaved?: () => void;
   store: SessionStore;
   sessionId: string;
@@ -55,9 +59,11 @@ export function NeoComposer({
   const listening = recordingVoice || voicePhase === 'working';
   const attachments = useNeoAttachments(sessionId);
   const hasAttachments = attachments.files.length > 0 || attachments.reading > 0;
+  const needsDraft = hasAttachments || !!quote;
+  const draftContext = quote ? 'your quoted reply' : 'your attachments';
   const voiceStatus = recordingVoice
-    ? hasAttachments
-      ? 'Recording · Stop adds it to your draft; send it with your attachments'
+    ? needsDraft
+      ? `Recording · Stop adds it to your draft; send it with ${draftContext}`
       : coarsePointer
         ? 'Recording · Tap the arrow to stop and send'
         : 'Recording · Click the arrow to stop and send'
@@ -67,6 +73,9 @@ export function NeoComposer({
         ? 'Sending with your draft…'
         : null;
   const thought = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    if (quote) thought.current?.focus();
+  }, [quote]);
   const wasVoiceBusy = useRef(false);
   const idleHeight = useRef(0);
   useLayoutEffect(() => {
@@ -107,13 +116,13 @@ export function NeoComposer({
   const connected = connectionState.value === 'connected';
   async function send() {
     if (recordingVoice) {
-      if (!hasAttachments) {
+      if (!needsDraft) {
         finishVoice.current?.('send');
         return;
       }
       finishVoice.current?.('draft');
       onError(
-        `Added to your draft so it goes out with your attachments. ${coarsePointer ? 'Tap' : 'Click'} send when ready.`
+        `Added to your draft so it goes out with ${draftContext}. ${coarsePointer ? 'Tap' : 'Click'} send when ready.`
       );
       return;
     }
@@ -139,7 +148,9 @@ export function NeoComposer({
       const images = files.flatMap((file) => (file.kind === 'image' ? [file.image] : []));
       const content = attachmentMessage(submitted, files);
       attachments.remove(files.map((file) => file.id));
-      await onSend({ sessionId, text: content, images }).catch(() => undefined);
+      await onSend({ sessionId, text: content, images, ...(quote ? { quote } : {}) }).catch(
+        () => undefined
+      );
     } finally {
       if (sendingText.current === submitted) {
         sendingText.current = null;
@@ -152,8 +163,7 @@ export function NeoComposer({
     record: VoiceRecordEntry,
     transcript: string
   ): Promise<VoiceSendOutcome> {
-    if (record.sendText === undefined && (attachments.files.length > 0 || attachments.reading > 0))
-      return { kind: 'unconfirmed' };
+    if (record.sendText === undefined && needsDraft) return { kind: 'unconfirmed' };
     const composed = record.sendText ?? combineVoiceSubmission(draft, transcript);
     if (!composed.trim() || inFlight.current || sending || !connected)
       return { kind: 'unconfirmed' };
@@ -186,6 +196,32 @@ export function NeoComposer({
       }}
       class="pointer-events-auto relative rounded-3xl border border-line-strong bg-surface-raised/95 p-4 shadow-xl backdrop-blur-xl transition-colors focus-within:border-accent/60"
     >
+      {quote && (
+        <div
+          role="region"
+          aria-label="Quoted message"
+          class="mb-3 flex gap-2 rounded-xl border-l-2 border-accent bg-fill-soft p-3"
+        >
+          <div class="min-w-0 flex-1">
+            <p class="mb-1 text-xs font-medium text-accent">Replying to {quote.author}</p>
+            <blockquote class="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-sm text-fg-muted">
+              {quote.text}
+            </blockquote>
+          </div>
+          <button
+            type="button"
+            aria-label="Cancel quote"
+            title="Cancel quote"
+            class="self-start rounded-full p-1.5 text-fg-muted hover:bg-fill-strong hover:text-fg"
+            onClick={() => {
+              onCancelQuote?.();
+              thought.current?.focus();
+            }}
+          >
+            <NeoIcon name="close" class="!h-4 !w-4" />
+          </button>
+        </div>
+      )}
       {attachments.files.length > 0 && (
         <NeoAttachments files={attachments.files} onRemove={attachments.remove} />
       )}
@@ -310,15 +346,15 @@ export function NeoComposer({
             type="submit"
             size="sm"
             aria-label={
-              recordingVoice && hasAttachments
+              recordingVoice && needsDraft
                 ? 'Stop recording and add it to your draft'
                 : recordingVoice
                   ? 'Stop recording and send the message'
                   : 'Send message'
             }
             title={
-              recordingVoice && hasAttachments
-                ? 'Stop and add it to your draft, to send with your attachments'
+              recordingVoice && needsDraft
+                ? `Stop and add it to your draft, to send with ${draftContext}`
                 : recordingVoice
                   ? 'Stop recording and send it now'
                   : undefined

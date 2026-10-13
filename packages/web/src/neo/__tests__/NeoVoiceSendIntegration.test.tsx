@@ -3,6 +3,7 @@ import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
+import type { NeoQuote } from '../neo-intake.ts';
 
 type IntakeInput = { sessionId: string; requestId: string; content: unknown };
 
@@ -98,7 +99,7 @@ function makeStore(): SessionStore {
   } as unknown as SessionStore;
 }
 
-function renderComposer(draft = 'typed first') {
+function renderComposer(draft = 'typed first', quote?: NeoQuote) {
   const current = signal(draft);
   const onDraft = vi.fn((value: string) => {
     current.value = value;
@@ -117,6 +118,7 @@ function renderComposer(draft = 'typed first') {
       onError={onError}
       onTranscript={onTranscript}
       onSend={onSend}
+      quote={quote}
     />
   );
   return {
@@ -167,6 +169,23 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('NeoComposer and NeoVoice send integration', () => {
+  it('keeps a recording in the draft when replying to a quoted message', async () => {
+    const { onTranscript, onSend } = renderComposer('typed first', {
+      author: 'Neo',
+      text: 'Earlier answer',
+      anchor: 'source',
+    });
+    const stop = await screen.findByRole('button', {
+      name: 'Stop recording and add it to your draft',
+    });
+    fireEvent.click(stop);
+    await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('spoken second'));
+    expect(asks()).toHaveLength(0);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole('region', { name: 'Quoted message' }).textContent).toContain(
+      'Earlier answer'
+    );
+  });
   it('the existing Send control is the only send affordance and is enabled while recording', async () => {
     renderComposer();
     await awaitRecordingComposer();

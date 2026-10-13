@@ -503,7 +503,9 @@ describe('NeoPublicConversation topic labels', () => {
         }
       />
     );
-    const replies = screen.getAllByRole('article').filter((item) => !item.id);
+    const replies = screen
+      .getAllByRole('article')
+      .filter((item) => item.classList.contains('neo-message-assistant'));
     expect(within(replies[0]).getByText('Neo iOS (forwarded from HyperNeo)')).toBeTruthy();
     expect(within(replies[1]).getByText('Neo (forwarded from Neo iOS)')).toBeTruthy();
   });
@@ -522,7 +524,9 @@ describe('NeoPublicConversation topic labels', () => {
         topics={new Map([[holder, 'Fictional research']])}
       />
     );
-    const replies = screen.getAllByRole('article').filter((item) => !item.id);
+    const replies = screen
+      .getAllByRole('article')
+      .filter((item) => item.classList.contains('neo-message-assistant'));
     expect(within(replies[0]).getByText('Fictional research')).toBeTruthy();
     expect(within(replies[1]).queryByText('Fictional research')).toBeNull();
     expect(within(replies[1]).getByText('Neo')).toBeTruthy();
