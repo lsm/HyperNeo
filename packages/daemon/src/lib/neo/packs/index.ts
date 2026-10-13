@@ -86,10 +86,12 @@ export function requireNeoEvidenceRefresh<
     session: boolean;
     packEvidence: boolean;
     toldAt: number | null;
+    doneWhenMet: boolean;
   },
   now: number,
   closedDonePrefix: string
 ): { value: Refresh & { row: Row | null } } | { reason: 'not_due' } {
+  if (card.doneWhenMet) return { reason: 'not_due' };
   const pr = requireNeoWorkPrRefresh(
     refresh,
     { row: card.row, session: card.session },

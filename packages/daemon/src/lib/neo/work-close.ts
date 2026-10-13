@@ -1,5 +1,5 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
+import { isNeoWorkClosedDone, NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
@@ -33,7 +33,8 @@ export function planNeoWorkClose(
           ? { ok: true, work }
           : { ok: false, reason: 'work_closed: cancelled work stays cancelled' },
     };
-  if (outcome === 'done' && work.status === 'reported') return { reason: { ok: true, work } };
+  if (outcome === 'done' && work.status === 'reported' && isNeoWorkClosedDone(work.report))
+    return { reason: { ok: true, work } };
   return {
     value: {
       work,
