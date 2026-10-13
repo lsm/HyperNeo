@@ -256,16 +256,6 @@ in test code.
 Within each milestone, follow Pin → Extract → Build → Wire → Delete, measure fresh `dev`
 diffs, and create one mapped issue and merge contract per slice within the production budget.
 
-0. **Coding pack fresh base:** fetch and prepare the required remote target for every coding
-   card; refuse failed fetches. Independent of this design's merge and all subsequent slices.
-1. **Binding and registry:** bindings, pack-registered kinds, per-ask `revision` and
-   `approved_revision`, definition hashes, and evidence validity. No external revision slice exists.
-2. **The gate:** edges, the admission pipeline on every start path, durable claims, and dispatch
-   on item met. Retain conservative uncertain-start blocking from the first wired version.
-3. **Visibility:** dependency blockers in the ask view, web, and iOS; exclude blocked work from
-   stall detection and capacity accounting.
-4. **Reconciliation:** extend existing handoff rows with automatic uncertain-start recovery.
-
 Test chains, fan-in/fan-out, cycles, transactional edits, empty/removed items, pack registration
 and unloading, false worker reports, human answers, revision-bound approval, folds, and every
 start path. Test duplicate events/concurrent starts, cancellation/supersession, restart and
@@ -273,15 +263,13 @@ uncertain handoffs, capacity changes, and archived-target retargeting. Coding te
 fetch, and fresh bases containing prerequisite merge commits. Verify approved plans advance
 while Neo is idle. Web/iOS checks cover blocker links and automatic-start visibility.
 
-Run required checks per slice. This document changes no runtime behavior or execution cards.
-
 ## Issue and PR execution plan
 
-The labels below are planning IDs, not created GitHub issues. Create one implementation epic
-and map each eligible row to exactly one issue and one PR, reusing an existing issue only if
+The labels below are planning IDs; F2 is now mapped to #6769. Create one implementation epic
+under #6002 and map each eligible row to exactly one issue and one PR, reusing an existing issue only if
 its purpose and merge contract match. Do not create or dispatch execution sessions for the
 whole table up front. Planning issues may exist early; execution starts only after the listed
-prerequisite PRs are verified merged into `dev`. `D` means this design PR, #6767.
+prerequisite PRs are verified merged into their repository's target branch. `D` is design PR #6767.
 
 Each row is a candidate boundary, not a measured line-count promise. Before creating its PR,
 read all affected call sites and measure against freshly fetched `origin/dev`; record an exact
@@ -291,28 +279,44 @@ wiring, and deletion remain separate; a few-line build+wire exception requires a
 contract. New build modules must have a legitimate registered/discovery consumer for knip,
 not unused exports or a fake production call added only to satisfy the check.
 
+### Existing work: reuse and ordering
+
+These dependencies bind to verified merged implementations, not merely closed issue states.
+Read the resulting code before measuring a row; do not implement a competing sibling solution.
+
+| Existing issue | Integration owner and required ordering |
+| --- | --- |
+| #6749 — live worker for archived target | Already merged in PR #6765 (`fc44fd0b`); A1 reuses its retargeting code. No second implementation. |
+| #6747 — own-PR attribution | Its verified merge is required by A1's coding evidence integration and N1 guidance; audit against explicit issue/PR identity rather than trusting branch claims. |
+| #6750 — checked outcomes and withdrawn PR questions | R2 waits for its merge; then K2 follows R2 and B2 follows K2, serializing neo.ask.open/edit changes. |
+| #6754 — close/follow/fold | Owns the existing fold operation. B1/B2 wait for its merge; B1 owns the dependency binding remapping extension and B2 wires that extension, without rewriting fold ownership. |
+| #6763 — model/effort per driver | A2 waits for its merge and preserves its driver request/refusal contract; do not independently rebuild work.start configuration. |
+
+Recheck issue-to-PR mapping when each row becomes eligible. If an existing slice changes scope,
+update this graph before dispatch rather than coding around its unmerged branch.
+
 ### Slice 0: fresh coding bases, independently eligible
 
 | ID / issue purpose | Rung and concrete steps | Required merged PRs | Acceptance evidence |
 | --- | --- | --- | --- |
-| F0 — pin coding start preparation | Pin existing placement, user-checkout preservation, and driver handoff behavior. | None; does not wait for D | Characterization tests pass without production changes. |
-| F1 — isolate coding preparation seam | Extract current preparation verbatim into the adapter resource seam, exposing a pack stage boundary without behavior changes. | F0 | Existing preparation/start tests pass unchanged. |
-| F2 — build fresh-base preparation | Build pure target/ref and ancestry decisions plus fetch/checkout effect stages; refuse failed authenticated fetch. | F1 | Failed fetch creates no worker; prepared checkout uses required remote target; user's checkout remains intact. |
+| F2 — build fresh-base preparation (#6769) | Reuse preparation characterization; build pure target/ref and ancestry decisions plus fetch/checkout effect stages through the existing seam. | None; does not wait for D | Failed fetch creates no worker; checkout uses required remote target; user's checkout remains intact. |
 | F3 — wire fresh coding starts | Replace the existing preparation call with the coding pack stage for every coding card, including independent cards. | F2 | Driver integration proves fresh remote base and no local-HEAD fallback. |
 
-If F1 proves unnecessary after measurement, document that decision and route F2 from F0;
-do not manufacture an extraction. F3 can land before D. No deployment is part of this track.
+No default pin-only or extract-only issue is needed where existing suites and seams suffice.
+In F2, R1, and K1, reuse characterization first and add missing test cases before the build;
+tests ride their owning slice. If a real missing seam needs extraction or a substantial Pin
+rung is needed, measure and create that separate predecessor PR under ADR 0004. Keep Build
+and Wire separate. F3 can land before D. No deployment is part of this track.
 
 ### Slice 1: outcomes, revisions, and registered checks
 
 | ID / issue purpose | Rung and concrete steps | Required merged PRs | Acceptance evidence |
 | --- | --- | --- | --- |
-| P0 — pin ask outcome behavior | Pin surviving item ticks, human answers, approval, folding, and pre-delivery retry behavior. | D | Characterization covers actual existing operations and repositories. |
-| R1 — build ask revision storage | Add revision/approved_revision and definition-hash storage; build canonical hashing and pure material-edit decisions. | P0 | Migration/backfill tests; material versus nonmaterial changes; legacy evidence cannot unlock work. |
-| R2 — wire revision-safe mutations | Route edits, approval, daemon ticks, and human answers through revision/hash checks and atomic derived-view returns. | R1 | Stale ticks and approval rejected; unchanged-item evidence survives unrelated edits. |
-| K1 — build check registry | Build pure loaded-pack lookup/collision validation and compatible string schemas; migrate the hard-coded DB constraint. | P0 | Existing kinds preserved; unknown/colliding kinds rejected; unloaded kinds remain blocked. |
-| K2 — wire registered checks | Swap operation validation/check dispatch to the registry, retaining existing checks' behavior. | K1 | Loaded-pack checks work through the operations door; no life-admin behavior change. |
-| B1 — build outcome bindings | Add deliveredBy persistence and pure binding validation; define fold remapping and binding invalidation. | R2 | Missing/foreign cards rejected; changed bindings clear evidence; fold preserves card identity. |
+| R1 — build ask revision storage | Reuse outcome characterization; add revision/approved_revision and definition-hash storage with pure material-edit decisions. | D | Migration/backfill tests; material versus nonmaterial changes; legacy evidence cannot unlock work. |
+| R2 — wire revision-safe mutations | Route edits, approval, daemon ticks, and human answers through revision/hash checks and atomic derived-view returns. | R1, #6750 | Stale ticks and approval rejected; unchanged-item evidence survives unrelated edits. |
+| K1 — build check registry | Reuse existing check tests; build pure loaded-pack validation and string schemas; migrate the hard-coded DB constraint. | R1 | Existing kinds preserved; unknown/colliding kinds rejected; unloaded kinds remain blocked. |
+| K2 — wire registered checks | Swap operation validation/check dispatch to the registry, retaining existing checks' behavior. | K1, R2 | Loaded-pack checks work through the operations door; no life-admin behavior change. |
+| B1 — build outcome bindings | Add deliveredBy persistence and pure validation; extend #6754's fold with binding remapping/invalidation. | R2, #6754 | Missing/foreign cards rejected; changed bindings clear evidence; fold preserves card identity. |
 | B2 — wire binding operations | Add deliveredBy to neo.ask.open/edit and transactional fold behavior, returning updated views. | B1, K2 | Real operation tests prove atomic bindings/revisions and target-ask approval isolation. |
 
 ### Slice 2: graph, common admission, and deterministic dispatch
@@ -320,8 +324,8 @@ do not manufacture an extraction. F3 can land before D. No deployment is part of
 | ID / issue purpose | Rung and concrete steps | Required merged PRs | Acceptance evidence |
 | --- | --- | --- | --- |
 | G1 — build dependency graph | Add edge storage and pure DAG/blocker decisions; validate both endpoints' bound outcomes transactionally. | B2 | Chain/fan-in/fan-out, cycles, empty/removed outcomes, cross-ask ownership and cancellation tests. |
-| A1 — build admission pipeline | Compose prerequisite, approval, live staffing target, pack preparation, and final recheck stages; extend durable target-row claims and conservative uncertain state. | G1, F3 | Blocked decisions produce zero worker effects; ended targets retarget within authorized pool; competing claims cannot both win. |
-| A2 — wire direct start paths | Route public Start and adoption through admission before any worker effect. | A1 | Direct/adopt tests cover blocked, retargeted, stale, and uncertain attempts. |
+| A1 — build admission pipeline | Compose pure admission gates and effects; reuse #6749's live retargeting and pack evidence; extend target-row claims and uncertain state. | G1, F3, #6747; #6749 already merged | Blocked decisions produce zero worker effects; existing retargeting preserved; competing claims cannot both win. |
+| A2 — wire direct start paths | Route public Start and adoption through admission, preserving #6763's model/effort contract. | A1, #6763 | Direct/adopt tests cover blocked, retargeted, stale, uncertain, and configuration-refused attempts. |
 | A3 — wire approval and recovery | Route approval fan-out, pre-delivery retries, and recovery through the same pipeline. | A2 | Every remaining start path respects dependencies and cancellation; no Promise.allSettled bypass. |
 | Q1 — build dependency wake jobs | Register durable Neo admission jobs and atomic item-met/enqueue changes using enqueueUniquePending. | A3 | Duplicate events, queue restart, cancellation, and stale revisions cannot double-dispatch. |
 | Q2 — expose plans and automatic dispatch | Wire dependsOn on neo.work.propose/start; activate item-met, approval, availability, and startup triggers. | Q1 | An approved chain progresses with Neo idle; invalid graph returns typed blockers; Start edits cannot self-approve. |
@@ -338,10 +342,10 @@ before adding planning guidance.
 | --- | --- | --- | --- |
 | V1 — derive blockers in ask views | Add shared snapshot/view fields; exclude blocked plans from ask-stall and execution-capacity counts. | Q2 | Snapshot/derived-state tests distinguish reported, met, blocked, and uncertain states; no artificial question or stall continue. |
 | V2 — show web dependency waits | Render prerequisite links, unmet items, authorized waiting, and attention actions in existing ask/card UI. | V1 | Focused accessible web interaction tests; no Start bypass; required web checks. |
-| V3 — show iOS dependency waits | Consume the shared derived fields in the existing iOS ask surface, preserving compatibility with older snapshots. | V1 | Platform checks cover blocker links, automatic-start intent, and uncertainty actions. |
+| V3 — show iOS dependency waits (lsm/neo-ios) | Read new shared derived fields directly in the iOS ask surface; no old-daemon snapshot fallbacks. | V1 | Platform checks cover blocker links, automatic-start intent, and uncertainty actions. |
 | H1 — build handoff reconciliation | Build pure reconciliation decisions and adapter receipt reads against existing target rows. | Q2 | Crash-before/after-start, absent receipts, and ambiguous external starts classified conservatively. |
 | H2 — wire safe restart recovery | Replace uncertain-start recovery with the new pipeline; never blindly relaunch a possibly started worker. | H1 | Restart integration proves recorded handoff reuse and single dispatch under duplicate recovery triggers. |
-| N1 — teach Neo dependency planning | Update coding pack guidance with bound coding.pr_merged items watching each card's issue and explicit dependsOn edges. | V2, V3, H2 | Planning fixtures/evals produce valid staged plans before PRs exist; daemon still enforces correctness. |
+| N1 — teach Neo dependency planning | Update coding guidance with bound issue-watching outcomes and dependsOn edges; V1 blocker visibility is useful but optional. | Q2, #6747 | Planning fixtures/evals produce valid staged plans before PRs exist; daemon enforces correctness without waiting for clients or H2. |
 
 Removal-only cleanup PRs follow their replacement's verified merge only when an obsolete
 bypass or hard-coded validator remains. Give each a separate measured issue; do not bundle
@@ -351,29 +355,42 @@ deletion into a build or wiring PR. Life-admin evidence audit #6768 is outside t
 
 ```mermaid
 flowchart LR
-    F0 --> F1 --> F2 --> F3
-    D[Design 6767] --> P0
-    P0 --> R1 --> R2 --> B1
-    P0 --> K1 --> K2
+    F2[Fresh-base build 6769] --> F3
+    D[Design 6767] --> R1
+    R1 --> R2 --> B1
+    R1 --> K1 --> K2
+    R2 --> K2
+    X6750[6750 checked outcomes] --> R2
+    X6754[6754 fold owner] --> B1
     B1 --> B2
     K2 --> B2
     B2 --> G1 --> A1
     F3 --> A1
+    X6747[6747 PR identity] --> A1
+    X6749[6749 merged in 6765] --> A1
+    X6763[6763 model and effort] --> A2
     A1 --> A2 --> A3 --> Q1 --> Q2
     Q2 --> V1
     V1 --> V2
     V1 --> V3
     Q2 --> H1 --> H2
-    V2 --> N1
-    V3 --> N1
-    H2 --> N1
+    Q2 --> N1
+    X6747 --> N1
 ```
 
 An arrow requires an actual merged prerequisite PR, not approval, green CI, a worker report,
-or an open sibling branch. Start each eligible PR from updated `dev`, never stack it on an
-unmerged branch. Independently eligible branches can run concurrently only if staffing and
+or an open sibling branch. HyperNeo PRs start from updated `dev`, never an unmerged sibling.
+V3 uses lsm/neo-ios's documented target branch, checks, and merge rules; verify those before
+creating its issue/PR. Both daemons are updated together; clients read the new contract directly.
+Independently eligible branches can run concurrently only if staffing and
 touch budgets allow; conflicting shared-file/schema work is serialized. Until neo.work gates
 exist, enforce this table through explicit merge verification before opening the next worker.
+After Q2 merges, create the remaining V1–N1 execution cards with real dependsOn edges and bound
+outcome items as the first live dogfood plan. Include V2/V3 → V1 and H2 → H1; N1 needs Q2,
+not client or reconciliation completion. Core progresses it without a Neo turn. The coding
+pack verifies cross-repository outcomes, including V3's own repository/target. Record actual
+dispatch/blocked evidence; retain conservative uncertain handling until H2. Manual verification
+remains the merge audit, not a replacement scheduler for these remaining cards.
 
 For each row: verify prerequisites → measure scope/call sites → create mapped issue with its
 merge contract → implement/test the rung → run required repository checks → open PR targeting
