@@ -5,6 +5,7 @@ import {
   type NeoAskStatus,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
+import { neoAskRevisionPolicy } from '../../lib/neo/ask-revision-policy.ts';
 
 const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
@@ -55,6 +56,7 @@ export interface NeoAskOwner {
 }
 
 export class NeoAskRepository {
+  readonly revisionPolicy = neoAskRevisionPolicy;
   constructor(
     private readonly db: Database,
     private readonly notify: () => void = () => {}
