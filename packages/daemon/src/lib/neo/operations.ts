@@ -1446,6 +1446,24 @@ export function createNeoOperations(service: NeoService) {
     .pipe(requireLiveNeoWorkOrigin, ['origin', 'caller'], 'result:admission')
     .pipe(requireNeoProposalDoneWhen, ['input', 'caller'], 'result:admission')
     .pipe(
+      (input: z.infer<typeof Propose>, origin: NeoWorkOrigin, caller: OperationCaller) => {
+        const planned = planNeoCardAsk(input, origin);
+        const checked = service.outcomeCheckPolicy.requireChecks(
+          planned ? planNeoAskItems(planned).items : []
+        );
+        return 'reason' in checked
+          ? {
+              reason: {
+                ...checked.reason,
+                reason: `${checked.reason.reason} Open a checked ask with neo.ask.open, then pass its askId.`,
+              },
+            }
+          : { value: caller };
+      },
+      ['input', 'origin', 'caller'],
+      'result:admission'
+    )
+    .pipe(
       (
         input: z.infer<typeof Propose>,
         origin: NeoWorkOrigin,

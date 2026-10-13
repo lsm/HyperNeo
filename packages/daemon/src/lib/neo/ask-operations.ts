@@ -1393,11 +1393,17 @@ export function createNeoAskOperations(
     .pipe(requireNeoAskEdit, ['input', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Edit>, ask: NeoAsk) => {
-        const tracked = input.track.flatMap((change) => {
-          const item = ask.doneItems?.find((entry) => entry.id === change.itemId);
-          return item ? [{ ...item, check: change.check ?? item.check }] : [];
-        });
-        const checked = service.outcomeCheckPolicy.requireChecks([...input.add, ...tracked]);
+        const tracked = new Map<string, NeoAskItem>();
+        for (const change of input.track) {
+          const item =
+            tracked.get(change.itemId) ??
+            ask.doneItems?.find((entry) => entry.id === change.itemId);
+          if (item) tracked.set(item.id, { ...item, check: change.check ?? item.check });
+        }
+        const checked = service.outcomeCheckPolicy.requireChecks([
+          ...input.add,
+          ...tracked.values(),
+        ]);
         return 'reason' in checked ? checked : { value: ask };
       },
       ['input', 'admission'],

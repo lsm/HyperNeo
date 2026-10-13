@@ -641,6 +641,44 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true } });
   });
 
+  test.each([false, true])(
+    'validates the final folded tracking check (watch first: %s)',
+    async (watchFirst) => {
+      const askId = await openAsk();
+      service.askRecords.editItems(
+        askId,
+        planNeoAskEdit(service.askRecords.get(askId)!, {
+          askId,
+          add: [{ text: 'Deployed', check: null }],
+          remove: [],
+          track: [],
+        }),
+        Date.now()
+      );
+      const track = [
+        { itemId: 'i3', check: 'coding.deployed' },
+        { itemId: 'i3', check: null, watch: ['https://github.com/lsm/HyperNeo/pull/42'] },
+      ];
+      expect(
+        await invoke('neo.ask.edit', { askId, track: watchFirst ? [...track].reverse() : track })
+      ).toMatchObject({ value: { ok: true } });
+      expect(
+        service.askRecords.get(askId)?.doneItems?.find((item) => item.id === 'i3')
+      ).toMatchObject({ check: 'coding.deployed', watch: track[1].watch });
+      const before = service.askRecords.get(askId);
+      expect(
+        await invoke('neo.ask.edit', {
+          askId,
+          track: [
+            { itemId: 'i3', check: 'coding.deployed' },
+            { itemId: 'i3', check: 'coding.pr_merged' },
+          ],
+        })
+      ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('coding.deployed') } });
+      expect(service.askRecords.get(askId)).toEqual(before);
+    }
+  );
+
   test('opens an ask under an enabled pack and briefs it in the same value', async () => {
     const opened = await invoke('neo.ask.open', { ...opening, pack: 'coding' });
     expect(opened).toMatchObject({
@@ -1438,7 +1476,7 @@ describe('neo.ask operations', () => {
       instruction: 'Fix it.',
       work: { verb: 'start', adapter: 'claude-desktop', place },
       goal: 'Remove the write-only field',
-      doneWhen: '- merged to dev',
+      doneWhen: '- implementation ready',
     };
     const first = await invoke('neo.work.propose', { ...card, requestKey: 'card-1' });
     await invoke('neo.work.propose', { ...card, requestKey: 'card-1' });
@@ -1448,12 +1486,45 @@ describe('neo.ask operations', () => {
     expect(asks).toEqual([
       expect.objectContaining({
         ask: 'Remove the write-only field',
-        doneWhen: '- merged to dev',
+        doneWhen: '- implementation ready',
         doneSource: 'card',
         workIds: [first.value!.work!.id],
       }),
     ]);
   });
+
+  test.each(['PR merged', 'Deployed'])(
+    'refuses unchecked implicit card outcomes before writing: %s',
+    async (text) => {
+      const input = {
+        requestKey: 'checked-card',
+        title: 'Fix it',
+        instruction: 'Fix it.',
+        work: { verb: 'start', adapter: 'claude-desktop', place },
+        doneWhen: text,
+      };
+      expect(await invoke('neo.work.propose', input)).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('neo.ask.open') },
+      });
+      expect(service.askRecords.list()).toEqual([]);
+      expect(service.repo.listWork()).toEqual([]);
+      const opened = await invoke('neo.ask.open', {
+        ...opening,
+        doneItems: [
+          {
+            text,
+            check: text === 'Deployed' ? 'coding.deployed' : 'coding.pr_merged',
+          },
+        ],
+      });
+      const askId = opened.value!.ask!.id;
+      expect(await invoke('neo.work.propose', { ...input, askId })).toMatchObject({
+        value: { ok: true },
+      });
+      expect(service.askRecords.list()).toHaveLength(1);
+      expect(service.askRecords.get(askId)?.workIds).toHaveLength(1);
+    }
+  );
 
   test('refuses a retried request key under another ask', async () => {
     const first = await openAsk();
