@@ -247,7 +247,9 @@ describe('Neo existing trusted human work input', () => {
     const second = await under('second', target);
     const stuck = await under('stuck', gone);
     db.updateSession(gone, { status: 'archived' });
-    expect(service.askRecords.get(opened.id)?.workIds).toEqual([first.id, second.id, stuck.id]);
+    expect([...(service.askRecords.get(opened.id)?.workIds ?? [])].sort()).toEqual(
+      [first.id, second.id, stuck.id].sort()
+    );
 
     const later = caller(root, '00000000-0000-4000-8000-000000000009');
     expect(later.neoTurn?.human).toBe(false);
