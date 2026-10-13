@@ -70,4 +70,48 @@ const select = (superpipe({})('work-start-configuration') as PipelineAPI)
       detail: string;
     };
 
-export const workStartConfiguration = { schema: Schema, refusalSchema: RefusalSchema, select };
+type Receipt =
+  | { ok: true; value: Request }
+  | { ok: false; reason: 'not_delivered'; detail: string };
+
+function confirmField(
+  field: keyof Request,
+  requested: Request,
+  observed: Request
+): { value: Request } | { reason: Extract<Receipt, { ok: false }> } {
+  return requested[field] === undefined || requested[field] === observed[field]
+    ? { value: observed }
+    : {
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: `The driver did not confirm ${field} ${JSON.stringify(requested[field])}; reported ${JSON.stringify(observed[field] ?? null)}.`,
+        },
+      };
+}
+
+const confirm = (superpipe({})('work-start-configuration-receipt') as PipelineAPI)
+  .input(['requested', 'observed'])
+  .pipe(
+    (requested: Request, observed: Request) => confirmField('model', requested, observed),
+    ['requested', 'observed'],
+    'result:configuration'
+  )
+  .pipe(
+    (requested: Request, observed: Request) => confirmField('effort', requested, observed),
+    ['requested', 'configuration'],
+    'result:configuration'
+  )
+  .pipe(
+    (observed: Request): Receipt => ({ ok: true, value: { ...observed } }),
+    'configuration',
+    'configuration'
+  )
+  .end('configuration') as (requested: Request, observed: Request) => Receipt;
+
+export const workStartConfiguration = {
+  schema: Schema,
+  refusalSchema: RefusalSchema,
+  select,
+  confirm,
+};

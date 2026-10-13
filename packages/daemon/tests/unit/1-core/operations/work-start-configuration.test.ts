@@ -79,6 +79,53 @@ describe('workStartConfiguration', () => {
       reason: 'unsupported_effort',
     });
   });
+  test('confirms canonical model and effort after catalog selection', () => {
+    const requested = policy.select({ model: 'sol 6.1', effort: 'MEDIUM' }, models);
+    if ('ok' in requested) throw new Error('Configuration selection failed');
+    const observed = Object.freeze({ model: 'gpt-6.1-sol', effort: 'medium' });
+    expect(policy.confirm(Object.freeze(requested), observed)).toEqual({
+      ok: true,
+      value: observed,
+    });
+    expect(requested).toEqual({ model: 'gpt-6.1-sol', effort: 'medium' });
+    expect(observed).toEqual({ model: 'gpt-6.1-sol', effort: 'medium' });
+  });
+  test.each([
+    [{}, 'model'],
+    [{ model: 'other', effort: 'high' }, 'model'],
+    [{ model: 'sol 6.1', effort: 'medium' }, 'model'],
+    [{ model: 'gpt-6.1-sol' }, 'effort'],
+    [{ model: 'gpt-6.1-sol', effort: 'high' }, 'effort'],
+    [{ model: 'gpt-6.1-sol', effort: 'MEDIUM' }, 'effort'],
+  ] as const)('refuses missing or different receipt fields: %j', (observed, field) => {
+    expect(policy.confirm({ model: 'gpt-6.1-sol', effort: 'medium' }, observed)).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail: expect.stringContaining(`confirm ${field}`),
+    });
+  });
+  test('requires effort-only receipts to confirm the requested effort', () => {
+    expect(policy.confirm({ effort: 'medium' }, {})).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+    });
+    expect(policy.confirm({ effort: 'medium' }, { effort: 'medium' })).toEqual({
+      ok: true,
+      value: { effort: 'medium' },
+    });
+  });
+  test('retains observed defaults without inventing unreported configuration', () => {
+    expect(policy.confirm({}, {})).toEqual({ ok: true, value: {} });
+    expect(policy.confirm({}, { model: 'other', effort: 'high' })).toEqual({
+      ok: true,
+      value: { model: 'other', effort: 'high' },
+    });
+    expect(policy.confirm({ model: 'gpt-6.1-sol' }, { model: 'gpt-6.1-sol' })).toEqual({
+      ok: true,
+      value: { model: 'gpt-6.1-sol' },
+    });
+  });
+
   test('configuration and work-result schemas retain explicit choices and typed refusals', () => {
     expect(policy.schema.parse({ model: ' sol 6.1 ', effort: ' medium ' })).toEqual({
       model: 'sol 6.1',
