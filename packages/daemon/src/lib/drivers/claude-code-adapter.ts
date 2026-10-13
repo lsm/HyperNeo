@@ -1,7 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { basename } from 'node:path';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
-import { claudeTranscriptCwd } from './claude-feed.ts';
+import { claudeTranscriptCwd, isTempCwd } from './claude-feed.ts';
 import { listFeedFiles, readFeedHead } from './work-feed.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { mergePlaceGroups, withChatEvidence } from './places.ts';
@@ -15,6 +15,7 @@ export interface ClaudeCodeAdapterDeps {
   machine: string;
   searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
   desktopSessions: () => Promise<ReadonlySet<string>>;
+  ownedSessions?: () => ReadonlySet<string>;
 }
 
 interface ClaudeFolder {
@@ -58,11 +59,17 @@ export function buildClaudeCodeGroups(
   desktop: ReadonlySet<string>,
   query: FindQuery,
   machine: string,
-  folders: readonly ClaudeFolder[] = []
+  folders: readonly ClaudeFolder[] = [],
+  owned: ReadonlySet<string> = new Set()
 ): PlaceGroup[] {
   const bySession = new Map(folders.map((record) => [record.sessionId, record]));
+  const excluded = new Set([
+    ...desktop,
+    ...owned,
+    ...folders.filter((record) => isTempCwd(record.folder)).map((record) => record.sessionId),
+  ]);
   const work: WorkSummary[] = chats
-    .filter((chat) => chat.kind === 'claude' && chat.sessionId && !desktop.has(chat.sessionId))
+    .filter((chat) => chat.kind === 'claude' && chat.sessionId && !excluded.has(chat.sessionId))
     .filter((chat) => !query.folder || bySession.get(chat.sessionId ?? '')?.folder === query.folder)
     .slice(0, SESSIONS_PER_PLACE)
     .map((chat) =>
@@ -90,7 +97,8 @@ export function buildClaudeCodeGroups(
     work: [item],
   }));
   for (const record of folders) {
-    if (desktop.has(record.sessionId) || (query.folder && record.folder !== query.folder)) continue;
+    if (excluded.has(record.sessionId) || (query.folder && record.folder !== query.folder))
+      continue;
     if (query.text && !record.folder.toLowerCase().includes(query.text.toLowerCase())) continue;
     groups.push({
       place: { machine, folder: record.folder, name: basename(record.folder) },
@@ -114,6 +122,7 @@ const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI
     'chats'
   )
   .pipe((deps: ClaudeCodeAdapterDeps) => deps.desktopSessions(), 'deps', 'desktop')
+  .pipe((deps: ClaudeCodeAdapterDeps) => deps.ownedSessions?.() ?? new Set(), 'deps', 'owned')
   .pipe(
     (deps: ClaudeCodeAdapterDeps, cache: FolderCache) =>
       deps.projectsDir ? readClaudeCodeFolders(deps.projectsDir, cache) : [],
@@ -126,9 +135,10 @@ const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI
       desktop: ReadonlySet<string>,
       query: FindQuery,
       deps: ClaudeCodeAdapterDeps,
-      folders: ClaudeFolder[]
-    ) => buildClaudeCodeGroups(chats, desktop, query, deps.machine, folders),
-    ['chats', 'desktop', 'query', 'deps', 'folders'],
+      folders: ClaudeFolder[],
+      owned: ReadonlySet<string>
+    ) => buildClaudeCodeGroups(chats, desktop, query, deps.machine, folders, owned),
+    ['chats', 'desktop', 'query', 'deps', 'folders', 'owned'],
     'groups'
   )
   .endAsync('groups') as (

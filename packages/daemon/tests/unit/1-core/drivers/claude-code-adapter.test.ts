@@ -89,6 +89,43 @@ describe('createClaudeCodeAdapter', () => {
     }
   });
 
+  test('excludes temporary and owned folders before limits and refreshes ownership with cached transcripts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    const owned = new Set(['coordinator']);
+    const records = [
+      ['cli', '/real/project'],
+      ['temp', '/tmp/hyperneo-neo-context/task'],
+      ['coordinator', '/data/Neo/.coordinators/task'],
+    ];
+    try {
+      mkdirSync(join(dir, 'encoded'));
+      for (const [id, cwd] of records) {
+        writeFileSync(join(dir, 'encoded', `${id}.jsonl`), `${JSON.stringify({ cwd })}\n`);
+      }
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => records.map(([id]) => chat(id, 'project')),
+        desktopSessions: async () => new Set(),
+        ownedSessions: () => owned,
+      });
+      const query = { includeClosed: false, limit: 1 };
+      expect((await adapter.find(query)).map((group) => group.place.folder)).toEqual([
+        '/real/project',
+      ]);
+      const matches = await adapter.find({ ...query, text: 'project' });
+      expect(matches.flatMap((group) => group.work.map((work) => work.ref.id))).toEqual(['cli']);
+      expect(await adapter.find({ ...query, folder: '/tmp/hyperneo-neo-context/task' })).toEqual(
+        []
+      );
+      owned.add('cli');
+      expect(await adapter.find(query)).toEqual([]);
+      expect(await adapter.find({ ...query, text: 'project' })).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('only searches when asked for text', async () => {
     const searched: string[] = [];
     const adapter = createClaudeCodeAdapter({
