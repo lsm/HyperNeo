@@ -60,7 +60,7 @@ describe('neoDraftPayload', () => {
       sessionId: 'neo:root',
       requestId: uuid,
       content:
-        'Replying to [Neo](#neo-message-source):\n\n> &#42;&#42;Answer&#42;&#42;\n> \n> &#62; nested\n> &#96;&#96;&#96;js\n> code\n> &#96;&#96;&#96;\n\nYour reply:\n\nPlease explain',
+        'Replying to Neo:\n> **Answer**\n>\n> > nested\n> ```js\n> code\n> ```\n\nPlease explain',
     });
   });
 
@@ -81,7 +81,7 @@ describe('neoDraftPayload', () => {
       content: [
         {
           type: 'text',
-          text: 'Replying to [You](#neo-message-question):\n\n> Which photo?\n\nYour reply:\n\n',
+          text: 'Replying to my earlier message:\n> Which photo?',
         },
         {
           type: 'image',
