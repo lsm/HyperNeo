@@ -41,6 +41,11 @@ export interface NeoPack extends NeoPackBrief {
     works: readonly NeoWork[]
   ): Promise<{ id: string; evidence: string }[]>;
   readAskWatchTicks?(ask: NeoAsk): Promise<{ id: string; evidence: string }[]>;
+  readAskEventTicks?(
+    ask: NeoAsk,
+    event: ExternalEvent
+  ): Promise<{ id: string; evidence: string }[]>;
+  askTopics?(ask: NeoAsk): string[];
   checks?: Record<string, NeoPackCheck>;
   workerMcpServers?: string[];
   externalTopics?(work: NeoWork): string[];

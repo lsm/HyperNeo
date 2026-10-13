@@ -1,6 +1,13 @@
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
-import { parseGitHubRefUrl } from '../../../github/parse-pr-url.ts';
+import type { ExternalEvent } from '../../../external-events/types.ts';
+import {
+  buildPrEventTopicPattern,
+  parseGitHubRefUrl,
+  parseGitHubTopic,
+  parsePrUrl,
+} from '../../../github/parse-pr-url.ts';
 import type { NeoRef, NeoRefState, NeoRefStateReader } from './ask-prs.ts';
+import { CODING_CHECK_DEPLOYED } from './deploy-checks.ts';
 import type { NeoAskTick } from './issue-checks.ts';
 
 const NEO_WATCH_READ_MS = 2 * 60_000;
@@ -18,7 +25,10 @@ export function countNeoAskWatches(items: readonly Pick<NeoAskItem, 'watch'>[]):
 
 export function isNeoWatchItem(item: NeoAskItem): boolean {
   return (
-    !!item.watch?.length && !item.removed && (item.state === 'pending' || item.state === 'reported')
+    !!item.watch?.length &&
+    item.check !== CODING_CHECK_DEPLOYED &&
+    !item.removed &&
+    (item.state === 'pending' || item.state === 'reported')
   );
 }
 
@@ -65,4 +75,56 @@ export async function readNeoWatchTicks(
   if (!refs.length || now - (lastRead.get(ask.id) ?? -Infinity) < NEO_WATCH_READ_MS) return [];
   lastRead.set(ask.id, now);
   return judgeNeoWatchTicks(ask, await readRefStates(refs));
+}
+
+export function neoWatchTopics(ask: NeoAsk): string[] {
+  const urls = (ask.doneItems ?? []).filter(isNeoWatchItem).flatMap((item) => item.watch!);
+  const topics = urls.flatMap((url) => {
+    const pr = parsePrUrl(url);
+    return pr && pr.host.toLowerCase() === 'github.com' ? [buildPrEventTopicPattern(pr)] : [];
+  });
+  return [...new Set(topics)];
+}
+
+export function neoWatchEventMerge(event: ExternalEvent): NeoRefState | null {
+  const topic = parseGitHubTopic(event.topic);
+  if (topic?.resource !== 'pull_request' || event.payload.merged !== true) return null;
+  return {
+    url: `https://github.com/${topic.owner}/${topic.repo}/pull/${topic.entity}`,
+    kind: 'pr',
+    state: 'MERGED',
+    at: event.occurredAt,
+    done: true,
+    closedBy: null,
+  };
+}
+
+export async function readNeoWatchEventTicks(
+  ask: NeoAsk,
+  event: ExternalEvent,
+  readRefStates: NeoRefStateReader
+): Promise<NeoAskTick[]> {
+  const merge = neoWatchEventMerge(event);
+  if (!merge) return [];
+  const items = (ask.doneItems ?? []).filter(
+    (item) => isNeoWatchItem(item) && item.watch!.some((url) => refKey(url) === refKey(merge.url))
+  );
+  if (!items.length) return [];
+  const watched = items
+    .flatMap((item) => item.watch!)
+    .find((url) => refKey(url) === refKey(merge.url));
+  const merged = { ...merge, url: watched ?? merge.url };
+  const others = new Map<string, NeoRef>();
+  for (const url of items.flatMap((item) => item.watch!)) {
+    const ref = parseGitHubRefUrl(url);
+    if (ref && refKey(url) !== refKey(merge.url)) others.set(refKey(url), ref);
+  }
+  const states = others.size ? await readRefStates([...others.values()]) : [];
+  const ids = new Set(items.map((item) => item.id));
+  return judgeNeoWatchTicks(ask, [...states, merged])
+    .filter((tick) => ids.has(tick.id))
+    .map((tick) => ({
+      ...tick,
+      evidence: `${tick.evidence} (event ${event.id}: ${event.summary})`,
+    }));
 }
