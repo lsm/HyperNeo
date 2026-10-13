@@ -4,6 +4,7 @@ import { Database } from '../../storage/sqlite-compat.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import type { CodexAppServer } from './codex-app-server.ts';
+import { selectCodexConfiguration } from './codex-start-configuration.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
@@ -598,6 +599,11 @@ export function startedThreadId(started: unknown): string | null {
   return typeof id === 'string' && id ? id : null;
 }
 
+function startedThreadModel(started: unknown): string | undefined {
+  const model = (started as { model?: unknown } | null)?.model;
+  return typeof model === 'string' && model.trim() ? model : undefined;
+}
+
 interface CodexWorkFolder {
   cwd: string;
   release: () => Promise<void>;
@@ -663,11 +669,24 @@ export async function startCodexThread(
     let threadId: string | null = null;
     let workFolder: CodexWorkFolder | null = null;
     try {
+      const configuration = await selectCodexConfiguration({ model: request.model }, server);
+      if (!configuration.ok) return configuration;
       const prepared = await prepareCodexWorkFolder(folder, deps);
       if (!prepared.ok) return prepared;
       workFolder = prepared.value;
-      threadId = startedThreadId(await server.call('thread/start', { cwd: workFolder.cwd }));
+      const started = await server.call('thread/start', {
+        cwd: workFolder.cwd,
+        ...configuration.value,
+      });
+      threadId = startedThreadId(started);
       if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
+      const model = startedThreadModel(started);
+      if (configuration.value.model !== undefined && model !== configuration.value.model) {
+        return reject(
+          'not_delivered',
+          `Codex did not confirm model ${configuration.value.model}; reported ${JSON.stringify(model ?? null)}. Thread ${threadId} was created without its first turn.`
+        );
+      }
       await server.call('thread/name/set', { threadId, name: request.title });
       await server.call('turn/start', {
         threadId,
@@ -682,6 +701,7 @@ export async function startCodexThread(
           status: 'running',
           lastActivityAt: deps.now(),
           link: `codex://threads/${threadId}`,
+          ...(model ? { model } : {}),
         },
       };
     } catch (error) {
