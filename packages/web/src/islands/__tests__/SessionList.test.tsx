@@ -379,6 +379,26 @@ describe('SessionsSidebar', () => {
     expect(screen.getByText('Project Chat')).toBeTruthy();
   });
 
+  it('creates a standalone project from the native header picker while an add-folder form is open', async () => {
+    Object.defineProperty(window, 'isTauri', { value: true, configurable: true });
+    try {
+      mockGetWorkspaceHistory.mockResolvedValue([createHistory('/existing')]);
+      render(<SessionsSidebar />);
+      const addFolder = await screen.findByRole('button', { name: 'Add folder to existing' });
+      fireEvent.click(addFolder);
+      expect(screen.getByTestId('add-project-form')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Add project' }));
+      await waitFor(() =>
+        expect(mockAddWorkspaceToHistory).toHaveBeenCalledWith('/workspace/new-project')
+      );
+      expect(mockAddFolderToProject).not.toHaveBeenCalled();
+      expect(await screen.findByText('new-project')).toBeTruthy();
+      expect(screen.getByText('existing')).toBeTruthy();
+    } finally {
+      Reflect.deleteProperty(window, 'isTauri');
+    }
+  });
+
   it('uses native browsing from the add-project control when available', async () => {
     mockSessionsSignal.value = [
       createMockSession('session-1', 'Project Chat', '/workspace/hyperneo'),

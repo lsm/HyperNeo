@@ -159,7 +159,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     });
   };
 
-  const addProjectFromPath = async (path: string) => {
+  const addProjectFromPath = async (path: string, target = folderTarget) => {
     const trimmed = path.trim();
     if (!trimmed) {
       setAddProjectError('Enter an absolute project path.');
@@ -168,8 +168,8 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     setAddProjectBusy(true);
     setAddProjectError(null);
     try {
-      if (folderTarget) {
-        await addFolderToProject(folderTarget.folders[0], trimmed);
+      if (target) {
+        await addFolderToProject(target.folders[0], trimmed);
         setHistory(await getWorkspaceHistory());
       } else {
         const entry = await addWorkspaceToHistory(trimmed);
@@ -202,7 +202,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
         setAddProjectError('Enter a path manually if the folder picker is unavailable.');
         return;
       }
-      await addProjectFromPath(picked.path);
+      await addProjectFromPath(picked.path, null);
     } catch (err) {
       setAddProjectOpen(true);
       setAddProjectError(err instanceof Error ? err.message : 'Failed to add project');
