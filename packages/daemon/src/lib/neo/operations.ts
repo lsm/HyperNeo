@@ -1912,7 +1912,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.retry',
       description:
-        'Try a failed hand-off again on the same work item: only work that failed before its driver started it (for example the claude CLI was logged out) can be retried. The work item goes back to queued and the same approved instruction is sent to the same target. Use this instead of proposing new work for the same ask. Started work uses neo.work.continue instead. The Neo session that proposed the work can retry it at any time; any Neo session can while answering the human’s own chat message, and the user always can.',
+        'Try a hand-off again on the same work item: work that failed before its driver started it (for example the claude CLI was logged out), or a card waiting for an open worker, can be retried. The work item goes back to queued and the same approved instruction is sent; an archived or ended target is replaced by an idle worker in the same project. Use this instead of proposing new work for the same ask. Started work uses neo.work.continue instead. The Neo session that proposed the work can retry it at any time; any Neo session can while answering the human’s own chat message, and the user always can.',
       inputSchema: WorkId,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

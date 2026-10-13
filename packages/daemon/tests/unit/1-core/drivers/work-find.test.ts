@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   createFindWorkOperation,
+  combineFindResults,
   FIND_AGENT_RESULT_BUDGET_CHARS,
 } from '../../../../src/lib/drivers/find-operation';
 import {
@@ -46,6 +47,29 @@ const chat = (sessionId: string | null, taskId: string | null = null): WorkChatM
   snippets: [
     { match: 'exact', messageId: 'm1', sessionId, role: 'assistant', at: 1, text: 'a hit' },
   ],
+});
+
+describe('combineFindResults', () => {
+  test('open discovery excludes closed sessions while explicit history and id lookups retain them', () => {
+    const sessions = group('laptop', '/focus/dolmen', 'claude-desktop', 10);
+    sessions.work.push({
+      ...sessions.work[0],
+      ref: { adapter: 'claude-desktop', id: 'archived' },
+      status: 'stopped',
+    });
+    const local = { groups: [sessions], unreachable: [] };
+    const remote = { groups: [], unreachable: [] };
+    const input = { includeClosed: false, limit: 20, localOnly: true };
+    expect(
+      combineFindResults(local, remote, input).places[0].work.map((item) => item.ref.id)
+    ).toEqual(['claude-desktop-10']);
+    expect(
+      combineFindResults(local, remote, { ...input, includeClosed: true }).places[0].work
+    ).toHaveLength(2);
+    expect(
+      combineFindResults(local, remote, { ...input, id: 'archived' }).places[0].work[0].ref.id
+    ).toBe('archived');
+  });
 });
 
 describe('mergePlaceGroups', () => {

@@ -64,6 +64,11 @@ import {
   runNeoDeliveryRetry,
 } from '../../../../src/lib/neo/delivery-retry.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import {
+  NEO_WORK_AWAITING_WORKER,
+  pickNeoReplacementWorkers,
+} from '../../../../src/lib/neo/work-reroute.ts';
+import type { WorkRef, WorkSummary } from '../../../../src/lib/drivers/types.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
 const retryVia = async (service: NeoService, id = 'work-1') => {
@@ -542,7 +547,7 @@ describe('readDriverOutcome', () => {
         kind: 'completed',
         value: { ok: false, reason: 'not_open', detail: 'archived' },
       })
-    ).toEqual({ failure: 'not_open: archived' });
+    ).toEqual({ failure: 'not_open: archived', reason: 'not_open' });
     expect(
       readDriverOutcome(startTarget, { kind: 'failed', code: 'execution_failed', message: 'boom' })
     ).toEqual({ failure: 'boom' });
@@ -699,8 +704,13 @@ describe('Neo work with a drivers target', () => {
   async function setup(
     reply: unknown,
     during?: (service: NeoService) => Promise<void>,
-    status: () => unknown = () => ({ ok: false, reason: 'unreachable', detail: 'down' }),
-    target: NeoDriverTarget = startTarget
+    status: (input: Record<string, unknown>) => unknown = () => ({
+      ok: false,
+      reason: 'unreachable',
+      detail: 'down',
+    }),
+    target: NeoDriverTarget = startTarget,
+    find: (input: Record<string, unknown>) => unknown = () => ({ places: [], unreachable: [] })
   ) {
     const db = await createTestDb();
     const calls: Array<{ name: string; input: unknown; caller: OperationCaller }> = [];
@@ -714,8 +724,13 @@ describe('Neo work with a drivers target', () => {
         execute: async (input, caller) => {
           calls.push({ name, input, caller });
           if (name === 'work.start') await during?.(service);
-          if (name === 'work.status') return status();
-          return name === 'work.stop' ? { ok: true, value: { stopped: true } } : reply;
+          if (name === 'work.status') return status(input);
+          if (name === 'work.find') return find(input);
+          return name === 'work.stop'
+            ? { ok: true, value: { stopped: true } }
+            : typeof reply === 'function'
+              ? reply(input)
+              : reply;
         },
       });
     const registry = createOperationRegistry([
@@ -723,6 +738,7 @@ describe('Neo work with a drivers target', () => {
       operation('work.send'),
       operation('work.stop'),
       operation('work.status'),
+      operation('work.find'),
     ]);
     service = new NeoService(
       db,
@@ -745,6 +761,340 @@ describe('Neo work with a drivers target', () => {
     );
     return { db, service, calls, proposed };
   }
+
+  const archivedRef = { adapter: 'claude-desktop', id: 'archived' };
+  const worker = (id: string, overrides: Partial<WorkSummary> = {}): WorkSummary => ({
+    ref: { ...archivedRef, id },
+    title: id,
+    place: { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' },
+    status: 'done',
+    lastActivityAt: 100,
+    ...overrides,
+  });
+  const found = (workers: WorkSummary[]) => ({
+    places: workers.map((item) => ({
+      place: item.place,
+      lastActivityAt: item.lastActivityAt,
+      openCount: 1,
+      archivedCount: 0,
+      adapters: [item.ref.adapter],
+      work: [item],
+    })),
+    unreachable: [],
+  });
+  const statusReply = () => ({ ok: true, value: { status: 'done', lastActivityAt: 10 } });
+
+  test('replacement selection preserves the project, daemon and adapter and skips every non-idle candidate', () => {
+    const original = worker('archived');
+    const candidates = [
+      worker('older', { lastActivityAt: 50 }),
+      worker('newer'),
+      worker('remote', { ref: { ...archivedRef, id: 'remote', daemon: 'remote' } }),
+      worker('adapter', { ref: { adapter: 'codex-desktop', id: 'adapter' } }),
+      worker('machine', { place: { ...original.place, machine: 'remote' } }),
+      worker('project', { place: { ...original.place, folder: '/other' } }),
+      worker('space', { place: { ...original.place, spaceId: 'other' } }),
+      worker('busy', { busy: true }),
+      worker('loaded', { liveCards: 1 }),
+      ...(['queued', 'running', 'needs_you', 'stopped', 'failed'] as const).map((status) =>
+        worker(status, { status })
+      ),
+    ];
+    expect(pickNeoReplacementWorkers(candidates, original, new Set())).toEqual([
+      worker('newer').ref,
+      worker('older').ref,
+    ]);
+    expect(pickNeoReplacementWorkers(candidates, undefined, new Set())).toEqual([]);
+    expect(
+      pickNeoReplacementWorkers(
+        candidates,
+        { ...original, place: { machine: 'laptop', name: 'Chats' } },
+        new Set()
+      )
+    ).toEqual([]);
+  });
+
+  test('reserving a replacement skips a worker already reserved by another card', async () => {
+    const { db, service } = await setup({ ok: false, reason: 'not_open', detail: 'archived' });
+    try {
+      service.driverTargets.propose(
+        service.repo,
+        {
+          id: 'other-card',
+          requestKey: 'other-card',
+          concernId: null,
+          originSessionId: 'neo:root',
+          originMessageId: 'ask-1',
+          ...work,
+        },
+        { verb: 'send', ref: worker('claimed').ref }
+      );
+      const original = service.repo.getWork('work-1')!;
+      expect(
+        service.driverTargets.reassign(service.repo, original, [
+          worker('claimed').ref,
+          worker('free').ref,
+        ])?.target
+      ).toEqual({ verb: 'send', ref: worker('free').ref });
+    } finally {
+      db.close();
+    }
+  });
+
+  test.each(['archived', 'ended'])(
+    'reassigns a card rejected as %s to an idle worker in the same project',
+    async (closed) => {
+      const replacement = worker('idle');
+      const { db, service, calls } = await setup(
+        ({ ref }: { ref: WorkRef }) =>
+          ref.id === 'archived'
+            ? { ok: false, reason: 'not_open', detail: closed }
+            : { ok: true, value: { delivered: true } },
+        undefined,
+        statusReply,
+        { verb: 'send', ref: archivedRef },
+        (input) =>
+          found(
+            input.id
+              ? [worker('archived', { status: 'stopped' })]
+              : [
+                  worker('other-project', {
+                    place: { machine: 'laptop', folder: '/focus/other', name: 'other' },
+                  }),
+                  worker('closed', { status: 'stopped' }),
+                  worker('busy', { status: 'running' }),
+                  worker('loaded', { liveCards: 1 }),
+                  replacement,
+                ]
+          )
+      );
+      Object.assign(service, { returnReport: mock(async () => {}) });
+      try {
+        service.workGoals.record('work-1', 'Change the font', '- 16px');
+        await service.start('work-1');
+        expect(service.repo.getWork('work-1')).toMatchObject({
+          status: 'queued',
+          instruction: work.instruction,
+        });
+        expect(service.driverTargets.get('work-1')).toEqual({ verb: 'send', ref: replacement.ref });
+        expect(service.driverTargets.readRef('work-1')).toEqual(replacement.ref);
+        const sent = calls.filter((call) => call.name === 'work.send').map((call) => call.input);
+        expect(sent).toEqual([
+          { ref: archivedRef, message: expect.stringContaining('- 16px') },
+          { ref: replacement.ref, message: expect.stringContaining('- 16px') },
+        ]);
+        expect((sent[0] as { message: string }).message).toBe(
+          (sent[1] as { message: string }).message
+        );
+        await service.start('work-1');
+        expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(2);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  test.each(['proposed', 'queued'] as const)(
+    'respects a %s native Space-agent reservation when rerouting',
+    async (status) => {
+      const { db, service } = await setup({ ok: false, reason: 'not_open', detail: 'archived' });
+      try {
+        const held = service.agentTargets.propose(
+          service.repo,
+          {
+            id: 'native-card',
+            requestKey: 'native-card',
+            concernId: null,
+            originSessionId: 'neo:root',
+            originMessageId: 'ask-1',
+            targetSessionId: 'agent-session',
+            ...work,
+          },
+          { spaceId: 'space', agentId: 'held', sessionId: 'agent-session' }
+        );
+        if (status === 'queued')
+          service.repo.transitionWork(held.work.id, held.work, {
+            status,
+            sessionId: 'agent-session',
+          });
+        const free = { adapter: 'space', id: 'agent:free' };
+        expect(
+          service.driverTargets.reassign(service.repo, service.repo.getWork('work-1')!, [
+            { adapter: 'space', id: 'agent:held' },
+            free,
+          ])?.target
+        ).toEqual({ verb: 'send', ref: free });
+        expect(service.repo.getWork(held.work.id)?.status).toBe(status);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  test('returns an unassigned card to Neo without failing it, then retries the same card when a worker appears', async () => {
+    let available = false;
+    const { db, service, calls } = await setup(
+      ({ ref }: { ref: WorkRef }) =>
+        ref.id === 'archived'
+          ? { ok: false, reason: 'not_open', detail: 'archived' }
+          : { ok: true, value: { delivered: true } },
+      undefined,
+      statusReply,
+      { verb: 'send', ref: archivedRef },
+      (input) =>
+        found(
+          input.id ? [worker('archived', { status: 'stopped' })] : available ? [worker('idle')] : []
+        )
+    );
+    const delivered = mock(async () => {});
+    Object.assign(service, { deliver: delivered });
+    try {
+      await service.start('work-1');
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'proposed',
+        report: NEO_WORK_AWAITING_WORKER,
+      });
+      expect(service.driverTargets.readRef('work-1')).toBeNull();
+      expect(service.isRetryable('work-1')).toBe(true);
+      expect(delivered).toHaveBeenCalledWith(
+        'neo:root',
+        expect.stringContaining('work-1'),
+        expect.stringContaining('neo.work.retry'),
+        'neo:root',
+        expect.anything()
+      );
+      available = true;
+      expect(await retryVia(service)).toMatchObject({
+        ok: true,
+        work: { id: 'work-1', status: 'queued' },
+      });
+      expect(
+        calls
+          .filter((call) => call.name === 'work.send')
+          .map((call) => (call.input as { ref: WorkRef }).ref.id)
+      ).toEqual(['archived', 'idle']);
+      expect(service.repo.listWork()).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('does not loop through stale archived candidates or change a card cancelled during discovery', async () => {
+    let cancel: (() => Promise<void>) | undefined;
+    const { db, service, calls } = await setup(
+      { ok: false, reason: 'not_open', detail: 'archived' },
+      undefined,
+      statusReply,
+      { verb: 'send', ref: archivedRef },
+      async (input) => {
+        await cancel?.();
+        return found(input.id ? [worker(String(input.id))] : [worker('archived'), worker('stale')]);
+      }
+    );
+    Object.assign(service, { deliver: mock(async () => {}) });
+    try {
+      await service.start('work-1');
+      expect(service.repo.getWork('work-1')?.status).toBe('proposed');
+      expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(2);
+      cancel = () => service.cancel('work-1');
+      await retryVia(service);
+      expect(service.repo.getWork('work-1')?.status).toBe('cancelled');
+      expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test.each([
+    [false, 'start'],
+    [true, 'start'],
+    [true, 'retry'],
+  ] as const)(
+    'an interrupted card resumes from stored state (reserved: %s, resume: %s)',
+    async (reserved, resume) => {
+      let available = reserved;
+      const { db, service, calls } = await setup(
+        ({ ref }: { ref: WorkRef }) =>
+          ref.id === 'archived'
+            ? { ok: false, reason: 'not_open', detail: 'archived' }
+            : { ok: true, value: { delivered: true } },
+        undefined,
+        statusReply,
+        { verb: 'send', ref: archivedRef },
+        (input) =>
+          found(
+            input.id
+              ? [worker(String(input.id), { status: input.id === 'archived' ? 'stopped' : 'done' })]
+              : available
+                ? [worker('idle')]
+                : []
+          )
+      );
+      const reassign = service.driverTargets.reassign.bind(service.driverTargets);
+      spyOn(service.driverTargets, 'reassign').mockImplementation((...args) => {
+        const saved = reassign(...args);
+        if (saved?.target) throw new Error('interrupted');
+        return saved;
+      });
+      Object.assign(service, {
+        deliver: async () => {
+          throw new Error('interrupted');
+        },
+      });
+      try {
+        await expect(service.start('work-1')).rejects.toThrow('interrupted');
+        expect(service.repo.getWork('work-1')).toMatchObject({
+          status: 'proposed',
+          report: expect.stringContaining('worker'),
+        });
+        expect(service.driverTargets.get('work-1')).toEqual({
+          verb: 'send',
+          ref: reserved ? worker('idle').ref : archivedRef,
+        });
+        const restarted = new NeoService(
+          db,
+          service.sessions,
+          { event: mock(() => {}) } as unknown as MessageHub,
+          new InternalEventBus<DaemonInternalEventMap>()
+        );
+        Object.assign(restarted, { deliver: mock(async () => {}) });
+        available = true;
+        if (resume === 'retry') expect(await retryVia(restarted)).toMatchObject({ ok: true });
+        else await restarted.start('work-1');
+        expect(restarted.driverTargets.readRef('work-1')).toEqual(worker('idle').ref);
+        expect(
+          calls
+            .filter((call) => call.name === 'work.send')
+            .map((call) => (call.input as { ref: WorkRef }).ref.id)
+        ).toEqual(['archived', 'idle']);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  test.each(['unreachable', 'not_delivered', 'not_found'])(
+    'keeps %s failures unchanged',
+    async (reason) => {
+      const { db, service, calls } = await setup(
+        { ok: false, reason, detail: 'no send' },
+        undefined,
+        statusReply,
+        { verb: 'send', ref: archivedRef }
+      );
+      Object.assign(service, { returnReport: mock(async () => {}) });
+      try {
+        await service.start('work-1');
+        expect(service.repo.getWork('work-1')).toMatchObject({
+          status: 'failed',
+          report: `Could not start the execution: ${reason}: no send`,
+        });
+        expect(calls.some((call) => call.name === 'work.find')).toBe(false);
+      } finally {
+        db.close();
+      }
+    }
+  );
 
   test('a card that stopped being checked still reads unchecked after a restart', async () => {
     const { db, service } = await setup({ ok: true, value: { ref: null } });

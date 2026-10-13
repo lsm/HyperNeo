@@ -54,6 +54,7 @@ import { hashString32 } from '../runtime-hash.ts';
 import { WORK_MESSAGE_MAX, WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
+import { awaitingNeoWorker } from './work-reroute.ts';
 
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   z.object({
@@ -259,11 +260,12 @@ export function readDriverOutcome(
   outcome: OperationOutcome
 ):
   | { ref: WorkRef; link?: string; model?: string; startedAt?: number; queued?: true }
-  | { failure: string } {
+  | { failure: string; reason?: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
   const reply = DriverReplySchema.safeParse(outcome.value);
   if (!reply.success) return { failure: 'The work operation returned an unusable reply.' };
-  if (!reply.data.ok) return { failure: `${reply.data.reason}: ${reply.data.detail}` };
+  if (!reply.data.ok)
+    return { failure: `${reply.data.reason}: ${reply.data.detail}`, reason: reply.data.reason };
   if ('ref' in reply.data.value) {
     const { ref, link, model, lastActivityAt } = reply.data.value as {
       ref: WorkRef;
@@ -377,7 +379,7 @@ export const NEO_DRIVER_START_INTERRUPTED = 'Starting was interrupted before';
 export type NeoWorkRetryCard = { target: boolean; ref: boolean; interrupted: boolean };
 
 export function requireNeoWorkRetryable<T>(
-  work: Pick<NeoWork, 'status'>,
+  work: Pick<NeoWork, 'status'> & Partial<Pick<NeoWork, 'report'>>,
   card: NeoWorkRetryCard,
   admitted: T
 ): { value: T } | { reason: { ok: false; reason: string } } {
@@ -389,7 +391,10 @@ export function requireNeoWorkRetryable<T>(
           'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
       },
     };
-  return work.status === 'failed' && card.target && !card.ref
+  return (work.status === 'failed' ||
+    awaitingNeoWorker({ ...work, report: work.report ?? null })) &&
+    card.target &&
+    !card.ref
     ? { value: admitted }
     : {
         reason: {
