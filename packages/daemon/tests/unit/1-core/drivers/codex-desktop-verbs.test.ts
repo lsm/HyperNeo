@@ -317,13 +317,13 @@ describe('codex-desktop adapter status and send', () => {
     expect(await adapter().stop?.(ref('nope'), user)).toMatchObject({ reason: 'not_found' });
   });
 
-  test('status reads the turn from the rollout and places the thread in its project', async () => {
+  test('status preserves a worktree whose project has no git link', async () => {
     expect(await adapter().status?.(ref('busy'))).toEqual({
       ok: true,
       value: {
         ref: ref('busy'),
         title: 'loader',
-        place: { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' },
+        place: { machine: 'laptop', folder: '/codex/worktrees/1/dolmen', name: 'dolmen' },
         status: 'running',
         lastActivityAt: NOW - 600_000,
         link: 'codex://threads/busy',

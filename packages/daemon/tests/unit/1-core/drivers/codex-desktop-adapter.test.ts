@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,6 +8,7 @@ import {
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { mergePlaceGroups } from '../../../../src/lib/drivers/places';
 
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
 
@@ -22,9 +23,9 @@ describe('codexProjectFolder', () => {
     { name: 'b', folder: '/focus/b/neokai', lastActiveAt: 1 },
   ];
 
-  test('maps a Codex worktree to the one project root with its name', () => {
+  test('does not infer history from a matching folder name', () => {
     expect(codexProjectFolder('/codex/worktrees/5096/dolmen', roots, '/codex/worktrees')).toBe(
-      '/focus/dolmen'
+      '/codex/worktrees/5096/dolmen'
     );
   });
 
@@ -48,6 +49,8 @@ describe('codex-desktop adapter against a Codex state database', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'codex-state-'));
     statePath = join(dir, 'state_5.sqlite');
+    mkdirSync(join(dir, 'worktree'));
+    writeFileSync(join(dir, 'worktree', '.git'), 'gitdir: /focus/dolmen/.git/worktrees/test\n');
     const db = new Database(statePath);
     db.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, updated_at_ms INTEGER)`);
     db.exec(`CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT)`);
@@ -58,16 +61,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
       `INSERT INTO project_roots VALUES ('p1', 0, '/focus/dolmen'), ('p2', 0, '/focus/superpipe')`
     );
     const insert = db.prepare(`INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-    insert.run(
-      't1',
-      'dolmen-codex',
-      '',
-      '',
-      '/codex/worktrees/5096/dolmen',
-      'vscode',
-      0,
-      NOW - 1000
-    );
+    insert.run('t1', 'dolmen-codex', '', '', join(dir, 'worktree'), 'vscode', 0, NOW - 1000);
     insert.run('t2', '', '', 'fix the loader please', '/focus/dolmen', 'cli', 0, NOW - 3_600_000);
     insert.run('t3', 'old', '', '', '/focus/dolmen', 'vscode', 1, NOW - 7_200_000);
     insert.run(
@@ -89,7 +83,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
   function adapter() {
     return createCodexDesktopAdapter({
       statePath,
-      worktreesDir: '/codex/worktrees',
+      worktreesDir: dir,
       machine: 'laptop',
       now: () => NOW,
       spawn: unusedSpawn,
@@ -102,11 +96,27 @@ describe('codex-desktop adapter against a Codex state database', () => {
     });
   }
 
+  test('links all roots of one Codex project while preserving separate project IDs', async () => {
+    const db = new Database(statePath);
+    db.exec(`INSERT INTO project_roots VALUES ('p1', 1, '/docs/product')`);
+    db.exec(`INSERT INTO projects VALUES ('p3', 'dolmen', 1)`);
+    db.exec(`INSERT INTO project_roots VALUES ('p3', 0, '/unrelated')`);
+    db.close();
+    const groups = mergePlaceGroups(await adapter().find({ includeClosed: false, limit: 20 }), 20);
+    const product = groups.find((group) => group.place.toolProject?.id === 'codex:p1');
+    expect(product?.workspaces?.map((place) => place.folder)).toEqual([
+      '/focus/dolmen',
+      '/docs/product',
+    ]);
+    expect(product?.projectId).toBe('tool:laptop:codex:p1');
+    expect(groups).toHaveLength(3);
+  });
+
   test('finds a thread by what was said in it and shows the matching snippet', async () => {
     const searched: string[] = [];
     const found = await createCodexDesktopAdapter({
       statePath,
-      worktreesDir: '/codex/worktrees',
+      worktreesDir: dir,
       machine: 'laptop',
       now: () => NOW,
       spawn: unusedSpawn,
@@ -175,7 +185,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
     ]);
     expect(groups[0].work[0]).toMatchObject({
       ref: { adapter: 'codex-desktop', id: 't1' },
-      place: { machine: 'laptop', folder: '/focus/dolmen' },
+      place: { machine: 'laptop', folder: join(dir, 'worktree') },
       link: 'codex://threads/t1',
     });
   });
@@ -252,7 +262,12 @@ describe('codex-desktop adapter against a Codex state database', () => {
     });
     expect(groups).toEqual([
       expect.objectContaining({
-        place: { machine: 'laptop', folder: '/focus/nameless', name: 'nameless' },
+        place: {
+          machine: 'laptop',
+          folder: '/focus/nameless',
+          name: 'nameless',
+          toolProject: { id: 'codex:p3', name: '' },
+        },
         openCount: 1,
         work: [expect.objectContaining({ title: 'odd', lastActivityAt: 0, status: 'done' })],
       }),
@@ -262,7 +277,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
   test('answers a Space search without opening the state database', async () => {
     const groups = await createCodexDesktopAdapter({
       statePath: join(dir, 'missing.sqlite'),
-      worktreesDir: '/codex/worktrees',
+      worktreesDir: dir,
       machine: 'laptop',
       now: () => NOW,
       spawn: unusedSpawn,

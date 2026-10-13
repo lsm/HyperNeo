@@ -145,6 +145,7 @@ function claudeCodeAdapters(
   const cache: ClaudeRecordCache = new Map();
   return [
     createClaudeCodeAdapter({
+      projectsDir: join(homedir(), '.claude', 'projects'),
       machine: hostname(),
       searchChats: (text) => searchChats(text, ['claude']),
       desktopSessions: async () =>

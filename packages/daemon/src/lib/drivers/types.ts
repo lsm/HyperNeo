@@ -17,6 +17,9 @@ export const PlaceSchema = z.object({
   folder: z.string().optional(),
   spaceId: z.string().optional(),
   name: z.string(),
+  codeIdentity: z.string().optional(),
+  remotes: z.array(z.string()).optional(),
+  toolProject: z.object({ id: z.string(), name: z.string() }).optional(),
 });
 
 export const WorkRefSchema = z.object({
@@ -52,6 +55,8 @@ export const WorkSummarySchema = z.object({
 
 export const PlaceGroupSchema = z.object({
   place: PlaceSchema,
+  projectId: z.string().optional(),
+  workspaces: z.array(PlaceSchema).optional(),
   lastActivityAt: z.number(),
   openCount: z.number().int().nonnegative(),
   archivedCount: z.number().int().nonnegative(),
