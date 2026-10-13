@@ -11,7 +11,7 @@ import {
   NEO_CONSULTATION_RECEIPT_PENDING,
   NEO_CONSULTATION_RECEIPT_RETURNED,
 } from '@hyperneo/prompts';
-import { planNeoSnapshotRead } from './snapshot-read.ts';
+import { planNeoSnapshotRead, rememberNeoSnapshotRead } from './snapshot-read.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { THINKING_LEVELS } from '@hyperneo/shared';
 import { z } from 'zod';
@@ -1077,7 +1077,7 @@ export function createNeoOperations(service: NeoService) {
         service.snapshotReads.get(key) ?? null,
         service.db.getSDKMessageRepo().latestCompactionSeq(caller.sessionId)
       );
-      if (planned.remember) service.snapshotReads.set(key, planned.remember);
+      if (planned.remember) rememberNeoSnapshotRead(service.snapshotReads, key, planned.remember);
       return planned.result;
     }
   );

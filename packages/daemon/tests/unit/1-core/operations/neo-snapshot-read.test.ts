@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { planNeoSnapshotRead } from '../../../../src/lib/neo/snapshot-read.ts';
+import {
+  planNeoSnapshotRead,
+  rememberNeoSnapshotRead,
+} from '../../../../src/lib/neo/snapshot-read.ts';
 
 describe('planNeoSnapshotRead', () => {
   const full = { ok: true, rev: 'r1', scopedTo: 'ask-1' };
@@ -42,5 +45,18 @@ describe('planNeoSnapshotRead', () => {
       result: unchanged,
       remember: null,
     });
+  });
+});
+
+describe('rememberNeoSnapshotRead', () => {
+  test('keeps the 256 most recent reads, refreshing a key it sees again', () => {
+    const reads = new Map<string, { rev: string; compaction: number }>();
+    for (let i = 0; i < 300; i++)
+      rememberNeoSnapshotRead(reads, `k${i}`, { rev: 'r', compaction: 0 });
+    rememberNeoSnapshotRead(reads, 'k100', { rev: 'r2', compaction: 0 });
+    expect(reads.size).toBe(256);
+    expect(reads.has('k43')).toBe(false);
+    expect(reads.get('k100')).toEqual({ rev: 'r2', compaction: 0 });
+    expect([...reads.keys()].at(-1)).toBe('k100');
   });
 });

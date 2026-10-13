@@ -28,3 +28,18 @@ export function planNeoSnapshotRead<T extends { ok: boolean; rev?: string; uncha
     remember: null,
   };
 }
+
+const NEO_SNAPSHOT_READS_KEPT = 256;
+
+export function rememberNeoSnapshotRead(
+  reads: Map<string, NeoSnapshotRead>,
+  key: string,
+  read: NeoSnapshotRead
+): void {
+  reads.delete(key);
+  reads.set(key, read);
+  for (const oldest of reads.keys()) {
+    if (reads.size <= NEO_SNAPSHOT_READS_KEPT) break;
+    reads.delete(oldest);
+  }
+}
