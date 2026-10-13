@@ -1635,6 +1635,172 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('daemon_readable') } });
   });
 
+  describe('obsolete PR question reconciliation', () => {
+    const terminal = {
+      url: 'https://github.com/lsm/HyperNeo/pull/42',
+      kind: 'pr' as const,
+      state: 'MERGED' as const,
+      at: 123,
+      done: true,
+      closedBy: null,
+    };
+
+    async function waitingQuestion() {
+      const askId = await openAsk();
+      const question = 'lsm/HyperNeo#42 CI is running; wait or continue?';
+      service.askRecords.settle(
+        { id: askId, status: 'open' },
+        'waiting',
+        question,
+        question,
+        'i3',
+        { id: 'i3', position: 2, text: question, options: ['Wait', 'Continue'] }
+      );
+      const delivered = mock(async (..._args: unknown[]) => {});
+      (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
+      return { askId, delivered };
+    }
+
+    test.each(['MERGED', 'CLOSED'] as const)(
+      'withdraws a %s PR question once without completing outcomes',
+      async (state) => {
+        const { askId, delivered } = await waitingQuestion();
+        service.readRefStates = mock(async () => [
+          { ...terminal, state, done: state === 'MERGED' },
+        ]);
+        await service.withdrawObsoletePrQuestions(askId);
+        await service.withdrawObsoletePrQuestions(askId);
+        const ask = service.askRecords.get(askId)!;
+        expect(ask.status).toBe('open');
+        expect(ask.doneItems?.slice(0, 2).map((item) => [item.state, !!item.removed])).toEqual([
+          ['pending', false],
+          ['pending', false],
+        ]);
+        expect(ask.doneItems?.[2]).toMatchObject({
+          state: 'pending',
+          removed: true,
+          metBy: 'daemon',
+          evidence: expect.stringContaining(terminal.url),
+        });
+        expect(ask.doneItems?.[2]?.evidence).toContain(
+          state === 'MERGED' ? 'merged' : 'closed unmerged'
+        );
+        expect(service.readRefStates).toHaveBeenCalledTimes(1);
+        expect(delivered).toHaveBeenCalledTimes(1);
+        expect(delivered.mock.calls[0]?.[2]).toContain('withdrew obsolete PR questions');
+      }
+    );
+
+    test('returns a legacy outcome to pending while retaining its check', async () => {
+      const { askId, delivered } = await waitingQuestion();
+      expect(
+        await invoke('neo.ask.edit', {
+          askId,
+          track: [{ itemId: 'i2', check: 'coding.pr_merged' }],
+        })
+      ).toMatchObject({ value: { ok: true } });
+      service.askRecords.tickItem(
+        askId,
+        {
+          id: 'i2',
+          state: 'needs_you',
+          evidence: 'Confirm merge',
+          metBy: null,
+          question: 'Has lsm/HyperNeo#42 merged?',
+          kind: 'decision',
+        },
+        Date.now()
+      );
+      service.readRefStates = async () => [{ ...terminal, state: 'CLOSED', done: false }];
+      await service.withdrawObsoletePrQuestions(askId);
+      const item = service.askRecords.get(askId)?.doneItems?.[1];
+      expect(item).toMatchObject({
+        state: 'pending',
+        evidence: expect.stringContaining('closed unmerged'),
+      });
+      expect(item?.removed).toBeFalsy();
+      expect(item?.check).toBe('coding.pr_merged');
+      expect(item?.question).toBeUndefined();
+      expect(delivered).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(['open', 'missing', 'issue', 'error'])(
+      'leaves questions unchanged on %s evidence',
+      async (kind) => {
+        const { askId, delivered } = await waitingQuestion();
+        const before = service.askRecords.get(askId);
+        service.readRefStates = async () => {
+          if (kind === 'error') throw new Error('GitHub unavailable');
+          if (kind === 'missing') return [];
+          return [
+            {
+              ...terminal,
+              ...(kind === 'open' ? { state: 'OPEN' as const } : { kind: 'issue' as const }),
+            },
+          ];
+        };
+        if (kind === 'error')
+          await expect(service.withdrawObsoletePrQuestions(askId)).rejects.toThrow(
+            'GitHub unavailable'
+          );
+        else await service.withdrawObsoletePrQuestions(askId);
+        expect(service.askRecords.get(askId)).toEqual(before);
+        expect(delivered).not.toHaveBeenCalled();
+      }
+    );
+
+    test.each(['answer', 'close'])('preserves a human %s during the read', async (change) => {
+      const { askId, delivered } = await waitingQuestion();
+      let afterHuman: NeoAsk | null = null;
+      service.readRefStates = async () => {
+        if (change === 'answer')
+          service.askRecords.tickItem(
+            askId,
+            {
+              id: 'i3',
+              state: 'met',
+              evidence: 'Continue',
+              metBy: 'human',
+            },
+            Date.now()
+          );
+        else
+          service.askRecords.settle(
+            service.askRecords.get(askId)!,
+            'abandoned',
+            'Stop',
+            'Human stopped it'
+          );
+        afterHuman = service.askRecords.get(askId);
+        return [terminal];
+      };
+      await service.withdrawObsoletePrQuestions(askId);
+      expect(service.askRecords.get(askId)).toEqual(afterHuman);
+      expect(delivered).not.toHaveBeenCalled();
+    });
+
+    test('concurrent reads withdraw and notify only once', async () => {
+      const { askId, delivered } = await waitingQuestion();
+      service.readRefStates = mock(async () => [terminal]);
+      await Promise.all([
+        service.withdrawObsoletePrQuestions(askId),
+        service.withdrawObsoletePrQuestions(askId),
+      ]);
+      expect(service.readRefStates).toHaveBeenCalledTimes(2);
+      expect(service.askRecords.get(askId)?.doneItems?.[2]?.removed).toBe(true);
+      expect(delivered).toHaveBeenCalledTimes(1);
+    });
+
+    test('skips GitHub for outcomes without a referenced question', async () => {
+      const askId = await openAsk();
+      service.readRefStates = mock(async () => []);
+      await service.withdrawObsoletePrQuestions(askId);
+      await service.withdrawObsoletePrQuestions('missing');
+      expect(service.readRefStates).not.toHaveBeenCalled();
+      expect(service.askRecords.get(askId)?.status).toBe('open');
+    });
+  });
+
   test('a legacy needs_you item goes back to pending and Neo hears why once its card starts', async () => {
     const askId = await openAsk();
     const cardId = (await propose('card-1', askId)).value!.work!.id;
