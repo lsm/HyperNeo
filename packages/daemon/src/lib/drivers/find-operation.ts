@@ -193,7 +193,14 @@ export function combineFindResults(
     mergePlaceGroups([...local.groups, ...remote.groups], input.id ? 51 : input.limit + 1),
     input.id
   );
-  const fitted = fitFindBudget(merged.slice(0, input.limit), budget);
+  const open =
+    input.includeClosed || input.id
+      ? merged
+      : merged.map((group) => ({
+          ...group,
+          work: group.work.filter((work) => work.status !== 'stopped'),
+        }));
+  const fitted = fitFindBudget(open.slice(0, input.limit), budget);
   return {
     places: fitted.places,
     unreachable: [...local.unreachable, ...remote.unreachable],

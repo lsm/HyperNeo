@@ -309,6 +309,12 @@ import {
   requireNeoWorkFollowAnswered,
   requireNeoWorkFollowUp,
 } from './work-follow.ts';
+import {
+  awaitingNeoWorker,
+  NEO_WORK_AWAITING_WORKER,
+  neoWorkerRefKey,
+  rerouteNeoDriverWork,
+} from './work-reroute.ts';
 
 const dispatchNeoConsultationWaiter = (
   superpipe({})('neo-consultation-waiter-dispatch') as PipelineAPI
@@ -1310,7 +1316,15 @@ export class NeoService {
     if (work?.status === 'proposed' || work?.status === 'queued') await this.close(id, 'cancelled');
   }
 
-  private async startDriverWork(work: NeoWork, target: NeoDriverTarget): Promise<void> {
+  private async startDriverWork(
+    work: NeoWork,
+    target: NeoDriverTarget,
+    tried = new Set<string>()
+  ): Promise<void> {
+    if (target.verb === 'send' && awaitingNeoWorker(work) && tried.size === 0) {
+      await this.rerouteDriverWork(work, target.ref, tried);
+      return;
+    }
     if (work.status === 'queued') {
       if (this.driverTargets.readRef(work.id)) return;
       if (target.verb === 'adopt') return this.adoptDriverWork(work, target.ref);
@@ -1360,7 +1374,34 @@ export class NeoService {
       });
       return;
     }
+    if (target.verb === 'send' && result.reason === 'not_open') {
+      await this.rerouteDriverWork(queued, target.ref, tried);
+      return;
+    }
     await this.failWork(queued, `Could not start the execution: ${result.failure}`);
+  }
+
+  private async rerouteDriverWork(work: NeoWork, ref: WorkRef, tried: Set<string>): Promise<void> {
+    tried.add(neoWorkerRefKey(ref));
+    await rerouteNeoDriverWork(work, ref, tried, {
+      pause: (current) =>
+        this.repo.transitionWork(current.id, current, {
+          status: 'proposed',
+          report: NEO_WORK_AWAITING_WORKER,
+        }),
+      find: (input) => this.invokeAsCard(work, 'work.find', input),
+      reserve: (current, candidates) => this.driverTargets.reassign(this.repo, current, candidates),
+      start: (next, target) => this.startDriverWork(next, target, tried),
+      returnToNeo: async (next, place) => {
+        await this.deliver(
+          next.originSessionId,
+          `neo-work-reroute:${next.id}:${this.driverTargets.readRetries(next.id)}`,
+          `The card's target is archived or ended; its instruction was not delivered. The card is still approved and has not failed. Arrange an open idle worker in the same project, then call neo.work.retry with this workId; it will select an open worker and send the original instruction. Do not ask the human to approve again or duplicate the card.\n${JSON.stringify({ workId: next.id, title: next.title, ref, place })}`,
+          next.originSessionId,
+          neoWorkParent(next)
+        );
+      },
+    });
   }
 
   private async adoptDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
@@ -1414,7 +1455,10 @@ export class NeoService {
     work: NeoWork
   ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
     const id = work.id;
-    const proposed = this.repo.transitionWork(id, work, { status: 'proposed', report: null });
+    const proposed = this.repo.transitionWork(id, work, {
+      status: 'proposed',
+      report: awaitingNeoWorker(work) ? work.report : null,
+    });
     if (!proposed) return { ok: false, reason: 'This work changed meanwhile; read it again.' };
     await this.workPending.get(id)?.catch(() => undefined);
     this.driverTargets.recordRetry(id);
@@ -1455,7 +1499,7 @@ export class NeoService {
     );
     for (const work of this.repo.listWork()) {
       try {
-        if (work.status === 'queued') await this.start(work.id);
+        if (work.status === 'queued' || awaitingNeoWorker(work)) await this.start(work.id);
         await this.reconcile(work.id);
       } catch (error) {
         this.log.warn('Neo recovery pending', error);

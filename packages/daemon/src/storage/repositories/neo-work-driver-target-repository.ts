@@ -12,6 +12,8 @@ import {
 } from '../../lib/neo/driver-work.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { NeoRepository, NeoWorkInput } from './neo-repository.ts';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { NEO_WORK_AWAITING_WORKER, neoWorkerRefKey } from '../../lib/neo/work-reroute.ts';
 
 export type NeoDriverTargetCard = {
   target: NeoDriverTarget | null;
@@ -49,6 +51,45 @@ export class NeoWorkDriverTargetRepository {
     if (!row) return null;
     const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
     return target.success ? target.data : null;
+  }
+
+  reassign(repo: NeoRepository, work: NeoWork, candidates: WorkRef[]) {
+    return this.db.transaction(() => {
+      if (
+        !['proposed', 'queued'].includes(work.status) ||
+        !this.get(work.id) ||
+        this.readRef(work.id)
+      )
+        return null;
+      const occupied = new Set(
+        repo.listWork().flatMap((other) => {
+          if (other.id === work.id || !['proposed', 'queued'].includes(other.status)) return [];
+          const target = this.get(other.id);
+          const ref =
+            this.readRef(other.id) ?? (target && target.verb !== 'start' ? target.ref : null);
+          const local = other.sessionId ?? other.targetSessionId;
+          return ref
+            ? [neoWorkerRefKey(ref)]
+            : local
+              ? [neoWorkerRefKey({ adapter: 'hyperneo', id: local })]
+              : [];
+        })
+      );
+      const ref = candidates.find((candidate) => !occupied.has(neoWorkerRefKey(candidate)));
+      const target: NeoDriverTarget | null = ref ? { verb: 'send', ref } : null;
+      const next = repo.transitionWork(work.id, work, {
+        status: 'proposed',
+        report: NEO_WORK_AWAITING_WORKER,
+      });
+      if (!next) return null;
+      if (target)
+        this.db
+          .prepare(
+            'UPDATE neo_work_driver_targets SET target = ? WHERE work_id = ? AND ref IS NULL'
+          )
+          .run(JSON.stringify(target), work.id);
+      return { work: next, target };
+    })();
   }
 
   readCard(workId: string): NeoDriverTargetCard | null {
