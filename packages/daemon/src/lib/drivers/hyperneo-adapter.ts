@@ -1,4 +1,5 @@
 import { basename, sep } from 'node:path';
+import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
@@ -69,6 +70,7 @@ export interface HyperneoSessionControl {
 }
 
 export interface HyperneoAdapterDeps {
+  projects?: () => NonNullable<WorkspaceHistoryEntry['project']>[];
   db: () => BunDatabase;
   machine: string;
   searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
@@ -169,7 +171,8 @@ export function buildHyperneoGroups(
   query: FindQuery,
   deps: Pick<HyperneoAdapterDeps, 'machine'>,
   matched: ReadonlyMap<string, WorkChatMatch>,
-  liveCards: ReadonlyMap<string, number> = new Map()
+  liveCards: ReadonlyMap<string, number> = new Map(),
+  projects: NonNullable<WorkspaceHistoryEntry['project']>[] = []
 ): PlaceGroup[] {
   const machine = deps.machine;
   const text = query.text?.toLowerCase();
@@ -177,8 +180,15 @@ export function buildHyperneoGroups(
     .filter((place) => !query.folder || place.folder === query.folder)
     .filter((place) => query.includeClosed || place.openCount > 0 || place.known > 0)
     .flatMap((place) => {
+      const project = projects.find((project) => project.folders.includes(place.folder ?? ''));
+      const toolProject = project
+        ? { id: `hyperneo:${project.id}`, name: project.name }
+        : undefined;
       const placeMatches =
-        !text || `${placeName(place.folder)} ${place.folder ?? ''}`.toLowerCase().includes(text);
+        !text ||
+        `${project?.name ?? placeName(place.folder)} ${place.folder ?? ''}`
+          .toLowerCase()
+          .includes(text);
       const work = sessions
         .filter((session) => session.folder === place.folder)
         .filter(
@@ -201,13 +211,17 @@ export function buildHyperneoGroups(
           place: {
             machine,
             ...(place.folder ? { folder: place.folder } : {}),
-            name: placeName(place.folder),
+            name: project?.name ?? placeName(place.folder),
+            ...(toolProject ? { toolProject } : {}),
           },
           lastActivityAt: timestamp(place.lastActiveAt),
           openCount: place.openCount,
           archivedCount: place.archivedCount,
           adapters: ['hyperneo'],
-          work,
+          work: work.map((item) => ({
+            ...item,
+            place: { ...item.place, ...(toolProject ? { toolProject } : {}) },
+          })),
         },
       ];
     });
@@ -284,9 +298,10 @@ const runHyperneoFind = (superpipe({})('hyperneo-find-work') as PipelineAPI)
   .pipe(foldNeoSessions, ['rawSessions', 'neoRoot'], 'sessions')
   .pipe(matchHyperneoSessions, 'chats', 'matched')
   .pipe((deps: HyperneoAdapterDeps) => deps.liveCards?.() ?? new Map(), 'deps', 'liveCards')
+  .pipe((deps: HyperneoAdapterDeps) => deps.projects?.() ?? [], 'deps', 'projects')
   .pipe(
     buildHyperneoGroups,
-    ['places', 'sessions', 'query', 'deps', 'matched', 'liveCards'],
+    ['places', 'sessions', 'query', 'deps', 'matched', 'liveCards', 'projects'],
     'groups'
   )
   .end('groups') as (

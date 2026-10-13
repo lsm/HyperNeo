@@ -11,6 +11,7 @@ import { sessions } from '../lib/state.ts';
 import {
   getWorkspaceHistory,
   addWorkspaceToHistory,
+  addFolderToProject,
   removeWorkspaceFromHistory,
   archiveSession,
 } from '../lib/api-helpers.ts';
@@ -44,6 +45,7 @@ interface ProjectGroup {
   name: string;
   sessions: Session[];
   sortTime: number;
+  folders: string[];
 }
 
 function buildView(
@@ -51,6 +53,13 @@ function buildView(
   history: WorkspaceHistoryEntry[]
 ): { projects: ProjectGroup[]; ungrouped: Session[]; childrenByParent: Map<string, Session[]> } {
   const byRoot = new Map<string, Session[]>();
+  const memberships = new Map(
+    history.flatMap((entry) =>
+      entry.project ? entry.project.folders.map((folder) => [folder, entry.project!] as const) : []
+    )
+  );
+  const projectKey = (path: string) => memberships.get(path)?.id ?? path;
+  const definitions = new Map([...memberships.values()].map((project) => [project.id, project]));
   const ungrouped: Session[] = [];
   const ids = new Set(sessionsList.map((session) => session.id));
   const childrenByParent = new Map<string, Session[]>();
@@ -63,7 +72,8 @@ function buildView(
       childrenByParent.set(parentId, siblings);
       continue;
     }
-    const root = projectRootOf(session);
+    const folder = projectRootOf(session);
+    const root = folder ? projectKey(folder) : null;
     if (root) {
       const existing = byRoot.get(root);
       if (existing) existing.push(session);
@@ -75,15 +85,23 @@ function buildView(
 
   const historyTime = new Map<string, number>();
   for (const entry of history) {
-    historyTime.set(entry.path, entry.lastUsedAt);
-    if (!byRoot.has(entry.path)) byRoot.set(entry.path, []);
+    const key = projectKey(entry.path);
+    historyTime.set(key, Math.max(historyTime.get(key) ?? 0, entry.lastUsedAt));
+    if (!byRoot.has(key)) byRoot.set(key, []);
   }
 
   const projects: ProjectGroup[] = [...byRoot.entries()]
     .map(([path, grouped]) => {
       const sorted = grouped.slice().sort((a, b) => lastActive(b) - lastActive(a));
       const sortTime = sorted.length > 0 ? lastActive(sorted[0]) : (historyTime.get(path) ?? 0);
-      return { path, name: projectName(path), sessions: sorted, sortTime };
+      const project = definitions.get(path);
+      return {
+        path,
+        name: project?.name ?? projectName(path),
+        folders: project?.folders ?? [path],
+        sessions: sorted,
+        sortTime,
+      };
     })
     .sort((a, b) => b.sortTime - a.sortTime);
 
@@ -112,6 +130,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const [addProjectPath, setAddProjectPath] = useState('');
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [addProjectBusy, setAddProjectBusy] = useState(false);
+  const [folderTarget, setFolderTarget] = useState<ProjectGroup | null>(null);
   const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
 
   useEffect(() => {
@@ -149,8 +168,14 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     setAddProjectBusy(true);
     setAddProjectError(null);
     try {
-      const entry = await addWorkspaceToHistory(trimmed);
-      setHistory((prev) => [entry, ...prev.filter((e) => e.path !== entry.path)]);
+      if (folderTarget) {
+        await addFolderToProject(folderTarget.folders[0], trimmed);
+        setHistory(await getWorkspaceHistory());
+      } else {
+        const entry = await addWorkspaceToHistory(trimmed);
+        setHistory((prev) => [entry, ...prev.filter((e) => e.path !== entry.path)]);
+      }
+      setFolderTarget(null);
       setAddProjectPath('');
       setAddProjectOpen(false);
     } catch (err) {
@@ -189,10 +214,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     addProjectFromPath(addProjectPath);
   };
 
-  const handleRemoveProject = async (path: string) => {
+  const handleRemoveProject = async (folders: string[]) => {
     try {
-      await removeWorkspaceFromHistory(path);
-      setHistory((prev) => prev.filter((e) => e.path !== path));
+      for (const path of folders) await removeWorkspaceFromHistory(path);
+      setHistory(await getWorkspaceHistory());
     } catch {
       toast.error('Failed to remove project');
     }
@@ -286,7 +311,9 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
             <button
               type="button"
               data-testid="add-project-button"
+              disabled={addProjectBusy}
               onClick={() => {
+                setFolderTarget(null);
                 setAddProjectError(null);
                 if (nativeFolderPickerAvailable) {
                   void handleBrowseProject();
@@ -315,16 +342,20 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
               onSubmit={handleAddProjectSubmit}
               class="mx-2 mb-2 rounded-lg border border-line bg-surface-overlay p-2"
             >
+              {folderTarget && (
+                <p class="mb-2 text-xs text-fg-soft">Add folder to {folderTarget.name}</p>
+              )}
               <div class="flex items-center gap-1.5">
                 <input
                   type="text"
                   data-testid="add-project-path-input"
+                  disabled={addProjectBusy}
                   value={addProjectPath}
                   onInput={(e) => {
                     setAddProjectPath((e.currentTarget as HTMLInputElement).value);
                     setAddProjectError(null);
                   }}
-                  placeholder="Project path"
+                  placeholder={folderTarget ? 'Folder path' : 'Project path'}
                   autoFocus
                   class="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-line-strong focus:outline-none"
                 />
@@ -351,6 +382,14 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   key={project.path}
                   name={project.name}
                   path={project.path}
+                  folders={project.folders}
+                  onAddFolder={() => {
+                    if (addProjectBusy) return;
+                    setFolderTarget(project);
+                    setAddProjectPath('');
+                    setAddProjectError(null);
+                    setAddProjectOpen(true);
+                  }}
                   sessions={project.sessions}
                   collapsed={collapsed.has(project.path)}
                   onToggle={() => toggleProject(project.path)}
@@ -359,7 +398,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   childrenOf={childrenOf}
                   onRemove={
                     project.sessions.length === 0
-                      ? () => handleRemoveProject(project.path)
+                      ? () => handleRemoveProject(project.folders)
                       : undefined
                   }
                 />

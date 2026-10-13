@@ -10,6 +10,7 @@ const {
   mockNavigateToSessions,
   mockGetWorkspaceHistory,
   mockAddWorkspaceToHistory,
+  mockAddFolderToProject,
   mockRemoveWorkspaceFromHistory,
   mockArchiveSession,
   mockGetHubIfConnected,
@@ -23,6 +24,7 @@ const {
   mockNavigateToSessions: vi.fn(),
   mockGetWorkspaceHistory: vi.fn(),
   mockAddWorkspaceToHistory: vi.fn(),
+  mockAddFolderToProject: vi.fn(),
   mockRemoveWorkspaceFromHistory: vi.fn(),
   mockArchiveSession: vi.fn(),
   mockGetHubIfConnected: vi.fn(),
@@ -50,6 +52,7 @@ vi.mock('../../lib/router.ts', () => ({
 vi.mock('../../lib/api-helpers.ts', () => ({
   getWorkspaceHistory: mockGetWorkspaceHistory,
   addWorkspaceToHistory: mockAddWorkspaceToHistory,
+  addFolderToProject: mockAddFolderToProject,
   removeWorkspaceFromHistory: mockRemoveWorkspaceFromHistory,
   archiveSession: mockArchiveSession,
 }));
@@ -134,6 +137,53 @@ describe('SessionsSidebar', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('groups every project folder under one header and adds a folder through the project operation', async () => {
+    const project = { id: 'p1', name: 'Product', folders: ['/code', '/docs'] };
+    const history = project.folders.map((path) => ({ ...createHistory(path), project }));
+    mockSessionsSignal.value = [
+      createMockSession('code', 'Code chat', '/code'),
+      createMockSession('docs', 'Docs chat', '/docs'),
+    ];
+    mockGetWorkspaceHistory.mockResolvedValue(history);
+    render(<SessionsSidebar />);
+    await waitFor(() => expect(screen.getAllByTestId('project-group-header')).toHaveLength(1));
+    expect(screen.getByText('Code chat')).toBeTruthy();
+    expect(screen.getByText('Docs chat')).toBeTruthy();
+    expect(screen.getByText('/code')).toBeTruthy();
+    expect(screen.getByText('/docs')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add folder to Product' }));
+    fireEvent.input(screen.getByTestId('add-project-path-input'), { target: { value: '/assets' } });
+    const expanded = { ...project, folders: [...project.folders, '/assets'] };
+    mockGetWorkspaceHistory.mockResolvedValue(
+      expanded.folders.map((path) => ({ ...createHistory(path), project: expanded }))
+    );
+    mockAddFolderToProject.mockResolvedValue(undefined);
+    fireEvent.submit(screen.getByTestId('add-project-form'));
+    await waitFor(() => expect(mockAddFolderToProject).toHaveBeenCalledWith('/code', '/assets'));
+    await waitFor(() => expect(screen.getByText('/assets')).toBeTruthy());
+    expect(screen.getAllByTestId('project-group-header')).toHaveLength(1);
+    expect(mockAddWorkspaceToHistory).not.toHaveBeenCalled();
+  });
+
+  it('shows a folder rejection without changing the project or closing the form', async () => {
+    mockGetWorkspaceHistory.mockResolvedValue([createHistory('/code')]);
+    render(<SessionsSidebar />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Add folder to code' })).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add folder to code' }));
+    fireEvent.input(screen.getByTestId('add-project-path-input'), { target: { value: '/taken' } });
+    mockAddFolderToProject.mockRejectedValue(
+      new Error('Folder already belongs to another project.')
+    );
+    fireEvent.submit(screen.getByTestId('add-project-form'));
+    await waitFor(() =>
+      expect(screen.getByText('Folder already belongs to another project.')).toBeTruthy()
+    );
+    expect(screen.getByTestId('add-project-form')).toBeTruthy();
+    expect(screen.getAllByTestId('project-group-header')).toHaveLength(1);
   });
 
   it('renders the empty chats state', () => {

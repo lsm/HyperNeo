@@ -1,4 +1,5 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
 
 export interface WorkspaceHistoryRow {
   path: string;
@@ -8,6 +9,56 @@ export interface WorkspaceHistoryRow {
 
 export class WorkspaceHistoryRepository {
   constructor(private db: BunDatabase) {}
+
+  projects(): NonNullable<WorkspaceHistoryEntry['project']>[] {
+    const rows = this.db
+      .prepare(`SELECT p.id, p.name, f.path FROM workspace_projects p
+      JOIN workspace_project_folders f ON f.project_id = p.id ORDER BY p.id, f.path`)
+      .all() as { id: string; name: string; path: string }[];
+    const projects = new Map<string, NonNullable<WorkspaceHistoryEntry['project']>>();
+    for (const row of rows) {
+      const project = projects.get(row.id) ?? { id: row.id, name: row.name, folders: [] };
+      project.folders.push(row.path);
+      projects.set(row.id, project);
+    }
+    return [...projects.values()];
+  }
+
+  addProjectFolder(projectPath: string, path: string, name: string): boolean {
+    return this.db.transaction(() => {
+      const membership = this.db.prepare(
+        'SELECT project_id FROM workspace_project_folders WHERE path = ?'
+      );
+      const target = membership.get(projectPath) as { project_id: string } | null;
+      const current = membership.get(path) as { project_id: string } | null;
+      if (current) return current.project_id === target?.project_id;
+      const id = target?.project_id ?? crypto.randomUUID();
+      this.db
+        .prepare('INSERT OR IGNORE INTO workspace_projects (id, name) VALUES (?, ?)')
+        .run(id, name);
+      for (const folder of new Set([projectPath, path])) {
+        this.upsert(folder);
+        this.db
+          .prepare(
+            'INSERT OR IGNORE INTO workspace_project_folders (path, project_id) VALUES (?, ?)'
+          )
+          .run(folder, id);
+      }
+      return true;
+    })();
+  }
+
+  entries(): WorkspaceHistoryEntry[] {
+    const projects = new Map(
+      this.projects().flatMap((project) => project.folders.map((path) => [path, project] as const))
+    );
+    return this.listAll().map((row) => ({
+      path: row.path,
+      lastUsedAt: row.last_used_at,
+      useCount: row.use_count,
+      ...(projects.has(row.path) ? { project: projects.get(row.path) } : {}),
+    }));
+  }
 
   upsert(path: string): WorkspaceHistoryRow {
     const now = Date.now();

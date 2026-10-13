@@ -14,11 +14,13 @@ import { registerSessionOperations } from './session.ts';
 import { registerSettingsOperations } from './settings.ts';
 import { registerSpaceOperations } from './spaces.ts';
 import { registerWorkflowOperations } from './workflows.ts';
+import { createProjectFolderOperation } from '../../workspaces/project-folder-operation.ts';
 
 export type { FamilyOperationContext } from './context.ts';
 
 export function collectFamilyOperations(context: FamilyOperationContext): OperationDefinition[] {
   return [
+    createProjectFolderOperation(context.deps.db.workspaceHistory),
     ...registerAgentOperations(context),
     ...registerArtifactOperations(context),
     ...registerAuditOperations(context),
