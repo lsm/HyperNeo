@@ -225,6 +225,32 @@ flowchart LR
 
 All planning cards can exist at once; eligible workers start on bases containing earlier merges.
 
+## Implementation architecture: superpipe and pure functions
+
+Use one direct superpipe pipeline per business path under ADR 0004, with named inputs and
+typed gate results sharing a `result:<name>` output with disjoint `{ value } | { reason }`
+arms. Do not build a mutable context bag, nested orchestration framework, or pack scheduler.
+Pure functions decide; effect stages read or commit through the existing repository/adapter
+seams. Packs supply stage functions composed into the core pipeline.
+
+| Path | Pure functions | Effect stages |
+| --- | --- | --- |
+| Plan mutation | Normalize bindings, validate ownership/self-edges/cycles, compute material revision changes | Read snapshot; atomically commit items, edges, revision, and derived view |
+| Item verification | Canonicalize/hash definition, validate evidence provenance, reject stale ticks | Read pack evidence or human answer; conditionally tick item and enqueue dependents |
+| Admission | Evaluate prerequisites, approved revision, cancellation, target liveness/capacity | Read plan/staffing snapshot; prepare through pack; recheck; claim and hand off |
+| Reconciliation | Classify known, absent, or ambiguous handoff; choose allowed transition | Read driver receipt; conditionally update existing target row and enqueue admission |
+
+Pure functions receive immutable snapshots and explicit time values, never a database,
+network client, worker session, or hidden clock. They return decisions, blockers, or change
+sets without mutating inputs. Repository transactions enforce revisions and attempt tokens:
+a pure decision against an old snapshot cannot authorize a stale write. Resource-owning
+adapter shells stay imperative and consult the admission pipeline before worker effects.
+
+Test pure functions with real inputs, then test pipeline effects through narrow seams. Assert
+both decisions and absence of forbidden effects (no worker/worktree for blocked cards, no
+second handoff for duplicate events). Do not mock the pipeline under test or mirror its stages
+in test code.
+
 ## Implementation order and tests
 
 Within each milestone, follow Pin → Extract → Build → Wire → Delete, measure fresh `dev`
@@ -248,3 +274,109 @@ fetch, and fresh bases containing prerequisite merge commits. Verify approved pl
 while Neo is idle. Web/iOS checks cover blocker links and automatic-start visibility.
 
 Run required checks per slice. This document changes no runtime behavior or execution cards.
+
+## Issue and PR execution plan
+
+The labels below are planning IDs, not created GitHub issues. Create one implementation epic
+and map each eligible row to exactly one issue and one PR, reusing an existing issue only if
+its purpose and merge contract match. Do not create or dispatch execution sessions for the
+whole table up front. Planning issues may exist early; execution starts only after the listed
+prerequisite PRs are verified merged into `dev`. `D` means this design PR, #6767.
+
+Each row is a candidate boundary, not a measured line-count promise. Before creating its PR,
+read all affected call sites and measure against freshly fetched `origin/dev`; record an exact
+production and test budget in the issue and PR. Production stays within approximately 300
+lines. Split any oversized row into separately mapped issues/PRs before coding. Construction,
+wiring, and deletion remain separate; a few-line build+wire exception requires a measured
+contract. New build modules must have a legitimate registered/discovery consumer for knip,
+not unused exports or a fake production call added only to satisfy the check.
+
+### Slice 0: fresh coding bases, independently eligible
+
+| ID / issue purpose | Rung and concrete steps | Required merged PRs | Acceptance evidence |
+| --- | --- | --- | --- |
+| F0 — pin coding start preparation | Pin existing placement, user-checkout preservation, and driver handoff behavior. | None; does not wait for D | Characterization tests pass without production changes. |
+| F1 — isolate coding preparation seam | Extract current preparation verbatim into the adapter resource seam, exposing a pack stage boundary without behavior changes. | F0 | Existing preparation/start tests pass unchanged. |
+| F2 — build fresh-base preparation | Build pure target/ref and ancestry decisions plus fetch/checkout effect stages; refuse failed authenticated fetch. | F1 | Failed fetch creates no worker; prepared checkout uses required remote target; user's checkout remains intact. |
+| F3 — wire fresh coding starts | Replace the existing preparation call with the coding pack stage for every coding card, including independent cards. | F2 | Driver integration proves fresh remote base and no local-HEAD fallback. |
+
+If F1 proves unnecessary after measurement, document that decision and route F2 from F0;
+do not manufacture an extraction. F3 can land before D. No deployment is part of this track.
+
+### Slice 1: outcomes, revisions, and registered checks
+
+| ID / issue purpose | Rung and concrete steps | Required merged PRs | Acceptance evidence |
+| --- | --- | --- | --- |
+| P0 — pin ask outcome behavior | Pin surviving item ticks, human answers, approval, folding, and pre-delivery retry behavior. | D | Characterization covers actual existing operations and repositories. |
+| R1 — build ask revision storage | Add revision/approved_revision and definition-hash storage; build canonical hashing and pure material-edit decisions. | P0 | Migration/backfill tests; material versus nonmaterial changes; legacy evidence cannot unlock work. |
+| R2 — wire revision-safe mutations | Route edits, approval, daemon ticks, and human answers through revision/hash checks and atomic derived-view returns. | R1 | Stale ticks and approval rejected; unchanged-item evidence survives unrelated edits. |
+| K1 — build check registry | Build pure loaded-pack lookup/collision validation and compatible string schemas; migrate the hard-coded DB constraint. | P0 | Existing kinds preserved; unknown/colliding kinds rejected; unloaded kinds remain blocked. |
+| K2 — wire registered checks | Swap operation validation/check dispatch to the registry, retaining existing checks' behavior. | K1 | Loaded-pack checks work through the operations door; no life-admin behavior change. |
+| B1 — build outcome bindings | Add deliveredBy persistence and pure binding validation; define fold remapping and binding invalidation. | R2 | Missing/foreign cards rejected; changed bindings clear evidence; fold preserves card identity. |
+| B2 — wire binding operations | Add deliveredBy to neo.ask.open/edit and transactional fold behavior, returning updated views. | B1, K2 | Real operation tests prove atomic bindings/revisions and target-ask approval isolation. |
+
+### Slice 2: graph, common admission, and deterministic dispatch
+
+| ID / issue purpose | Rung and concrete steps | Required merged PRs | Acceptance evidence |
+| --- | --- | --- | --- |
+| G1 — build dependency graph | Add edge storage and pure DAG/blocker decisions; validate both endpoints' bound outcomes transactionally. | B2 | Chain/fan-in/fan-out, cycles, empty/removed outcomes, cross-ask ownership and cancellation tests. |
+| A1 — build admission pipeline | Compose prerequisite, approval, live staffing target, pack preparation, and final recheck stages; extend durable target-row claims and conservative uncertain state. | G1, F3 | Blocked decisions produce zero worker effects; ended targets retarget within authorized pool; competing claims cannot both win. |
+| A2 — wire direct start paths | Route public Start and adoption through admission before any worker effect. | A1 | Direct/adopt tests cover blocked, retargeted, stale, and uncertain attempts. |
+| A3 — wire approval and recovery | Route approval fan-out, pre-delivery retries, and recovery through the same pipeline. | A2 | Every remaining start path respects dependencies and cancellation; no Promise.allSettled bypass. |
+| Q1 — build dependency wake jobs | Register durable Neo admission jobs and atomic item-met/enqueue changes using enqueueUniquePending. | A3 | Duplicate events, queue restart, cancellation, and stale revisions cannot double-dispatch. |
+| Q2 — expose plans and automatic dispatch | Wire dependsOn on neo.work.propose/start; activate item-met, approval, availability, and startup triggers. | Q1 | An approved chain progresses with Neo idle; invalid graph returns typed blockers; Start edits cannot self-approve. |
+
+Do not expose dependency planning inputs before A3 covers every start path. Existing independent
+cards must continue to work while these slices land. For staged wiring, gate new dependency
+behavior until Q2; keep the daemon's eligibility decision authoritative rather than relying
+on a prompt or hidden UI control. If a start path was missed, stop this track and fix its gate
+before adding planning guidance.
+
+### Slices 3 and 4: visibility and handoff reconciliation
+
+| ID / issue purpose | Rung and concrete steps | Required merged PRs | Acceptance evidence |
+| --- | --- | --- | --- |
+| V1 — derive blockers in ask views | Add shared snapshot/view fields; exclude blocked plans from ask-stall and execution-capacity counts. | Q2 | Snapshot/derived-state tests distinguish reported, met, blocked, and uncertain states; no artificial question or stall continue. |
+| V2 — show web dependency waits | Render prerequisite links, unmet items, authorized waiting, and attention actions in existing ask/card UI. | V1 | Focused accessible web interaction tests; no Start bypass; required web checks. |
+| V3 — show iOS dependency waits | Consume the shared derived fields in the existing iOS ask surface, preserving compatibility with older snapshots. | V1 | Platform checks cover blocker links, automatic-start intent, and uncertainty actions. |
+| H1 — build handoff reconciliation | Build pure reconciliation decisions and adapter receipt reads against existing target rows. | Q2 | Crash-before/after-start, absent receipts, and ambiguous external starts classified conservatively. |
+| H2 — wire safe restart recovery | Replace uncertain-start recovery with the new pipeline; never blindly relaunch a possibly started worker. | H1 | Restart integration proves recorded handoff reuse and single dispatch under duplicate recovery triggers. |
+| N1 — teach Neo dependency planning | Update coding pack guidance with bound coding.pr_merged items watching each card's issue and explicit dependsOn edges. | V2, V3, H2 | Planning fixtures/evals produce valid staged plans before PRs exist; daemon still enforces correctness. |
+
+Removal-only cleanup PRs follow their replacement's verified merge only when an obsolete
+bypass or hard-coded validator remains. Give each a separate measured issue; do not bundle
+deletion into a build or wiring PR. Life-admin evidence audit #6768 is outside this epic.
+
+### Dependency graph and dispatch policy for this implementation
+
+```mermaid
+flowchart LR
+    F0 --> F1 --> F2 --> F3
+    D[Design 6767] --> P0
+    P0 --> R1 --> R2 --> B1
+    P0 --> K1 --> K2
+    B1 --> B2
+    K2 --> B2
+    B2 --> G1 --> A1
+    F3 --> A1
+    A1 --> A2 --> A3 --> Q1 --> Q2
+    Q2 --> V1
+    V1 --> V2
+    V1 --> V3
+    Q2 --> H1 --> H2
+    V2 --> N1
+    V3 --> N1
+    H2 --> N1
+```
+
+An arrow requires an actual merged prerequisite PR, not approval, green CI, a worker report,
+or an open sibling branch. Start each eligible PR from updated `dev`, never stack it on an
+unmerged branch. Independently eligible branches can run concurrently only if staffing and
+touch budgets allow; conflicting shared-file/schema work is serialized. Until neo.work gates
+exist, enforce this table through explicit merge verification before opening the next worker.
+
+For each row: verify prerequisites → measure scope/call sites → create mapped issue with its
+merge contract → implement/test the rung → run required repository checks → open PR targeting
+dev with Closes #issue → fix review findings → verify current-head CI/review → merge under repo
+rules → sync and audit issue closure. A prerequisite's merge failure keeps dependents blocked;
+re-slicing updates this table before scheduling replacement work. No deployment is authorized.
