@@ -217,9 +217,14 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const handleRemoveProject = async (folders: string[]) => {
     try {
       for (const path of folders) await removeWorkspaceFromHistory(path);
-      setHistory(await getWorkspaceHistory());
     } catch {
       toast.error('Failed to remove project');
+    } finally {
+      try {
+        setHistory(await getWorkspaceHistory());
+      } catch {
+        toast.error('Failed to refresh projects');
+      }
     }
   };
 

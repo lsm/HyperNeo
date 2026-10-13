@@ -167,6 +167,32 @@ describe('SessionsSidebar', () => {
     expect(mockAddWorkspaceToHistory).not.toHaveBeenCalled();
   });
 
+  it('refreshes the sidebar after a partial project removal failure and retries only remaining folders', async () => {
+    const project = { id: 'p1', name: 'Product', folders: ['/code', '/docs'] };
+    mockGetWorkspaceHistory.mockResolvedValue(
+      project.folders.map((path) => ({ ...createHistory(path), project }))
+    );
+    render(<SessionsSidebar />);
+    await waitFor(() => expect(screen.getByText('/code')).toBeTruthy());
+    const remaining = { ...project, folders: ['/docs'] };
+    mockGetWorkspaceHistory.mockResolvedValue([{ ...createHistory('/docs'), project: remaining }]);
+    mockRemoveWorkspaceFromHistory
+      .mockResolvedValueOnce({ success: true })
+      .mockRejectedValueOnce(new Error('Disconnected'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project Product' }));
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to remove project'));
+    await waitFor(() => expect(screen.queryByText('/code')).toBeNull());
+    expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: 'Remove project Product' })).toBeTruthy();
+    mockRemoveWorkspaceFromHistory.mockClear();
+    mockGetWorkspaceHistory.mockResolvedValue([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project Product' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Remove project Product' })).toBeNull()
+    );
+    expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([['/docs']]);
+  });
+
   it('shows a folder rejection without changing the project or closing the form', async () => {
     mockGetWorkspaceHistory.mockResolvedValue([createHistory('/code')]);
     render(<SessionsSidebar />);
