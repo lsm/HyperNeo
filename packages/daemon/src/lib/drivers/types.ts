@@ -44,6 +44,7 @@ export const WorkSummarySchema = z.object({
   lastActivityAt: z.number(),
   link: z.string().optional(),
   model: z.string().optional(),
+  effort: z.string().optional(),
   remoteLink: z.string().optional(),
   score: z.number().optional(),
   hits: z.number().int().nonnegative().optional(),
@@ -127,6 +128,7 @@ export interface StartRequest {
   message: string;
   createFolder?: boolean;
   model?: string;
+  effort?: string;
 }
 
 export interface WorkCallContext {
