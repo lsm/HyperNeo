@@ -3620,7 +3620,7 @@ describe('QueryRunner', () => {
       expect(mockLogger.error).toHaveBeenCalledWith('Streaming query error:', expect.anything());
     });
 
-    it('reports a terminal error when the redelivered prompt meets the same exit again', async () => {
+    it('ends the turn quietly when the redelivered prompt meets the same exit again', async () => {
       async function* prompts() {
         yield { message: { uuid: 'next-prompt', message: { content: 'next' } }, onSent: () => {} };
       }
@@ -3650,8 +3650,77 @@ describe('QueryRunner', () => {
       await ctx.queryPromise;
 
       expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
-      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ['error_max_turns', true],
+      ['success', true],
+      ['error_max_turns', false],
+    ])(
+      'a process exit after a %s result and a trailing state message is not an error (fed note: %s)',
+      async (subtype, fedNote) => {
+        let queryCalls = 0;
+        (query as unknown as ReturnType<typeof mock>).mockImplementation(
+          ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+            queryCalls += 1;
+            const firstQuery = queryCalls === 1;
+            return {
+              close: () => {},
+              interrupt: async () => {},
+              [Symbol.asyncIterator]: async function* () {
+                if (!firstQuery) return;
+                yield { type: 'result', subtype, uuid: 'turn-result' } as unknown as SDKMessage;
+                yield {
+                  type: 'system',
+                  subtype: 'session_state_changed',
+                  state: 'idle',
+                  uuid: 'state-idle',
+                } as unknown as SDKMessage;
+                if (fedNote) await prompt[Symbol.asyncIterator]().next();
+                throw new Error('Claude Code process exited with code 1');
+              },
+            };
+          }
+        );
+        let generatorCalls = 0;
+        const ctx = createContext({
+          messageQueue: {
+            ...mockMessageQueue,
+            messageGenerator: mock(async function* () {
+              generatorCalls += 1;
+              if (generatorCalls > 1 || !fedNote) return;
+              yield {
+                message: {
+                  type: 'user',
+                  uuid: 'turn-limit-note',
+                  message: { role: 'user', content: 'turn limit note' },
+                },
+                onSent: () => {},
+              };
+            }),
+          } as unknown as MessageQueue,
+        });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise;
+
+        expect(handleErrorSpy).not.toHaveBeenCalled();
+        expect(mockLogger.error).not.toHaveBeenCalledWith(
+          'Streaming query error:',
+          expect.anything()
+        );
+        if (fedNote) {
+          expect(enqueueWithIdSpy).toHaveBeenCalledWith(
+            'turn-limit-note',
+            'turn limit note',
+            false,
+            { prepend: true }
+          );
+          expect(queryCalls).toBe(2);
+        }
+      }
+    );
 
     it('passes the assessed limit payload to the handoff callback', async () => {
       const resetAtMs = Date.now() + 60 * 60 * 1000;

@@ -101,6 +101,20 @@ export function isSdkProcessExitError(rawText: string): boolean {
   return SDK_PROCESS_EXIT_ERROR_RE.test(rawText);
 }
 
+const NEW_TURN_MESSAGE_TYPES = new Set(['assistant', 'user', 'stream_event']);
+
+export function planTurnEndedGeneration(
+  current: number | null,
+  message: { type: string; subtype?: string; state?: string; parent_tool_use_id?: string | null },
+  queryGeneration: number
+): number | null {
+  if (message.type === 'result') return message.parent_tool_use_id ? null : queryGeneration;
+  if (NEW_TURN_MESSAGE_TYPES.has(message.type)) return null;
+  if (message.type === 'system' && message.subtype === 'session_state_changed')
+    return message.state === 'running' ? null : current;
+  return current;
+}
+
 export function decideProviderTerminalCategory(
   signal: QueryRetryErrorSignal,
   env: QueryRetryEnvironment

@@ -45,6 +45,7 @@ import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
   decideQueryRetry,
+  planTurnEndedGeneration,
   type QueryRetryEnvironment,
   type QueryRetryErrorSignal,
   type QueryRetryRoute,
@@ -432,7 +433,7 @@ export class QueryRunner {
     const fresh = this.fedAfterTurnEnd.every(
       (prompt) => !this.redeliveredFedPrompts.includes(prompt.uuid)
     );
-    return { turnEnded: fresh, hasFedPrompt: fresh };
+    return { turnEnded: true, hasFedPrompt: fresh };
   }
 
   get lastConsumedUserMessage() {
@@ -1353,12 +1354,14 @@ export class QueryRunner {
               resolveAskOrigin
             );
 
-          this.turnEndedGeneration =
-            message.type === 'result' &&
-            !(message as SDKMessage & { parent_tool_use_id?: string | null }).parent_tool_use_id
-              ? queryGeneration
-              : null;
-          this.fedAfterTurnEnd = [];
+          const turnEndedGeneration = planTurnEndedGeneration(
+            this.turnEndedGeneration,
+            message as SDKMessage & { subtype?: string; state?: string },
+            queryGeneration
+          );
+          if (message.type === 'result' || turnEndedGeneration !== this.turnEndedGeneration)
+            this.fedAfterTurnEnd = [];
+          this.turnEndedGeneration = turnEndedGeneration;
           try {
             if (message.type === 'result') questionInputs.endTurn();
             await this.handleSDKMessage(message, queryGeneration);
