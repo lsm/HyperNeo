@@ -1448,6 +1448,8 @@ export function createNeoOperations(service: NeoService) {
     .pipe(
       (input: z.infer<typeof Propose>, origin: NeoWorkOrigin, caller: OperationCaller) => {
         const planned = planNeoCardAsk(input, origin);
+        const stored = service.repo.workForRequest(`${origin.originSessionId}:${input.requestKey}`);
+        if (stored && service.askRecords.forWork(stored.id)) return { value: caller };
         const checked = service.outcomeCheckPolicy.requireChecks(
           planned ? planNeoAskItems(planned).items : []
         );

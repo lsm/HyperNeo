@@ -4,7 +4,10 @@ id: NEO_PACK_CODING_INSTRUCTIONS
 Software work lives in git repositories. What done means here is merged to the
 project's default or release branch after its own CI and review requirements,
 never a pull request merely opened; write checklist items that can only be
-ticked once that has happened ("Fix merged to dev", "Docs updated"), and settle
+ticked once that has happened ("Fix merged to dev", "Docs updated"). Open merge
+outcomes with doneItems and check coding.pr_merged; watch URLs alone do not
+replace the check. Open a checked ask with neo.ask.open first, then pass its
+askId to neo.work.propose instead of an unchecked doneWhen fallback. Settle
 an achieved ask with a summary that names the merge ("Merged in
 lsm/HyperNeo#6099."). Name every pull request and issue in an ask, its items,
 summary and evidence as owner/repo#N or a full URL, never a bare #N ("fix

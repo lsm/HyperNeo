@@ -398,6 +398,80 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test('retries an unchecked legacy ask without duplicating it or replacing its checklist', async () => {
+    const input = { ...opening, concernId: null, doneWhen: '- merged to dev' };
+    const stored = service.askRecords.open(
+      {
+        ...input,
+        id: 'legacy',
+        requestKey: 'root:fix',
+        originSessionId: 'root',
+        originMessageId: 'ask-1',
+        doneSource: 'human',
+      },
+      planNeoAskItems(input).items
+    )!;
+    expect(await invoke('neo.ask.open', input)).toMatchObject({
+      value: { ok: true, ask: { id: stored.id } },
+    });
+    expect(service.askRecords.get(stored.id)).toMatchObject({
+      id: stored.id,
+      requestKey: stored.requestKey,
+      doneItems: stored.doneItems,
+      createdAt: stored.createdAt,
+    });
+    expect(await invoke('neo.ask.open', { ...input, title: 'Changed' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('another ask') },
+    });
+    expect(
+      await invoke('neo.ask.open', { ...input, requestKey: 'new' }, nextMessage)
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('outcome_check_required') },
+    });
+    expect(service.askRecords.list()).toHaveLength(1);
+  });
+
+  test('retries an unchecked legacy card only when its ask already exists', async () => {
+    const input = {
+      requestKey: 'legacy-card',
+      concernId: null,
+      title: 'Fix it',
+      instruction: 'Fix it.',
+      doneWhen: '- merged to dev',
+      work: { verb: 'start' as const, adapter: 'claude-desktop', place },
+    };
+    const origin = { originSessionId: 'root', originMessageId: 'ask-1' };
+    const planned = planNeoCardAsk(input, origin)!;
+    const stored = service.askRecords.open(
+      { ...planned, id: 'legacy-card-ask' },
+      planNeoAskItems(planned).items
+    )!;
+    const { work } = service.driverTargets.propose(
+      service.repo,
+      { ...input, ...origin, id: 'legacy-card', requestKey: 'root:legacy-card' },
+      input.work
+    );
+    service.askRecords.link(stored.id, work.id);
+    const before = service.askRecords.get(stored.id);
+    expect(await invoke('neo.work.propose', input)).toMatchObject({
+      value: { ok: true, work: { id: work.id } },
+    });
+    expect(service.askRecords.get(stored.id)).toEqual(before);
+    expect(service.repo.listWork()).toHaveLength(1);
+    service.driverTargets.propose(
+      service.repo,
+      { ...input, ...origin, id: 'unlinked', requestKey: 'root:unlinked' },
+      input.work
+    );
+    for (const requestKey of ['unlinked', 'new']) {
+      expect(await invoke('neo.work.propose', { ...input, requestKey })).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('outcome_check_required') },
+      });
+    }
+    expect(service.repo.listWork()).toHaveLength(2);
+    expect(service.askRecords.list()).toHaveLength(1);
+  });
+
   test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
     const askId = await openAsk();
     for (const itemId of ['i1', 'i2'])

@@ -1030,11 +1030,17 @@ export function createNeoAskOperations(
     )
     .pipe(planNeoAskItems, 'input', 'checklist')
     .pipe(
-      (checklist: ReturnType<typeof planNeoAskItems>, origin: NeoWorkOrigin) => {
+      (
+        checklist: ReturnType<typeof planNeoAskItems>,
+        origin: NeoWorkOrigin,
+        input: z.infer<typeof Open>
+      ) => {
+        if (service.askRecords.forRequest(`${origin.originSessionId}:${input.requestKey}`))
+          return { value: origin };
         const checked = service.outcomeCheckPolicy.requireChecks(checklist.items);
         return 'reason' in checked ? checked : { value: origin };
       },
-      ['checklist', 'admission'],
+      ['checklist', 'admission', 'input'],
       'result:admission'
     )
     .pipe(
