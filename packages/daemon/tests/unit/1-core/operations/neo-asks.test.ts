@@ -2382,6 +2382,8 @@ describe('neoAskTitleNamedIn', () => {
     ['a CJK title run into other text', '为Neo添加引用回复这个也看一下', '为Neo添加引用回复', true],
     ['a plain Latin title', 'For Fix the login bug, also check Safari.', 'Fix the login bug', true],
     ['a title inside a longer word', 'Already done.', 'Read', false],
+    ['a title inside an identifier', 'Rename user_login first.', 'login', false],
+    ['a title as an identifier part', 'Rename login_page first.', 'login', false],
     [
       'a Latin title glued to more letters',
       'Fix the login bugs everywhere',

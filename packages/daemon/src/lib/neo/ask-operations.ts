@@ -424,8 +424,8 @@ export function neoAskTitleNamedIn(text: string, rawTitle: string): boolean {
   const title = rawTitle.trim();
   if ([...title].length < NEO_ASK_TITLE_MIN) return false;
   const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const before = /^[A-Za-z0-9]/.test(title) ? '(?<![A-Za-z0-9])' : '';
-  const after = /[A-Za-z0-9]$/.test(title) ? '(?![A-Za-z0-9])' : '';
+  const before = /^\w/.test(title) ? '(?<!\\w)' : '';
+  const after = /\w$/.test(title) ? '(?!\\w)' : '';
   return new RegExp(`${before}${escaped}${after}`).test(text);
 }
 
