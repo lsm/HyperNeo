@@ -1833,10 +1833,77 @@ describe('neo.ask operations', () => {
         const before = service.askRecords.get(askId);
         service.readRefStates = async () => [terminal];
         await service.withdrawObsoletePrQuestions(askId);
+        await service.clearStaleNeedsYou();
         expect(service.askRecords.get(askId)).toEqual(before);
         expect(delivered).not.toHaveBeenCalled();
       }
     );
+
+    test.each(['MERGED', 'CLOSED'] as const)(
+      'recovery withdraws %s PR questions only once',
+      async (state) => {
+        const { askId, delivered } = await waitingQuestion();
+        service.readRefStates = async () => [{ ...terminal, state }];
+        await service.clearStaleNeedsYou();
+        await service.clearStaleNeedsYou();
+        expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
+          removed: true,
+          state: 'pending',
+        });
+        expect(service.askRecords.get(askId)?.status).toBe('open');
+        expect(delivered).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    test('recovery does not clear a legacy wait after the ask closes during lookup', async () => {
+      const { askId, delivered } = await waitingQuestion();
+      service.askRecords.tickItem(
+        askId,
+        {
+          id: 'i2',
+          state: 'needs_you',
+          evidence: 'Start the card',
+          metBy: null,
+          waitCard: 'old-card',
+        },
+        Date.now()
+      );
+      let closed: NeoAsk | null = null;
+      service.readRefStates = async () => {
+        service.askRecords.settle(
+          service.askRecords.get(askId)!,
+          'abandoned',
+          'Stop',
+          'Human stopped it'
+        );
+        closed = service.askRecords.get(askId);
+        return [terminal];
+      };
+      await service.clearStaleNeedsYou();
+      expect(service.askRecords.get(askId)).toEqual(closed);
+      expect(delivered).not.toHaveBeenCalled();
+    });
+
+    test('recovery continues other asks after a GitHub lookup fails', async () => {
+      const { askId, delivered } = await waitingQuestion();
+      const before = service.askRecords.get(askId);
+      const second = (
+        await invoke('neo.ask.open', { ...opening, requestKey: 'other' }, nextMessage)
+      ).value!.ask!;
+      service.askRecords.settle(second, 'waiting', 'Wait?', 'Waiting on PR', 'i3', {
+        id: 'i3',
+        position: 2,
+        text: 'Wait for lsm/HyperNeo#43?',
+      });
+      service.readRefStates = async (refs) => {
+        if (refs[0].number === 42) throw new Error('GitHub unavailable');
+        return [{ ...terminal, url: 'https://github.com/lsm/HyperNeo/pull/43' }];
+      };
+      await service.clearStaleNeedsYou();
+      expect(service.askRecords.get(askId)).toEqual(before);
+      expect(service.askRecords.get(second.id)?.doneItems?.[2]?.removed).toBe(true);
+      expect(delivered).toHaveBeenCalledTimes(1);
+    });
 
     test('skips GitHub for outcomes without a referenced question', async () => {
       const askId = await openAsk();
