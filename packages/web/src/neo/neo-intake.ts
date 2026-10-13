@@ -124,13 +124,11 @@ export function neoDraftThumbnails(submission: Submission): Promise<NeoThumbnail
   return making;
 }
 
-/** The quoted text as iOS `ReplyTarget` keeps it: trimmed, capped at 500 characters plus "…". */
 export function neoQuoteExcerpt(text: string): string {
   const chars = Array.from(text.replace(/\r\n?|\u2028|\u2029/g, '\n').trim());
   return chars.length > 500 ? `${chars.slice(0, 500).join('')}…` : chars.join('');
 }
 
-/** iOS `ReplyTarget.prefix`: "Replying to Neo:" and the quote as a Markdown block quote, above the reply. */
 function neoDraftText({ text, quote }: NeoDraft): string {
   if (!quote) return text;
   const quoted = neoQuoteExcerpt(quote.text)
