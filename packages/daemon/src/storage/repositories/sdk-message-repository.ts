@@ -1298,6 +1298,16 @@ export class SDKMessageRepository {
     return row ? inflatePersistedMessage(row) : null;
   }
 
+  latestCompactionSeq(sessionId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT MAX(seq) AS seq FROM sdk_messages
+          WHERE session_id = ? AND message_subtype_norm = 'compact_boundary'`
+      )
+      .get(sessionId) as { seq: number | null } | undefined;
+    return row?.seq ?? 0;
+  }
+
   getSDKMessageCount(sessionId: string): number {
     const stmt = this.db.prepare(
       `SELECT COUNT(*) as count FROM sdk_messages

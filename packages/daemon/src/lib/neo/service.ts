@@ -23,6 +23,7 @@ import {
   type NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { hostname } from 'node:os';
+import type { NeoSnapshotRead } from './snapshot-read.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -1044,7 +1045,11 @@ export class NeoService {
       });
   }
 
+  readonly snapshotReads = new Map<string, NeoSnapshotRead>();
+
   private forgetSession(sessionId: string): void {
+    for (const key of this.snapshotReads.keys())
+      if (key.startsWith(`${sessionId}\n`)) this.snapshotReads.delete(key);
     this.processingStatus.delete(sessionId);
     this.interruptedSessions.delete(sessionId);
     const timer = this.replyRechecks.get(sessionId);

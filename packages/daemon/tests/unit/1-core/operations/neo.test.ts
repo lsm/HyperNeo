@@ -117,6 +117,7 @@ describe('Neo MVP', () => {
         getStoredPromptsByUuid: () => [{ type: 'user', inputKind: 'human' }],
         listQueuedSystemInputs: () => [],
         lastConsumedInputSeq: () => null,
+        latestCompactionSeq: () => 0,
         findMessageIdByUuid: (id: string, uuid: string) =>
           delivered.has(`${id}:${uuid}`) ? uuid : null,
         hasTerminalResultAfter: (id: string) => terminalSessions?.has(id) ?? terminal,
