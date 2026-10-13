@@ -134,6 +134,13 @@ export class RemoteDaemonRegistry {
     name: string,
     input: unknown,
     options?: { timeoutMs?: number }
+  ): Promise<unknown> => this.request(daemonId, 'operation.invoke', { name, input }, options);
+
+  readonly request = async (
+    daemonId: string,
+    method: string,
+    data: unknown,
+    options?: { timeoutMs?: number }
   ): Promise<unknown> => {
     const url = this.urls.get(daemonId);
     if (url === undefined) throw new Error(`No attached daemon: ${daemonId}`);
@@ -141,8 +148,8 @@ export class RemoteDaemonRegistry {
     const connection = await attempt.connection;
     try {
       return await connection.hub.request(
-        'operation.invoke',
-        { name, input },
+        method,
+        data,
         options?.timeoutMs ? { timeout: options.timeoutMs } : undefined
       );
     } catch (error) {

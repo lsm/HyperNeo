@@ -42,7 +42,7 @@ type NeoAskItemRow = Omit<
   watch: string | null;
 };
 
-const watchJson = (item: NeoAskItemInput) =>
+const watchJson = (item: Pick<NeoAskItem, 'watch'>) =>
   item.watch?.length ? JSON.stringify(item.watch) : null;
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
@@ -203,10 +203,19 @@ export class NeoAskRepository {
 
   editItems(
     askId: string,
-    edit: { add: (NeoAskItemInput & { id: string; position: number })[]; remove: string[] },
+    edit: {
+      add: (NeoAskItemInput & { id: string; position: number })[];
+      remove: string[];
+      track?: { itemId: string; check: NeoAskItem['check']; watch?: string[] }[];
+    },
     at: number
   ): boolean {
     this.db.transaction(() => {
+      const track = this.db.prepare(`UPDATE neo_ask_items
+        SET check_kind = COALESCE(?, check_kind), watch = COALESCE(?, watch), updated_at = ?
+        WHERE ask_id = ? AND id = ? AND removed = 0 AND state != 'met'`);
+      for (const item of edit.track ?? [])
+        track.run(item.check, watchJson(item), at, askId, item.itemId);
       const insert = this.db.prepare(`INSERT INTO neo_ask_items
         (ask_id, id, position, text, state, check_kind, watch, added_at, updated_at)
         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`);
