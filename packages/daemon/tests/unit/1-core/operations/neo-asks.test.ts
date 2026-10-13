@@ -38,6 +38,7 @@ import {
   requireNeoWorkAskLive,
   requireNeoWorkAskOwner,
   requireNeoWorkAskLink,
+  neoAskTitleNamedIn,
 } from '../../../../src/lib/neo/ask-operations.ts';
 import {
   driverDoneCheckNote,
@@ -2367,5 +2368,29 @@ describe('requireNeoAskApprovalLapsed', () => {
     expect(requireNeoAskApprovalLapsed({ approvedAt: null }, false, now, 'v')).toEqual({
       value: 'v',
     });
+  });
+});
+
+describe('neoAskTitleNamedIn', () => {
+  test.each([
+    [
+      'a backticked title in Chinese text',
+      '`为 Neo 网页版添加引用回复` 这个要做成一样',
+      '为 Neo 网页版添加引用回复',
+      true,
+    ],
+    ['a CJK title run into other text', '为Neo添加引用回复这个也看一下', '为Neo添加引用回复', true],
+    ['a plain Latin title', 'For Fix the login bug, also check Safari.', 'Fix the login bug', true],
+    ['a title inside a longer word', 'Already done.', 'Read', false],
+    [
+      'a Latin title glued to more letters',
+      'Fix the login bugs everywhere',
+      'Fix the login bug',
+      false,
+    ],
+    ['a title in another case', 'fix the login bug', 'Fix the login bug', false],
+    ['a title shorter than four characters', 'Fix it now', 'Fix', false],
+  ])('%s', (_label, text, title, named) => {
+    expect(neoAskTitleNamedIn(text, title)).toBe(named);
   });
 });

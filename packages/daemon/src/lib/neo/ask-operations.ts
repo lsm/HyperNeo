@@ -418,6 +418,17 @@ function githubRefForms(url: string): RegExp[] {
   ];
 }
 
+const NEO_ASK_TITLE_MIN = 4;
+
+export function neoAskTitleNamedIn(text: string, rawTitle: string): boolean {
+  const title = rawTitle.trim();
+  if ([...title].length < NEO_ASK_TITLE_MIN) return false;
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const before = /^[A-Za-z0-9]/.test(title) ? '(?<![A-Za-z0-9])' : '';
+  const after = /[A-Za-z0-9]$/.test(title) ? '(?![A-Za-z0-9])' : '';
+  return new RegExp(`${before}${escaped}${after}`).test(text);
+}
+
 export function neoAskNamedBy(said: readonly string[], ask: NeoAskNameable): boolean {
   const text = said.join('\n');
   const ids = [ask.id, ...ask.cardIds].map((id) => id.toLowerCase());
@@ -425,10 +436,9 @@ export function neoAskNamedBy(said: readonly string[], ask: NeoAskNameable): boo
     const prefix = token.toLowerCase().replace(/-+$/, '');
     return ids.some((id) => id.startsWith(prefix));
   });
-  const title = ask.title.trim();
   return (
     named ||
-    (title.length > 0 && text.includes(title)) ||
+    neoAskTitleNamedIn(text, ask.title) ||
     ask.refs.some((url) => githubRefForms(url).some((form) => form.test(text)))
   );
 }
