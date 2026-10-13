@@ -1030,6 +1030,14 @@ export function createNeoAskOperations(
     )
     .pipe(planNeoAskItems, 'input', 'checklist')
     .pipe(
+      (checklist: ReturnType<typeof planNeoAskItems>, origin: NeoWorkOrigin) => {
+        const checked = service.outcomeCheckPolicy.requireChecks(checklist.items);
+        return 'reason' in checked ? checked : { value: origin };
+      },
+      ['checklist', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (input: z.infer<typeof Open>, checklist: ReturnType<typeof planNeoAskItems>): Opening => {
         const { doneItems: _items, ...rest } = input;
         return { ...rest, doneWhen: checklist.doneWhen };
@@ -1384,6 +1392,18 @@ export function createNeoAskOperations(
     )
     .pipe(requireNeoAskEdit, ['input', 'admission'], 'result:admission')
     .pipe(
+      (input: z.infer<typeof Edit>, ask: NeoAsk) => {
+        const tracked = input.track.flatMap((change) => {
+          const item = ask.doneItems?.find((entry) => entry.id === change.itemId);
+          return item ? [{ ...item, check: change.check ?? item.check }] : [];
+        });
+        const checked = service.outcomeCheckPolicy.requireChecks([...input.add, ...tracked]);
+        return 'reason' in checked ? checked : { value: ask };
+      },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (input: z.infer<typeof Edit>, ask: NeoAsk, caller: OperationCaller) =>
         requireNeoAskDecisionKept(ask, caller, input.remove, ask),
       ['input', 'admission', 'caller'],
@@ -1459,7 +1479,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps. Reuse requestKey only to retry this input.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; new merge/deploy outcomes require the matching coding.pr_merged/coding.deployed check in doneItems; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps. Reuse requestKey only to retry this input.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1504,7 +1524,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.edit',
       description:
-        "Change an open ask's done checklist when what done means changes: add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply, or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
+        "Change an open ask's done checklist when what done means changes: add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply, or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. New outcomes and changed tracking require the matching coding.pr_merged/coding.deployed check for PR merge or deploy outcomes; untouched legacy items stay unchanged. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
       inputSchema: Edit,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
