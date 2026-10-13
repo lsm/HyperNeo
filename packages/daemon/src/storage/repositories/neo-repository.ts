@@ -193,6 +193,14 @@ export class NeoRepository {
       .get(id) as NeoWork | null;
   }
 
+  workForRequest(requestKey: string): NeoWork | null {
+    return (
+      (this.db
+        .prepare(`SELECT ${workColumns} FROM neo_work WHERE request_key = ?`)
+        .get(requestKey) as NeoWork | undefined) ?? null
+    );
+  }
+
   findWorkBySession(sessionId: string): NeoWork | null {
     return this.db
       .prepare(`SELECT ${workColumns} FROM neo_work WHERE session_id = ?

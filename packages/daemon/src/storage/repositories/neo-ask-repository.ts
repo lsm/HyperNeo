@@ -114,6 +114,13 @@ export class NeoAskRepository {
     return row ? this.withWork([row])[0] : null;
   }
 
+  forRequest(requestKey: string): NeoAsk | null {
+    const row = this.db.prepare('SELECT id FROM neo_asks WHERE request_key = ?').get(requestKey) as
+      | { id: string }
+      | undefined;
+    return row ? this.get(row.id) : null;
+  }
+
   forWork(workId: string): NeoAsk | null {
     const link = this.db
       .prepare('SELECT ask_id AS askId FROM neo_ask_work WHERE work_id = ?')
