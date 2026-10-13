@@ -139,6 +139,7 @@ export interface WorkCallContext {
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
+  readonly supportsStartEffort?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
   readonly start?: (
     request: StartRequest,
