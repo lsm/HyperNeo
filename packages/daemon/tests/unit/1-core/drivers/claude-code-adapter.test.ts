@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -121,6 +121,36 @@ describe('createClaudeCodeAdapter', () => {
       owned.add('cli');
       expect(await adapter.find(query)).toEqual([]);
       expect(await adapter.find({ ...query, text: 'project' })).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('ignores transcripts outside the feed window and evicts expired cached folders', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    try {
+      mkdirSync(join(dir, 'encoded'));
+      const path = join(dir, 'encoded', 'cli.jsonl');
+      writeFileSync(path, `${JSON.stringify({ cwd: '/real/project' })}\n`);
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+      });
+      const query = { includeClosed: false, limit: 20 };
+      expect(await adapter.find(query)).toHaveLength(1);
+      const old = new Date(Date.now() - 91 * 24 * 60 * 60_000);
+      utimesSync(path, old, old);
+      expect(await adapter.find(query)).toEqual([]);
+      expect(
+        await createClaudeCodeAdapter({
+          projectsDir: dir,
+          machine: 'laptop',
+          searchChats: async () => [],
+          desktopSessions: async () => new Set(),
+        }).find(query)
+      ).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -70,7 +70,13 @@ export function mergePlaceGroups(groups: readonly PlaceGroup[], limit: number): 
         (a, b) => (b.score ?? -1) - (a.score ?? -1) || b.lastActivityAt - a.lastActivityAt
       ),
     }))
-    .sort((a, b) => bestScore(b) - bestScore(a) || b.lastActivityAt - a.lastActivityAt)
+    .sort(
+      (a, b) =>
+        bestScore(b) - bestScore(a) ||
+        Number(b.openCount > 0 && b.work.length > 0) -
+          Number(a.openCount > 0 && a.work.length > 0) ||
+        b.lastActivityAt - a.lastActivityAt
+    )
     .slice(0, limit);
 }
 

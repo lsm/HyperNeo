@@ -23,6 +23,22 @@ export async function readCodeIdentity(folder: string): Promise<CodeIdentity> {
   }
 }
 
+export function createCodeIdentityReader(
+  read = readCodeIdentity,
+  now = Date.now
+): (folder: string, refresh?: boolean) => Promise<CodeIdentity> {
+  const cache = new Map<string, { until: number; value: Promise<CodeIdentity> }>();
+  return (folder, refresh = false) => {
+    const known = cache.get(folder);
+    if (!refresh && known && known.until > now()) return known.value;
+    const value = read(folder);
+    cache.delete(folder);
+    cache.set(folder, { until: now() + 60_000, value });
+    if (cache.size > 1024) cache.delete(cache.keys().next().value!);
+    return value;
+  };
+}
+
 export async function identifyWorkspaces(
   groups: readonly PlaceGroup[],
   read: (folder: string) => Promise<CodeIdentity> = readCodeIdentity

@@ -27,7 +27,7 @@ interface ClaudeFolder {
 type FolderCache = Map<string, { at: number; record: ClaudeFolder | null }>;
 
 export function readClaudeCodeFolders(root: string, cache: FolderCache): ClaudeFolder[] {
-  const files = listFeedFiles(root, 0, 2);
+  const files = listFeedFiles(root, Date.now() - 90 * 24 * 60 * 60_000, 2);
   const paths = new Set(files.map((file) => file.path));
   for (const path of cache.keys()) if (!paths.has(path)) cache.delete(path);
   return files.flatMap((file) => {

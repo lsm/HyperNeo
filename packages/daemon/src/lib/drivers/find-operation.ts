@@ -1,7 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation } from '../operations/registry.ts';
-import { identifyWorkspaces } from './code-identity.ts';
+import { createCodeIdentityReader, identifyWorkspaces } from './code-identity.ts';
 import { mergePlaceGroups, stampDaemon } from './places.ts';
 import { PlaceGroupSchema, type FindQuery, type PlaceGroup, type WorkAdapter } from './types.ts';
 
@@ -210,13 +210,22 @@ export function combineFindResults(
 }
 
 const runFindWork = (superpipe({})('find-work') as PipelineAPI)
-  .input(['input', 'deps', 'budget'])
+  .input(['input', 'deps', 'budget', 'readIdentity'])
   .pipe(selectFindAdapters, ['input', 'deps'], 'adapters')
   .pipe(toFindQuery, 'input', 'query')
   .pipe(findLocally, ['adapters', 'query'], 'local')
   .pipe(
-    async (local: SourceOutcome) => ({ ...local, groups: await identifyWorkspaces(local.groups) }),
-    'local',
+    async (
+      local: SourceOutcome,
+      input: FindInput,
+      read: ReturnType<typeof createCodeIdentityReader>
+    ) => ({
+      ...local,
+      groups: await identifyWorkspaces(local.groups, (folder) =>
+        read(folder, input.folder === folder)
+      ),
+    }),
+    ['local', 'input', 'readIdentity'],
     'local'
   )
   .pipe(findRemotely, ['input', 'deps'], 'remote')
@@ -224,10 +233,12 @@ const runFindWork = (superpipe({})('find-work') as PipelineAPI)
   .endAsync('result') as (
   input: FindInput,
   deps: FindWorkDeps,
-  budget: number
+  budget: number,
+  readIdentity: ReturnType<typeof createCodeIdentityReader>
 ) => Promise<FindResult>;
 
 export function createFindWorkOperation(deps: FindWorkDeps) {
+  const readIdentity = createCodeIdentityReader();
   return defineOperation({
     name: 'work.find',
     description:
@@ -239,7 +250,8 @@ export function createFindWorkOperation(deps: FindWorkDeps) {
       runFindWork(
         input,
         deps,
-        caller.source === 'mcp' ? FIND_AGENT_RESULT_BUDGET_CHARS : FIND_RESULT_BUDGET_CHARS
+        caller.source === 'mcp' ? FIND_AGENT_RESULT_BUDGET_CHARS : FIND_RESULT_BUDGET_CHARS,
+        readIdentity
       ),
   });
 }

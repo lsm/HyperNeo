@@ -3,8 +3,16 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { identifyWorkspaces, readCodeIdentity } from '../../../../src/lib/drivers/code-identity';
-import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation';
+import {
+  createCodeIdentityReader,
+  identifyWorkspaces,
+  readCodeIdentity,
+} from '../../../../src/lib/drivers/code-identity';
+import {
+  combineFindResults,
+  createFindWorkOperation,
+  FindWorkInputSchema,
+} from '../../../../src/lib/drivers/find-operation';
 import { mergePlaceGroups, stampDaemon } from '../../../../src/lib/drivers/places';
 import { PlaceGroupSchema, type Place, type PlaceGroup } from '../../../../src/lib/drivers/types';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
@@ -226,5 +234,52 @@ describe('identifyWorkspaces', () => {
       folder: '/two',
       codeIdentity: 'git:root',
     });
+  });
+});
+
+describe('workspace discovery safeguards', () => {
+  test('shares pending and completed probes per folder, expires misses, and refreshes on demand', async () => {
+    let now = 0;
+    const calls: string[] = [];
+    let identity = {};
+    const read = createCodeIdentityReader(
+      async (folder) => {
+        calls.push(folder);
+        return identity;
+      },
+      () => now
+    );
+    await Promise.all([read('/repo'), read('/repo')]);
+    await read('/repo');
+    expect(calls).toEqual(['/repo']);
+    identity = { codeIdentity: 'git:new', remotes: ['new-remote'] };
+    expect(await read('/repo')).toEqual({});
+    now = 60_000;
+    expect(await read('/repo')).toEqual(identity);
+    identity = { codeIdentity: 'git:replacement', remotes: [] };
+    expect(await read('/repo', true)).toEqual(identity);
+    await read('/other');
+    expect(calls).toEqual(['/repo', '/repo', '/repo', '/other']);
+  });
+
+  test('limited browse results retain idle open sessions ahead of newer empty folder shells', () => {
+    const open = group({ machine: 'local', folder: '/idle', name: 'idle' });
+    open.work[0].status = 'needs_you';
+    const shells: PlaceGroup[] = Array.from({ length: 35 }, (_, i) => ({
+      ...group({ machine: 'local', folder: `/new/${i}`, name: `${i}` }),
+      lastActivityAt: 100 + i,
+      openCount: 0,
+      work: [],
+    }));
+    const result = combineFindResults(
+      { groups: [...shells, open], unreachable: [] },
+      { groups: [], unreachable: [] },
+      FindWorkInputSchema.parse({ limit: 30, localOnly: true })
+    );
+    expect(result.places).toHaveLength(30);
+    expect(result.places[0].work[0].ref.id).toBe('/idle');
+    expect(result.more).toBe(true);
+    shells[0].work = [{ ...open.work[0], score: 10 }];
+    expect(mergePlaceGroups([open, shells[0]], 1)[0].place.folder).toBe('/new/0');
   });
 });
