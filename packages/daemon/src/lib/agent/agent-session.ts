@@ -93,6 +93,7 @@ const NEO_CORE_OPERATIONS = [
   'neo.work.continue',
   'neo.work.retry',
   'neo.work.close',
+  'neo.work.refused',
   'neo.work.cancel',
   'neo.github.read',
   'neo.publication.publish',

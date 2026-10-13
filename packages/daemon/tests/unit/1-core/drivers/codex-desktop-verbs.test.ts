@@ -100,7 +100,18 @@ describe('codexRecentInputs and reply time', () => {
         heard('no time'),
         '{"truncated',
       ])
-    ).toEqual([{ at: Date.parse('2026-10-08T17:46:10.074Z'), text: 'Continue the work' }]);
+    ).toEqual([
+      { at: Date.parse('2026-10-08T17:46:10.074Z'), text: 'Continue the work', human: true },
+    ]);
+  });
+
+  test('keeps agent inputs visible for delivery but never labels them human', () => {
+    const entries = codexRecentInputs([
+      at('2026-10-08T17:46:10.074Z', heard('Do it\n[HyperNeo agent input]')),
+      at('2026-10-08T17:46:11.074Z', heard('Neo routed this to you: do it here.')),
+      at('2026-10-08T17:46:12.074Z', heard('Please do it myself.')),
+    ]);
+    expect(entries.map((entry) => entry.human)).toEqual([false, false, true]);
   });
 
   test('times the reply by the line it came from', () => {
@@ -416,7 +427,28 @@ describe('codex-desktop adapter status and send', () => {
     });
   });
 
-  const user = { from: 'user', caller: { source: 'rpc' as const } };
+  const user = { from: 'chat', caller: { source: 'rpc' as const, principal: 'local' } };
+
+  test('marks agent sends without confusing their delivery with a previous marked message', async () => {
+    appendFileSync(
+      join(dir, 'finished.jsonl'),
+      `\n${heard('old request\n[HyperNeo agent input]')}`
+    );
+    const agent = {
+      from: 'session:neo',
+      caller: { source: 'internal' as const, role: 'neo' as const },
+    };
+    expect(await adapter().send?.(ref('idle'), 'new request', agent)).toEqual({
+      ok: true,
+      value: { delivered: false },
+    });
+    expect(spawned.at(-1)).toEqual([
+      'codex',
+      'queue',
+      '--thread=idle',
+      '--message=new request\n[HyperNeo agent input]',
+    ]);
+  });
 
   test('send queues the message and reports it delivered once the rollout shows it', async () => {
     expect(await adapter().send?.(ref('busy'), '-v after this', user)).toEqual({

@@ -379,3 +379,43 @@ describe('NeoWorkCard result', () => {
     expect(screen.getByText('Could not start.')).toBeTruthy();
   });
 });
+
+it.each(['detail', 'summary'] as const)(
+  'shows one refusal line beside the existing Open control in %s',
+  (presentation) => {
+    const item = work('refused', 'reported');
+    const onOpen = vi.fn();
+    const { rerender } = render(
+      <NeoWorkCard
+        work={item}
+        card={testCard(item, { talk: "daemon-code won't update the device." })}
+        busy={false}
+        disabled={false}
+        onAction={vi.fn()}
+        onOpen={onOpen}
+        presentation={presentation}
+      />
+    );
+    expect(
+      screen.getAllByText("daemon-code won't update the device. Open it and tell it yourself.")
+    ).toHaveLength(1);
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: presentation === 'summary' ? 'Open chat for Title refused' : 'Open chat',
+      })
+    );
+    expect(onOpen).toHaveBeenCalledWith('refused');
+    rerender(
+      <NeoWorkCard
+        work={item}
+        card={testCard(item)}
+        busy={false}
+        disabled={false}
+        onAction={vi.fn()}
+        onOpen={onOpen}
+        presentation={presentation}
+      />
+    );
+    expect(screen.queryByText(/Open it and tell it yourself/)).toBeNull();
+  }
+);

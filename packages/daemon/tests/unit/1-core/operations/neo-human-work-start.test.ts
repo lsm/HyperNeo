@@ -1,3 +1,5 @@
+import { reconcileNeoWorkRefusal } from '../../../../src/lib/neo/work-refusal.ts';
+import { NeoWorkRefusalRepository } from '../../../../src/storage/repositories/neo-work-refusal-repository.ts';
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -12,7 +14,10 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
-import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import {
+  InternalEventBus,
+  type DaemonInternalEventMap,
+} from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import {
   hasNeoHumanWorkInput,
@@ -23,6 +28,7 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 describe('Neo existing trusted human work input', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
+  let events: InternalEventBus<DaemonInternalEventMap>;
   let attempts: QueryAttemptRegistry;
   let turns: NeoHolderTurn[];
   let created: ReturnType<typeof mock>;
@@ -42,11 +48,12 @@ describe('Neo existing trusted human work input', () => {
     loaded = mock(async () => {
       throw new Error('Must not load or change the native runtime');
     });
+    events = new InternalEventBus();
     service = new NeoService(
       db,
       { createSession: created, getSessionAsync: loaded } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,
-      new InternalEventBus()
+      events
     );
     service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     service.repo.saveProject(
@@ -152,6 +159,107 @@ describe('Neo existing trusted human work input', () => {
       });
     }
   );
+
+  test('records a refusal on an owned started card and exposes talk through the snapshot', async () => {
+    storeInput();
+    const owner = caller();
+    const work = await propose(owner);
+    const input = { workId: work.id, what: "target won't update the device." };
+    expect(await invoke('neo.work.refused', input, owner)).toMatchObject({ value: { ok: false } });
+    service.repo.transitionWork(work.id, work, {
+      status: 'reported',
+      sessionId: target,
+      report: 'Refused.',
+    });
+    storeInput(holder);
+    expect(await invoke('neo.work.refused', input, caller(holder))).toMatchObject({
+      value: { ok: false },
+    });
+    expect(await invoke('neo.work.refused', input, owner)).toMatchObject({ value: { ok: true } });
+    expect(new NeoWorkRefusalRepository(db.getDatabase()).list()).toMatchObject([
+      { workId: work.id, what: input.what },
+    ]);
+    const snapshot = await invoke('neo.snapshot', {});
+    expect(snapshot).toMatchObject({
+      value: {
+        askViews: expect.arrayContaining([
+          expect.objectContaining({
+            humanActions: expect.arrayContaining([
+              { kind: 'talk', workId: work.id, what: input.what },
+            ]),
+          }),
+        ]),
+        cards: expect.arrayContaining([
+          expect.objectContaining({
+            workId: work.id,
+            talk: input.what,
+            group: 'attention',
+            primary: { kind: 'chat', label: 'Open chat', link: null },
+          }),
+        ]),
+      },
+    });
+    const persisted = async (sessionId: string, inputKind: string, messageId: string) => {
+      storeInput(sessionId, inputKind, messageId);
+      await events.publish('message.persisted', {
+        sessionId,
+        messageId,
+        messageContent: 'Go ahead',
+        userMessageText: 'Go ahead',
+        needsWorkspaceInit: false,
+        hasDraftToClear: false,
+        sendStatus: 'enqueued',
+        deliveryMode: 'immediate',
+      });
+    };
+    const refusal = service.workRefusals.list()[0];
+    service.workRefusals.record({ ...refusal, at: Date.now() - 1 });
+    await persisted(target, 'system', 'system-note');
+    await persisted(root, 'human', 'other-session');
+    expect(service.workRefusals.list()).toHaveLength(1);
+    await persisted(target, 'human', 'direct-human');
+    expect(service.workRefusals.list()).toEqual([]);
+    expect(service.repo.getWork(work.id)?.report).toBe('Refused.');
+  });
+
+  test('clears a driver refusal only for later human input and fences a newer refusal', async () => {
+    storeInput();
+    const work = await propose(caller());
+    const row = {
+      workId: work.id,
+      ref: { adapter: 'codex-desktop', id: 'thread' },
+      what: 'Refused',
+      at: 10,
+    };
+    const inputs = [
+      { at: 9, text: 'earlier', human: true },
+      { at: 11, text: 'relayed', human: false },
+      { at: 12, text: 'unknown' },
+    ];
+    service.workRefusals.record(row);
+    const read = async () => ({
+      kind: 'completed' as const,
+      value: {
+        ok: true,
+        value: {
+          status: 'running',
+          lastActivityAt: 20,
+          recentInputs: inputs,
+        },
+      },
+    });
+    const clear = () => {
+      service.workRefusals.clear(row);
+    };
+    expect(await reconcileNeoWorkRefusal(row, { read, clear })).toBe(false);
+    expect(service.workRefusals.list()).toHaveLength(1);
+    inputs.push({ at: 13, text: 'direct', human: true });
+    expect(await reconcileNeoWorkRefusal(row, { read, clear })).toBe(true);
+    expect(service.workRefusals.list()).toEqual([]);
+    service.workRefusals.record({ ...row, at: 14, what: 'New refusal' });
+    expect(service.workRefusals.clear(row)).toBe(false);
+    expect(service.workRefusals.list()[0].what).toBe('New refusal');
+  });
 
   test.each([root, holder])(
     'starts only the exact current real human input of %s through existing delivery',

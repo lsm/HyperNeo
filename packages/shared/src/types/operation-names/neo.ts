@@ -31,6 +31,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.snapshot',
   'neo.work.cancel',
   'neo.work.close',
+  'neo.work.refused',
   'neo.work.continue',
   'neo.work.propose',
   'neo.work.report',

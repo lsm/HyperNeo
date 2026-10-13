@@ -373,7 +373,11 @@ export function readHyperneoInputs(db: BunDatabase, id: string, since?: number):
           .all(id, new Date(since).toISOString())
   ) as { timestamp: string; message: string }[];
   const inputs = rows.flatMap((row) => {
-    const input = workInput(workEntryTime(row.timestamp), hyperneoInputText(row.message));
+    const input = workInput(
+      workEntryTime(row.timestamp),
+      hyperneoInputText(row.message),
+      JSON.parse(row.message).inputKind === 'human'
+    );
     return input ? [input] : [];
   });
   return recentWorkInputs(inputs, since);

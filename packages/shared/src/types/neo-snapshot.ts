@@ -220,6 +220,7 @@ export interface NeoCardOpenTarget {
 export interface NeoCardView {
   model?: string;
   effort?: string;
+  talk?: string;
   workId: string;
   phase: NeoCardPhase;
   group: NeoCardGroup;
@@ -280,7 +281,8 @@ export type NeoAskHumanAction =
     }
   | { kind: 'confirm'; itemId: string; step: string }
   | { kind: 'retry'; workId: string }
-  | { kind: 'close'; workId: string };
+  | { kind: 'close'; workId: string }
+  | { kind: 'talk'; workId: string; what: string };
 
 export interface NeoAskAnswer {
   itemId: string;

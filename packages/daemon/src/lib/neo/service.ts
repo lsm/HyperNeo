@@ -1,4 +1,7 @@
 import { runNeoReadWork } from './read-work.ts';
+import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
+import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-refusal-repository.ts';
+import { reconcileNeoWorkRefusal } from './work-refusal.ts';
 import { neoOutcomeCheckPolicy } from './outcome-check-policy.ts';
 import { neoPrQuestionWithdrawalPolicy } from './packs/coding/question-withdrawal-policy.ts';
 import {
@@ -398,6 +401,7 @@ export class NeoService {
   private readonly sessionSubscriptions: SessionEventSubscriptionRepository;
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
   readonly workPrClaims: NeoWorkPrClaimRepository;
+  readonly workRefusals: NeoWorkRefusalRepository;
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
@@ -685,6 +689,7 @@ export class NeoService {
       sessionBranchPrs: (ref) => this.sessionBranchPrs(ref),
       notifyChanged: () => this.notifyChanged(),
     });
+    this.workRefusals = new NeoWorkRefusalRepository(db.getDatabase());
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
@@ -828,6 +833,30 @@ export class NeoService {
       newId: () => crypto.randomUUID(),
     };
     this.directReplies = directReplies;
+    const offHumanInput = events.subscribe(
+      'message.persisted',
+      ({ sessionId, messageId }) => {
+        const human = db
+          .getSDKMessageRepo()
+          .getStoredPromptsByUuid(sessionId, messageId)
+          .some((message) => 'inputKind' in message && message.inputKind === 'human');
+        if (!human) return;
+        const at =
+          db.getSDKMessageRepo().getUserMessageByUuid(sessionId, messageId)?.timestamp ?? 0;
+        for (const row of this.workRefusals.list()) {
+          if (
+            at > row.at &&
+            !row.ref.daemon &&
+            ((row.ref.adapter === 'hyperneo' && row.ref.id === sessionId) ||
+              (row.ref.adapter === 'space' &&
+                row.ref.id === spaceWorkRefForSession(db.getDatabase(), sessionId)?.id)) &&
+            this.workRefusals.clear(row)
+          )
+            this.notifyChanged();
+        }
+      },
+      { subscriberName: 'neo-work-refusal-human-input' }
+    );
     const offUpdated = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState }) => {
@@ -900,6 +929,7 @@ export class NeoService {
       { subscriberName: 'neo-card-events', namespaceId: SESSION_EVENT_SCOPE }
     );
     this.unsubscribe = () => {
+      offHumanInput();
       offUpdated();
       offStatus();
       offDeleted();
@@ -1571,6 +1601,16 @@ export class NeoService {
   }
 
   async refreshDriverWork(): Promise<void> {
+    for (const refusal of this.workRefusals.list()) {
+      const work = this.repo.getWork(refusal.workId);
+      if (!work) continue;
+      await reconcileNeoWorkRefusal(refusal, {
+        read: () => this.invokeAsCard(work, 'work.status', { ref: refusal.ref, since: refusal.at }),
+        clear: () => {
+          if (this.workRefusals.clear(refusal)) this.notifyChanged();
+        },
+      }).catch((error) => this.log.warn('Card refusal refresh pending', error));
+    }
     const cards = this.driverTargets
       .cardRefs(Date.now() - NEO_WORK_FOLLOW_MAX_AGE_MS)
       .flatMap((card) => {
