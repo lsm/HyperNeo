@@ -204,6 +204,7 @@ import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-c
 import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
+import { buildNeoCheckRegistry } from './packs/check-registry.ts';
 import {
   neoEnabledPacks,
   neoSettingsPackBriefs,
@@ -2000,6 +2001,10 @@ export class NeoService {
       seen.add(pack.id);
       return true;
     });
+  }
+
+  checkRegistry() {
+    return buildNeoCheckRegistry(this.packs());
   }
 
   pack(id: string): NeoPack | null {

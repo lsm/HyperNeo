@@ -87,7 +87,7 @@ export const NeoAskSchema = z.object({
         text: z.string(),
         state: z.enum(['pending', 'met', 'needs_you', 'reported']),
         evidence: z.string().nullable(),
-        check: z.enum(NEO_ASK_CHECK_KINDS).nullable(),
+        check: z.string().min(1).nullable(),
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
         removed: z.boolean(),
         addedAt: z.number().nullable(),

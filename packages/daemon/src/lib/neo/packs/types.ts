@@ -48,6 +48,7 @@ export interface NeoPack extends NeoPackBrief {
   ): Promise<{ id: string; evidence: string }[]>;
   askTopics?(ask: NeoAsk): string[];
   checks?: Record<string, NeoPackCheck>;
+  checkEvidence?: Record<string, { independent: boolean }>;
   workerMcpServers?: string[];
   externalTopics?(work: NeoWork): string[];
   routeExternalEvent?(
