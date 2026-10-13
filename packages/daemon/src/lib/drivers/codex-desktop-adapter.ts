@@ -6,6 +6,7 @@ import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import type { CodexAppServer } from './codex-app-server.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
+import { workStartConfiguration } from './start-configuration.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
@@ -690,10 +691,11 @@ export async function startCodexThread(
       threadId = startedThreadId(started);
       if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
       const model = startedThreadModel(started);
-      if (configuration.value.model !== undefined && model !== configuration.value.model) {
+      const confirmed = workStartConfiguration.confirm(configuration.value, { model });
+      if (!confirmed.ok) {
         return reject(
-          'not_delivered',
-          `Codex did not confirm model ${configuration.value.model}; reported ${JSON.stringify(model ?? null)}. Thread ${threadId} was created without its first turn.`
+          confirmed.reason,
+          `${confirmed.detail} Thread ${threadId} was created without its first turn.`
         );
       }
       await server.call('thread/name/set', { threadId, name: request.title });
