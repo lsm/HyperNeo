@@ -1446,6 +1446,85 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test("Neo cannot tick a deploy item met or reported on an agent's word; the human still can", async () => {
+    service.knownDaemons = () => ['laptop', 'imac'];
+    const askId = await openAsk();
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        add: [
+          {
+            text: 'Running on both daemons',
+            deploy: { change: 'https://github.com/o/r/pull/9', daemons: ['laptop', 'iMac'] },
+          },
+        ],
+      })
+    ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
+      deploy: { change: 'https://github.com/o/r/pull/9', daemons: ['laptop', 'iMac'] },
+    });
+    for (const state of ['met', 'reported'] as const)
+      expect(
+        await invoke('neo.ask.tick', {
+          askId,
+          itemId: 'i3',
+          state,
+          evidence: 'The worker says it deployed both daemons.',
+        })
+      ).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('daemon_ticks_deploy') },
+      });
+    expect(
+      await invoke(
+        'neo.ask.tick',
+        { askId, itemId: 'i3', state: 'met', evidence: 'I checked both.' },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true } });
+  });
+
+  test('a deploy item may only name daemons this daemon knows', async () => {
+    service.knownDaemons = () => ['laptop'];
+    const askId = await openAsk();
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        add: [
+          {
+            text: 'Running on the iMac',
+            deploy: { change: 'https://github.com/o/r/pull/9', daemons: ['imac'] },
+          },
+        ],
+      })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('unknown_daemon: imac') },
+    });
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        add: [{ text: 'Deployed', deploy: { change: 'https://example.com/pull/9' } }],
+      })
+    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+  });
+
+  test('Neo cannot tick an item whose check kind the daemon reads from GitHub', async () => {
+    const askId = await openAsk();
+    await invoke('neo.ask.edit', {
+      askId,
+      add: [{ text: 'Issue closed', check: 'coding.issue_closed' }],
+    });
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i3',
+        state: 'met',
+        evidence: 'https://github.com/o/r/issues/4 is closed.',
+      })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('daemon_ticks_check') },
+    });
+  });
+
   test('a turn that hit its limit gets one note listing the asks it already opened', async () => {
     const results = db.getSDKMessageRepo();
     const save = (uuid: string, subtype: string) =>

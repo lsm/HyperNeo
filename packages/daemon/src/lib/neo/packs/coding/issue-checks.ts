@@ -1,6 +1,7 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { GITHUB_REF_PATH } from '../../../github/parse-pr-url.ts';
+import type { NeoEvidenceRead } from '../../evidence.ts';
 import {
   extractNeoAskRefs,
   extractNeoCardRefs,
@@ -118,4 +119,39 @@ export async function readNeoIssueTicks(
   const refs = new Map(plans.flatMap((plan) => plan.refs).map((ref) => [refKey(ref), ref]));
   const states = await readRefStates([...refs.values()]);
   return plans.flatMap((plan) => judgeNeoIssueCheck(plan, states, ask.createdAt) ?? []);
+}
+
+const ISSUE_URL = /https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)/g;
+
+export function neoCardIssueRef(work: Pick<NeoWork, 'instruction'>): NeoRef | null {
+  const refs = new Map(
+    [...work.instruction.matchAll(ISSUE_URL)].map((match) => {
+      const ref = { owner: match[1], repo: match[2], number: Number(match[3]) };
+      return [refKey(ref), ref] as const;
+    })
+  );
+  return refs.size === 1 ? [...refs.values()][0] : null;
+}
+
+export async function readNeoCardIssueEvidence(
+  work: Pick<NeoWork, 'status' | 'instruction'>,
+  readRefStates: NeoRefStateReader,
+  now: number
+): Promise<NeoEvidenceRead | null> {
+  const ref = work.status === 'reported' ? neoCardIssueRef(work) : null;
+  if (!ref) return null;
+  const [state] = await readRefStates([ref]);
+  if (state?.kind !== 'issue' || state.state !== 'CLOSED' || !state.done) return null;
+  return {
+    evidence: [
+      {
+        key: state.url,
+        state: 'done',
+        summary: `closed as completed${state.closedBy ? ` by ${state.closedBy}` : ''}`,
+        blockers: [],
+      },
+    ],
+    read: { ok: true, okAt: now },
+    daemonRead: true,
+  };
 }

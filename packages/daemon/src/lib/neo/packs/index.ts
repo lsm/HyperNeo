@@ -1,5 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import type { ExternalEvent } from '../../external-events/types.ts';
 import { isNeoAskLive } from '../done-check.ts';
 import { combineNeoEvidenceReads, type NeoEvidence, type NeoEvidenceRead } from '../evidence.ts';
 import { CODING_PACK_BRIEF } from './coding/pack.ts';
@@ -155,6 +156,10 @@ export function neoPackEvidenceOrNone(
   return read ?? (failed ? null : { evidence: [], read: { ok: true, okAt: now } });
 }
 
+export function neoPackDaemonReadChecks(packs: readonly NeoPack[]): string[] {
+  return packs.flatMap((pack) => pack.daemonReadChecks ?? []);
+}
+
 export function neoPackChecks(packs: readonly NeoPack[]): Record<string, NeoPackCheck> {
   return Object.assign({}, ...[...packs].reverse().map((pack) => pack.checks ?? {}));
 }
@@ -165,7 +170,8 @@ export function requireNeoPackTickable(read: {
   return read.ask &&
     isNeoAskLive(read.ask) &&
     (read.ask.doneItems ?? []).some(
-      (item) => (item.check || item.watch?.length) && !item.removed && item.state !== 'met'
+      (item) =>
+        (item.check || item.watch?.length || item.deploy) && !item.removed && item.state !== 'met'
     )
     ? { value: read.ask }
     : { reason: null };
@@ -223,4 +229,28 @@ export async function readNeoAskPackEvidence(
       )
   );
   return reads.flatMap((read) => read ?? []);
+}
+
+export async function readNeoAskEventTicks(
+  packs: readonly NeoPack[],
+  ask: NeoAsk,
+  event: ExternalEvent,
+  warn: (id: string, error: unknown) => void
+): Promise<{ id: string; evidence: string }[]> {
+  const reads = await Promise.all(
+    packs.map((pack) =>
+      pack.readAskEventTicks?.(ask, event).catch((error: unknown) => {
+        warn(pack.id, error);
+        return [];
+      })
+    )
+  );
+  const ticks = reads.flatMap((read) => read ?? []);
+  return ticks.filter((tick, index) => ticks.findIndex((item) => item.id === tick.id) === index);
+}
+
+export function neoPackAskTopics(packs: readonly NeoPack[], asks: readonly NeoAsk[]): string[] {
+  return [
+    ...new Set(asks.flatMap((ask) => packs.flatMap((pack) => pack.askExternalTopics?.(ask) ?? []))),
+  ];
 }

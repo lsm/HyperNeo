@@ -3,6 +3,7 @@ import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import { NEO_CARD_UNCHECKED_MS } from '../../../../src/lib/neo/card-check.ts';
+import { NEO_WORK_CLOSED_BY_DAEMON } from '../../../../src/lib/neo/card-settle.ts';
 import { z } from 'zod';
 import {
   type DaemonInternalEventMap,
@@ -1329,21 +1330,19 @@ describe('Neo work with a drivers target', () => {
         ref,
         since: reportedAt,
       });
+      expect(followed.report).toStartWith(`${NEO_WORK_CLOSED_BY_DAEMON}${url} merged`);
       expect(followed.report).toContain(`merged ${url}`);
       expect(followed.report).toContain('Earlier report:');
       expect(service.workPrs.get('work-1')?.prs).toEqual([
         { url, state: 'MERGED', checks: 'passing', review: 'approved' },
       ]);
-      expect(notes).toEqual([
-        'work-1:done-check:0',
-        `work-1:done-check:0:pr:1:at:${followed.updatedAt}`,
-      ]);
+      expect(notes).toEqual(['work-1:done-check:0']);
 
       await service.refreshDriverWork();
       expect(statusCalls()).toBe(before + 1);
 
       await service.reconcile('work-1');
-      expect(notes).toHaveLength(2);
+      expect(notes).toHaveLength(1);
     } finally {
       db.close();
     }
@@ -1627,7 +1626,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('a file-pack ask keeps the pull request done check', async () => {
+  test('a file-pack ask still reads the pull request, and the daemon settles the merged card', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/9';
     const reply: unknown = {
@@ -1657,9 +1656,10 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       await service.refreshDriverWork();
-      expect(notes).toHaveLength(1);
-      expect(notes[0][0]).toContain('work-1:done-check:');
-      expect(notes[0][1]).toContain(url);
+      expect(notes).toEqual([]);
+      expect(service.repo.getWork('work-1')?.report).toStartWith(
+        `${NEO_WORK_CLOSED_BY_DAEMON}${url} merged`
+      );
     } finally {
       db.close();
     }
@@ -1854,7 +1854,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('ticks a merged-PR item itself when the card reports its PR merged', async () => {
+  test('settles a card whose PR merged and ticks its merged-PR item without a Neo turn', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6265';
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
@@ -1900,7 +1900,10 @@ describe('Neo work with a drivers target', () => {
         }),
         expect.objectContaining({ id: 'i2', state: 'pending' }),
       ]);
-      expect(notes.at(-1)).toContain('"state":"met"');
+      expect(notes).toEqual([]);
+      expect(service.repo.getWork('work-1')?.report).toStartWith(
+        `${NEO_WORK_CLOSED_BY_DAEMON}${url} merged`
+      );
     } finally {
       db.close();
     }

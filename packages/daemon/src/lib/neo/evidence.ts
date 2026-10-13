@@ -10,6 +10,7 @@ export interface NeoEvidence {
 export type NeoEvidenceRead = {
   evidence: NeoEvidence[];
   read: { ok: boolean; okAt: number };
+  daemonRead?: true;
 };
 
 export function combineNeoEvidenceReads(
@@ -18,6 +19,7 @@ export function combineNeoEvidenceReads(
   const found = reads.filter((read): read is NeoEvidenceRead => !!read);
   if (!found.length) return null;
   return {
+    ...(found.every((read) => read.daemonRead) ? { daemonRead: true as const } : {}),
     evidence: found.flatMap((read) => read.evidence),
     read: {
       ok: found.every((read) => read.read.ok),

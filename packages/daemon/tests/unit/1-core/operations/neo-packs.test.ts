@@ -183,6 +183,7 @@ describe('readEvidence', () => {
     expect(await coding.readEvidence?.(work(`Opened ${pr.url}.`))).toEqual({
       evidence: [expect.objectContaining({ key: pr.url, state: 'ready' })],
       read: { ok: true, okAt: 50 },
+      daemonRead: true,
     });
     expect(recorded).toEqual([[pr]]);
   });
@@ -192,6 +193,7 @@ describe('readEvidence', () => {
     expect(await coding.readEvidence?.(work(null))).toEqual({
       evidence: [expect.objectContaining({ key: pr.url })],
       read: { ok: false, okAt: 10 },
+      daemonRead: true,
     });
     expect(failed).toHaveLength(1);
   });
@@ -500,6 +502,11 @@ describe('neoPackAskCardEvidence', () => {
   ] as NeoWork[];
   const packs = [
     createCodingPack({
+      readDeploy: {
+        readDaemons: async () => [],
+        readChangeCommit: async () => null,
+        readContains: async () => null,
+      },
       readPrs: async () => [],
       prCandidates: async () => [],
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },

@@ -63,8 +63,11 @@ const NEO_CHECK_WORD =
 const NEO_DAEMON_FACT =
   /\b(merged|merge[sd]? (to|into)|PRs?|pull requests?|CI|checks? (pass|green)\w*|standing rules?|cards?)\b|\blaptop\b[^.;]*\bdeploy|\bdeploy\w*\b[^.;]*\blaptop\b/i;
 const NEO_REMOTE_FACT = /\b(iMac|tts|remote|other machine|phone|device)\b/i;
+const NEO_DEPLOY_FACT = /\bdeploy\w*\b/i;
+const NEO_DEVICE_FACT = /\b(phone|device)\b/i;
 
 export function neoDaemonReadsClaim(text: string, context = ''): boolean {
+  if (NEO_DEPLOY_FACT.test(text) && !NEO_DEVICE_FACT.test(`${text}\n${context}`)) return true;
   if (NEO_REMOTE_FACT.test(`${text}\n${context}`) || !NEO_DAEMON_SUBJECT.test(text)) return false;
   return NEO_CHECK_WORD.test(text) || NEO_DAEMON_FACT.test(text);
 }

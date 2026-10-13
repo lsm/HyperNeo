@@ -13,6 +13,7 @@ import {
   type SessionStatusRead,
 } from '../messaging/message-send.ts';
 import { createAttachDaemonOperation } from '../remote-daemons/attach-operation.ts';
+import { createDaemonBuildOperation } from '../remote-daemons/build-operation.ts';
 import {
   createDetachDaemonOperation,
   createListDaemonsOperation,
@@ -64,6 +65,7 @@ export function createDaemonOperationCatalog(
     createProbeDaemonOperation(remoteDaemons),
     createListDaemonsOperation(remoteDaemons),
     createDetachDaemonOperation(remoteDaemons),
+    createDaemonBuildOperation(),
     createGetTaskOperation(tasks.readTask, tasks.readTaskByNumber),
     tasks.create ?? createCreateTaskOperation(tasks.createTask),
     createListTasksOperation(tasks.listTasks),

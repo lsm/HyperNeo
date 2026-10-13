@@ -17,8 +17,16 @@ completed). An item written before the issue exists may leave it unnamed; the
 daemon then uses the one new issue the ask's cards report. An item that waits
 on particular pull requests or issues lists their URLs in watch: the daemon
 ticks it met once every watched pull request has merged and every watched issue
-has closed, so never tick it from an agent's word. To check a pull request or
-issue yourself, read it with neo.github.read {url}.
+has closed, so never tick it from an agent's word. An item that waits on a
+deploy names the change in deploy: {change: the merged pull request or commit
+URL, daemons: the daemons it must run on}. Which daemons count is the
+project's own knowledge (its standing rule, or where its earlier deploys went);
+daemon.build lists the daemons this daemon knows and the commit each runs, and
+leaving daemons out means every one of them. The daemon ticks a deploy item met
+only when it reads back that each of them runs a commit containing the change,
+never on a working agent's report. The daemon ticks watched, deploy and check
+items itself and refuses your tick on them. To check a pull request or issue
+yourself, read it with neo.github.read {url}.
 
 Every request names its project somehow. When the human names a repository,
 prefer a place from work.find whose git remote matches that repository; product

@@ -80,6 +80,7 @@ describe('operation.invoke RPC registration', () => {
       'daemon.probe',
       'daemon.list',
       'daemon.detach',
+      'daemon.build',
       'task.get',
       'task.create',
       'task.list',

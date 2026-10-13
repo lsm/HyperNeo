@@ -2,6 +2,7 @@ import {
   NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
   type NeoAskItem,
+  type NeoAskItemDeploy,
   type NeoAskStatus,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
@@ -26,10 +27,18 @@ export type NeoAskInput = Omit<
   | 'updatedAt'
   | 'settledAt'
 >;
-export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch'>;
+export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'deploy'>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
-  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind' | 'question' | 'watch'
+  | 'removed'
+  | 'options'
+  | 'decision'
+  | 'action'
+  | 'waitCard'
+  | 'kind'
+  | 'question'
+  | 'watch'
+  | 'deploy'
 > & {
   askId: string;
   removed: number;
@@ -40,13 +49,15 @@ type NeoAskItemRow = Omit<
   kind: NeoAskItem['kind'] | null;
   question: string | null;
   watch: string | null;
+  deploy: string | null;
 };
 
 const watchJson = (item: NeoAskItemInput) =>
   item.watch?.length ? JSON.stringify(item.watch) : null;
+const deployJson = (item: NeoAskItemInput) => (item.deploy ? JSON.stringify(item.deploy) : null);
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch`;
+  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch, deploy`;
 
 export interface NeoAskOwner {
   concernId: string;
@@ -66,10 +77,19 @@ export class NeoAskRepository {
       const opened = this.insertAsk(input, now);
       if (opened) {
         const insert = this.db.prepare(`INSERT INTO neo_ask_items
-          (ask_id, id, position, text, state, check_kind, watch, updated_at)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`);
+          (ask_id, id, position, text, state, check_kind, watch, deploy, updated_at)
+          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`);
         items.forEach((item, index) =>
-          insert.run(input.id, `i${index + 1}`, index, item.text, item.check, watchJson(item), now)
+          insert.run(
+            input.id,
+            `i${index + 1}`,
+            index,
+            item.text,
+            item.check,
+            watchJson(item),
+            deployJson(item),
+            now
+          )
         );
       }
       return opened;
@@ -208,10 +228,20 @@ export class NeoAskRepository {
   ): boolean {
     this.db.transaction(() => {
       const insert = this.db.prepare(`INSERT INTO neo_ask_items
-        (ask_id, id, position, text, state, check_kind, watch, added_at, updated_at)
-        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`);
+        (ask_id, id, position, text, state, check_kind, watch, deploy, added_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`);
       for (const item of edit.add)
-        insert.run(askId, item.id, item.position, item.text, item.check, watchJson(item), at, at);
+        insert.run(
+          askId,
+          item.id,
+          item.position,
+          item.text,
+          item.check,
+          watchJson(item),
+          deployJson(item),
+          at,
+          at
+        );
       this.db
         .prepare(`UPDATE neo_ask_items SET removed = 1, updated_at = ?
           WHERE ask_id = ? AND id IN (SELECT value FROM json_each(?))`)
@@ -240,9 +270,9 @@ export class NeoAskRepository {
       if (!closed || !kept) throw new Error('neo-ask-fold-lost');
       const copy = this.db.prepare(`INSERT INTO neo_ask_items
         (ask_id, id, position, text, state, evidence, check_kind, met_by, removed, added_at,
-         updated_at, options, decision, action, wait_card, kind)
+         updated_at, options, decision, action, wait_card, kind, watch, deploy)
         SELECT ?, ?, ?, text, state, evidence, check_kind, met_by, 0, ?, ?, options, decision,
-               action, wait_card, kind
+               action, wait_card, kind, watch, deploy
           FROM neo_ask_items WHERE ask_id = ? AND id = ?`);
       for (const move of moves)
         copy.run(target.id, move.id, move.position, at, at, source.id, move.from);
@@ -476,6 +506,7 @@ export class NeoAskRepository {
             kind,
             question,
             watch,
+            deploy,
             ...item
           }) => ({
             ...item,
@@ -487,6 +518,7 @@ export class NeoAskRepository {
             ...(kind ? { kind } : {}),
             ...(question ? { question } : {}),
             ...(watch ? { watch: JSON.parse(watch) as string[] } : {}),
+            ...(deploy ? { deploy: JSON.parse(deploy) as NeoAskItemDeploy } : {}),
           })
         ),
     }));

@@ -3,7 +3,7 @@ import type { NeoAsk, NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import { neoDoneCheckMessageId, neoWorkReturnMessageId } from './ask-origin.ts';
 import type { NeoEvidence } from './evidence.ts';
 
-export type NeoDoneCheckSkip = 'settled' | 'not_checked' | 'told' | 'waiting';
+export type NeoDoneCheckSkip = 'settled' | 'not_checked' | 'told' | 'waiting' | 'daemon_settled';
 type Gate<T> = { value: T } | { reason: NeoDoneCheckSkip };
 
 export const isNeoAskSettled = (ask: Pick<NeoAsk, 'status'>) =>

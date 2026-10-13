@@ -154,7 +154,8 @@ describe('neoDaemonReadsClaim', () => {
     ['a merge Neo can read', 'Issue filed with its fix merged to dev', true],
     ['a standing rule Neo can read', 'confirm the #6587 stopgap rule was removed', true],
     ['a deploy on this machine', 'The laptop runs the deploy', true],
-    ['another machine', 'laptop and iMac deployed, read back over RPC', false],
+    ['a deploy to another daemon', 'laptop and iMac deployed, read back over RPC', true],
+    ['a deploy to a phone', 'The build is deployed to the phone', false],
     ['a plain claim', 'The photos look right', false],
   ])('%s', (_name, text, expected) => {
     expect(neoDaemonReadsClaim(text)).toBe(expected);

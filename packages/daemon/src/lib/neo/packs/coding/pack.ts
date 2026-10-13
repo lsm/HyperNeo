@@ -1,6 +1,7 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { ExternalEvent } from '../../../external-events/types.ts';
 import type { NeoEvidence } from '../../evidence.ts';
 import type { NeoPack, NeoPackBrief, NeoPackCheck } from '../types.ts';
 import {
@@ -9,9 +10,16 @@ import {
   neoAskRefNews,
   type NeoRefStateReader,
 } from './ask-prs.ts';
-import { readNeoIssueTicks } from './issue-checks.ts';
+import {
+  CODING_CHECK_ISSUE_CLOSED,
+  CODING_CHECK_ISSUE_FILED,
+  CODING_CHECK_ISSUE_SUB_ISSUE,
+  readNeoCardIssueEvidence,
+  readNeoIssueTicks,
+} from './issue-checks.ts';
+import { readNeoDeployTicks, type NeoDeployReaders } from './deploy-checks.ts';
 import { neoCardPrTopics, routeNeoCardPrEvent } from './card-pr-events.ts';
-import { readNeoWatchTicks } from './watch-checks.ts';
+import { neoWatchTopics, readNeoWatchEventTicks, readNeoWatchTicks } from './watch-checks.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
 import {
@@ -42,6 +50,12 @@ export const CODING_PACK_BRIEF: NeoPackBrief = {
 };
 
 export const CODING_CHECK_PR_MERGED = 'coding.pr_merged';
+export const CODING_DAEMON_READ_CHECKS: readonly string[] = [
+  CODING_CHECK_PR_MERGED,
+  CODING_CHECK_ISSUE_FILED,
+  CODING_CHECK_ISSUE_SUB_ISSUE,
+  CODING_CHECK_ISSUE_CLOSED,
+];
 
 export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoEvidence[]) => {
   const prs = evidence.filter((item) => /^https?:\/\//.test(item.key));
@@ -223,19 +237,25 @@ export function createCodingPack(
     runningPrUrls: (workIds: readonly string[]) => Promise<string[]>;
     cardReports: (workIds: readonly string[]) => string[];
     readRefStates: NeoRefStateReader;
+    readDeploy: NeoDeployReaders;
   }
 ): NeoPack {
   return {
     ...CODING_PACK_BRIEF,
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     checks: { [CODING_CHECK_PR_MERGED]: codingPrMergedCheck },
+    daemonReadChecks: CODING_DAEMON_READ_CHECKS,
     externalTopics: (work: NeoWork) => neoCardPrTopics(deps.workPrs.get(work.id)?.prs ?? []),
     routeExternalEvent: routeNeoCardPrEvent,
     readEvidence: async (work: NeoWork) => {
       const { row, ok } = await readNeoCardPrs(deps, work, deps.workPrs.get(work.id), Date.now());
       return row?.prs.length
-        ? { evidence: neoWorkPrEvidence(row.prs), read: { ok, okAt: row.readOkAt } }
-        : null;
+        ? {
+            evidence: neoWorkPrEvidence(row.prs),
+            read: { ok, okAt: row.readOkAt },
+            daemonRead: true as const,
+          }
+        : readNeoCardIssueEvidence(work, deps.readRefStates, Date.now());
     },
     askCardEvidence: (ask: NeoAsk, works: readonly NeoWork[]) =>
       neoAskPrEvidence(
@@ -245,7 +265,13 @@ export function createCodingPack(
       ),
     readAskTicks: (ask: NeoAsk, works: readonly NeoWork[]) =>
       readNeoIssueTicks(ask, works, deps.readRefStates, Date.now()),
-    readAskWatchTicks: (ask: NeoAsk) => readNeoWatchTicks(ask, deps.readRefStates, Date.now()),
+    readAskEventTicks: (ask: NeoAsk, event: ExternalEvent) =>
+      readNeoWatchEventTicks(ask, event, deps.readRefStates),
+    askExternalTopics: neoWatchTopics,
+    readAskWatchTicks: async (ask: NeoAsk) => [
+      ...(await readNeoWatchTicks(ask, deps.readRefStates, Date.now())),
+      ...(await readNeoDeployTicks(ask, deps.readDeploy, Date.now())),
+    ],
     readAskEvidence: async (ask: NeoAsk) => {
       const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));
       const refs = neoAskCardRefs(

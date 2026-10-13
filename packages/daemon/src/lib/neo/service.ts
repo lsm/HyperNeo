@@ -1,4 +1,13 @@
 import {
+  readGithubCommitContains,
+  readGithubDeployChangeCommit,
+  type NeoDeployReaders,
+} from './packs/coding/deploy-checks.ts';
+import {
+  defaultDaemonBuildDeps,
+  readKnownDaemonBuilds,
+} from '../remote-daemons/build-operation.ts';
+import {
   fillPrompt,
   NEO_SESSION_TRACK,
   NEO_WORK_DELEGATED,
@@ -204,6 +213,8 @@ import {
   planNeoPackTicks,
   readNeoAskPackEvidence,
   readNeoAskPackTicks,
+  readNeoAskEventTicks,
+  neoPackAskTopics,
   readNeoPackEvidence,
   requireNeoEvidenceRefresh,
   requireNeoPackTickable,
@@ -216,6 +227,7 @@ import {
   readGithubPrs,
   type NeoWorkPrReader,
 } from './packs/coding/work-prs.ts';
+import { planNeoCardDaemonSettle, requireNeoCardDaemonUnsettled } from './card-settle.ts';
 import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
 import {
   isNeoAskLive,
@@ -415,6 +427,15 @@ export class NeoService {
   readBranchPrs: NeoBranchPrReader = readGithubBranchPrs;
   readWorkRepo: NeoWorkRepoReader = readGithubWorkRepo;
   readRefStates: NeoRefStateReader = readGithubRefStates;
+  knownDaemons: () => string[] = () => [
+    defaultDaemonBuildDeps.self.name,
+    ...defaultDaemonBuildDeps.registry.list().map((daemon) => daemon.daemonId),
+  ];
+  readDeploy: NeoDeployReaders = {
+    readDaemons: () => readKnownDaemonBuilds(defaultDaemonBuildDeps),
+    readChangeCommit: (change) => readGithubDeployChangeCommit(change),
+    readContains: (change, sha, running) => readGithubCommitContains(change, sha, running),
+  };
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
@@ -548,6 +569,21 @@ export class NeoService {
       ['work', 'card'],
       'found'
     )
+    .pipe(planNeoCardDaemonSettle, ['work', 'found'], 'settle')
+    .pipe(
+      (work: NeoWork, card: NeoDoneCheckCard, settle: { report: string } | null) => {
+        if (!settle) return;
+        const settled = this.repo.transitionWork(work.id, work, {
+          status: 'reported',
+          report: settle.report.slice(0, NEO_WORK_REPORT_LIMIT),
+        });
+        if (!settled) return;
+        this.notifyChanged();
+        if (card.ask) this.runAskPackTicks(card.ask.id);
+      },
+      ['work', 'card', 'settle']
+    )
+    .pipe(requireNeoCardDaemonUnsettled, ['settle', 'check'], 'result:check')
     .pipe(
       (work: NeoWork, card: NeoDoneCheckCard, followed: boolean, found: NeoDoneCheckRead) => ({
         told:
@@ -652,6 +688,12 @@ export class NeoService {
         runningPrUrls: (workIds) => this.runningPrUrls(workIds),
         cardReports: (workIds) => workIds.flatMap((id) => this.repo.getWork(id)?.report ?? []),
         readRefStates: (refs) => this.readRefStates(refs),
+        readDeploy: {
+          readDaemons: () => this.readDeploy.readDaemons(),
+          readChangeCommit: (change) => this.readDeploy.readChangeCommit(change),
+          readContains: (change, sha, running) =>
+            this.readDeploy.readContains(change, sha, running),
+        },
       }),
       createLifeAdminPack(),
     ];
@@ -834,6 +876,9 @@ export class NeoService {
       async (payload: ExternalEventPublishedPayload) => {
         await this.routeCardEvent(payload).catch((error) =>
           this.log.warn('Card event delivery pending', error)
+        );
+        await this.tickAsksOnEvent(payload).catch((error) =>
+          this.log.warn('Ask event ticks pending', error)
         );
       },
       { subscriberName: 'neo-card-events', namespaceId: SESSION_EVENT_SCOPE }
@@ -1482,6 +1527,7 @@ export class NeoService {
       );
     }
     for (const ask of this.askRecords.listLive()) {
+      this.watchAskTopics(ask);
       try {
         this.runAskPackTicks(ask.id);
       } catch (error) {
@@ -2031,8 +2077,44 @@ export class NeoService {
   }
 
   followedTopics(): string[] {
-    return this.cardEvents.listActive().map((row) => row.topic);
+    return [
+      ...this.cardEvents.listActive().map((row) => row.topic),
+      ...neoPackAskTopics(this.packs(), this.askRecords.listLive()),
+    ];
   }
+
+  private readonly watchedAskTopics = new Set<string>();
+
+  private watchAskTopics(ask: NeoAsk): void {
+    for (const topic of neoPackAskTopics(this.packs(), [ask])) {
+      if (this.watchedAskTopics.has(topic)) continue;
+      this.watchedAskTopics.add(topic);
+      void this.watchExternalTopic?.(topic).catch((error) => {
+        this.watchedAskTopics.delete(topic);
+        this.log.warn('Ask event source watch pending', error);
+      });
+    }
+  }
+
+  private readonly tickAsksOnEvent = (superpipe({})('neo-ask-event-ticks') as PipelineAPI)
+    .input(['payload'])
+    .pipe(
+      (payload: ExternalEventPublishedPayload) => {
+        const event = this.sessionEvents.getById(payload.eventId)?.event;
+        return event ? { value: event } : { reason: 'event_missing' };
+      },
+      'payload',
+      'result:event'
+    )
+    .pipe(async (event: ExternalEvent) => {
+      for (const ask of this.askRecords.listLive()) {
+        const ticks = await readNeoAskEventTicks(this.packs(), ask, event, (id, error) =>
+          this.log.warn(`Neo pack ${id} event ticks pending`, error)
+        );
+        if (ticks.length) this.writeAskTicks(this.askRecords.get(ask.id) ?? ask, ticks);
+      }
+    }, 'event')
+    .endAsync('event') as (payload: ExternalEventPublishedPayload) => Promise<unknown>;
 
   private readonly routeCardEvent = (superpipe({})('neo-card-event') as PipelineAPI)
     .input(['payload'])

@@ -114,6 +114,12 @@ export interface NeoAskItem {
   kind?: NeoAskItemKind;
   question?: string;
   watch?: string[];
+  deploy?: NeoAskItemDeploy;
+}
+
+export interface NeoAskItemDeploy {
+  change: string;
+  daemons?: string[];
 }
 
 export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';
