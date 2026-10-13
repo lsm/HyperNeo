@@ -8,6 +8,8 @@ import { WorkspaceHistoryRepository } from '../../../src/storage/repositories/wo
 import { createProjectFolderOperation } from '../../../src/lib/workspaces/project-folder-operation';
 import { createOperationRegistry } from '../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../src/lib/operations/invoke';
+import { createFindWorkOperation } from '../../../src/lib/drivers/find-operation';
+import type { PlaceGroup } from '../../../src/lib/drivers/types';
 import { buildHyperneoGroups } from '../../../src/lib/drivers/hyperneo-adapter';
 
 describe('workspace project folders', () => {
@@ -114,7 +116,7 @@ describe('workspace project folders', () => {
     expect(repo.get(third)).toBeNull();
   });
 
-  test('driver discovery carries one tool project identity on all folders and matches its name', () => {
+  test('driver discovery carries one tool project identity on all folders and matches its name', async () => {
     repo.addProjectFolder('/code', '/docs', 'Product');
     const places = ['/code', '/docs'].map((folder) => ({
       folder,
@@ -139,5 +141,27 @@ describe('workspace project folders', () => {
         name: 'Product',
       })
     );
+    const registry = createOperationRegistry([
+      createFindWorkOperation({
+        adapters: () => [{ id: 'hyperneo', capabilities: ['find'], find: () => groups }],
+        remote: {
+          list: () => [],
+          invoke: async () => {
+            throw new Error('unexpected remote');
+          },
+        },
+      }),
+    ]);
+    const result = await invokeOperation(
+      registry,
+      'work.find',
+      { localOnly: true },
+      { source: 'rpc' }
+    );
+    if (result.kind !== 'completed') throw new Error('find did not complete');
+    const found = (result.value as { places: PlaceGroup[] }).places;
+    expect(found).toHaveLength(1);
+    expect(found[0].projectId).toBe(`tool:local:hyperneo:${repo.projects()[0].id}`);
+    expect(found[0].workspaces?.map((place) => place.folder)).toEqual(['/code', '/docs']);
   });
 });
