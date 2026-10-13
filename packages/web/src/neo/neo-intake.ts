@@ -124,13 +124,26 @@ export function neoDraftThumbnails(submission: Submission): Promise<NeoThumbnail
   return making;
 }
 
+export function neoQuoteExcerpt(text: string): string {
+  const chars = Array.from(text.replace(/\r\n?|\u2028|\u2029/g, '\n'));
+  const suffix = '\n… (quote shortened)';
+  return chars.length > 4000
+    ? chars.slice(0, 4000 - suffix.length).join('') + suffix
+    : chars.join('');
+}
+
 function neoDraftText({ text, quote }: NeoDraft): string {
   if (!quote) return text;
-  const quoted = quote.text
-    .split(/\r?\n/)
-    .map((line) => `> ${line}`)
+  const quoted = neoQuoteExcerpt(quote.text)
+    .replace(/[&<>\\`*_[\]{}()#+\-.!|~$:@/]/g, (char) => `&#${char.charCodeAt(0)};`)
+    .split('\n')
+    .map((line) => `> ${line.replace(/^[ \t]/, (char) => `&#${char.charCodeAt(0)};`)}`)
     .join('\n');
-  return `Replying to [${quote.author}](#${quote.anchor}):\n\n${quoted}\n\n${text}`;
+  const anchor = encodeURIComponent(quote.anchor).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+  return `Replying to [${quote.author}](#${anchor}):\n\n${quoted}\n\nYour reply:\n\n${text}`;
 }
 
 export function neoDraftPayload(submission: Submission, thumbnails: readonly NeoThumbnail[] = []) {

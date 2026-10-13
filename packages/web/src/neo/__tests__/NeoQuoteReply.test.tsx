@@ -168,11 +168,30 @@ function quote(author: 'You' | 'Neo') {
   fireEvent.click(button);
   return anchor;
 }
-const quotedText = (author: string, anchor: string, text: string, draft: string) =>
-  `Replying to [${author}](#${anchor}):\n\n${text
+const quotedText = (author: string, anchor: string, text: string, draft: string) => {
+  const excerpt =
+    text === fullReply
+      ? 'Short answer\n\n&#35;&#35; Full evidence\n\nPreserve &#42;&#42;this detail&#42;&#42;&#46;'
+      : originalText;
+  return `Replying to [${author}](#${encodeURIComponent(anchor)}):\n\n${excerpt
     .split('\n')
     .map((line) => `> ${line}`)
-    .join('\n')}\n\n${draft}`;
+    .join('\n')}\n\nYour reply:\n\n${draft}`;
+};
+function deferredSend() {
+  let finish: (response: unknown) => void = () => {};
+  request.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+  );
+  return async () => {
+    await act(async () => finish(accepted(calls()[0][1].input)));
+    await waitFor(() => expect(pending.value[0]?.state).toBe('accepted'));
+    await act(async () => {});
+  };
+}
 
 describe('Neo quote reply through live chat and durable intake', () => {
   it('selects either author, keeps drafts on replacement and quotes full collapsed replies', async () => {
@@ -202,7 +221,9 @@ describe('Neo quote reply through live chat and durable intake', () => {
       { timeout: 90_000 },
     ]);
     expect(document.getElementById(anchor)).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Quoted message' })).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Quoted message' })).toBeNull()
+    );
     await waitFor(() => expect(input.value).toBe(''));
     type('Next message');
     submit();
@@ -273,7 +294,9 @@ describe('Neo quote reply through live chat and durable intake', () => {
       quotedText('Neo', anchor, fullReply, 'Please explain')
     );
     expect(calls()[1][1].input).toEqual(calls()[0][1].input);
-    expect(screen.queryByRole('region', { name: 'Quoted message' })).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Quoted message' })).toBeNull()
+    );
   });
   it('restores failed replies as a cancellable quote with the raw draft on Edit', async () => {
     const input = await open();
@@ -294,5 +317,132 @@ describe('Neo quote reply through live chat and durable intake', () => {
     await waitFor(() => expect(calls()).toHaveLength(2));
     expect(calls()[1][1].input.content).toBe('Please explain');
     expect(calls()[1][1].input.requestId).not.toBe(calls()[0][1].input.requestId);
+  });
+  it.each(['rejected', 'transport', 'invalid'])(
+    'retains the quote after %s failure and clears it after accepted retry',
+    async (failure) => {
+      await open();
+      type('Please explain');
+      quote('Neo');
+      request.mockImplementationOnce(async () => {
+        if (failure === 'transport') throw new Error('Disconnected');
+        return failure === 'invalid' ? { ok: true } : { ok: false, reason: 'Try again.' };
+      });
+      submit();
+      const retry = await screen.findByRole('button', { name: 'Retry' });
+      expect(screen.getByRole('region', { name: 'Quoted message' }).textContent).toContain(
+        fullReply
+      );
+      fireEvent.click(retry);
+      await waitFor(() =>
+        expect(screen.queryByRole('region', { name: 'Quoted message' })).toBeNull()
+      );
+      expect(calls()[1][1].input).toEqual(calls()[0][1].input);
+    }
+  );
+
+  it.each(['unchanged', 'replacement', 'reselection', 'cancel', 'session'])(
+    'preserves newer selection state after late success with %s',
+    async (change) => {
+      await open();
+      type('Pending reply');
+      quote('Neo');
+      const finish = deferredSend();
+      submit();
+      await waitFor(() => expect(calls()).toHaveLength(1));
+      expect(screen.getByRole('region', { name: 'Quoted message' }).textContent).toContain(
+        fullReply
+      );
+      if (change === 'replacement') quote('You');
+      if (change === 'cancel' || change === 'reselection') {
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel quote' }));
+        if (change === 'reselection') quote('Neo');
+      }
+      if (change === 'session') {
+        await act(async () => {
+          sessionId.value = 'holder';
+          store.activeSessionId.value = 'holder';
+          store.sessionState.value = nativeState('holder');
+        });
+        quote('You');
+      }
+      type('New draft');
+      await finish();
+      if (change === 'cancel' || change === 'unchanged') {
+        await waitFor(() =>
+          expect(screen.queryByRole('region', { name: 'Quoted message' })).toBeNull()
+        );
+      } else {
+        expect(screen.getByRole('region', { name: 'Quoted message' }).textContent).toContain(
+          change === 'reselection' ? fullReply : originalText
+        );
+      }
+      expect(screen.getByRole('textbox', { name: 'Message Neo' })).toHaveProperty(
+        'value',
+        'New draft'
+      );
+    }
+  );
+
+  it('uses native accessible buttons and preserves the draft through keyboard cancellation', async () => {
+    const input = await open();
+    type('Keep my draft');
+    const button = screen.getByRole('button', { name: 'Quote Neo’s message' }) as HTMLButtonElement;
+    expect(button.type).toBe('button');
+    expect(button.tabIndex).toBe(0);
+    button.focus();
+    fireEvent.click(button, { detail: 0 });
+    expect(document.activeElement).toBe(input);
+    expect(input.getAttribute('aria-describedby')).toBe('neo-quote-label');
+    expect(document.getElementById('neo-quote-label')).toHaveProperty(
+      'textContent',
+      'Replying to Neo'
+    );
+    expect(document.getElementById('neo-quote-label')?.getAttribute('role')).toBe('status');
+    const cancel = screen.getByRole('button', { name: 'Cancel quote' }) as HTMLButtonElement;
+    expect(cancel.type).toBe('button');
+    expect(cancel.tabIndex).toBe(0);
+    cancel.focus();
+    fireEvent.click(cancel, { detail: 0 });
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('Keep my draft');
+    quote('Neo');
+    fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Escape', keyCode: 229 });
+    expect(screen.getByRole('region', { name: 'Quoted message' })).toBeTruthy();
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: 'Quoted message' })).toBeNull();
+    expect(input.value).toBe('Keep my draft');
+    expect(document.activeElement).toBe(input);
+    expect(calls()).toHaveLength(0);
+  });
+
+  it('renders a bounded quote preview as literal text', async () => {
+    const publication = conversation.entries[1];
+    if (publication.kind !== 'publication') throw new Error('Expected publication fixture');
+    const previous = publication.publication;
+    publication.publication = {
+      ...previous,
+      fullText: '<img src=x onerror=alert(1)> **literal**\r' + 'a'.repeat(4500),
+    };
+    try {
+      await open();
+      type('Keep this');
+      quote('Neo');
+      const preview = screen
+        .getByRole('region', { name: 'Quoted message' })
+        .querySelector('blockquote')!;
+      expect(preview.textContent).toHaveLength(4000);
+      expect(preview.textContent).toContain('<img src=x onerror=alert(1)> **literal**\n');
+      expect(preview.textContent).toMatch(/\n… \(quote shortened\)$/);
+      expect(preview.querySelector('img')).toBeNull();
+      expect(preview.querySelector('strong')).toBeNull();
+      expect(screen.getByRole('textbox', { name: 'Message Neo' })).toHaveProperty(
+        'value',
+        'Keep this'
+      );
+    } finally {
+      publication.publication = previous;
+    }
   });
 });

@@ -14,7 +14,7 @@ import { NeoIcon } from './NeoIcon.tsx';
 import { type NeoPreference, NeoPreferences } from './NeoPreferences.tsx';
 import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
 import { attachmentMessage, NEO_FILE_ACCEPT, useNeoAttachments } from './neo-attachments.ts';
-import type { createNeoIntakeClient, NeoQuote } from './neo-intake.ts';
+import { type createNeoIntakeClient, type NeoQuote, neoQuoteExcerpt } from './neo-intake.ts';
 import { useCoarsePointer } from './useCoarsePointer.ts';
 import { VoiceDraftPreview } from '../components/voice/VoiceDraftPreview.tsx';
 
@@ -203,16 +203,18 @@ export function NeoComposer({
           class="mb-3 flex gap-2 rounded-xl border-l-2 border-accent bg-fill-soft p-3"
         >
           <div class="min-w-0 flex-1">
-            <p class="mb-1 text-xs font-medium text-accent">Replying to {quote.author}</p>
+            <p id="neo-quote-label" role="status" class="mb-1 text-xs font-medium text-accent">
+              Replying to {quote.author}
+            </p>
             <blockquote class="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-sm text-fg-muted">
-              {quote.text}
+              {neoQuoteExcerpt(quote.text)}
             </blockquote>
           </div>
           <button
             type="button"
             aria-label="Cancel quote"
-            title="Cancel quote"
-            class="self-start rounded-full p-1.5 text-fg-muted hover:bg-fill-strong hover:text-fg"
+            title="Cancel quote (Esc)"
+            class="self-start rounded-full p-1.5 text-fg-muted hover:bg-fill-strong hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             onClick={() => {
               onCancelQuote?.();
               thought.current?.focus();
@@ -259,6 +261,7 @@ export function NeoComposer({
           ref={thought}
           id="neo-thought"
           aria-label="Message Neo"
+          aria-describedby={quote ? 'neo-quote-label' : undefined}
           value={draft}
           onInput={(event) => onDraft(event.currentTarget.value)}
           onPaste={(event) => {
@@ -269,6 +272,11 @@ export function NeoComposer({
             }
           }}
           onKeyDown={(event) => {
+            if (event.key === 'Escape' && quote && !event.isComposing && event.keyCode !== 229) {
+              event.preventDefault();
+              onCancelQuote?.();
+              return;
+            }
             if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
             if (
               neoEnterSends(
