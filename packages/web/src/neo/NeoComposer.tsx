@@ -107,6 +107,8 @@ export function NeoComposer({
   currentSession.current = sessionId;
   const currentDraft = useRef(draft);
   currentDraft.current = draft;
+  const currentQuote = useRef(quote);
+  currentQuote.current = quote;
   useLayoutEffect(
     () => () => {
       alive.current = false;
@@ -178,7 +180,15 @@ export function NeoComposer({
     }
     try {
       const outcome = await submitVoiceSendIntent(hub, record, composed);
-      if (outcome.kind === 'accepted' && currentDraft.current === draft) onDraft('');
+      if (
+        outcome.kind === 'accepted' &&
+        alive.current &&
+        currentSession.current === sessionId &&
+        currentDraft.current === draft &&
+        draft === record.sendDraft &&
+        !currentQuote.current
+      )
+        onDraft('');
       else if (outcome.kind === 'refused' && alive.current) onError(outcome.reason);
       return outcome;
     } catch {
