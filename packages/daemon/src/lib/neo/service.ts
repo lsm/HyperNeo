@@ -142,6 +142,7 @@ import {
   sendNeoWorkContinue,
 } from './continue-work.ts';
 import {
+  isNeoCardAwaitingPr,
   isNeoCardDoneWhenMet,
   isNeoHumanInputSince,
   neoCardStalledWakes,
@@ -1714,6 +1715,7 @@ export class NeoService {
               title: work.title,
               status: work.status,
               progress: `${this.workProgress(work)}:${this.workContinues.get(work.id)?.count ?? 0}`,
+              awaited: isNeoCardAwaitingPr(this.workPrs.get(work.id)?.prs ?? []),
             },
           ]
         : [];

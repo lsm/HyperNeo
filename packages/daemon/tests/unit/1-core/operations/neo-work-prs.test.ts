@@ -134,7 +134,18 @@ describe('neoWorkPrEvidence', () => {
     ['an open PR with changes requested', { review: 'changes_requested' }, 'failed'],
     ['an approved PR with green checks', { review: 'approved' }, 'ready'],
     ['an approved PR with no checks', { checks: 'none', review: 'approved' }, 'ready'],
-    ['an open PR waiting for review', {}, 'pending'],
+    ['an open PR waiting for review', {}, 'waiting'],
+    [
+      'an open PR waiting only for its required approval',
+      { blockers: ['needs 1 approving review, has 0'] },
+      'waiting',
+    ],
+    ['an open PR with conflicts', { blockers: ['merge conflicts with dev'] }, 'pending'],
+    [
+      'an open PR with an unresolved thread',
+      { blockers: ['1 unresolved review thread'] },
+      'pending',
+    ],
   ])('%s', (_label, overrides, state) => {
     expect(neoWorkPrEvidence([{ ...pr, ...overrides }])[0].state).toBe(state);
   });
@@ -168,7 +179,7 @@ describe('neoAskPrEvidence', () => {
       ).map((item) => [item.key, item.state])
     ).toEqual([
       [pr.url, 'done'],
-      [other.url, 'pending'],
+      [other.url, 'waiting'],
     ]);
   });
 
