@@ -31,6 +31,7 @@ export interface NeoPackFragment {
 }
 
 export interface NeoPack extends NeoPackBrief {
+  prepareExecution?: NeoExecutionPreparation;
   instructions(ask: NeoAsk | null): string | null;
   readEvidence?(work: NeoWork): Promise<NeoEvidenceRead | null>;
   reportEvidence?(work: NeoWork): NeoEvidence[];
@@ -54,3 +55,20 @@ export interface NeoPack extends NeoPackBrief {
     subscriptions: readonly NeoCardEventSubscription[]
   ): NeoPackEventRoute | null;
 }
+
+export type NeoExecutionPreparation = (
+  request: {
+    directory: string;
+    destination: string;
+    parameters: Readonly<Record<string, unknown>>;
+  },
+  effects: {
+    run: (
+      command: readonly string[],
+      directory: string
+    ) => Promise<{ code: number; stdout: string; stderr: string }>;
+  }
+) => Promise<
+  | { ok: true; value: { directory: string; release: () => Promise<void> } }
+  | { ok: false; reason: string }
+>;

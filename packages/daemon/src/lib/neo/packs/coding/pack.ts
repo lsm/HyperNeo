@@ -1,4 +1,5 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
+import { prepareCodingExecution } from './prepare-execution.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { ExternalEvent } from '../../../external-events/types.ts';
@@ -230,6 +231,7 @@ export function createCodingPack(
 ): NeoPack {
   return {
     ...CODING_PACK_BRIEF,
+    prepareExecution: prepareCodingExecution,
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     checks: { [CODING_CHECK_PR_MERGED]: codingPrMergedCheck },
     externalTopics: (work: NeoWork) => neoCardPrTopics(deps.workPrs.get(work.id)?.prs ?? []),

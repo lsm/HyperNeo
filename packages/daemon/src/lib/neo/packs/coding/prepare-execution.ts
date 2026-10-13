@@ -1,0 +1,145 @@
+import { isAbsolute, resolve } from 'node:path';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import type { NeoExecutionPreparation } from '../types.ts';
+
+type Request = Parameters<NeoExecutionPreparation>[0];
+type Effects = Parameters<NeoExecutionPreparation>[1];
+type Failure = { ok: false; reason: string };
+type Gate<T> = { value: T } | { reason: Failure };
+type Plan = { directory: string; destination: string; ref: string; commits: string[] };
+type CommandResult = Awaited<ReturnType<Effects['run']>>;
+
+function refuse(reason: string): { reason: Failure } {
+  return { reason: { ok: false, reason } };
+}
+
+function planPreparation(request: Request): Gate<Plan> {
+  const { target, prerequisiteCommits = [] } = request.parameters;
+  if (
+    !isAbsolute(request.directory) ||
+    !isAbsolute(request.destination) ||
+    resolve(request.directory) === resolve(request.destination)
+  )
+    return refuse('invalid_preparation_directory');
+  if (
+    typeof target !== 'string' ||
+    !target ||
+    target.startsWith('-') ||
+    target === '@' ||
+    /[\s\x00-\x1f\x7f~^:?*\[\\]/.test(target) ||
+    target.includes('..') ||
+    target.includes('@{') ||
+    target
+      .split('/')
+      .some((part) => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock'))
+  )
+    return refuse('invalid_preparation_target');
+  if (
+    !Array.isArray(prerequisiteCommits) ||
+    !prerequisiteCommits.every(
+      (commit) => typeof commit === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(commit)
+    )
+  )
+    return refuse('invalid_prerequisite_commits');
+  return {
+    value: {
+      directory: request.directory,
+      destination: request.destination,
+      ref: `refs/remotes/origin/${target}`,
+      commits: [...prerequisiteCommits],
+    },
+  };
+}
+
+function requireCommand(result: CommandResult, phase: string): Gate<CommandResult> {
+  return result.code === 0 ? { value: result } : refuse(`${phase}: ${result.stderr.trim()}`);
+}
+
+function requireCommit(result: CommandResult): Gate<string> {
+  const commit = result.stdout.trim();
+  return /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(commit)
+    ? { value: commit }
+    : refuse('invalid_prepared_commit');
+}
+
+export const prepareCodingExecution = (superpipe({})('neo-coding-prepare-execution') as PipelineAPI)
+  .input(['request', 'effects'])
+  .pipe(planPreparation, 'request', 'result:prepared')
+  .pipe((prepared: Plan) => prepared, 'prepared', 'plan')
+  .pipe(
+    async (plan: Plan, effects: Effects) =>
+      effects.run(
+        [
+          'git',
+          'fetch',
+          '--no-tags',
+          'origin',
+          `+refs/heads/${plan.ref.slice('refs/remotes/origin/'.length)}:${plan.ref}`,
+        ],
+        plan.directory
+      ),
+    ['plan', 'effects'],
+    'fetched'
+  )
+  .pipe(
+    (fetched: CommandResult) => requireCommand(fetched, 'fetch_failed'),
+    'fetched',
+    'result:prepared'
+  )
+  .pipe(
+    async (plan: Plan, effects: Effects) =>
+      effects.run(['git', 'rev-parse', '--verify', `${plan.ref}^{commit}`], plan.directory),
+    ['plan', 'effects'],
+    'resolved'
+  )
+  .pipe(
+    (resolved: CommandResult) => requireCommand(resolved, 'resolve_failed'),
+    'resolved',
+    'result:prepared'
+  )
+  .pipe(requireCommit, 'prepared', 'result:prepared')
+  .pipe((prepared: string) => prepared, 'prepared', 'commit')
+  .pipe(
+    async (plan: Plan, commit: string, effects: Effects): Promise<Gate<string>> => {
+      for (const prerequisite of plan.commits) {
+        const checked = await effects.run(
+          ['git', 'merge-base', '--is-ancestor', prerequisite, commit],
+          plan.directory
+        );
+        if (checked.code !== 0) return refuse(`prerequisite_not_in_base: ${prerequisite}`);
+      }
+      return { value: commit };
+    },
+    ['plan', 'commit', 'effects'],
+    'result:prepared'
+  )
+  .pipe(
+    async (plan: Plan, commit: string, effects: Effects) =>
+      effects.run(['git', 'worktree', 'add', '--detach', plan.destination, commit], plan.directory),
+    ['plan', 'commit', 'effects'],
+    'added'
+  )
+  .pipe(
+    (added: CommandResult) => requireCommand(added, 'worktree_failed'),
+    'added',
+    'result:prepared'
+  )
+  .pipe(
+    (plan: Plan, effects: Effects) => ({
+      ok: true,
+      value: {
+        directory: plan.destination,
+        release: async () => {
+          const removed = await effects.run(
+            ['git', 'worktree', 'remove', '--force', plan.destination],
+            plan.directory
+          );
+          if (removed.code !== 0)
+            throw new Error(`worktree_release_failed: ${removed.stderr.trim()}`);
+        },
+      },
+    }),
+    ['plan', 'effects'],
+    'prepared'
+  )
+  .endAsync('prepared') as NeoExecutionPreparation;
