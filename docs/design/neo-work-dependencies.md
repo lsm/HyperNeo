@@ -5,13 +5,11 @@ Design only; implementation requires separately scoped issues and PRs.
 
 ## Problem and boundary
 
-Neo can propose an entire epic up front, but a prompt saying “wait for the earlier card”
-is not an execution gate. Dependent cards can start before their prerequisites deliver the
-required outcome. Planning every card up front is useful; launching every worker is not.
+Neo can plan an epic up front, but “wait for the earlier card” is not an execution gate.
+Dependent workers must wait for their prerequisites' outcomes.
 
-Add dependencies owned by `neo.work`, with deterministic daemon admission and dispatch.
-Neo proposes the plan and explains changes. The daemon decides eligibility from persisted
-ask items, approval, and pack checks, without needing a Neo LLM turn.
+Neo proposes `neo.work` dependencies; deterministic daemon admission and dispatch use
+persisted ask items, approval, and pack checks without needing a Neo LLM turn.
 
 Do not reuse Space task tables, workflow scheduling, statuses, or completion logic. Neo cards
 and external drivers are a different system. SQLite transactions and the durable job queue
@@ -33,29 +31,30 @@ item bound to it being `met`, with evidence valid for the current item definitio
 revision. A prerequisite must have at least one bound outcome item; an empty set is never
 complete. Questions, approval controls, and other interaction items are not outcome contracts.
 
-The receipt is the existing item state, evidence, and provenance (`metBy`) plus the ask
-revision. Reuse the derived-state work's revision and approval surfaces rather than inventing
-another plan version. The implementation must confirm those surfaces are present on its
-fresh `dev` base; the original inspection at `fc44fd0b` has approval but no explicit revision
-field. This design depends on the ask revision slice, not on timestamp comparisons.
+There is no existing per-ask revision: snapshot `rev` / `sinceRev` is a global cursor.
+Slice 1 adds integer `neo_asks.revision`, bumped only by material edits: outcome text, check,
+watch, bindings, edges, or card scope. Approval sets `approved_revision` to that revision;
+admission requires equality as well as valid existing approval. Each daemon tick or human
+answer records a definition hash of the item's text, check, and watch alongside evidence and
+`metBy`. Use a deterministic canonical encoding. Unchanged items retain valid evidence when
+other edits bump the ask; a stale in-flight tick cannot verify a changed definition.
 
 A worker report, report prefix, or Neo's assertion alone cannot tick a dependency outcome.
 Registered checks tick items through the existing daemon event/timed-read paths. Evidence
-accepted by those checks must verify the item's exact outcome; parsing an asserted worker
-confirmation is not independent verification. Explicit human answers use `neo.ask.question`
+accepted by those checks must verify the item's exact outcome. Explicit human answers use `neo.ask.question`
 and are bound to the question's item definition and revision. There is no new confirm flow.
 
 For already-met items, admission validates the evidence against the current outcome definition.
 An unrelated ask edit may preserve unchanged verified items; an outcome or binding edit
 invalidates affected evidence and approval. Removing all bound items must block, not make
-completion vacuously true. Reuse ask revision transitions for this policy.
+completion vacuously true. A changed `deliveredBy` binding clears its evidence even when the
+definition hash is unchanged. Existing evidence without a hash needs reverification before admission.
 
 ## Core: bindings, graph, and registry
 
-Persist item-to-card bindings on the existing ask items and edges in a Neo-owned dependency
-table. Extend `neo_work_driver_targets` for durable admission/attempt bookkeeping; do not add
-another dispatch table. Keep existing execution statuses and derive dependency blockers
-separately from whether a worker has reported.
+Persist bindings on ask items and edges in a Neo-owned dependency table. Extend
+`neo_work_driver_targets` for admission/attempt bookkeeping, without another dispatch table.
+Keep execution statuses and derive blockers separately from worker reports.
 
 Validate a graph edit in one transaction:
 
@@ -64,9 +63,15 @@ Validate a graph edit in one transaction:
 - No self-edge, duplicate edge, or cycle is accepted.
 - Card, bindings, edges, and affected ask revisions are persisted before the result is exposed.
 
-Cross-ask edges are allowed within the daemon after ownership checks. This is not a distributed
-cross-daemon graph. Superseding a card does not silently redirect edges. Dependencies and
+Cross-ask edges are allowed after ownership checks; approval stays per ask. The dependent's
+approval never authorizes work in its prerequisite's ask. This is not a cross-daemon graph.
+Superseding a card does not silently redirect edges. Dependencies and
 bindings cannot be materially changed after dispatch; changed work requires a new card.
+
+Neo supplies `dependsOn` through `neo.work.propose` / `neo.work.start`, and `deliveredBy` on
+items through `neo.ask.open` / `neo.ask.edit`. Start may validate and persist pre-dispatch graph
+edits, but cannot approve the resulting revision itself. Invalid plans return typed refusals
+with blockers. Build referenced cards/items before adding edges; never expose partially validated plans.
 
 Make check kinds pack-registered. `NeoPack.checks` already provides the contribution seam;
 remove the hard-coded operation enum, shared closed union, and database CHECK constraint that
@@ -88,7 +93,7 @@ Named stages are:
 
 1. All prerequisites' bound outcome items are met with valid evidence.
 2. The card is active and authorized by the owning ask's approval and current revision.
-3. The target has execution capacity.
+3. Resolve a live target from the staffing pool (#6710) and check its execution capacity.
 4. The pack's optional preparation stage succeeds.
 5. A durable attempt is claimed and the driver handoff is recorded.
 
@@ -97,6 +102,9 @@ the daemon dispatches without another click or LLM instruction. Approval arms on
 the approved ask revision; later scope additions require renewed approval. Existing expiry
 and cancellation rules still apply. A target override never bypasses prerequisite checks.
 
+Archived or ended targets trigger retargeting within the authorized staffing pool, not failure
+or an archived-target blocker. If no eligible live worker exists, retain a capacity blocker.
+The durable job runs these stages in order; enqueueing it does not claim a worker attempt.
 Preparation can take time. Recheck revisions, approval, cancellation, and prerequisite evidence
 before the first worker side effect; never hold a database transaction over an external read.
 Preparation resources need cleanup if admission becomes stale. Use durable claims and database
@@ -106,19 +114,19 @@ compare-and-set transitions, not only an in-memory pending set.
 flowchart TD
     P[Neo proposes cards and bound outcome items] --> V[Daemon validates bindings and edges]
     V --> S[Persist plan and approved intent]
-    S --> G{Prerequisite items verified met?}
+    S --> J[Durable admission job]
+    J --> G{Prerequisite items verified met?}
     G -->|No| B[Blocked: no worker or capacity reservation]
-    G -->|Yes| A{Authorized and target available?}
+    G -->|Yes| A{Authorized and live target available?}
     A -->|No| B
-    A -->|Yes| J[Durable admission job]
-    J --> K[Pack preparation stage]
+    A -->|Yes| K[Pack preparation stage]
     K --> D[Recheck gate and claim handoff]
     D --> W[Driver starts work]
     W --> E[Existing pack checks or human answer]
     E --> M[Tick bound ask item with evidence]
     M --> Q[Atomically enqueue affected dependents]
-    Q --> G
-    B -. Item or availability event .-> G
+    Q --> J
+    B -. Item or availability event .-> J
 ```
 
 When an item becomes `met`, persist its evidence and enqueue affected dependents in the same
@@ -172,8 +180,10 @@ resource-owning execution seam; packs supply domain preparation requirements.
 | Pack | Outcome checks | Preparation |
 | --- | --- | --- |
 | coding | Existing `coding.pr_merged`, issue/deployment checks, and watch readers | Fetch and prepare a fresh required target-branch checkout. |
-| life-admin | Existing `life-admin.confirmed`, corrected to require trustworthy evidence or a human answer | None required. |
+| life-admin | Existing `life-admin.confirmed`; no behavior change in these slices | None required. |
 | future packs, such as legal | Register their own checks and evidence readers | Their own stage or none. |
+
+Life-admin confirmation evidence is a separate audit/fix in [#6768](https://github.com/lsm/HyperNeo/issues/6768).
 
 ### Coding pack
 
@@ -187,6 +197,8 @@ A merged-outcome check validates the intended repository, issue/PR identity, req
 and actual merge evidence. Green CI, review approval, a worker report, and issue closure as
 not planned do not meet it. Tighten the existing checks rather than adding a second receipt
 system. A watch becoming settled is not interchangeable with the required successful outcome.
+Coding guidance teaches Neo to bind a `coding.pr_merged` item watching each card's issue before
+a PR exists; `ask-prs.ts` already resolves an issue's `closedByPullRequestsReferences`.
 
 The preparation stage fetches through the documented authenticated repository path, then
 creates an isolated checkout from `origin/<target>`, not the user's local `HEAD`. Refuse start
@@ -211,19 +223,17 @@ flowchart LR
     E --> F[6762: reorganize work]
 ```
 
-All planning cards can exist at once. Only the current eligible stage gets workers, and the
-coding pack prepares a base containing the earlier merges.
+All planning cards can exist at once; eligible workers start on bases containing earlier merges.
 
 ## Implementation order and tests
 
-These are ownership milestones, not large PR budgets. Within each, follow Pin → Extract →
-Build → Wire → Delete, measure diffs from fresh `dev`, and create one mapped issue and explicit
-merge contract per slice. Each production PR stays within the repository's measured budget.
+Within each milestone, follow Pin → Extract → Build → Wire → Delete, measure fresh `dev`
+diffs, and create one mapped issue and merge contract per slice within the production budget.
 
 0. **Coding pack fresh base:** fetch and prepare the required remote target for every coding
-   card; refuse failed fetches. This is valuable independently of dependencies.
-1. **Binding and registry:** item-to-card bindings, pack-registered kinds, and revision/evidence
-   validity, integrating the existing derived-state revision work first if needed.
+   card; refuse failed fetches. Independent of this design's merge and all subsequent slices.
+1. **Binding and registry:** bindings, pack-registered kinds, per-ask `revision` and
+   `approved_revision`, definition hashes, and evidence validity. No external revision slice exists.
 2. **The gate:** edges, the admission pipeline on every start path, durable claims, and dispatch
    on item met. Retain conservative uncertain-start blocking from the first wired version.
 3. **Visibility:** dependency blockers in the ask view, web, and iOS; exclude blocked work from
@@ -233,9 +243,8 @@ merge contract per slice. Each production PR stays within the repository's measu
 Test chains, fan-in/fan-out, cycles, transactional edits, empty/removed items, pack registration
 and unloading, false worker reports, human answers, revision-bound approval, folds, and every
 start path. Test duplicate events/concurrent starts, cancellation/supersession, restart and
-uncertain handoffs, and capacity changes. Coding tests cover unrelated PRs, wrong base, failed
+uncertain handoffs, capacity changes, and archived-target retargeting. Coding tests cover unrelated PRs, wrong base, failed
 fetch, and fresh bases containing prerequisite merge commits. Verify approved plans advance
 while Neo is idle. Web/iOS checks cover blocker links and automatic-start visibility.
 
-Run required repository checks with every implementation slice. This document changes no
-runtime behavior, creates no execution cards, and authorizes no deployment.
+Run required checks per slice. This document changes no runtime behavior or execution cards.
