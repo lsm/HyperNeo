@@ -125,3 +125,12 @@ export const NeoAskViewSchema = z.object({
     .optional(),
   humanActions: z.array(HumanAction).optional(),
 } satisfies ZodShape<NeoAskView>);
+
+export const NeoAskStateViewSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  outcome: z.string().nullable(),
+  items: z.array(z.object({ id: z.string(), state: z.string(), text: z.string().optional() })),
+  cards: z.array(z.object({ id: z.string(), title: z.string(), status: z.string() })),
+  humanActions: z.array(HumanAction),
+});
