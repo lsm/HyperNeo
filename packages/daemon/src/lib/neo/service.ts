@@ -333,6 +333,7 @@ type NeoWorkPrCard = {
   session: boolean;
   packEvidence: boolean;
   toldAt: number | null;
+  doneWhenMet: boolean;
 };
 type NeoWorkPrRefreshed = { read: NeoEvidenceRead | null; failed: boolean };
 type NeoNeedsYouCard = {
@@ -1833,6 +1834,7 @@ export class NeoService {
           session: !!this.db.getSession(refresh.work.originSessionId),
           packEvidence: this.askPackReadsReport(ask),
           toldAt: this.workChecks.get(refresh.work.id)?.toldAt ?? null,
+          doneWhenMet: isNeoCardDoneWhenMet(refresh.work, ask),
         };
       },
       'refresh',

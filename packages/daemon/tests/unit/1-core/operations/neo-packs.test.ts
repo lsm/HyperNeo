@@ -563,6 +563,12 @@ describe('requireNeoEvidenceRefresh', () => {
       { value: expect.objectContaining({ row: null }) },
     ],
     [
+      'a card whose done list is met',
+      refresh(),
+      { goal: true, session: true, row: due, packEvidence: true, toldAt: null, doneWhenMet: true },
+      { reason: 'not_due' },
+    ],
+    [
       'a card with neither a row nor an evidence-reading pack',
       refresh(),
       { goal: true, session: true, row: null, packEvidence: false, toldAt: null },

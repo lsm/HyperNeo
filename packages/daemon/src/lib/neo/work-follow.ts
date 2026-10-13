@@ -4,6 +4,7 @@ import type { WorkRef, WorkStatus } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import { isNeoAskLive } from './done-check.ts';
 import { readDriverFollowUp, readDriverLive } from './driver-work.ts';
+import { isNeoCardDoneWhenMet } from './card-wake.ts';
 
 type Gate<T> = { value: T } | { reason: null };
 
@@ -16,7 +17,7 @@ const NEO_WORK_LIVE_FINAL: readonly WorkStatus[] = ['done', 'failed', 'stopped']
 export type NeoWorkFollowCard = {
   ref: WorkRef | null;
   goal: boolean;
-  ask: Pick<NeoAsk, 'status'> | null;
+  ask: Pick<NeoAsk, 'status' | 'doneItems'> | null;
   readAt: number | null;
   superseded: boolean;
   live: WorkStatus | null;
@@ -33,7 +34,7 @@ export function requireNeoWorkFollow(
   const due = card.readAt === null || now - card.readAt >= NEO_WORK_FOLLOW_READ_MS;
   const liveOpen = card.live !== null && !NEO_WORK_LIVE_FINAL.includes(card.live);
   return work.status === 'reported' &&
-    !isNeoWorkClosedDone(work.report) &&
+    !isNeoCardDoneWhenMet(work, card.ask) &&
     card.ref &&
     !card.superseded &&
     (followsUp(work, card) || liveOpen) &&
