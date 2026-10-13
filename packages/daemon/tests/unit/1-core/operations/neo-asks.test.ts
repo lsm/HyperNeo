@@ -877,35 +877,22 @@ describe('neo.ask operations', () => {
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
   });
 
-  test('a question on a full checklist is refused until Neo makes room for it', async () => {
+  test('a question adds its item however long the checklist is', async () => {
     const askId = await openAsk();
     await invoke('neo.ask.edit', {
       askId,
       add: Array.from({ length: 10 }, (_, index) => ({ text: `step ${index}` })),
     });
-    const waiting = {
-      id: askId,
-      outcome: 'waiting',
-      summary: 'Pick the release date.',
-      evidence: 'Two dates fit.',
-      question: 'Which release date?',
-      options: ['Friday', 'Monday'],
-    };
-    expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('checklist_full') },
-    });
     expect(
-      await invoke('neo.ask.question', {
-        askId,
-        question: waiting.question,
-        options: waiting.options,
-        kind: 'decision',
+      await invoke('neo.ask.settle', {
+        id: askId,
+        outcome: 'waiting',
+        summary: 'Pick the release date.',
+        evidence: 'Two dates fit.',
+        question: 'Which release date?',
+        options: ['Friday', 'Monday'],
       })
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('checklist_full') } });
-    await invoke('neo.ask.edit', { askId, remove: ['i3'] });
-    expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
-      value: { ok: true, ask: { status: 'waiting', waitingItem: 'i13' } },
-    });
+    ).toMatchObject({ value: { ok: true, ask: { status: 'waiting', waitingItem: 'i13' } } });
   });
 
   test("an item Neo only has an agent's word for is reported, never met", async () => {
@@ -1403,35 +1390,29 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test('a fold keeps every item past twelve, and the full ask can still be trimmed', async () => {
-    const targetId = await openAsk();
-    await invoke('neo.ask.edit', {
-      askId: targetId,
-      add: Array.from({ length: 9 }, (_, index) => ({ text: `slice ${index}` })),
+  test('an ask holds as many items as it needs through open, edit and fold', async () => {
+    const steps = (from: number, count: number) =>
+      Array.from({ length: count }, (_, index) => ({ text: `step ${from + index}` }));
+    const opened = await invoke('neo.ask.open', { ...opening, doneItems: steps(1, 13) });
+    const targetId = opened.value!.ask!.id;
+    expect(opened.value!.ask!.doneItems).toHaveLength(13);
+    expect(await invoke('neo.ask.edit', { askId: targetId, add: steps(14, 12) })).toMatchObject({
+      value: { ok: true },
     });
+    expect(service.askRecords.get(targetId)!.doneItems).toHaveLength(25);
     const later: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'ask-2' } };
     const duplicate = await invoke(
       'neo.ask.open',
-      { ...opening, requestKey: 'dup', doneWhen: '- plan updated\n- stall fixed\n- merges owned' },
+      { ...opening, requestKey: 'dup', doneItems: steps(26, 15) },
       later
     );
-    const sourceId = duplicate.value!.ask!.id;
-    expect(await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId })).toMatchObject({
-      value: { ok: true },
-    });
-    const items = service.askRecords.get(targetId)!.doneItems!;
-    expect(items.filter((item) => !item.removed)).toHaveLength(14);
-    expect(items.slice(-3).map((item) => item.text)).toEqual([
-      'plan updated',
-      'stall fixed',
-      'merges owned',
-    ]);
     expect(
-      await invoke('neo.ask.edit', { askId: targetId, add: [{ text: 'more' }] })
-    ).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('holds 14 items from a fold') },
-    });
-    expect(await invoke('neo.ask.edit', { askId: targetId, remove: ['i3'] })).toMatchObject({
+      await invoke('neo.ask.fold', { askId: duplicate.value!.ask!.id, intoAskId: targetId })
+    ).toMatchObject({ value: { ok: true } });
+    const items = service.askRecords.get(targetId)!.doneItems!;
+    expect(items.filter((item) => !item.removed)).toHaveLength(40);
+    expect(items.at(-1)?.text).toBe('step 40');
+    expect(await invoke('neo.ask.edit', { askId: targetId, add: steps(41, 1) })).toMatchObject({
       value: { ok: true },
     });
   });
@@ -1822,7 +1803,7 @@ describe('requireNeoAskEdit', () => {
     ['an edit by the owner', { add: items(1) }, null],
     ['an item already removed', { remove: ['i2'] }, 'item_not_found'],
     ['removing the last item', { remove: ['i1'] }, 'checklist_empty'],
-    ['more than twelve items', { add: items(12) }, 'checklist_full'],
+    ['forty more items', { add: items(40) }, null],
     [
       'more than twenty watched refs',
       {
