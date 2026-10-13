@@ -38,7 +38,6 @@ describe('planNeoDoneCheck', () => {
     toldAt: 0,
     reminded: null,
   });
-  const quiet = { quietSince: 0, remindable: true };
 
   test.each<
     [
@@ -79,65 +78,13 @@ describe('planNeoDoneCheck', () => {
       'wait',
     ],
   ])('%s', (_label, evidence, before, read, now, plan) => {
-    expect(planNeoDoneCheck(evidence, before, read, now, quiet)).toBe(plan);
+    expect(planNeoDoneCheck(evidence, before, read, now)).toBe(plan);
   });
 
-  const now = 10 * halfHour;
-  const seen = { ...told([ready]), toldAt: now - halfHour };
-  test.each<
-    [
-      string,
-      NeoEvidence[],
-      NeoEvidenceTold,
-      Parameters<typeof planNeoDoneCheck>[4],
-      ReturnType<typeof planNeoDoneCheck>,
-    ]
-  >([
-    [
-      'ready evidence left alone for half an hour',
-      [ready],
-      seen,
-      { ...quiet, quietSince: now - halfHour },
-      'remind',
-    ],
-    [
-      'one Neo was told about a minute ago',
-      [ready],
-      { ...seen, toldAt: now - 60_000 },
-      quiet,
-      'unchanged',
-    ],
-    [
-      'one whose session moved since',
-      [ready],
-      seen,
-      { ...quiet, quietSince: now - 60_000 },
-      'unchanged',
-    ],
-    [
-      'one already reminded in this state',
-      [ready],
-      { ...seen, reminded: seen.signature },
-      quiet,
-      'unchanged',
-    ],
-    [
-      'one under an ask that is settled or waits on the human',
-      [ready],
-      seen,
-      { ...quiet, remindable: false },
-      'unchanged',
-    ],
-    [
-      'one told before delivery times were kept',
-      [ready],
-      { ...seen, toldAt: null },
-      quiet,
-      'remind',
-    ],
-    ['one still waiting for review', [open], told([open]), quiet, 'unchanged'],
-  ])('%s', (_label, evidence, before, card, plan) => {
-    expect(planNeoDoneCheck(evidence, before, { ok: true, okAt: now }, now, card)).toBe(plan);
+  test('evidence Neo already saw stays quiet however long it sits approved', () => {
+    expect(planNeoDoneCheck([ready], told([ready]), { ok: true, okAt: 0 }, 100 * halfHour)).toBe(
+      'unchanged'
+    );
   });
 });
 
