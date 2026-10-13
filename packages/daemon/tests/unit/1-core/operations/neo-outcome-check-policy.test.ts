@@ -5,6 +5,9 @@ describe('neoOutcomeCheckPolicy', () => {
   test.each([
     ['Merged to dev', 'coding.pr_merged'],
     ['PR #42 is merged', 'coding.pr_merged'],
+    ['The pull request is merged', 'coding.pr_merged'],
+    ['https://github.com/lsm/HyperNeo/pull/42 merged', 'coding.pr_merged'],
+    ['Merging into dev', 'coding.pr_merged'],
     ['Merge into the target branch', 'coding.pr_merged'],
     ['Slice 6 deployed to both daemons', 'coding.deployed'],
     ['Rolled out on the laptop', 'coding.deployed'],
@@ -12,6 +15,9 @@ describe('neoOutcomeCheckPolicy', () => {
     ['Merged and deployed to both daemons', 'coding.deployed'],
     ['User selects the design', null],
     ['Merge CSV files into one report', null],
+    ['Merged the CSV exports', null],
+    ['Merged the two services', null],
+    ['The contact records were merged', null],
     ['CI green', null],
     ['Deployed to TestFlight on the iPhone', null],
   ])('classifies %s as %s', (text, check) => {

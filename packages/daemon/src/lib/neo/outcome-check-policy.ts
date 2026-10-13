@@ -6,11 +6,14 @@ type Check = 'coding.pr_merged' | 'coding.deployed';
 function requiredCheck(item: Outcome): Check | null {
   const path = neoDaemonTickPath({ text: item.text, check: null, watch: [] });
   if (path === 'needs_deploy_check') return 'coding.deployed';
-  return /\bmerged\b|\bmerge[ds]?\s+(?:to|into)\s+(?:dev|main|master|the\s+target\s+branch)\b/i.test(
-    item.text
-  )
-    ? 'coding.pr_merged'
-    : null;
+  const mergesPr =
+    /\bmerg(?:e[ds]?|ing)\b/i.test(item.text) &&
+    /\bPRs?\b|\bpull requests?\b|github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+\b/i.test(item.text);
+  const mergesToBranch =
+    /\bmerg(?:e[ds]?|ing)\s+(?:to|into)\s+(?:dev|main|master|the\s+target\s+branch)\b/i.test(
+      item.text
+    );
+  return mergesPr || mergesToBranch ? 'coding.pr_merged' : null;
 }
 
 function requireChecks<T extends Outcome>(
