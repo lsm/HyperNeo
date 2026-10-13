@@ -208,26 +208,13 @@ function ActionRow({
       <span class="min-w-0 flex-1">
         <span class="break-words text-fg">{text}</span>
         {question && <span class="block break-words text-xs text-fg-muted">{question}</span>}
-      </span>
-      <span class="flex shrink-0 flex-wrap justify-end gap-1.5">
-        {action.kind === 'confirm'
-          ? onDone && (
-              <button
-                type="button"
-                class={neoSecondaryClass}
-                disabled={disabled}
-                aria-label={`Confirm: ${text}`}
-                onClick={() => onDone(action.itemId)}
-              >
-                Confirm
-              </button>
-            )
-          : onAnswer &&
-            action.options.map((option) => (
+        {action.kind === 'answer' && onAnswer && (
+          <span class="mt-1.5 flex flex-wrap gap-1.5">
+            {action.options.map((option) => (
               <button
                 key={option}
                 type="button"
-                class={neoSecondaryClass}
+                class={`${neoSecondaryClass} max-w-full whitespace-normal text-left`}
                 disabled={disabled}
                 aria-label={`Answer ${question ?? text}: ${option}`}
                 onClick={() => onAnswer(action.itemId, option)}
@@ -235,7 +222,20 @@ function ActionRow({
                 {option}
               </button>
             ))}
+          </span>
+        )}
       </span>
+      {action.kind === 'confirm' && onDone && (
+        <button
+          type="button"
+          class={`${neoSecondaryClass} shrink-0`}
+          disabled={disabled}
+          aria-label={`Confirm: ${text}`}
+          onClick={() => onDone(action.itemId)}
+        >
+          Confirm
+        </button>
+      )}
     </li>
   );
 }
