@@ -37,12 +37,14 @@ describe('claude-desktop start', () => {
   let spawned: string[][];
   let cwds: (string | undefined)[];
   let clock: number;
+  let effects: string[];
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'claude-start-'));
     spawned = [];
     cwds = [];
     clock = 1_000;
+    effects = [];
   });
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -63,6 +65,7 @@ describe('claude-desktop start', () => {
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
       liveSessions: async () => {
+        effects.push('liveSessions');
         polls++;
         return options.appearsAfter !== undefined && polls > options.appearsAfter
           ? [
@@ -97,17 +100,43 @@ describe('claude-desktop start', () => {
           kill: () => {},
         };
       },
-      folderExists: () => true,
-      makeFolder: () => {},
+      folderExists: () => {
+        effects.push('folderExists');
+        return true;
+      },
+      makeFolder: () => {
+        effects.push('makeFolder');
+      },
       homeDir: '/Users/test',
-      gitCheckout: async () => options.checkout ?? null,
-      newId: () => 'u1',
+      gitCheckout: async () => {
+        effects.push('gitCheckout');
+        return options.checkout ?? null;
+      },
+      newId: () => {
+        effects.push('newId');
+        return 'u1';
+      },
       sleep: async (ms) => {
         clock += ms;
       },
       now: () => clock,
     });
   }
+
+  test.each([
+    [{ model: 'sonnet' }, 'unsupported_model'],
+    [{ effort: 'medium' }, 'unsupported_effort'],
+    [{ model: 'sonnet', effort: 'medium' }, 'unsupported_model'],
+  ] as const)(
+    'refuses explicit configuration %j before start effects',
+    async (configuration, reason) => {
+      expect(
+        await adapter({}).start?.({ ...request, createFolder: true, ...configuration }, user)
+      ).toMatchObject({ ok: false, reason });
+      expect(effects).toEqual([]);
+      expect(spawned).toEqual([]);
+    }
+  );
 
   test('opens a named session, hands it to the app and relays the task', async () => {
     expect(await adapter({ appearsAfter: 0, relayWrites: true }).start?.(request, user)).toEqual({
