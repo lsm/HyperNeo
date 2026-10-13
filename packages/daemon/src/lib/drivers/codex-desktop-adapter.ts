@@ -679,19 +679,28 @@ export async function startCodexThread(
     let threadId: string | null = null;
     let workFolder: CodexWorkFolder | null = null;
     try {
-      const configuration = await selectCodexConfiguration({ model: request.model }, server);
+      const configuration = await selectCodexConfiguration(
+        { model: request.model, effort: request.effort },
+        server
+      );
       if (!configuration.ok) return configuration;
       const prepared = await prepareCodexWorkFolder(folder, deps);
       if (!prepared.ok) return prepared;
       workFolder = prepared.value;
       const started = await server.call('thread/start', {
         cwd: workFolder.cwd,
-        ...configuration.value,
+        ...(configuration.value.model ? { model: configuration.value.model } : {}),
+        ...(configuration.value.effort
+          ? { config: { model_reasoning_effort: configuration.value.effort } }
+          : {}),
       });
       threadId = startedThreadId(started);
       if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
       const model = startedThreadModel(started);
-      const confirmed = workStartConfiguration.confirm(configuration.value, { model });
+      const reportedEffort = (started as { reasoningEffort?: unknown } | null)?.reasoningEffort;
+      const effort =
+        typeof reportedEffort === 'string' && reportedEffort.trim() ? reportedEffort : undefined;
+      const confirmed = workStartConfiguration.confirm(configuration.value, { model, effort });
       if (!confirmed.ok) {
         return reject(
           confirmed.reason,
@@ -713,6 +722,7 @@ export async function startCodexThread(
           lastActivityAt: deps.now(),
           link: `codex://threads/${threadId}`,
           ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
         },
       };
     } catch (error) {
