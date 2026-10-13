@@ -98,6 +98,7 @@ import {
   NEO_PUBLISH_NUDGE,
   type NeoDirectReplyRuntime,
   neoIdleReplySessions,
+  neoNoteDeliveryMode,
   neoSessionStatus,
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
@@ -2954,6 +2955,10 @@ export class NeoService {
         parent_tool_use_id: null,
         inputKind: 'system',
       },
+      deliveryMode: neoNoteDeliveryMode(
+        this.processingStatus.get(sessionId) ??
+          neoSessionStatus(this.db.getSession(sessionId)?.processingState)
+      ),
       jobQueue: queue,
     });
     if (outcome.kind === 'rejected') throw new Error(outcome.reason);
