@@ -35,6 +35,7 @@ import {
   neoHumanTickWakes,
   type NeoDaemonTickPath,
 } from './needs-you.ts';
+import { NeoAskMutationViewSchema } from './card-view-schema.ts';
 import { isNeoAskOutcomeItem } from './ask-views.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -107,7 +108,12 @@ export const NeoAskSchema = z.object({
 });
 const AskResult = z.union([
   Failure,
-  z.object({ ok: z.literal(true), ask: NeoAskSchema, packBriefing: z.string().optional() }),
+  z.object({
+    ok: z.literal(true),
+    ask: NeoAskSchema,
+    packBriefing: z.string().optional(),
+    view: NeoAskMutationViewSchema.nullable().optional(),
+  }),
 ]);
 const WatchUrl = z
   .string()

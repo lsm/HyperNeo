@@ -88,20 +88,22 @@ function signatureType(node: JsonSchemaNode): string {
   const variants = node.anyOf ?? node.oneOf;
   if (variants) return [...new Set(variants.map(signatureType))].join('|');
   if (node.type === 'array') return `${signatureType(node.items ?? {})}[]`;
-  if (node.type === 'object' && node.properties)
-    return `{${Object.keys(node.properties).join(', ')}}`;
+  if (node.type === 'object' && node.properties) return `{${signatureFields(node)}}`;
   return Array.isArray(node.type) ? node.type.join('|') : (node.type ?? 'any');
+}
+
+function signatureFields(node: JsonSchemaNode): string {
+  const required = new Set(node.required ?? []);
+  return Object.entries(node.properties ?? {})
+    .map(([field, child]) => `${field}${required.has(field) ? '' : '?'}: ${signatureType(child)}`)
+    .join(', ');
 }
 
 export function operationSignature(
   operation: Pick<OperationDefinition, 'name' | 'inputSchema'>
 ): string {
   const schema = z.toJSONSchema(operation.inputSchema, { io: 'input' }) as JsonSchemaNode;
-  const required = new Set(schema.required ?? []);
-  const fields = Object.entries(schema.properties ?? {}).map(
-    ([field, node]) => `${field}${required.has(field) ? '' : '?'}: ${signatureType(node)}`
-  );
-  return `${operation.name} {${fields.join(', ')}}`;
+  return `${operation.name} {${signatureFields(schema)}}`;
 }
 
 export function describeOperationSignatures(

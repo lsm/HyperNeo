@@ -295,7 +295,16 @@ describe('operationSignature', () => {
         .optional(),
     });
     expect(operationSignature({ name: 'demo.op', inputSchema })).toBe(
-      'demo.op {id: string, outcome: "done"|"cancelled", tags?: string[], target?: {verb, ref}|{verb}}'
+      'demo.op {id: string, outcome: "done"|"cancelled", tags?: string[], target?: {verb: "send", ref: string}|{verb: "start"}}'
+    );
+  });
+
+  test('spells out nested object fields with their types', () => {
+    const inputSchema = z.object({
+      items: z.array(z.object({ text: z.string(), watch: z.array(z.string()).optional() })),
+    });
+    expect(operationSignature({ name: 'demo.nested', inputSchema })).toBe(
+      'demo.nested {items: {text: string, watch?: string[]}[]}'
     );
   });
 });

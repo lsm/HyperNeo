@@ -7,6 +7,7 @@ import type {
   NeoCardView,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
+import type { NeoAskMutationView } from './ask-views.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -19,23 +20,25 @@ const OpenTarget = z.object({
   daemon: z.string().nullable(),
 } satisfies ZodShape<NeoCardOpenTarget>);
 
+const CardPhase = z.enum([
+  'proposed',
+  'handed',
+  'running',
+  'needs_you',
+  'checking',
+  'abandoned',
+  'stopped',
+  'pr_open',
+  'pr_setback',
+  'merged',
+  'reported',
+  'failed',
+  'cancelled',
+]);
+
 export const NeoCardViewSchema = z.object({
   workId: z.string(),
-  phase: z.enum([
-    'proposed',
-    'handed',
-    'running',
-    'needs_you',
-    'checking',
-    'abandoned',
-    'stopped',
-    'pr_open',
-    'pr_setback',
-    'merged',
-    'reported',
-    'failed',
-    'cancelled',
-  ]),
+  phase: CardPhase,
   group: CardGroup,
   tone: z.enum(['accent', 'warning', 'success']),
   label: z.string(),
@@ -125,3 +128,20 @@ export const NeoAskViewSchema = z.object({
     .optional(),
   humanActions: z.array(HumanAction).optional(),
 } satisfies ZodShape<NeoAskView>);
+
+export const NeoAskMutationViewSchema = z.object({
+  id: z.string(),
+  status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
+  outcome: z.string().nullable(),
+  items: z.array(z.object({ id: z.string(), state: z.string(), text: z.string().optional() })),
+  humanActions: z.array(HumanAction),
+  cards: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      status: z.enum(['proposed', 'queued', 'reported', 'failed', 'cancelled']),
+      phase: CardPhase.nullable(),
+      pr: z.string().nullable(),
+    })
+  ),
+} satisfies ZodShape<NeoAskMutationView>);

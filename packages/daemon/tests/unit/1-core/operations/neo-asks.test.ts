@@ -307,6 +307,64 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test('a work operation answers with each card phase and PR verdict', async () => {
+    const askId = await openAsk();
+    const card = (await propose('card-1', askId)).value!.work!.id;
+    service.workPrs.record(
+      card,
+      [
+        {
+          url: 'https://github.com/lsm/HyperNeo/pull/6716',
+          state: 'OPEN',
+          checks: 'failing',
+          review: 'none',
+        },
+      ],
+      Date.now()
+    );
+    expect(await invoke('neo.work.cancel', { id: card })).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          id: askId,
+          humanActions: [],
+          cards: [{ id: card, phase: 'cancelled', pr: 'Checks failing · #6716' }],
+        },
+      },
+    });
+  });
+
+  test('an ask operation answers with the derived view, so a question shows as its human action', async () => {
+    const askId = await openAsk();
+    const asked = await invoke('neo.ask.question', {
+      askId,
+      question: 'Ship it on Friday?',
+      options: ['Ship Friday', 'Wait'],
+    });
+    const itemId = asked.value!.ask!.doneItems!.at(-1)!.id;
+    expect(asked).toMatchObject({
+      value: {
+        ok: true,
+        view: {
+          id: askId,
+          status: 'waiting',
+          items: expect.arrayContaining([
+            { id: itemId, state: 'needs_you', text: 'Ship it on Friday?' },
+          ]),
+          humanActions: [
+            {
+              kind: 'answer',
+              itemId,
+              question: 'Ship it on Friday?',
+              options: ['Ship Friday', 'Wait'],
+            },
+          ],
+          cards: [],
+        },
+      },
+    });
+  });
+
   test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
     const askId = await openAsk();
     for (const itemId of ['i1', 'i2'])

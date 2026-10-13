@@ -137,8 +137,16 @@ import {
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoSavedRules } from './saved-rules.ts';
 import { projectNeoCardViews } from './card-views.ts';
-import { NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
-import { projectNeoAskViews } from './ask-views.ts';
+import {
+  NeoAskMutationViewSchema,
+  NeoAskViewSchema,
+  NeoCardViewSchema,
+} from './card-view-schema.ts';
+import {
+  describeNeoAskMutationView,
+  type NeoAskMutationView,
+  projectNeoAskViews,
+} from './ask-views.ts';
 import { unmutedNeoAskSessions } from './session-ask-links.ts';
 import { NEO_WORK_FOLLOW_MAX_AGE_MS } from './work-follow.ts';
 
@@ -303,16 +311,13 @@ const SnapshotUnchanged = z.object({
   scopedTo: z.string().optional(),
 });
 const Snapshot = z.union([Failure, SnapshotUnchanged, SnapshotOk]);
-const WorkAskView = z.object({
-  id: z.string(),
-  status: z.string(),
-  outcome: z.string().nullable(),
-  items: z.array(z.object({ id: z.string(), state: z.string(), text: z.string().optional() })),
-  cards: z.array(z.object({ id: z.string(), title: z.string(), status: z.string() })),
-});
 const WorkResult = z.union([
   Failure,
-  z.object({ ok: z.literal(true), work: Work, ask: WorkAskView.nullable().optional() }),
+  z.object({
+    ok: z.literal(true),
+    work: Work,
+    ask: NeoAskMutationViewSchema.nullable().optional(),
+  }),
 ]);
 const Scope = z
   .object({
@@ -637,21 +642,6 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
     : { ...snapshot, rev, ...scoped };
 }
 
-export function neoWorkAskView(
-  ask: NeoAsk | null,
-  works: readonly Pick<NeoWork, 'id' | 'title' | 'status'>[]
-): z.infer<typeof WorkAskView> | null {
-  return ask
-    ? {
-        id: ask.id,
-        status: ask.status,
-        outcome: ask.outcome,
-        items: neoNoteChecklist(ask),
-        cards: works.map(({ id, title, status }) => ({ id, title, status })),
-      }
-    : null;
-}
-
 export function neoAskScope(ask: Pick<NeoAsk, 'concernId'> | null): string | null | undefined {
   return ask ? ask.concernId : undefined;
 }
@@ -774,17 +764,59 @@ export function createNeoOperations(service: NeoService) {
       .pipe(action, ['input', 'admission'], 'admission')
       .endAsync('admission') as (input: I, caller: OperationCaller) => Promise<O | Rejection>;
   }
+  function readWorkDrivers(workIds: readonly string[]) {
+    return service.driverTargets.receipts([...workIds]).map((receipt) => {
+      const since = service.uncheckedSince(receipt.workId);
+      return {
+        ...receipt,
+        ...(since === null ? {} : { uncheckedSince: since }),
+        ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
+      };
+    });
+  }
+  function readWorkPrs(workIds: readonly string[]) {
+    return service.workPrs
+      .list([...workIds])
+      .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));
+  }
+  function askView(ask: NeoAsk | null): NeoAskMutationView | null {
+    if (!ask) return null;
+    const work = ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []);
+    const workIds = work.map((item) => item.id);
+    const asks = projectNeoSnapshotAsks(
+      [ask],
+      1,
+      Date.now(),
+      new Set(workIds.filter((id) => service.isContinueStalled(id)))
+    );
+    const prs = readWorkPrs(workIds);
+    const cards = projectNeoCardViews({
+      work,
+      drivers: readWorkDrivers(workIds),
+      prs,
+      goals: service.workGoals.list(workIds),
+      continues: service.workContinues.list(workIds),
+      supersessions: service.workSupersessions.list(workIds),
+      asks,
+    });
+    return describeNeoAskMutationView(
+      ask,
+      neoNoteChecklist(ask),
+      work,
+      cards,
+      projectNeoAskViews(asks, cards, prs)[0]
+    );
+  }
   function withAskView<T extends { ok: boolean }>(result: T): T {
     if (!result.ok || !('work' in result)) return result;
     const work = (result as { work: NeoWork }).work;
-    const ask = service.askRecords.forWork(work.id);
-    return {
-      ...result,
-      ask: neoWorkAskView(
-        ask,
-        ask ? ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []) : []
-      ),
-    };
+    return { ...result, ask: askView(service.askRecords.forWork(work.id)) };
+  }
+  function withAskRecordView<T>(result: T): T {
+    const ask = (result as { ok?: boolean; ask?: NeoAsk }).ok
+      ? (result as { ask?: NeoAsk }).ask
+      : undefined;
+    return ask ? { ...result, view: askView(service.askRecords.get(ask.id) ?? ask) } : result;
   }
 
   function snapshot(caller: OperationCaller, requested?: string, askId?: string) {
@@ -825,14 +857,7 @@ export function createNeoOperations(service: NeoService) {
     const consultations = focus ? [] : service.consultations.list(scope ?? undefined);
     const waiters = focus ? [] : service.consultationWaiters.queued(scope ?? undefined);
     const workIds = visibleWork.map((item) => item.id);
-    const workDrivers = service.driverTargets.receipts(workIds).map((receipt) => {
-      const since = service.uncheckedSince(receipt.workId);
-      return {
-        ...receipt,
-        ...(since === null ? {} : { uncheckedSince: since }),
-        ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
-      };
-    });
+    const workDrivers = readWorkDrivers(workIds);
     const workGoals = service.workGoals.list(workIds);
     const workContinues = service.workContinues.list(workIds);
     const workSupersessions = service.workSupersessions.list(workIds);
@@ -845,9 +870,7 @@ export function createNeoOperations(service: NeoService) {
       Date.now(),
       new Set(workIds.filter((id) => service.isContinueStalled(id)))
     );
-    const workPrs = service.workPrs
-      .list(workIds)
-      .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));
+    const workPrs = readWorkPrs(workIds);
     const cards = projectNeoCardViews({
       work: visibleWork,
       drivers: workDrivers,
@@ -1733,7 +1756,11 @@ export function createNeoOperations(service: NeoService) {
     createNeoPreferenceOperation(service),
     ...createNeoAskOperations(service, (caller, name, concernId) =>
       admitNeoCaller(service, caller, name, concernId)
-    ),
+    ).map((operation) => ({
+      ...operation,
+      execute: async (input: unknown, caller: OperationCaller) =>
+        withAskRecordView(await operation.execute(input, caller)),
+    })),
     defineOperation({
       name: 'neo.concern.cancel',
       description:
