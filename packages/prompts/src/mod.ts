@@ -106,9 +106,6 @@ import mdneoWorkDoneCheckPrsLive from './neo/packs/coding/done-check-prs-live.md
   type: 'text',
 };
 import mdneoPacksCodingInstructions from './neo/packs/coding/instructions.md' with { type: 'text' };
-import mdneoWorkDoneCheckPrsReady from './neo/packs/coding/done-check-prs-ready.md' with {
-  type: 'text',
-};
 import mdneoWorkDoneCheckPrsStale from './neo/packs/coding/done-check-prs-stale.md' with {
   type: 'text',
 };
@@ -393,7 +390,6 @@ const registry: Record<string, string> = {
   'neo/work/done-check-budget.md': mdneoWorkDoneCheckBudget,
   'neo/work/done-check-continue.md': mdneoWorkDoneCheckContinue,
   'neo/packs/coding/done-check-prs-live.md': mdneoWorkDoneCheckPrsLive,
-  'neo/packs/coding/done-check-prs-ready.md': mdneoWorkDoneCheckPrsReady,
   'neo/packs/coding/done-check-prs-stale.md': mdneoWorkDoneCheckPrsStale,
   'neo/work/done-check.md': mdneoWorkDoneCheck,
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
@@ -582,7 +578,6 @@ export const {
   NEO_WORK_DONE_CHECK_BUDGET,
   NEO_WORK_DONE_CHECK_CONTINUE,
   NEO_WORK_DONE_CHECK_PRS_LIVE,
-  NEO_WORK_DONE_CHECK_PRS_READY,
   NEO_WORK_DONE_CHECK_PRS_STALE,
   NEO_WORK_DONE_CHECK,
   NEO_WORK_GOAL_ASKED,

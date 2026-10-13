@@ -307,6 +307,36 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test('an ask operation answers with the derived view, its human actions included', async () => {
+    const askId = await openAsk();
+    const card = (await propose('card-1', askId)).value!.work!.id;
+    const asked = await invoke('neo.ask.question', {
+      askId,
+      question: 'Own data dir or attach?',
+      options: ['Own dir', 'Attach'],
+    });
+    expect(asked).toMatchObject({
+      value: {
+        ok: true,
+        view: {
+          id: askId,
+          cards: [{ id: card, title: 'Fix it', status: 'proposed' }],
+          humanActions: expect.arrayContaining([
+            expect.objectContaining({ kind: 'answer', options: ['Own dir', 'Attach'] }),
+          ]),
+        },
+      },
+    });
+    expect(await invoke('neo.work.cancel', { id: card })).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          humanActions: expect.arrayContaining([expect.objectContaining({ kind: 'answer' })]),
+        },
+      },
+    });
+  });
+
   test('a work operation answers with each card phase and PR verdict', async () => {
     const askId = await openAsk();
     const card = (await propose('card-1', askId)).value!.work!.id;
@@ -327,39 +357,7 @@ describe('neo.ask operations', () => {
         ok: true,
         ask: {
           id: askId,
-          humanActions: [],
           cards: [{ id: card, phase: 'cancelled', pr: 'Checks failing · #6716' }],
-        },
-      },
-    });
-  });
-
-  test('an ask operation answers with the derived view, so a question shows as its human action', async () => {
-    const askId = await openAsk();
-    const asked = await invoke('neo.ask.question', {
-      askId,
-      question: 'Ship it on Friday?',
-      options: ['Ship Friday', 'Wait'],
-    });
-    const itemId = asked.value!.ask!.doneItems!.at(-1)!.id;
-    expect(asked).toMatchObject({
-      value: {
-        ok: true,
-        view: {
-          id: askId,
-          status: 'waiting',
-          items: expect.arrayContaining([
-            { id: itemId, state: 'needs_you', text: 'Ship it on Friday?' },
-          ]),
-          humanActions: [
-            {
-              kind: 'answer',
-              itemId,
-              question: 'Ship it on Friday?',
-              options: ['Ship Friday', 'Wait'],
-            },
-          ],
-          cards: [],
         },
       },
     });

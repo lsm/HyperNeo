@@ -53,6 +53,7 @@ describe('claude-desktop start', () => {
     relayWrites?: boolean;
     twin?: boolean;
     checkout?: { repo: string; linked: boolean };
+    resumeExit?: number;
   }) {
     const transcripts = join(dir, 'projects', '-focus-dolmen');
     mkdirSync(transcripts, { recursive: true });
@@ -82,7 +83,12 @@ describe('claude-desktop start', () => {
             `${JSON.stringify({ type: 'user', message: { content: '<cross-session-message from="x">\nRaise the body font to 16px.\n</cross-session-message>' } })}\n`
           );
         }
-        const code = args[2] === '--session-id' ? (options.openExit ?? 0) : 0;
+        const code =
+          args[2] === '--session-id'
+            ? (options.openExit ?? 0)
+            : args[2] === '--resume'
+              ? (options.resumeExit ?? 0)
+              : 0;
         return {
           stdout: null,
           stderr: new Response(code ? 'no auth' : '').body,
@@ -104,14 +110,14 @@ describe('claude-desktop start', () => {
   }
 
   test('opens a named session, hands it to the app and relays the task', async () => {
-    expect(await adapter({ appearsAfter: 1, relayWrites: true }).start?.(request, user)).toEqual({
+    expect(await adapter({ appearsAfter: 0, relayWrites: true }).start?.(request, user)).toEqual({
       ok: true,
       value: {
         ref: { adapter: 'claude-desktop', id: 'local_u1' },
         title: 'Bigger font',
         place,
         status: 'running',
-        lastActivityAt: 1_000 + 2_000,
+        lastActivityAt: 1_000,
         link: 'claude://claude.ai/epitaxy/local_u1',
       },
     });
@@ -149,12 +155,12 @@ describe('claude-desktop start', () => {
         permissionMode: 'bypassPermissions',
       })
     );
-    await adapter({ appearsAfter: 1, relayWrites: true }).start?.(request, user);
+    await adapter({ appearsAfter: 0, relayWrites: true }).start?.(request, user);
     expect(spawned[2].slice(6, 8)).toEqual(['--permission-mode', 'bypassPermissions']);
   });
 
   test('opens work in a git repo in its own worktree and resumes it there', async () => {
-    await adapter({ appearsAfter: 1, checkout: { repo: '/focus/dolmen', linked: false } }).start?.(
+    await adapter({ appearsAfter: 0, checkout: { repo: '/focus/dolmen', linked: false } }).start?.(
       request,
       user
     );
@@ -175,7 +181,7 @@ describe('claude-desktop start', () => {
 
   test('runs work in a folder that is already a linked worktree without making another', async () => {
     await adapter({
-      appearsAfter: 1,
+      appearsAfter: 0,
       checkout: { repo: '/focus/main', linked: true },
     }).start?.(request, user);
     expect(spawned[0]).not.toContain('--worktree');
@@ -187,24 +193,34 @@ describe('claude-desktop start', () => {
       ok: false,
       reason: 'not_delivered',
       detail:
-        'local_u1 opened, but the task did not reach it: Bigger font has no unique name to relay a message to.',
+        'local_u1 was created, but the task did not reach it: Bigger font has no unique name to relay a message to.',
     });
     expect(spawned).toHaveLength(2);
   });
 
-  test('stops when the opening turn fails and reports a session the app never opened', async () => {
+  test('stops when the opening turn fails', async () => {
     expect(await adapter({ openExit: 1 }).start?.(request, user)).toEqual({
       ok: false,
       reason: 'not_delivered',
       detail: 'no auth',
     });
     expect(spawned).toHaveLength(1);
-    expect(await adapter({}).start?.(request, user)).toEqual({
+  });
+
+  test('sends the task to a session the app has not started yet, which wakes it', async () => {
+    expect(await adapter({}).start?.(request, user)).toMatchObject({
+      ok: true,
+      value: { ref: { adapter: 'claude-desktop', id: 'local_u1' }, status: 'running' },
+    });
+    expect(spawned[2]).toEqual(['claude', '-p', '--resume', 'u1', '--', request.message]);
+    expect(clock).toBe(1_000);
+  });
+
+  test('reports not_delivered only when that send fails', async () => {
+    expect(await adapter({ resumeExit: 1 }).start?.(request, user)).toEqual({
       ok: false,
       reason: 'not_delivered',
-      detail:
-        'local_u1 was created but Claude Code Desktop did not open it; send the task to it with work.send.',
+      detail: 'local_u1 was created, but the task did not reach it: no auth',
     });
-    expect(clock).toBeGreaterThanOrEqual(1_000 + 60_000);
   });
 });

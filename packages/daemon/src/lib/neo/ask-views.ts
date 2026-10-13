@@ -1,4 +1,3 @@
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   type NeoAsk,
   type NeoAskAnswer,
@@ -180,45 +179,6 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     sessions,
     answer: neoAskAnswer(ask),
     humanActions: deriveNeoAskHumanActions(ask, live),
-  };
-}
-
-export type NeoAskMutationView = {
-  id: string;
-  status: NeoAskStatus;
-  outcome: string | null;
-  items: { id: string; state: string; text?: string }[];
-  humanActions: NeoAskHumanAction[];
-  cards: {
-    id: string;
-    title: string;
-    status: NeoWork['status'];
-    phase: NeoCardView['phase'] | null;
-    pr: string | null;
-  }[];
-};
-
-export function describeNeoAskMutationView(
-  ask: NeoAsk,
-  items: NeoAskMutationView['items'],
-  works: readonly Pick<NeoWork, 'id' | 'title' | 'status'>[],
-  cards: readonly NeoCardView[],
-  view: Pick<NeoAskView, 'humanActions'> | undefined
-): NeoAskMutationView {
-  const byId = new Map(cards.map((card) => [card.workId, card]));
-  return {
-    id: ask.id,
-    status: ask.status,
-    outcome: ask.outcome,
-    items,
-    humanActions: view?.humanActions ?? [],
-    cards: works.map(({ id, title, status }) => ({
-      id,
-      title,
-      status,
-      phase: byId.get(id)?.phase ?? null,
-      pr: byId.get(id)?.pr?.label ?? null,
-    })),
   };
 }
 

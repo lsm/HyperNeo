@@ -35,8 +35,8 @@ import {
   neoHumanTickWakes,
   type NeoDaemonTickPath,
 } from './needs-you.ts';
-import { NeoAskMutationViewSchema } from './card-view-schema.ts';
 import { isNeoAskOutcomeItem } from './ask-views.ts';
+import { NeoAskStateViewSchema } from './card-view-schema.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -111,8 +111,8 @@ const AskResult = z.union([
   z.object({
     ok: z.literal(true),
     ask: NeoAskSchema,
+    view: NeoAskStateViewSchema.nullable().optional(),
     packBriefing: z.string().optional(),
-    view: NeoAskMutationViewSchema.nullable().optional(),
   }),
 ]);
 const WatchUrl = z
@@ -903,7 +903,13 @@ export function requireNeoOwnedLiveAsk(read: NeoAsk | Rejection): Gate<NeoAsk> {
   return 'ok' in read ? { reason: read } : { value: read };
 }
 
-export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
+export function createNeoAskOperations(
+  service: NeoService,
+  admit: NeoAdmit,
+  view: (ask: NeoAsk) => z.infer<typeof NeoAskStateViewSchema> | null
+) {
+  const withView = <T extends AskReceipt | Rejection>(result: T) =>
+    result.ok ? { ...result, view: view(result.ask) } : result;
   const humanText = (sessionId: string, messageId: string) =>
     service.db
       .getSDKMessageRepo()
@@ -1433,7 +1439,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       inputSchema: Fold,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => fold(input, caller),
+      execute: async (input, caller) => withView(await fold(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.open',
@@ -1442,7 +1448,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => open(input, caller),
+      execute: async (input, caller) => withView(await open(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.tick',
@@ -1451,7 +1457,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => tick(input, caller),
+      execute: async (input, caller) => withView(await tick(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.question',
@@ -1460,7 +1466,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       inputSchema: Question,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => question(input, caller),
+      execute: async (input, caller) => withView(await question(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.answer',
@@ -1469,7 +1475,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       inputSchema: Answer,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },
-      execute: async (input, caller) => answer(input, caller),
+      execute: async (input, caller) => withView(await answer(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.approve',
@@ -1478,7 +1484,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       inputSchema: Approve,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },
-      execute: async (input, caller) => approve(input, caller),
+      execute: async (input, caller) => withView(await approve(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.edit',
@@ -1487,7 +1493,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       inputSchema: Edit,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => edit(input, caller),
+      execute: async (input, caller) => withView(await edit(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.settle',
@@ -1496,7 +1502,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => settle(input, caller),
+      execute: async (input, caller) => withView(await settle(input, caller)),
     }),
   ];
 }

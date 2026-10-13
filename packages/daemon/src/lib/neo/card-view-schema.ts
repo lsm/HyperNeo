@@ -7,7 +7,6 @@ import type {
   NeoCardView,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
-import type { NeoAskMutationView } from './ask-views.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -129,19 +128,19 @@ export const NeoAskViewSchema = z.object({
   humanActions: z.array(HumanAction).optional(),
 } satisfies ZodShape<NeoAskView>);
 
-export const NeoAskMutationViewSchema = z.object({
+export const NeoAskStateViewSchema = z.object({
   id: z.string(),
-  status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
+  status: z.string(),
   outcome: z.string().nullable(),
   items: z.array(z.object({ id: z.string(), state: z.string(), text: z.string().optional() })),
-  humanActions: z.array(HumanAction),
   cards: z.array(
     z.object({
       id: z.string(),
       title: z.string(),
-      status: z.enum(['proposed', 'queued', 'reported', 'failed', 'cancelled']),
+      status: z.string(),
       phase: CardPhase.nullable(),
       pr: z.string().nullable(),
     })
   ),
-} satisfies ZodShape<NeoAskMutationView>);
+  humanActions: z.array(HumanAction),
+});

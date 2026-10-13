@@ -208,8 +208,8 @@ export function requireNeoWorkPrDelivery<Refresh extends object>(
   refresh: Refresh,
   plan: ReturnType<typeof planNeoDoneCheck>,
   live: boolean
-): { value: Refresh & { delivery: 'deliver' | 'remind' } } | { reason: 'quiet' } {
-  return live && (plan === 'deliver' || plan === 'remind')
+): { value: Refresh & { delivery: 'deliver' } } | { reason: 'quiet' } {
+  return live && plan === 'deliver'
     ? { value: { ...refresh, delivery: plan } }
     : { reason: 'quiet' };
 }
