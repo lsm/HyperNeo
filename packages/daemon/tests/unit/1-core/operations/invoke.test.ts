@@ -1,10 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import {
-  invokeOperation,
-  resolveOperation,
-  parseOperationInput,
   executeOperation,
+  invokeOperation,
+  parseOperationInput,
+  resolveOperation,
   validateOperationResult,
 } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
@@ -53,6 +53,47 @@ describe('operation invocation gates', () => {
     expect(await validateOperationResult({ operation, result: { accepted: 12 } })).toMatchObject({
       reason: { kind: 'failed', code: 'invalid_result' },
     });
+  });
+});
+
+describe('unknown operation suggestions', () => {
+  function suggestionFixture() {
+    const definitions = ['neo.snapshot', 'neo.ask.settle', 'neo.ask.open'].map((name) =>
+      defineOperation({
+        name,
+        description: name,
+        inputSchema: z.object({}),
+        resultSchema: z.object({}),
+        execute: async () => ({}),
+      })
+    );
+    return createOperationRegistry(definitions);
+  }
+
+  test('suggests the closest registered names for a near-miss name', () => {
+    const registry = suggestionFixture();
+    expect(resolveOperation(registry, 'neo.ask.snapshot')).toEqual({
+      reason: {
+        kind: 'failed',
+        code: 'unknown_operation',
+        message:
+          'Unknown operation: neo.ask.snapshot. Did you mean: neo.snapshot, neo.ask.open, neo.ask.settle?',
+      },
+    });
+  });
+
+  test('gives no suggestions for a far-off name', () => {
+    const registry = suggestionFixture();
+    expect(resolveOperation(registry, 'zzz.qqq')).toEqual({
+      reason: { kind: 'failed', code: 'unknown_operation', message: 'Unknown operation: zzz.qqq' },
+    });
+  });
+
+  test('a known name still resolves', () => {
+    const registry = suggestionFixture();
+    const operation = registry.get('neo.snapshot');
+    expect(operation).toBeDefined();
+    expect(resolveOperation(registry, 'neo.snapshot')).toEqual({ value: operation });
   });
 });
 
