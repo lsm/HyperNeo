@@ -2195,7 +2195,7 @@ export class SDKMessageRepository {
       .prepare(
         `SELECT 1 FROM sdk_messages
            WHERE session_id = ? AND timestamp > ? AND message_type = 'user'
-             AND substr(sdk_uuid, 1, ?) = ?
+             AND substr(sdk_uuid, 1, ?) = ? AND send_status IS NOT 'failed'
            LIMIT 1`
       )
       .get(sessionId, since, prefix.length, prefix);

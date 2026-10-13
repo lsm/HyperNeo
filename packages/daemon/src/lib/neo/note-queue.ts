@@ -6,6 +6,7 @@ import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { isNeoFoldableNote } from './ask-origin.ts';
 import { NEO_TURN_LIMIT_PREFIX } from './turn-limit.ts';
+import { RESTART_RECOVERY_PREFIX } from '../agent/restart-turn-recovery.ts';
 
 export type NeoNoteSubject = { kind: 'card' | 'ask'; id: string };
 export type NeoNoteDropReason = 'settled' | 'superseded' | 'stale';
@@ -46,7 +47,9 @@ export function isNeoWakeNote(messageId: string): boolean {
 }
 
 export function isNeoTurnResumeNote(messageId: string): boolean {
-  return messageId.startsWith(NEO_TURN_LIMIT_PREFIX) || messageId.startsWith('restart-recovery:');
+  return (
+    messageId.startsWith(NEO_TURN_LIMIT_PREFIX) || messageId.startsWith(RESTART_RECOVERY_PREFIX)
+  );
 }
 
 export function isNeoNoteSubjectSettled(
