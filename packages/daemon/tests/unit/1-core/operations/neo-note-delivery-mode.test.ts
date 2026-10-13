@@ -65,4 +65,19 @@ describe('Neo daemon notes', () => {
     await service.deliverForward(rootId, 'note-idle', 'A card reported.', rootId, null);
     expect(queued('note-idle')).toEqual(['immediate']);
   });
+
+  test('a message to a busy ordinary chat is not deferred', async () => {
+    db.createSession(createTestSession('chat-1'));
+    await events.publish('session.updated', {
+      sessionId: 'chat-1',
+      processingState: { status: 'processing' } as never,
+    });
+    await service.deliverForward('chat-1', 'brief-1', 'Do the work.', rootId, null);
+    expect(
+      db
+        .getJobQueueRepo()
+        .listActiveByPayload('mailbox', { 'to.sessionId': 'chat-1', messageUuid: 'brief-1' })
+        .map((job) => job.payload.deliveryMode)
+    ).toEqual(['immediate']);
+  });
 });
