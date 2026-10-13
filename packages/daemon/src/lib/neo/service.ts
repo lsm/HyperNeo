@@ -2472,8 +2472,11 @@ export class NeoService {
 
   async clearStaleNeedsYou(): Promise<void> {
     for (const { id: askId } of this.askRecords.needingHuman()) {
+      await this.withdrawObsoletePrQuestions(askId).catch((error) =>
+        this.log.warn('Obsolete PR question reconciliation pending', error)
+      );
       const ask = this.askRecords.get(askId);
-      if (!ask) continue;
+      if (!ask || !isNeoAskLive(ask)) continue;
       const cards = new Map(
         ask.workIds.flatMap((id) => {
           const work = this.repo.getWork(id);
