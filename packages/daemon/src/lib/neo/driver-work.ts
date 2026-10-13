@@ -55,6 +55,7 @@ import { WORK_MESSAGE_MAX, WorkAdaptersResultSchema } from '../drivers/work-oper
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { awaitingNeoWorker } from './work-reroute.ts';
+import { workStartConfiguration } from '../drivers/start-configuration.ts';
 
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   z.object({
@@ -62,7 +63,7 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
     adapter: z.string().min(1).max(80),
     place: PlaceSchema,
     createFolder: z.boolean().optional(),
-    model: z.string().trim().min(1).max(200).optional(),
+    ...workStartConfiguration.schema.shape,
   }),
   z.object({ verb: z.literal('send'), ref: WorkRefSchema }),
   z.object({ verb: z.literal('adopt'), ref: WorkRefSchema }),
@@ -235,6 +236,7 @@ export function driverWorkCall(
           message,
           ...(target.createFolder ? { createFolder: true } : {}),
           ...(target.model ? { model: target.model } : {}),
+          ...(target.effort ? { effort: target.effort } : {}),
         },
       }
     : { name: 'work.send', input: { ref: target.ref, message } };
