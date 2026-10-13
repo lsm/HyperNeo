@@ -764,9 +764,11 @@ export function NeoLive() {
                 const submitted = draft ?? '';
                 const sessionId = neo.sessionId ?? '';
                 const captured = reloadBuffer.read(sessionId);
+                const submittedQuote = quoted;
                 setDraft('');
-                setQuoted(null);
                 const cleanup = async () => {
+                  if (input.quote)
+                    setQuoted((current) => (current === submittedQuote ? null : current));
                   await inputDraft.clearSubmitted(sessionId, submitted);
                   if (captured?.text === submitted) reloadBuffer.forget(sessionId, captured.id);
                 };

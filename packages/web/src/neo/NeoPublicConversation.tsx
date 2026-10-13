@@ -434,7 +434,7 @@ function PublicEntry({
             type="button"
             aria-label={ask ? 'Quote your message' : 'Quote Neo’s message'}
             title="Quote reply"
-            class="rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft"
+            class="rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             onClick={() =>
               onQuote({ author: ask ? 'You' : 'Neo', text: ask ? text : full || text, anchor })
             }
