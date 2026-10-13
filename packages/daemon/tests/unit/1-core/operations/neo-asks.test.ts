@@ -337,7 +337,7 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test('a work operation answers with each card phase and PR verdict', async () => {
+  test('a work operation answers with each card phase and the wake-note PR verdict', async () => {
     const askId = await openAsk();
     const card = (await propose('card-1', askId)).value!.work!.id;
     service.workPrs.record(
@@ -357,7 +357,7 @@ describe('neo.ask operations', () => {
         ok: true,
         ask: {
           id: askId,
-          cards: [{ id: card, phase: 'cancelled', pr: 'Checks failing · #6716' }],
+          cards: [{ id: card, phase: 'cancelled', pr: 'failed' }],
         },
       },
     });

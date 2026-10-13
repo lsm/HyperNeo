@@ -139,7 +139,7 @@ export const NeoAskStateViewSchema = z.object({
       title: z.string(),
       status: z.string(),
       phase: CardPhase.nullable(),
-      pr: z.string().nullable(),
+      pr: z.enum(['done', 'failed', 'waiting', 'ready', 'pending']).nullable(),
     })
   ),
   humanActions: z.array(HumanAction),

@@ -32,6 +32,7 @@ import {
   type NeoAsk,
   type NeoCardView,
   type NeoReceiptAskOrigin,
+  type NeoWorkPr,
   type NeoSnapshot,
   type NeoWaitingOnHuman,
   type NeoWorkResourceReceipt,
@@ -87,6 +88,7 @@ import {
   NeoDriverTargetSchema,
   readNeoDriverAdapters,
   neoNoteChecklist,
+  neoNotePrVerdict,
   readNeoStartFolder,
   requireNeoDriverVerb,
   requireNeoStartFolder,
@@ -636,9 +638,11 @@ export function neoWorkAskView(
   ask: NeoAsk | null,
   works: readonly Pick<NeoWork, 'id' | 'title' | 'status'>[],
   humanActions: z.infer<typeof WorkAskView>['humanActions'] = [],
-  cards: readonly Pick<NeoCardView, 'workId' | 'phase' | 'pr'>[] = []
+  cards: readonly Pick<NeoCardView, 'workId' | 'phase'>[] = [],
+  prs: readonly { workId: string; prs: NeoWorkPr[] }[] = []
 ): z.infer<typeof WorkAskView> | null {
   const byId = new Map(cards.map((card) => [card.workId, card]));
+  const prsById = new Map(prs.map((receipt) => [receipt.workId, receipt.prs]));
   return ask
     ? {
         id: ask.id,
@@ -650,7 +654,7 @@ export function neoWorkAskView(
           title,
           status,
           phase: byId.get(id)?.phase ?? null,
-          pr: byId.get(id)?.pr?.label ?? null,
+          pr: neoNotePrVerdict(prsById.get(id) ?? []) ?? null,
         })),
         humanActions,
       }
@@ -795,7 +799,7 @@ export function createNeoOperations(service: NeoService) {
     );
     const { workPrs, cards } = projectCards(work, asks);
     const [view] = projectNeoAskViews(asks, cards, workPrs, unmutedAskSessions());
-    return neoWorkAskView(ask, work, view?.humanActions ?? [], cards);
+    return neoWorkAskView(ask, work, view?.humanActions ?? [], cards, workPrs);
   }
   function unmutedAskSessions() {
     return unmutedNeoAskSessions(
