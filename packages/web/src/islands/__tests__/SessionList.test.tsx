@@ -10,6 +10,7 @@ const {
   mockNavigateToSessions,
   mockGetWorkspaceHistory,
   mockAddWorkspaceToHistory,
+  mockAddFolderToProject,
   mockRemoveWorkspaceFromHistory,
   mockArchiveSession,
   mockGetHubIfConnected,
@@ -23,6 +24,7 @@ const {
   mockNavigateToSessions: vi.fn(),
   mockGetWorkspaceHistory: vi.fn(),
   mockAddWorkspaceToHistory: vi.fn(),
+  mockAddFolderToProject: vi.fn(),
   mockRemoveWorkspaceFromHistory: vi.fn(),
   mockArchiveSession: vi.fn(),
   mockGetHubIfConnected: vi.fn(),
@@ -50,6 +52,7 @@ vi.mock('../../lib/router.ts', () => ({
 vi.mock('../../lib/api-helpers.ts', () => ({
   getWorkspaceHistory: mockGetWorkspaceHistory,
   addWorkspaceToHistory: mockAddWorkspaceToHistory,
+  addFolderToProject: mockAddFolderToProject,
   removeWorkspaceFromHistory: mockRemoveWorkspaceFromHistory,
   archiveSession: mockArchiveSession,
 }));
@@ -134,6 +137,79 @@ describe('SessionsSidebar', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('groups every project folder under one header and adds a folder through the project operation', async () => {
+    const project = { id: 'p1', name: 'Product', folders: ['/code', '/docs'] };
+    const history = project.folders.map((path) => ({ ...createHistory(path), project }));
+    mockSessionsSignal.value = [
+      createMockSession('code', 'Code chat', '/code'),
+      createMockSession('docs', 'Docs chat', '/docs'),
+    ];
+    mockGetWorkspaceHistory.mockResolvedValue(history);
+    render(<SessionsSidebar />);
+    await waitFor(() => expect(screen.getAllByTestId('project-group-header')).toHaveLength(1));
+    expect(screen.getByText('Code chat')).toBeTruthy();
+    expect(screen.getByText('Docs chat')).toBeTruthy();
+    expect(screen.getByText('/code')).toBeTruthy();
+    expect(screen.getByText('/docs')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add folder to Product' }));
+    fireEvent.input(screen.getByTestId('add-project-path-input'), { target: { value: '/assets' } });
+    const expanded = { ...project, folders: [...project.folders, '/assets'] };
+    mockGetWorkspaceHistory.mockResolvedValue(
+      expanded.folders.map((path) => ({ ...createHistory(path), project: expanded }))
+    );
+    mockAddFolderToProject.mockResolvedValue(undefined);
+    fireEvent.submit(screen.getByTestId('add-project-form'));
+    await waitFor(() => expect(mockAddFolderToProject).toHaveBeenCalledWith('/code', '/assets'));
+    await waitFor(() => expect(screen.getByText('/assets')).toBeTruthy());
+    expect(screen.getAllByTestId('project-group-header')).toHaveLength(1);
+    expect(mockAddWorkspaceToHistory).not.toHaveBeenCalled();
+  });
+
+  it('refreshes the sidebar after a partial project removal failure and retries only remaining folders', async () => {
+    const project = { id: 'p1', name: 'Product', folders: ['/code', '/docs'] };
+    mockGetWorkspaceHistory.mockResolvedValue(
+      project.folders.map((path) => ({ ...createHistory(path), project }))
+    );
+    render(<SessionsSidebar />);
+    await waitFor(() => expect(screen.getByText('/code')).toBeTruthy());
+    const remaining = { ...project, folders: ['/docs'] };
+    mockGetWorkspaceHistory.mockResolvedValue([{ ...createHistory('/docs'), project: remaining }]);
+    mockRemoveWorkspaceFromHistory
+      .mockResolvedValueOnce({ success: true })
+      .mockRejectedValueOnce(new Error('Disconnected'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project Product' }));
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to remove project'));
+    await waitFor(() => expect(screen.queryByText('/code')).toBeNull());
+    expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: 'Remove project Product' })).toBeTruthy();
+    mockRemoveWorkspaceFromHistory.mockClear();
+    mockGetWorkspaceHistory.mockResolvedValue([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project Product' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Remove project Product' })).toBeNull()
+    );
+    expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([['/docs']]);
+  });
+
+  it('shows a folder rejection without changing the project or closing the form', async () => {
+    mockGetWorkspaceHistory.mockResolvedValue([createHistory('/code')]);
+    render(<SessionsSidebar />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Add folder to code' })).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add folder to code' }));
+    fireEvent.input(screen.getByTestId('add-project-path-input'), { target: { value: '/taken' } });
+    mockAddFolderToProject.mockRejectedValue(
+      new Error('Folder already belongs to another project.')
+    );
+    fireEvent.submit(screen.getByTestId('add-project-form'));
+    await waitFor(() =>
+      expect(screen.getByText('Folder already belongs to another project.')).toBeTruthy()
+    );
+    expect(screen.getByTestId('add-project-form')).toBeTruthy();
+    expect(screen.getAllByTestId('project-group-header')).toHaveLength(1);
   });
 
   it('renders the empty chats state', () => {
@@ -301,6 +377,26 @@ describe('SessionsSidebar', () => {
     expect(screen.queryByText('Loose Chat')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Projects section' }));
     expect(screen.getByText('Project Chat')).toBeTruthy();
+  });
+
+  it('creates a standalone project from the native header picker while an add-folder form is open', async () => {
+    Object.defineProperty(window, 'isTauri', { value: true, configurable: true });
+    try {
+      mockGetWorkspaceHistory.mockResolvedValue([createHistory('/existing')]);
+      render(<SessionsSidebar />);
+      const addFolder = await screen.findByRole('button', { name: 'Add folder to existing' });
+      fireEvent.click(addFolder);
+      expect(screen.getByTestId('add-project-form')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Add project' }));
+      await waitFor(() =>
+        expect(mockAddWorkspaceToHistory).toHaveBeenCalledWith('/workspace/new-project')
+      );
+      expect(mockAddFolderToProject).not.toHaveBeenCalled();
+      expect(await screen.findByText('new-project')).toBeTruthy();
+      expect(screen.getByText('existing')).toBeTruthy();
+    } finally {
+      Reflect.deleteProperty(window, 'isTauri');
+    }
   });
 
   it('uses native browsing from the add-project control when available', async () => {

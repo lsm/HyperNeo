@@ -4,6 +4,8 @@ import { SessionConversationGroup } from './SessionConversationGroup.tsx';
 interface SessionProjectGroupProps {
   name: string;
   path: string;
+  folders?: string[];
+  onAddFolder?: () => void;
   sessions: Session[];
   collapsed: boolean;
   onToggle: () => void;
@@ -16,6 +18,8 @@ interface SessionProjectGroupProps {
 export function SessionProjectGroup({
   name,
   path,
+  folders,
+  onAddFolder,
   sessions,
   collapsed,
   onToggle,
@@ -33,7 +37,7 @@ export function SessionProjectGroup({
           type="button"
           data-testid="project-group-header"
           onClick={onToggle}
-          title={path}
+          title={folders?.join('\n') ?? path}
           aria-expanded={!collapsed}
           class="flex-1 min-w-0 flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-fg-soft transition-colors group-hover/project:text-fg"
         >
@@ -64,6 +68,17 @@ export function SessionProjectGroup({
           </span>
           <span class="flex-1 min-w-0 truncate text-left font-medium">{name}</span>
         </button>
+        {onAddFolder && (
+          <button
+            type="button"
+            onClick={onAddFolder}
+            aria-label={`Add folder to ${name}`}
+            title="Add folder"
+            class="p-1 text-xs text-fg-faint hover:text-fg"
+          >
+            +
+          </button>
+        )}
         {onRemove && (
           <button
             type="button"
@@ -86,6 +101,13 @@ export function SessionProjectGroup({
       </div>
       {!collapsed && (
         <div class="ml-3 mt-0.5 flex flex-col gap-0.5">
+          {folders &&
+            folders.length > 1 &&
+            folders.map((folder) => (
+              <div key={folder} title={folder} class="truncate px-2.5 text-xs text-fg-faint">
+                {folder}
+              </div>
+            ))}
           {isEmpty ? (
             <div class="px-2.5 py-1.5 text-xs text-fg-faint">No chats</div>
           ) : (

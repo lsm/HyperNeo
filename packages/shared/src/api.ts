@@ -103,6 +103,7 @@ export interface WorkspaceHistoryEntry {
   path: string;
   lastUsedAt: number;
   useCount: number;
+  project?: { id: string; name: string; folders: string[] };
 }
 
 export interface WorkspaceHistoryResponse {

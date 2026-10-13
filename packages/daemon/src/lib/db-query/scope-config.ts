@@ -510,6 +510,8 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'sdk_message_replacements',
   'github_filter_configs',
   'workspace_history',
+  'workspace_projects',
+  'workspace_project_folders',
   'mcp_enablement',
   'message_search_content',
   'message_search_pending',

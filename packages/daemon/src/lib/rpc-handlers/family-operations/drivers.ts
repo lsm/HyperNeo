@@ -343,6 +343,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   const ownChats = (text: string) => searchChats(text, ['message', 'task']);
   const adapters = [
     createHyperneoAdapter({
+      projects: () => context.deps.db.workspaceHistory.projects(),
       db,
       machine,
       searchChats: ownChats,
