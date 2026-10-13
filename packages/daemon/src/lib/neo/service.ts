@@ -1,3 +1,4 @@
+import { neoOutcomeCheckPolicy } from './outcome-check-policy.ts';
 import {
   fillPrompt,
   NEO_SESSION_TRACK,
@@ -376,6 +377,7 @@ type NeoReminderTurnInput = { sessionId: string; messageId: string };
 type NeoRemindersDue = { key: string; asks: ReturnType<typeof planNeoWaitingReminders> };
 
 export class NeoService {
+  readonly outcomeCheckPolicy = neoOutcomeCheckPolicy;
   readonly repo: NeoRepository;
   readonly publications: NeoPublicationRepository;
   readonly asks: NeoConversationAskRepository;
