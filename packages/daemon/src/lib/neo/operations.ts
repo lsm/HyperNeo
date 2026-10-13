@@ -11,6 +11,7 @@ import {
   NEO_CONSULTATION_RECEIPT_PENDING,
   NEO_CONSULTATION_RECEIPT_RETURNED,
 } from '@hyperneo/prompts';
+import { planNeoSnapshotRead } from './snapshot-read.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { THINKING_LEVELS } from '@hyperneo/shared';
 import { z } from 'zod';
@@ -1063,11 +1064,21 @@ export function createNeoOperations(service: NeoService) {
       input.askId ? neoAskScope(service.askRecords.get(input.askId)) : input.concernId,
     (input, caller) => {
       const scope = scopeOf(input, caller);
-      return neoSnapshotRevision(
+      const read = neoSnapshotRevision(
         snapshot(caller, input.concernId, scope.askId),
         input.sinceRev,
         scope.scopedTo
       );
+      const turn = caller.source === 'mcp' ? caller.neoTurn?.messageId : undefined;
+      if (!caller.sessionId || !turn) return read;
+      const key = [caller.sessionId, turn, input.concernId, scope.askId, input.all].join('\n');
+      const planned = planNeoSnapshotRead(
+        read,
+        service.snapshotReads.get(key) ?? null,
+        service.db.getSDKMessageRepo().latestCompactionSeq(caller.sessionId)
+      );
+      if (planned.remember) service.snapshotReads.set(key, planned.remember);
+      return planned.result;
     }
   );
   const consult = (superpipe({})('neo.concern.consult') as PipelineAPI)

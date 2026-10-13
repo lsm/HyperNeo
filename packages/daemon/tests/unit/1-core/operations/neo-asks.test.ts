@@ -284,6 +284,36 @@ describe('neo.ask operations', () => {
     expect(moved.asks).toHaveLength(1);
   });
 
+  test('a repeated read answers unchanged without sinceRev, and in full again after a compaction', async () => {
+    const first = (await invoke('neo.snapshot', {})).value as unknown as NeoSnapshot;
+    expect(first.rev).toBeTruthy();
+    expect(await invoke('neo.snapshot', {})).toMatchObject({
+      value: { ok: true, unchanged: true, rev: first.rev },
+    });
+    expect(
+      ((await invoke('neo.snapshot', { all: true })).value as { unchanged?: true }).unchanged
+    ).toBeUndefined();
+    expect(
+      (
+        (await invoke('neo.snapshot', {}, { source: 'rpc', principal: 'local' })).value as {
+          unchanged?: true;
+        }
+      ).unchanged
+    ).toBeUndefined();
+
+    db.getSDKMessageRepo().saveSDKMessage('root', {
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'compacted',
+      session_id: 'root',
+      compact_metadata: { trigger: 'auto', pre_tokens: 1 },
+    } as unknown as SDKUserMessage);
+    const reread = (await invoke('neo.snapshot', {})).value as unknown as NeoSnapshot;
+    expect(reread).toMatchObject({ rev: first.rev });
+    expect((reread as { unchanged?: true }).unchanged).toBeUndefined();
+    expect(await invoke('neo.snapshot', {})).toMatchObject({ value: { unchanged: true } });
+  });
+
   test('a work operation answers with its ask, so Neo needs no follow-up read', async () => {
     const askId = await openAsk();
     const proposed = await propose('card-1', askId);
