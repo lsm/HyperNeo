@@ -14,6 +14,7 @@ import type { Database } from '../sqlite-compat.ts';
 import type { NeoRepository, NeoWorkInput } from './neo-repository.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { NEO_WORK_AWAITING_WORKER, neoWorkerRefKey } from '../../lib/neo/work-reroute.ts';
+import { NeoAgentWorkTargetRepository } from './neo-agent-work-target-repository.ts';
 
 export type NeoDriverTargetCard = {
   target: NeoDriverTarget | null;
@@ -61,6 +62,7 @@ export class NeoWorkDriverTargetRepository {
         this.readRef(work.id)
       )
         return null;
+      const agents = new NeoAgentWorkTargetRepository(this.db);
       const occupied = new Set(
         repo.listWork().flatMap((other) => {
           if (other.id === work.id || !['proposed', 'queued'].includes(other.status)) return [];
@@ -68,11 +70,12 @@ export class NeoWorkDriverTargetRepository {
           const ref =
             this.readRef(other.id) ?? (target && target.verb !== 'start' ? target.ref : null);
           const local = other.sessionId ?? other.targetSessionId;
-          return ref
-            ? [neoWorkerRefKey(ref)]
-            : local
-              ? [neoWorkerRefKey({ adapter: 'hyperneo', id: local })]
-              : [];
+          const agent = agents.get(other.id);
+          return [
+            ...(ref ? [neoWorkerRefKey(ref)] : []),
+            ...(local ? [neoWorkerRefKey({ adapter: 'hyperneo', id: local })] : []),
+            ...(agent ? [neoWorkerRefKey({ adapter: 'space', id: `agent:${agent.agentId}` })] : []),
+          ];
         })
       );
       const ref = candidates.find((candidate) => !occupied.has(neoWorkerRefKey(candidate)));

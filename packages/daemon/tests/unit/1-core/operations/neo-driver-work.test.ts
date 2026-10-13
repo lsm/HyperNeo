@@ -894,6 +894,43 @@ describe('Neo work with a drivers target', () => {
     }
   );
 
+  test.each(['proposed', 'queued'] as const)(
+    'respects a %s native Space-agent reservation when rerouting',
+    async (status) => {
+      const { db, service } = await setup({ ok: false, reason: 'not_open', detail: 'archived' });
+      try {
+        const held = service.agentTargets.propose(
+          service.repo,
+          {
+            id: 'native-card',
+            requestKey: 'native-card',
+            concernId: null,
+            originSessionId: 'neo:root',
+            originMessageId: 'ask-1',
+            targetSessionId: 'agent-session',
+            ...work,
+          },
+          { spaceId: 'space', agentId: 'held', sessionId: 'agent-session' }
+        );
+        if (status === 'queued')
+          service.repo.transitionWork(held.work.id, held.work, {
+            status,
+            sessionId: 'agent-session',
+          });
+        const free = { adapter: 'space', id: 'agent:free' };
+        expect(
+          service.driverTargets.reassign(service.repo, service.repo.getWork('work-1')!, [
+            { adapter: 'space', id: 'agent:held' },
+            free,
+          ])?.target
+        ).toEqual({ verb: 'send', ref: free });
+        expect(service.repo.getWork(held.work.id)?.status).toBe(status);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
   test('returns an unassigned card to Neo without failing it, then retries the same card when a worker appears', async () => {
     let available = false;
     const { db, service, calls } = await setup(
