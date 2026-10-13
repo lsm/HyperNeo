@@ -25,8 +25,8 @@ describe('Neo terminal error results', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    service.repo.reserveBinding({ sessionId: 'root', concernId: null, kind: 'neo' });
-    service.repo.reserveBinding({ sessionId: 'worker', concernId: null, kind: 'worker' });
+    service.repo.reserveBinding({ sessionId: 'root', projectId: null, kind: 'neo' });
+    service.repo.reserveBinding({ sessionId: 'worker', projectId: null, kind: 'worker' });
   });
 
   afterEach(() => {
@@ -38,7 +38,7 @@ describe('Neo terminal error results', () => {
     const proposed = service.repo.proposeWork({
       id: crypto.randomUUID(),
       requestKey: crypto.randomUUID(),
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'original-ask',
       targetSessionId: null,

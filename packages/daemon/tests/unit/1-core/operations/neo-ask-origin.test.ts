@@ -70,15 +70,15 @@ import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbo
 
 const root: NeoBinding = {
   sessionId: 'neo:10000000-0000-4000-8000-000000000001',
-  concernId: null,
+  projectId: null,
   kind: 'neo',
 };
-const holder: NeoBinding = { sessionId: 'holder:a', concernId: 'a', kind: 'concern' };
+const holder: NeoBinding = { sessionId: 'holder:a', projectId: 'a', kind: 'project' };
 const ask: NeoAskOrigin = { sessionId: root.sessionId, messageId: 'human:1' };
 const consultation: NeoConsultation = {
   id: 'check:with:delimiters',
   requestKey: 'key',
-  concernId: 'a',
+  projectId: 'a',
   originSessionId: root.sessionId,
   originMessageId: ask.messageId,
   sessionId: holder.sessionId,
@@ -90,7 +90,7 @@ const consultation: NeoConsultation = {
 const work: NeoWork = {
   id: 'work:opaque:id',
   requestKey: 'work-key',
-  concernId: 'a',
+  projectId: 'a',
   originSessionId: root.sessionId,
   originMessageId: ask.messageId,
   title: 'Title',
@@ -224,8 +224,8 @@ describe('recorded ask lineage gates', () => {
     null,
     { ...root, sessionId: 'other' },
     { ...root, kind: 'worker' as const },
-    { ...root, concernId: 'a' },
-    { ...holder, concernId: null },
+    { ...root, projectId: 'a' },
+    { ...holder, projectId: null },
   ])('rejects invalid coordinator: %j', (binding) => {
     expect(requireNeoAskCoordinator(ask, binding)).toEqual({ reason: { kind: 'unknown' } });
   });
@@ -342,7 +342,7 @@ describe('real SQLite ask lineage facade', () => {
       { event: notify } as unknown as MessageHub,
       new InternalEventBus()
     );
-    service.repo.saveConcern({ id: 'a', title: 'A', summary: '', context: '' }, 0);
+    service.repo.saveProject({ id: 'a', title: 'A', summary: '', context: '' }, 0);
     for (const item of [root, holder]) {
       mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(item.sessionId);
       service.repo.reserveBinding(item);
@@ -379,7 +379,7 @@ describe('real SQLite ask lineage facade', () => {
     return {
       sdk: mailbox.sdkRows(),
       jobs: mailbox.rows(),
-      concerns: service.repo.listConcerns(),
+      projects: service.repo.listProjects(),
       work: service.repo.listWork(),
       consultations: service.consultations.list(),
     };
@@ -491,11 +491,11 @@ describe('real SQLite ask lineage facade', () => {
   test('snapshot origin metadata preserves holder scope and root detail redaction', async () => {
     const a = await intake();
     const b = await intake(root.sessionId, 'e4da4c3c-d629-46dc-a550-047144cf9499');
-    service.repo.saveConcern(
+    service.repo.saveProject(
       { id: 'a', title: 'A', summary: 'Summary A', context: 'Private A' },
       1
     );
-    service.repo.saveConcern(
+    service.repo.saveProject(
       { id: 'b', title: 'B', summary: 'Summary B', context: 'Private B' },
       0
     );
@@ -504,22 +504,22 @@ describe('real SQLite ask lineage facade', () => {
       ...work,
       id: 'work-b',
       requestKey: 'b',
-      concernId: 'b',
+      projectId: 'b',
       originMessageId: b.messageId,
     });
     reserve({ ...consultation, originMessageId: a.messageId });
     const rootCaller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: root.sessionId };
     const holderCaller: OperationCaller = { ...rootCaller, sessionId: holder.sessionId };
     const overview = await snapshot(rootCaller);
-    expect(overview.concerns.map((item) => item.context)).toEqual(['', '']);
+    expect(overview.projects.map((item) => item.context)).toEqual(['', '']);
     expect(overview.work.every((item) => item.instruction === '' && item.report === null)).toBe(
       true
     );
     expect(overview.consultations![0]).toMatchObject({ question: '', answer: null });
     expect(overview.askOrigins).toContainEqual({ kind: 'work', id: 'work-b', origin: b });
     const scoped = await snapshot(holderCaller);
-    expect(scoped.concerns.map((item) => item.id)).toEqual(['a']);
-    expect(scoped.concerns[0].context).toBe('Private A');
+    expect(scoped.projects.map((item) => item.id)).toEqual(['a']);
+    expect(scoped.projects[0].context).toBe('Private A');
     expect(scoped.work.map((item) => item.id)).toEqual([work.id]);
     expect(scoped.askOrigins).toEqual(
       expect.arrayContaining([
@@ -532,7 +532,7 @@ describe('real SQLite ask lineage facade', () => {
       await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.snapshot',
-        { concernId: 'b' },
+        { projectId: 'b' },
         holderCaller
       )
     ).toMatchObject({ kind: 'completed', value: { ok: false } });
@@ -625,7 +625,7 @@ describe('real SQLite ask lineage facade', () => {
       const proposed = service.repo.proposeWork({
         ...work,
         originSessionId: sessionId,
-        concernId: sessionId === holder.sessionId ? holder.concernId : null,
+        projectId: sessionId === holder.sessionId ? holder.projectId : null,
         originMessageId: human.messageId,
       });
       service.repo.transitionWork(proposed.id, proposed, {
@@ -639,7 +639,7 @@ describe('real SQLite ask lineage facade', () => {
         ...work,
         id: 'legacy',
         requestKey: 'legacy',
-        concernId: null,
+        projectId: null,
         originMessageId: null,
       });
       service.repo.transitionWork(legacy.id, legacy, { status: 'reported' });
@@ -654,7 +654,7 @@ describe('real SQLite ask lineage facade', () => {
     expect(mailbox.sdkMessageRepo.saveSDKMessage(input.sessionId, unmarked)).toBe(true);
     expect(service.resolveAskOrigin(input)).toBeNull();
     mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run('worker');
-    service.repo.reserveBinding({ sessionId: 'worker', kind: 'worker', concernId: 'a' });
+    service.repo.reserveBinding({ sessionId: 'worker', kind: 'worker', projectId: 'a' });
     const workerInput = { ...input, sessionId: 'worker' };
     expect(mailbox.sdkMessageRepo.saveSDKMessage('worker', prompt(workerInput))).toBe(true);
     expect(service.resolveAskOrigin(workerInput)).toBeNull();

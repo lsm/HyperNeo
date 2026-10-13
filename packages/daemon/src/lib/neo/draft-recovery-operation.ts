@@ -57,7 +57,7 @@ function askText(ask: NeoConversationAsk): string {
 }
 
 export function requireUnsubmitted(captured: Captured, service: Recovers): Gate<Captured> {
-  const root = service.repo.getBindingForConcern(null);
+  const root = service.repo.getBindingForProject(null);
   if (!root?.sessionId.startsWith('neo:')) return refuse('session_not_found');
   const newest = service.asks.newestFrom(root.sessionId.slice(4), captured.recovery.sessionId);
   return newest && askText(newest) === captured.recovery.text.trim()

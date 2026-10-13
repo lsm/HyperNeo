@@ -229,7 +229,7 @@ describe('ordinary chat inspection through the database catalog', () => {
     session(caller.sessionId!, null, 100);
     new NeoRepository(db.getDatabase()).reserveBinding({
       sessionId: caller.sessionId!,
-      concernId: null,
+      projectId: null,
       kind: 'neo',
     });
   });

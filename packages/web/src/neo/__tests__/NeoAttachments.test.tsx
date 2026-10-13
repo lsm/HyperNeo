@@ -74,7 +74,7 @@ describe('Neo attachments', () => {
     const id = crypto.randomUUID();
     useNeoMock.mockReturnValue({
       sessionId: id,
-      snapshot: { concerns: [], work: [] },
+      snapshot: { projects: [], work: [] },
       error: null,
       setError: vi.fn(),
       open: vi.fn(),

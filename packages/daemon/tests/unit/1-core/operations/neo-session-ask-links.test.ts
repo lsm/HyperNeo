@@ -335,7 +335,7 @@ describe('NeoService session ask links', () => {
     service.readPrs = async () => [];
     service.readRefStates = async () => [];
     service.readBranchPrs = async () => [];
-    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
   });
   afterEach(() => {
     service.dispose();
@@ -346,7 +346,7 @@ describe('NeoService session ask links', () => {
     service.askRecords.open({
       id: 'a1',
       requestKey: 'k1',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       originMessageId: 'm0',
       title: 'Ship the fix',
@@ -362,7 +362,7 @@ describe('NeoService session ask links', () => {
       {
         id: 'w1',
         requestKey: 'root:w1',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'm0',
         title: 'Ship the fix',

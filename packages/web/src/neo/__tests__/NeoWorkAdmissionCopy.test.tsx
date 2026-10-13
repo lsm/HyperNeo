@@ -34,7 +34,7 @@ describe('Neo empty-conversation admission guidance', () => {
       const snapshot = {
         ok: true,
         sessionId,
-        concerns: [
+        projects: [
           {
             id: 'garden',
             title: 'Fictional garden',

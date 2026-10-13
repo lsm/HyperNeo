@@ -43,12 +43,12 @@ const work = (
   id: string,
   status: NeoWork['status'],
   createdAt: number,
-  concernId: string | null = 'a',
+  projectId: string | null = 'a',
   extra: Partial<NeoWork> = {}
 ): NeoWork => ({
   id,
   requestKey: id,
-  concernId,
+  projectId,
   originSessionId: 'root',
   originMessageId: `ask-${id}`,
   title: `Title ${id}`,
@@ -87,10 +87,10 @@ const live = () => ({
 const snapshot = () => ({
   ok: true as const,
   sessionId: 'root',
-  concerns: [
+  projects: [
     {
       id: 'a',
-      title: 'Concern A',
+      title: 'Project A',
       summary: 'S',
       context: 'C',
       revision: 1,
@@ -99,7 +99,7 @@ const snapshot = () => ({
     },
     {
       id: 'b',
-      title: 'Concern B',
+      title: 'Project B',
       summary: 'S',
       context: 'C',
       revision: 1,
@@ -115,7 +115,7 @@ const snapshot = () => ({
     work('a-cancelled', 'cancelled', 60, 'a'),
     work('b-queued', 'queued', 70, 'b'),
   ],
-  consultations: [{ id: 'consult-one', concernId: 'a', status: 'pending' as const }],
+  consultations: [{ id: 'consult-one', projectId: 'a', status: 'pending' as const }],
 });
 
 const renderLive = (over: Record<string, unknown> = {}) => {

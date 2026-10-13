@@ -51,7 +51,7 @@ const item = (id: string, extra: Partial<NeoAskItem> = {}): NeoAskItem => ({
 const ask = (items: NeoAskItem[], id = 'a1'): NeoAsk => ({
   id,
   requestKey: `k-${id}`,
-  concernId: null,
+  projectId: null,
   originSessionId: 'neo:root',
   originMessageId: 'm0',
   title: 'Ship it',
@@ -335,7 +335,7 @@ describe('Neo ask event ticks', () => {
       {
         id,
         requestKey: `k-${id}`,
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'm0',
         title: 'Land it',

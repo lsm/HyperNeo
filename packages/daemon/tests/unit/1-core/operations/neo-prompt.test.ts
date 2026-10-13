@@ -26,8 +26,8 @@ const NEO_TOOLS = [
 ];
 
 describe('neoCoordinatorNativeTools', () => {
-  test.each(['saas', 'family'])('gives the %s holder questions and every tool', (concernId) => {
-    expect(neoCoordinatorNativeTools(concernId)).toEqual(['AskUserQuestion', ...NEO_TOOLS]);
+  test.each(['saas', 'family'])('gives the %s holder questions and every tool', (projectId) => {
+    expect(neoCoordinatorNativeTools(projectId)).toEqual(['AskUserQuestion', ...NEO_TOOLS]);
   });
 
   test('gives root Neo the same tools as a topic, without questions', () => {
@@ -73,9 +73,9 @@ describe('neoCoordinatorDeniedReads', () => {
 
 describe('restrictNeoQuery guard', () => {
   test('root and topic Neo get the same decisions', async () => {
-    const decide = async (concernId: string | null, tool_name: string, tool_input: object) => {
+    const decide = async (projectId: string | null, tool_name: string, tool_input: object) => {
       const options: Options = {};
-      restrictNeoQuery(options, concernId, 'neo:guard-parity');
+      restrictNeoQuery(options, projectId, 'neo:guard-parity');
       return options.hooks!.PreToolUse![0].hooks[0](
         {
           hook_event_name: 'PreToolUse',
@@ -111,8 +111,8 @@ describe('Neo world briefing delivery', () => {
 
   test.each([null, 'research', 'family'])(
     'ends the composed prompt with request focus for %s',
-    (concernId) => {
-      const prompt = neoPrompt(concernId);
+    (projectId) => {
+      const prompt = neoPrompt(projectId);
       expect(prompt).toContain(NEO_RESPONSE_FOCUS_BRIEFING);
       expect(prompt.indexOf(NEO_RESPONSE_FOCUS_BRIEFING)).toBeGreaterThan(
         prompt.indexOf(NEO_CAPABILITIES_BRIEFING)
@@ -135,8 +135,8 @@ describe('Neo world briefing delivery', () => {
     }
   );
 
-  test.each([null, 'research'])('teaches the worker-staffing method for %s', (concernId) => {
-    const prompt = neoPrompt(concernId).replace(/\s+/g, ' ');
+  test.each([null, 'research'])('teaches the worker-staffing method for %s', (projectId) => {
+    const prompt = neoPrompt(projectId).replace(/\s+/g, ' ');
     for (const text of [
       'small pool of two or three long-lived workers',
       'give related work (the same epic, the same files, the same section) to the worker',
@@ -151,7 +151,7 @@ describe('Neo world briefing delivery', () => {
 
   test.each([null, 'research'])(
     'refreshes response guidance through the existing runtime policy for %s',
-    (concernId) => {
+    (projectId) => {
       const options: Options = {
         systemPrompt: 'Legacy stored coordinator wording',
         model: 'fixture-model',
@@ -161,29 +161,29 @@ describe('Neo world briefing delivery', () => {
         },
       };
       const operations = options.mcpServers!['hyperneo-operations'];
-      restrictNeoQuery(options, concernId);
+      restrictNeoQuery(options, projectId);
       expect(options.systemPrompt).toEqual({
         type: 'custom',
-        prompt: neoPrompt(concernId),
+        prompt: neoPrompt(projectId),
         snapshot: false,
       });
       const prompt = (options.systemPrompt as { prompt: string }).prompt;
       expect(prompt).toContain(NEO_RESPONSE_FOCUS_BRIEFING);
       expect(prompt).not.toContain('Legacy stored coordinator wording');
-      expect(options.tools).toEqual(neoCoordinatorNativeTools(concernId));
+      expect(options.tools).toEqual(neoCoordinatorNativeTools(projectId));
       expect(options.mcpServers).toEqual({ 'hyperneo-operations': operations });
-      expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(concernId));
+      expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
       expect(options.settingSources).toEqual([]);
       expect(options.model).toBe('fixture-model');
       expect(options.maxTurns).toBe(17);
       expect(prompt).toContain(
-        concernId ? 'For every consultation request' : 'For every new user request'
+        projectId ? 'For every consultation request' : 'For every new user request'
       );
     }
   );
 
-  test.each([null, 'saas'])('briefs the local world for concern %s', (concernId) => {
-    const prompt = neoPrompt(concernId);
+  test.each([null, 'saas'])('briefs the local world for concern %s', (projectId) => {
+    const prompt = neoPrompt(projectId);
     expect(prompt).toContain(NEO_CAPABILITIES_BRIEFING);
     for (const text of [
       'daemon.snapshot',
@@ -227,26 +227,26 @@ describe('Neo world briefing delivery', () => {
     expect(Object.keys(FindWorkResultSchema.shape)).toContain('more');
   });
 
-  test.each([null, 'saas'])('delivers a refreshed custom Neo prompt for %s', (concernId) => {
+  test.each([null, 'saas'])('delivers a refreshed custom Neo prompt for %s', (projectId) => {
     const options: Options = {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Ambient project' },
     };
-    restrictNeoQuery(options, concernId);
+    restrictNeoQuery(options, projectId);
     expect(options.systemPrompt).toEqual({
       type: 'custom',
-      prompt: neoPrompt(concernId),
+      prompt: neoPrompt(projectId),
       snapshot: false,
     });
     const prompt = (options.systemPrompt as { prompt: string }).prompt;
     expect(prompt).toContain('daemon.snapshot');
     expect(prompt).not.toContain('Ambient project');
-    expect(options.tools).toEqual(neoCoordinatorNativeTools(concernId));
+    expect(options.tools).toEqual(neoCoordinatorNativeTools(projectId));
   });
 
   test.each([null, 'saas'])(
     'keeps execution discovery separate from approval for %s',
-    (concernId) => {
-      const prompt = neoPrompt(concernId);
+    (projectId) => {
+      const prompt = neoPrompt(projectId);
       expect(prompt).toContain(
         'Inspect existing execution resources through their discovered read operations'
       );
@@ -258,7 +258,7 @@ describe('Neo world briefing delivery', () => {
       expect(prompt).not.toContain(
         'Coordinate existing execution resources through their discovered operations when appropriate'
       );
-      if (concernId) expect(prompt).toContain('You may propose work but cannot start it');
+      if (projectId) expect(prompt).toContain('You may propose work but cannot start it');
     }
   );
 
@@ -288,8 +288,8 @@ describe('Neo world briefing delivery', () => {
 describe('Neo look-up guidance', () => {
   test.each([null, 'saas'])(
     'tells %s to check facts itself and change nothing shared',
-    (concernId) => {
-      const prompt = neoPrompt(concernId);
+    (projectId) => {
+      const prompt = neoPrompt(projectId);
       expect(prompt).toContain('never change shared state yourselves');
       expect(prompt).toContain('A check that one or two commands answer, you do yourself');
       expect(prompt).toContain(
@@ -303,8 +303,8 @@ describe('Neo look-up guidance', () => {
 
   test.each([null, 'saas'])(
     'tells %s how to repair a session the human asks about',
-    (concernId) => {
-      const prompt = neoPrompt(concernId);
+    (projectId) => {
+      const prompt = neoPrompt(projectId);
       for (const text of [
         'when the human asks you to fix a session',
         'session.runtimeSettings.update',

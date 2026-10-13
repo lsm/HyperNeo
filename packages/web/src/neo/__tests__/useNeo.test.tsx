@@ -64,7 +64,7 @@ describe('useNeo intake client', () => {
       async (_method: string, { name, input }: { name: string; input: { requestId?: string } }) =>
         name === 'neo.message.send'
           ? { ok: true, requestId: input.requestId, messageId: input.requestId, created: true }
-          : { ok: true, sessionId: 'neo:root', concerns: [], work: [] }
+          : { ok: true, sessionId: 'neo:root', projects: [], work: [] }
     );
     render(<IntakeProbe />);
     fireEvent.click(screen.getByRole('button', { name: 'Send ask' }));
@@ -88,12 +88,12 @@ describe('useNeo root conversation', () => {
     request.mockImplementation(async (_method: string, { name }: { name: string }) => ({
       ok: true,
       sessionId: 'root',
-      concerns: [],
+      projects: [],
       work: [
         {
           id: name === 'neo.open' ? 'unused' : version,
           requestKey: version,
-          concernId: null,
+          projectId: null,
           originSessionId: 'root',
           sessionId: version,
           title: version,

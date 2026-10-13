@@ -62,7 +62,7 @@ describe('runNeoNightlyReorganize', () => {
       reorganize: async () => {
         runs++;
         return {
-          moved: [{ askId: 'a', concernId: 'c' }],
+          moved: [{ askId: 'a', projectId: 'c' }],
           stayed: [{ askId: 'b', reason: 'stays_main' }],
         };
       },

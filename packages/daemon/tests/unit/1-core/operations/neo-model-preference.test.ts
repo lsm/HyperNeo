@@ -173,7 +173,7 @@ describe('neo.preferences.set', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
   });
   afterEach(() => {
     service.dispose();
@@ -236,7 +236,7 @@ describe('neo.preferences.set', () => {
       provider: 'anthropic',
       thinkingLevel: 'think8k',
     });
-    service.repo.saveConcern({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
+    service.repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
     await service.open('garden');
     expect(created).toEqual([
       expect.objectContaining({

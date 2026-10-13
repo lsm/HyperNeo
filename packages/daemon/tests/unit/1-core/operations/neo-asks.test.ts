@@ -14,7 +14,7 @@ import {
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
   projectNeoSnapshotAsks,
-  requireNeoAskConcern,
+  requireNeoAskProject,
   isNeoAskReplay,
   planNeoAskItems,
   planNeoAskEdit,
@@ -85,22 +85,22 @@ const opening = {
 
 describe('isNeoTurnAskReadable', () => {
   test('root reads any turn ask, a holder only its own concern, anyone else none', () => {
-    expect(isNeoTurnAskReadable({ kind: 'neo', concernId: null }, { concernId: 'club' })).toBe(
+    expect(isNeoTurnAskReadable({ kind: 'neo', projectId: null }, { projectId: 'club' })).toBe(
       true
     );
     expect(
-      isNeoTurnAskReadable({ kind: 'concern', concernId: 'club' }, { concernId: 'club' })
+      isNeoTurnAskReadable({ kind: 'project', projectId: 'club' }, { projectId: 'club' })
     ).toBe(true);
-    expect(isNeoTurnAskReadable({ kind: 'concern', concernId: 'club' }, { concernId: null })).toBe(
+    expect(isNeoTurnAskReadable({ kind: 'project', projectId: 'club' }, { projectId: null })).toBe(
       false
     );
     expect(
-      isNeoTurnAskReadable({ kind: 'concern', concernId: 'club' }, { concernId: 'work' })
+      isNeoTurnAskReadable({ kind: 'project', projectId: 'club' }, { projectId: 'work' })
     ).toBe(false);
-    expect(isNeoTurnAskReadable({ kind: 'worker', concernId: 'club' }, { concernId: 'club' })).toBe(
+    expect(isNeoTurnAskReadable({ kind: 'worker', projectId: 'club' }, { projectId: 'club' })).toBe(
       false
     );
-    expect(isNeoTurnAskReadable(null, { concernId: null })).toBe(false);
+    expect(isNeoTurnAskReadable(null, { projectId: null })).toBe(false);
   });
 });
 
@@ -117,7 +117,7 @@ describe('neo.ask operations', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
     db.updateGlobalSettings({ neo: { standingRules: [rule] } });
   });
   afterEach(() => {
@@ -399,7 +399,7 @@ describe('neo.ask operations', () => {
   });
 
   test('retries an unchecked legacy ask without duplicating it or replacing its checklist', async () => {
-    const input = { ...opening, concernId: null, doneWhen: '- merged to dev' };
+    const input = { ...opening, projectId: null, doneWhen: '- merged to dev' };
     const stored = service.askRecords.open(
       {
         ...input,
@@ -434,7 +434,7 @@ describe('neo.ask operations', () => {
   test('retries an unchecked legacy card only when its ask already exists', async () => {
     const input = {
       requestKey: 'legacy-card',
-      concernId: null,
+      projectId: null,
       title: 'Fix it',
       instruction: 'Fix it.',
       doneWhen: '- merged to dev',
@@ -535,23 +535,23 @@ describe('neo.ask operations', () => {
   });
 
   test("an ask-scoped read shows the cards' reports but not the concern's private context", async () => {
-    service.repo.saveConcern({ id: 'c1', title: 'C1', summary: 'S', context: 'Private' }, 0);
+    service.repo.saveProject({ id: 'c1', title: 'C1', summary: 'S', context: 'Private' }, 0);
     const askId = (
-      await invoke('neo.ask.open', { ...opening, requestKey: 'scoped', concernId: 'c1' })
+      await invoke('neo.ask.open', { ...opening, requestKey: 'scoped', projectId: 'c1' })
     ).value!.ask!.id;
     const scoped = (await invoke('neo.snapshot', { askId })) as {
-      value?: { concerns: { id: string; context: string }[] };
+      value?: { projects: { id: string; context: string }[] };
     };
-    expect(scoped.value?.concerns).toEqual([expect.objectContaining({ id: 'c1', context: '' })]);
+    expect(scoped.value?.projects).toEqual([expect.objectContaining({ id: 'c1', context: '' })]);
   });
 
   test("a context holder cannot read another concern's ask, whatever concern it names", async () => {
     const askId = await openAsk();
-    service.repo.saveConcern({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
+    service.repo.saveProject({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
     db.createSession(createTestSession('holder'));
-    service.repo.reserveBinding({ sessionId: 'holder', kind: 'concern', concernId: 'c1' });
+    service.repo.reserveBinding({ sessionId: 'holder', kind: 'project', projectId: 'c1' });
     const holder: OperationCaller = { source: 'mcp', sessionId: 'holder', role: 'neo' };
-    for (const input of [{ askId }, { concernId: 'c1', askId }])
+    for (const input of [{ askId }, { projectId: 'c1', askId }])
       expect(await invoke('neo.snapshot', input, holder)).toMatchObject({
         value: { ok: false, reason: 'This context holder cannot access another concern.' },
       });
@@ -2206,7 +2206,7 @@ describe('neo.ask operations', () => {
 const ask: NeoAsk = {
   id: 'a1',
   requestKey: 'root:fix',
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'm1',
   title: opening.title,
@@ -2220,7 +2220,7 @@ const ask: NeoAsk = {
   updatedAt: 1,
   settledAt: null,
 };
-const openInput = { ...opening, concernId: null };
+const openInput = { ...opening, projectId: null };
 
 describe('requireNeoAskReceipt', () => {
   test.each([
@@ -2232,7 +2232,7 @@ describe('requireNeoAskReceipt', () => {
     ],
     [
       'another concern',
-      { ...ask, concernId: 'c1' },
+      { ...ask, projectId: 'c1' },
       'This request key already belongs to another ask.',
     ],
   ])('refuses %s', (_case, opened, reason) => {
@@ -2246,37 +2246,37 @@ describe('requireNeoAskReceipt', () => {
   });
 });
 
-describe('requireNeoAskConcern', () => {
+describe('requireNeoAskProject', () => {
   test('refuses a missing concern and passes the value otherwise', () => {
-    expect(requireNeoAskConcern({ concernId: 'c1' }, { concern: null }, 'v')).toEqual({
-      reason: { ok: false, reason: 'Concern not found.' },
+    expect(requireNeoAskProject({ projectId: 'c1' }, { concern: null }, 'v')).toEqual({
+      reason: { ok: false, reason: 'Project not found.' },
     });
-    expect(requireNeoAskConcern({ concernId: null }, { concern: null }, 'v')).toEqual({
+    expect(requireNeoAskProject({ projectId: null }, { concern: null }, 'v')).toEqual({
       value: 'v',
     });
   });
 });
 
 describe('requireNeoWorkAsk', () => {
-  const input = { askId: 'a1', concernId: null };
+  const input = { askId: 'a1', projectId: null };
   test('refuses work filed under an ask from another concern', () => {
-    expect(requireNeoWorkAsk({ ...ask, concernId: 'c1' }, input, neo)).toEqual({
+    expect(requireNeoWorkAsk({ ...ask, projectId: 'c1' }, input, neo)).toEqual({
       reason: {
         ok: false,
-        reason: 'This ask belongs to another concern; propose under its concernId.',
+        reason: 'This ask belongs to another concern; propose under its projectId.',
       },
     });
   });
 
   test('passes work with no ask, a missing ask, or an ask in its concern', () => {
-    expect(requireNeoWorkAsk(null, { concernId: null }, neo)).toEqual({ value: neo });
+    expect(requireNeoWorkAsk(null, { projectId: null }, neo)).toEqual({ value: neo });
     expect(requireNeoWorkAsk(null, input, neo)).toEqual({ value: neo });
     expect(requireNeoWorkAsk(ask, input, neo)).toEqual({ value: neo });
   });
 });
 
 describe('requireNeoWorkAskOwner', () => {
-  const input = { askId: 'a1', concernId: null };
+  const input = { askId: 'a1', projectId: null };
   test('refuses a missing ask or another Neo session, and passes the user', () => {
     expect(requireNeoWorkAskOwner(null, input, neo)).toEqual({
       reason: { ok: false, reason: 'ask_not_found' },
@@ -2286,12 +2286,12 @@ describe('requireNeoWorkAskOwner', () => {
     });
     const user: OperationCaller = { source: 'rpc', principal: 'local' };
     expect(requireNeoWorkAskOwner(ask, input, user)).toEqual({ value: user });
-    expect(requireNeoWorkAskOwner(null, { concernId: null }, neo)).toEqual({ value: neo });
+    expect(requireNeoWorkAskOwner(null, { projectId: null }, neo)).toEqual({ value: neo });
   });
 });
 
 describe('requireNeoWorkAskLive', () => {
-  const input = { askId: 'a1', concernId: null };
+  const input = { askId: 'a1', projectId: null };
   test('refuses work under a settled ask and passes an active one', () => {
     expect(requireNeoWorkAskLive({ ...ask, status: 'achieved' }, input, neo)).toEqual({
       reason: { ok: false, reason: 'ask_settled: this ask is already achieved; open a new ask.' },
@@ -2814,14 +2814,14 @@ describe('projectNeoAskCards', () => {
 
 describe('planNeoCardAsk', () => {
   const origin = { originSessionId: 'root', originMessageId: 'm1' };
-  const card = { requestKey: 'k', concernId: null, title: 'Fix it', doneWhen: '- merged' };
+  const card = { requestKey: 'k', projectId: null, title: 'Fix it', doneWhen: '- merged' };
 
   test('plans an ask only for a card with a done list and no ask', () => {
     expect(planNeoCardAsk({ ...card, askId: 'a1' }, origin)).toBe(null);
     expect(planNeoCardAsk({ ...card, doneWhen: undefined }, origin)).toBe(null);
     expect(planNeoCardAsk(card, origin)).toEqual({
       requestKey: 'card:root:k',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'm1',
       title: 'Fix it',
@@ -2836,7 +2836,7 @@ describe('planNeoCardAsk', () => {
 describe('isNeoCardAsk', () => {
   test('accepts only the ask the card planned, never one that shares its key', () => {
     const planned = planNeoCardAsk(
-      { requestKey: 'k', concernId: null, title: 'Fix it', doneWhen: '- merged' },
+      { requestKey: 'k', projectId: null, title: 'Fix it', doneWhen: '- merged' },
       { originSessionId: 'root', originMessageId: 'm1' }
     )!;
     const opened = { ...ask, ...planned };
@@ -2904,8 +2904,8 @@ describe('neoPrompt place resolution', () => {
 
 describe('neoAskScope', () => {
   test("admits an ask-scoped read by the ask's own concern, and a missing ask by none", () => {
-    expect(neoAskScope({ concernId: 'c1' })).toBe('c1');
-    expect(neoAskScope({ concernId: null })).toBe(null);
+    expect(neoAskScope({ projectId: 'c1' })).toBe('c1');
+    expect(neoAskScope({ projectId: null })).toBe(null);
     expect(neoAskScope(null)).toBe(undefined);
   });
 });

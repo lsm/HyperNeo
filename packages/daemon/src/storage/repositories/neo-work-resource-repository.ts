@@ -82,7 +82,7 @@ export class NeoWorkResourceRepository {
             expected.sessionId,
             expected.originSessionId,
             expected.originMessageId,
-            expected.concernId,
+            expected.projectId,
             expected.targetSessionId,
             expected.report
           );
@@ -93,7 +93,7 @@ export class NeoWorkResourceRepository {
         });
         if (
           'reason' in requireSettledNeoWorkReport(expected, plan.input, { work }) ||
-          work?.concernId !== expected.concernId ||
+          work?.projectId !== expected.projectId ||
           work?.targetSessionId !== expected.targetSessionId
         )
           throw new SettlementConflict();

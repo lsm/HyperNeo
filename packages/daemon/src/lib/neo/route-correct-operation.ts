@@ -10,12 +10,12 @@ import {
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 
-const Input = z.object({ messageId: z.string().min(1), concernId: z.string().min(1) });
+const Input = z.object({ messageId: z.string().min(1), projectId: z.string().min(1) });
 const Result = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(true) }),
   z.object({
     ok: z.literal(false),
-    reason: z.enum(['main_neo_only', 'unknown_ask', 'unknown_topic']),
+    reason: z.enum(['main_neo_only', 'unknown_ask', 'unknown_project']),
   }),
 ]);
 type Input = z.infer<typeof Input>;
@@ -33,10 +33,10 @@ function requireLoggedAsk(route: NeoRoute | null): Gate<NeoRoute> {
   return route ? { value: route } : { reason: { ok: false, reason: 'unknown_ask' } };
 }
 
-function requireTopicHolder(binding: NeoBinding | null): Gate<NeoBinding> {
-  return binding?.kind === 'concern'
+function requireProjectHolder(binding: NeoBinding | null): Gate<NeoBinding> {
+  return binding?.kind === 'project'
     ? { value: binding }
-    : { reason: { ok: false, reason: 'unknown_topic' } };
+    : { reason: { ok: false, reason: 'unknown_project' } };
 }
 
 const runCorrect = (superpipe({})('neo-route-correct') as PipelineAPI)
@@ -49,14 +49,14 @@ const runCorrect = (superpipe({})('neo-route-correct') as PipelineAPI)
   )
   .pipe(requireLoggedAsk, 'logged', 'result:outcome')
   .pipe(
-    (input: Input, repo: NeoRepository) => repo.getBindingForConcern(input.concernId),
+    (input: Input, repo: NeoRepository) => repo.getBindingForProject(input.projectId),
     ['input', 'repo'],
     'binding'
   )
-  .pipe(requireTopicHolder, 'binding', 'result:outcome')
+  .pipe(requireProjectHolder, 'binding', 'result:outcome')
   .pipe(
     (route: NeoRoute, holder: NeoBinding, log: NeoRoutingLogRepository): Outcome => {
-      log.correct(route.messageId, holder.concernId!, holder.sessionId);
+      log.correct(route.messageId, holder.projectId!, holder.sessionId);
       return { ok: true };
     },
     ['logged', 'outcome', 'log'],
@@ -73,7 +73,7 @@ export function createNeoRouteCorrectOperation(db: Database, repo: NeoRepository
   return defineOperation({
     name: 'neo.route.correct',
     description:
-      'Record that a human ask went to the wrong topic: messageId is the ask (as shown in the catch-up), concernId the topic that should have answered it. This updates the routing log so later asks route better; it does not move or answer the ask, so consult that holder separately.',
+      'Record that a human ask went to the wrong project: messageId is the ask (as shown in the catch-up), projectId the project that should have answered it. This updates the routing log so later asks route better; it does not move or answer the ask, so consult that holder separately.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

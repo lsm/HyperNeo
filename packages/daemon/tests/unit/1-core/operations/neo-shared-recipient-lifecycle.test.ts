@@ -47,13 +47,13 @@ describe('NeoService shared recipient lifecycle', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       events
     );
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
-    service.repo.saveConcern(
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
+    service.repo.saveProject(
       { id: 'research', title: 'Research', summary: 'Learn', context: 'Private context' },
       0
     );
-    service.repo.reserveBinding({ sessionId: 'holder', kind: 'concern', concernId: 'research' });
-    service.repo.reserveBinding({ sessionId: 'dedicated', kind: 'worker', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'holder', kind: 'project', projectId: 'research' });
+    service.repo.reserveBinding({ sessionId: 'dedicated', kind: 'worker', projectId: null });
   });
 
   afterEach(() => {
@@ -65,7 +65,7 @@ describe('NeoService shared recipient lifecycle', () => {
     return service.repo.proposeWork({
       id: crypto.randomUUID(),
       requestKey: id,
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: `ask-${id}`,
       targetSessionId,

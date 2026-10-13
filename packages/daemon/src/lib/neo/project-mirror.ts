@@ -1,0 +1,82 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
+import type { Database } from '../../storage/sqlite-compat.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import type { PlaceGroup } from '../drivers/types.ts';
+import { placeKey } from '../drivers/places.ts';
+import { neoFolderPath } from './folder.ts';
+
+export interface NeoWorkspaceProject {
+  aliases: string[];
+  title: string;
+}
+
+export function planNeoWorkspaceProjects(
+  groups: readonly PlaceGroup[],
+  rootFolder?: string
+): NeoWorkspaceProject[] {
+  return groups
+    .filter(
+      (group) =>
+        (group.place.folder || group.place.toolProject) && group.place.folder !== rootFolder
+    )
+    .map((group) => {
+      const workspaces = group.workspaces ?? [group.place];
+      return {
+        aliases: [
+          ...new Set([
+            ...(group.projectId ? [group.projectId] : []),
+            ...workspaces.flatMap((place) => [
+              `folder:${placeKey(place)}`,
+              ...(place.codeIdentity ? [place.codeIdentity] : []),
+              ...(place.toolProject
+                ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`]
+                : []),
+            ]),
+          ]),
+        ],
+        title: workspaces.find((place) => place.toolProject)?.toolProject?.name ?? group.place.name,
+      };
+    });
+}
+
+export function persistNeoWorkspaceProjects(
+  db: Database,
+  projects: readonly NeoWorkspaceProject[]
+): boolean {
+  const repo = new NeoRepository(db);
+  return db.transaction(() => {
+    let changed = false;
+    for (const project of projects) {
+      const identities = project.aliases.filter((alias) => !alias.startsWith('folder:'));
+      const known = (identities.length ? identities : project.aliases).flatMap((alias) => {
+        const row = db
+          .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')
+          .get(alias) as { project_id: string } | null;
+        return row ? [row.project_id] : [];
+      });
+      const id = known[0] ?? `project:${crypto.randomUUID()}`;
+      if (!known.length) {
+        changed = true;
+        repo.saveProject(
+          { id, title: project.title, summary: `Project: ${project.title}`, context: '' },
+          0
+        );
+      }
+      for (const alias of project.aliases)
+        db.prepare(
+          'INSERT OR IGNORE INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
+        ).run(alias, id);
+    }
+    return changed;
+  })();
+}
+
+export const mirrorNeoWorkspaceProjects = (superpipe({})('neo-project-mirror') as PipelineAPI)
+  .input(['db', 'groups'])
+  .pipe(
+    (groups: readonly PlaceGroup[]) => planNeoWorkspaceProjects(groups, neoFolderPath()),
+    'groups',
+    'projects'
+  )
+  .pipe(persistNeoWorkspaceProjects, ['db', 'projects'], 'changed')
+  .end('changed') as (db: Database, groups: readonly PlaceGroup[]) => boolean;

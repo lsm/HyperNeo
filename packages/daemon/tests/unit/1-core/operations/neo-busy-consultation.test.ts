@@ -54,13 +54,13 @@ describe('Neo durable busy consultation intake', () => {
     for (const id of [rootId, 'research-holder', 'family-holder'])
       db.createSession({ ...createTestSession(id), workspacePath: null });
     restart();
-    service.repo.reserveBinding({ sessionId: rootId, concernId: null, kind: 'neo' });
+    service.repo.reserveBinding({ sessionId: rootId, projectId: null, kind: 'neo' });
     for (const id of ['research', 'family']) {
-      service.repo.saveConcern(
+      service.repo.saveProject(
         { id, title: id, summary: 'Current', context: 'Private original' },
         0
       );
-      service.repo.reserveBinding({ sessionId: `${id}-holder`, concernId: id, kind: 'concern' });
+      service.repo.reserveBinding({ sessionId: `${id}-holder`, projectId: id, kind: 'project' });
     }
   });
   afterEach(() => {
@@ -96,10 +96,10 @@ describe('Neo durable busy consultation intake', () => {
     });
     return caller(messageId);
   }
-  async function consult(index: number, concernId = 'research') {
+  async function consult(index: number, projectId = 'research') {
     const source = await ask(index);
-    const input = { concernId, requestKey: `ask-${index}`, question: `Question ${index}` };
-    const result = await invoke('neo.concern.consult', input, source);
+    const input = { projectId, requestKey: `ask-${index}`, question: `Question ${index}` };
+    const result = await invoke('neo.project.consult', input, source);
     expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
     return { input, source, receipt: (result as { value: Receipt }).value };
   }
@@ -110,7 +110,7 @@ describe('Neo durable busy consultation intake', () => {
   }
   async function answer(item: NeoConsultation) {
     const result = await invoke(
-      'neo.concern.respond',
+      'neo.project.respond',
       { id: item.id, answer: `Answer ${item.originMessageId}` },
       {
         source: 'mcp',
@@ -145,7 +145,7 @@ describe('Neo durable busy consultation intake', () => {
     expect(jobs(a.sessionId, `neo-consult:${waiter.id}:request`)).toEqual([]);
     expect((await consult(2, 'family')).receipt.consultation?.status).toBe('pending');
     await ask(3);
-    expect(service.repo.listConcerns()).toHaveLength(2);
+    expect(service.repo.listProjects()).toHaveLength(2);
     expect(service.repo.listWork()).toEqual([]);
     const snapshot = await invoke('neo.snapshot', {}, b.source);
     expect(snapshot).toMatchObject({
@@ -169,7 +169,7 @@ describe('Neo durable busy consultation intake', () => {
     const a = (await consult(0)).receipt.consultation!;
     const b = (await consult(1)).receipt.waiter!;
     const c = (await consult(2)).receipt.waiter!;
-    service.repo.saveConcern(
+    service.repo.saveProject(
       { id: 'research', title: 'research', summary: 'Changed', context: 'Latest human context' },
       1
     );
@@ -216,7 +216,7 @@ describe('Neo durable busy consultation intake', () => {
     expect(
       service.resolveAskOrigin({ sessionId: rootId, messageId: `neo-consult:${b.id}:reply` })
     ).toEqual({ sessionId: rootId, messageId: ids[1] });
-    expect(service.repo.getConcern('family')?.revision).toBe(1);
+    expect(service.repo.getProject('family')?.revision).toBe(1);
     expect(service.consultations.list().filter((item) => item.status === 'pending')).toHaveLength(
       1
     );
@@ -226,18 +226,18 @@ describe('Neo durable busy consultation intake', () => {
     await consult(0);
     const b = await consult(1);
     for (const result of await Promise.all([
-      invoke('neo.concern.consult', b.input, b.source),
-      invoke('neo.concern.consult', b.input, b.source),
+      invoke('neo.project.consult', b.input, b.source),
+      invoke('neo.project.consult', b.input, b.source),
     ]))
       expect(result).toMatchObject({
         value: { waiter: { id: b.receipt.waiter!.id, status: 'queued' } },
       });
     for (const [input, source] of [
       [{ ...b.input, question: 'Changed' }, b.source],
-      [{ ...b.input, concernId: 'family' }, b.source],
+      [{ ...b.input, projectId: 'family' }, b.source],
       [b.input, caller(ids[0])],
     ] as const)
-      expect(await invoke('neo.concern.consult', input, source)).toMatchObject({
+      expect(await invoke('neo.project.consult', input, source)).toMatchObject({
         value: { ok: false },
       });
     expect(service.consultationWaiters.queued()).toHaveLength(1);
@@ -249,15 +249,15 @@ describe('Neo durable busy consultation intake', () => {
     const c = (await consult(2)).receipt.waiter!;
     const id = b.receipt.waiter!.id;
     for (const denied of [b.source, { source: 'rpc', principal: 'remote' } as OperationCaller])
-      expect(await invoke('neo.concern.cancel', { id }, denied)).toMatchObject({
+      expect(await invoke('neo.project.cancel', { id }, denied)).toMatchObject({
         value: { ok: false },
       });
     expect(service.consultationWaiters.get(id)?.status).toBe('queued');
     for (let i = 0; i < 2; i++)
-      expect(await invoke('neo.concern.cancel', { id })).toMatchObject({
+      expect(await invoke('neo.project.cancel', { id })).toMatchObject({
         value: { ok: true, waiter: { id, status: 'cancelled' } },
       });
-    expect(await invoke('neo.concern.consult', b.input, b.source)).toMatchObject({
+    expect(await invoke('neo.project.consult', b.input, b.source)).toMatchObject({
       value: { ok: false },
     });
     await answer(a);
@@ -274,7 +274,7 @@ describe('Neo durable busy consultation intake', () => {
       db.getDatabase()
         .prepare('UPDATE neo_consultation_waiters SET created_at = ? WHERE id = ?')
         .run(Date.now() - CONSULTATION_TIMEOUT_MS * 2, b.id);
-      if (mode === 'stop') await invoke('neo.concern.cancel', { id: a.id });
+      if (mode === 'stop') await invoke('neo.project.cancel', { id: a.id });
       if (mode === 'expire') {
         db.getDatabase()
           .prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?')
@@ -332,7 +332,7 @@ describe('Neo durable busy consultation intake', () => {
     const waiter = service.consultationWaiters.enqueue({
       id: 'persisted-B',
       requestKey: 'B',
-      concernId: 'research',
+      projectId: 'research',
       originSessionId: rootId,
       originMessageId: source.neoTurn!.messageId,
       sessionId: 'research-holder',

@@ -17,17 +17,17 @@ function options(): Options {
     mcpServers: { 'hyperneo-operations': { type: 'stdio', command: 'fixture-operations' } },
   };
 }
-function delivered(concernId: string | null): string {
+function delivered(projectId: string | null): string {
   const query = options();
-  restrictNeoQuery(query, concernId);
+  restrictNeoQuery(query, projectId);
   return (query.systemPrompt as { prompt: string }).prompt;
 }
 
 describe('direct human publication prompt', () => {
-  test.each([null, 'research'])('reaches the real %s coordinator options', (concernId) => {
+  test.each([null, 'research'])('reaches the real %s coordinator options', (projectId) => {
     const query = options();
-    restrictNeoQuery(query, concernId);
-    const custom = { type: 'custom', prompt: neoPrompt(concernId), snapshot: false } as const;
+    restrictNeoQuery(query, projectId);
+    const custom = { type: 'custom', prompt: neoPrompt(projectId), snapshot: false } as const;
     expect(query.systemPrompt).toEqual(custom);
     const prompt = (query.systemPrompt as { prompt: string }).prompt;
     expect(prompt).toContain('neo.publication.publish');
@@ -36,22 +36,22 @@ describe('direct human publication prompt', () => {
   });
   test.each([null, 'research'])(
     'keeps existing %s model, tool and MCP policy intact',
-    (concernId) => {
+    (projectId) => {
       const query = options();
-      restrictNeoQuery(query, concernId);
+      restrictNeoQuery(query, projectId);
       const operations = { type: 'stdio' as const, command: 'fixture-operations' };
       expect(query.model).toBe('fixture-model');
       expect(query.maxTurns).toBe(17);
-      expect(query.tools).toEqual(neoCoordinatorNativeTools(concernId));
+      expect(query.tools).toEqual(neoCoordinatorNativeTools(projectId));
       expect(query.mcpServers).toEqual({ 'hyperneo-operations': operations });
-      expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools(concernId));
+      expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
       expect(query.settingSources).toEqual([]);
       expect(query.plugins).toEqual([]);
       expect(query.agents).toEqual({});
     }
   );
-  test.each([null, 'research'])('supplies the four authored keys jointly for %s', (concernId) => {
-    const prompt = delivered(concernId);
+  test.each([null, 'research'])('supplies the four authored keys jointly for %s', (projectId) => {
+    const prompt = delivered(projectId);
     expect(prompt).toContain('neo.publication.publish {publicationId, shortText, fullText, links}');
     const accepted = NeoPublicationSchema.pick({
       publicationId: true,
@@ -66,8 +66,8 @@ describe('direct human publication prompt', () => {
   });
   test.each([null, 'research'])(
     'lets %s send an interim message before a long investigation',
-    (concernId) => {
-      const prompt = delivered(concernId);
+    (projectId) => {
+      const prompt = delivered(projectId);
       expect(prompt).toContain(
         'right after the turn-start neo.snapshot and before any other call, publish a brief neo.publication.publish message with interim:true'
       );
@@ -78,15 +78,15 @@ describe('direct human publication prompt', () => {
       });
     }
   );
-  test.each([null, 'research'])('requires one call before the turn ends for %s', (concernId) => {
-    expect(delivered(concernId)).toContain(
+  test.each([null, 'research'])('requires one call before the turn ends for %s', (projectId) => {
+    expect(delivered(projectId)).toContain(
       'publish that answer with neo.publication.publish {publicationId, shortText, fullText, links} in one call before ending the turn'
     );
   });
   test.each([null, 'research'])(
     'keeps the authored short reply and full detail in the same reasoning pass for %s',
-    (concernId) => {
-      const prompt = delivered(concernId);
+    (projectId) => {
+      const prompt = delivered(projectId);
       expect(prompt).toContain(
         'Use the useful short reply and full detail from the reasoning pass you are already doing'
       );
@@ -97,16 +97,16 @@ describe('direct human publication prompt', () => {
   );
   test.each([null, 'research'])(
     'restricts publication to identical retries for %s',
-    (concernId) => {
-      const prompt = delivered(concernId);
+    (projectId) => {
+      const prompt = delivered(projectId);
       expect(prompt).toContain('Give publicationId a fresh UUID');
       expect(prompt).toContain('same authored payload only to retry an identical');
     }
   );
   test.each([null, 'research'])(
     'derives identity at runtime and never flags authority for %s',
-    (concernId) => {
-      const prompt = delivered(concernId);
+    (projectId) => {
+      const prompt = delivered(projectId);
       expect(prompt).toContain(
         'The runtime derives the conversation, the original ask and the producer from live evidence'
       );
@@ -127,8 +127,8 @@ describe('direct human publication prompt', () => {
   });
   test.each([null, 'research'])(
     'links only in-scope Neo ids started for this ask for %s',
-    (concernId) => {
-      const prompt = delivered(concernId);
+    (projectId) => {
+      const prompt = delivered(projectId);
       expect(prompt).toContain(
         'Link only Neo concern ids, or work and consultation ids started for this ask'
       );
@@ -137,8 +137,8 @@ describe('direct human publication prompt', () => {
       expect(NeoPublicationSchema.shape.links).toBeDefined();
     }
   );
-  test.each([null, 'research'])('excludes internal and non-human inputs for %s', (concernId) => {
-    const prompt = delivered(concernId);
+  test.each([null, 'research'])('excludes internal and non-human inputs for %s', (projectId) => {
+    const prompt = delivered(projectId);
     expect(prompt).toContain(
       'Never publish internal compaction, tool chatter, other system deliveries or returned legacy results as answers, except the work summary a returned-work or done-check note asks for'
     );
@@ -168,8 +168,8 @@ describe('direct human publication prompt', () => {
   });
   test.each([null, 'research'])(
     'treats a rejected publication as a real failure for %s',
-    (concernId) => {
-      const prompt = delivered(concernId);
+    (projectId) => {
+      const prompt = delivered(projectId);
       expect(prompt).toContain('A rejected publication is a real failure to fix and retry');
       expect(prompt).toContain('never a reply you may instead claim was recorded');
       expect(prompt).toContain('never a publication you may fabricate');
@@ -181,7 +181,7 @@ describe('direct human publication prompt', () => {
       'For every consultation request, complete its requested return operation before ending your turn'
     );
     expect(holder).toContain(
-      'do not also call neo.concern.respond or send ordinary assistant text'
+      'do not also call neo.project.respond or send ordinary assistant text'
     );
     const root = delivered(null);
     expect(root).toContain(

@@ -161,7 +161,7 @@ export function NeoPreferences({
           busy={busy}
           loading={model.loading}
           working={store.isWorking.value}
-          scope={{ idle: 'For Neo and all its topics', working: 'Neo switches after this reply' }}
+          scope={{ idle: 'For Neo and all its projects', working: 'Neo switches after this reply' }}
           onModel={(next) => void changeModel(next)}
           onThinking={(next) => void changeThinking(next)}
           onReload={() => void model.reload()}

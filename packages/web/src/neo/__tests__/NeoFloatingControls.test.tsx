@@ -36,9 +36,9 @@ beforeEach(async () => {
   ({ NeoLive } = await import('../NeoLive.tsx'));
 });
 
-const concern = (id: string) => ({
+const project = (id: string) => ({
   id,
-  title: `Concern ${id}`,
+  title: `Project ${id}`,
   summary: `Summary ${id}`,
   context: `Context ${id}`,
   revision: 1,
@@ -51,12 +51,12 @@ const snapshot: NeoSnapshot = {
   consultations: [],
   askViews: [],
   sessionId: 'root',
-  concerns: [concern('a'), concern('b')],
+  projects: [project('a'), project('b')],
   work: [
     {
       id: 'w-queued',
       requestKey: 'w',
-      concernId: 'a',
+      projectId: 'a',
       originSessionId: 'root',
       originMessageId: 'ask-w',
       title: 'Title w',
@@ -125,7 +125,7 @@ describe('Neo floating controls', () => {
     expect(screen.queryByText('MVP')).toBeNull();
     expect(banner().querySelector('h1')).toBeNull();
     expect(screen.getByText('Conversation body')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Your concerns/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Your projects/ })).toBeNull();
   });
 
   it('keeps the root logo actionable as the actual Back to Neo control', () => {

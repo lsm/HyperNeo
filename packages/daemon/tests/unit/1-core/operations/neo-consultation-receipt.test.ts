@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoConsultation, NeoConsultationWaiter } from '@hyperneo/shared/types/neo-context';
 import { requireNeoConsultationReceipt } from '../../../../src/lib/neo/operations.ts';
 
-const input = Object.freeze({ concernId: 'research', requestKey: 'B', question: 'Correction B' });
+const input = Object.freeze({ projectId: 'research', requestKey: 'B', question: 'Correction B' });
 const origin = Object.freeze({ originSessionId: 'root', originMessageId: 'ask-B' });
 const waiter: NeoConsultationWaiter = Object.freeze({
   ...input,
@@ -30,7 +30,7 @@ describe('requireNeoConsultationReceipt', () => {
     null,
     { ...waiter, requestKey: 'A' },
     { ...waiter, question: 'Other question' },
-    { ...waiter, concernId: 'family' },
+    { ...waiter, projectId: 'family' },
     { ...waiter, originSessionId: 'another-root' },
     { ...waiter, originMessageId: 'ask-A' },
     { ...waiter, sessionId: 'another-holder' },

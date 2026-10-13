@@ -34,19 +34,19 @@ describe('durable public author snapshot bindings', () => {
       new InternalEventBus<DaemonInternalEventMap>()
     );
     try {
-      service.repo.reserveBinding({ sessionId: root, concernId: null, kind: 'neo' });
+      service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
       for (let index = 0; index < 21; index++) {
         const id = `context-${index}`;
-        service.repo.saveConcern({ id, title: `Context ${index}`, summary: id, context: id }, 0);
+        service.repo.saveProject({ id, title: `Context ${index}`, summary: id, context: id }, 0);
         service.repo.reserveBinding({
           sessionId: `holder-${index}`,
-          concernId: id,
-          kind: 'concern',
+          projectId: id,
+          kind: 'project',
         });
         const consultation = service.consultations.reserve({
           id: `consult-${index}`,
           requestKey: `request-${index}`,
-          concernId: id,
+          projectId: id,
           originSessionId: root,
           originMessageId: `ask-${index}`,
           sessionId: `holder-${index}`,
@@ -56,7 +56,7 @@ describe('durable public author snapshot bindings', () => {
         if (index === 0)
           service.consultations.finish(consultation!.id, 'reported', 'Authored answer');
       }
-      service.repo.reserveBinding({ sessionId: 'worker', concernId: 'context-0', kind: 'worker' });
+      service.repo.reserveBinding({ sessionId: 'worker', projectId: 'context-0', kind: 'worker' });
       for (let index = 0; index < 500; index++) {
         expect(
           service.publications.append({
@@ -80,8 +80,8 @@ describe('durable public author snapshot bindings', () => {
       expect(result.publicAuthorBindings).toHaveLength(21);
       expect(result.publicAuthorBindings).toContainEqual({
         sessionId: 'holder-0',
-        concernId: 'context-0',
-        kind: 'concern',
+        projectId: 'context-0',
+        kind: 'project',
       });
       expect(
         result.publicAuthorBindings?.some(
@@ -89,7 +89,7 @@ describe('durable public author snapshot bindings', () => {
         )
       ).toBe(false);
       const bindings = new Map(
-        result.publicAuthorBindings?.map((row) => [row.sessionId, row.concernId])
+        result.publicAuthorBindings?.map((row) => [row.sessionId, row.projectId])
       );
       const retained = Array.from(
         { length: 5 },
@@ -98,10 +98,10 @@ describe('durable public author snapshot bindings', () => {
       expect(retained).toHaveLength(500);
       for (const row of retained) expect(bindings.has(row.producerInput.sessionId)).toBe(true);
       const scoped = operation.resultSchema.parse(
-        await operation.execute({ concernId: 'context-0' }, { source: 'rpc', principal: 'local' })
+        await operation.execute({ projectId: 'context-0' }, { source: 'rpc', principal: 'local' })
       ) as NeoSnapshot;
       expect(scoped.publicAuthorBindings).toEqual([
-        { sessionId: 'holder-0', concernId: 'context-0', kind: 'concern' },
+        { sessionId: 'holder-0', projectId: 'context-0', kind: 'project' },
       ]);
       const agent = operation.resultSchema.parse(
         await operation.execute({}, { source: 'mcp', principal: 'local', sessionId: 'holder-0' })
@@ -123,20 +123,20 @@ describe('durable public author snapshot bindings', () => {
       createNeoTables(db);
       const repo = new NeoRepository(db, notify);
       for (const id of ['A', 'B']) {
-        repo.saveConcern({ id, title: id, summary: id, context: id }, 0);
-        repo.reserveBinding({ sessionId: `holder-${id}`, concernId: id, kind: 'concern' });
+        repo.saveProject({ id, title: id, summary: id, context: id }, 0);
+        repo.reserveBinding({ sessionId: `holder-${id}`, projectId: id, kind: 'project' });
       }
-      repo.reserveBinding({ sessionId: 'root', concernId: null, kind: 'neo' });
-      repo.reserveBinding({ sessionId: 'worker', concernId: 'A', kind: 'worker' });
-      const expected = repo.listConcernBindings();
+      repo.reserveBinding({ sessionId: 'root', projectId: null, kind: 'neo' });
+      repo.reserveBinding({ sessionId: 'worker', projectId: 'A', kind: 'worker' });
+      const expected = repo.listProjectBindings();
       expect(expected).toHaveLength(2);
       db.close();
       db = new SqliteDatabase(path);
       const reopened = new NeoRepository(db, notify);
       notify.mockClear();
-      expect(reopened.listConcernBindings()).toEqual(expected);
-      expect(reopened.listConcernBindings('A')).toEqual([expected[0]]);
-      expect(reopened.listConcernBindings('missing')).toEqual([]);
+      expect(reopened.listProjectBindings()).toEqual(expected);
+      expect(reopened.listProjectBindings('A')).toEqual([expected[0]]);
+      expect(reopened.listProjectBindings('missing')).toEqual([]);
       expect(notify).not.toHaveBeenCalled();
     } finally {
       db.close();

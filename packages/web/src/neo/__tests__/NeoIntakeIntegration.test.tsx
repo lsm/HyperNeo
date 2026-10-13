@@ -65,7 +65,7 @@ const asks = () => request.mock.calls.filter((call) => call[1]?.name === 'neo.me
 const snapshot = (sessionId = 'neo:root') => ({
   ok: true,
   sessionId,
-  concerns: [
+  projects: [
     {
       id: 'research',
       title: 'Research',
@@ -88,11 +88,11 @@ beforeEach(() => {
   request.mockImplementation(
     async (
       method: string,
-      { name, input }: { name: string; input: IntakeInput & { concernId?: string } }
+      { name, input }: { name: string; input: IntakeInput & { projectId?: string } }
     ) => {
       if (method !== 'operation.invoke') throw new Error('Unexpected legacy message path');
       if (name === 'neo.message.send') return accepted(input);
-      return snapshot(input.concernId ? `neo:${input.concernId}` : 'neo:root');
+      return snapshot(input.projectId ? `neo:${input.projectId}` : 'neo:root');
     }
   );
   vi.stubGlobal(
@@ -162,7 +162,7 @@ describe('Neo live durable intake', () => {
     expect(stores[0].isWorking.value).toBe(true);
     expect(
       request.mock.calls.some(
-        (call) => call[0] === 'message.send' || call[1]?.name === 'neo.concern.create'
+        (call) => call[0] === 'message.send' || call[1]?.name === 'neo.project.create'
       )
     ).toBe(false);
   });

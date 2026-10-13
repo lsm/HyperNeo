@@ -11,19 +11,19 @@ import {
   neoAskItems,
   neoAskOpenTarget,
 } from '../neo-asks.ts';
-import type { NeoConcernBoard } from '../neo-concern-board.ts';
+import type { NeoProjectBoard } from '../neo-project-board.ts';
 import { classifyNeoScenes, groupNeoScenes, type NeoScene } from '../neo-scenes.ts';
 import { testAskView, testCard } from './neo-test-views.ts';
 
 afterEach(cleanup);
 
-type Receipt = NeoConcernBoard['receipts'][number];
+type Receipt = NeoProjectBoard['receipts'][number];
 const work = (id: string, status: NeoWork['status']): Receipt =>
   ({
     kind: 'work',
     id,
     requestKey: id,
-    concernId: null,
+    projectId: null,
     originSessionId: 'root',
     originMessageId: 'm',
     title: `Card ${id}`,
@@ -37,7 +37,7 @@ const work = (id: string, status: NeoWork['status']): Receipt =>
 const ask = (id: string, status: NeoAsk['status'], workIds: string[]): NeoAsk => ({
   id,
   requestKey: id,
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'm',
   title: `Ask ${id}`,

@@ -14,7 +14,7 @@ const base: NeoWork = Object.freeze({
   requestKey: 'root:k',
   originSessionId: 'root',
   originMessageId: 'm1',
-  concernId: null,
+  projectId: null,
   title: 'Title',
   instruction: 'Do it.',
   targetSessionId: null,

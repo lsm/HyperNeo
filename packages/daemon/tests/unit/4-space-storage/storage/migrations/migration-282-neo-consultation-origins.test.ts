@@ -26,7 +26,7 @@ describe('migration 282 and consultation origins', () => {
       const input = {
         id: 'current',
         requestKey: 'current',
-        concernId: 'club',
+        projectId: 'club',
         originSessionId: 'root',
         originMessageId: 'ask-A',
         sessionId: 'holder',

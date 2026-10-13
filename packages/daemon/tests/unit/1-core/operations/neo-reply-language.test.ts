@@ -4,8 +4,8 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 describe('Neo reply language guidance', () => {
   test.each([null, 'mixed-name-concern'])(
     'rendered prompt keeps human language distinct from names for %j',
-    (concernId) => {
-      const prompt = neoPrompt(concernId);
+    (projectId) => {
+      const prompt = neoPrompt(projectId);
       expect(prompt).toContain("Choose the reply language from the human question's phrasing");
       expect(prompt).toContain('not its project\nnames, tool names, or these English instructions');
       expect(prompt).toContain('This also applies to a brief\nacknowledgement');

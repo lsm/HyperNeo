@@ -14,7 +14,7 @@ import { type NeoCardViewParts, projectNeoCardViews } from '../../../../src/lib/
 const work = (id: string, status: NeoWork['status'], sessionId: string | null = null): NeoWork => ({
   id,
   requestKey: id,
-  concernId: null,
+  projectId: null,
   originSessionId: 'neo',
   originMessageId: null,
   title: id,
@@ -50,7 +50,7 @@ const pr = (n: number, extra: Partial<NeoWorkPr> = {}): NeoWorkPr => ({
 const ask = (extra: Partial<NeoAsk>): NeoAsk => ({
   id: 'a1',
   requestKey: 'a1',
-  concernId: null,
+  projectId: null,
   originSessionId: 'neo',
   originMessageId: null,
   title: 'Ask',

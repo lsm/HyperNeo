@@ -1,19 +1,19 @@
-import type { NeoBinding, NeoConcern, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { Database } from '../sqlite-compat.ts';
 import { CONSULTATION_TIMEOUT_MS } from '../../lib/neo/consultation-policy.ts';
 
 const concernColumns = `id, title, summary, context, revision,
   created_at AS createdAt, updated_at AS updatedAt`;
-const bindingColumns = 'session_id AS sessionId, concern_id AS concernId, kind';
-const workColumns = `id, request_key AS requestKey, concern_id AS concernId,
+const bindingColumns = 'session_id AS sessionId, concern_id AS projectId, kind';
+const workColumns = `id, request_key AS requestKey, concern_id AS projectId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
   title, instruction, target_session_id AS targetSessionId, session_id AS sessionId,
   status, report, created_at AS createdAt, updated_at AS updatedAt`;
 
-export type NeoConcernInput = Pick<NeoConcern, 'id' | 'title' | 'summary' | 'context'>;
+export type NeoProjectInput = Pick<NeoProject, 'id' | 'title' | 'summary' | 'context'>;
 export type NeoWorkInput = Pick<
   NeoWork,
-  'id' | 'requestKey' | 'concernId' | 'originSessionId' | 'title' | 'instruction'
+  'id' | 'requestKey' | 'projectId' | 'originSessionId' | 'title' | 'instruction'
 > &
   Partial<Pick<NeoWork, 'originMessageId'>> & { targetSessionId?: string | null };
 export interface NeoWorkTarget {
@@ -33,26 +33,26 @@ export class NeoRepository {
     private readonly notify: () => void = () => {}
   ) {}
 
-  listConcerns(): NeoConcern[] {
+  listProjects(): NeoProject[] {
     return this.db
       .prepare(`SELECT ${concernColumns} FROM neo_concerns ORDER BY updated_at DESC, id`)
-      .all() as NeoConcern[];
+      .all() as NeoProject[];
   }
 
-  listConcernTitles(): Array<{ id: string; title: string }> {
+  listProjectTitles(): Array<{ id: string; title: string }> {
     return this.db.prepare('SELECT id, title FROM neo_concerns').all() as Array<{
       id: string;
       title: string;
     }>;
   }
 
-  getConcern(id: string): NeoConcern | null {
+  getProject(id: string): NeoProject | null {
     return this.db
       .prepare(`SELECT ${concernColumns} FROM neo_concerns WHERE id = ?`)
-      .get(id) as NeoConcern | null;
+      .get(id) as NeoProject | null;
   }
 
-  saveConcern(input: NeoConcernInput, expectedRevision: number): NeoConcern | null {
+  saveProject(input: NeoProjectInput, expectedRevision: number): NeoProject | null {
     const now = Date.now();
     const row =
       expectedRevision === 0
@@ -68,22 +68,22 @@ export class NeoRepository {
               RETURNING ${concernColumns}`)
             .get(input.title, input.summary, input.context, now, input.id, expectedRevision);
     if (row) this.notify();
-    return row as NeoConcern | null;
+    return row as NeoProject | null;
   }
 
-  retireArchivedBinding(concernId: string, sessionId: string): boolean {
+  retireArchivedBinding(projectId: string, sessionId: string): boolean {
     const result = this.db
       .prepare(`DELETE FROM neo_session_bindings
-        WHERE concern_id = ? AND session_id = ? AND kind = 'concern'`)
-      .run(concernId, sessionId);
+        WHERE concern_id = ? AND session_id = ? AND kind = 'project'`)
+      .run(projectId, sessionId);
     if (result.changes > 0) this.notify();
     return result.changes > 0;
   }
 
-  discardUnopenedConcern(id: string): boolean {
+  discardUnopenedProject(id: string): boolean {
     const removed = this.db.transaction(() => {
       this.db
-        .prepare(`DELETE FROM neo_session_bindings WHERE concern_id = ? AND kind = 'concern'
+        .prepare(`DELETE FROM neo_session_bindings WHERE concern_id = ? AND kind = 'project'
           AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_session_bindings.session_id)`)
         .run(id);
       return this.db
@@ -99,17 +99,17 @@ export class NeoRepository {
     const result = this.db
       .prepare(`INSERT INTO neo_session_bindings (session_id, concern_id, kind)
         VALUES (?, ?, ?) ON CONFLICT DO NOTHING`)
-      .run(binding.sessionId, binding.concernId, binding.kind);
+      .run(binding.sessionId, binding.projectId, binding.kind);
     if (result.changes > 0) this.notify();
     return result.changes > 0;
   }
 
   saveConsultationContext(
-    input: NeoConcernInput,
+    input: NeoProjectInput,
     expectedRevision: number,
     consultationId: string,
     holderSessionId: string
-  ): NeoConcern | null {
+  ): NeoProject | null {
     const saved = this.db.transaction(() => {
       const now = Date.now();
       const row = this.db
@@ -120,7 +120,7 @@ export class NeoRepository {
             JOIN neo_consultations c ON c.id = g.consultation_id
             JOIN neo_session_bindings b ON b.session_id = c.session_id
             WHERE c.id = ? AND c.session_id = ? AND c.concern_id = neo_concerns.id
-              AND b.kind = 'concern' AND b.concern_id = c.concern_id
+              AND b.kind = 'project' AND b.concern_id = c.concern_id
               AND c.status = 'pending' AND c.created_at > ?
               AND g.context_revision = neo_concerns.revision
           ) RETURNING ${concernColumns}`)
@@ -134,7 +134,7 @@ export class NeoRepository {
           consultationId,
           holderSessionId,
           now - CONSULTATION_TIMEOUT_MS
-        ) as NeoConcern | null;
+        ) as NeoProject | null;
       if (row)
         this.db
           .prepare(
@@ -153,20 +153,20 @@ export class NeoRepository {
       .get(sessionId) as NeoBinding | null;
   }
 
-  getBindingForConcern(concernId: string | null): NeoBinding | null {
+  getBindingForProject(projectId: string | null): NeoBinding | null {
     return this.db
       .prepare(`SELECT ${bindingColumns} FROM neo_session_bindings
-        WHERE concern_id IS ? AND kind IN ('neo', 'concern')`)
-      .get(concernId) as NeoBinding | null;
+        WHERE concern_id IS ? AND kind IN ('neo', 'project')`)
+      .get(projectId) as NeoBinding | null;
   }
 
-  listConcernBindings(concernId?: string): (NeoBinding & { kind: 'concern'; concernId: string })[] {
+  listProjectBindings(projectId?: string): (NeoBinding & { kind: 'project'; projectId: string })[] {
     return this.db
-      .prepare(`SELECT ${bindingColumns} FROM neo_session_bindings WHERE kind = 'concern'
-        ${concernId === undefined ? '' : 'AND concern_id = ?'} ORDER BY session_id`)
-      .all(...(concernId === undefined ? [] : [concernId])) as (NeoBinding & {
-      kind: 'concern';
-      concernId: string;
+      .prepare(`SELECT ${bindingColumns} FROM neo_session_bindings WHERE kind = 'project'
+        ${projectId === undefined ? '' : 'AND concern_id = ?'} ORDER BY session_id`)
+      .all(...(projectId === undefined ? [] : [projectId])) as (NeoBinding & {
+      kind: 'project';
+      projectId: string;
     })[];
   }
 
@@ -180,11 +180,11 @@ export class NeoRepository {
       .all(originSessionId, since, until) as NeoWork[];
   }
 
-  listWork(concernId?: string | null): NeoWork[] {
-    const condition = concernId === undefined ? '' : 'WHERE concern_id IS ?';
+  listWork(projectId?: string | null): NeoWork[] {
+    const condition = projectId === undefined ? '' : 'WHERE concern_id IS ?';
     return this.db
       .prepare(`SELECT ${workColumns} FROM neo_work ${condition} ORDER BY created_at DESC, id`)
-      .all(...(concernId === undefined ? [] : [concernId])) as NeoWork[];
+      .all(...(projectId === undefined ? [] : [projectId])) as NeoWork[];
   }
 
   getWork(id: string): NeoWork | null {
@@ -227,7 +227,7 @@ export class NeoRepository {
       .run(
         input.id,
         input.requestKey,
-        input.concernId,
+        input.projectId,
         input.originSessionId,
         input.originMessageId ?? null,
         input.targetSessionId ?? null,
@@ -244,13 +244,13 @@ export class NeoRepository {
 
   moveWork(
     ids: readonly string[],
-    owner: { concernId: string; originSessionId: string; originMessageId: string }
+    owner: { projectId: string; originSessionId: string; originMessageId: string }
   ): void {
     if (ids.length === 0) return;
     const moved = this.db
       .prepare(`UPDATE neo_work SET concern_id = ?, origin_session_id = ?, origin_message_id = ?
         WHERE id IN (SELECT value FROM json_each(?))`)
-      .run(owner.concernId, owner.originSessionId, owner.originMessageId, JSON.stringify(ids));
+      .run(owner.projectId, owner.originSessionId, owner.originMessageId, JSON.stringify(ids));
     if (moved.changes > 0) this.notify();
   }
 

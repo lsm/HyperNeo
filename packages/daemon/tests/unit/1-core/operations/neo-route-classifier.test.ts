@@ -12,8 +12,8 @@ import {
   NEO_INBOX_ID,
   type NeoHolder,
   type NeoRouterDeps,
-  neoNewTopic,
-  openNeoNewTopic,
+  neoNewProject,
+  openNeoNewProject,
 } from '../../../../src/lib/neo/router.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
@@ -21,13 +21,13 @@ import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import type { NeoRoute } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 
 const drivers: NeoHolder = {
-  concernId: 'drivers',
+  projectId: 'drivers',
   sessionId: 'neo:holder:drivers',
   title: 'Neo driver epic',
   summary: 'Work drivers for Codex and Claude',
 };
 const youtube: NeoHolder = {
-  concernId: 'youtube',
+  projectId: 'youtube',
   sessionId: 'neo:holder:yt',
   title: 'YouTube pipeline',
   summary: '',
@@ -38,9 +38,9 @@ describe('buildNeoRoutePrompt', () => {
     const prompt = buildNeoRoutePrompt(
       'how about 5060 now?',
       [drivers, youtube],
-      'Topics:\n- main: Neo itself, the default'
+      'Projects:\n- main: Neo itself, the default'
     );
-    expect(prompt.indexOf('Topics:')).toBeLessThan(
+    expect(prompt.indexOf('Projects:')).toBeLessThan(
       prompt.indexOf('New message:\nhow about 5060 now?')
     );
     expect(prompt).toContain('Reply with one JSON object and nothing else');
@@ -48,7 +48,7 @@ describe('buildNeoRoutePrompt', () => {
     expect(prompt).toContain('answers_waiting: it answers a WAITING ON YOU question');
     expect(prompt.indexOf('- answers_waiting:')).toBeLessThan(prompt.indexOf('- continues_turn:'));
     expect(prompt).toContain("Choose main only when it replies to main's last message.");
-    expect(prompt).toContain('cross_topic: it asks about work across topics');
+    expect(prompt).toContain('cross_topic: it asks about work across projects');
     expect(prompt).toContain('basis is the name of the rule below, exactly as written');
   });
 
@@ -200,7 +200,7 @@ const turn = (fields: Partial<NeoRoute>): NeoRoute => ({
   ask: 'what is the Cloudflare post?',
   destination: 'holder',
   targetSessionId: youtube.sessionId,
-  concernId: 'youtube',
+  projectId: 'youtube',
   signal: 'classifier',
   confidence: 0.6,
   outcome: 'A git beta.',
@@ -217,7 +217,7 @@ describe('chooseNeoRoute with a classifier', () => {
   ): NeoRouterDeps => ({
     holders: () => [drivers, youtube],
     recentTurns: () => recent,
-    topicTurns: () => recent,
+    projectTurns: () => recent,
     recentAsks: () => [],
     embed: async () => null,
     classify,
@@ -228,12 +228,12 @@ describe('chooseNeoRoute with a classifier', () => {
     const route = await chooseNeoRoute(
       'yes',
       deps(async (_text, options, context) => {
-        seen.push(options.map((holder) => holder.concernId).join(','));
+        seen.push(options.map((holder) => holder.projectId).join(','));
         return context.includes('WAITING ON YOU: "Draft a reply?"') ? youtube : 'main';
       })
     );
     expect(seen).toEqual(['drivers,youtube']);
-    expect(route.choice).toMatchObject({ concernId: 'youtube', signal: 'classifier' });
+    expect(route.choice).toMatchObject({ projectId: 'youtube', signal: 'classifier' });
   });
 
   test('records the confidence the classifier gave with its decision', async () => {
@@ -242,7 +242,7 @@ describe('chooseNeoRoute with a classifier', () => {
       deps(async () => ({ decision: youtube, confidence: 0.91, basis: 'answers_waiting' }))
     );
     expect(route.choice).toMatchObject({
-      concernId: 'youtube',
+      projectId: 'youtube',
       confidence: 0.91,
       signal: 'classifier:answers_waiting',
     });
@@ -276,7 +276,7 @@ describe('chooseNeoRoute with a new subject', () => {
   const base = (newTopic?: NeoRouterDeps['newTopic']): NeoRouterDeps => ({
     holders: () => [drivers, youtube],
     recentTurns: () => [turn({})],
-    topicTurns: () => [turn({})],
+    projectTurns: () => [turn({})],
     recentAsks: () => [],
     embed: async () => null,
     classify: async () => ({ decision: 'main', confidence: 0.8, basis: 'new_subject' }),
@@ -289,13 +289,13 @@ describe('chooseNeoRoute with a new subject', () => {
       'Plan the garden for spring',
       base(async (text) => {
         asked.push(text);
-        return { concernId: 't1', sessionId: 'neo:t1', title: text, summary: '' };
+        return { projectId: 't1', sessionId: 'neo:t1', title: text, summary: '' };
       })
     );
     expect(asked).toEqual(['Plan the garden for spring']);
     expect(route).toEqual({
       choice: {
-        concernId: 't1',
+        projectId: 't1',
         sessionId: 'neo:t1',
         signal: 'classifier:new_subject',
         confidence: 0.8,
@@ -305,11 +305,11 @@ describe('chooseNeoRoute with a new subject', () => {
 
   test('opens a topic when the classifier matches a topic but names no holder', async () => {
     const route = await chooseNeoRoute('fix HyperNeo #5554', {
-      ...base(async () => ({ concernId: 't4', sessionId: 'neo:t4', title: 'fix', summary: '' })),
+      ...base(async () => ({ projectId: 't4', sessionId: 'neo:t4', title: 'fix', summary: '' })),
       classify: async () => ({ decision: 'main', confidence: 0.7, basis: 'matches_topic' }),
     });
     expect(route.choice).toMatchObject({
-      concernId: 't4',
+      projectId: 't4',
       signal: 'classifier:matches_topic',
       confidence: 0.7,
     });
@@ -344,16 +344,16 @@ describe('chooseNeoRoute with a new subject', () => {
       opened.push(id);
       return `neo:${id}`;
     };
-    const topic = neoNewTopic('Plan the garden', 'request-1');
+    const topic = neoNewProject('Plan the garden', 'request-1');
     const holder = {
-      concernId: 'request-1',
+      projectId: 'request-1',
       sessionId: 'neo:request-1',
       title: 'Plan the garden',
       summary: 'Plan the garden',
     };
-    expect(await openNeoNewTopic(repo, open, topic)).toEqual(holder);
-    expect(await openNeoNewTopic(repo, open, { ...topic, title: 'Other' })).toEqual(holder);
-    expect(repo.listConcerns().map((concern) => concern.id)).toEqual(['request-1']);
+    expect(await openNeoNewProject(repo, open, topic)).toEqual(holder);
+    expect(await openNeoNewProject(repo, open, { ...topic, title: 'Other' })).toEqual(holder);
+    expect(repo.listProjects().map((concern) => concern.id)).toEqual(['request-1']);
     expect(opened).toEqual(['request-1', 'request-1']);
     db.close();
   });
@@ -361,43 +361,43 @@ describe('chooseNeoRoute with a new subject', () => {
   test('drops a topic whose holder cannot be opened, so the message stays with main Neo', async () => {
     const { db, repo } = topicDb();
     expect(
-      await openNeoNewTopic(
+      await openNeoNewProject(
         repo,
         async () => {
           throw new Error('provider unavailable');
         },
-        neoNewTopic('Plan the garden', 't2')
+        neoNewProject('Plan the garden', 't2')
       )
     ).toBeNull();
     expect(
-      await openNeoNewTopic(
+      await openNeoNewProject(
         repo,
         async (id) => {
-          repo.reserveBinding({ sessionId: `neo:${id}`, concernId: id, kind: 'concern' });
+          repo.reserveBinding({ sessionId: `neo:${id}`, projectId: id, kind: 'project' });
           throw new Error('session could not be created');
         },
-        neoNewTopic('Plan the pond', 't3')
+        neoNewProject('Plan the pond', 't3')
       )
     ).toBeNull();
-    expect([repo.getConcern('t2'), repo.getConcern('t3'), repo.getBindingForConcern('t3')]).toEqual(
+    expect([repo.getProject('t2'), repo.getProject('t3'), repo.getBindingForProject('t3')]).toEqual(
       [null, null, null]
     );
     db.close();
   });
 
   test('names the topic after the first line of the message', () => {
-    expect(neoNewTopic('  Plan the garden\nwith tomatoes  ', 'id-1')).toEqual({
+    expect(neoNewProject('  Plan the garden\nwith tomatoes  ', 'id-1')).toEqual({
       id: 'id-1',
       title: 'Plan the garden',
       summary: 'Plan the garden with tomatoes',
     });
-    expect(neoNewTopic('x'.repeat(80), 'id-2').title).toBe(`${'x'.repeat(59)}…`);
+    expect(neoNewProject('x'.repeat(80), 'id-2').title).toBe(`${'x'.repeat(59)}…`);
   });
 });
 
 describe('chooseNeoRoute with an inbox', () => {
   const inboxHolder = {
-    concernId: NEO_INBOX_ID,
+    projectId: NEO_INBOX_ID,
     sessionId: 'neo:inbox',
     title: 'Inbox',
     summary: '',
@@ -408,13 +408,13 @@ describe('chooseNeoRoute with an inbox', () => {
     const offered: string[][] = [];
     const route = await chooseNeoRoute('what time is it in Tokyo?', {
       holders: () => [],
-      recentTurns: () => [turn({ destination: 'main', concernId: null, awaiting: null })],
-      topicTurns: () => [],
+      recentTurns: () => [turn({ destination: 'main', projectId: null, awaiting: null })],
+      projectTurns: () => [],
       recentAsks: () => [],
       embed: async () => null,
       classify: async (_text, options) => {
-        offered.push(options.map((holder) => holder.concernId));
-        return options.find((holder) => holder.concernId === NEO_INBOX_ID) ?? null;
+        offered.push(options.map((holder) => holder.projectId));
+        return options.find((holder) => holder.projectId === NEO_INBOX_ID) ?? null;
       },
       inbox: async () => {
         opened += 1;
@@ -424,7 +424,7 @@ describe('chooseNeoRoute with an inbox', () => {
     expect(offered).toEqual([[NEO_INBOX_ID]]);
     expect(opened).toBe(1);
     expect(route.choice).toMatchObject({
-      concernId: NEO_INBOX_ID,
+      projectId: NEO_INBOX_ID,
       sessionId: 'neo:inbox',
       signal: 'classifier',
     });
@@ -435,12 +435,12 @@ describe('chooseNeoRoute with an inbox', () => {
     let opened = 0;
     const route = await chooseNeoRoute('what time is it in Tokyo?', {
       holders: () => [drivers],
-      recentTurns: () => [turn({ destination: 'main', concernId: null, awaiting: null })],
-      topicTurns: () => [],
+      recentTurns: () => [turn({ destination: 'main', projectId: null, awaiting: null })],
+      projectTurns: () => [],
       recentAsks: () => [],
       embed: async () => null,
       classify: async (_text, options) => {
-        offered.push(options.map((holder) => holder.concernId));
+        offered.push(options.map((holder) => holder.projectId));
         return 'main';
       },
       inbox: async () => {
@@ -457,7 +457,7 @@ describe('chooseNeoRoute with an inbox', () => {
     const route = await chooseNeoRoute('anything', {
       holders: () => [inboxHolder],
       recentTurns: () => [],
-      topicTurns: () => [],
+      projectTurns: () => [],
       recentAsks: () => [],
       embed: async (text) => {
         embedded.push(text);

@@ -23,7 +23,7 @@ import type { NeoService } from './service.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import type { NeoWorkTarget } from '../../storage/repositories/neo-repository.ts';
 import type {
-  NeoConcern,
+  NeoProject,
   NeoConsultation,
   NeoConsultationWaiter,
   NeoWork,
@@ -149,7 +149,7 @@ import { NEO_WORK_FOLLOW_MAX_AGE_MS } from './work-follow.ts';
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
 const NEO_SNAPSHOT_FORWARDS = 100;
-const Concern = z.object({
+const Project = z.object({
   id: z.string(),
   title: z.string(),
   summary: z.string(),
@@ -157,11 +157,11 @@ const Concern = z.object({
   revision: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
-} satisfies ZodShape<NeoConcern>);
+} satisfies ZodShape<NeoProject>);
 const Work = z.object({
   id: z.string(),
   requestKey: z.string(),
-  concernId: z.string().nullable(),
+  projectId: z.string().nullable(),
   originSessionId: z.string(),
   originMessageId: z.string().nullable(),
   title: z.string(),
@@ -177,7 +177,7 @@ const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 const Consultation = z.object({
   id: z.string(),
   requestKey: z.string(),
-  concernId: z.string(),
+  projectId: z.string(),
   originSessionId: z.string(),
   originMessageId: z.string().nullable(),
   sessionId: z.string(),
@@ -189,7 +189,7 @@ const Consultation = z.object({
 const ConsultationWaiter = z.object({
   id: z.string(),
   requestKey: z.string(),
-  concernId: z.string(),
+  projectId: z.string(),
   originSessionId: z.string(),
   originMessageId: z.string(),
   sessionId: z.string(),
@@ -198,7 +198,7 @@ const ConsultationWaiter = z.object({
   createdAt: z.number(),
 } satisfies ZodShape<NeoConsultationWaiter>);
 const Consult = z.object({
-  concernId: z.string().min(1),
+  projectId: z.string().min(1),
   requestKey: z.string().min(1).max(160),
   question: z.string().trim().min(1).max(8000),
 });
@@ -219,13 +219,13 @@ const ConsultationResult = z.union([
 const SnapshotOk = z.object({
   ok: z.literal(true),
   sessionId: z.string().nullable(),
-  concerns: z.array(Concern),
+  projects: z.array(Project),
   publicAuthorBindings: z
     .array(
       z.object({
         sessionId: z.string(),
-        concernId: z.string(),
-        kind: z.literal('concern'),
+        projectId: z.string(),
+        kind: z.literal('project'),
       } satisfies ZodShape<NonNullable<NeoSnapshot['publicAuthorBindings']>[number]>)
     )
     .optional(),
@@ -314,7 +314,7 @@ const WorkResult = z.union([
 ]);
 const Scope = z
   .object({
-    concernId: z.string().min(1).optional(),
+    projectId: z.string().min(1).optional(),
     askId: z.string().min(1).optional(),
     all: z.boolean().optional(),
     sinceRev: z.string().min(1).max(40).optional(),
@@ -329,7 +329,7 @@ const Save = z.object({
 });
 const Propose = z.object({
   requestKey: z.string().min(1).max(160),
-  concernId: z.string().min(1).nullable().default(null),
+  projectId: z.string().min(1).nullable().default(null),
   title: z.string().trim().min(1).max(160),
   instruction: z.string().trim().min(1).max(16000),
   targetSessionId: z.string().min(1).max(160).nullable().optional(),
@@ -428,7 +428,7 @@ export function requireNeoConsultationReceipt(
     !item ||
     item.requestKey !== input.requestKey ||
     item.question !== input.question ||
-    item.concernId !== input.concernId ||
+    item.projectId !== input.projectId ||
     item.originSessionId !== origin.originSessionId ||
     item.originMessageId !== origin.originMessageId ||
     item.sessionId !== sessionId
@@ -596,14 +596,14 @@ export function requireNeoWorkRetryCaller(
 }
 
 export function isNeoTurnAskReadable(
-  binding: { kind: string; concernId: string | null } | null,
-  ask: Pick<NeoAsk, 'concernId'>
+  binding: { kind: string; projectId: string | null } | null,
+  ask: Pick<NeoAsk, 'projectId'>
 ): boolean {
   return (
     binding?.kind === 'neo' ||
-    (binding?.kind === 'concern' &&
-      binding.concernId !== null &&
-      ask.concernId === binding.concernId)
+    (binding?.kind === 'project' &&
+      binding.projectId !== null &&
+      ask.projectId === binding.projectId)
   );
 }
 
@@ -662,8 +662,8 @@ export function neoWorkAskView(
     : null;
 }
 
-export function neoAskScope(ask: Pick<NeoAsk, 'concernId'> | null): string | null | undefined {
-  return ask ? ask.concernId : undefined;
+export function neoAskScope(ask: Pick<NeoAsk, 'projectId'> | null): string | null | undefined {
+  return ask ? ask.projectId : undefined;
 }
 
 export const NEO_HUMAN_TURN_REFUSAL =
@@ -709,7 +709,7 @@ function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
   name: string,
-  concernId?: string | null,
+  projectId?: string | null,
   askApproved = false
 ): { value: OperationCaller } | { reason: Rejection } {
   if (caller.source === 'rpc' && caller.principal === 'local') return { value: caller };
@@ -719,15 +719,15 @@ function admitNeoCaller(
   if (name === 'neo.rule.save' && binding.kind !== 'neo')
     return { reason: { ok: false, reason: 'Only root Neo can save standing rules.' } };
   if (
-    name === 'neo.concern.save' &&
+    name === 'neo.project.save' &&
     binding.kind === 'neo' &&
-    concernId &&
-    service.repo.getConcern(concernId)
+    projectId &&
+    service.repo.getProject(projectId)
   )
     return {
       reason: {
         ok: false,
-        reason: 'Consult this concern’s holder to save corrections; Neo only has its summary.',
+        reason: 'Consult this project’s holder to save corrections; Neo only has its summary.',
       },
     };
   if (
@@ -737,28 +737,28 @@ function admitNeoCaller(
       : isNeoHumanTurn(service, caller))
   )
     return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
-  if (['neo.open', 'neo.concern.cancel', 'neo.ask.answer', 'neo.session.track'].includes(name))
+  if (['neo.open', 'neo.project.cancel', 'neo.ask.answer', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
-  if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
-    return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
+  if (binding.kind === 'project' && projectId !== undefined && projectId !== binding.projectId)
+    return { reason: { ok: false, reason: 'This context holder cannot access another project.' } };
   return { value: caller };
 }
 
 export function neoReorganizeRuntime(
   service: NeoService,
-  router: NeoRouter = createNeoRouter(service.db, service.repo, (concernId) =>
-    service.open(concernId)
+  router: NeoRouter = createNeoRouter(service.db, service.repo, (projectId) =>
+    service.open(projectId)
   )
 ): NeoReorganizeRuntime {
   return {
     getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
-    rootSessionId: () => service.repo.getBindingForConcern(null)?.sessionId ?? null,
+    rootSessionId: () => service.repo.getBindingForProject(null)?.sessionId ?? null,
     liveAsks: () => service.askRecords.listLive(),
     ask: (id) => service.askRecords.get(id),
     route: (ask) => router(`${ask.title}\n${ask.ask}`, ask.id),
     sessionStatus: (sessionId) =>
       neoSessionStatus(service.db.getSession(sessionId)?.processingState),
-    topicSession: (concernId) => service.repo.getBindingForConcern(concernId)?.sessionId ?? null,
+    projectSession: (projectId) => service.repo.getBindingForProject(projectId)?.sessionId ?? null,
     cards: (ask) => ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
     deliver: (sessionId, messageId, content, from, parent) =>
       service.deliverForward(sessionId, messageId, content, from, parent),
@@ -846,17 +846,17 @@ export function createNeoOperations(service: NeoService) {
     if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
     const scope =
-      binding?.kind === 'concern'
-        ? binding.concernId
+      binding?.kind === 'project'
+        ? binding.projectId
         : focus
-          ? (focus.concernId ?? undefined)
+          ? (focus.projectId ?? undefined)
           : requested;
-    const detailed = caller.source === 'rpc' || binding?.kind === 'concern';
+    const detailed = caller.source === 'rpc' || binding?.kind === 'project';
     const cardDetail = detailed || !!focus;
     const compact = caller.source !== 'rpc' && !focus;
-    const concerns = service.repo
-      .listConcerns()
-      .filter((item) => (focus ? item.id === focus.concernId : !scope || item.id === scope));
+    const projects = service.repo
+      .listProjects()
+      .filter((item) => (focus ? item.id === focus.projectId : !scope || item.id === scope));
     const work = focus
       ? focus.workIds.flatMap((id) => service.repo.getWork(id) ?? [])
       : service.repo.listWork(scope === undefined ? undefined : scope);
@@ -885,7 +885,7 @@ export function createNeoOperations(service: NeoService) {
     const { workPrs, cards } = projectCards(visibleWork, asks);
     return {
       ok: true as const,
-      sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
+      sessionId: service.repo.getBindingForProject(scope ?? null)?.sessionId ?? null,
       waitingOnHuman:
         caller.neoTurn && caller.sessionId
           ? neoWaitingOnHuman(
@@ -897,7 +897,7 @@ export function createNeoOperations(service: NeoService) {
           : undefined,
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
       publicAuthorBindings:
-        caller.source === 'rpc' ? service.repo.listConcernBindings(scope ?? undefined) : [],
+        caller.source === 'rpc' ? service.repo.listProjectBindings(scope ?? undefined) : [],
       askForwards:
         caller.source === 'rpc'
           ? service.askForwards.listRecent(NEO_SNAPSHOT_FORWARDS).map((forward) => ({
@@ -908,7 +908,7 @@ export function createNeoOperations(service: NeoService) {
               toSessionId: forward.toSessionId,
             }))
           : [],
-      concerns: concerns.map((item) => ({
+      projects: projects.map((item) => ({
         ...item,
         context: detailed ? item.context : '',
       })),
@@ -988,7 +988,7 @@ export function createNeoOperations(service: NeoService) {
       'result:track'
     )
     .pipe(
-      () => requireNeoTrackRoot(service.repo.getBindingForConcern(null)?.sessionId),
+      () => requireNeoTrackRoot(service.repo.getBindingForProject(null)?.sessionId),
       'caller',
       'result:track'
     )
@@ -1066,7 +1066,7 @@ export function createNeoOperations(service: NeoService) {
     return ask && isNeoTurnAskReadable(binding, ask) ? ask.id : undefined;
   };
   const scopeOf = (input: z.infer<typeof Scope>, caller: OperationCaller) => {
-    if (input.askId || input.concernId || input.all)
+    if (input.askId || input.projectId || input.all)
       return { askId: input.askId, scopedTo: undefined };
     const askId = turnAsk(caller);
     return { askId, scopedTo: askId };
@@ -1074,17 +1074,17 @@ export function createNeoOperations(service: NeoService) {
   const read = path(
     'neo.snapshot',
     (input: z.infer<typeof Scope>) =>
-      input.askId ? neoAskScope(service.askRecords.get(input.askId)) : input.concernId,
+      input.askId ? neoAskScope(service.askRecords.get(input.askId)) : input.projectId,
     (input, caller) => {
       const scope = scopeOf(input, caller);
       const read = neoSnapshotRevision(
-        snapshot(caller, input.concernId, scope.askId),
+        snapshot(caller, input.projectId, scope.askId),
         input.sinceRev,
         scope.scopedTo
       );
       const turn = caller.source === 'mcp' ? caller.neoTurn?.messageId : undefined;
       if (!caller.sessionId || !turn) return read;
-      const key = [caller.sessionId, turn, input.concernId, scope.askId, input.all].join('\n');
+      const key = [caller.sessionId, turn, input.projectId, scope.askId, input.all].join('\n');
       const planned = planNeoSnapshotRead(
         read,
         service.snapshotReads.get(key) ?? null,
@@ -1094,7 +1094,7 @@ export function createNeoOperations(service: NeoService) {
       return planned.result;
     }
   );
-  const consult = (superpipe({})('neo.concern.consult') as PipelineAPI)
+  const consult = (superpipe({})('neo.project.consult') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
       (caller: OperationCaller) =>
@@ -1107,13 +1107,13 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (input: z.infer<typeof Consult>, root: NeoConsultationOrigin) =>
-        service.repo.getConcern(input.concernId)
+        service.repo.getProject(input.projectId)
           ? { value: root }
-          : { reason: { ok: false, reason: 'Concern not found.' } },
+          : { reason: { ok: false, reason: 'Project not found.' } },
       ['input', 'admission'],
       'result:admission'
     )
-    .pipe((input: z.infer<typeof Consult>) => service.open(input.concernId), 'input', 'sessionId')
+    .pipe((input: z.infer<typeof Consult>) => service.open(input.projectId), 'input', 'sessionId')
     .pipe(
       (origin: NeoConsultationOrigin, caller: OperationCaller) =>
         requireLiveNeoConsultationOrigin(origin, caller.neoTurn),
@@ -1140,7 +1140,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       async (item: NeoConsultation | NeoConsultationWaiter) => {
-        if (item.status === 'queued') await service.dispatchConsultationWaiter(item.concernId);
+        if (item.status === 'queued') await service.dispatchConsultationWaiter(item.projectId);
         const consultation = service.consultations.get(item.id);
         if (consultation) {
           await service.syncConsultation(item.id);
@@ -1156,7 +1156,7 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof Consult>,
     caller: OperationCaller
   ) => Promise<z.infer<typeof ConsultationResult>>;
-  const respond = (superpipe({})('neo.concern.respond') as PipelineAPI)
+  const respond = (superpipe({})('neo.project.respond') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
       (input: z.infer<typeof Respond>, caller: OperationCaller) => {
@@ -1165,9 +1165,9 @@ export function createNeoOperations(service: NeoService) {
         return caller.source === 'mcp' &&
           item &&
           holder &&
-          holder.kind === 'concern' &&
+          holder.kind === 'project' &&
           holder.sessionId === item.sessionId &&
-          holder.concernId === item.concernId
+          holder.projectId === item.projectId
           ? { value: item }
           : {
               reason: { ok: false, reason: 'This consultation belongs to another context holder.' },
@@ -1201,21 +1201,27 @@ export function createNeoOperations(service: NeoService) {
   ) => Promise<z.infer<typeof ConsultationResult>>;
   const open = path(
     'neo.open',
-    (input: z.infer<typeof Scope>) => input.concernId,
+    (input: z.infer<typeof Scope>) => input.projectId,
     async (input, caller) => {
-      if (input.concernId && !service.repo.getConcern(input.concernId))
-        return { ok: false as const, reason: 'Concern not found.' };
-      return { ...snapshot(caller), sessionId: await service.open(input.concernId ?? null) };
+      await invokeOperation(
+        service.sessions.getOperationRegistry(),
+        'work.find',
+        { limit: 50 },
+        caller
+      );
+      if (input.projectId && !service.repo.getProject(input.projectId))
+        return { ok: false as const, reason: 'Project not found.' };
+      return { ...snapshot(caller), sessionId: await service.open(input.projectId ?? null) };
     }
   );
   const cancelConsultation = path(
-    'neo.concern.cancel',
+    'neo.project.cancel',
     (_input: z.infer<typeof WorkId>) => undefined,
     async ({ id }) => {
       const waiter = service.consultationWaiters.get(id);
       if (waiter?.status === 'queued' || waiter?.status === 'cancelled') {
         const cancelled = service.consultationWaiters.cancel(id)!;
-        await service.dispatchConsultationWaiter(cancelled.concernId);
+        await service.dispatchConsultationWaiter(cancelled.projectId);
         return { ok: true as const, waiter: cancelled };
       }
       const item = service.consultations.finish(id, 'failed', CONSULTATION_STOPPED);
@@ -1225,17 +1231,17 @@ export function createNeoOperations(service: NeoService) {
     }
   );
   const save = path(
-    'neo.concern.save',
+    'neo.project.save',
     (input: z.infer<typeof Save>) => input.id,
     (input, caller) => {
       const holder =
         caller.source === 'mcp' &&
         caller.sessionId &&
-        service.repo.getBindingBySession(caller.sessionId)?.kind === 'concern';
+        service.repo.getBindingBySession(caller.sessionId)?.kind === 'project';
       const turn = caller.neoTurn;
       if (holder && (!turn?.isLive() || (!turn.human && !turn.consultationId)))
         return { ok: false as const, reason: 'A live holder input is required to save context.' };
-      const concern =
+      const project =
         holder && turn?.consultationId
           ? service.repo.saveConsultationContext(
               input,
@@ -1243,15 +1249,15 @@ export function createNeoOperations(service: NeoService) {
               turn.consultationId,
               caller.sessionId!
             )
-          : service.repo.saveConcern(input, input.expectedRevision);
-      return concern
-        ? { ok: true as const, concern }
+          : service.repo.saveProject(input, input.expectedRevision);
+      return project
+        ? { ok: true as const, project }
         : {
             ok: false as const,
             reason:
               holder && turn?.consultationId
                 ? 'superseded: this request cannot save context. Return the uncertainty to Neo; a fresh consultation is required.'
-                : 'superseded: read the current concern before saving again',
+                : 'superseded: read the current project before saving again',
           };
     }
   );
@@ -1259,7 +1265,7 @@ export function createNeoOperations(service: NeoService) {
     .input(['input', 'caller'])
     .pipe(
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
-        admitNeoCaller(service, caller, 'neo.work.propose', input.concernId),
+        admitNeoCaller(service, caller, 'neo.work.propose', input.projectId),
       ['input', 'caller'],
       'result:admission'
     )
@@ -1347,8 +1353,8 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
-        input.concernId && !service.repo.getConcern(input.concernId)
-          ? { reason: { ok: false, reason: 'Concern not found.' } }
+        input.projectId && !service.repo.getProject(input.projectId)
+          ? { reason: { ok: false, reason: 'Project not found.' } }
           : { value: caller },
       ['input', 'admission'],
       'result:admission'
@@ -1364,12 +1370,12 @@ export function createNeoOperations(service: NeoService) {
     .pipe(requireNeoWorkAskLive, ['workAsk', 'input', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Propose>) => {
-        const works = input.supersedes === undefined ? service.repo.listWork(input.concernId) : [];
+        const works = input.supersedes === undefined ? service.repo.listWork(input.projectId) : [];
         const superseded = new Set(
           service.workSupersessions.list(works.map((work) => work.id)).map((row) => row.workId)
         );
         return {
-          candidates: neoWorkSupersedeCandidates(works, superseded, input.concernId, Date.now()),
+          candidates: neoWorkSupersedeCandidates(works, superseded, input.projectId, Date.now()),
         };
       },
       'input',
@@ -1398,7 +1404,7 @@ export function createNeoOperations(service: NeoService) {
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
         admitNeoWorkOrigin(
           caller,
-          caller.sessionId ?? service.repo.getBindingForConcern(input.concernId)?.sessionId
+          caller.sessionId ?? service.repo.getBindingForProject(input.projectId)?.sessionId
         ),
       ['input', 'admission'],
       'result:admission'
@@ -1745,7 +1751,7 @@ export function createNeoOperations(service: NeoService) {
         : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
     }
   );
-  const router = createNeoRouter(service.db, service.repo, (concernId) => service.open(concernId));
+  const router = createNeoRouter(service.db, service.repo, (projectId) => service.open(projectId));
   return [
     createNeoIntakeOperation(service.db, service.repo, service.notifyChanged, router),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, router)),
@@ -1755,17 +1761,17 @@ export function createNeoOperations(service: NeoService) {
       getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
       forwards: (ask) => service.askForwards.list(ask),
-      getConcern: (id) => service.repo.getConcern(id),
-      listTopics: () => service.repo.listConcerns(),
-      rootSessionId: () => service.repo.getBindingForConcern(null)?.sessionId ?? null,
+      getProject: (id) => service.repo.getProject(id),
+      listProjects: () => service.repo.listProjects(),
+      rootSessionId: () => service.repo.getBindingForProject(null)?.sessionId ?? null,
       askText: (ask) => {
-        const root = service.repo.getBindingForConcern(null)?.sessionId;
+        const root = service.repo.getBindingForProject(null)?.sessionId;
         return root?.startsWith('neo:')
           ? neoForwardedText(service.asks.find(root.slice(4), ask.messageId), ask)
           : null;
       },
-      open: (concernId) =>
-        reopenNeoHolder(service.repo, service.db, (id) => service.open(id), concernId),
+      open: (projectId) =>
+        reopenNeoHolder(service.repo, service.db, (id) => service.open(id), projectId),
       record: (ask, forward) => service.askForwards.record(ask, forward),
       unrecord: (ask, hop) => service.askForwards.remove(ask, hop),
       delivered: (sessionId, messageId) => service.hasDelivery(sessionId, messageId),
@@ -1781,11 +1787,11 @@ export function createNeoOperations(service: NeoService) {
     createNeoPreferenceOperation(service),
     ...createNeoAskOperations(
       service,
-      (caller, name, concernId) => admitNeoCaller(service, caller, name, concernId),
+      (caller, name, projectId) => admitNeoCaller(service, caller, name, projectId),
       askView
     ),
     defineOperation({
-      name: 'neo.concern.cancel',
+      name: 'neo.project.cancel',
       description:
         'Stop waiting for a context check. Rejects later answers without interrupting the holder session or undoing saved context.',
       inputSchema: WorkId,
@@ -1794,7 +1800,7 @@ export function createNeoOperations(service: NeoService) {
       execute: cancelConsultation,
     }),
     defineOperation({
-      name: 'neo.concern.consult',
+      name: 'neo.project.consult',
       description:
         'Ask a context holder a bounded question from the current root input. Returns a correlated durable receipt; the answer arrives asynchronously. Reuse requestKey only for retries of this input; use a new key for another ask.',
       inputSchema: Consult,
@@ -1803,7 +1809,7 @@ export function createNeoOperations(service: NeoService) {
       execute: consult,
     }),
     defineOperation({
-      name: 'neo.concern.respond',
+      name: 'neo.project.respond',
       description:
         'Return a concise answer to the root Neo for a consultation assigned to this context holder.',
       inputSchema: Respond,
@@ -1813,7 +1819,7 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.open',
-      description: 'Open the human Neo or concern conversation.',
+      description: 'Open the human Neo or project conversation.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'human_only' },
@@ -1867,25 +1873,25 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. In a turn that belongs to an ask, the snapshot is scoped to that ask (scopedTo says which) unless you pass askId, concernId or all: true. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+        'Read durable project summaries and execution receipts. Pass projectId to load that project’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. In a turn that belongs to an ask, the snapshot is scoped to that ask (scopedTo says which) unless you pass askId, projectId or all: true. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },
       execute: read,
     }),
     defineOperation({
-      name: 'neo.concern.save',
+      name: 'neo.project.save',
       description:
-        'Create a continuing context only when needed, or update an existing context with revision protection. Never one concern per message.',
+        'Create a continuing context only when needed, or update an existing context with revision protection. Never one project per message.',
       inputSchema: Save,
-      resultSchema: z.union([Failure, z.object({ ok: z.literal(true), concern: Concern })]),
+      resultSchema: z.union([Failure, z.object({ ok: z.literal(true), project: Project })]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: save,
     }),
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?, effort?} to start new work in a place from work.find (set model and effort when the human requests them; work.start validates the settings, with catalog model resolution for Codex and effort currently supported only for local Codex starts) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found, or {verb:"adopt", ref} to follow a session the human names in chat or tapped Track on, without sending it anything (that card starts on its own); starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. For PR-merge or daemon-deploy outcomes, first call neo.ask.open with doneItems carrying check coding.pr_merged or coding.deployed, then pass its askId here; unchecked doneWhen cannot create a new ask. Existing requestKey retries retain their stored ask. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the concern has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. A proposal to a session that already holds live cards is refused with its load and the idle sessions in the same place; split independent items across idle sessions, and pass allowBusyTarget:true only to queue behind the work of that session on purpose. This does not start execution.',
+        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?, effort?} to start new work in a place from work.find (set model and effort when the human requests them; work.start validates the settings, with catalog model resolution for Codex and effort currently supported only for local Codex starts) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found, or {verb:"adopt", ref} to follow a session the human names in chat or tapped Track on, without sending it anything (that card starts on its own); starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. For PR-merge or daemon-deploy outcomes, first call neo.ask.open with doneItems carrying check coding.pr_merged or coding.deployed, then pass its askId here; unchecked doneWhen cannot create a new ask. Existing requestKey retries retain their stored ask. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the project has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. A proposal to a session that already holds live cards is refused with its load and the idle sessions in the same place; split independent items across idle sessions, and pass allowBusyTarget:true only to queue behind the work of that session on purpose. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

@@ -30,7 +30,7 @@ const workflow = { kind: 'workflows', id: 'flow/β' };
 const work: NeoWork = Object.freeze({
   id: 'work-A',
   requestKey: 'request-A',
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'ask-A',
   title: 'Draft only',
@@ -186,7 +186,7 @@ describe('Neo report resource pipeline ports', () => {
     const f = ports();
     const report = createNeoWorkReporter({
       ...f.deps,
-      readBinding: () => ({ sessionId: 'recipient', kind: 'concern', concernId: 'A' }),
+      readBinding: () => ({ sessionId: 'recipient', kind: 'project', projectId: 'A' }),
     });
     expect(await report(input, caller)).toEqual(rejected('recipient_is_coordinator'));
     expect(f.resourceReports.settle).not.toHaveBeenCalled();
@@ -366,7 +366,7 @@ describe('NeoService resource-report Wire', () => {
             `INSERT INTO sessions(id, title, workspace_path, created_at, last_active_at, status, config, metadata) VALUES (?, ?, NULL, '2026-09-28T12:00:00Z', '2026-09-28T12:00:00Z', 'active', '{}', '{}')`
           )
           .run(id, id);
-      service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+      service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
       const proposed = service.repo.proposeWork(work);
       service.repo.transitionWork(work.id, proposed, { status: 'queued', sessionId: 'recipient' });
       const capture = () =>

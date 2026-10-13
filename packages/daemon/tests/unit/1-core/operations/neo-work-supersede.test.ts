@@ -23,20 +23,20 @@ import {
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 describe('requireNeoWorkSupersedable', () => {
-  const old = { id: 'w1', status: 'failed' as const, concernId: null };
+  const old = { id: 'w1', status: 'failed' as const, projectId: null };
   test('passes a proposal that supersedes nothing', () => {
-    expect(requireNeoWorkSupersedable({ concernId: null }, null, 'ok')).toEqual({ value: 'ok' });
+    expect(requireNeoWorkSupersedable({ projectId: null }, null, 'ok')).toEqual({ value: 'ok' });
   });
 
   test('passes failed or cancelled work in the same concern', () => {
     for (const status of ['failed', 'cancelled'] as const)
       expect(
-        requireNeoWorkSupersedable({ supersedes: 'w1', concernId: null }, { ...old, status }, 'ok')
+        requireNeoWorkSupersedable({ supersedes: 'w1', projectId: null }, { ...old, status }, 'ok')
       ).toEqual({ value: 'ok' });
   });
 
   test('refuses missing, still-live or another concern’s work', () => {
-    const input = { supersedes: 'w1', concernId: null };
+    const input = { supersedes: 'w1', projectId: null };
     expect(requireNeoWorkSupersedable(input, null, 'ok')).toEqual({
       reason: { ok: false, reason: 'The work this supersedes was not found.' },
     });
@@ -46,7 +46,7 @@ describe('requireNeoWorkSupersedable', () => {
         reason: 'Only failed or cancelled work can be superseded; w1 is queued.',
       },
     });
-    expect(requireNeoWorkSupersedable(input, { ...old, concernId: 'other' }, 'ok')).toEqual({
+    expect(requireNeoWorkSupersedable(input, { ...old, projectId: 'other' }, 'ok')).toEqual({
       reason: { ok: false, reason: 'The work this supersedes belongs to another concern.' },
     });
   });
@@ -58,7 +58,7 @@ describe('neoWorkSupersedeCandidates', () => {
     id,
     title: `Card ${id}`,
     status: 'failed' as const,
-    concernId: null,
+    projectId: null,
     updatedAt: now - 1_000,
     ...overrides,
   });
@@ -69,7 +69,7 @@ describe('neoWorkSupersedeCandidates', () => {
           work('a'),
           work('b', { status: 'cancelled' }),
           work('c', { status: 'reported' }),
-          work('d', { concernId: 'other' }),
+          work('d', { projectId: 'other' }),
           work('e', { updatedAt: now - NEO_SUPERSEDE_WINDOW_MS }),
           work('f'),
         ],
@@ -87,7 +87,7 @@ describe('neoWorkSupersedeCandidates', () => {
 describe('requireNeoWorkSupersedeDecision', () => {
   const candidates = [{ id: 'a', title: 'Card a' }];
   test('asks Neo to decide when a replacement is likely and it said nothing', () => {
-    expect(requireNeoWorkSupersedeDecision({ concernId: null }, candidates, 'ok')).toEqual({
+    expect(requireNeoWorkSupersedeDecision({ projectId: null }, candidates, 'ok')).toEqual({
       reason: {
         ok: false,
         reason:
@@ -99,9 +99,9 @@ describe('requireNeoWorkSupersedeDecision', () => {
   test('passes once Neo decides either way, or when nothing is likely', () => {
     for (const supersedes of ['a', null])
       expect(
-        requireNeoWorkSupersedeDecision({ concernId: null, supersedes }, candidates, 'ok')
+        requireNeoWorkSupersedeDecision({ projectId: null, supersedes }, candidates, 'ok')
       ).toEqual({ value: 'ok' });
-    expect(requireNeoWorkSupersedeDecision({ concernId: null }, [], 'ok')).toEqual({
+    expect(requireNeoWorkSupersedeDecision({ projectId: null }, [], 'ok')).toEqual({
       value: 'ok',
     });
   });
@@ -146,7 +146,7 @@ describe('neo.work.propose with supersedes', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
   });
   afterEach(() => {
     service.dispose();

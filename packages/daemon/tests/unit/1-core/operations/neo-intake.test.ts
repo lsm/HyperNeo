@@ -31,7 +31,7 @@ const input = {
   content: 'What is happening with project A?',
 };
 const target = { id: input.sessionId, status: 'active' as const, config: {} };
-const binding = { sessionId: input.sessionId, concernId: null, kind: 'neo' as const };
+const binding = { sessionId: input.sessionId, projectId: null, kind: 'neo' as const };
 
 describe('Neo intake gates', () => {
   test.each([
@@ -65,7 +65,7 @@ describe('wantsNeoRoute', () => {
   test('routes only asks to the main Neo conversation when a router exists', () => {
     expect(wantsNeoRoute(binding, router)).toEqual({ value: router });
     expect(wantsNeoRoute(binding, null)).toEqual({ reason: { choice: null } });
-    expect(wantsNeoRoute({ ...binding, kind: 'concern', concernId: 'c1' }, router)).toEqual({
+    expect(wantsNeoRoute({ ...binding, kind: 'project', projectId: 'c1' }, router)).toEqual({
       reason: { choice: null },
     });
   });
@@ -74,7 +74,7 @@ describe('wantsNeoRoute', () => {
 describe('loggedNeoRoute', () => {
   const earlier = {
     destination: 'holder',
-    concernId: 'c1',
+    projectId: 'c1',
     targetSessionId: 's1',
     signal: 'classifier',
     confidence: 0.8,
@@ -83,7 +83,7 @@ describe('loggedNeoRoute', () => {
     expect(loggedNeoRoute(null)).toEqual({ value: null });
     expect(loggedNeoRoute(earlier)).toEqual({
       reason: {
-        choice: { concernId: 'c1', sessionId: 's1', signal: 'classifier', confidence: 0.8 },
+        choice: { projectId: 'c1', sessionId: 's1', signal: 'classifier', confidence: 0.8 },
       },
     });
     expect(
@@ -95,12 +95,12 @@ describe('loggedNeoRoute', () => {
 describe('replayedNeoRoute', () => {
   const logged = {
     destination: 'holder',
-    concernId: 'c1',
+    projectId: 'c1',
     targetSessionId: 's1',
     signal: 'classifier',
     confidence: 0.8,
   } as unknown as Parameters<typeof replayedNeoRoute>[1];
-  const holder = { sessionId: 's1', kind: 'concern' as const, concernId: 'c1' };
+  const holder = { sessionId: 's1', kind: 'project' as const, projectId: 'c1' };
   test('a first ask has nothing to replay', () => {
     expect(replayedNeoRoute(null, null)).toEqual({ value: null });
   });
@@ -113,7 +113,7 @@ describe('replayedNeoRoute', () => {
   test('the ask ledger wins when the log is missing or points elsewhere', () => {
     const replayed = {
       reason: {
-        choice: { concernId: 'c1', sessionId: 's1', signal: 'embedding', confidence: 1 },
+        choice: { projectId: 'c1', sessionId: 's1', signal: 'embedding', confidence: 1 },
         fallback: 'replayed',
       },
     };
@@ -222,7 +222,7 @@ describe('durable Neo intake operation', () => {
       origin: 'chat',
       released: true,
     });
-    expect(repo.listConcerns()).toEqual([]);
+    expect(repo.listProjects()).toEqual([]);
     expect(repo.listWork()).toEqual([]);
   });
   test('accepts another concern while the previous delivery remains processing', async () => {
@@ -244,18 +244,18 @@ describe('durable Neo intake operation', () => {
       other.requestId,
     ]);
     expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(2);
-    expect(repo.listConcerns()).toEqual([]);
+    expect(repo.listProjects()).toEqual([]);
   });
   test('a retry whose routing log was lost goes back to the holder its ask first went to', async () => {
     const holderId = 'neo:holder:c1';
-    repo.saveConcern({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
-    repo.reserveBinding({ sessionId: holderId, kind: 'concern', concernId: 'c1' });
+    repo.saveProject({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
+    repo.reserveBinding({ sessionId: holderId, kind: 'project', projectId: 'c1' });
     mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(holderId);
     sessions.set(holderId, { ...target, id: holderId });
     let routed = 0;
     const router: NeoRouter = async () =>
       routed++ === 0
-        ? { choice: { concernId: 'c1', sessionId: holderId, signal: 'embedding', confidence: 0.9 } }
+        ? { choice: { projectId: 'c1', sessionId: holderId, signal: 'embedding', confidence: 0.9 } }
         : { choice: null };
     const registry = createOperationRegistry([
       createNeoIntakeOperation(db, repo, undefined, router),

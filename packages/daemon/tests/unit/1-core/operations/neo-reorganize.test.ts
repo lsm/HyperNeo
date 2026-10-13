@@ -35,7 +35,7 @@ const root = 'neo:root';
 const ask = (id: string, fields: Partial<NeoAsk> = {}): NeoAsk => ({
   id,
   requestKey: `k-${id}`,
-  concernId: null,
+  projectId: null,
   originSessionId: root,
   originMessageId: `m-${id}`,
   title: `Ask ${id}`,
@@ -50,17 +50,17 @@ const ask = (id: string, fields: Partial<NeoAsk> = {}): NeoAsk => ({
   settledAt: null,
   ...fields,
 });
-const routed = (concernId: string | null): NeoRouted => ({
-  choice: concernId
-    ? { concernId, sessionId: `holder:${concernId}`, signal: 'classifier', confidence: 0.9 }
+const routed = (projectId: string | null): NeoRouted => ({
+  choice: projectId
+    ? { projectId, sessionId: `holder:${projectId}`, signal: 'classifier', confidence: 0.9 }
     : null,
 });
 const neoCaller: OperationCaller = { source: 'mcp', sessionId: root, role: 'neo' };
 
 describe('admitNeoReorganizer', () => {
   test('lets main Neo and the human run it, not a topic avatar', () => {
-    const main = { sessionId: root, kind: 'neo', concernId: null } as NeoBinding;
-    const holder = { sessionId: 'h', kind: 'concern', concernId: 'c' } as NeoBinding;
+    const main = { sessionId: root, kind: 'neo', projectId: null } as NeoBinding;
+    const holder = { sessionId: 'h', kind: 'project', projectId: 'c' } as NeoBinding;
     expect(admitNeoReorganizer(neoCaller, main)).toEqual({ value: true });
     expect(admitNeoReorganizer({ source: 'rpc', principal: 'local' }, null)).toEqual({
       value: true,
@@ -73,7 +73,7 @@ describe('admitNeoReorganizer', () => {
 
 describe('selectNeoReorganizableAsks', () => {
   test('takes main’s asks and every topic’s asks, not asks another conversation opened', () => {
-    const asks = [ask('a'), ask('b', { concernId: 'c' }), ask('c', { originSessionId: 'h' })];
+    const asks = [ask('a'), ask('b', { projectId: 'c' }), ask('c', { originSessionId: 'h' })];
     expect(selectNeoReorganizableAsks(asks, root).map((item) => item.id)).toEqual(['a', 'b']);
   });
 });
@@ -106,7 +106,7 @@ describe('requireNeoAskUnchanged', () => {
     expect(requireNeoAskUnchanged(ask('a'), ask('a', { status: 'achieved' }), root)).toEqual(
       changed
     );
-    expect(requireNeoAskUnchanged(ask('a'), ask('a', { concernId: 'c' }), root)).toEqual(changed);
+    expect(requireNeoAskUnchanged(ask('a'), ask('a', { projectId: 'c' }), root)).toEqual(changed);
     expect(
       requireNeoAskUnchanged(ask('a'), ask('a', { status: 'waiting', title: 'Now' }), root)
     ).toMatchObject({ value: { status: 'waiting', title: 'Now' } });
@@ -116,7 +116,7 @@ describe('requireNeoAskUnchanged', () => {
 describe('requireNeoAskTopic', () => {
   test('moves to a topic, but keeps main and inbox choices with main', () => {
     expect(requireNeoAskTopic(ask('a'), routed('drivers'))).toEqual({
-      value: { concernId: 'drivers', sessionId: 'holder:drivers' },
+      value: { projectId: 'drivers', sessionId: 'holder:drivers' },
     });
     expect(requireNeoAskTopic(ask('a'), routed(null))).toEqual({
       reason: { askId: 'a', reason: 'stays_main' },
@@ -127,9 +127,9 @@ describe('requireNeoAskTopic', () => {
   });
 
   test('moves a topic’s ask only to a different topic', () => {
-    const held = ask('a', { concernId: 'web' });
+    const held = ask('a', { projectId: 'web' });
     expect(requireNeoAskTopic(held, routed('drivers'))).toEqual({
-      value: { concernId: 'drivers', sessionId: 'holder:drivers' },
+      value: { projectId: 'drivers', sessionId: 'holder:drivers' },
     });
     for (const choice of ['web', 'inbox', null])
       expect(requireNeoAskTopic(held, routed(choice))).toEqual({
@@ -140,7 +140,7 @@ describe('requireNeoAskTopic', () => {
 
 describe('requireNeoTopicIdle', () => {
   test('skips a topic whose avatar is mid-turn', () => {
-    const topic = { concernId: 'c', sessionId: 'h' };
+    const topic = { projectId: 'c', sessionId: 'h' };
     expect(requireNeoTopicIdle(ask('a'), topic, 'processing')).toEqual({
       reason: { askId: 'a', reason: 'topic_busy' },
     });
@@ -190,7 +190,7 @@ describe('neoMovedAskNote', () => {
   });
 });
 
-describe('neo.topics.reorganize', () => {
+describe('neo.projects.reorganize', () => {
   function runtime(
     asks: NeoAsk[],
     routes: Record<string, string | null>,
@@ -198,24 +198,24 @@ describe('neo.topics.reorganize', () => {
     current: Record<string, NeoAsk | null> = {}
   ) {
     const delivered: { sessionId: string; messageId: string; parent: unknown }[] = [];
-    const moves: { askId: string; concernId: string; messageId: string }[] = [];
+    const moves: { askId: string; projectId: string; messageId: string }[] = [];
     const deps: NeoReorganizeRuntime = {
       getBinding: (sessionId) =>
         sessionId === root
-          ? ({ sessionId: root, kind: 'neo', concernId: null } as NeoBinding)
+          ? ({ sessionId: root, kind: 'neo', projectId: null } as NeoBinding)
           : null,
       rootSessionId: () => root,
       liveAsks: () => asks,
       ask: (id) => (id in current ? current[id] : (asks.find((item) => item.id === id) ?? null)),
       route: async (item) => routed(routes[item.id] ?? null),
       sessionStatus: (sessionId) => (busy.includes(sessionId) ? 'processing' : 'idle'),
-      topicSession: (concernId) => `holder:${concernId}`,
+      projectSession: (projectId) => `holder:${projectId}`,
       cards: () => [],
       deliver: async (sessionId, messageId, _content, _from, parent) => {
         delivered.push({ sessionId, messageId, parent });
       },
       move: (item, _cards, owner) =>
-        moves.push({ askId: item.id, concernId: owner.concernId, messageId: owner.messageId }),
+        moves.push({ askId: item.id, projectId: owner.projectId, messageId: owner.messageId }),
       log: () => {},
     };
     return { deps, delivered, moves };
@@ -223,7 +223,7 @@ describe('neo.topics.reorganize', () => {
   const invoke = (deps: NeoReorganizeRuntime, caller: OperationCaller = neoCaller) =>
     invokeOperation(
       createOperationRegistry([createNeoReorganizeOperation(deps)]),
-      'neo.topics.reorganize',
+      'neo.projects.reorganize',
       {},
       caller
     ).then((outcome) => (outcome as { value?: unknown }).value);
@@ -236,7 +236,7 @@ describe('neo.topics.reorganize', () => {
     );
     expect(await invoke(deps)).toEqual({
       ok: true,
-      moved: [{ askId: 'a', concernId: 'drivers' }],
+      moved: [{ askId: 'a', projectId: 'drivers' }],
       stayed: [
         { askId: 'b', reason: 'waiting_on_human' },
         { askId: 'c', reason: 'stays_main' },
@@ -252,24 +252,24 @@ describe('neo.topics.reorganize', () => {
       },
     ]);
     expect(moves).toEqual([
-      { askId: 'a', concernId: 'drivers', messageId: neoMovedAskMessageId(ask('a')) },
+      { askId: 'a', projectId: 'drivers', messageId: neoMovedAskMessageId(ask('a')) },
     ]);
   });
 
   test('moves an off-topic ask between topics unless either avatar is mid-turn', async () => {
     const moved = ask('a', {
-      concernId: 'web',
+      projectId: 'web',
       originSessionId: 'holder:web',
       originMessageId: 'neo-moved:a:x',
     });
     const { deps, delivered, moves } = runtime(
-      [moved, ask('b', { concernId: 'busy', originSessionId: 'holder:busy' })],
+      [moved, ask('b', { projectId: 'busy', originSessionId: 'holder:busy' })],
       { a: 'drivers', b: 'drivers' },
       ['holder:busy']
     );
     expect(await invoke(deps)).toEqual({
       ok: true,
-      moved: [{ askId: 'a', concernId: 'drivers' }],
+      moved: [{ askId: 'a', projectId: 'drivers' }],
       stayed: [{ askId: 'b', reason: 'topic_busy' }],
     });
     expect(delivered).toEqual([
@@ -280,7 +280,7 @@ describe('neo.topics.reorganize', () => {
       },
     ]);
     expect(moves).toEqual([
-      { askId: 'a', concernId: 'drivers', messageId: neoMovedAskMessageId(moved) },
+      { askId: 'a', projectId: 'drivers', messageId: neoMovedAskMessageId(moved) },
     ]);
     expect(neoMovedAskMessageId(moved)).not.toBe(neoMovedAskMessageId(ask('a')));
   });
@@ -338,11 +338,11 @@ describe('NeoService.moveAsk', () => {
   });
 
   test('gives the ask and its cards to the topic avatar in one step', () => {
-    service.repo.saveConcern({ id: 'drivers', title: 'Drivers', summary: '', context: '' }, 0);
+    service.repo.saveProject({ id: 'drivers', title: 'Drivers', summary: '', context: '' }, 0);
     const opened = service.askRecords.open({
       id: 'a1',
       requestKey: 'k-a1',
-      concernId: null,
+      projectId: null,
       originSessionId: root,
       originMessageId: 'm-a1',
       title: 'Fix login',
@@ -353,7 +353,7 @@ describe('NeoService.moveAsk', () => {
     const card = service.repo.proposeWork({
       id: 'w1',
       requestKey: 'k-w1',
-      concernId: null,
+      projectId: null,
       originSessionId: root,
       originMessageId: 'm-a1',
       title: 'Fix login',
@@ -361,18 +361,18 @@ describe('NeoService.moveAsk', () => {
     });
     service.askRecords.link(opened.id, card.id);
     service.moveAsk(opened, [card], {
-      concernId: 'drivers',
+      projectId: 'drivers',
       sessionId: 'holder:drivers',
       messageId: 'neo-moved:a1',
     });
     expect(service.askRecords.get('a1')).toMatchObject({
-      concernId: 'drivers',
+      projectId: 'drivers',
       originSessionId: 'holder:drivers',
       originMessageId: 'neo-moved:a1',
       status: 'open',
     });
     expect(service.repo.getWork('w1')).toMatchObject({
-      concernId: 'drivers',
+      projectId: 'drivers',
       originSessionId: 'holder:drivers',
       originMessageId: 'neo-moved:a1',
     });

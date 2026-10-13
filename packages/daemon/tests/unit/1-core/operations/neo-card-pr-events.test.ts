@@ -115,7 +115,7 @@ describe('Neo card pull request events', () => {
     service.watchExternalTopic = async (topic) => {
       watched.push(topic);
     };
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
     publisher = new ExternalEventService(new SessionExternalEventStore(db.getDatabase()), bus);
   });
   afterEach(() => {
@@ -129,7 +129,7 @@ describe('Neo card pull request events', () => {
       {
         id: 'w-desktop',
         requestKey: 'root:desktop',
-        concernId: null,
+        projectId: null,
         originSessionId: 'root',
         title: 'Fix the bug',
         instruction: 'Fix it and merge.',
@@ -207,7 +207,7 @@ describe('Neo card pull request events', () => {
     const proposed = service.repo.proposeWork({
       id: 'w-native',
       requestKey: 'root:native',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'm1',
       title: 'Fix it',
@@ -254,7 +254,7 @@ describe('Neo card pull request events', () => {
       service.repo.proposeWork({
         id: 'w-live',
         requestKey: 'root:live',
-        concernId: null,
+        projectId: null,
         originSessionId: 'root',
         originMessageId: 'm2',
         title: 'Fix more',
@@ -291,7 +291,7 @@ describe('Neo card pull request events', () => {
     const proposed = service.repo.proposeWork({
       id: 'w-legacy',
       requestKey: 'root:legacy',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'm3',
       title: 'Fix it',
@@ -319,7 +319,7 @@ describe('Neo card pull request events', () => {
     const proposed = service.repo.proposeWork({
       id: 'w-done',
       requestKey: 'root:done',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'm4',
       title: 'Fix it',

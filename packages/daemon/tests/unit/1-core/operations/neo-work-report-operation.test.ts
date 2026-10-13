@@ -67,13 +67,13 @@ describe('Neo recipient report owning operation', () => {
           status, config, metadata) VALUES (?, ?, NULL, '2026-09-28T14:00:00Z',
           '2026-09-28T14:00:00Z', 'active', '{}', '{}')`)
         .run(id, id);
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
-    service.repo.saveConcern(
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
+    service.repo.saveProject(
       { id: 'research', title: 'Research', summary: 'Learn', context: 'Private context' },
       0
     );
-    service.repo.reserveBinding({ sessionId: 'holder', kind: 'concern', concernId: 'research' });
-    service.repo.reserveBinding({ sessionId: 'worker', kind: 'worker', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'holder', kind: 'project', projectId: 'research' });
+    service.repo.reserveBinding({ sessionId: 'worker', kind: 'worker', projectId: null });
     registry = createOperationRegistry([
       ...createNeoOperations(service),
       ...createDiscoveryOperations(() => registry),
@@ -87,12 +87,12 @@ describe('Neo recipient report owning operation', () => {
   function propose(
     id = input.id,
     sessionId = recipient.sessionId!,
-    concernId: string | null = null
+    projectId: string | null = null
   ) {
     return service.repo.proposeWork({
       id,
       requestKey: id,
-      concernId,
+      projectId,
       originSessionId: 'root',
       originMessageId: `ask:${id}`,
       title: 'Read current research status',
@@ -103,9 +103,9 @@ describe('Neo recipient report owning operation', () => {
   function queued(
     id = input.id,
     sessionId = recipient.sessionId!,
-    concernId: string | null = null
+    projectId: string | null = null
   ) {
-    const work = propose(id, sessionId, concernId);
+    const work = propose(id, sessionId, projectId);
     return service.repo.transitionWork(id, work, { status: 'queued', sessionId })!;
   }
   const invoke = (value: unknown = input, caller = recipient) =>
@@ -411,7 +411,7 @@ describe('Neo recipient report owning operation', () => {
     const id = `neo-work:${work.id}:review`;
     const consultation = service.consultations.get(id);
     expect(consultation).toMatchObject({
-      concernId: 'research',
+      projectId: 'research',
       originSessionId: 'root',
       sessionId: 'holder',
       status: 'pending',

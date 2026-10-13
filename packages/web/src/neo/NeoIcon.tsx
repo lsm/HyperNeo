@@ -44,7 +44,7 @@ export function NeoIcon({
   );
 }
 
-export function concernColor(id: string): string {
+export function projectColor(id: string): string {
   const index = [...id].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 4;
   return [
     'text-accent bg-accent/10',

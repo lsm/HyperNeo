@@ -70,13 +70,13 @@ export function scopeNeoRequestReceipts({ snapshot, origin }: Selection): Gate<N
       !consultations.some((active) => active.id === item.id)
   );
   if (!work.length && !consultations.length && !consultationWaiters.length) return { reason: null };
-  const concerns = new Set(
-    [...work, ...consultations, ...consultationWaiters].map((item) => item.concernId)
+  const projects = new Set(
+    [...work, ...consultations, ...consultationWaiters].map((item) => item.projectId)
   );
   return {
     value: {
       ...snapshot,
-      concerns: snapshot.concerns.filter((item) => concerns.has(item.id)),
+      projects: snapshot.projects.filter((item) => projects.has(item.id)),
       work,
       consultations,
       consultationWaiters,
@@ -97,7 +97,7 @@ export function neoRequestConsultationProgress(snapshot: NeoSnapshot | null) {
         !snapshot?.consultations?.some((active) => active.id === item.id)
     ),
   ].map((item) => {
-    const title = snapshot?.concerns.find((concern) => concern.id === item.concernId)?.title;
+    const title = snapshot?.projects.find((project) => project.id === item.projectId)?.title;
     return {
       id: item.id,
       status: item.status,

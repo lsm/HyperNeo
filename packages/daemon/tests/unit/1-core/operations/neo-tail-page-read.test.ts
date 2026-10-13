@@ -16,7 +16,7 @@ import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbo
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const foreignId = '10000000-0000-4000-8000-000000000002';
-const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, concernId: null };
+const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const id = (index: number) => `20000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 const newest = Number.MAX_SAFE_INTEGER;

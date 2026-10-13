@@ -17,7 +17,7 @@ const Stayed = z.object({
     'stays_main',
     'in_place',
     'one_off',
-    'topic_busy',
+    'project_busy',
     'handoff_failed',
   ]),
 });
@@ -25,14 +25,14 @@ const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.literal('main_neo_only') }),
   z.object({
     ok: z.literal(true),
-    moved: z.array(z.object({ askId: z.string(), concernId: z.string() })),
+    moved: z.array(z.object({ askId: z.string(), projectId: z.string() })),
     stayed: z.array(Stayed),
   }),
 ]);
 type Stay = z.infer<typeof Stayed>;
 type Outcome = z.infer<typeof Result>;
-type Topic = { concernId: string; sessionId: string };
-type Moved = { askId: string; concernId: string };
+type Project = { projectId: string; sessionId: string };
+type Moved = { askId: string; projectId: string };
 
 export interface NeoReorganizeRuntime {
   getBinding(sessionId: string): NeoBinding | null;
@@ -41,7 +41,7 @@ export interface NeoReorganizeRuntime {
   ask(id: string): NeoAsk | null;
   route(ask: NeoAsk): Promise<NeoRouted>;
   sessionStatus(sessionId: string): string | null;
-  topicSession(concernId: string): string | null;
+  projectSession(projectId: string): string | null;
   cards(ask: NeoAsk): NeoWork[];
   deliver(
     sessionId: string,
@@ -50,7 +50,7 @@ export interface NeoReorganizeRuntime {
     fromSessionId: string,
     parent: NeoAskOrigin | null
   ): Promise<void>;
-  move(ask: NeoAsk, cards: readonly NeoWork[], owner: Topic & { messageId: string }): void;
+  move(ask: NeoAsk, cards: readonly NeoWork[], owner: Project & { messageId: string }): void;
   log(line: string): void;
 }
 
@@ -69,7 +69,7 @@ export function admitNeoReorganizer(
 }
 
 export function selectNeoReorganizableAsks(asks: readonly NeoAsk[], root: string): NeoAsk[] {
-  return asks.filter((ask) => ask.concernId !== null || ask.originSessionId === root);
+  return asks.filter((ask) => ask.projectId !== null || ask.originSessionId === root);
 }
 
 export function requireNeoAskMovable(ask: NeoAsk): { value: NeoAsk } | { reason: Stay } {
@@ -85,34 +85,34 @@ export function requireNeoAskUnchanged(
 ): { value: NeoAsk } | { reason: Stay } {
   return current &&
     ['open', 'waiting', 'blocked'].includes(current.status) &&
-    current.concernId === ask.concernId &&
+    current.projectId === ask.projectId &&
     current.originSessionId === ask.originSessionId &&
     selectNeoReorganizableAsks([current], root).length === 1
     ? { value: current }
     : { reason: { askId: ask.id, reason: 'changed' } };
 }
 
-export function requireNeoAskTopic(
+export function requireNeoAskProject(
   ask: NeoAsk,
   routed: NeoRouted
-): { value: Topic } | { reason: Stay } {
+): { value: Project } | { reason: Stay } {
   const choice = routed.choice;
-  const home = ask.concernId === null ? null : 'in_place';
+  const home = ask.projectId === null ? null : 'in_place';
   if (!choice) return { reason: { askId: ask.id, reason: home ?? 'stays_main' } };
-  if (choice.concernId === NEO_INBOX_ID)
+  if (choice.projectId === NEO_INBOX_ID)
     return { reason: { askId: ask.id, reason: home ?? 'one_off' } };
-  if (choice.concernId === ask.concernId) return { reason: { askId: ask.id, reason: 'in_place' } };
-  return { value: { concernId: choice.concernId, sessionId: choice.sessionId } };
+  if (choice.projectId === ask.projectId) return { reason: { askId: ask.id, reason: 'in_place' } };
+  return { value: { projectId: choice.projectId, sessionId: choice.sessionId } };
 }
 
-export function requireNeoTopicIdle(
+export function requireNeoProjectIdle(
   ask: NeoAsk,
-  topic: Topic,
+  project: Project,
   status: string | null
-): { value: Topic } | { reason: Stay } {
+): { value: Project } | { reason: Stay } {
   return status === null || status === 'idle'
-    ? { value: topic }
-    : { reason: { askId: ask.id, reason: 'topic_busy' } };
+    ? { value: project }
+    : { reason: { askId: ask.id, reason: 'project_busy' } };
 }
 
 export function requireNeoSourceIdle(
@@ -121,7 +121,7 @@ export function requireNeoSourceIdle(
 ): { value: NeoAsk } | { reason: Stay } {
   return status === null || status === 'idle'
     ? { value: ask }
-    : { reason: { askId: ask.id, reason: 'topic_busy' } };
+    : { reason: { askId: ask.id, reason: 'project_busy' } };
 }
 
 export function neoMovedAskNote(ask: NeoAsk, cards: readonly NeoWork[]): string {
@@ -140,14 +140,14 @@ export function neoMovedAskNote(ask: NeoAsk, cards: readonly NeoWork[]): string 
 
 export type NeoReorganized = { moved: Moved[]; stayed: Stay[] };
 
-export function createNeoTopicsReorganizer(
+export function createNeoProjectsReorganizer(
   runtime: NeoReorganizeRuntime
 ): () => Promise<NeoReorganized> {
   const sourceStatus = (ask: NeoAsk): string | null => {
-    const sessionId = ask.concernId === null ? null : runtime.topicSession(ask.concernId);
+    const sessionId = ask.projectId === null ? null : runtime.projectSession(ask.projectId);
     return sessionId === null ? null : runtime.sessionStatus(sessionId);
   };
-  const moveAsk = (superpipe({})('neo-topics-reorganize-ask') as PipelineAPI)
+  const moveAsk = (superpipe({})('neo-projects-reorganize-ask') as PipelineAPI)
     .input(['ask', 'root'])
     .pipe(requireNeoAskMovable, 'ask', 'result:move')
     .pipe((ask: NeoAsk) => requireNeoSourceIdle(ask, sourceStatus(ask)), 'ask', 'result:move')
@@ -156,19 +156,19 @@ export function createNeoTopicsReorganizer(
     .pipe(requireNeoAskUnchanged, ['ask', 'current', 'root'], 'result:move')
     .pipe(requireNeoAskMovable, 'move', 'result:move')
     .pipe((current: NeoAsk) => current, 'move', 'fresh')
-    .pipe(requireNeoAskTopic, ['fresh', 'routed'], 'result:move')
+    .pipe(requireNeoAskProject, ['fresh', 'routed'], 'result:move')
     .pipe(
-      (ask: NeoAsk, topic: Topic) =>
-        requireNeoTopicIdle(ask, topic, runtime.sessionStatus(topic.sessionId)),
+      (ask: NeoAsk, project: Project) =>
+        requireNeoProjectIdle(ask, project, runtime.sessionStatus(project.sessionId)),
       ['fresh', 'move'],
       'result:move'
     )
     .pipe((ask: NeoAsk) => runtime.cards(ask), 'fresh', 'cards')
     .pipe(
-      async (ask: NeoAsk, root: string, topic: Topic, cards: NeoWork[]) => {
+      async (ask: NeoAsk, root: string, project: Project, cards: NeoWork[]) => {
         const messageId = neoMovedAskMessageId(ask);
         await runtime.deliver(
-          topic.sessionId,
+          project.sessionId,
           messageId,
           neoMovedAskNote(ask, cards),
           root,
@@ -176,11 +176,11 @@ export function createNeoTopicsReorganizer(
             ? { sessionId: ask.originSessionId, messageId: ask.originMessageId }
             : null
         );
-        runtime.move(ask, cards, { ...topic, messageId });
+        runtime.move(ask, cards, { ...project, messageId });
         runtime.log(
-          `neo reorganize: moved ask ${ask.id} (${ask.title}) and ${cards.length} card(s) from ${ask.concernId ?? 'main'} to ${topic.concernId}`
+          `neo reorganize: moved ask ${ask.id} (${ask.title}) and ${cards.length} card(s) from ${ask.projectId ?? 'main'} to ${project.projectId}`
         );
-        return { askId: ask.id, concernId: topic.concernId };
+        return { askId: ask.id, projectId: project.projectId };
       },
       ['fresh', 'root', 'move', 'cards'],
       'move'
@@ -195,7 +195,7 @@ export function createNeoTopicsReorganizer(
     for (const ask of selectNeoReorganizableAsks(runtime.liveAsks(), root)) {
       const result = await moveAsk(ask, root).catch((error: unknown) => {
         runtime.log(
-          `neo reorganize: ask ${ask.id} stays with ${ask.concernId ?? 'main'}, handoff failed: ${String(error)}`
+          `neo reorganize: ask ${ask.id} stays with ${ask.projectId ?? 'main'}, handoff failed: ${String(error)}`
         );
         return { askId: ask.id, reason: 'handoff_failed' as const };
       });
@@ -207,20 +207,20 @@ export function createNeoTopicsReorganizer(
 }
 
 export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
-  const reorganizeTopics = createNeoTopicsReorganizer(runtime);
+  const reorganizeProjects = createNeoProjectsReorganizer(runtime);
   const reorganize = async (caller: OperationCaller): Promise<Outcome> => {
     const admitted = admitNeoReorganizer(
       caller,
       caller.sessionId ? runtime.getBinding(caller.sessionId) : null
     );
     if ('reason' in admitted) return admitted.reason;
-    return { ok: true, ...(await reorganizeTopics()) };
+    return { ok: true, ...(await reorganizeProjects()) };
   };
 
   return defineOperation({
-    name: 'neo.topics.reorganize',
+    name: 'neo.projects.reorganize',
     description:
-      'Move each live ask into the topic it belongs to: main’s asks into their topics, and a topic’s off-topic asks into the right topic, an existing one or a new topic and avatar the daemon creates. The ask and its cards are handed to that topic’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
+      'Move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

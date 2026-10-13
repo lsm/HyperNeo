@@ -11,7 +11,7 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 const item: NeoConsultation = Object.freeze({
   id: 'fictional-check',
   requestKey: 'fictional-request',
-  concernId: 'fictional',
+  projectId: 'fictional',
   originSessionId: 'root',
   originMessageId: 'original-ask',
   sessionId: 'holder',
@@ -36,9 +36,9 @@ describe('NeoService extracted consultation request delivery', () => {
     );
     try {
       for (const id of ['root', 'holder']) db.createSession(createTestSession(id));
-      service.repo.saveConcern({ id: 'fictional', title: 'Drafts', summary: '', context: '' }, 0);
-      service.repo.reserveBinding({ sessionId: 'root', concernId: null, kind: 'neo' });
-      service.repo.reserveBinding({ sessionId: 'holder', concernId: 'fictional', kind: 'concern' });
+      service.repo.saveProject({ id: 'fictional', title: 'Drafts', summary: '', context: '' }, 0);
+      service.repo.reserveBinding({ sessionId: 'root', projectId: null, kind: 'neo' });
+      service.repo.reserveBinding({ sessionId: 'holder', projectId: 'fictional', kind: 'project' });
       const saved = service.consultations.reserve({ ...item })!;
       const sdkBefore = db.getDatabase().prepare('SELECT * FROM sdk_messages').all();
       await service.syncConsultation(saved.id);

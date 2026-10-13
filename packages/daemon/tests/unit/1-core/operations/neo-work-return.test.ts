@@ -6,7 +6,7 @@ import { returnWorkThroughHolder } from '../../../../src/lib/neo/work-return.ts'
 describe('returnWorkThroughHolder', () => {
   const work = {
     id: 'w1',
-    concernId: 'c1',
+    projectId: 'c1',
     originSessionId: 'neo:root',
     originMessageId: 'ask-1',
     status: 'reported',

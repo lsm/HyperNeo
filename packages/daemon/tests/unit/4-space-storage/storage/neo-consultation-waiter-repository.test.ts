@@ -13,13 +13,13 @@ import { NeoConsultationRepository } from '../../../../src/storage/repositories/
 import { NeoConsultationWaiterRepository } from '../../../../src/storage/repositories/neo-consultation-waiter-repository.ts';
 import { CONSULTATION_TIMEOUT_MS } from '../../../../src/lib/neo/consultation-policy.ts';
 
-const request = (id: string, concernId = 'club') => ({
+const request = (id: string, projectId = 'club') => ({
   id,
   requestKey: id,
-  concernId,
+  projectId,
   originSessionId: 'root',
   originMessageId: `human:${id}`,
-  sessionId: `holder:${concernId}`,
+  sessionId: `holder:${projectId}`,
   question: `Question for ${id}`,
 });
 
@@ -28,12 +28,12 @@ describe('NeoConsultationWaiterRepository', () => {
   let dir: string;
   let waiters: NeoConsultationWaiterRepository;
   let consultations: NeoConsultationRepository;
-  let concerns: NeoRepository;
+  let projects: NeoRepository;
   let notices: number;
   const reopen = () => {
     db = new Database(join(dir, 'test.db'));
     db.exec('PRAGMA foreign_keys = ON');
-    concerns = new NeoRepository(db);
+    projects = new NeoRepository(db);
     consultations = new NeoConsultationRepository(db, () => {});
     waiters = new NeoConsultationWaiterRepository(db, () => notices++);
   };
@@ -47,8 +47,8 @@ describe('NeoConsultationWaiterRepository', () => {
     runMigration280(db);
     runMigration285(db);
     for (const id of ['club', 'family']) {
-      concerns.saveConcern({ id, title: id, summary: 'Recorded', context: 'Original' }, 0);
-      concerns.reserveBinding({ sessionId: `holder:${id}`, concernId: id, kind: 'concern' });
+      projects.saveProject({ id, title: id, summary: 'Recorded', context: 'Original' }, 0);
+      projects.reserveBinding({ sessionId: `holder:${id}`, projectId: id, kind: 'project' });
     }
   });
   afterEach(() => {
@@ -111,7 +111,7 @@ describe('NeoConsultationWaiterRepository', () => {
     expect(
       db.prepare("SELECT COUNT(*) AS total FROM neo_consultations WHERE status = 'pending'").get()
     ).toEqual({ total: 2 });
-    expect(consultations.reserve({ ...request('overlap'), concernId: 'club' })).toBeNull();
+    expect(consultations.reserve({ ...request('overlap'), projectId: 'club' })).toBeNull();
   });
 
   test('starts the original deadline and captures the current revision only at admission', () => {
@@ -119,7 +119,7 @@ describe('NeoConsultationWaiterRepository', () => {
     const queuedAt = Date.now() - 2 * CONSULTATION_TIMEOUT_MS;
     db.prepare('UPDATE neo_consultation_waiters SET created_at = ?').run(queuedAt);
     expect(db.prepare('SELECT * FROM neo_context_write_grants').all()).toHaveLength(0);
-    const current = concerns.saveConcern(
+    const current = projects.saveProject(
       { id: 'club', title: 'Club', summary: 'Changed', context: 'New human fact' },
       1
     )!;
@@ -132,7 +132,7 @@ describe('NeoConsultationWaiterRepository', () => {
       { consultation_id: 'correction', context_revision: current.revision },
     ]);
     expect(
-      concerns.saveConsultationContext(
+      projects.saveConsultationContext(
         { id: 'club', title: 'Club', summary: 'Applied', context: 'Saved correction' },
         current.revision,
         admitted.id,
@@ -268,10 +268,10 @@ describe('NeoConsultationWaiterRepository', () => {
     expect(waiters.queued()).toHaveLength(20);
     expect(waiters.queued()[0]?.id).toBe('queued-0');
     expect(waiters.get('queued-22')?.originMessageId).toBe('human:queued-22');
-    expect(waiters.queuedConcerns()).toEqual(['club', 'family']);
+    expect(waiters.queuedProjects()).toEqual(['club', 'family']);
     expect(notices).toBe(24);
     expect(waiters.admitNext('club')).toBeNull();
     expect(waiters.admitNext('family')?.originMessageId).toBe('human:late-family');
-    expect(waiters.queuedConcerns()).toEqual(['club']);
+    expect(waiters.queuedProjects()).toEqual(['club']);
   });
 });

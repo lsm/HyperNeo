@@ -29,7 +29,7 @@ const sessionId = 'manager-A';
 const work: NeoWork = {
   id: 'work-A',
   requestKey: 'A',
-  concernId: 'project-A',
+  projectId: 'project-A',
   originSessionId: 'neo',
   originMessageId: 'ask-A',
   title: 'Review only this draft',

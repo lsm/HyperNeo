@@ -51,13 +51,13 @@ function runtime(overrides: Partial<NeoDirectReplyRuntime> = {}) {
   const value: NeoDirectReplyRuntime = {
     getBinding: (id) =>
       id === root
-        ? { sessionId: root, kind: 'neo', concernId: null }
+        ? { sessionId: root, kind: 'neo', projectId: null }
         : id === holder
-          ? { sessionId: holder, kind: 'concern', concernId: 'garden' }
+          ? { sessionId: holder, kind: 'project', projectId: 'garden' }
           : id === 'worker'
-            ? { sessionId: 'worker', kind: 'worker', concernId: null }
+            ? { sessionId: 'worker', kind: 'worker', projectId: null }
             : null,
-    getRootBinding: () => ({ sessionId: root, kind: 'neo', concernId: null }),
+    getRootBinding: () => ({ sessionId: root, kind: 'neo', projectId: null }),
     recentAsks: (_conversation, id) => [ask(askA, id)],
     isPublished: () => false,
     startedWork: () => false,
@@ -137,7 +137,7 @@ describe('Neo direct reply fallback', () => {
     ['a missing root conversation', { getRootBinding: () => null }],
     [
       'a root without a conversation identity',
-      { getRootBinding: () => ({ sessionId: 'legacy', kind: 'neo' as const, concernId: null }) },
+      { getRootBinding: () => ({ sessionId: 'legacy', kind: 'neo' as const, projectId: null }) },
     ],
   ] as [string, Partial<NeoDirectReplyRuntime>][])('skips %s', (_name, overrides) => {
     const io = runtime(overrides);
@@ -300,10 +300,10 @@ describe('neoIdleReplySessions', () => {
     expect(
       neoIdleReplySessions(
         [
-          { sessionId: 'a', concernId: null, kind: 'neo' },
-          { sessionId: 'b', concernId: 'x', kind: 'concern' },
-          { sessionId: 'c', concernId: 'x', kind: 'worker' },
-          { sessionId: 'd', concernId: 'x', kind: 'concern' },
+          { sessionId: 'a', projectId: null, kind: 'neo' },
+          { sessionId: 'b', projectId: 'x', kind: 'project' },
+          { sessionId: 'c', projectId: 'x', kind: 'worker' },
+          { sessionId: 'd', projectId: 'x', kind: 'project' },
           null,
         ],
         (id) => neoSessionStatus(states[id])
@@ -386,9 +386,9 @@ describe('NeoService direct reply fallback wiring', () => {
       events
     );
     for (const id of [root, holder]) db.createSession(createTestSession(id));
-    service.repo.saveConcern({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
-    service.repo.reserveBinding({ sessionId: root, concernId: null, kind: 'neo' });
-    service.repo.reserveBinding({ sessionId: holder, concernId: 'garden', kind: 'concern' });
+    service.repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
+    service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+    service.repo.reserveBinding({ sessionId: holder, projectId: 'garden', kind: 'project' });
     const { sequence: _sequence, createdAt: _createdAt, ...input } = ask(askA);
     expect(service.asks.append(input).accepted).toBe(true);
     for (const message of [
@@ -510,7 +510,7 @@ describe('NeoService direct reply fallback wiring', () => {
     service.consultationWaiters.enqueue({
       id: 'waiter',
       requestKey: 'check-garden',
-      concernId: 'garden',
+      projectId: 'garden',
       originSessionId: root,
       originMessageId: askA,
       sessionId: holder,
@@ -524,7 +524,7 @@ describe('NeoService direct reply fallback wiring', () => {
     service.consultationWaiters.enqueue({
       id: 'old-waiter',
       requestKey: 'old-check',
-      concernId: 'garden',
+      projectId: 'garden',
       originSessionId: root,
       originMessageId: askA,
       sessionId: holder,
@@ -535,7 +535,7 @@ describe('NeoService direct reply fallback wiring', () => {
       service.consultationWaiters.enqueue({
         id: `newer-${index}`,
         requestKey: `newer-${index}`,
-        concernId: 'garden',
+        projectId: 'garden',
         originSessionId: root,
         originMessageId: `other-${index}`,
         sessionId: holder,
