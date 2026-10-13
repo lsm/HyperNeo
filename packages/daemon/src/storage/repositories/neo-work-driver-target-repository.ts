@@ -13,7 +13,11 @@ import {
 import type { Database } from '../sqlite-compat.ts';
 import type { NeoRepository, NeoWorkInput } from './neo-repository.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NEO_WORK_AWAITING_WORKER, neoWorkerRefKey } from '../../lib/neo/work-reroute.ts';
+import {
+  NEO_WORK_AWAITING_WORKER,
+  NEO_WORK_RESERVED_WORKER,
+  neoWorkerRefKey,
+} from '../../lib/neo/work-reroute.ts';
 import { NeoAgentWorkTargetRepository } from './neo-agent-work-target-repository.ts';
 
 export type NeoDriverTargetCard = {
@@ -82,7 +86,7 @@ export class NeoWorkDriverTargetRepository {
       const target: NeoDriverTarget | null = ref ? { verb: 'send', ref } : null;
       const next = repo.transitionWork(work.id, work, {
         status: 'proposed',
-        report: NEO_WORK_AWAITING_WORKER,
+        report: target ? NEO_WORK_RESERVED_WORKER : NEO_WORK_AWAITING_WORKER,
       });
       if (!next) return null;
       if (target)

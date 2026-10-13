@@ -312,6 +312,7 @@ import {
 import {
   awaitingNeoWorker,
   NEO_WORK_AWAITING_WORKER,
+  NEO_WORK_RESERVED_WORKER,
   neoWorkerRefKey,
   rerouteNeoDriverWork,
 } from './work-reroute.ts';
@@ -1321,7 +1322,11 @@ export class NeoService {
     target: NeoDriverTarget,
     tried = new Set<string>()
   ): Promise<void> {
-    if (target.verb === 'send' && awaitingNeoWorker(work) && tried.size === 0) {
+    if (
+      target.verb === 'send' &&
+      awaitingNeoWorker(work) &&
+      work.report !== NEO_WORK_RESERVED_WORKER
+    ) {
       await this.rerouteDriverWork(work, target.ref, tried);
       return;
     }

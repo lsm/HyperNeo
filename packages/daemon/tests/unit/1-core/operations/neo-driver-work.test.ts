@@ -1005,50 +1005,73 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('a waiting card survives interruption while returning to Neo and resumes from stored state', async () => {
-    let available = false;
-    const { db, service, calls } = await setup(
-      ({ ref }: { ref: WorkRef }) =>
-        ref.id === 'archived'
-          ? { ok: false, reason: 'not_open', detail: 'archived' }
-          : { ok: true, value: { delivered: true } },
-      undefined,
-      statusReply,
-      { verb: 'send', ref: archivedRef },
-      (input) =>
-        found(
-          input.id ? [worker('archived', { status: 'stopped' })] : available ? [worker('idle')] : []
-        )
-    );
-    Object.assign(service, {
-      deliver: async () => {
-        throw new Error('interrupted');
-      },
-    });
-    try {
-      await expect(service.start('work-1')).rejects.toThrow('interrupted');
-      expect(service.repo.getWork('work-1')).toMatchObject({
-        status: 'proposed',
-        report: NEO_WORK_AWAITING_WORKER,
-      });
-      const restarted = new NeoService(
-        db,
-        service.sessions,
-        { event: mock(() => {}) } as unknown as MessageHub,
-        new InternalEventBus<DaemonInternalEventMap>()
+  test.each([
+    [false, 'start'],
+    [true, 'start'],
+    [true, 'retry'],
+  ] as const)(
+    'an interrupted card resumes from stored state (reserved: %s, resume: %s)',
+    async (reserved, resume) => {
+      let available = reserved;
+      const { db, service, calls } = await setup(
+        ({ ref }: { ref: WorkRef }) =>
+          ref.id === 'archived'
+            ? { ok: false, reason: 'not_open', detail: 'archived' }
+            : { ok: true, value: { delivered: true } },
+        undefined,
+        statusReply,
+        { verb: 'send', ref: archivedRef },
+        (input) =>
+          found(
+            input.id
+              ? [worker(String(input.id), { status: input.id === 'archived' ? 'stopped' : 'done' })]
+              : available
+                ? [worker('idle')]
+                : []
+          )
       );
-      available = true;
-      await restarted.start('work-1');
-      expect(restarted.driverTargets.readRef('work-1')).toEqual(worker('idle').ref);
-      expect(
-        calls
-          .filter((call) => call.name === 'work.send')
-          .map((call) => (call.input as { ref: WorkRef }).ref.id)
-      ).toEqual(['archived', 'idle']);
-    } finally {
-      db.close();
+      const reassign = service.driverTargets.reassign.bind(service.driverTargets);
+      spyOn(service.driverTargets, 'reassign').mockImplementation((...args) => {
+        const saved = reassign(...args);
+        if (saved?.target) throw new Error('interrupted');
+        return saved;
+      });
+      Object.assign(service, {
+        deliver: async () => {
+          throw new Error('interrupted');
+        },
+      });
+      try {
+        await expect(service.start('work-1')).rejects.toThrow('interrupted');
+        expect(service.repo.getWork('work-1')).toMatchObject({
+          status: 'proposed',
+          report: expect.stringContaining('worker'),
+        });
+        expect(service.driverTargets.get('work-1')).toEqual({
+          verb: 'send',
+          ref: reserved ? worker('idle').ref : archivedRef,
+        });
+        const restarted = new NeoService(
+          db,
+          service.sessions,
+          { event: mock(() => {}) } as unknown as MessageHub,
+          new InternalEventBus<DaemonInternalEventMap>()
+        );
+        Object.assign(restarted, { deliver: mock(async () => {}) });
+        available = true;
+        if (resume === 'retry') expect(await retryVia(restarted)).toMatchObject({ ok: true });
+        else await restarted.start('work-1');
+        expect(restarted.driverTargets.readRef('work-1')).toEqual(worker('idle').ref);
+        expect(
+          calls
+            .filter((call) => call.name === 'work.send')
+            .map((call) => (call.input as { ref: WorkRef }).ref.id)
+        ).toEqual(['archived', 'idle']);
+      } finally {
+        db.close();
+      }
     }
-  });
+  );
 
   test.each(['unreachable', 'not_delivered', 'not_found'])(
     'keeps %s failures unchanged',
