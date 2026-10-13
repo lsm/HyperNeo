@@ -171,7 +171,7 @@ describe('neo.ask operations', () => {
     expect(isNeoAskHandedOver({ source: 'rpc', principal: 'local' })).toBe(false);
   });
 
-  test('a human message naming an open ask, its card or its PR edits that ask instead', async () => {
+  test('a human message naming an open ask, its title, its card or its PR edits that ask instead', async () => {
     const say = (uuid: string, content: string) =>
       db.getSDKMessageRepo().saveSDKMessage('root', {
         type: 'user',
@@ -205,6 +205,8 @@ describe('neo.ask operations', () => {
       ['m-ask', `Also make ${askId.slice(0, 8)} cover the signup page.`],
       ['m-card', `Card ${card.slice(0, 10).toUpperCase()} should rebase first.`],
       ['m-pr', 'Address the review on lsm/HyperNeo#6670.'],
+      ['m-title-quoted', '`Fix the login bug` 这个你让codex看一下 neo-ios 怎么实现的'],
+      ['m-title', 'For Fix the login bug, also check Safari.'],
     ]) {
       say(uuid, said);
       expect(await openFrom(uuid)).toMatchObject({
@@ -214,6 +216,8 @@ describe('neo.ask operations', () => {
         },
       });
     }
+    say('m-near', 'Fix the login page styling too.');
+    expect(await openFrom('m-near')).toMatchObject({ value: { ok: true } });
     say('m-new', 'Separately, write release notes for #6671 and the 0.44 tag.');
     expect(await openFrom('m-new')).toMatchObject({ value: { ok: true } });
   });

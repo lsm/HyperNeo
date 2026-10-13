@@ -425,7 +425,12 @@ export function neoAskNamedBy(said: readonly string[], ask: NeoAskNameable): boo
     const prefix = token.toLowerCase().replace(/-+$/, '');
     return ids.some((id) => id.startsWith(prefix));
   });
-  return named || ask.refs.some((url) => githubRefForms(url).some((form) => form.test(text)));
+  const title = ask.title.trim();
+  return (
+    named ||
+    (title.length > 0 && text.includes(title)) ||
+    ask.refs.some((url) => githubRefForms(url).some((form) => form.test(text)))
+  );
 }
 
 export function requireNeoAskUnnamed(
