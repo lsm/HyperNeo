@@ -3620,6 +3620,57 @@ describe('QueryRunner', () => {
       expect(mockLogger.error).toHaveBeenCalledWith('Streaming query error:', expect.anything());
     });
 
+    it('redelivers a fresh prompt fed alongside one already redelivered', async () => {
+      let queryCalls = 0;
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(
+        ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+          queryCalls += 1;
+          const call = queryCalls;
+          return {
+            close: () => {},
+            interrupt: async () => {},
+            [Symbol.asyncIterator]: async function* () {
+              if (call > 2) return;
+              yield {
+                type: 'result',
+                subtype: 'success',
+                uuid: `result-${call}`,
+              } as unknown as SDKMessage;
+              const fed = prompt[Symbol.asyncIterator]();
+              await fed.next();
+              if (call === 2) await fed.next();
+              throw new Error('Claude Code process exited with code 1');
+            },
+          };
+        }
+      );
+      const note = (uuid: string) => ({
+        message: { type: 'user', uuid, message: { role: 'user', content: uuid } },
+        onSent: () => {},
+      });
+      let generatorCalls = 0;
+      const ctx = createContext({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: mock(async function* () {
+            generatorCalls += 1;
+            if (generatorCalls === 1) yield note('old');
+            if (generatorCalls === 2) {
+              yield note('old');
+              yield note('new');
+            }
+          }),
+        } as unknown as MessageQueue,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise;
+
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith('new', 'new', false, { prepend: true });
+      expect(queryCalls).toBe(3);
+    });
+
     it('ends the turn quietly when the redelivered prompt meets the same exit again', async () => {
       async function* prompts() {
         yield { message: { uuid: 'next-prompt', message: { content: 'next' } }, onSent: () => {} };

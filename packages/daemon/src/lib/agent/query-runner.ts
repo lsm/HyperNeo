@@ -430,7 +430,7 @@ export class QueryRunner {
     if (this.turnEndedGeneration !== queryGeneration)
       return { turnEnded: false, hasFedPrompt: false };
     if (this.fedAfterTurnEnd.length === 0) return { turnEnded: true, hasFedPrompt: false };
-    const fresh = this.fedAfterTurnEnd.every(
+    const fresh = this.fedAfterTurnEnd.some(
       (prompt) => !this.redeliveredFedPrompts.includes(prompt.uuid)
     );
     return { turnEnded: true, hasFedPrompt: fresh };
