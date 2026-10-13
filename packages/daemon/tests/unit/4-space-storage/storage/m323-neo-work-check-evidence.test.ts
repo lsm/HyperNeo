@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { type NeoWorkPr, neoWorkPrVerdict } from '@hyperneo/shared/types/neo-snapshot';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence';
-import { neoWorkPrEvidence } from '../../../../src/lib/neo/packs/coding/work-prs';
 import { NeoWorkCheckRepository } from '../../../../src/storage/repositories/neo-work-check-repository';
 import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs';
 import { runMigration317 } from '../../../../src/storage/schema/m317-neo-work-pr-reminders';
@@ -19,6 +18,14 @@ const legacySignature = (prs: readonly NeoWorkPr[]) =>
       ...(blockers?.length ? [blockers] : []),
     ])
   );
+
+const m323Evidence = (prs: readonly NeoWorkPr[]) =>
+  prs.map((item) => ({
+    key: item.url,
+    state: neoWorkPrVerdict(item),
+    summary: `${item.state.toLowerCase()}, checks ${item.checks}, review ${item.review}`,
+    blockers: item.blockers ?? [],
+  }));
 
 const pr: NeoWorkPr = {
   url: 'https://github.com/lsm/HyperNeo/pull/42',
@@ -65,7 +72,7 @@ describe('runMigration323', () => {
   });
 });
 
-describe('runMigration323 against the live evidence signature', () => {
+describe('runMigration323 against the evidence signature it shipped with', () => {
   const states = ['OPEN', 'MERGED', 'CLOSED'] as const;
   const checks = ['pending', 'failing', 'passing', 'none'] as const;
   const reviews = ['approved', 'changes_requested', 'none'] as const;
@@ -81,7 +88,7 @@ describe('runMigration323 against the live evidence signature', () => {
   );
 
   test.each(cases.map((prs) => [prs[0].state, prs[0].checks, prs[0].review, prs]))(
-    'stores what live code signs for a %s PR with %s checks and %s review',
+    'stores what code signed at m323 for a %s PR with %s checks and %s review',
     (_state, _checks, _review, prs) => {
       const db = new Database(':memory:');
       db.exec('CREATE TABLE neo_work (id TEXT PRIMARY KEY)');
@@ -97,7 +104,7 @@ describe('runMigration323 against the live evidence signature', () => {
       checks.markTold('w1', legacySignature(prs as NeoWorkPr[]), 1);
       runMigration323(db);
       expect(checks.get('w1')?.signature).toBe(
-        neoEvidenceSignature(neoWorkPrEvidence(prs as NeoWorkPr[]))
+        neoEvidenceSignature(m323Evidence(prs as NeoWorkPr[]))
       );
     }
   );
