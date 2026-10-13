@@ -32,8 +32,9 @@ revision. A prerequisite must have at least one bound outcome item; an empty set
 complete. Questions, approval controls, and other interaction items are not outcome contracts.
 
 There is no existing per-ask revision: snapshot `rev` / `sinceRev` is a global cursor.
-Slice 1 adds integer `neo_asks.revision`, bumped only by material edits: outcome text, check,
-watch, bindings, edges, or card scope. Approval sets `approved_revision` to that revision;
+Slice 1 adds integer `neo_asks.revision` for material text/check/watch/binding/scope edits.
+Adding, removing, or replacing dependsOn edges bumps only the dependent card's owning ask;
+never a separate prerequisite ask. No-op edits do not bump. Approval copies revision to `approved_revision`;
 admission requires equality as well as valid existing approval. Each daemon tick or human
 answer records a definition hash of the item's text, check, and watch alongside evidence and
 `metBy`. Use a deterministic canonical encoding. Unchanged items retain valid evidence when
@@ -274,9 +275,8 @@ its purpose and merge contract match. Do not create or dispatch execution sessio
 whole table up front. Planning issues may exist early; execution starts only after the listed
 prerequisite PRs are verified merged into their repository's target branch. `D` is design PR #6767.
 
-Each row is a candidate boundary, not a measured line-count promise. Before creating its PR,
-read all affected call sites and measure against freshly fetched `origin/dev`; record an exact
-production and test budget in the issue and PR. Production stays within approximately 300
+Measure each candidate row's call sites/diff against fresh `origin/dev` before its PR; record
+exact production/test budgets in the issue and PR. Production stays within approximately 300
 lines. Split any oversized row into separately mapped issues/PRs before coding. Construction,
 wiring, and deletion remain separate; a few-line build+wire exception requires a measured
 contract. New build modules must have a legitimate registered/discovery consumer for knip,
@@ -324,7 +324,7 @@ F3 can land before D. No deployment is part of this track.
 
 | ID / issue purpose | Rung and concrete steps | Required merged PRs | Acceptance evidence |
 | --- | --- | --- | --- |
-| G1 — build dependency graph | Add edge storage and pure DAG/blocker decisions; validate both endpoints' bound outcomes transactionally. | B2 | Chain/fan-in/fan-out, cycles, empty/removed outcomes, cross-ask ownership and cancellation tests. |
+| G1 — build dependency graph | Add edges and pure DAG/blocker decisions; validate bound outcomes and bump only dependent-ask revision transactionally. | B2 | Late cross-ask dependent preserves prerequisite approval; edge edits invalidate dependent approval; same-ask revision, no-op, cycle and cancellation tests. |
 | A1 — build admission pipeline | Compose pure gates/effects, including independent-check or recorded-human-answer eligibility; reuse #6749 retargeting; extend claims/uncertain state. | G1, F3, #6747; #6749 already merged | Self-attested met items cannot unlock dependents; human question answers can; duplicate claims and blocked worker effects prevented. |
 | A2 — wire direct start paths | Route public Start and adoption through admission, preserving #6763's model/effort contract. | A1, #6763 | Direct/adopt tests cover blocked, retargeted, stale, uncertain, and configuration-refused attempts. |
 | A3 — wire approval and recovery | Route approval fan-out, pre-delivery retries, and recovery through the same pipeline. | A2 | Every remaining start path respects dependencies and cancellation; no Promise.allSettled bypass. |
