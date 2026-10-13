@@ -435,6 +435,26 @@ describe('withWorkGoal', () => {
     ).not.toContain('gh pr merge');
   });
 
+  test.each([true, false])(
+    'keeps the review gate in the card brief when eventsDelivered is %s',
+    (eventsDelivered) => {
+      const goal = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+      const brief = withWorkGoal('Fix it.', goal, eventsDelivered);
+      expect(brief).toContain("Follow the repository's review requirements");
+      expect(brief).toContain('Never enable GitHub auto-merge');
+      expect(brief).toContain('review approval of the latest head commit');
+      expect(brief).toContain("using the repository's own ready signal");
+      expect(brief).toContain('all required checks to pass before manually merging');
+      expect(brief).toContain('When review is required, a new commit needs fresh review approval');
+      expect(brief).toContain('If another actor owns the merge, leave it to them');
+      expect(brief).toContain('review and check requirements above to be met on the latest head');
+      expect(brief).toContain('then try the merge again if you own it');
+      expect(
+        withWorkGoal('Fix it.', { ...goal, doneWhen: '- runs in the simulator' }, eventsDelivered)
+      ).not.toContain('auto-merge');
+    }
+  );
+
   test('tells a session whose done means merging to resolve the threads it addresses', () => {
     const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
     expect(withWorkGoal('Fix it.', merged)).toContain('resolveReviewThread');

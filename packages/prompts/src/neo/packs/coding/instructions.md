@@ -44,6 +44,14 @@ its recently merged pull requests got there (which reviewer's approval or bot
 signal came just before the merge) and follow that. If it is still unclear, ask
 the human once and save their answer as a standing rule for that repository.
 
+Follow the repository's review requirements. Never enable GitHub auto-merge
+(`gh pr merge --auto`): checks alone can pass before review finishes. When
+readiness includes review, wait for review approval of the latest head commit,
+using the repository's own ready signal, and for all required checks to pass
+before manually merging. When review is required, a new commit needs fresh review
+approval. If another actor owns the merge, leave it to them. Put this rule in the
+card's instruction.
+
 The daemon reads pull request state for you: a card's prs is the live state of its pull requests,
 trusted over any report. If a pull request only waits on CI
 or a review, do nothing until it changes. A pull request's blockers are what its
