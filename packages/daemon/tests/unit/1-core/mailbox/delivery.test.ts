@@ -769,6 +769,28 @@ describe('createMailboxDeliveryHandler', () => {
       expect(scheduleDeferredReplay).not.toHaveBeenCalled();
     });
 
+    test('an immediate entry is deferred when its target turns busy before it materializes', async () => {
+      const scheduleDeferredReplay = mock(async () => {});
+      const defersFor = mock(() => true);
+      const handler = createMailboxDeliveryHandler({
+        jobQueue: mailbox.jobQueue,
+        db: mailbox.db,
+        sdkMessageRepo: mailbox.sdkMessageRepo,
+        getSession: async () => ({ ok: true }),
+        isSessionArchived: () => false,
+        scheduleDeferredReplay,
+        defersFor,
+      });
+      const entry = makeEntry({ origin: 'space_agent', deliveryMode: 'immediate' });
+
+      await handler(claimMailboxJob(mailbox, entry));
+
+      expect(defersFor).toHaveBeenCalledWith(SESSION_ID, expect.objectContaining({ id: entry.id }));
+      expect(mailbox.sdkRows()[0].send_status).toBe('deferred');
+      expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(0);
+      expect(scheduleDeferredReplay).toHaveBeenCalledWith(SESSION_ID);
+    });
+
     test('defer publishes a deferred status after the SDK row is materialized', async () => {
       const publishDeferredStatus = mock(async () => {});
       const { handler } = makeHandler(

@@ -6,6 +6,8 @@ import type { JobQueueRepository } from '../../storage/repositories/job-queue-re
 import { createMailboxExpireHandler } from '../job-handlers/mailbox-expire.handler.ts';
 import { MAILBOX_EXPIRE_FIRE } from '../job-queue-constants.ts';
 import type { SessionManager } from '../session-manager.ts';
+import { neoNoteDeliveryMode } from '../neo/direct-reply-fallback.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import {
   createMailboxDeferredReplayScheduler,
   type MailboxDeferredReplayScheduler,
@@ -103,6 +105,12 @@ function registerDelivery(
       scheduleDeferredReplay: (sessionId) => {
         scheduler.schedule(sessionId);
       },
+      defersFor: (sessionId, entry) =>
+        entry.message.inputKind === 'system' &&
+        !!neoCoordinatorBinding(deps.db, sessionId) &&
+        neoNoteDeliveryMode(
+          deps.sessionManager?.getCachedSession(sessionId)?.getProcessingState().status
+        ) === 'defer',
       publishDeferredStatus: async (sessionId, dbMessageId) => {
         await deps.internalEventBus
           .publish('messages.statusChanged', {
