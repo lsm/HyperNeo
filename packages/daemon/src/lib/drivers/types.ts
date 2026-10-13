@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { workStartConfiguration } from './start-configuration.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 
 export const WorkStatusSchema = z.enum([
@@ -59,6 +60,7 @@ export const PlaceGroupSchema = z.object({
 });
 
 export const WorkRejectionSchema = z.enum([
+  ...workStartConfiguration.refusalSchema.options,
   'unknown_adapter',
   'unsupported',
   'not_found',
