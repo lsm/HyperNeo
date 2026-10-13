@@ -1,4 +1,5 @@
 import { neoOutcomeCheckPolicy } from './outcome-check-policy.ts';
+import { neoPrQuestionWithdrawalPolicy } from './packs/coding/question-withdrawal-policy.ts';
 import {
   fillPrompt,
   NEO_SESSION_TRACK,
@@ -378,6 +379,7 @@ type NeoRemindersDue = { key: string; asks: ReturnType<typeof planNeoWaitingRemi
 
 export class NeoService {
   readonly outcomeCheckPolicy = neoOutcomeCheckPolicy;
+  readonly prQuestionWithdrawalPolicy = neoPrQuestionWithdrawalPolicy;
   readonly repo: NeoRepository;
   readonly publications: NeoPublicationRepository;
   readonly asks: NeoConversationAskRepository;
