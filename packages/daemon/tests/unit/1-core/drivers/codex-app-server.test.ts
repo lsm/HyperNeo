@@ -64,4 +64,18 @@ describe('connectCodexAppServer', () => {
     server.listen(join(dir, 'other.sock'));
     await expect(connectCodexAppServer(join(dir, 'missing.sock'))).rejects.toThrow();
   });
+
+  test('exposes configuration selection without creating a thread on catalog failure', async () => {
+    const { path, seen } = await listen();
+    const client = await connectCodexAppServer(path);
+    try {
+      expect(await client.selectConfiguration?.({ model: 'sol 6.1' })).toMatchObject({
+        ok: false,
+        reason: 'unreachable',
+      });
+      expect(seen).toEqual(['initialize', 'initialized', 'model/list']);
+    } finally {
+      client.close();
+    }
+  });
 });

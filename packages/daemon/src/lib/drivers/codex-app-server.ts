@@ -1,10 +1,14 @@
 import WebSocket from 'ws';
+import { selectCodexConfiguration } from './codex-start-configuration.ts';
 
 const CALL_TIMEOUT_MS = 30_000;
 
 export interface CodexAppServer {
   call(method: string, params: Record<string, unknown>): Promise<unknown>;
   close(): void;
+  selectConfiguration?: (
+    request: Parameters<typeof selectCodexConfiguration>[0]
+  ) => ReturnType<typeof selectCodexConfiguration>;
 }
 
 type Pending = {
@@ -60,7 +64,11 @@ export function connectCodexAppServer(socketPath: string): Promise<CodexAppServe
           clientInfo: { name: 'hyperneo', title: 'HyperNeo', version: '1' },
         });
         socket.send(JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} }));
-        resolve({ call, close: () => socket.close() });
+        resolve({
+          call,
+          close: () => socket.close(),
+          selectConfiguration: (request) => selectCodexConfiguration(request, { call }),
+        });
       } catch (error) {
         socket.close();
         reject(error);
