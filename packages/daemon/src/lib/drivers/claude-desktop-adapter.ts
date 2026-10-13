@@ -775,14 +775,8 @@ export async function startClaudeSession(
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   }
-  const live = await waitUntilLive(cliSessionId, deps);
-  const session = live?.find((candidate) => candidate.sessionId === cliSessionId);
-  if (!live || !session) {
-    return reject(
-      'not_delivered',
-      `${sessionId} was created but Claude Code Desktop did not open it; send the task to it with work.send.`
-    );
-  }
+  const live = await deps.liveSessions().catch((): readonly ClaudeLiveSession[] => []);
+  const session = live.find((candidate) => candidate.sessionId === cliSessionId);
   const appRecord = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
     (candidate) => candidate.sessionId === sessionId
   );
@@ -799,13 +793,17 @@ export async function startClaudeSession(
   if (!sent.ok) {
     return reject(
       'not_delivered',
-      `${sessionId} opened, but the task did not reach it: ${sent.detail}`
+      `${sessionId} was created, but the task did not reach it: ${sent.detail}`
     );
   }
   return {
     ok: true,
     value: {
-      ...toClaudeWork(record, new Map([[cliSessionId, session.status]]), deps.machine),
+      ...toClaudeWork(
+        record,
+        new Map(session ? [[cliSessionId, session.status]] : []),
+        deps.machine
+      ),
       place: { machine: deps.machine, folder, name: request.place.name },
       status: sent.value.delivered ? 'running' : 'queued',
     },

@@ -361,6 +361,30 @@ describe('Neo ask event ticks', () => {
     expect(watched).toEqual(['github/lsm/HyperNeo/pull_request/7.*']);
   });
 
+  test('follows a PR again when a later ask watches it after the first stopped', async () => {
+    const first = openWatch('a-first');
+    const watched: string[] = [];
+    service.watchExternalTopic = async (topic) => {
+      watched.push(topic);
+    };
+    service.readRefStates = async () => [];
+    Object.assign(service, { deliver: async () => {} });
+    await service.refreshDriverWork();
+    service.askRecords.tickItem(
+      first.id,
+      { id: 'i1', state: 'met', evidence: 'merged', metBy: 'daemon' },
+      Date.now()
+    );
+    await service.refreshDriverWork();
+    expect(service.followedTopics()).toEqual([]);
+    openWatch('a-again');
+    await service.refreshDriverWork();
+    expect(watched).toEqual([
+      'github/lsm/HyperNeo/pull_request/7.*',
+      'github/lsm/HyperNeo/pull_request/7.*',
+    ]);
+  });
+
   test('ticks the watched item met on its merge event, without a read', async () => {
     const opened = openWatch('a-event');
     const reader = mock(async () => []);

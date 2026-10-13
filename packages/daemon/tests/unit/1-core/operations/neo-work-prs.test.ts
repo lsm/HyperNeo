@@ -553,22 +553,20 @@ describe('requireNeoWorkPrCurrent', () => {
 });
 
 describe('requireNeoWorkPrDelivery', () => {
-  test.each<['deliver' | 'remind' | 'wait' | 'unchanged', boolean]>([
+  test.each<['deliver' | 'wait' | 'unchanged', boolean]>([
     ['deliver', true],
-    ['remind', true],
     ['wait', false],
     ['unchanged', false],
   ])('%s', (plan, delivers) => {
     const refresh = { work: { id: 'w1' } };
     expect(requireNeoWorkPrDelivery(refresh, plan, true)).toEqual(
-      delivers ? { value: { ...refresh, delivery: plan } } : { reason: 'quiet' }
+      delivers ? { value: { ...refresh, delivery: 'deliver' } } : { reason: 'quiet' }
     );
   });
 
   test('never delivers for a card whose ask is settled or missing', () => {
     const refresh = { work: { id: 'w1' } };
     expect(requireNeoWorkPrDelivery(refresh, 'deliver', false)).toEqual({ reason: 'quiet' });
-    expect(requireNeoWorkPrDelivery(refresh, 'remind', false)).toEqual({ reason: 'quiet' });
   });
 });
 

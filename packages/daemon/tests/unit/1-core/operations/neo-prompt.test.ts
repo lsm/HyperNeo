@@ -135,6 +135,20 @@ describe('Neo world briefing delivery', () => {
     }
   );
 
+  test.each([null, 'research'])('teaches the worker-staffing method for %s', (concernId) => {
+    const prompt = neoPrompt(concernId).replace(/\s+/g, ' ');
+    for (const text of [
+      'small pool of two or three long-lived workers',
+      'give related work (the same epic, the same files, the same section) to the worker',
+      'start a new session only when every fitting worker is busy',
+      'tell them you are adding sessions',
+      '"quickly" in a message sets it for that ask only',
+      'retire it and start a fresh worker with a short handoff',
+    ])
+      expect(prompt).toContain(text);
+    expect(prompt).not.toContain('each card keeps its own session');
+  });
+
   test.each([null, 'research'])(
     'refreshes response guidance through the existing runtime policy for %s',
     (concernId) => {
@@ -187,7 +201,7 @@ describe('Neo world briefing delivery', () => {
       'work.status {ref} instead of searching again',
       'any other connected work apps',
       'Neo context operations (not the full HyperNeo catalog)',
-      'a separate task in the same project starts new work',
+      'or is related work it already has the context for',
     ]) {
       expect(prompt.replace(/\s+/g, ' ')).toContain(text);
     }

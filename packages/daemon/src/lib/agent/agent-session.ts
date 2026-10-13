@@ -82,6 +82,7 @@ const MID_TURN_USAGE_REFRESH_INTERVAL_MS = 10_000;
 const NEO_CORE_OPERATIONS = [
   'neo.snapshot',
   'neo.ask.open',
+  'neo.ask.fold',
   'neo.ask.tick',
   'neo.ask.question',
   'neo.ask.edit',
@@ -90,7 +91,10 @@ const NEO_CORE_OPERATIONS = [
   'neo.work.propose',
   'neo.work.start',
   'neo.work.continue',
+  'neo.work.retry',
   'neo.work.close',
+  'neo.work.cancel',
+  'neo.github.read',
   'neo.publication.publish',
   'work.find',
   'work.read',

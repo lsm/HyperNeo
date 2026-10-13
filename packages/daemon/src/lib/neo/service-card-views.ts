@@ -7,7 +7,7 @@ import type { NeoAskTriggerRead } from './notification-triggers.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import type { NeoService } from './service.ts';
 
-export function projectNeoServiceCards(
+function projectNeoServiceCards(
   service: NeoService,
   listed: readonly NeoAsk[],
   work: readonly NeoWork[],
