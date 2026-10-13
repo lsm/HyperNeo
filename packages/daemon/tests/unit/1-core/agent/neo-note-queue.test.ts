@@ -85,6 +85,25 @@ describe('planNeoNoteQueue', () => {
       { uuid: 'neo-session-notices:1:k', reason: 'stale' },
     ]);
   });
+
+  it('drops a turn-limit or restart note once a newer input already continued the work', () => {
+    expect(
+      planNeoNoteQueue(
+        {
+          queued: [
+            note('neo-turn-limit:r1', 1),
+            note('restart-recovery:p1', 2),
+            note('neo-turn-limit:r2', 7),
+          ],
+          lastConsumedSeq: 5,
+        },
+        () => false
+      )
+    ).toEqual([
+      { uuid: 'neo-turn-limit:r1', reason: 'stale' },
+      { uuid: 'restart-recovery:p1', reason: 'stale' },
+    ]);
+  });
 });
 
 describe('neoNoteSubject', () => {

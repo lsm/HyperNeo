@@ -1583,6 +1583,38 @@ describe('neo.ask operations', () => {
     expect(delivered.mock.calls[0]?.[2]).toContain(`- ask ${askId} "${opening.title}" (open`);
   });
 
+  test('a dropped turn-limit note does not stop the next cut-off turn from getting its own', async () => {
+    const results = db.getSDKMessageRepo();
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+    const save = (uuid: string, type: 'result' | 'user', subtype?: string) =>
+      results.saveSDKMessage('root', {
+        type,
+        subtype,
+        uuid,
+        session_id: 'root',
+        ...(type === 'user'
+          ? {
+              inputKind: 'system',
+              message: { role: 'user', content: 'Your last turn hit its turn limit.' },
+            }
+          : {}),
+      } as unknown as SDKUserMessage);
+    save('r1', 'result', 'error_max_turns');
+    await pause();
+    save('neo-turn-limit:r1', 'user');
+    await pause();
+    save('r2', 'result', 'error_max_turns');
+    const delivered = mock(async (..._args: unknown[]) => {});
+    (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
+    await service.noteTurnLimit('root');
+    expect(delivered).not.toHaveBeenCalled();
+    db.getDatabase()
+      .prepare("UPDATE sdk_messages SET send_status = 'failed' WHERE sdk_uuid = ?")
+      .run('neo-turn-limit:r1');
+    await service.noteTurnLimit('root');
+    expect(delivered.mock.calls.map((call) => call[1])).toEqual(['neo-turn-limit:r2']);
+  });
+
   test('edits the checklist in view: removed items stay listed, and dropping a question reopens the ask', async () => {
     const askId = await openAsk();
     await invoke('neo.ask.question', {
