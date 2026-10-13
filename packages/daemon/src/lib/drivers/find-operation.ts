@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation } from '../operations/registry.ts';
+import { readWorkspaceIdentity, identifyWorkspaces } from './code-identity.ts';
 import { mergePlaceGroups, stampDaemon } from './places.ts';
 import { PlaceGroupSchema, type FindQuery, type PlaceGroup, type WorkAdapter } from './types.ts';
 
@@ -213,6 +214,16 @@ const runFindWork = (superpipe({})('find-work') as PipelineAPI)
   .pipe(selectFindAdapters, ['input', 'deps'], 'adapters')
   .pipe(toFindQuery, 'input', 'query')
   .pipe(findLocally, ['adapters', 'query'], 'local')
+  .pipe(
+    async (local: SourceOutcome, input: FindInput) => ({
+      ...local,
+      groups: await identifyWorkspaces(local.groups, (folder) =>
+        readWorkspaceIdentity(folder, input.folder === folder)
+      ),
+    }),
+    ['local', 'input'],
+    'local'
+  )
   .pipe(findRemotely, ['input', 'deps'], 'remote')
   .pipe(combineFindResults, ['local', 'remote', 'input', 'budget'], 'result')
   .endAsync('result') as (

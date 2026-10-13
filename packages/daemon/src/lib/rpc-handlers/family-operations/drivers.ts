@@ -17,6 +17,7 @@ import {
   type ClaudeDesktopAdapterDeps,
   type ClaudeRecordCache,
 } from '../../drivers/claude-desktop-adapter.ts';
+import { readHyperneoSdkSessions } from '../../drivers/claude-feed.ts';
 import { createClaudeCodeAdapter } from '../../drivers/claude-code-adapter.ts';
 import { withClaudeRemoteControl } from '../../drivers/claude-remote-control.ts';
 import { connectCodexAppServer } from '../../drivers/codex-app-server.ts';
@@ -139,12 +140,15 @@ const CLAUDE_DESKTOP_SESSIONS = join(
 );
 
 function claudeCodeAdapters(
-  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>
+  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
+  ownedSessions: () => ReadonlySet<string>
 ): WorkAdapter[] {
   if (!existsSync(join(homedir(), '.claude', 'projects'))) return [];
   const cache: ClaudeRecordCache = new Map();
   return [
     createClaudeCodeAdapter({
+      projectsDir: join(homedir(), '.claude', 'projects'),
+      ownedSessions,
       machine: hostname(),
       searchChats: (text) => searchChats(text, ['claude']),
       desktopSessions: async () =>
@@ -369,7 +373,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     }),
     ...codexDesktopAdapters(searchChats),
     ...claudeDesktopAdapters(searchChats),
-    ...claudeCodeAdapters(searchChats),
+    ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db())),
     ...acpAgentAdapters(
       () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId))
     ),

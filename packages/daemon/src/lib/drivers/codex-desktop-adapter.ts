@@ -1,6 +1,7 @@
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
+import { gitWorktreeProject } from './acp-agent-adapter.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import type { CodexAppServer } from './codex-app-server.ts';
@@ -53,6 +54,7 @@ const INJECTED_INPUT = /^<([a-z_]+)>[\s\S]*<\/\1>$/;
 const CODEX_ASK_TOOL = 'request_user_input_async';
 
 export interface CodexRootRow {
+  projectId?: string;
   name: string;
   folder: string;
   lastActiveAt: number;
@@ -139,7 +141,7 @@ export function readCodexSnapshot(statePath: string, includeClosed: boolean): Co
   return withCodexState(statePath, (db) => ({
     roots: db
       .prepare(
-        `SELECT COALESCE(p.name, '') AS name, r.path AS folder,
+        `SELECT p.id AS projectId, COALESCE(p.name, '') AS name, r.path AS folder,
              COALESCE(p.updated_at_ms, 0) AS lastActiveAt
              FROM projects p JOIN project_roots r ON r.project_id = p.id WHERE r.path IS NOT NULL`
       )
@@ -171,11 +173,11 @@ export function codexProjectFolder(
   worktreesDir: string
 ): string {
   if (!folder.startsWith(`${worktreesDir}/`)) return folder;
-  const matches = roots.filter((root) => basename(root.folder) === basename(folder));
-  return matches.length === 1 ? matches[0].folder : folder;
+  const project = gitWorktreeProject(folder);
+  return roots.some((root) => root.folder === project) ? project : folder;
 }
 
-function codexPlaces(snapshot: CodexSnapshot, worktreesDir: string): CodexPlace[] {
+function codexPlaces(snapshot: CodexSnapshot, folders: ReadonlyMap<string, string>): CodexPlace[] {
   const places = new Map<string, CodexPlace>();
   for (const root of snapshot.roots) {
     places.set(root.folder, {
@@ -187,7 +189,7 @@ function codexPlaces(snapshot: CodexSnapshot, worktreesDir: string): CodexPlace[
     });
   }
   for (const row of snapshot.folders) {
-    const folder = codexProjectFolder(row.folder, snapshot.roots, worktreesDir);
+    const folder = folders.get(row.folder) ?? row.folder;
     const place = places.get(folder) ?? {
       folder,
       name: basename(folder) || folder,
@@ -225,17 +227,24 @@ export function buildCodexGroups(
 ): PlaceGroup[] {
   const text = query.text?.toLowerCase();
   const now = deps.now();
-  return codexPlaces(snapshot, deps.worktreesDir)
+  const folders = new Map(
+    [...new Set([...snapshot.folders, ...snapshot.threads].map((row) => row.folder))].map(
+      (folder) => [folder, codexProjectFolder(folder, snapshot.roots, deps.worktreesDir)]
+    )
+  );
+  return codexPlaces(snapshot, folders)
     .filter((place) => !query.folder || place.folder === query.folder)
     .filter((place) => query.includeClosed || place.openCount > 0 || place.known)
     .flatMap((place) => {
       const placeMatches = !text || `${place.name} ${place.folder}`.toLowerCase().includes(text);
       const where = { machine: deps.machine, folder: place.folder, name: place.name };
+      const project = snapshot.roots.find((root) => root.folder === place.folder);
+      const toolProject = project?.projectId
+        ? { id: `codex:${project.projectId}`, name: project.name }
+        : undefined;
+      const linked = { ...where, ...(toolProject ? { toolProject } : {}) };
       const work: WorkSummary[] = snapshot.threads
-        .filter(
-          (thread) =>
-            codexProjectFolder(thread.folder, snapshot.roots, deps.worktreesDir) === place.folder
-        )
+        .filter((thread) => folders.get(thread.folder) === place.folder)
         .filter(
           (thread) =>
             placeMatches ||
@@ -247,7 +256,7 @@ export function buildCodexGroups(
             {
               ref: { adapter: 'codex-desktop', id: thread.id },
               title: thread.title,
-              place: where,
+              place: { ...linked, folder: thread.folder },
               status: codexStatus(thread, now),
               lastActivityAt: thread.updatedAt,
               link: `codex://threads/${thread.id}`,
@@ -260,7 +269,7 @@ export function buildCodexGroups(
       if (!placeMatches && work.length === 0) return [];
       return [
         {
-          place: where,
+          place: linked,
           lastActivityAt: place.lastActiveAt,
           openCount: place.openCount,
           archivedCount: place.archivedCount,

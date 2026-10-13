@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   buildClaudeCodeGroups,
   createClaudeCodeAdapter,
@@ -50,6 +53,109 @@ describe('buildClaudeCodeGroups', () => {
 });
 
 describe('createClaudeCodeAdapter', () => {
+  test('discovers CLI folders without a search and links content hits to their actual folder', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    try {
+      mkdirSync(join(dir, 'encoded'));
+      writeFileSync(
+        join(dir, 'encoded', 'cli-2.jsonl'),
+        `${JSON.stringify({ cwd: '/travel/japan' })}\n`
+      );
+      writeFileSync(
+        join(dir, 'encoded', 'desk-1.jsonl'),
+        `${JSON.stringify({ cwd: '/desktop' })}\n`
+      );
+      writeFileSync(join(dir, 'encoded', 'broken.jsonl'), 'invalid\n');
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => [chat('cli-2', 'itinerary')],
+        desktopSessions: async () => new Set(['desk-1']),
+      });
+      const query = { includeClosed: false, limit: 20 };
+      expect((await adapter.find(query)).map((group) => group.place.folder)).toEqual([
+        '/travel/japan',
+      ]);
+      const found = await adapter.find({ ...query, text: 'itinerary', folder: '/travel/japan' });
+      expect(found[0].work[0]).toMatchObject({
+        ref: { id: 'cli-2' },
+        place: { folder: '/travel/japan' },
+      });
+      expect(await adapter.find({ ...query, folder: '/unrelated' })).toEqual([]);
+      rmSync(join(dir, 'encoded', 'cli-2.jsonl'));
+      expect(await adapter.find(query)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('excludes temporary and owned folders before limits and refreshes ownership with cached transcripts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    const owned = new Set(['coordinator']);
+    const records = [
+      ['cli', '/real/project'],
+      ['temp', '/tmp/hyperneo-neo-context/task'],
+      ['coordinator', '/data/Neo/.coordinators/task'],
+    ];
+    try {
+      mkdirSync(join(dir, 'encoded'));
+      for (const [id, cwd] of records) {
+        writeFileSync(join(dir, 'encoded', `${id}.jsonl`), `${JSON.stringify({ cwd })}\n`);
+      }
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => records.map(([id]) => chat(id, 'project')),
+        desktopSessions: async () => new Set(),
+        ownedSessions: () => owned,
+      });
+      const query = { includeClosed: false, limit: 1 };
+      expect((await adapter.find(query)).map((group) => group.place.folder)).toEqual([
+        '/real/project',
+      ]);
+      const matches = await adapter.find({ ...query, text: 'project' });
+      expect(matches.flatMap((group) => group.work.map((work) => work.ref.id))).toEqual(['cli']);
+      expect(await adapter.find({ ...query, folder: '/tmp/hyperneo-neo-context/task' })).toEqual(
+        []
+      );
+      owned.add('cli');
+      expect(await adapter.find(query)).toEqual([]);
+      expect(await adapter.find({ ...query, text: 'project' })).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('ignores transcripts outside the feed window and evicts expired cached folders', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    try {
+      mkdirSync(join(dir, 'encoded'));
+      const path = join(dir, 'encoded', 'cli.jsonl');
+      writeFileSync(path, `${JSON.stringify({ cwd: '/real/project' })}\n`);
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+      });
+      const query = { includeClosed: false, limit: 20 };
+      expect(await adapter.find(query)).toHaveLength(1);
+      const old = new Date(Date.now() - 91 * 24 * 60 * 60_000);
+      utimesSync(path, old, old);
+      expect(await adapter.find(query)).toEqual([]);
+      expect(
+        await createClaudeCodeAdapter({
+          projectsDir: dir,
+          machine: 'laptop',
+          searchChats: async () => [],
+          desktopSessions: async () => new Set(),
+        }).find(query)
+      ).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('only searches when asked for text', async () => {
     const searched: string[] = [];
     const adapter = createClaudeCodeAdapter({
