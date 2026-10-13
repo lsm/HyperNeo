@@ -372,6 +372,32 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test('a work operation answers with each card phase and the wake-note PR verdict', async () => {
+    const askId = await openAsk();
+    const card = (await propose('card-1', askId)).value!.work!.id;
+    service.workPrs.record(
+      card,
+      [
+        {
+          url: 'https://github.com/lsm/HyperNeo/pull/6716',
+          state: 'OPEN',
+          checks: 'failing',
+          review: 'none',
+        },
+      ],
+      Date.now()
+    );
+    expect(await invoke('neo.work.cancel', { id: card })).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          id: askId,
+          cards: [{ id: card, phase: 'cancelled', pr: 'failed' }],
+        },
+      },
+    });
+  });
+
   test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
     const askId = await openAsk();
     for (const itemId of ['i1', 'i2'])

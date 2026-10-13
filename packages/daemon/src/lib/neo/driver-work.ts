@@ -552,10 +552,14 @@ export function isNeoDoneWhenRestated(doneWhen: string, ask: NeoAsk): boolean {
   return lines.length > 0 && lines.every((line) => texts.has(line));
 }
 
+export function neoNotePrVerdict(prs: readonly NeoWorkPr[]) {
+  const verdicts = prs.map(neoWorkPrVerdict);
+  return verdicts.find((verdict) => verdict !== 'done') ?? verdicts[0];
+}
+
 export function neoNoteCards(cards: readonly NeoAskCard[]) {
   return cards.map(({ id, title, status, prs }) => {
-    const verdicts = (prs ?? []).map(neoWorkPrVerdict);
-    const pr = verdicts.find((verdict) => verdict !== 'done') ?? verdicts[0];
+    const pr = neoNotePrVerdict(prs ?? []);
     return { id, title, status, ...(pr ? { pr } : {}) };
   });
 }
