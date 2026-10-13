@@ -23,25 +23,23 @@ export async function readCodeIdentity(folder: string): Promise<CodeIdentity> {
   }
 }
 
-export function createCodeIdentityReader(
-  read = readCodeIdentity,
-  now = Date.now
-): (folder: string, refresh?: boolean) => Promise<CodeIdentity> {
+export function createCodeIdentityReader(read = readCodeIdentity, now = Date.now) {
   const cache = new Map<string, { until: number; value: Promise<CodeIdentity> }>();
-  return (folder, refresh = false) => {
+  return (folder: string, refresh = false) => {
     const known = cache.get(folder);
     if (!refresh && known && known.until > now()) return known.value;
     const value = read(folder);
-    cache.delete(folder);
     cache.set(folder, { until: now() + 60_000, value });
     if (cache.size > 1024) cache.delete(cache.keys().next().value!);
     return value;
   };
 }
 
+export const readWorkspaceIdentity = createCodeIdentityReader();
+
 export async function identifyWorkspaces(
   groups: readonly PlaceGroup[],
-  read: (folder: string) => Promise<CodeIdentity> = readCodeIdentity
+  read: (folder: string) => Promise<CodeIdentity> = readWorkspaceIdentity
 ): Promise<PlaceGroup[]> {
   const identities = new Map<string, CodeIdentity>();
   const folders = [
@@ -67,10 +65,9 @@ export async function identifyWorkspaces(
   return groups.map((group) => ({
     ...group,
     place: identify(group.place),
-    workspaces: [
-      ...(group.workspaces ?? [group.place]),
-      ...group.work.map((work) => work.place),
-    ].map(identify),
+    workspaces: (group.workspaces ?? [group.place])
+      .concat(group.work.map((work) => work.place))
+      .map(identify),
     work: group.work.map((work) => ({ ...work, place: identify(work.place) })),
   }));
 }

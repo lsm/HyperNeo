@@ -177,7 +177,7 @@ export function codexProjectFolder(
   return roots.some((root) => root.folder === project) ? project : folder;
 }
 
-function codexPlaces(snapshot: CodexSnapshot, worktreesDir: string): CodexPlace[] {
+function codexPlaces(snapshot: CodexSnapshot, folders: ReadonlyMap<string, string>): CodexPlace[] {
   const places = new Map<string, CodexPlace>();
   for (const root of snapshot.roots) {
     places.set(root.folder, {
@@ -189,7 +189,7 @@ function codexPlaces(snapshot: CodexSnapshot, worktreesDir: string): CodexPlace[
     });
   }
   for (const row of snapshot.folders) {
-    const folder = codexProjectFolder(row.folder, snapshot.roots, worktreesDir);
+    const folder = folders.get(row.folder) ?? row.folder;
     const place = places.get(folder) ?? {
       folder,
       name: basename(folder) || folder,
@@ -227,7 +227,12 @@ export function buildCodexGroups(
 ): PlaceGroup[] {
   const text = query.text?.toLowerCase();
   const now = deps.now();
-  return codexPlaces(snapshot, deps.worktreesDir)
+  const folders = new Map(
+    [...new Set([...snapshot.folders, ...snapshot.threads].map((row) => row.folder))].map(
+      (folder) => [folder, codexProjectFolder(folder, snapshot.roots, deps.worktreesDir)]
+    )
+  );
+  return codexPlaces(snapshot, folders)
     .filter((place) => !query.folder || place.folder === query.folder)
     .filter((place) => query.includeClosed || place.openCount > 0 || place.known)
     .flatMap((place) => {
@@ -239,10 +244,7 @@ export function buildCodexGroups(
         : undefined;
       const linked = { ...where, ...(toolProject ? { toolProject } : {}) };
       const work: WorkSummary[] = snapshot.threads
-        .filter(
-          (thread) =>
-            codexProjectFolder(thread.folder, snapshot.roots, deps.worktreesDir) === place.folder
-        )
+        .filter((thread) => folders.get(thread.folder) === place.folder)
         .filter(
           (thread) =>
             placeMatches ||

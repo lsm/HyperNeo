@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
+import * as acp from '../../../../src/lib/drivers/acp-agent-adapter';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -160,6 +161,29 @@ describe('codex-desktop adapter against a Codex state database', () => {
         ],
       },
     ]);
+  });
+
+  test('resolves each worktree folder once per snapshot and refreshes on the next find', async () => {
+    const probe = spyOn(acp, 'gitWorktreeProject');
+    try {
+      const adapter = createCodexDesktopAdapter({
+        statePath,
+        machine: 'laptop',
+        worktreesDir: dir,
+        now: () => NOW,
+        spawn: unusedSpawn,
+      });
+      await adapter.find({ includeClosed: false, limit: 20 });
+      expect(probe.mock.calls.filter(([folder]) => folder === join(dir, 'worktree'))).toHaveLength(
+        1
+      );
+      await adapter.find({ includeClosed: false, limit: 20 });
+      expect(probe.mock.calls.filter(([folder]) => folder === join(dir, 'worktree'))).toHaveLength(
+        2
+      );
+    } finally {
+      probe.mockRestore();
+    }
   });
 
   test('lists Codex projects with their open threads, worktrees folded into the project', async () => {

@@ -262,6 +262,34 @@ describe('workspace discovery safeguards', () => {
     expect(calls).toEqual(['/repo', '/repo', '/repo', '/other']);
   });
 
+  test('deduplicates physical folders while preserving metadata from every adapter in either order', () => {
+    const plain = group({
+      machine: 'local',
+      folder: '/repo',
+      name: 'repo',
+      toolProject: undefined,
+    });
+    const coded = group({ ...plain.place, codeIdentity: 'git:root', remotes: ['origin'] });
+    const tool = group({ ...plain.place, toolProject: { id: 'codex:1', name: 'Project' } });
+    for (const groups of [
+      [plain, coded, tool],
+      [tool, coded, plain],
+    ]) {
+      const merged = mergePlaceGroups(groups, 20);
+      expect(merged).toHaveLength(1);
+      expect(merged[0].workspaces).toEqual([
+        {
+          ...plain.place,
+          codeIdentity: 'git:root',
+          remotes: ['origin'],
+          toolProject: tool.place.toolProject,
+        },
+      ]);
+      expect(merged[0].projectId).toBe('git:root');
+      expect(mergePlaceGroups(merged, 20)[0].workspaces).toEqual(merged[0].workspaces);
+    }
+  });
+
   test('limited browse results retain idle open sessions ahead of newer empty folder shells', () => {
     const open = group({ machine: 'local', folder: '/idle', name: 'idle' });
     open.work[0].status = 'needs_you';

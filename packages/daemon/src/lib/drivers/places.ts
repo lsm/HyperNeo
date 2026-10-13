@@ -22,16 +22,31 @@ function bestScore(group: PlaceGroup): number {
   return Math.max(-1, ...group.work.map((work) => work.score ?? -1));
 }
 
+function projectKeys(place: Place): string[] {
+  return [
+    ...(place.codeIdentity ? [place.codeIdentity] : []),
+    ...(place.toolProject ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`] : []),
+  ];
+}
+
+function workspaceLocations(places: readonly Place[]): Place[] {
+  const locations = new Map<string, Place>();
+  for (const place of places) {
+    locations.set(placeKey(place), {
+      ...locations.get(placeKey(place)),
+      ...Object.fromEntries(Object.entries(place).filter(([, value]) => value !== undefined)),
+    } as Place);
+  }
+  return [...locations.values()];
+}
+
 export function mergePlaceGroups(groups: readonly PlaceGroup[], limit: number): PlaceGroup[] {
   const byPlace = new Map<string, PlaceGroup>();
   const aliases = new Map<string, string>();
   for (const group of groups) {
     const keys = (group.workspaces ?? [group.place]).flatMap((place) => [
       `folder:${placeKey(place)}`,
-      ...(place.codeIdentity ? [place.codeIdentity] : []),
-      ...(place.toolProject
-        ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`]
-        : []),
+      ...projectKeys(place),
     ]);
     const matches = new Set(keys.flatMap((key) => aliases.get(key) ?? []));
     const key = [...matches][0] ?? keys[0];
@@ -49,23 +64,9 @@ export function mergePlaceGroups(groups: readonly PlaceGroup[], limit: number): 
     .map((group) => ({
       ...group,
       projectId:
-        (group.workspaces ?? [group.place])
-          .flatMap((place) => place.codeIdentity ?? [])
-          .sort()[0] ??
-        (group.workspaces ?? [group.place])
-          .flatMap((place) =>
-            place.toolProject ? `tool:${place.daemon ?? place.machine}:${place.toolProject.id}` : []
-          )
-          .sort()[0] ??
+        (group.workspaces ?? [group.place]).flatMap(projectKeys).sort()[0] ??
         `folder:${placeKey(group.place)}`,
-      workspaces: [
-        ...new Map(
-          (group.workspaces ?? [group.place]).map((place) => [
-            `${placeKey(place)}:${place.toolProject?.id ?? ''}`,
-            place,
-          ])
-        ).values(),
-      ],
+      workspaces: workspaceLocations(group.workspaces ?? [group.place]),
       work: [...group.work].sort(
         (a, b) => (b.score ?? -1) - (a.score ?? -1) || b.lastActivityAt - a.lastActivityAt
       ),
