@@ -832,8 +832,9 @@ function sshRemote(words: readonly string[]): { host: string; command: string } 
 }
 
 function credentialDump(raw: readonly string[], words: readonly string[]): string | null {
-  if (raw[0] === 'env' && !words.length) return 'env';
-  if (['printenv', 'set'].includes(words[0]) && words.length <= 2) return words[0];
+  if (!words.length && raw.some((word) => /(?:^|\/)env$/.test(word))) return 'env';
+  if (words[0] === 'printenv') return 'printenv';
+  if (words[0] === 'set' && words.length === 1) return 'set';
   if (words[0] === 'export' && (words.length === 1 || words[1] === '-p')) return 'export';
   if (words[0] === 'declare' && words.some((word) => /^-[a-z]*x/.test(word))) return 'declare -x';
   if (words[0] === 'gh' && words.includes('auth')) {
