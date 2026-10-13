@@ -49,16 +49,42 @@ describe('runMigration359', () => {
       db.close();
     }
   });
-  test('restores the original schema and settings if integrity validation fails', () => {
+  test.each([
+    "INSERT INTO child VALUES ('missing')",
+    "UPDATE neo_ask_items SET ask_id = 'missing'",
+  ])('restores the original schema and settings for a related violation: %s', (violation) => {
     const db = fixture();
     try {
-      db.exec(
-        "PRAGMA foreign_keys = OFF; INSERT INTO child VALUES ('missing'); PRAGMA foreign_keys = ON"
-      );
+      db.exec(`PRAGMA foreign_keys = OFF; ${violation}; PRAGMA foreign_keys = ON`);
       expect(() => runMigration359(db)).toThrow('neo_pack_check_registry_foreign_key_violation');
       expect(db.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
       expect(() => db.exec("UPDATE neo_ask_items SET check_kind = 'legal.confirmed'")).toThrow();
       expect(db.prepare('SELECT COUNT(*) AS count FROM neo_ask_items').get()).toEqual({ count: 1 });
+    } finally {
+      db.close();
+    }
+  });
+  test('ignores unrelated violations while preserving references to the rebuilt table', () => {
+    const db = fixture();
+    try {
+      db.exec(`PRAGMA foreign_keys = OFF;
+        CREATE TABLE unrelated (ask_id TEXT REFERENCES neo_asks(id));
+        INSERT INTO unrelated VALUES ('missing');
+        ALTER TABLE child ADD COLUMN other_ask_id TEXT REFERENCES neo_asks(id);
+        UPDATE child SET other_ask_id = 'missing';
+        PRAGMA foreign_keys = ON;`);
+      const before = db.prepare('PRAGMA foreign_key_check').all();
+      expect(before).toHaveLength(2);
+      runMigration359(db);
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual(before);
+      expect(db.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
+      expect(db.prepare('SELECT * FROM child').all()).toEqual([
+        { item_id: 'i', other_ask_id: 'missing' },
+      ]);
+      db.exec("UPDATE neo_ask_items SET check_kind = 'legal.confirmed'");
+      expect(db.prepare('SELECT check_kind FROM neo_ask_items').get()).toEqual({
+        check_kind: 'legal.confirmed',
+      });
     } finally {
       db.close();
     }

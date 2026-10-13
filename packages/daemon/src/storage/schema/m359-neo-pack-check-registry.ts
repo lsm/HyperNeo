@@ -17,6 +17,12 @@ export function runMigration359(db: Database): void {
     .join(', ');
   const foreignKeys = (db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number })
     .foreign_keys;
+  const references = db
+    .prepare(
+      `SELECT DISTINCT m.name FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f
+       WHERE m.type = 'table' AND f."table" = 'neo_ask_items'`
+    )
+    .all() as { name: string }[];
   db.exec('PRAGMA foreign_keys = OFF');
   try {
     db.transaction(() => {
@@ -27,8 +33,15 @@ export function runMigration359(db: Database): void {
       db.exec('DROP TABLE neo_ask_items');
       db.exec('ALTER TABLE neo_ask_items_registry_new RENAME TO neo_ask_items');
       for (const object of objects) db.exec(object.sql);
-      if (db.prepare('PRAGMA foreign_key_check').all().length)
-        throw new Error('neo_pack_check_registry_foreign_key_violation');
+      for (const name of new Set(['neo_ask_items', ...references.map((row) => row.name)])) {
+        const violations = db
+          .prepare('SELECT parent FROM pragma_foreign_key_check(?)')
+          .all(name) as {
+          parent: string;
+        }[];
+        if (violations.some(({ parent }) => name === 'neo_ask_items' || parent === 'neo_ask_items'))
+          throw new Error('neo_pack_check_registry_foreign_key_violation');
+      }
     })();
   } finally {
     db.exec(`PRAGMA foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}`);
