@@ -1,3 +1,4 @@
+import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,6 +51,7 @@ describe('claude-desktop start', () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   function adapter(options: {
+    prepareExecution?: WorkExecutionPreparer;
     openExit?: number;
     appearsAfter?: number;
     relayWrites?: boolean;
@@ -62,6 +64,7 @@ describe('claude-desktop start', () => {
     let polls = 0;
     return createClaudeDesktopAdapter({
       sessionsDir: join(dir, 'sessions'),
+      prepareExecution: options.prepareExecution,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
       liveSessions: async () => {
@@ -137,6 +140,43 @@ describe('claude-desktop start', () => {
       expect(spawned).toEqual([]);
     }
   );
+
+  test('uses the prepared directory for CLI creation and desktop without --worktree', async () => {
+    const driver = adapter({
+      appearsAfter: 0,
+      relayWrites: true,
+      prepareExecution: async () => ({
+        ok: true,
+        value: {
+          directory: '/fresh/remote-base',
+          release: async () => {
+            throw new Error('Live resource released');
+          },
+        },
+      }),
+    });
+    await driver.start!(
+      { ...request, preparation: { pack: 'coding', parameters: { target: 'dev' } } },
+      user
+    );
+    expect(cwds[0]).toBe('/fresh/remote-base');
+    expect(cwds[1]).toBe('/fresh/remote-base');
+    expect(spawned[0]).not.toContain('--worktree');
+  });
+
+  test('failed preparation launches no Claude process', async () => {
+    const driver = adapter({
+      prepareExecution: async () => ({
+        ok: false,
+        reason: 'preparation_failed',
+        detail: 'fetch failed',
+      }),
+    });
+    expect(
+      await driver.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user)
+    ).toMatchObject({ ok: false, reason: 'preparation_failed' });
+    expect(spawned).toEqual([]);
+  });
 
   test('opens a named session, hands it to the app and relays the task', async () => {
     expect(await adapter({ appearsAfter: 0, relayWrites: true }).start?.(request, user)).toEqual({

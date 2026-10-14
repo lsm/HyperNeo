@@ -1,3 +1,7 @@
+import {
+  workStartPreparation,
+  type WorkExecutionPreparer,
+} from '../../drivers/start-preparation.ts';
 import { mirrorNeoWorkspaceProjects } from '../../neo/project-mirror.ts';
 import { existsSync, mkdirSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
@@ -197,12 +201,14 @@ function claudeCodeAdapters(
 }
 
 function claudeDesktopAdapters(
-  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>
+  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
+  prepareExecution: WorkExecutionPreparer
 ): WorkAdapter[] {
   const sessionsDir = CLAUDE_DESKTOP_SESSIONS;
   if (!existsSync(sessionsDir)) return [];
   const deps: ClaudeDesktopAdapterDeps = {
     sessionsDir,
+    prepareExecution,
     projectsDir: join(homedir(), '.claude', 'projects'),
     machine: hostname(),
     liveSessions: () => readLiveClaudeSessions(spawnProcess),
@@ -238,7 +244,8 @@ function acpAgentAdapters(ownSessions: () => ReadonlySet<string>): WorkAdapter[]
 }
 
 function codexDesktopAdapters(
-  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>
+  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
+  prepareExecution: WorkExecutionPreparer
 ): WorkAdapter[] {
   const codexHome = join(homedir(), '.codex');
   const statePath = join(codexHome, 'state_5.sqlite');
@@ -246,6 +253,7 @@ function codexDesktopAdapters(
   return [
     createCodexDesktopAdapter({
       statePath,
+      prepareExecution,
       worktreesDir: join(codexHome, 'worktrees'),
       machine: hostname(),
       now: Date.now,
@@ -332,6 +340,22 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
 }
 
 export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
+  const prepareExecution: WorkExecutionPreparer = (request, location) =>
+    workStartPreparation.prepare(request, location, context.executionPreparations?.() ?? [], {
+      run: async (command, directory) => {
+        const process = spawnProcess([...command], {
+          cwd: directory,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        const [code, stdout, stderr] = await Promise.all([
+          process.exited,
+          new Response(process.stdout).text(),
+          new Response(process.stderr).text(),
+        ]);
+        return { code, stdout, stderr };
+      },
+    });
   const db = () => context.deps.db.getDatabase();
   const machine = hostname();
   const recentVectors = new Map<string, { at: number; semantic: ReturnType<typeof embedQuery> }>();
@@ -377,6 +401,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   const ownChats = (text: string) => searchChats(text, ['message', 'task']);
   const adapters = [
     createHyperneoAdapter({
+      prepareExecution,
       projects: () => context.deps.db.workspaceHistory.projects(),
       db,
       machine,
@@ -406,8 +431,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       searchChats: ownChats,
       tasks: spaceTaskControl(context),
     }),
-    ...codexDesktopAdapters(searchChats),
-    ...claudeDesktopAdapters(searchChats),
+    ...codexDesktopAdapters(searchChats, prepareExecution),
+    ...claudeDesktopAdapters(searchChats, prepareExecution),
     ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db())),
     ...acpAgentAdapters(
       () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId))

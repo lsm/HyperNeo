@@ -90,6 +90,11 @@ const prepare = (superpipe({})('work-start-preparation') as PipelineAPI)
   effects: Effects
 ) => Promise<{ ok: true; value: Prepared } | Failure>;
 
+export type WorkExecutionPreparer = (
+  request: Request,
+  location: Location
+) => ReturnType<typeof prepare>;
+
 export const workStartPreparation = {
   schema: Schema,
   refusalSchema: RefusalSchema,

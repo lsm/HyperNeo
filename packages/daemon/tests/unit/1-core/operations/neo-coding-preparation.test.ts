@@ -1,3 +1,5 @@
+import { createCodexDesktopAdapter } from '../../../../src/lib/drivers/codex-desktop-adapter';
+import { workStartPreparation } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,6 +50,65 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
+describe('createCodexDesktopAdapter with coding preparation', () => {
+  test.each([false, true])(
+    'a driver receives the fresh remote base, or no thread on fetch failure %s',
+    async (failFetch) => {
+      const f = fixture();
+      if (failFetch) git(f.directory, 'remote', 'set-url', 'origin', join(f.directory, 'missing'));
+      const starts: string[] = [];
+      const driver = createCodexDesktopAdapter({
+        statePath: '/unused',
+        worktreesDir: join(f.directory, '.executions'),
+        machine: 'local',
+        now: Date.now,
+        folderExists: existsSync,
+        makeFolder: () => {
+          throw new Error('Unexpected folder creation');
+        },
+        homeDir: '/unused',
+        gitCheckout: async () => {
+          throw new Error('Must not fall back to local HEAD');
+        },
+        newId: () => 'prepared-1',
+        spawn: () => {
+          throw new Error('Unregistered preparation');
+        },
+        prepareExecution: (request, location) =>
+          workStartPreparation.prepare(
+            request,
+            location,
+            [{ id: 'coding', prepareExecution: prepareCodingExecution }],
+            f.effects
+          ),
+        appServer: async () => ({
+          close: () => {},
+          call: async (method, params) => {
+            if (method === 'thread/start') {
+              starts.push(git(String(params.cwd), 'rev-parse', 'HEAD'));
+              return { thread: { id: 'fresh' } };
+            }
+            return {};
+          },
+        }),
+      });
+      const result = await driver.start!(
+        {
+          place: { machine: 'local', folder: f.directory, name: 'repo' },
+          title: 't',
+          message: 'm',
+          preparation: { pack: 'coding', parameters: { target: 'dev' } },
+        },
+        { from: 'user', caller: { source: 'rpc' } }
+      );
+      expect(result.ok).toBe(!failFetch);
+      expect(starts).toEqual(failFetch ? [] : [f.latest]);
+      expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
+      expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+    }
+  );
+});
+
 describe('prepareCodingExecution', () => {
   test('prepares the fetched target and preserves dirty user checkout', async () => {
     const f = fixture();
@@ -60,6 +121,33 @@ describe('prepareCodingExecution', () => {
     expect(f.calls.find((call) => call[1] === 'worktree')?.at(-1)).toBe(f.latest);
     await result.value.release();
     expect(existsSync(f.destination)).toBe(false);
+  });
+
+  test('an omitted target uses the advertised remote default, never local HEAD', async () => {
+    const f = fixture();
+    const result = await prepareCodingExecution({ ...f.request, parameters: {} }, f.effects);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    expect(git(result.value.directory, 'rev-parse', 'HEAD')).toBe(f.latest);
+    expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
+    expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+    expect(f.calls[0]).toEqual(['git', 'ls-remote', '--symref', 'origin', 'HEAD']);
+    await result.value.release();
+  });
+
+  test('a missing advertised default refuses before fetch or checkout', async () => {
+    const calls: unknown[] = [];
+    const result = await prepareCodingExecution(
+      { directory: '/repo', destination: '/prepared', parameters: {} },
+      {
+        run: async (command) => {
+          calls.push(command);
+          return { code: 0, stdout: '', stderr: '' };
+        },
+      }
+    );
+    expect(result).toEqual({ ok: false, reason: 'remote_default_unavailable' });
+    expect(calls).toEqual([['git', 'ls-remote', '--symref', 'origin', 'HEAD']]);
   });
 
   test('failed fetch never creates a checkout from a cached ref', async () => {

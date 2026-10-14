@@ -1,3 +1,4 @@
+import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { basename, join } from 'node:path';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -84,6 +85,7 @@ export interface CodexSnapshot {
 }
 
 export interface CodexDesktopAdapterDeps {
+  prepareExecution?: WorkExecutionPreparer;
   statePath: string;
   worktreesDir: string;
   machine: string;
@@ -601,6 +603,8 @@ export function selectCodexStartFolder(
   request: StartRequest,
   deps: CodexDesktopAdapterDeps
 ): Gate<string> {
+  const admitted = workStartPreparation.admit(request.preparation, !!deps.prepareExecution);
+  if ('reason' in admitted) return admitted;
   return selectLocalStartFolder(request, deps, 'A Codex thread needs a folder to work in.');
 }
 
@@ -685,9 +689,18 @@ export async function startCodexThread(
         server
       );
       if (!configuration.ok) return configuration;
-      const prepared = await prepareCodexWorkFolder(folder, deps);
-      if (!prepared.ok) return prepared;
-      workFolder = prepared.value;
+      if (request.preparation) {
+        const prepared = await deps.prepareExecution!(request.preparation, {
+          directory: folder,
+          destination: join(deps.worktreesDir, deps.newId().slice(0, 8), basename(folder)),
+        });
+        if (!prepared.ok) return prepared;
+        workFolder = { cwd: prepared.value.directory, release: prepared.value.release };
+      } else {
+        const prepared = await prepareCodexWorkFolder(folder, deps);
+        if (!prepared.ok) return prepared;
+        workFolder = prepared.value;
+      }
       const started = await server.call('thread/start', {
         cwd: workFolder.cwd,
         ...(configuration.value.model ? { model: configuration.value.model } : {}),
@@ -785,6 +798,7 @@ const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   return {
     id: 'codex-desktop',
+    supportsStartPreparation: !!deps.prepareExecution,
     supportsStartEffort: true,
     capabilities: ['find', 'start', 'send', 'status', 'stop', 'archive'],
     find: async (query) =>

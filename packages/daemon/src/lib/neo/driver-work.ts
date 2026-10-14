@@ -65,6 +65,10 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
     adapter: z.string().min(1).max(80),
     place: PlaceSchema,
     createFolder: z.boolean().optional(),
+    preparationParameters: z
+      .record(z.string(), z.json())
+      .optional()
+      .describe('Parameters for the linked ask pack preparation stage.'),
     ...workStartConfiguration.schema.shape,
   }),
   z.object({ verb: z.literal('send'), ref: WorkRefSchema }),

@@ -14,7 +14,7 @@ function refuse(reason: string): { reason: Failure } {
 }
 
 function planPreparation(request: Request): Gate<Plan> {
-  const { target, prerequisiteCommits = [] } = request.parameters;
+  const { target = 'HEAD', prerequisiteCommits = [] } = request.parameters;
   if (
     !isAbsolute(request.directory) ||
     !isAbsolute(request.destination) ||
@@ -45,7 +45,7 @@ function planPreparation(request: Request): Gate<Plan> {
     value: {
       directory: request.directory,
       destination: request.destination,
-      ref: `refs/remotes/origin/${target}`,
+      ref: request.parameters.target === undefined ? '' : `refs/remotes/origin/${target}`,
       commits: [...prerequisiteCommits],
     },
   };
@@ -65,6 +65,29 @@ function requireCommit(result: CommandResult): Gate<string> {
 export const prepareCodingExecution = (superpipe({})('neo-coding-prepare-execution') as PipelineAPI)
   .input(['request', 'effects'])
   .pipe(planPreparation, 'request', 'result:prepared')
+  .pipe(
+    (plan: Plan, effects: Effects) =>
+      plan.ref
+        ? null
+        : effects.run(['git', 'ls-remote', '--symref', 'origin', 'HEAD'], plan.directory),
+    ['prepared', 'effects'],
+    'advertised'
+  )
+  .pipe(
+    (plan: Plan, request: Request, advertised: CommandResult | null): Gate<Plan> => {
+      if (plan.ref) return { value: plan };
+      if (!advertised || advertised.code !== 0) return refuse('remote_default_unavailable');
+      const targets = [...advertised.stdout.matchAll(/^ref: refs\/heads\/(.+)\tHEAD$/gm)];
+      return targets.length === 1
+        ? planPreparation({
+            ...request,
+            parameters: { ...request.parameters, target: targets[0][1] },
+          })
+        : refuse('remote_default_unavailable');
+    },
+    ['prepared', 'request', 'advertised'],
+    'result:prepared'
+  )
   .pipe((prepared: Plan) => prepared, 'prepared', 'plan')
   .pipe(
     async (plan: Plan, effects: Effects) =>
