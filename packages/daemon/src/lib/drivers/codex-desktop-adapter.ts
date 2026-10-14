@@ -13,6 +13,7 @@ import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
+import { workExecutionLocation } from './execution-location.ts';
 import { codexOpenedPrs } from './opened-prs.ts';
 import { readTailLines } from './transcript-tail.ts';
 import type {
@@ -538,6 +539,7 @@ export function describeCodexThread(
       ref: { adapter: 'codex-desktop', id: thread.id },
       title: thread.title,
       place: { machine: deps.machine, folder, name: root?.name || basename(folder) || folder },
+      ...workExecutionLocation(thread.folder, deps.machine),
       status: turnStatus(thread, state, deps.now()),
       lastActivityAt: thread.updatedAt,
       link: `codex://threads/${thread.id}`,
