@@ -140,6 +140,11 @@ describe('chooseNeoRoute', () => {
       choice: null,
       fallback: 'facts:unresolved',
     });
+    work('card-one', 'alpha');
+    expect(await chooseNeoRoute('card-one and #99999', deps())).toEqual({
+      choice: null,
+      fallback: 'facts:unresolved',
+    });
   });
 });
 

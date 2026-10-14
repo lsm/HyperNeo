@@ -78,7 +78,7 @@ export function readNeoProjectFacts(db: Database, text: string): NeoProjectFact[
     const matches = prs.filter((pr) => parseGitHubRefUrl(pr.url)?.number === Number(number));
     if (matches.length)
       facts.push(...matches.map((pr) => ({ reference, projectId: pr.projectId })));
-    else if (!facts.length) facts.push({ reference, projectId: undefined });
+    else facts.push({ reference, projectId: undefined });
   }
   for (const { reference, ref } of [...urls, ...named]) {
     const explicit = prs.filter((pr) => {
