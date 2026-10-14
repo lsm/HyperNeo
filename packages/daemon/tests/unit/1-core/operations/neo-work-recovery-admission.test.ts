@@ -153,6 +153,45 @@ describe('NeoService.admitWork on the remaining start paths', () => {
     }
   });
 
+  test('a retry refused after its reset puts the failed card and its report back', async () => {
+    const { db, service, starts } = await setup();
+    try {
+      const failed = service.repo.transitionWork('c', service.repo.getWork('c')!, {
+        status: 'failed',
+        report: 'Could not start the execution: logged out',
+      })!;
+      db.getDatabase()
+        .prepare("UPDATE neo_asks SET status = 'abandoned' WHERE id = 'ask-bc'")
+        .run();
+      expect(await service.retryWork(failed)).toEqual({ ok: false, reason: 'ask_not_live' });
+      expect(service.repo.getWork('c')).toMatchObject({
+        status: 'failed',
+        report: 'Could not start the execution: logged out',
+      });
+      expect(starts).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('recovery releases a claim left on a card still waiting for a worker before boot', async () => {
+    const { db, service, starts } = await setup();
+    try {
+      service.repo.transitionWork('c', service.repo.getWork('c')!, {
+        status: 'proposed',
+        report: NEO_WORK_AWAITING_WORKER,
+      });
+      db.getDatabase()
+        .prepare("UPDATE neo_work_driver_targets SET claimed_at = 1 WHERE work_id = 'c'")
+        .run();
+      await service.recover();
+      expect(starts).toEqual(['work.start']);
+      expect(service.repo.getWork('c')?.status).toBe('queued');
+    } finally {
+      db.close();
+    }
+  });
+
   test('recovery does not hand a blocked or cancelled card waiting for a worker to a driver', async () => {
     const { db, service, starts } = await setup();
     try {

@@ -77,8 +77,9 @@ function requireNeoAdmissionHandoff(snapshot: Admissible) {
   if (card?.ref) return refuse('already_started');
   if (card?.startInterrupted) return refuse('handoff_uncertain');
   const claimedAt = card?.claimedAt ?? null;
-  if (claimedAt !== null)
-    return refuse(claimedAt < snapshot.bootedAt ? 'handoff_uncertain' : 'already_claimed');
+  const stale = claimedAt !== null && claimedAt < snapshot.bootedAt;
+  if (claimedAt !== null && !(stale && snapshot.work.status === 'proposed'))
+    return refuse(stale ? 'handoff_uncertain' : 'already_claimed');
   return { value: snapshot };
 }
 

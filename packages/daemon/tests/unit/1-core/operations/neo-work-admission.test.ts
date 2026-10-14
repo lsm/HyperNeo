@@ -168,6 +168,7 @@ describe('NeoService.admitWork', () => {
       const [, admitted] = await Promise.all([service.start('a'), service.admitWork('a', true)]);
       expect(admitted).toEqual({ ok: true, handoff: 'started' });
       expect(starts).toHaveLength(1);
+      service.repo.transitionWork('b', service.repo.getWork('b')!, { status: 'queued' });
       db.getDatabase()
         .prepare('UPDATE neo_work_driver_targets SET claimed_at = 1 WHERE work_id = ?')
         .run('b');
