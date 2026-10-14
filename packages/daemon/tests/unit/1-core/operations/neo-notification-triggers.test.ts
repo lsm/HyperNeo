@@ -9,7 +9,12 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import {
   coverNeoAskTriggers,
+  isNeoAskAnsweredByReply,
   isNeoCardFailedForGood,
+  neoInputTrigger,
+  neoReplyOriginKey,
+  neoTriggerMessageId,
+  planNeoTriggerRetry,
   NEO_TRIGGER_RETRY_MS,
   neoAskTriggerKeys,
   neoTriggerNote,
@@ -113,12 +118,54 @@ describe('trigger keys of an ask', () => {
     ]);
   });
 
+  test('a failed card stays quiet while other work on the ask is still in play', () => {
+    const read = {
+      view: view({ workIds: ['w1', 'w2'] }),
+      cards: [card({ phase: 'failed' }), card({ workId: 'w2', phase: 'running' })],
+    };
+    expect(keys(ask, read)).toEqual([]);
+    read.cards[1] = card({ workId: 'w2', phase: 'merged' });
+    expect(keys(ask, read)).toEqual([['failed', 'failed:w1:500']]);
+  });
+
+  test('an optional Close is not a reason to interrupt the human', () => {
+    const read = { view: view({ humanActions: [{ kind: 'close', workId: 'w1' }] }), cards: [] };
+    expect(keys(ask, read)).toEqual([]);
+  });
+
   test('a card that failed with no retry is a failure trigger; a retryable or retrying one is not', () => {
     const failed = { view: view(), cards: [card({ phase: 'failed' })] };
     expect(keys(ask, failed)).toEqual([['failed', 'failed:w1:500']]);
     expect(keys(ask, failed, true)).toEqual([]);
     expect(isNeoCardFailedForGood(card({ phase: 'failed', retryable: true }), false)).toBe(false);
     expect(isNeoCardFailedForGood(card({ phase: 'failed', superseded: true }), false)).toBe(false);
+  });
+});
+
+describe('planNeoTriggerRetry', () => {
+  test.each([
+    [true, ['consumed'], 'done'],
+    [false, [], 'wait'],
+    [false, ['enqueued'], 'wait'],
+    [false, ['consumed'], 'retry'],
+    [false, ['consumed', 'failed'], 'retry'],
+    [false, ['consumed', 'consumed', 'consumed'], 'done'],
+  ] as const)('published %s with note statuses %j is %s', (published, statuses, plan) => {
+    expect(planNeoTriggerRetry(published, statuses)).toBe(plan);
+  });
+
+  test('a retried note keeps its trigger id', () => {
+    expect(neoTriggerMessageId('outcome:a1:x', 1)).toBe('neo-trigger:outcome:a1:x#2');
+    expect(neoInputTrigger(neoTriggerMessageId('outcome:a1:x', 1), false)).toBe('outcome:a1:x');
+  });
+});
+
+describe('isNeoAskAnsweredByReply', () => {
+  test('a reply covers only the ask it answered', () => {
+    const covers = new Set([neoReplyOriginKey({ sessionId: root, messageId: 'm0' })]);
+    expect(isNeoAskAnsweredByReply(ask, covers)).toBe(true);
+    expect(isNeoAskAnsweredByReply({ ...ask, originMessageId: 'other' }, covers)).toBe(false);
+    expect(isNeoAskAnsweredByReply({ ...ask, originMessageId: null }, covers)).toBe(false);
   });
 });
 
@@ -358,10 +405,73 @@ describe('NeoService notification triggers', () => {
     expect(new NeoNotificationTriggerRepository(db.getDatabase()).isSeeded()).toBe(true);
   });
 
+  test('a delivered note that ends without a post is sent again under the same trigger', async () => {
+    const opened = open();
+    seed();
+    tickMet(opened);
+    await sweep();
+    await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
+    const first = mailbox()[0].messageUuid;
+    db.getSDKMessageRepo().saveSDKMessage(root, {
+      type: 'user',
+      uuid: first,
+      session_id: root,
+      parent_tool_use_id: null,
+      inputKind: 'system',
+      message: { role: 'user', content: 'note' },
+    } as unknown as SDKUserMessage);
+    await sweep();
+    await vi.waitFor(() => expect(mailbox()).toHaveLength(2));
+    expect(mailbox()[1].messageUuid).toBe(`${first}#2`);
+  });
+
+  test('a reply to one ask does not swallow a question that appeared on another', async () => {
+    seed();
+    const opened = open();
+    human(m1, 'something unrelated');
+    service.askRecords.tickItem(
+      opened.id,
+      {
+        id: opened.doneItems![0].id,
+        state: 'needs_you',
+        evidence: null,
+        metBy: null,
+        kind: 'decision',
+        question: 'Ship now?',
+        options: ['Yes', 'No'],
+      },
+      Date.now()
+    );
+    await invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      'neo.publication.publish',
+      {
+        publicationId: '20000000-0000-4000-8000-000000000001',
+        shortText: 'Here is the unrelated answer.',
+        fullText: 'Here is the unrelated answer.',
+        links: [],
+      },
+      {
+        source: 'mcp',
+        sessionId: root,
+        role: 'neo',
+        neoTurn: { messageId: m1, human: true, isLive: () => true },
+      }
+    );
+    await sweep();
+    await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
+    expect(mailbox()[0].messageUuid).toMatch(/^neo-trigger:action:a1:/);
+  });
+
   test('the human reply that covers an ask’s new question leaves no trigger note behind', async () => {
     seed();
     const opened = open();
     human(m1, 'ship it when ready');
+    service.inputOrigins.record(
+      { sessionId: root, messageId: m1 },
+      { sessionId: root, messageId: m0 },
+      0
+    );
     service.askRecords.tickItem(
       opened.id,
       {

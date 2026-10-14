@@ -46,13 +46,34 @@ export interface NeoTriggerSweepDeps {
   wake(ask: NeoAsk, trigger: NeoAskTrigger): Promise<boolean>;
 }
 
-export function neoTriggerMessageId(triggerId: string): string {
-  return `${NEO_TRIGGER_PREFIX}${triggerId}`;
+export const NEO_TRIGGER_ATTEMPTS = 3;
+
+export function neoTriggerMessageId(triggerId: string, attempt = 0): string {
+  return `${NEO_TRIGGER_PREFIX}${triggerId}${attempt ? `#${attempt + 1}` : ''}`;
 }
+
+export function neoTriggerMessageIds(triggerId: string): string[] {
+  return Array.from({ length: NEO_TRIGGER_ATTEMPTS }, (_, attempt) =>
+    neoTriggerMessageId(triggerId, attempt)
+  );
+}
+
+export type NeoTriggerRetry = 'retry' | 'wait' | 'done';
+
+export function planNeoTriggerRetry(
+  published: boolean,
+  statuses: readonly string[]
+): NeoTriggerRetry {
+  if (published) return 'done';
+  if (!statuses.length || statuses.some((status) => !TURN_OVER.has(status))) return 'wait';
+  return statuses.length >= NEO_TRIGGER_ATTEMPTS ? 'done' : 'retry';
+}
+
+const TURN_OVER: ReadonlySet<string> = new Set(['consumed', 'failed']);
 
 export function neoInputTrigger(messageId: string, human: boolean): string | null {
   if (messageId.startsWith(NEO_TRIGGER_PREFIX))
-    return messageId.slice(NEO_TRIGGER_PREFIX.length) || null;
+    return messageId.slice(NEO_TRIGGER_PREFIX.length).replace(/#\d+$/, '') || null;
   const nudged = nudgedMessageId(messageId);
   if (nudged) return neoInputTrigger(nudged, true);
   const forwarded = neoForwardedAskMessageId(messageId);
@@ -70,6 +91,22 @@ export function neoConsultationTrigger(
     messageId: consultation.originMessageId,
   };
   return neoInputTrigger(origin.messageId, isHumanInput(origin));
+}
+
+export function neoReplyOriginKey(origin: { sessionId: string; messageId: string }): string {
+  return `${origin.sessionId}\0${origin.messageId}`;
+}
+
+export function isNeoAskAnsweredByReply(
+  ask: Pick<NeoAsk, 'originSessionId' | 'originMessageId'>,
+  covers: ReadonlySet<string>
+): boolean {
+  return (
+    !!ask.originMessageId &&
+    covers.has(
+      neoReplyOriginKey({ sessionId: ask.originSessionId, messageId: ask.originMessageId })
+    )
+  );
 }
 
 export function neoHumanTriggerMessageId(triggerId: string | undefined): string | null {
@@ -158,6 +195,16 @@ export function isNeoCardFailedForGood(card: NeoCardView, pending: boolean): boo
   );
 }
 
+const IN_PLAY: ReadonlySet<NeoCardView['phase']> = new Set([
+  'proposed',
+  'handed',
+  'running',
+  'needs_you',
+  'checking',
+  'pr_open',
+  'pr_setback',
+]);
+
 export function neoAskTriggerKeys(
   ask: NeoAsk,
   read: NeoAskTriggerRead,
@@ -176,8 +223,8 @@ export function neoAskTriggerKeys(
       },
     ];
   if (ask.status === 'abandoned') return [];
-  const failed = read.cards
-    .filter((card) => read.view.workIds.includes(card.workId))
+  const live = read.cards.filter((card) => read.view.workIds.includes(card.workId));
+  const failed = (live.some((card) => IN_PLAY.has(card.phase)) ? [] : live)
     .filter((card) => isNeoCardFailedForGood(card, pending(card.workId)))
     .map(
       (card): NeoTriggerKey => ({
@@ -188,7 +235,9 @@ export function neoAskTriggerKeys(
     );
   return [
     ...failed,
-    ...(read.view.humanActions ?? []).map((action) => neoActionTriggerKey(ask, action, work)),
+    ...(read.view.humanActions ?? [])
+      .filter((action) => action.kind !== 'close')
+      .map((action) => neoActionTriggerKey(ask, action, work)),
   ];
 }
 

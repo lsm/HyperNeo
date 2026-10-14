@@ -322,12 +322,16 @@ import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session
 import { NeoNotificationTriggerRepository } from '../../storage/repositories/neo-notification-trigger-repository.ts';
 import {
   coverNeoAskTriggers,
+  isNeoAskAnsweredByReply,
+  neoReplyOriginKey,
   neoConsultationTrigger,
   NEO_TRIGGER_ACHIEVED_WINDOW_MS,
   NEO_TRIGGER_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
   neoHumanTriggerMessageId,
   neoTriggerMessageId,
+  neoTriggerMessageIds,
+  planNeoTriggerRetry,
   neoTriggerNote,
   noteNeoAskTrigger,
   type NeoTriggerSweepDeps,
@@ -491,7 +495,7 @@ export class NeoService {
   private readonly noteQueue: NeoNoteQueueDeps;
   private readonly triggers: NeoNotificationTriggerRepository;
   private readonly triggerDeps: NeoTriggerSweepDeps;
-  private readonly triggerCovers = new Map<string, number>();
+  private readonly triggerCovers = new Map<string, Set<string>>();
   private triggerTimer?: ReturnType<typeof setTimeout>;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
@@ -729,7 +733,10 @@ export class NeoService {
           .then((target) =>
             this.deliver(
               target,
-              neoTriggerMessageId(trigger.triggerId),
+              neoTriggerMessageId(
+                trigger.triggerId,
+                this.triggers.noteStatuses(target, neoTriggerMessageIds(trigger.triggerId)).length
+              ),
               neoTriggerNote(ask, trigger, this.lastHumanText()),
               target,
               neoAskParent(ask)
@@ -1098,6 +1105,7 @@ export class NeoService {
 
   private async sweepTriggers(): Promise<void> {
     if (this.disposed || !this.triggers.isSeeded()) return;
+    this.retryUnpublishedTriggers();
     for (const ask of this.triggerAsks()) {
       try {
         await noteNeoAskTrigger(ask, this.triggerDeps);
@@ -1112,6 +1120,24 @@ export class NeoService {
     for (const ask of this.triggerAsks())
       coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'failed', 'action']);
     this.triggers.markSeeded(Date.now());
+  }
+
+  private retryUnpublishedTriggers(): void {
+    const root = this.repo.getBindingForProject(null);
+    if (!root?.sessionId.startsWith('neo:')) return;
+    const conversationId = root.sessionId.slice(4);
+    for (const { askId, triggerId } of this.triggers.pending(
+      Date.now() - NEO_TRIGGER_ACHIEVED_WINDOW_MS
+    )) {
+      const ask = this.askRecords.get(askId);
+      const target = ask ? this.repo.getBindingForProject(ask.projectId)?.sessionId : null;
+      if (!ask || !target) continue;
+      const plan = planNeoTriggerRetry(
+        this.publications.hasTrigger(conversationId, triggerId, ''),
+        this.triggers.noteStatuses(target, neoTriggerMessageIds(triggerId))
+      );
+      if (plan === 'retry') this.triggers.forget(askId, triggerId);
+    }
   }
 
   private isTriggerOwnerBusy(ask: NeoAsk): boolean {
@@ -1142,21 +1168,20 @@ export class NeoService {
 
   private noteHumanReply(input: NeoPublicationInput): void {
     const human = neoHumanTriggerMessageId(input.triggerId);
-    const asked = human ? this.asks.find(input.conversationId, human) : null;
-    if (!asked) return;
-    const since = Date.parse(asked.createdAt);
-    const prior = this.triggerCovers.get(input.producerInput.sessionId);
-    this.triggerCovers.set(input.producerInput.sessionId, Math.min(prior ?? since, since));
+    if (!human) return;
+    const covers = this.triggerCovers.get(input.producerInput.sessionId) ?? new Set<string>();
+    covers.add(neoReplyOriginKey(input.askOrigin));
+    covers.add(neoReplyOriginKey({ sessionId: input.askOrigin.sessionId, messageId: human }));
+    this.triggerCovers.set(input.producerInput.sessionId, covers);
     this.coverHumanReply(input.producerInput.sessionId, false);
   }
 
   private coverHumanReply(sessionId: string, settled = true): void {
-    const since = this.triggerCovers.get(sessionId);
-    if (since === undefined) return;
+    const covers = this.triggerCovers.get(sessionId);
+    if (!covers) return;
     if (settled) this.triggerCovers.delete(sessionId);
-    const scope = this.repo.getBindingBySession(sessionId)?.projectId ?? null;
     for (const ask of this.triggerAsks())
-      if (ask.projectId === scope && ask.updatedAt >= since)
+      if (isNeoAskAnsweredByReply(ask, covers))
         coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'action']);
   }
 

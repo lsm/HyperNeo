@@ -33,6 +33,30 @@ export class NeoNotificationTriggerRepository {
     })();
   }
 
+  pending(since: number): { askId: string; triggerId: string }[] {
+    if (!this.ready()) return [];
+    return this.db
+      .prepare(`SELECT DISTINCT ask_id AS askId, trigger_id AS triggerId
+        FROM neo_notification_triggers WHERE trigger_id IS NOT NULL AND created_at > ?`)
+      .all(since) as { askId: string; triggerId: string }[];
+  }
+
+  forget(askId: string, triggerId: string): void {
+    if (!this.ready()) return;
+    this.db
+      .prepare('DELETE FROM neo_notification_triggers WHERE ask_id = ? AND trigger_id = ?')
+      .run(askId, triggerId);
+  }
+
+  noteStatuses(sessionId: string, messageIds: readonly string[]): string[] {
+    if (!messageIds.length) return [];
+    const rows = this.db
+      .prepare(`SELECT COALESCE(send_status, 'consumed') AS status FROM sdk_messages
+        WHERE session_id = ? AND sdk_uuid IN (${messageIds.map(() => '?').join(', ')})`)
+      .all(sessionId, ...messageIds) as { status: string }[];
+    return rows.map((row) => row.status);
+  }
+
   isSeeded(): boolean {
     return this.told(SEEDED.askId).has(SEEDED.key);
   }
