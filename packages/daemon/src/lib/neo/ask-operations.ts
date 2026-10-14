@@ -1647,7 +1647,7 @@ export function createNeoAskOperations(
       'startable'
     )
     .pipe(async (startable: string[]) => {
-      await Promise.allSettled(startable.map((id) => service.start(id)));
+      await Promise.allSettled(startable.map((id) => service.admitWork(id, false)));
     }, 'startable')
     .endAsync('admission') as (
     input: z.infer<typeof Approve>,
