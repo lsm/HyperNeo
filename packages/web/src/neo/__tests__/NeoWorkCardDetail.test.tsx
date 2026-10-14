@@ -501,6 +501,25 @@ describe('NeoWorkCard dependency waits', () => {
     expect(screen.getByRole('button', { name: /Start work/ })).toBeTruthy();
   });
 
+  it('a summary card keeps its prerequisite links outside its own button', () => {
+    const openWork = vi.fn();
+    const { container } = render(
+      <NeoWorkCard
+        work={work('ui', 'proposed')}
+        card={proposed({})}
+        busy={false}
+        disabled={false}
+        onAction={() => {}}
+        onOpen={() => {}}
+        onOpenWork={openWork}
+        presentation="summary"
+      />
+    );
+    expect(container.querySelector('[data-scene-open] [data-neo-waits]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Ship the API: PR merged, Deployed' }));
+    expect(openWork).toHaveBeenCalledExactlyOnceWith('api');
+  });
+
   it('a card that starts by itself offers only Cancel', () => {
     const act = vi.fn();
     render(

@@ -178,7 +178,6 @@ export function NeoWorkCard({
           <span class="line-clamp-3 break-words text-[15px] font-semibold leading-snug">
             {work.title}
           </span>
-          {dependency}
           {card.talk && (
             <span class="text-sm text-fg-muted">{card.talk} Open it and tell it yourself.</span>
           )}
@@ -199,6 +198,7 @@ export function NeoWorkCard({
             </span>
           )}
         </button>
+        {(waits.length > 0 || card.uncertain) && <div class="mx-4 mb-3">{dependency}</div>}
         {link && (
           <div class="mx-4 mb-3.5 mt-3 flex items-center gap-2 border-t border-line pt-3">
             {link}
