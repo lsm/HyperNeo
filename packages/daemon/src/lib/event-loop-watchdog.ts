@@ -50,6 +50,7 @@ export interface EventLoopWatchdogOptions {
   shutdownFuseMs?: number;
   killMode?: 'sigkill' | 'observe';
   markerPath?: string;
+  stackPath?: string;
   onNotice?: (notice: EventLoopWatchdogNotice) => void;
 }
 
@@ -95,6 +96,7 @@ export async function startEventLoopWatchdog(
         checkIntervalMs,
         killMode,
         markerPath: options.markerPath,
+        stackPath: options.stackPath,
         deferStallDetection: options.deferStallDetection ?? false,
       },
     });

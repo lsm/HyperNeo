@@ -112,6 +112,7 @@ import {
 import {
   describeEventLoopStallMarker,
   eventLoopStallMarkerPath,
+  eventLoopStallStackPath,
   readAndClearEventLoopStallMarker,
 } from './lib/event-loop-stall-marker.ts';
 import { WorkflowHookRuntimeService } from './lib/workflows/hook-runtime-service.ts';
@@ -413,6 +414,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       eventLoopWatchdog = await startEventLoopWatchdog({
         deferStallDetection: true,
         markerPath: stallMarkerPath,
+        stackPath: eventLoopStallStackPath(dirname(config.dbPath)),
         onNotice: (notice) => {
           if (notice.type === 'stall-detected') {
             console.error(
