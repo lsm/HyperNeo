@@ -829,11 +829,28 @@ export function isNeoQuoteNaming(words: string, item: Pick<NeoAskItem, 'text'>):
   return [...namingTerms(words)].some((term) => named.has(term));
 }
 
-export function requireNeoAskScopeCut(
-  input: Pick<z.infer<typeof Edit>, 'remove' | 'humanSaid'>,
-  ask: NeoAsk,
+export function readNeoHumanQuote(
+  input: Pick<z.infer<typeof Edit>, 'humanSaid'>,
   caller: OperationCaller,
   said: readonly string[]
+): string | null {
+  if (!input.humanSaid) return null;
+  if (caller.source !== 'mcp') return input.humanSaid;
+  const words = heardText(input.humanSaid);
+  const turn = caller.neoTurn;
+  return turn?.human &&
+    !turn.consultationId &&
+    turn.isLive() &&
+    said.some((text) => isNeoHumanQuote(words, heardText(text)))
+    ? input.humanSaid
+    : null;
+}
+
+export function requireNeoAskScopeCut(
+  input: Pick<z.infer<typeof Edit>, 'remove'>,
+  ask: NeoAsk,
+  caller: OperationCaller,
+  quote: string | null
 ): Gate<NeoAsk> {
   if (caller.source !== 'mcp') return { value: ask };
   const unfinished = (ask.doneItems ?? []).filter(
@@ -846,16 +863,7 @@ export function requireNeoAskScopeCut(
       !item.options
   );
   if (!unfinished.length) return { value: ask };
-  const words = heardText(input.humanSaid ?? '');
-  const turn = caller.neoTurn;
-  const heard =
-    !!turn?.human &&
-    !turn.consultationId &&
-    turn.isLive() &&
-    words.length > 0 &&
-    said.some((text) => isNeoHumanQuote(words, heardText(text))) &&
-    unfinished.every((item) => isNeoQuoteNaming(words, item));
-  return heard
+  return quote && unfinished.every((item) => isNeoQuoteNaming(heardText(quote), item))
     ? { value: ask }
     : {
         reason: fail(
@@ -865,11 +873,12 @@ export function requireNeoAskScopeCut(
 }
 
 export function planNeoAskRemovedReason(
-  input: Pick<z.infer<typeof Edit>, 'remove' | 'humanSaid'>,
-  caller: OperationCaller
+  input: Pick<z.infer<typeof Edit>, 'remove'>,
+  caller: OperationCaller,
+  quote: string | null
 ): string | null {
   if (!input.remove.length) return null;
-  if (input.humanSaid) return `The human said: "${input.humanSaid}"`;
+  if (quote) return `The human said: "${quote}"`;
   return caller.source === 'mcp' ? null : 'Removed by the human.';
 }
 
@@ -1615,9 +1624,10 @@ export function createNeoAskOperations(
       ['input', 'caller'],
       'said'
     )
-    .pipe(requireNeoAskScopeCut, ['input', 'admission', 'caller', 'said'], 'result:admission')
+    .pipe(readNeoHumanQuote, ['input', 'caller', 'said'], 'quote')
+    .pipe(requireNeoAskScopeCut, ['input', 'admission', 'caller', 'quote'], 'result:admission')
     .pipe(planNeoAskEdit, ['admission', 'input'], 'plan')
-    .pipe(planNeoAskRemovedReason, ['input', 'caller'], 'removedReason')
+    .pipe(planNeoAskRemovedReason, ['input', 'caller', 'quote'], 'removedReason')
     .pipe(
       (ask: NeoAsk, plan: ReturnType<typeof planNeoAskEdit>, removedReason: string | null) => {
         const written = service.askRecords.editItems(

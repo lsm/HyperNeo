@@ -2768,9 +2768,14 @@ describe('neo.ask operations', () => {
       { askId, add: [{ text: 'Docs updated' }, { text: 'Changelog' }] },
       quiet
     );
-    expect(await invoke('neo.ask.edit', { askId, remove: ['i1'] }, quiet)).toMatchObject({
-      value: { ok: true },
+    expect(
+      await invoke('neo.ask.edit', { askId, remove: ['i1'], humanSaid: 'drop CI green' }, quiet)
+    ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({
+      id: 'i1',
+      removed: true,
     });
+    expect(service.askRecords.get(askId)?.doneItems?.[0]?.removedReason).toBeUndefined();
     expect(
       await invoke('neo.ask.edit', { askId, remove: ['i3'] }, { source: 'rpc', principal: 'local' })
     ).toMatchObject({
