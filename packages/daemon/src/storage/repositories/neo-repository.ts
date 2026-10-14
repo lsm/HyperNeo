@@ -35,7 +35,7 @@ export class NeoRepository {
     private readonly db: Database,
     private readonly notify: () => void = () => {}
   ) {
-    this.projectMerges = new NeoProjectMergeRepository(db);
+    this.projectMerges = new NeoProjectMergeRepository(db, notify);
   }
 
   listProjects(): NeoProject[] {

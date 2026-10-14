@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
@@ -132,8 +135,12 @@ describe('createNeoProjectMergePipeline', () => {
 
 let db: Database;
 let repo: NeoRepository;
+let directory: string;
+let filename: string;
 beforeEach(() => {
-  db = new Database(':memory:');
+  directory = mkdtempSync(join(tmpdir(), 'neo-project-merge-'));
+  filename = join(directory, 'test.db');
+  db = new Database(filename);
   db.exec(
     'PRAGMA foreign_keys = ON; CREATE TABLE sessions(id TEXT PRIMARY KEY, processing_state TEXT)'
   );
@@ -148,7 +155,10 @@ beforeEach(() => {
   repo.reserveBinding({ sessionId: 'avatar', projectId: 'source', kind: 'project' });
   db.exec("INSERT INTO sessions VALUES ('avatar', NULL)");
 });
-afterEach(() => db.close());
+afterEach(() => {
+  db.close();
+  rmSync(directory, { recursive: true, force: true });
+});
 const askRow = (status = 'open') =>
   db
     .prepare(`INSERT INTO neo_asks
@@ -247,6 +257,29 @@ describe('Neo project merge storage', () => {
     expect(db.prepare('SELECT concern_id FROM neo_consultation_waiters').get()).toEqual({
       concern_id: 'target',
     });
+  });
+  test('notifies once after a successful commit, never on admission rejection or rollback', () => {
+    const committed: string[] = [];
+    repo = new NeoRepository(db, () => {
+      const observer = new Database(filename);
+      try {
+        expect(new NeoRepository(observer).projectMerges.resolve('source')).toBe('target');
+      } finally {
+        observer.close();
+      }
+      committed.push(repo.projectMerges.resolve('source')!);
+    });
+    expect(repo.projectMerges.merge({ ...input, sourceRevision: 2 }).ok).toBe(false);
+    expect(committed).toEqual([]);
+    db.exec(`CREATE TRIGGER fail_notify_merge BEFORE UPDATE ON neo_concerns WHEN NEW.id = 'target'
+      BEGIN SELECT RAISE(ABORT, 'injected failure'); END`);
+    expect(() => repo.projectMerges.merge(input)).toThrow('injected failure');
+    expect(committed).toEqual([]);
+    db.exec('DROP TRIGGER fail_notify_merge');
+    expect(repo.projectMerges.merge(input).ok).toBe(true);
+    expect(committed).toEqual(['target']);
+    expect(repo.projectMerges.merge(input).ok).toBe(false);
+    expect(committed).toEqual(['target']);
   });
   test('rolls back all prior writes when a storage effect fails', () => {
     askRow();

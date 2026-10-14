@@ -8,7 +8,10 @@ import {
 } from '../../lib/neo/project-merge.ts';
 
 export class NeoProjectMergeRepository {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly notify: () => void = () => {}
+  ) {}
 
   resolve(id: string): string | null {
     const seen = new Set<string>();
@@ -64,7 +67,7 @@ export class NeoProjectMergeRepository {
   }
 
   merge(input: NeoProjectMergeInput): NeoProjectMergeResult {
-    return this.db.transaction(() =>
+    const result = this.db.transaction(() =>
       createNeoProjectMergePipeline(
         () => this.state(),
         ({ source, target }) => {
@@ -115,5 +118,7 @@ export class NeoProjectMergeRepository {
         }
       )(input)
     )();
+    if (result.ok) this.notify();
+    return result;
   }
 }
