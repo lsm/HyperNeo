@@ -4,6 +4,7 @@ import { extractNeoCardRefs } from './packs/coding/ask-prs.ts';
 
 export interface NeoProjectFact {
   reference: string;
+  projectOnly?: true;
   projectId: string | null | undefined;
 }
 
@@ -30,10 +31,16 @@ export function readNeoProjectFacts(db: Database, text: string): NeoProjectFact[
     "CAST(substr(CAST(alias AS BLOB), instr(CAST(alias AS BLOB), x'00') + 1) AS TEXT) COLLATE NOCASE";
   const workExpression =
     "CAST(substr(CAST(alias AS BLOB), instr(CAST(alias AS BLOB), x'00') + instr(substr(CAST(alias AS BLOB), instr(CAST(alias AS BLOB), x'00') + 1), x'00') + 1) AS TEXT) COLLATE NOCASE";
-  const add = (reference: string, rows: { projectId: string | null }[], unknown = false) =>
+  const add = (
+    reference: string,
+    rows: { projectId: string | null }[],
+    unknown = false,
+    projectOnly = false
+  ) =>
     facts.push(
       ...(rows.length ? rows : unknown ? [{ projectId: undefined }] : []).map((row) => ({
         reference,
+        ...(projectOnly ? { projectOnly: true as const } : {}),
         projectId: row.projectId,
       }))
     );
@@ -56,10 +63,11 @@ export function readNeoProjectFacts(db: Database, text: string): NeoProjectFact[
         .all(...batch) as typeof sessions)
     );
   }
-  for (const id of ids) add(id, aliasOwners('work', workExpression, id));
+  for (const id of ids) add(id, aliasOwners('work', workExpression, id), false, true);
   for (const match of text.matchAll(/["'`]([^"'`]+)["'`]|(\/[^\s"'`<>(){},;!?]+)/g)) {
     const folder = (match[1] ?? match[2]).replace(/\.+$/, '');
-    if (folder.startsWith('/')) add(folder, aliasOwners('folder', folderExpression, folder));
+    if (folder.startsWith('/'))
+      add(folder, aliasOwners('folder', folderExpression, folder), false, true);
   }
   for (const session of sessions) {
     const owned = db
@@ -72,7 +80,8 @@ export function readNeoProjectFacts(db: Database, text: string): NeoProjectFact[
       owned.length
         ? owned
         : aliasOwners('folder', folderExpression, session.worktree ?? session.folder ?? ''),
-      true
+      true,
+      !owned.length
     );
   }
   const urls = [
@@ -98,7 +107,7 @@ export function readNeoProjectFacts(db: Database, text: string): NeoProjectFact[
     const matches = explicit.length
       ? explicit
       : aliasOwners('repo', 'substr(alias, 6, instr(alias, char(0)) - 6)', repo);
-    add(reference, matches, true);
+    add(reference, matches, true, !explicit.length);
   }
   for (const [reference] of text.matchAll(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi)) {
     if (!facts.some((fact) => fact.reference.toLowerCase().includes(reference.toLowerCase())))

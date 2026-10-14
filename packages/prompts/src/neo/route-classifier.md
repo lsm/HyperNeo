@@ -12,7 +12,7 @@ Reply with one JSON object and nothing else:
 {"type":"choice","choice":"<id>","confidence":<0 to 1>,"basis":"<rule>"}
 choice is one of: {{ids}}
 basis is the name of the rule below, exactly as written, with no explanation.
-Pick the project first, then the most specific available section of that project. Facts resolved by the daemon take priority over this text classification. Never route across project boundaries because of wording alone.
+The daemon presents one level of the project tree at a time. Pick only among the listed candidates; if the current project is listed alongside its sections, choose it to stay there. The daemon descends after your selection. Facts resolved by the daemon take priority over this text classification. Never route across project boundaries because of wording alone.
 Pick choice and basis by the first rule that applies:
 - answers_waiting: it answers a WAITING ON YOU question; choose whoever asked it, main included.
 - continues_turn: it replies to a recent turn (a follow-up, "yes", "how about X now", a reference to an earlier thing); choose that turn's project. Choose main only when it replies to main's last message.

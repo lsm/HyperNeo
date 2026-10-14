@@ -18,6 +18,7 @@ import {
   readLiveClaudeSessions,
   reuseLiveSessions,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
+import { WorkDetailSchema } from '../../../../src/lib/drivers/types';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 
 function record(id: string, fields: Record<string, unknown>) {
@@ -118,6 +119,31 @@ describe('claude-desktop adapter against the app session records', () => {
       },
     });
   }
+
+  test('status exposes execution cwd without requiring a transcript', async () => {
+    const result = await adapter().status!({ adapter: 'claude-desktop', id: 'local_a1' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    expect(WorkDetailSchema.parse(result.value)).toMatchObject({
+      place: { folder: '/focus/dolmen' },
+      execution: { directory: '/focus/dolmen/.claude/worktrees/w1', machine: 'laptop' },
+    });
+  });
+
+  test.each([undefined, '', 'relative/worktree'])(
+    'status never substitutes originCwd for unusable execution cwd %s',
+    async (cwd) => {
+      writeFileSync(
+        join(dir, 'acct-a/scope-1/local_a1.json'),
+        JSON.stringify(record('a1', { originCwd: '/focus/dolmen', cwd }))
+      );
+      const result = await adapter().status!({ adapter: 'claude-desktop', id: 'local_a1' });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.reason);
+      expect(result.value.execution).toBeUndefined();
+      expect(result.value.place.folder).toBe('/focus/dolmen');
+    }
+  );
 
   test('lists every project the app shows, with its open sessions and live status', async () => {
     const groups = await adapter().find({ includeClosed: false, limit: 20 });
@@ -321,6 +347,7 @@ describe('claude-desktop adapter against the app session records', () => {
         status: 'needs_you',
         lastActivityAt: 30,
         link: 'claude://claude.ai/epitaxy/local_a1',
+        execution: { directory: '/focus/dolmen/.claude/worktrees/w1', machine: 'laptop' },
         lastReply: 'Loaded 3 tables.',
         recentInputs: [],
       },

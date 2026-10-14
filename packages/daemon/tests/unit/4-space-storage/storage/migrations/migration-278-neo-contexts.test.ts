@@ -9,7 +9,9 @@ describe('migration 278: Neo contexts', () => {
       db.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL)');
       db.exec("INSERT INTO sessions VALUES ('existing', 'Keep me')");
       runMigration278(db);
-      db.exec("INSERT INTO neo_concerns VALUES ('launch', 'Launch', '', '', 1, 1, 1)");
+      db.exec(
+        "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('launch', 'Launch', '', '', 1, 1, 1)"
+      );
       runMigration278(db);
       expect(db.prepare('SELECT * FROM sessions').all()).toEqual([
         { id: 'existing', title: 'Keep me' },

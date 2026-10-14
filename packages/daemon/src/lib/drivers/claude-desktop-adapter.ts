@@ -25,6 +25,7 @@ import type {
   ArchiveAdmission,
 } from './types.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
+import { workExecutionLocation } from './execution-location.ts';
 import { reject } from './work-operations.ts';
 import {
   boundExchange,
@@ -485,7 +486,10 @@ export function describeClaudeSession(
   deps: ClaudeDesktopAdapterDeps
 ): Result<WorkDetail> {
   const live = new Map(liveSessions.map((session) => [session.sessionId, session.status]));
-  const work = toClaudeWork(record, live, deps.machine);
+  const work = {
+    ...toClaudeWork(record, live, deps.machine),
+    ...workExecutionLocation(record.cwd, deps.machine),
+  };
   if (!transcript) return { ok: true, value: work };
   return {
     ok: true,

@@ -383,7 +383,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.status',
       description:
-        'Read the current status of work by ref: queued, running, needs_you, done, failed or stopped, with its last reply and link. With since (epoch ms on that machine), Codex and Claude Code Desktop work also return exchange: the user and agent messages after that time, oldest first; exchangeCut true means earlier ones were not read; openedPrs lists pull requests the session created. Use this to follow up on work instead of searching again.',
+        'Read the current status of work by ref: queued, running, needs_you, done, failed or stopped, with its last reply and link. With since (epoch ms on that machine), HyperNeo sessions, Space agents, Codex and Claude Code Desktop work also return exchange: the user and agent messages after that time, oldest first; exchangeCut true means earlier ones were not read; openedPrs lists pull requests the session created. Desktop execution, when present, identifies the actual working directory and its machine; place.folder may instead be a grouped project. Use this to follow up on work instead of searching again.',
       inputSchema: WorkStatusInputSchema,
       resultSchema: WorkStatusResultSchema,
       policy: { safetyClass: 'read' },

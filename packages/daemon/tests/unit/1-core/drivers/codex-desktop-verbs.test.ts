@@ -9,6 +9,7 @@ import {
   codexTurnState,
   createCodexDesktopAdapter,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
+import { WorkDetailSchema } from '../../../../src/lib/drivers/types';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -289,7 +290,8 @@ describe('codex-desktop adapter status and send', () => {
   function adapter(
     exitCode = 0,
     stderr = '',
-    appServer: () => Promise<CodexAppServer> = () => Promise.reject(new Error('not used'))
+    appServer: () => Promise<CodexAppServer> = () => Promise.reject(new Error('not used')),
+    worktreesDir = '/codex/worktrees'
   ) {
     const spawn: SpawnFn = (args) => {
       spawned.push(args);
@@ -303,7 +305,7 @@ describe('codex-desktop adapter status and send', () => {
     };
     return createCodexDesktopAdapter({
       statePath,
-      worktreesDir: '/codex/worktrees',
+      worktreesDir,
       machine: 'laptop',
       now: () => NOW,
       spawn,
@@ -393,6 +395,7 @@ describe('codex-desktop adapter status and send', () => {
         ref: ref('busy'),
         title: 'loader',
         place: { machine: 'laptop', folder: '/codex/worktrees/1/dolmen', name: 'dolmen' },
+        execution: { directory: '/codex/worktrees/1/dolmen', machine: 'laptop' },
         status: 'running',
         lastActivityAt: NOW - 600_000,
         link: 'codex://threads/busy',
@@ -405,6 +408,33 @@ describe('codex-desktop adapter status and send', () => {
       value: { status: 'done', lastReply: 'Done.' },
     });
     expect(await adapter().status?.(ref('nope'))).toMatchObject({ ok: false, reason: 'not_found' });
+  });
+
+  test('status preserves execution cwd separately from the folded project location', async () => {
+    const directory = join(dir, 'worktree');
+    mkdirSync(directory);
+    writeFileSync(join(directory, '.git'), 'gitdir: /focus/dolmen/.git/worktrees/test\n');
+    const db = new Database(statePath);
+    db.prepare('UPDATE threads SET cwd = ? WHERE id = ?').run(directory, 'busy');
+    db.close();
+    const result = await adapter(0, '', undefined, dir).status!(ref('busy'));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    expect(WorkDetailSchema.parse(result.value)).toMatchObject({
+      place: { folder: '/focus/dolmen' },
+      execution: { directory, machine: 'laptop' },
+    });
+  });
+
+  test.each(['', 'relative/worktree'])('status omits unusable execution cwd %s', async (cwd) => {
+    const db = new Database(statePath);
+    db.prepare('UPDATE threads SET cwd = ? WHERE id = ?').run(cwd, 'idle');
+    db.close();
+    const result = await adapter().status!(ref('idle'));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.value.execution).toBeUndefined();
+    expect(result.value.lastReply).toBe('Done.');
   });
 
   test('status reports a question waiting on the user and a turn that errored', async () => {

@@ -2,7 +2,13 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import { hyperneoWorkStatus, readHyperneoInputs } from './hyperneo-adapter.ts';
+import {
+  hyperneoWorkStatus,
+  readHyperneoInputs,
+  readHyperneoExchange,
+  readHyperneoLastResult,
+} from './hyperneo-adapter.ts';
+import { withExchange, workEntryTime } from './work-messages.ts';
 import { withChatEvidence } from './places.ts';
 import type {
   FindQuery,
@@ -45,6 +51,7 @@ export interface SpaceTaskRow {
 
 export interface SpaceTaskDetailRow extends SpaceTaskRow {
   spaceName: string;
+  completedAt: number | null;
   result: string | null;
   reportedSummary: string | null;
   blockReason: string | null;
@@ -318,7 +325,7 @@ export function readSpaceTask(db: BunDatabase, id: string): SpaceTaskDetailRow |
   const row = db
     .prepare(
       `SELECT t.id, t.space_id AS spaceId, t.task_number AS taskNumber, t.title, t.status,
-         t.updated_at AS updatedAt, t.result, t.reported_summary AS reportedSummary,
+         t.updated_at AS updatedAt, t.completed_at AS completedAt, t.result, t.reported_summary AS reportedSummary,
          t.block_reason AS blockReason, s.name AS spaceName
          FROM space_tasks t JOIN spaces s ON s.id = t.space_id WHERE t.id = ?`
     )
@@ -329,7 +336,15 @@ export function readSpaceTask(db: BunDatabase, id: string): SpaceTaskDetailRow |
 function describeTask(task: SpaceTaskDetailRow, machine: string): WorkDetail {
   const work = toWork(task, { id: task.spaceId, name: task.spaceName }, machine);
   const lastReply = task.result ?? task.reportedSummary ?? task.blockReason;
-  return lastReply ? { ...work, lastReply } : work;
+  return lastReply
+    ? {
+        ...work,
+        lastReply,
+        ...(task.status === 'done' && task.completedAt !== null
+          ? { lastReplyAt: task.completedAt }
+          : {}),
+      }
+    : work;
 }
 
 export function requireSpaceTask(ref: WorkRef, deps: SpaceAdapterDeps): Gate<SpaceTaskDetailRow> {
@@ -559,14 +574,27 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
         : runSpaceSend(ref, message, context, deps),
     status: async (ref, since) => {
       const result = reportSpaceAgent(ref, deps) ?? runSpaceStatus(ref, deps);
-      if (!result.ok || since === undefined) return result;
-      const sessionId = ref.id.startsWith(AGENT_REF)
+      const agent = ref.id.startsWith(AGENT_REF);
+      if (!result.ok || (since === undefined && !agent)) return result;
+      const sessionId = agent
         ? readSpaceAgents(deps.db(), true, ref.id.slice(AGENT_REF.length))[0]?.sessionId
         : readActiveNode(deps.db(), ref.id)?.agentSessionId;
+      const last = agent && sessionId ? readHyperneoLastResult(deps.db(), sessionId) : null;
       return {
         ...result,
         value: {
           ...result.value,
+          ...(last?.reply
+            ? { lastReply: last.reply.slice(0, 4_000), lastReplyAt: workEntryTime(last.at) }
+            : {}),
+          status: result.value.status === 'done' && last?.failed ? 'failed' : result.value.status,
+          ...withExchange(
+            agent && since !== undefined
+              ? sessionId
+                ? readHyperneoExchange(deps.db(), sessionId, since)
+                : { entries: [], cut: false }
+              : undefined
+          ),
           recentInputs: sessionId ? readHyperneoInputs(deps.db(), sessionId, since) : [],
         },
       };

@@ -16,7 +16,7 @@ describe('migration 279 and consultation persistence', () => {
     try {
       createNeoTables(db);
       db.exec(
-        "INSERT INTO neo_concerns VALUES ('club', 'Book club', 'Sunday', 'Eight people', 1, 1, 1)"
+        "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('club', 'Book club', 'Sunday', 'Eight people', 1, 1, 1)"
       );
       runMigration279(db);
       runMigration279(db);

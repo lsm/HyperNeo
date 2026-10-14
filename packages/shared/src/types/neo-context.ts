@@ -1,5 +1,8 @@
 export interface NeoProject {
   id: string;
+  parentId?: string | null;
+  epicUrl?: string | null;
+  workspaceAliases?: string[];
   title: string;
   summary: string;
   context: string;
