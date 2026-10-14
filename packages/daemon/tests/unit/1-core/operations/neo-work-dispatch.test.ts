@@ -7,6 +7,7 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import {
   NEO_WORK_ADMISSION_WAKE,
+  planNeoAvailabilityWakes,
   runNeoAdmissionWake,
 } from '../../../../src/lib/neo/admission-wake.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
@@ -241,6 +242,74 @@ describe('neo.work.start with dependsOn', () => {
           .getJobQueueRepo()
           .listActiveByPayload(NEO_WORK_ADMISSION_WAKE, { workId: 'b' }, ['pending'])
       ).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('planNeoAvailabilityWakes', () => {
+  const card = (
+    id: string,
+    projectId: string | null,
+    report: string | null = NEO_WORK_AWAITING_WORKER
+  ) => ({ id, projectId, status: 'proposed', report }) as never;
+
+  test('wakes only unblocked cards waiting for a worker in the settled card’s project', () => {
+    const work = [
+      card('waiting', 'p1'),
+      card('blocked', 'p1'),
+      card('elsewhere', 'p2'),
+      card('proposed', 'p1', null),
+      card('settled', 'p1'),
+    ];
+    expect(
+      planNeoAvailabilityWakes({ id: 'settled', projectId: 'p1' }, work, (id) => id === 'blocked')
+    ).toEqual(['waiting']);
+  });
+});
+
+describe('availability trigger', () => {
+  const settle = async (autoDispatch: boolean) => {
+    const context = await setup();
+    const { db, service, start } = context;
+    db.updateGlobalSettings({ neo: { autoDispatch } });
+    await start('a');
+    service.repo.transitionWork('b', service.repo.getWork('b')!, {
+      status: 'proposed',
+      report: NEO_WORK_AWAITING_WORKER,
+    });
+    const queued = service.repo.getWork('a')!;
+    expect(queued.status).toBe('queued');
+    service.repo.transitionWork('a', queued, { status: 'reported', report: 'Done.' });
+    return context;
+  };
+
+  test('a card that settles wakes a card waiting for a worker, which starts with auto-dispatch on', async () => {
+    const { db, service, starts, drain } = await settle(true);
+    try {
+      expect(
+        db
+          .getJobQueueRepo()
+          .listActiveByPayload(NEO_WORK_ADMISSION_WAKE, { workId: 'b' }, ['pending'])
+      ).toHaveLength(1);
+      await drain();
+      expect(starts.map((message) => message.split('\n')[0])).toEqual(['Do a.', 'Do b.']);
+      expect(service.repo.getWork('b')?.status).toBe('queued');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('with auto-dispatch off the wake changes nothing', async () => {
+    const { db, service, starts, drain } = await settle(false);
+    try {
+      await drain();
+      expect(starts.map((message) => message.split('\n')[0])).toEqual(['Do a.']);
+      expect(service.repo.getWork('b')).toMatchObject({
+        status: 'proposed',
+        report: NEO_WORK_AWAITING_WORKER,
+      });
     } finally {
       db.close();
     }
