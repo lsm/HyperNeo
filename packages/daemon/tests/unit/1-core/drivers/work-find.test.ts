@@ -521,6 +521,40 @@ describe('work.find operation', () => {
     expect(queries).toEqual([expect.objectContaining({ includeClosed: true, limit: 50 })]);
   });
 
+  test('asks other daemons while the local sources are still answering', async () => {
+    let remoteAsked: () => void = () => {};
+    const asked = new Promise<boolean>((resolve) => {
+      remoteAsked = () => resolve(true);
+    });
+    const waiting: WorkAdapter = {
+      id: 'hyperneo',
+      capabilities: ['find'],
+      find: async () => {
+        const overlapped = await Promise.race([
+          asked,
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+        ]);
+        return overlapped ? [group('imac', '/focus/dolmen', 'hyperneo', 20)] : [];
+      },
+    };
+    const ops = createOperationRegistry([
+      createFindWorkOperation({
+        adapters: () => [waiting],
+        remote: {
+          list: () => [{ daemonId: 'laptop' }],
+          invoke: async () => {
+            remoteAsked();
+            return { places: [], unreachable: [] };
+          },
+        },
+      }),
+    ]);
+    const outcome = await invokeOperation(ops, 'work.find', {}, { source: 'rpc' });
+    expect(
+      outcome.kind === 'completed' ? (outcome.value as { places: PlaceGroup[] }).places : []
+    ).toHaveLength(1);
+  });
+
   test('does not ask other daemons when called with localOnly', async () => {
     let asked = false;
     await invokeOperation(
