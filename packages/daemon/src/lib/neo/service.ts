@@ -195,6 +195,7 @@ import {
   planNeoDoneCheck,
 } from './evidence.ts';
 import {
+  localCodingSessionId,
   neoWorkBranch,
   neoWorkRepoCwd,
   readGithubBranchPrs,
@@ -2893,7 +2894,8 @@ export class NeoService {
     brief: string
   ): Promise<{ named: string[]; mentioned: string[] }> {
     const ref = this.driverTargets.readRef(work.id);
-    const cwd = neoWorkRepoCwd(ref?.adapter === 'hyperneo' ? this.db.getSession(ref.id) : null);
+    const localId = localCodingSessionId(ref);
+    const cwd = neoWorkRepoCwd(localId ? this.db.getSession(localId) : null);
     return readCodingCardRefs(
       brief,
       work.report,
@@ -2907,7 +2909,8 @@ export class NeoService {
   }
 
   private async sessionBranchPrs(ref: WorkRef | null): Promise<string[]> {
-    const branch = neoWorkBranch(ref?.adapter === 'hyperneo' ? this.db.getSession(ref.id) : null);
+    const localId = localCodingSessionId(ref);
+    const branch = neoWorkBranch(localId ? this.db.getSession(localId) : null);
     return branch ? this.readBranchPrs(branch) : [];
   }
 

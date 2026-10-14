@@ -1,3 +1,4 @@
+import type { WorkRef } from '../../../drivers/types.ts';
 import type { WorktreeMetadata } from '@hyperneo/shared';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
@@ -16,6 +17,10 @@ const RepoSchema = z.object({ owner: z.object({ login: z.string() }), name: z.st
 const read = new Map<string, { at: number; urls: string[] }>();
 const repos = new Map<string, { at: number; repo: NeoWorkRepo | null }>();
 const NEO_WORK_REPO_MS = 60 * 60_000;
+
+export function localCodingSessionId(ref: WorkRef | null): string | null {
+  return ref?.adapter === 'hyperneo' && !ref.daemon ? ref.id : null;
+}
 
 export function neoWorkBranch(
   session: { worktree?: WorktreeMetadata } | null

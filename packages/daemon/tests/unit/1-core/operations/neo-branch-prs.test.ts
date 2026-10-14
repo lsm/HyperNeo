@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  localCodingSessionId,
   neoCardPrUrls,
   neoWorkBranch,
   neoWorkRepoCwd,
@@ -13,6 +14,17 @@ const worktree = {
   mainRepoPath: '/repo',
   branch: 'neo/fix-5546',
 };
+
+describe('localCodingSessionId', () => {
+  test('admits only a local HyperNeo identity for local Git evidence', () => {
+    expect(localCodingSessionId({ adapter: 'hyperneo', id: 'same-id' })).toBe('same-id');
+    expect(
+      localCodingSessionId({ adapter: 'hyperneo', id: 'same-id', daemon: 'other-host' })
+    ).toBeNull();
+    expect(localCodingSessionId({ adapter: 'codex-desktop', id: 'same-id' })).toBeNull();
+    expect(localCodingSessionId(null)).toBeNull();
+  });
+});
 
 describe('neoWorkBranch', () => {
   test("takes the card session's worktree branch, and nothing for a session in its main checkout", () => {
