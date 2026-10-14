@@ -458,6 +458,7 @@ describe('Neo MVP', () => {
       'neo.work.start',
       'neo.work.continue',
       'neo.work.retry',
+      'neo.work.refused',
       'neo.work.close',
       'neo.work.cancel',
     ]);

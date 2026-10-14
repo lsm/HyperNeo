@@ -1,6 +1,7 @@
 import { runMigration358 } from '../../../../src/storage/schema/m358-neo-ask-revisions.ts';
 import { runMigration362 } from '../../../../src/storage/schema/m362-neo-driver-configuration.ts';
 import { runMigration363 } from '../../../../src/storage/schema/m363-neo-work-refusals.ts';
+import { runMigration362 } from '../../../../src/storage/schema/m362-neo-driver-configuration.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';

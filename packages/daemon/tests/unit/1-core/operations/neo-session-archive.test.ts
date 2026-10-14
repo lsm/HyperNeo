@@ -113,6 +113,22 @@ describe('neo.session.archive', () => {
     expect(archive).toHaveBeenCalledTimes(2);
   });
 
+  test('read-only work does not hold a session open', async () => {
+    targets.propose(
+      repo,
+      {
+        id: 'read',
+        requestKey: 'read',
+        originSessionId: 'root',
+        projectId: null,
+        title: 'Inspect state',
+        instruction: 'Read current state',
+      },
+      { verb: 'read', operation: 'daemon.snapshot', input: {} }
+    );
+    expect(await invoke()).toMatchObject({ value: { ok: true, value: { archived: true } } });
+  });
+
   test.each([
     'stale',
     'system',
