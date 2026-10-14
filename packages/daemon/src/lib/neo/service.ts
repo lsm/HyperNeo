@@ -1501,7 +1501,7 @@ export class NeoService {
         probe
           ? probe.sent && { ...probe.sent, receipt: result.receipt }
           : opening
-            ? { inputBefore: 0, opening }
+            ? { inputBefore: 0, opening, ...(result.receipt ? { receipt: result.receipt } : {}) }
             : null
       );
       const current = this.repo.getWork(queued.id);

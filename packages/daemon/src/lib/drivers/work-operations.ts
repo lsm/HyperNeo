@@ -17,7 +17,7 @@ import {
   WorkDeliverySchema,
   WorkInputReceiptSchema,
   WorkRefSchema,
-  WorkSummarySchema,
+  WorkStartedSchema,
   workResultSchema,
   type Rejected,
   type WorkAdapter,
@@ -70,7 +70,7 @@ export const WorkStatusInputSchema = z.object({
   receipt: WorkInputReceiptSchema.optional(),
 });
 
-export const StartWorkResultSchema = workResultSchema(WorkSummarySchema);
+export const StartWorkResultSchema = workResultSchema(WorkStartedSchema);
 export const SendWorkResultSchema = workResultSchema(WorkDeliverySchema);
 export const WorkStatusResultSchema = workResultSchema(WorkDetailSchema);
 export const StopWorkResultSchema = workResultSchema(z.object({ stopped: z.boolean() }));
