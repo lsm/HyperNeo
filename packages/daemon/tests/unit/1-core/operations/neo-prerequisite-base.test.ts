@@ -98,6 +98,9 @@ describe('readCodingPrerequisiteBase', () => {
     expect(
       await readCodingPrerequisiteBase([item([prUrl], { check: null })], readers([], {}))
     ).toEqual({ ok: true, value: {} });
+    expect(
+      await readCodingPrerequisiteBase([item(['https://example.com/not-github'])], readers([], {}))
+    ).toEqual({ ok: false, reason: 'prerequisite_ref_unreadable' });
   });
 });
 
@@ -216,17 +219,25 @@ describe('a dependent coding card start', () => {
     }
   });
 
-  test('keeps a dependent waiting, not failed, while its prerequisite merge cannot be read', async () => {
+  test('keeps a dependent waiting, not failed, and retries later while its prerequisite merge cannot be read', async () => {
     const { db, service, prepared, start } = await setup({
       ok: false,
       reason: 'prerequisite_merge_unknown: https://github.com/o/r/pull/7',
     });
     try {
+      db.getDatabase().prepare("DELETE FROM job_queue WHERE queue = 'neo.work.admission'").run();
       prepared.length = 0;
       await start('b');
       expect(prepared).toEqual([]);
       expect(service.repo.getWork('b')?.status).toBe('proposed');
       expect(service.driverTargets.readCard('b')?.claimedAt).toBeNull();
+      const retry = db
+        .getDatabase()
+        .prepare(
+          "SELECT run_at AS runAt FROM job_queue WHERE queue = 'neo.work.admission' AND status = 'pending' AND json_extract(payload, '$.workId') = 'b'"
+        )
+        .get() as { runAt: number } | null;
+      expect(retry?.runAt).toBeGreaterThan(Date.now() + 60_000);
     } finally {
       db.close();
     }

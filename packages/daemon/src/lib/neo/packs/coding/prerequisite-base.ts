@@ -18,7 +18,7 @@ function neoPrerequisiteMergeWatches(items: readonly NeoAskItem[]) {
     .filter(
       (item) => item.check === CODING_CHECK_PR_MERGED && item.state === 'met' && !item.removed
     )
-    .flatMap((item) =>
+    .map((item) =>
       (item.watch ?? []).flatMap((url) => {
         const ref = requireNeoGithubRef(url);
         return 'value' in ref ? [{ item, ref: ref.value }] : [];
@@ -30,7 +30,10 @@ export async function readCodingPrerequisiteBase(
   items: readonly NeoAskItem[],
   readers: NeoPrerequisiteBaseReaders
 ): Promise<NeoPrerequisiteBase> {
-  const watches = neoPrerequisiteMergeWatches(items);
+  const perItem = neoPrerequisiteMergeWatches(items);
+  if (perItem.some((watches) => !watches.length))
+    return { ok: false, reason: 'prerequisite_ref_unreadable' };
+  const watches = perItem.flat();
   if (!watches.length) return { ok: true, value: {} };
   const prs = new Set<string>();
   for (const { item, ref } of watches) {

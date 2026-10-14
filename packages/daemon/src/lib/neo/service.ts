@@ -426,6 +426,8 @@ type NeoDoneCheckRead = NeoDoneCheckFound & { read: NeoEvidenceRead | null; stal
 type NeoReminderTurnInput = { sessionId: string; messageId: string };
 type NeoRemindersDue = { key: string; asks: ReturnType<typeof planNeoWaitingReminders> };
 
+const NEO_PREREQUISITE_BASE_RETRY_MS = 5 * 60_000;
+
 export class NeoService {
   readonly outcomeCheckPolicy = neoOutcomeCheckPolicy;
   readonly prQuestionWithdrawalPolicy = neoPrQuestionWithdrawalPolicy;
@@ -1773,6 +1775,11 @@ export class NeoService {
     const base = await this.prerequisiteParameters(work.id, target);
     if (!base.ok) {
       this.log.warn(`Neo card ${work.id} waits for its prerequisite base: ${base.reason}`);
+      scheduleNeoAdmissionWake(
+        this.db.getJobQueueRepo(),
+        work.id,
+        Date.now() + NEO_PREREQUISITE_BASE_RETRY_MS
+      );
       return;
     }
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
