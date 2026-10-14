@@ -112,7 +112,7 @@ export const WorkDeliverySchema = z.object({
 
 export type WorkDelivery = z.infer<typeof WorkDeliverySchema>;
 
-const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
+export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
   z
     .object({
       receipt: WorkInputReceiptSchema,
