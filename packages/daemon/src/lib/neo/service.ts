@@ -1833,7 +1833,7 @@ export class NeoService {
         await this.deliver(
           next.originSessionId,
           `neo-work-reroute:${next.id}:${this.driverTargets.readRetries(next.id)}`,
-          `The card's target is archived or ended; its instruction was not delivered. The card is still approved and has not failed. Arrange an open idle worker in the same project, then call neo.work.retry with this workId; it will select an open worker and send the original instruction. Do not ask the human to approve again or duplicate the card.\n${JSON.stringify({ workId: next.id, title: next.title, ref, place })}`,
+          `The card's target is archived, ended or taken by another card; its instruction was not delivered. The card is still approved and has not failed. Arrange an open idle worker in the same project, then call neo.work.retry with this workId; it will select an open worker and send the original instruction. Do not ask the human to approve again or duplicate the card.\n${JSON.stringify({ workId: next.id, title: next.title, ref, place })}`,
           next.originSessionId,
           neoWorkParent(next)
         );

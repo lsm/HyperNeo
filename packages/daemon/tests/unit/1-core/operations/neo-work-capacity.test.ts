@@ -145,7 +145,7 @@ describe('NeoWorkDriverTargetRepository.occupiedWorkers', () => {
 });
 
 describe('NeoWorkDriverTargetRepository.occupiedWorkers for other targets', () => {
-  test('a blocked card keeps a chat or agent target occupied, since only driver sends re-check', async () => {
+  test('a blocked card keeps a chat, agent or adopted target occupied, since only driver sends re-check', async () => {
     const { db, service } = await setup();
     try {
       service.repo.proposeWork({
@@ -160,6 +160,23 @@ describe('NeoWorkDriverTargetRepository.occupiedWorkers for other targets', () =
       const chat = neoWorkerRefKey({ adapter: 'hyperneo', id: 'chat-1' });
       expect(
         service.driverTargets.occupiedWorkers(service.repo, 'c', new Set(['d'])).has(chat)
+      ).toBe(true);
+      service.driverTargets.propose(
+        service.repo,
+        {
+          id: 'e',
+          requestKey: 'neo:root:e',
+          projectId: null,
+          originSessionId: 'neo:root',
+          title: 'Card e',
+          instruction: 'Track e.',
+        },
+        { verb: 'adopt', ref: ref('adopted') }
+      );
+      expect(
+        service.driverTargets
+          .occupiedWorkers(service.repo, 'c', new Set(['d', 'e']))
+          .has(neoWorkerRefKey(ref('adopted')))
       ).toBe(true);
     } finally {
       db.close();
