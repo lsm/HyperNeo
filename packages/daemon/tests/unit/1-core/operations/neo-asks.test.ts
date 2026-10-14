@@ -751,6 +751,7 @@ describe('neo.ask operations', () => {
       askId,
       question: 'Own data dir or attach?',
       options: ['Own dir', 'Attach'],
+      kind: 'decision',
     });
     expect(asked).toMatchObject({
       value: {
@@ -1589,7 +1590,7 @@ describe('neo.ask operations', () => {
       const input =
         name === 'neo.ask.settle'
           ? waiting
-          : { askId, question: waiting.question, options: waiting.options };
+          : { askId, question: waiting.question, options: waiting.options, kind: 'decision' };
       expect(await invoke(name, { ...input, kind: 'wait' })).toMatchObject({
         value: { ok: false, reason: expect.stringContaining('not_the_human') },
       });
@@ -1625,6 +1626,7 @@ describe('neo.ask operations', () => {
         askId,
         question: 'Re-approve the login fix?',
         options: ['Approve', 'Stop'],
+        kind: 'decision',
       })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('approval_on_ask') } });
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
@@ -1775,6 +1777,7 @@ describe('neo.ask operations', () => {
         askId,
         question: 'Is red CI on main acceptable?',
         options: ['Yes', 'Yes'],
+        kind: 'decision',
       })
     ).toMatchObject({ kind: 'failed', message: expect.stringContaining('Options must differ') });
     expect(
@@ -1782,12 +1785,14 @@ describe('neo.ask operations', () => {
         askId,
         question: 'Is red CI on main acceptable?',
         options: ['Accept it'],
+        kind: 'decision',
       })
     ).toMatchObject({ kind: 'failed' });
     const asked = {
       askId,
       question: 'Is red CI on main acceptable?',
       options: ['Accept it', 'Fix CI first'],
+      kind: 'decision',
     };
     expect(await invoke('neo.ask.question', asked, { ...neo, sessionId: 'other' })).toMatchObject({
       value: { ok: false },
@@ -1923,18 +1928,17 @@ describe('neo.ask operations', () => {
     expect(delivered.mock.calls[1]?.slice(2)).toEqual(['成功了', true]);
   });
 
-  test('a question without kind is a decision, whatever its options say', async () => {
+  test('a question must say its kind, so a result check is never taken for a decision', async () => {
     const askId = await openAsk();
-    const user: OperationCaller = { source: 'rpc', principal: 'local' };
-    await invoke('neo.ask.question', {
-      askId,
-      question: 'Did the keyboard hide?',
-      options: ['Yes', 'Not yet'],
-    });
-    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({ kind: 'decision' });
-    service.deliverAskAnswer = mock(async () => {});
-    await invoke('neo.ask.answer', { askId, itemId: 'i3', choice: 'Not yet' }, user);
-    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({ state: 'met' });
+    expect(
+      await invoke('neo.ask.question', {
+        askId,
+        question: 'Did the keyboard hide?',
+        decides: 'keyboard hides',
+        options: ['Yes', 'Not yet'],
+      })
+    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
   });
 
   test('the user can close an ask as done even with items still open', async () => {
@@ -2680,6 +2684,7 @@ describe('neo.ask operations', () => {
       askId,
       question: 'Is red CI on main acceptable?',
       options: ['Accept it', 'Fix CI first'],
+      kind: 'decision',
     });
     expect(service.askRecords.get(askId)?.status).toBe('waiting');
     await invoke('neo.ask.edit', { askId, remove: ['i3'] });
@@ -2732,6 +2737,7 @@ describe('neo.ask operations', () => {
       question: 'Slice 6 check can’t start: its target is archived. Retarget it?',
       decides: 'slice 6 target',
       options: ['Retarget', 'Drop it'],
+      kind: 'decision',
     };
     expect(
       await invoke('neo.ask.question', {
@@ -2799,6 +2805,7 @@ describe('neo.ask operations', () => {
       question: 'Ship tonight?',
       decides: 'release date',
       options: ['Yes', 'No'],
+      kind: 'decision',
     });
     await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId });
     expect(service.askRecords.get(targetId)!.doneItems!.at(-1)).toMatchObject({
@@ -2811,7 +2818,8 @@ describe('neo.ask operations', () => {
 
   test('asking the same decision again restates its question; another decision is its own', async () => {
     const askId = await openAsk();
-    const ask = (input: object) => invoke('neo.ask.question', { askId, ...input });
+    const ask = (input: object) =>
+      invoke('neo.ask.question', { askId, kind: 'decision', ...input });
     await ask({
       question: 'Slice 6 check: retarget it?',
       decides: 'Slice 6 target',
@@ -3604,7 +3612,7 @@ describe('isNeoCardAsk', () => {
 describe('neoPrompt decision items', () => {
   test('tells Neo to ask a decision with neo.ask.question instead of ticking an outcome item', () => {
     expect(neoPrompt(null)).toContain(
-      'reaches them only as neo.ask.question {askId, question, decides, options}'
+      'reaches them only as neo.ask.question {askId, question, decides, options, kind}'
     );
     expect(neoPrompt(null)).toContain('never tick an outcome item for a decision');
     expect(neoPrompt(null)).not.toContain('needs_you');
@@ -3612,14 +3620,14 @@ describe('neoPrompt decision items', () => {
 });
 
 describe('driverNeedsYouNote', () => {
-  test('asks Neo to ask the decision with neo.ask.question before telling the human', () => {
+  test('asks Neo to ask the decision with neo.ask.question, kind included, before telling the human', () => {
     expect(
       driverNeedsYouNote(
         { id: 'w1', title: 'Fix startup' },
         { adapter: 'claude-desktop', daemon: 'laptop', id: 't1' },
         'A or B?'
       )
-    ).toContain('ask it first with neo.ask.question {askId, question, decides, options}');
+    ).toContain('ask it first with neo.ask.question {askId, question, decides, options, kind}');
   });
 });
 
