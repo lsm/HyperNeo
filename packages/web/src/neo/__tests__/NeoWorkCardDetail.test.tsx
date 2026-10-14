@@ -426,3 +426,35 @@ it.each(['detail', 'summary'] as const)(
     expect(screen.queryByText(/Open it and tell it yourself/)).toBeNull();
   }
 );
+
+describe('NeoWorkCard reply attribution', () => {
+  afterEach(() => cleanup());
+
+  it('says where an unattributed reply came from, and says nothing for an attributed one', () => {
+    const detail =
+      "This is the session's latest reply. Neo's message was not found in its history.";
+    const { container, rerender } = render(
+      <NeoWorkCard
+        work={work('r1', 'reported')}
+        card={testCard(work('r1', 'reported'), {
+          label: 'Reply received · not verified',
+          replyUnverified: detail,
+        })}
+        busy={false}
+        disabled={false}
+        onAction={() => {}}
+      />
+    );
+    expect(screen.getByText(detail)).toBeTruthy();
+    rerender(
+      <NeoWorkCard
+        work={work('r1', 'reported')}
+        card={testCard(work('r1', 'reported'), { label: 'Reply received' })}
+        busy={false}
+        disabled={false}
+        onAction={() => {}}
+      />
+    );
+    expect(container.querySelector('[data-reply-unverified]')).toBeNull();
+  });
+});
