@@ -10,6 +10,8 @@ export interface NeoWorkResourceReceipt {
 export interface NeoWorkDriverReceipt {
   workId: string;
   adapter: string;
+  model?: string;
+  effort?: string;
   daemon: string | null;
   status: 'queued' | 'running' | 'needs_you' | 'done' | 'failed' | 'stopped' | null;
   link: string | null;
