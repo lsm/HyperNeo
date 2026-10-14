@@ -639,7 +639,9 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
       scopedTo?: string;
     } {
   if (!snapshot.ok) return snapshot;
-  const rev = hashString32(JSON.stringify(snapshot)).toString(36);
+  const rev = hashString32(
+    JSON.stringify(snapshot, (key, value) => (key === 'checkedAt' ? undefined : value))
+  ).toString(36);
   const scoped = scopedTo ? { scopedTo } : {};
   return sinceRev === rev
     ? {
