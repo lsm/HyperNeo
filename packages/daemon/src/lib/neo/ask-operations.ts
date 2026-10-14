@@ -2,9 +2,11 @@ import { NeoAskBindingError } from '../../storage/repositories/neo-ask-repositor
 import type { NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
+  NEO_ASK_QUESTION_REASONS,
   type NeoAsk,
   type NeoAskItem,
   type NeoAskItemKind,
+  type NeoAskQuestionBecause,
   neoAskApprovalSpent,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -95,6 +97,9 @@ export const NeoAskSchema = z.object({
         kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
         question: z.string().optional(),
         decides: z.string().optional(),
+        because: z
+          .object({ card: z.string(), reason: z.enum(NEO_ASK_QUESTION_REASONS) })
+          .optional(),
         watch: z.array(z.string()).optional(),
       })
     )
@@ -160,6 +165,11 @@ const Decides = z
   .describe(
     'A short stable name for the decision this question asks (e.g. "release date", "slice 6 target"). Asking the same decision again, however worded, restates its open question instead of adding another.'
   );
+const Because = z
+  .object({ card: z.string().min(1), reason: z.enum(NEO_ASK_QUESTION_REASONS) })
+  .describe(
+    "Why this question exists, when a card under this ask is the reason: target_unavailable (the card can't start because its target is gone), card_waits (the card waits on the human), card_failed (the card failed). The daemon withdraws the question as no longer needed once that reason is gone: the card's target resolves, the card stops waiting on the human, or the card is no longer failed."
+  );
 const Settle = z.preprocess(
   (input) =>
     input && typeof input === 'object' && !('id' in input) && 'askId' in input
@@ -174,6 +184,7 @@ const Settle = z.preprocess(
       kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
       question: z.string().trim().min(1).max(200).optional(),
       decides: Decides.optional(),
+      because: Because.optional(),
       options: Options.optional(),
     })
     .refine(
@@ -200,6 +211,7 @@ const Question = z.object({
   askId: z.string().min(1),
   question: z.string().trim().min(1).max(200),
   decides: Decides,
+  because: Because.optional(),
   options: Options,
   kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
 });
@@ -667,6 +679,7 @@ export type NeoAskQuestionItem = NeoAskItemInput & {
   kind: NeoAskItemKind;
   question: string;
   decides?: string;
+  because?: NeoAskQuestionBecause;
   options: string[];
 };
 
@@ -726,6 +739,7 @@ export function planNeoAskQuestion(
     options: readonly string[];
     kind?: NeoAskItemKind;
     decides?: string;
+    because?: NeoAskQuestionBecause;
   }
 ): NeoAskQuestionItem {
   const [slot] = planNeoAskEdit(ask, {
@@ -741,6 +755,7 @@ export function planNeoAskQuestion(
     kind: input.kind ?? 'decision',
     question: input.question,
     ...(input.decides ? { decides: input.decides } : {}),
+    ...(input.because ? { because: input.because } : {}),
     options: [...input.options],
   };
 }
@@ -791,6 +806,7 @@ export function planNeoAskSettle(
           options: input.options,
           kind: input.kind,
           decides: input.decides,
+          because: input.because,
         })
       : null;
   const open = (ask.doneItems ?? []).find((entry) => !entry.removed && entry.state === 'needs_you');
@@ -946,10 +962,33 @@ export function planNeoAskRemovedReason(
   return caller.source === 'mcp' ? null : 'Removed by the human.';
 }
 
+export function requireNeoAskBecauseCard<T>(
+  because: NeoAskQuestionBecause | undefined,
+  ask: Pick<NeoAsk, 'workIds'>,
+  value: T
+): Gate<T> {
+  return because && !ask.workIds.includes(because.card)
+    ? {
+        reason: fail(
+          `because_card_unknown: ${because.card} is not a card under this ask; name one of its cards or leave because out.`
+        ),
+      }
+    : { value };
+}
+
 export function requireNeoAskQuestion(
   input: z.infer<typeof Answer>,
   ask: NeoAsk
 ): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
+  const withdrawn = ask.doneItems?.find(
+    (entry) => entry.id === input.itemId && entry.removed && entry.decision
+  );
+  if (withdrawn)
+    return {
+      reason: fail(
+        `question_withdrawn: "${withdrawn.text}" is no longer needed${withdrawn.removedReason ? ` (${withdrawn.removedReason})` : ''}, so there is nothing to answer.`
+      ),
+    };
   const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
   if (!item) return { reason: fail(`item_not_found: ${input.itemId} is not on this checklist.`) };
   if (item.state !== 'needs_you')
@@ -1361,6 +1400,12 @@ export function createNeoAskOperations(
       'result:admission'
     )
     .pipe(
+      (input: z.infer<typeof Settle>, ask: NeoAsk) =>
+        requireNeoAskBecauseCard(input.because, ask, ask),
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (ask: NeoAsk, plan: NeoAskSettlePlan, facts: NeoAskSettleFacts) =>
         plan.approval
           ? requireNeoAskApprovalLapsed(ask, facts.stalled, Date.now(), ask)
@@ -1561,6 +1606,12 @@ export function createNeoAskOperations(
     )
     .pipe(
       (input: z.infer<typeof Question>, ask: NeoAsk) => requireNeoAskItemKind(input.kind, ask),
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Question>, ask: NeoAsk) =>
+        requireNeoAskBecauseCard(input.because, ask, ask),
       ['input', 'admission'],
       'result:admission'
     )
@@ -1808,7 +1859,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.question',
       description:
-        'Ask the human one question about this ask: the only way a decision, or a check only they can make, reaches them. question is one short question worded for this step; options are 2-4 short answers, which become their buttons. The question becomes its own checklist item and the ask waits on it; their answer ticks it met and is sent back to you, so act on it then. For a step only the human can check (on a device, or a machine the daemon cannot read), ask about its result with kind action and options written for that step in its own words, success first ("这一步成功了吗？" with "成功了" and "没成功"): the first option ticks it met, any other keeps it open and tells you. Never ask for re-approval: the daemon shows Approve itself when the approval expires or a card stalls. decides names the decision it asks: asking the same decision again, in any words, restates its open question (new wording and options) instead of adding another, and a different decision is its own question. Only the Neo session that opened the ask or the user can ask on it.',
+        'Ask the human one question about this ask: the only way a decision, or a check only they can make, reaches them. question is one short question worded for this step; options are 2-4 short answers, which become their buttons. The question becomes its own checklist item and the ask waits on it; their answer ticks it met and is sent back to you, so act on it then. For a step only the human can check (on a device, or a machine the daemon cannot read), ask about its result with kind action and options written for that step in its own words, success first ("这一步成功了吗？" with "成功了" and "没成功"): the first option ticks it met, any other keeps it open and tells you. Never ask for re-approval: the daemon shows Approve itself when the approval expires or a card stalls. decides names the decision it asks: asking the same decision again, in any words, restates its open question (new wording and options) instead of adding another, and a different decision is its own question. When a card under this ask is why you ask, pass because {card, reason}: the daemon withdraws the question as no longer needed once that reason is gone (never as answered), and a late answer to it is refused. Only the Neo session that opened the ask or the user can ask on it.',
       inputSchema: Question,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
