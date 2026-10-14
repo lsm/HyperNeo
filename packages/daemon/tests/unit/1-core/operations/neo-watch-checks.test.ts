@@ -157,22 +157,30 @@ describe('judgeNeoWatchTicks for coding.pr_merged', () => {
     ]);
   });
 
-  test("a card's bound outcome needs the merge into its target base, or the default branch", () => {
+  test("a card's bound outcome needs a merge into its target base, or the default branch", () => {
     const watched = ask([item('i1', [issueUrl(2)], bound), item('i2', [pull(4)], bound)]);
-    const closed = issueState(2, { state: 'CLOSED', done: true, closedBy: pull(1) });
+    const closed = issueState(2, {
+      state: 'CLOSED',
+      done: true,
+      closedBy: pull(1),
+      merges: [
+        { url: pull(1), base: 'feature' },
+        { url: pull(5), base: 'release' },
+      ],
+    });
     expect(
       judgeNeoWatchTicks(watched, [base(closed, 'feature'), base(prState(4, 'MERGED'), 'dev')])
     ).toEqual([{ id: 'i2', evidence: `Watched: ${pull(4)} merged into dev` }]);
     expect(
       judgeNeoWatchTicks(
         watched,
-        [base(closed, 'release'), base(prState(4, 'MERGED'), 'dev')],
+        [base(closed, 'feature'), base(prState(4, 'MERGED'), 'dev')],
         () => 'release'
       )
     ).toEqual([
       {
         id: 'i1',
-        evidence: `Watched: ${issueUrl(2)} closed as completed by ${pull(1)} into release`,
+        evidence: `Watched: ${issueUrl(2)} closed as completed by ${pull(5)} into release`,
       },
     ]);
     expect(judgeNeoWatchTicks(watched, [prState(4, 'MERGED')])).toEqual([]);

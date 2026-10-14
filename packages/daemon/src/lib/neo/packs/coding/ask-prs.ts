@@ -20,6 +20,7 @@ export type NeoRefState = {
   done: boolean;
   closedBy: string | null;
   base?: string | null;
+  merges?: { url: string; base: string | null }[];
   defaultBase?: string | null;
   duplicate?: true;
   createdAt?: number | null;
@@ -32,7 +33,7 @@ const REF_NAME = /(?<![\w./-])([\w.-]+)\/([\w.-]+)#(\d+)\b/g;
 const REF_BARE = /(?<![\w./#-])#(\d+)\b/g;
 const NEO_ASK_REF_MAX = 10;
 const NOT_A_REF = /could not resolve to (an issue or pull request|a repository)/i;
-const REF_QUERY = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){defaultBranchRef{name} issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt baseRefName} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:5,includeClosedPrs:true){nodes{url merged baseRefName}}}}}}`;
+const REF_QUERY = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){defaultBranchRef{name} issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt baseRefName} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:10,includeClosedPrs:true){nodes{url merged baseRefName}}}}}}`;
 const GhRefSchema = z.object({
   data: z.object({
     repository: z.object({
@@ -269,6 +270,9 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
           ...(closed && found.stateReason === 'DUPLICATE' ? { duplicate: true as const } : {}),
           closedBy: closing?.url ?? null,
           base: closing?.baseRefName ?? null,
+          merges: (found.closedByPullRequestsReferences?.nodes ?? [])
+            .filter((pr) => pr.merged)
+            .map((pr) => ({ url: pr.url, base: pr.baseRefName ?? null })),
           defaultBase,
           createdAt: Date.parse(found.createdAt ?? '') || null,
           parent: found.parent

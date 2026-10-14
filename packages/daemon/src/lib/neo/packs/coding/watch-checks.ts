@@ -61,7 +61,10 @@ function settledAs(state: NeoRefState, item: NeoAskItem, cardBase: NeoCardBase):
   if (state.kind === 'issue' && !state.closedBy) return null;
   if (!item.deliveredBy) return merged;
   const required = cardBase(item.deliveredBy) ?? state.defaultBase;
-  return required && state.base === required ? `${merged} into ${required}` : null;
+  if (!required) return null;
+  if (state.kind === 'pr') return state.base === required ? `merged into ${required}` : null;
+  const landed = (state.merges ?? []).find((merge) => merge.base === required);
+  return landed ? `closed as completed by ${landed.url} into ${required}` : null;
 }
 
 export function judgeNeoWatchTicks(
