@@ -45,6 +45,7 @@ import {
   WorkRefSchema,
   WorkStatusSchema,
   type WorkExchangeEntry,
+  type WorkDelivery,
   type WorkInput,
   type WorkRef,
   type WorkStatus,
@@ -467,6 +468,7 @@ export function readDriverSendBaseline(
 export interface DriverSent {
   inputBefore: number;
   opening: string;
+  receipt?: WorkDelivery['receipt'];
 }
 
 export function messageOpening(message: string): string {
