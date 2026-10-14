@@ -86,6 +86,7 @@ export const NeoAskSchema = z.object({
         deliveredBy: z.string().nullable().optional(),
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
         removed: z.boolean(),
+        removedReason: z.string().optional(),
         addedAt: z.number().nullable(),
         options: z.array(z.string()).optional(),
         decision: z.literal(true).optional(),
@@ -208,6 +209,7 @@ const Edit = z
     askId: z.string().min(1),
     add: z.array(Item).default([]),
     remove: z.array(z.string().min(1)).default([]),
+    humanSaid: z.string().trim().min(1).max(500).optional(),
     bind: z
       .array(z.object({ itemId: z.string().min(1), deliveredBy: DeliveredBy.unwrap() }))
       .default([]),
@@ -783,6 +785,101 @@ export function requireNeoAskDecisionKept<T>(
         ),
       }
     : { value };
+}
+
+const heardText = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim();
+const WORD_EDGE = /[\p{Script=Latin}\p{N}]/u;
+const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+export function isNeoHumanQuote(words: string, text: string): boolean {
+  if (CJK.test(words) ? [...words.replace(/\s/g, '')].length < 4 : words.split(' ').length < 2)
+    return false;
+  for (let at = text.indexOf(words); at >= 0; at = text.indexOf(words, at + 1)) {
+    const before = text[at - 1] ?? ' ';
+    const after = text[at + words.length] ?? ' ';
+    const cut =
+      (WORD_EDGE.test(before) && WORD_EDGE.test(words[0]!)) ||
+      (WORD_EDGE.test(after) && WORD_EDGE.test(words.at(-1)!));
+    if (!cut) return true;
+  }
+  return false;
+}
+
+const QUOTE_FILLER = new Set(
+  'the a an and or but to of in on at it is be for with this that these those we you i me my our your its from by as not no do'.split(
+    ' '
+  )
+);
+
+function namingTerms(text: string): Set<string> {
+  const lower = text.toLowerCase();
+  const words = (lower.match(/[\p{Script=Latin}\p{N}]{2,}/gu) ?? []).filter(
+    (word) => !QUOTE_FILLER.has(word)
+  );
+  const runs = lower.match(new RegExp(`${CJK.source}+`, 'gu')) ?? [];
+  const pairs = runs.flatMap((run) => {
+    const chars = [...run];
+    return chars.slice(1).map((char, index) => `${chars[index]}${char}`);
+  });
+  return new Set([...words, ...pairs]);
+}
+
+export function isNeoQuoteNaming(words: string, item: Pick<NeoAskItem, 'text'>): boolean {
+  const named = namingTerms(item.text);
+  return [...namingTerms(words)].some((term) => named.has(term));
+}
+
+export function readNeoHumanQuote(
+  input: Pick<z.infer<typeof Edit>, 'humanSaid'>,
+  caller: OperationCaller,
+  said: readonly string[]
+): string | null {
+  if (!input.humanSaid) return null;
+  if (caller.source !== 'mcp') return input.humanSaid;
+  const words = heardText(input.humanSaid);
+  const turn = caller.neoTurn;
+  return turn?.human &&
+    !turn.consultationId &&
+    turn.isLive() &&
+    said.some((text) => isNeoHumanQuote(words, heardText(text)))
+    ? input.humanSaid
+    : null;
+}
+
+export function requireNeoAskScopeCut(
+  input: Pick<z.infer<typeof Edit>, 'remove'>,
+  ask: NeoAsk,
+  caller: OperationCaller,
+  quote: string | null
+): Gate<NeoAsk> {
+  if (caller.source !== 'mcp') return { value: ask };
+  const unfinished = (ask.doneItems ?? []).filter(
+    (item) =>
+      input.remove.includes(item.id) &&
+      !item.removed &&
+      item.state !== 'met' &&
+      !item.decision &&
+      !item.kind &&
+      !item.options
+  );
+  if (!unfinished.length) return { value: ask };
+  return quote && unfinished.every((item) => isNeoQuoteNaming(heardText(quote), item))
+    ? { value: ask }
+    : {
+        reason: fail(
+          `scope_kept: ${unfinished.map((item) => `${item.id} "${item.text}"`).join('; ')} is not done, and only the human drops unfinished work. Remove it only in the turn where they tell you to drop it, passing humanSaid with their words from that message that name it (at least two whole words, or four characters of Chinese or Japanese, sharing a word with the item); when they only point at it, ask them with neo.ask.question or let them remove it in the app; otherwise keep it pending and keep working on it, or settle waiting with a question if you need them to decide.`
+        ),
+      };
+}
+
+export function planNeoAskRemovedReason(
+  input: Pick<z.infer<typeof Edit>, 'remove'>,
+  caller: OperationCaller,
+  quote: string | null
+): string | null {
+  if (!input.remove.length) return null;
+  if (quote) return `The human said: "${quote}"`;
+  return caller.source === 'mcp' ? null : 'Removed by the human.';
 }
 
 export function requireNeoAskQuestion(
@@ -1519,13 +1616,29 @@ export function createNeoAskOperations(
       ['input', 'admission', 'caller'],
       'result:admission'
     )
-    .pipe(planNeoAskEdit, ['admission', 'input'], 'plan')
     .pipe(
-      (ask: NeoAsk, plan: ReturnType<typeof planNeoAskEdit>) => {
-        const written = service.askRecords.editItems(ask.id, plan, Date.now(), ask.revision ?? 0);
+      (input: z.infer<typeof Edit>, caller: OperationCaller) =>
+        input.remove.length && caller.source === 'mcp' && caller.sessionId && caller.neoTurn
+          ? humanText(caller.sessionId, caller.neoTurn.messageId)
+          : [],
+      ['input', 'caller'],
+      'said'
+    )
+    .pipe(readNeoHumanQuote, ['input', 'caller', 'said'], 'quote')
+    .pipe(requireNeoAskScopeCut, ['input', 'admission', 'caller', 'quote'], 'result:admission')
+    .pipe(planNeoAskEdit, ['admission', 'input'], 'plan')
+    .pipe(planNeoAskRemovedReason, ['input', 'caller', 'quote'], 'removedReason')
+    .pipe(
+      (ask: NeoAsk, plan: ReturnType<typeof planNeoAskEdit>, removedReason: string | null) => {
+        const written = service.askRecords.editItems(
+          ask.id,
+          { ...plan, removedReason },
+          Date.now(),
+          ask.revision ?? 0
+        );
         return { ask: written ? service.askRecords.get(ask.id) : null };
       },
-      ['admission', 'plan'],
+      ['admission', 'plan', 'removedReason'],
       'edited'
     )
     .pipe(requireNeoAskWritten, 'edited', 'result:admission')
@@ -1635,7 +1748,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.edit',
       description:
-        "Change an open ask's done checklist when what done means changes: bind [{itemId, deliveredBy}] links an outcome to a card on this ask (null removes it), invalidating its evidence and approval; material changes are refused after dispatch. add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply, or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. New outcomes and changed tracking require the matching coding.pr_merged/coding.deployed check for PR merge or deploy outcomes; untouched legacy items stay unchanged. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
+        "Change an open ask's done checklist when what done means changes: bind [{itemId, deliveredBy}] links an outcome to a card on this ask (null removes it), invalidating its evidence and approval; material changes are refused after dispatch. add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply (an unfinished outcome only in the turn where the human tells you to drop it, with humanSaid quoting their words from that message; it stays listed as removed with that reason, and anything else is refused), or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. New outcomes and changed tracking require the matching coding.pr_merged/coding.deployed check for PR merge or deploy outcomes; untouched legacy items stay unchanged. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
       inputSchema: Edit,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

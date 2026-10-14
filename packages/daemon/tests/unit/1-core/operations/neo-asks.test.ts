@@ -23,6 +23,8 @@ import {
   requireNeoAskApprovalLapsed,
   requireNeoAskItemKind,
   isNeoAskHandedOver,
+  isNeoHumanQuote,
+  isNeoQuoteNaming,
   requireNeoAskEdit,
   planNeoAskWorkStops,
   planNeoCardAsk,
@@ -153,6 +155,17 @@ describe('neo.ask operations', () => {
     return opened.value!.ask!.id;
   }
 
+  function humanSays(content: string, uuid = 'ask-1') {
+    db.getSDKMessageRepo().saveSDKMessage('root', {
+      type: 'user',
+      uuid,
+      session_id: 'root',
+      parent_tool_use_id: null,
+      inputKind: 'human',
+      message: { role: 'user', content },
+    } as unknown as SDKUserMessage);
+  }
+
   function propose(requestKey: string, askId: string) {
     return invoke('neo.work.propose', {
       requestKey,
@@ -197,6 +210,7 @@ describe('neo.ask operations', () => {
     expect(
       await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: card }] })
     ).toMatchObject({ value: { ok: true, ask: { revision: 1 } } });
+    humanSays('Drop the CI part, it must roll back.');
     const before = service.askRecords.get(askId);
     expect(
       await invoke('neo.ask.edit', {
@@ -210,6 +224,7 @@ describe('neo.ask operations', () => {
         askId,
         add: [{ text: 'Must roll back' }],
         remove: ['i2'],
+        humanSaid: 'drop the CI part',
         bind: [{ itemId: 'i1', deliveredBy: 'missing-card' }],
       })
     ).toMatchObject({ value: { ok: false, reason: 'binding_card_not_owned' } });
@@ -294,12 +309,14 @@ describe('neo.ask operations', () => {
     await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: card }] });
     const nextCard = (await propose('next-card', askId)).value!.work!.id;
     service.repo.transitionWork(card, service.repo.getWork(card)!, { status: 'queued' });
+    humanSays('Drop the implementation item.');
     const before = service.askRecords.get(askId);
+    const drop = { remove: ['i1'], humanSaid: 'Drop the implementation item.' };
     for (const change of [
       { bind: [{ itemId: 'i1', deliveredBy: null }] },
-      { remove: ['i1'] },
+      drop,
       { track: [{ itemId: 'i1', check: 'coding.pr_merged' }] },
-      { remove: ['i1'], add: [{ text: 'Uncommitted replacement', deliveredBy: nextCard }] },
+      { ...drop, add: [{ text: 'Uncommitted replacement', deliveredBy: nextCard }] },
     ]) {
       expect(await invoke('neo.ask.edit', { askId, ...change })).toMatchObject({
         value: { ok: false, reason: 'binding_already_dispatched' },
@@ -2655,8 +2672,14 @@ describe('neo.ask operations', () => {
     });
     expect(service.askRecords.get(askId)?.status).toBe('waiting');
     await invoke('neo.ask.edit', { askId, remove: ['i3'] });
+    humanSays('Skip CI green, add release notes instead.');
     expect(
-      await invoke('neo.ask.edit', { askId, remove: ['i2'], add: [{ text: 'Release notes' }] })
+      await invoke('neo.ask.edit', {
+        askId,
+        remove: ['i2'],
+        humanSaid: 'skip ci green',
+        add: [{ text: 'Release notes' }],
+      })
     ).toMatchObject({
       value: {
         ok: true,
@@ -2664,7 +2687,12 @@ describe('neo.ask operations', () => {
           status: 'open',
           doneItems: [
             expect.objectContaining({ id: 'i1', removed: false }),
-            expect.objectContaining({ id: 'i2', text: 'CI green', removed: true }),
+            expect.objectContaining({
+              id: 'i2',
+              text: 'CI green',
+              removed: true,
+              removedReason: 'The human said: "skip ci green"',
+            }),
             expect.objectContaining({ id: 'i3', removed: true }),
             expect.objectContaining({
               id: 'i4',
@@ -2683,6 +2711,87 @@ describe('neo.ask operations', () => {
     expect(
       await invoke('neo.ask.edit', { askId, add: [{ text: 'x' }] }, { ...neo, sessionId: 'other' })
     ).toMatchObject({ value: { ok: false } });
+  });
+
+  test('Neo drops unfinished work only on the human’s words in a live turn; the human drops it freely', async () => {
+    const askId = await openAsk();
+    humanSays('any update?');
+    const quiet: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, human: false } };
+    const gone: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, isLive: () => false } };
+    for (const [change, caller] of [
+      [{ remove: ['i2'] }, neo],
+      [{ remove: ['i2'], humanSaid: 'drop CI green' }, neo],
+      [{ remove: ['i2'], humanSaid: 'any update' }, neo],
+      [{ remove: ['i2'], humanSaid: 'any update' }, quiet],
+      [{ remove: ['i2'], humanSaid: 'any update' }, gone],
+    ] as const)
+      expect(await invoke('neo.ask.edit', { askId, ...change }, caller)).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('scope_kept: i2 "CI green"') },
+      });
+    expect(service.askRecords.get(askId)?.doneItems?.[1]).toMatchObject({
+      id: 'i2',
+      removed: false,
+      state: 'pending',
+    });
+    humanSays('Drop CI green, we ship without it.', 'ask-2');
+    expect(
+      await invoke(
+        'neo.ask.edit',
+        { askId, remove: ['i2'], humanSaid: 'Drop  CI green' },
+        nextMessage
+      )
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          doneItems: [
+            expect.objectContaining({ id: 'i1', removed: false }),
+            expect.objectContaining({
+              id: 'i2',
+              removed: true,
+              removedReason: 'The human said: "Drop  CI green"',
+            }),
+          ],
+        },
+      },
+    });
+    const met = service.askRecords.get(askId)!.doneItems![0];
+    service.askRecords.tickItem(
+      askId,
+      { ...met, state: 'met', evidence: 'proof', metBy: 'daemon' },
+      Date.now(),
+      met,
+      true
+    );
+    await invoke(
+      'neo.ask.edit',
+      { askId, add: [{ text: 'Docs updated' }, { text: 'Changelog' }] },
+      quiet
+    );
+    expect(
+      await invoke('neo.ask.edit', { askId, remove: ['i1'], humanSaid: 'drop CI green' }, quiet)
+    ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({
+      id: 'i1',
+      removed: true,
+    });
+    expect(service.askRecords.get(askId)?.doneItems?.[0]?.removedReason).toBeUndefined();
+    expect(
+      await invoke('neo.ask.edit', { askId, remove: ['i3'] }, { source: 'rpc', principal: 'local' })
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          doneItems: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'i3',
+              removed: true,
+              removedReason: 'Removed by the human.',
+            }),
+          ]),
+        },
+      },
+    });
   });
 });
 
@@ -3354,8 +3463,9 @@ describe('driverNeedsYouNote', () => {
 describe('neoPrompt dropped items', () => {
   test('tells Neo to remove an item the human dropped instead of ticking it met', () => {
     expect(neoPrompt(null)).toContain(
-      'when the human drops part of an ask, remove that item (it stays listed as removed), and never tick a dropped item met'
+      'when the human drops part of an ask, remove that item in that turn with humanSaid quoting their words (it stays listed as removed, with that reason), and never tick a dropped item met'
     );
+    expect(neoPrompt(null)).toContain('Only the human drops unfinished work');
   });
 });
 
@@ -3457,5 +3567,32 @@ describe('neoAskTitleNamedIn', () => {
     ['a title shorter than four characters', 'Fix it now', 'Fix', false],
   ])('%s', (_label, text, title, named) => {
     expect(neoAskTitleNamedIn(text, title)).toBe(named);
+  });
+});
+
+describe('isNeoHumanQuote', () => {
+  test.each([
+    ['drop ci green', 'please drop ci green, we ship without it.', true],
+    ['ci green', 'skip ci green', true],
+    ['不要这个测试了', '那个不要这个测试了，先发布', true],
+    ['update', 'any update?', false],
+    ['y upd', 'any update?', false],
+    ['不要', '不要了', false],
+    ['drop it', 'never drop items', false],
+  ])('%s in %s → %s', (words, text, heard) => {
+    expect(isNeoHumanQuote(words, text)).toBe(heard);
+  });
+});
+
+describe('isNeoQuoteNaming', () => {
+  test.each([
+    ['drop the ci part', 'CI green', true],
+    ['skip the release notes', 'Release notes published', true],
+    ['先不做真机测试了', '真机测试通过', true],
+    ['any update', 'CI green', false],
+    ['drop the rest of it', 'The fix is live', false],
+    ['不要这个了', '真机测试通过', false],
+  ])('%s names %s → %s', (words, text, named) => {
+    expect(isNeoQuoteNaming(words, { text })).toBe(named);
   });
 });
