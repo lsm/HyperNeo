@@ -181,6 +181,10 @@ export class NeoConsultationRepository {
       );
   }
 
+  returnsPublication(conversationId: string, publicationId: string): boolean {
+    return this.publicationOwner(conversationId, publicationId) !== null;
+  }
+
   private publicationOwner(conversationId: string, publicationId: string): string | null {
     const row = this.db
       .prepare(

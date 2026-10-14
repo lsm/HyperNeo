@@ -75,7 +75,35 @@ export class NeoWorkDriverTargetRepository {
     return target.success ? target.data : null;
   }
 
-  reassign(repo: NeoRepository, work: NeoWork, candidates: WorkRef[]) {
+  occupiedWorkers(
+    repo: NeoRepository,
+    exceptId: string,
+    waiting: ReadonlySet<string> = new Set()
+  ): Set<string> {
+    const agents = new NeoAgentWorkTargetRepository(this.db);
+    return new Set(
+      repo.listWork().flatMap((other) => {
+        if (other.id === exceptId || !['proposed', 'queued'].includes(other.status)) return [];
+        const held = this.get(other.id);
+        const target = waiting.has(other.id) && held?.verb === 'send' ? null : held;
+        const ref = this.readRef(other.id) ?? (target && 'ref' in target ? target.ref : null);
+        const local = other.sessionId ?? other.targetSessionId;
+        const agent = agents.get(other.id);
+        return [
+          ...(ref ? [neoWorkerRefKey(ref)] : []),
+          ...(local ? [neoWorkerRefKey({ adapter: 'hyperneo', id: local })] : []),
+          ...(agent ? [neoWorkerRefKey({ adapter: 'space', id: `agent:${agent.agentId}` })] : []),
+        ];
+      })
+    );
+  }
+
+  reassign(
+    repo: NeoRepository,
+    work: NeoWork,
+    candidates: WorkRef[],
+    waiting: ReadonlySet<string> = new Set()
+  ) {
     return this.db.transaction(() => {
       if (
         !['proposed', 'queued'].includes(work.status) ||
@@ -83,21 +111,7 @@ export class NeoWorkDriverTargetRepository {
         this.readRef(work.id)
       )
         return null;
-      const agents = new NeoAgentWorkTargetRepository(this.db);
-      const occupied = new Set(
-        repo.listWork().flatMap((other) => {
-          if (other.id === work.id || !['proposed', 'queued'].includes(other.status)) return [];
-          const target = this.get(other.id);
-          const ref = this.readRef(other.id) ?? (target && 'ref' in target ? target.ref : null);
-          const local = other.sessionId ?? other.targetSessionId;
-          const agent = agents.get(other.id);
-          return [
-            ...(ref ? [neoWorkerRefKey(ref)] : []),
-            ...(local ? [neoWorkerRefKey({ adapter: 'hyperneo', id: local })] : []),
-            ...(agent ? [neoWorkerRefKey({ adapter: 'space', id: `agent:${agent.agentId}` })] : []),
-          ];
-        })
-      );
+      const occupied = this.occupiedWorkers(repo, work.id, waiting);
       const ref = candidates.find((candidate) => !occupied.has(neoWorkerRefKey(candidate)));
       const target: NeoDriverTarget | null = ref ? { verb: 'send', ref } : null;
       const next = repo.transitionWork(work.id, work, {
