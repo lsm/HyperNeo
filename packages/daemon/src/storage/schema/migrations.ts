@@ -1,3 +1,4 @@
+import { runMigration365 } from './m365-neo-work-dependencies.ts';
 import { runMigration364 } from './m364-neo-outcome-bindings.ts';
 import { runMigration365 } from './m365-neo-cross-project-dispatch.ts';
 import { runMigration361 } from './m361-neo-project-avatars.ts';
