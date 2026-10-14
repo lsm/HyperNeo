@@ -617,7 +617,7 @@ export function claudeInputEvidence(
       if (index === window.length - 1) break;
       return unavailable;
     }
-    if (entry.isSidechain === true) continue;
+    if (entry.isSidechain === true || entry.type === 'attachment') continue;
     if (claudeInputText(entry) !== null) {
       ended = true;
       break;

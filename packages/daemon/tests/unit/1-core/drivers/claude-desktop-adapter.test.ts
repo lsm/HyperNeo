@@ -960,6 +960,24 @@ describe('claudeInputEvidence', () => {
     });
   });
 
+  test('a peer message queued while the turn runs does not end it', () => {
+    const queued = JSON.stringify({
+      type: 'attachment',
+      timestamp: '2026-10-14T10:00:01.500Z',
+      attachment: { type: 'queued_command', origin: { kind: 'peer', body: 'another card' } },
+    });
+    expect(claudeInputEvidence([input, reply(0, 'tool_use'), queued], receipt, 'cli-a1')).toEqual({
+      receipt,
+      state: 'pending',
+    });
+    expect(
+      claudeInputEvidence([input, reply(0, 'tool_use'), queued, reply(900)], receipt, 'cli-a1')
+    ).toMatchObject({
+      state: 'observed',
+      exchange: [{ text: 'go' }, { text: 'step 0' }, { text: 'step 900' }],
+    });
+  });
+
   test('is unavailable when a line in its window is malformed', () => {
     expect(claudeInputEvidence([input, '{broken', reply(1)], receipt, 'cli-a1')).toEqual({
       receipt,
