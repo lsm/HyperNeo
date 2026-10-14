@@ -1366,7 +1366,8 @@ export class NeoService {
         queued.id,
         result.ref,
         result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
-        result.link
+        result.link,
+        { model: result.model, effort: result.effort }
       );
       const opening = messageOpening(String(call.input.message));
       this.driverTargets.recordSent(
