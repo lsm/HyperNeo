@@ -1,6 +1,7 @@
 import type {
   NeoPublication,
   NeoPublicationAppendResult,
+  NeoPublicationChangeResult,
   NeoPublicationInput,
 } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -134,6 +135,60 @@ export class NeoPublicationRepository {
       )
       .get(conversationId, publicationId) as Row | null;
     return row ? decode(row) : null;
+  }
+
+  edit(
+    conversationId: string,
+    publicationId: string,
+    text: { shortText?: string; fullText?: string },
+    at: string
+  ): NeoPublicationChangeResult {
+    const current = this.get(conversationId, publicationId);
+    if (!current) return { accepted: false, reason: 'not_found' };
+    const { sequence: _sequence, createdAt: _createdAt, ...stored } = current;
+    const next = admitNeoPublication({ ...stored, ...text, editedAt: at });
+    if ('reason' in next) return { accepted: false, reason: 'publication_conflict' };
+    this.db
+      .prepare(
+        'UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?'
+      )
+      .run(JSON.stringify(next.value), conversationId, publicationId);
+    return {
+      accepted: true,
+      created: false,
+      publication: this.get(conversationId, publicationId)!,
+    };
+  }
+
+  correct(original: NeoPublication, correction: NeoPublicationInput): NeoPublicationChangeResult {
+    return this.db.transaction((): NeoPublicationChangeResult => {
+      const current = this.get(original.conversationId, original.publicationId);
+      if (!current) return { accepted: false, reason: 'not_found' };
+      if (current.correctedBy === correction.publicationId) {
+        const existing = this.get(current.conversationId, correction.publicationId);
+        return existing
+          ? { accepted: true, created: false, publication: existing }
+          : { accepted: false, reason: 'publication_conflict' };
+      }
+      if (current.correctedBy || current.corrects)
+        return { accepted: false, reason: 'already_corrected' };
+      const admitted = admitNeoPublication({ ...correction, corrects: current.publicationId });
+      if ('reason' in admitted) return { accepted: false, reason: 'publication_conflict' };
+      const appended = appendImmutable(this.db, admitted.value, JSON.stringify(admitted.value));
+      if (!appended.accepted || !appended.created)
+        return { accepted: false, reason: 'publication_conflict' };
+      const { sequence: _sequence, createdAt: _createdAt, ...stored } = current;
+      this.db
+        .prepare(
+          'UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?'
+        )
+        .run(
+          JSON.stringify({ ...stored, correctedBy: correction.publicationId }),
+          current.conversationId,
+          current.publicationId
+        );
+      return appended;
+    })();
   }
 
   hasTrigger(conversationId: string, triggerId: string, publicationId: string): boolean {

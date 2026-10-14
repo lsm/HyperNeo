@@ -76,6 +76,7 @@ import {
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './direct-reply-fallback.ts';
 import { createNeoRouter, type NeoRouter, reopenNeoHolder } from './router.ts';
+import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
 import {
@@ -1984,6 +1985,12 @@ export function createNeoOperations(service: NeoService) {
     createNeoIntakeOperation(service.db, service.repo, service.notifyChanged, router),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, router)),
     createNeoPublicationOperation(service.publish),
+    ...createNeoPublicationChangeOperations({
+      getBinding: (id) => service.repo.getBindingBySession(id),
+      getRootBinding: () => service.repo.getBindingForProject(null),
+      publications: service.publications,
+      notify: () => service.notifyChanged(),
+    }),
     createNeoRouteCorrectOperation(service.db, service.repo),
     createNeoAskForwardOperation({
       getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),

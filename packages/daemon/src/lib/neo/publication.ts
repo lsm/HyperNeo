@@ -32,6 +32,9 @@ export const NeoPublicationSchema = z
     triggerId: text(200).optional(),
     askSummary: text(300).optional(),
     awaiting: text(500).optional(),
+    editedAt: z.string().datetime().optional(),
+    corrects: z.string().uuid().optional(),
+    correctedBy: z.string().uuid().optional(),
   })
   .strict();
 

@@ -25,6 +25,8 @@ export const NEO_OPERATION_NAMES = [
   'neo.projects.dispatch',
   'neo.projects.reorganize',
   'neo.publication.publish',
+  'neo.publication.edit',
+  'neo.publication.correct',
   'neo.publication.read',
   'neo.route.correct',
   'neo.rule.save',
