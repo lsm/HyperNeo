@@ -15,6 +15,10 @@ export function neoCardLabel(card: NeoCardView): string {
   return `${card.label} · not checked since ${time}`;
 }
 
+export function neoContinuedLabel(count: number): string {
+  return `Neo continued it ${count === 1 ? 'once' : `${count} times`}`;
+}
+
 export function neoCardOpenLabel(card: NeoCardView | undefined): string {
   const app = neoAppLabel(card?.adapter ?? 'hyperneo');
   return app === 'HyperNeo' ? 'Open chat' : `Open in ${app}`;

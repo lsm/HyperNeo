@@ -167,7 +167,7 @@ describe('NeoLive work scene groups', () => {
     const reported = within(group('Recent outcomes')).getByRole('article', {
       name: 'Title a-reported',
     });
-    expect(within(reported).getByText('Response ready')).toBeTruthy();
+    expect(within(reported).getByText('Reply received')).toBeTruthy();
     expect(within(reported).queryByText('Report a-reported')).toBeNull();
     expect(within(reported).queryByRole('button', { name: 'Start work' })).toBeNull();
     expect(reported.textContent).not.toMatch(/verified|accepted/i);

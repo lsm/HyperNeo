@@ -45,6 +45,7 @@ export type NeoDriverTargetCard = {
   retries: number;
   startInterrupted: boolean;
   needsYouSince: number | null;
+  claimedAt: number | null;
 };
 
 export class NeoWorkDriverTargetRepository {
@@ -119,7 +120,7 @@ export class NeoWorkDriverTargetRepository {
       .prepare(
         `SELECT target, ref, follow_anchor AS followAnchor, live_status AS liveStatus,
                 started_at AS startedAt, retries, start_interrupted AS startInterrupted,
-                needs_you_since AS needsYouSince
+                needs_you_since AS needsYouSince, claimed_at AS claimedAt
            FROM neo_work_driver_targets WHERE work_id = ?`
       )
       .get(workId) as
@@ -132,6 +133,7 @@ export class NeoWorkDriverTargetRepository {
           retries: number;
           startInterrupted: number;
           needsYouSince: number | null;
+          claimedAt: number | null;
         }
       | null
       | undefined;
@@ -146,7 +148,27 @@ export class NeoWorkDriverTargetRepository {
       retries: row.retries,
       startInterrupted: !!row.startInterrupted,
       needsYouSince: row.needsYouSince,
+      claimedAt: row.claimedAt,
     };
+  }
+
+  claimAdmission(workId: string, at: number, admitted: () => boolean): boolean {
+    return this.db.transaction(
+      () =>
+        admitted() &&
+        this.db
+          .prepare(`UPDATE neo_work_driver_targets SET claimed_at = ?
+            WHERE work_id = ? AND claimed_at IS NULL AND ref IS NULL AND start_interrupted = 0`)
+          .run(at, workId).changes === 1
+    )();
+  }
+
+  releaseAdmission(workId: string): void {
+    this.db
+      .prepare(
+        'UPDATE neo_work_driver_targets SET claimed_at = NULL WHERE work_id = ? AND ref IS NULL'
+      )
+      .run(workId);
   }
 
   adoptedRefs(reportedSince: number): WorkRef[] {

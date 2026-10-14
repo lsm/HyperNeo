@@ -61,7 +61,7 @@ describe('NeoWorkCard summary presentation', () => {
   it.each([
     ['proposed', 'Your call'],
     ['queued', 'Handed to HyperNeo'],
-    ['reported', 'Response ready'],
+    ['reported', 'Reply received'],
     ['failed', 'Failed'],
     ['cancelled', 'Stopped'],
   ] as const)(

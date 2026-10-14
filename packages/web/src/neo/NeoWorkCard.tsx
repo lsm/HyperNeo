@@ -9,6 +9,7 @@ import {
   neoCardOpenLabel,
   neoCardPrimaryAction,
   neoCardTone,
+  neoContinuedLabel,
 } from './card-view.ts';
 import {
   NeoAppMark,
@@ -319,7 +320,7 @@ export function NeoWorkCard({
       )}
       {presentation === 'detail' && continuedCount > 0 && (
         <p class="mt-1 text-xs text-fg-muted" title={card.continuedMessage ?? undefined}>
-          {`Neo continued it ${continuedCount}`}
+          {neoContinuedLabel(continuedCount)}
         </p>
       )}
       {presentation === 'detail' && doneWhen && (
