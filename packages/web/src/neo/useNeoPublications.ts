@@ -178,13 +178,13 @@ export function useNeoPublications(rootSessionId: string | null) {
           if (!current()) return;
           publish((tail ? applyTail : applyPage)(before, result));
           if (edited && !tail && value.status === 'ready' && value.items.length) {
-            edited = false;
             const window = await readNeoPublications(
               { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
               async () => hub,
               current
             );
             if (!current()) return;
+            if (window.state === 'ready') edited = false;
             publish(mergePublicationEdits(value, window));
           }
           inFlight = false;

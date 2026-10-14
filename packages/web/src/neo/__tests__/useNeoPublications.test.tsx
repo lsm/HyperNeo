@@ -239,6 +239,25 @@ describe('Neo authored publication state', () => {
     ]);
   });
 
+  it('keeps an edit refresh pending when its re-read fails, and retries it on the next update', async () => {
+    render(<Probe />);
+    await waitFor(() => expect(stateText()).toContain('ready/'));
+    const edited = page(0, 1);
+    edited.items[0].shortText = 'Edited reply';
+    io.request
+      .mockResolvedValueOnce(page(1, 0))
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValueOnce(page(1, 0))
+      .mockResolvedValueOnce(edited);
+    await act(async () => {
+      for (const listener of io.edited) listener({ conversationId: id });
+    });
+    await waitFor(() => expect(requests()).toHaveLength(3));
+    expect(screen.getByTestId('items').textContent).toBe('Reply 1');
+    await changed();
+    await waitFor(() => expect(screen.getByTestId('items').textContent).toBe('Edited reply'));
+  });
+
   it('keeps an empty tail cursor and admitted history stable', async () => {
     render(<Probe />);
     await waitFor(() => expect(stateText()).toContain('ready/'));
