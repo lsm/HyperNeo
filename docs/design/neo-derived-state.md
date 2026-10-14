@@ -152,11 +152,14 @@ A publication to the human happens in three cases only:
 |---|---|
 | the human sent a message | one reply to it |
 | an ask reaches achieved, or every item is met | one sentence naming the outcome |
-| an ask gains a `humanAction`, or a card fails with no retry | one sentence naming what's needed or what broke |
+| an ask gains a `humanAction` (other than an optional Close), or a card fails with no retry while no other card under the ask is still in play | one sentence naming what's needed or what broke |
 
 - The daemon refuses every other `neo.publication.publish`, with a reason. Interim "I'm checking…" posts go away.
 - For each trigger, the daemon wakes Neo with a note naming the trigger. The publication carries the trigger's id, so it can't be repeated for the same transition.
 - A publication is written in the language of the human's last message.
+- Once an ask's outcome is reached, a failed card under it is no longer news.
+- A reply to the human covers only the ask it answered: changes on other asks still get their own note.
+- A trigger is told only once its note was delivered and Neo published for it; a note whose turn ended without a post is sent again, up to three times.
 
 ### 8. Wakes and tools
 
