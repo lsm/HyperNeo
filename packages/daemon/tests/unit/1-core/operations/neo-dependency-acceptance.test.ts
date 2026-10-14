@@ -128,7 +128,7 @@ async function chain() {
 }
 
 describe('dependency plans end to end', () => {
-  test('a card waiting on two prerequisites starts only when both are met; one prerequisite releases both dependents', async () => {
+  test('a card waiting on two prerequisites starts only when both are met', async () => {
     const { db, starts, start, answer, drain, status } = await chain();
     try {
       db.updateGlobalSettings({ neo: { autoDispatch: true } });
