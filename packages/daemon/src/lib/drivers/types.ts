@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { workStartConfiguration } from './start-configuration.ts';
+import { workStartPreparation } from './start-preparation.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 
 export const WorkStatusSchema = z.enum([
@@ -67,6 +68,7 @@ export const PlaceGroupSchema = z.object({
 
 export const WorkRejectionSchema = z.enum([
   ...workStartConfiguration.refusalSchema.options,
+  ...workStartPreparation.refusalSchema.options,
   'unknown_adapter',
   'unsupported',
   'not_found',
@@ -132,6 +134,7 @@ export interface StartRequest {
   title: string;
   message: string;
   createFolder?: boolean;
+  preparation?: z.infer<typeof workStartPreparation.schema>;
   model?: string;
   effort?: string;
 }
@@ -145,6 +148,7 @@ export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
   readonly supportsStartEffort?: boolean;
+  readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
   readonly start?: (
     request: StartRequest,

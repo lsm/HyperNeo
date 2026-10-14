@@ -1,3 +1,4 @@
+import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import type { ExternalEvent } from '../../external-events/types.ts';
@@ -58,19 +59,4 @@ export interface NeoPack extends NeoPackBrief {
   ): NeoPackEventRoute | null;
 }
 
-export type NeoExecutionPreparation = (
-  request: {
-    directory: string;
-    destination: string;
-    parameters: Readonly<Record<string, unknown>>;
-  },
-  effects: {
-    run: (
-      command: readonly string[],
-      directory: string
-    ) => Promise<{ code: number; stdout: string; stderr: string }>;
-  }
-) => Promise<
-  | { ok: true; value: { directory: string; release: () => Promise<void> } }
-  | { ok: false; reason: string }
->;
+export type NeoExecutionPreparation = WorkExecutionPreparation;
