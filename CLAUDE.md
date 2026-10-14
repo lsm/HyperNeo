@@ -46,7 +46,7 @@ Repo-specific checks inside `bun run check`, all CI-enforced:
 - `check:session-guards` — only the allowlist in `scripts/check-session-deletion-callers.sh` may call session delete/archive primitives; anything else reopens a closed data-loss path.
 - `check:operation-names` — every `defineOperation` name must be declared in `packages/shared/src/types/operation-names.ts`, and vice versa.
 - `check:db-schema-parity` — `createSpaceTables` in `packages/daemon/tests/unit/helpers/space-test-db.ts` must match the migrated schema; update it with every migration that touches a table it covers.
-- `check:test-matrix` / `check:online-shards` — every test file must land in exactly one CI shard. Shards are directory globs and hash buckets in `scripts/test-daemon.sh` and `scripts/test-online.sh`; never hand-list files.
+- `check:test-matrix` / `check:online-shards` — every test file must land in exactly one CI shard. Shard discovery uses directory globs in `scripts/test-daemon.sh` and `scripts/test-online.sh`, with duration-weighted buckets and deterministic hash fallbacks; never hand-list files.
 - `check:test-quality` — rejects assertions that cannot fail against a mocked component, and tests filed under a `describe` naming a function they never call.
 - `check:raw-palette` — no new raw Tailwind palette classes in `packages/web/src`; use theme tokens.
 - knip ignores tests, so a module nothing imports fails CI. Export or register new modules in the same PR.
@@ -97,7 +97,7 @@ ADRs in `docs/adr/` (0001 live query + job queue, 0002 job-queue migration, 0003
 
 ## Testing
 
-- Daemon unit tests live in `tests/unit/{1-core,2-handlers,4-space-storage,5-space}`; the directory picks the shard. Vitest preloads `tests/vitest.setup.ts` and aliases the SDK to `tests/sdk-mock.ts`; bare `bun test` gets the same isolation with `--preload=./tests/unit/setup.ts`.
+- Daemon unit tests under `tests/unit/` are discovered recursively and balanced across `daemon-a` through `daemon-h` using recorded file durations, with deterministic hash fallbacks for unmeasured files. Shared tests have a separate shard. Vitest preloads `tests/vitest.setup.ts` and aliases the SDK to `tests/sdk-mock.ts`; bare `bun test` gets the same isolation with `--preload=./tests/unit/setup.ts`.
 - `tests/online/` boots a real daemon. CI runs it with `HYPERNEO_USE_DEV_PROXY=1` (Anthropic traffic to the `.devproxy/` stub, real credentials blanked); `real-api-tests.yml` runs selected modules with real keys. The proxy flag must never fall back silently.
 - Flaky tests are registered in `flaky-tests.json`, not patched with retries or skips.
 - E2E acts through visible UI only: no `hub.request`, stores, or state mutation in test bodies (setup/teardown may use `hub.request`); use `closeWebSocket()`/`restoreWebSocket()`, not browser offline mode. Run one file at a time; malformed-response and token-expiry cases belong in daemon integration tests.

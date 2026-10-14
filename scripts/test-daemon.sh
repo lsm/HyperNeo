@@ -572,9 +572,8 @@ run_shard() {
 	# intermittently exceed vitest's 5s test / 10s hook defaults under CI
 	# parallel load — a different file flakes on different runs. Give the whole
 	# shard a generous budget instead of hardening each file one-by-one.
-	# Migration shards replay the full chain (28/29/33/34/35-36/47/94);
-	# 5-space does the same per-test setup in direct-kickoff-startup and
-	# direct-process-ownership.
+	# Every daemon bucket can contain migration-chain or Space database tests,
+	# so all eight buckets retain the same timeout allowance.
 	local timeout_flags
 	timeout_flags=$(shard_timeout_flags "$shard")
 
