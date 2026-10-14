@@ -95,6 +95,7 @@ export function neoAskApprovalSpent(
 }
 
 export interface NeoAskItem {
+  deliveredBy?: string | null;
   verifiedDefinitionHash?: string | null;
   id: string;
   text: string;

@@ -1,3 +1,5 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { neoOutcomeBindingPolicy } from '../../lib/neo/outcome-binding-policy.ts';
 import {
   NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
@@ -50,7 +52,7 @@ const watchJson = (item: Pick<NeoAskItem, 'watch'>) =>
   item.watch?.length ? JSON.stringify(item.watch) : null;
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch`;
+  delivered_by AS deliveredBy, verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch`;
 
 export interface NeoAskOwner {
   projectId: string;
@@ -60,6 +62,7 @@ export interface NeoAskOwner {
 
 export class NeoAskRepository {
   readonly revisionPolicy = neoAskRevisionPolicy;
+  readonly bindingPolicy = neoOutcomeBindingPolicy;
   constructor(
     private readonly db: Database,
     private readonly notify: () => void = () => {}
@@ -187,13 +190,15 @@ export class NeoAskRepository {
       | 'question'
     >,
     at: number,
-    expected?: Pick<NeoAskItem, 'text' | 'check' | 'watch'>,
+    expected?: Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'deliveredBy'>,
     verify = false
   ): boolean {
     const changed = this.db.transaction(() => {
       const current = this.get(askId)?.doneItems?.find((entry) => entry.id === item.id);
       const hash = expected ? this.revisionPolicy.definitionHash(expected) : null;
       if (!current || (hash && hash !== this.revisionPolicy.definitionHash(current))) return false;
+      if (expected && (expected.deliveredBy ?? null) !== (current.deliveredBy ?? null))
+        return false;
       const verified =
         verify && item.state === 'met' && ['daemon', 'human'].includes(item.metBy ?? '');
       const ticked = this.db
@@ -274,14 +279,83 @@ export class NeoAskRepository {
     return changed;
   }
 
+  bindItems(
+    askId: string,
+    bindings: readonly { itemId: string; deliveredBy: string | null }[],
+    expectedRevision: number,
+    at: number
+  ): { ok: boolean; reason?: string } {
+    const bind = (superpipe({})('neo-ask-bindings') as PipelineAPI)
+      .input(['askId'])
+      .pipe((id: string) => this.get(id), 'askId', 'ask')
+      .pipe(
+        (ask: NeoAsk | null) =>
+          ask?.revision === expectedRevision
+            ? { value: ask }
+            : { reason: { ok: false, reason: 'stale_ask_revision' } },
+        'ask',
+        'result:binding'
+      )
+      .pipe(
+        (ask: NeoAsk) =>
+          this.db
+            .prepare(`SELECT w.id,
+        (w.status != 'proposed' OR d.started_at IS NOT NULL) AS dispatched
+        FROM neo_work w JOIN neo_ask_work a ON a.work_id = w.id
+        LEFT JOIN neo_work_driver_targets d ON d.work_id = w.id WHERE a.ask_id = ?`)
+            .all(ask.id)
+            .map((row) => {
+              const card = row as { id: string; dispatched: number };
+              return { id: card.id, dispatched: !!card.dispatched };
+            }),
+        'binding',
+        'cards'
+      )
+      .pipe(
+        (ask: NeoAsk, cards: { id: string; dispatched: boolean }[]) =>
+          this.bindingPolicy.requireBindings(ask, bindings, cards),
+        ['binding', 'cards'],
+        'result:binding'
+      )
+      .pipe(
+        (plan: { invalidateApproval: boolean; revision: number; invalidateItemIds: string[] }) => {
+          if (!plan.invalidateApproval) return { ok: true };
+          const write =
+            this.db.prepare(`UPDATE neo_ask_items SET delivered_by = ?, state = 'pending',
+          evidence = NULL, met_by = NULL, verified_definition_hash = NULL, updated_at = ?
+          WHERE ask_id = ? AND id = ?`);
+          for (const binding of bindings)
+            if (plan.invalidateItemIds.includes(binding.itemId))
+              write.run(binding.deliveredBy, at, askId, binding.itemId);
+          this.db
+            .prepare(`UPDATE neo_asks SET revision = ?, approved_at = NULL,
+          approved_revision = NULL, updated_at = ? WHERE id = ?`)
+            .run(plan.revision, at, askId);
+          return { ok: true };
+        },
+        'binding',
+        'binding'
+      )
+      .end('binding') as (id: string) => { ok: boolean; reason?: string };
+    const result = this.db.transaction(() => bind(askId))();
+    if (result.ok) this.notify();
+    return result;
+  }
+
   fold(
     source: Pick<NeoAsk, 'id' | 'status'>,
     target: Pick<NeoAsk, 'id' | 'status'>,
     moves: readonly { from: string; id: string; position: number }[],
     outcome: string,
-    at: number
+    at: number,
+    bindOutcomes = false
   ): boolean {
     const folded = this.db.transaction(() => {
+      if (source.id === target.id || !this.get(source.id) || !this.get(target.id))
+        throw new Error('neo-ask-fold-lost');
+      const bindingPlan = bindOutcomes
+        ? this.bindingPolicy.planFold(this.get(source.id)!, this.get(target.id)!, moves)
+        : null;
       const closed = this.db
         .prepare(`UPDATE neo_asks SET status = 'abandoned', outcome = ?, evidence = ?,
           settled_at = ?, updated_at = ?, waiting_item = NULL WHERE id = ? AND status = ?`)
@@ -301,6 +375,27 @@ export class NeoAskRepository {
       this.db
         .prepare('UPDATE neo_ask_work SET ask_id = ? WHERE ask_id = ?')
         .run(target.id, source.id);
+      if (bindingPlan) {
+        const update = this.db.prepare(`UPDATE neo_ask_items SET delivered_by = ?, watch = ?,
+          question = ?, state = ?, evidence = ?, met_by = ?, verified_definition_hash = ?
+          WHERE ask_id = ? AND id = ?`);
+        for (const item of bindingPlan.items)
+          update.run(
+            item.deliveredBy ?? null,
+            watchJson(item),
+            item.question ?? null,
+            item.state,
+            item.evidence,
+            item.metBy,
+            item.verifiedDefinitionHash ?? null,
+            target.id,
+            item.id
+          );
+        this.db
+          .prepare(`UPDATE neo_asks SET revision = ?, approved_at = NULL,
+          approved_revision = NULL, approved_continues = 0 WHERE id = ?`)
+          .run(bindingPlan.revision, target.id);
+      }
     });
     try {
       folded();
