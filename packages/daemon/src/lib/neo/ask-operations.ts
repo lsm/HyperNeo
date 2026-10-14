@@ -576,7 +576,7 @@ function requireNeoAskTick(
   if (input.state === 'needs_you')
     return {
       reason: fail(
-        'needs_you_removed: ask the human with neo.ask.question {askId, question, options}. A decision is its own item, so never tick an outcome item needs_you; keep it pending.'
+        'needs_you_removed: ask the human with neo.ask.question {askId, question, options, kind}. A decision is its own item, so never tick an outcome item needs_you; keep it pending.'
       ),
     };
   const path =

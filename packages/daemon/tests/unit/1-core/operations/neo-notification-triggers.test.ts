@@ -454,6 +454,40 @@ describe('NeoService notification triggers', () => {
     );
   });
 
+  test('a note whose running turn then posts is never sent again', async () => {
+    const opened = open();
+    seed();
+    tickMet(opened);
+    await sweep();
+    await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
+    db.getSDKMessageRepo().saveSDKMessage(root, {
+      type: 'user',
+      uuid: mailbox()[0].messageUuid,
+      session_id: root,
+      parent_tool_use_id: null,
+      inputKind: 'system',
+      message: { role: 'user', content: 'note' },
+    } as unknown as SDKUserMessage);
+    const status = (service as unknown as { processingStatus: Map<string, string> })
+      .processingStatus;
+    status.set(root, 'processing');
+    await sweep();
+    service.publications.append({
+      conversationId,
+      publicationId: '20000000-0000-4000-8000-000000000009',
+      askOrigin: { sessionId: root, messageId: m0 },
+      producerInput: { sessionId: root, messageId: mailbox()[0].messageUuid },
+      shortText: 'The composer is fixed.',
+      fullText: 'The composer is fixed.',
+      links: [],
+      triggerId: mailbox()[0].messageUuid.slice('neo-trigger:'.length),
+    });
+    status.set(root, 'idle');
+    await sweep();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mailbox()).toHaveLength(1);
+  });
+
   test('a reply to one ask does not swallow a question that appeared on another', async () => {
     seed();
     const opened = open();

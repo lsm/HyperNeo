@@ -3336,7 +3336,7 @@ describe('isNeoCardAsk', () => {
 describe('neoPrompt decision items', () => {
   test('tells Neo to ask a decision with neo.ask.question instead of ticking an outcome item', () => {
     expect(neoPrompt(null)).toContain(
-      'reaches them only as neo.ask.question {askId, question, options}'
+      'reaches them only as neo.ask.question {askId, question, options, kind}'
     );
     expect(neoPrompt(null)).toContain('never tick an outcome item for a decision');
     expect(neoPrompt(null)).not.toContain('needs_you');

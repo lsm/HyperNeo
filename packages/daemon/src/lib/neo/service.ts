@@ -1131,7 +1131,7 @@ export class NeoService {
     )) {
       const ask = this.askRecords.get(askId);
       const target = ask ? this.repo.getBindingForProject(ask.projectId)?.sessionId : null;
-      if (!ask || !target) continue;
+      if (!ask || !target || this.isTriggerOwnerBusy(ask)) continue;
       const plan = planNeoTriggerRetry(
         this.publications.hasTrigger(conversationId, triggerId, ''),
         this.triggers.noteStatuses(target, neoTriggerMessageIds(triggerId))
