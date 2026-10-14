@@ -49,6 +49,7 @@ const card = (workId: string, extra: Partial<NeoCardView> = {}): NeoCardView => 
   pooled: false,
   superseded: false,
   uncheckedSince: null,
+  checkedAt: null,
   unconfirmed: false,
   abandoned: false,
   retryable: false,

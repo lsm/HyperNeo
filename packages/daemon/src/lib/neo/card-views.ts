@@ -264,6 +264,7 @@ export function describeNeoCard(work: NeoWork, index: CardIndex): NeoCardView {
     pooled: index.pooled.has(work.id),
     superseded: index.superseded.has(work.id),
     uncheckedSince: driver?.uncheckedSince ?? null,
+    checkedAt: driver?.checkedAt ?? null,
     unconfirmed: !!driver?.unconfirmed,
     abandoned: !!driver?.abandoned,
     retryable,

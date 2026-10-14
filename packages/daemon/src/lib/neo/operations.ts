@@ -845,9 +845,11 @@ export function createNeoOperations(service: NeoService) {
   function workDrivers(workIds: string[]) {
     return service.driverTargets.receipts(workIds).map((receipt) => {
       const since = service.uncheckedSince(receipt.workId);
+      const checkedAt = service.checkedAt(receipt.workId);
       return {
         ...receipt,
         ...(since === null ? {} : { uncheckedSince: since }),
+        ...(checkedAt === null ? {} : { checkedAt }),
         ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
       };
     });

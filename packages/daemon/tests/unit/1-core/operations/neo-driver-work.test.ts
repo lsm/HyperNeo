@@ -1148,6 +1148,8 @@ describe('Neo work with a drivers target', () => {
       );
       expect(restarted.uncheckedSince('work-1')).toBe(1_000);
       expect(restarted.uncheckedSince('work-unknown')).toBeNull();
+      expect(restarted.checkedAt('work-1')).toBe(1_000);
+      expect(restarted.checkedAt('work-unknown')).toBeNull();
     } finally {
       db.close();
     }

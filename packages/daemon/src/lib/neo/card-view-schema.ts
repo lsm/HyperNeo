@@ -71,6 +71,7 @@ export const NeoCardViewSchema = z.object({
   pooled: z.boolean(),
   superseded: z.boolean(),
   uncheckedSince: z.number().nullable(),
+  checkedAt: z.number().nullable(),
   unconfirmed: z.boolean(),
   abandoned: z.boolean(),
   retryable: z.boolean(),

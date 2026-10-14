@@ -983,6 +983,10 @@ export class NeoService {
     return changed;
   }
 
+  checkedAt(workId: string): number | null {
+    return this.driverTargets.readCardCheck(workId)?.checkedAt ?? null;
+  }
+
   uncheckedSince(workId: string): number | null {
     const check = this.driverTargets.readCardCheck(workId);
     return check?.unchecked ? check.checkedAt : null;
