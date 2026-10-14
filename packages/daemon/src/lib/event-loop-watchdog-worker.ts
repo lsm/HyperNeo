@@ -81,17 +81,35 @@ setInterval(() => {
   }
 }, checkIntervalMs);
 
-function sampleStalledThread(wait: boolean): string | null {
+function samplingArgs(): string[] | null {
   if (!stackPath || process.platform !== 'darwin' || !existsSync(SAMPLER)) return null;
-  const args = [String(pid), '1', '-file', stackPath];
+  return [String(pid), '1', '-file', stackPath];
+}
+
+function sampled(): string | null {
+  if (!stackPath || !existsSync(stackPath)) return null;
+  writeSync(2, `[EventLoopWatchdog] sampled the stalled daemon's stacks into ${stackPath}\n`);
+  return stackPath;
+}
+
+function sampleBeforeKill(): string | null {
+  const args = samplingArgs();
+  if (!args) return null;
+  const run = spawnSync(SAMPLER, args, { stdio: 'ignore', timeout: 10_000 });
+  return run.error || run.status !== 0 ? null : sampled();
+}
+
+function sampleInBackground(done: (stack: string) => void): void {
+  const args = samplingArgs();
+  if (!args) return;
   try {
-    if (wait) spawnSync(SAMPLER, args, { stdio: 'ignore', timeout: 10_000 });
-    else spawn(SAMPLER, args, { stdio: 'ignore' }).on('error', () => {});
-    writeSync(2, `[EventLoopWatchdog] sampled the stalled daemon's stacks into ${stackPath}\n`);
-    return stackPath;
-  } catch {
-    return null;
-  }
+    spawn(SAMPLER, args, { stdio: 'ignore' })
+      .on('error', () => {})
+      .on('close', (code) => {
+        const stack = code === 0 ? sampled() : null;
+        if (stack) done(stack);
+      });
+  } catch {}
 }
 
 function writeMarker(reason: string, action: 'killed' | 'observed', stack: string | null): void {
@@ -106,9 +124,10 @@ function writeMarker(reason: string, action: 'killed' | 'observed', stack: strin
 
 function report(reason: string, notice: WatchdogNotice): void {
   const action = killMode === 'sigkill' ? 'killed' : 'observed';
-  const stack =
-    notice.type === 'stall-detected' ? sampleStalledThread(killMode === 'sigkill') : null;
-  writeMarker(reason, action, stack);
+  const stalled = notice.type === 'stall-detected';
+  writeMarker(reason, action, stalled && killMode === 'sigkill' ? sampleBeforeKill() : null);
+  if (stalled && killMode !== 'sigkill')
+    sampleInBackground((stack) => writeMarker(reason, action, stack));
   if (killMode === 'sigkill') {
     writeSync(2, `[EventLoopWatchdog] killing daemon pid=${pid}: ${reason}\n`);
     process.kill(pid, 'SIGKILL');

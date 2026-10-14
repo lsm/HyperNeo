@@ -225,31 +225,54 @@ describe('event-loop-watchdog', () => {
     }
   }, 12_000);
 
-  test('a spinning process is left alive by default and still leaves a marker', async () => {
+  async function observeStall(stackPath: string) {
     const markerPath = join(tmpdir(), `watchdog-observe-${process.pid}-${Date.now()}.json`);
-    const stackPath = join(tmpdir(), `watchdog-observe-${process.pid}-${Date.now()}-stack.txt`);
     const { child, stderrText } = spawnBunFixture('event-loop-watchdog-observe-fixture.ts', {
       WATCHDOG_MARKER_PATH: markerPath,
       WATCHDOG_STACK_PATH: stackPath,
     });
-    const sampled = process.platform === 'darwin' && existsSync('/usr/bin/sample');
     try {
       await new Promise((resolve) => setTimeout(resolve, 2500));
-      expect(child.kill(0)).toBe(true);
-      expect(stderrText()).toContain('[EventLoopWatchdog] daemon pid=');
-      expect(stderrText()).not.toContain('killing daemon');
-      expect(readAndClearEventLoopStallMarker(markerPath)).toMatchObject(
-        sampled ? { action: 'observed', stack: stackPath } : { action: 'observed' }
-      );
-      for (let waited = 0; sampled && !existsSync(stackPath) && waited < 8000; waited += 250)
+      for (
+        let waited = 0;
+        !readFileSync(markerPath, 'utf8').includes('"stack"') && waited < 6000;
+        waited += 250
+      )
         await new Promise((resolve) => setTimeout(resolve, 250));
-      expect(existsSync(stackPath)).toBe(sampled);
-      if (sampled) expect(readFileSync(stackPath, 'utf8')).toContain('Call graph');
+      return {
+        alive: child.kill(0),
+        stderr: stderrText(),
+        marker: readAndClearEventLoopStallMarker(markerPath),
+      };
     } finally {
       child.kill('SIGKILL');
       rmSync(markerPath, { force: true });
+    }
+  }
+
+  const sampler = process.platform === 'darwin' && existsSync('/usr/bin/sample');
+
+  test('a spinning process is left alive by default and still leaves a marker', async () => {
+    const stackPath = join(tmpdir(), `watchdog-observe-${process.pid}-${Date.now()}-stack.txt`);
+    try {
+      const { alive, stderr, marker } = await observeStall(stackPath);
+      expect(alive).toBe(true);
+      expect(stderr).toContain('[EventLoopWatchdog] daemon pid=');
+      expect(stderr).not.toContain('killing daemon');
+      expect(marker).toMatchObject({ action: 'observed' });
+      expect(marker?.stack).toBe(sampler ? stackPath : undefined);
+      expect(existsSync(stackPath)).toBe(sampler);
+      if (sampler) expect(readFileSync(stackPath, 'utf8')).toContain('Call graph');
+    } finally {
       rmSync(stackPath, { force: true });
     }
+  }, 20_000);
+
+  test('a stack sample that could not be written is not recorded in the marker', async () => {
+    const { stderr, marker } = await observeStall(join(tmpdir(), 'no-such-dir', 'stack.txt'));
+    expect(marker).toMatchObject({ action: 'observed' });
+    expect(marker?.stack).toBeUndefined();
+    expect(stderr).not.toContain('sampled the stalled');
   }, 20_000);
 
   test('survives whole-process suspension longer than the stall threshold', async () => {
