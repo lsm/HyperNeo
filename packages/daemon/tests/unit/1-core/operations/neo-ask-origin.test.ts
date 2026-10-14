@@ -1,3 +1,4 @@
+import { runMigration366 } from '../../../../src/storage/schema/m366-neo-work-dependencies.ts';
 import { runMigration358 } from '../../../../src/storage/schema/m358-neo-ask-revisions.ts';
 import { runMigration362 } from '../../../../src/storage/schema/m362-neo-driver-configuration.ts';
 import { runMigration363 } from '../../../../src/storage/schema/m363-neo-work-refusals.ts';
@@ -336,6 +337,7 @@ describe('real SQLite ask lineage facade', () => {
     runMigration344(mailbox.db);
     runMigration358(mailbox.db);
     runMigration362(mailbox.db);
+    runMigration366(mailbox.db);
     db = {
       getDatabase: () => mailbox.db,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,

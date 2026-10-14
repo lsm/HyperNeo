@@ -104,6 +104,33 @@ describe('neoCardPhase', () => {
 });
 
 describe('projectNeoCardViews', () => {
+  test('a waiting card carries its unverified prerequisites, its automatic start and any uncertain start', () => {
+    const waitingFor = [
+      {
+        workId: 'p',
+        title: 'Land the API',
+        reason: 'outcomes_unverified',
+        items: [{ id: 'i1', text: 'API merged to dev' }],
+      },
+    ];
+    const cards = projectNeoCardViews(
+      parts({
+        work: [work('w', 'proposed'), work('u', 'failed'), work('plain', 'proposed')],
+        waits: [
+          { workId: 'w', waitingFor, autoStart: true, uncertain: false },
+          { workId: 'u', waitingFor: [], autoStart: false, uncertain: true },
+        ],
+      })
+    );
+    expect(cards[0]).toMatchObject({ waitingFor, autoStart: true, phase: 'proposed' });
+    expect(cards[0]).not.toHaveProperty('uncertain');
+    expect(cards[1]).toMatchObject({ uncertain: true });
+    expect(cards[1]).not.toHaveProperty('waitingFor');
+    expect(cards[2]).not.toHaveProperty('waitingFor');
+    expect(cards[2]).not.toHaveProperty('autoStart');
+    for (const card of cards) expect(NeoCardViewSchema.parse(card)).toEqual(card);
+  });
+
   test('a queued card waiting on Codex asks the user to answer there', () => {
     const cards = projectNeoCardViews(
       parts({

@@ -75,7 +75,12 @@ export class NeoWorkDriverTargetRepository {
     return target.success ? target.data : null;
   }
 
-  reassign(repo: NeoRepository, work: NeoWork, candidates: WorkRef[]) {
+  reassign(
+    repo: NeoRepository,
+    work: NeoWork,
+    candidates: WorkRef[],
+    waiting: ReadonlySet<string> = new Set()
+  ) {
     return this.db.transaction(() => {
       if (
         !['proposed', 'queued'].includes(work.status) ||
@@ -86,7 +91,12 @@ export class NeoWorkDriverTargetRepository {
       const agents = new NeoAgentWorkTargetRepository(this.db);
       const occupied = new Set(
         repo.listWork().flatMap((other) => {
-          if (other.id === work.id || !['proposed', 'queued'].includes(other.status)) return [];
+          if (
+            other.id === work.id ||
+            waiting.has(other.id) ||
+            !['proposed', 'queued'].includes(other.status)
+          )
+            return [];
           const target = this.get(other.id);
           const ref = this.readRef(other.id) ?? (target && 'ref' in target ? target.ref : null);
           const local = other.sessionId ?? other.targetSessionId;

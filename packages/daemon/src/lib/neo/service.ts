@@ -228,7 +228,13 @@ import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { buildNeoCheckRegistry } from './packs/check-registry.ts';
 import { scheduleNeoAdmissionWake } from './admission-wake.ts';
-import { admitNeoWork, neoAdmissionRefusal, neoOutcomeEligibility } from './work-admission.ts';
+import {
+  admitNeoWork,
+  isNeoAdmissionApproved,
+  neoAdmissionRefusal,
+  neoOutcomeEligibility,
+} from './work-admission.ts';
+import type { NeoCardWait } from './card-views.ts';
 import {
   neoEnabledPacks,
   neoSettingsPackBriefs,
@@ -1528,6 +1534,45 @@ export class NeoService {
     return admitted;
   }
 
+  private waitingCards() {
+    return this.dependencies.waiting(neoOutcomeEligibility(this.checkRegistry()));
+  }
+
+  cardWaits(workIds: readonly string[], now = Date.now()): NeoCardWait[] {
+    const waiting = this.waitingCards();
+    const auto = this.db.getGlobalSettings?.().neo?.autoDispatch === true;
+    return workIds.flatMap((id) => {
+      const blockers = waiting.get(id) ?? [];
+      const status = this.repo.getWork(id)?.status;
+      const uncertain =
+        ['proposed', 'queued', 'failed'].includes(status ?? '') &&
+        this.driverTargets.readStartInterrupted(id);
+      if (!blockers.length && !uncertain) return [];
+      const authorized =
+        this.dependencies.hasStartIntent(id) ||
+        isNeoAdmissionApproved(this.askRecords.forWork(id), now);
+      return [
+        {
+          workId: id,
+          waitingFor: blockers.map((blocker) => {
+            const items = this.askRecords.forWork(blocker.workId)?.doneItems ?? [];
+            return {
+              workId: blocker.workId,
+              title: this.repo.getWork(blocker.workId)?.title ?? blocker.workId,
+              reason: blocker.reason,
+              items: blocker.itemIds.map((itemId) => ({
+                id: itemId,
+                text: items.find((item) => item.id === itemId)?.text ?? itemId,
+              })),
+            };
+          }),
+          autoStart: auto && blockers.length > 0 && authorized,
+          uncertain,
+        },
+      ];
+    });
+  }
+
   editDependencies(workId: string, dependsOn: readonly string[], now = Date.now()) {
     const work = this.repo.getWork(workId);
     if (work && awaitingNeoWorker(work))
@@ -1739,7 +1784,13 @@ export class NeoService {
           report: NEO_WORK_AWAITING_WORKER,
         }),
       find: (input) => this.invokeAsCard(work, 'work.find', input),
-      reserve: (current, candidates) => this.driverTargets.reassign(this.repo, current, candidates),
+      reserve: (current, candidates) =>
+        this.driverTargets.reassign(
+          this.repo,
+          current,
+          candidates,
+          new Set(this.waitingCards().keys())
+        ),
       start: (next, target) => this.startDriverWork(next, target, tried),
       returnToNeo: async (next, place) => {
         await this.deliver(
