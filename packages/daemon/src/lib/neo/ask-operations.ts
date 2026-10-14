@@ -788,6 +788,22 @@ export function requireNeoAskDecisionKept<T>(
 }
 
 const heardText = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim();
+const WORD_EDGE = /[\p{Script=Latin}\p{N}]/u;
+const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+export function isNeoHumanQuote(words: string, text: string): boolean {
+  if (CJK.test(words) ? [...words.replace(/\s/g, '')].length < 4 : words.split(' ').length < 2)
+    return false;
+  for (let at = text.indexOf(words); at >= 0; at = text.indexOf(words, at + 1)) {
+    const before = text[at - 1] ?? ' ';
+    const after = text[at + words.length] ?? ' ';
+    const cut =
+      (WORD_EDGE.test(before) && WORD_EDGE.test(words[0]!)) ||
+      (WORD_EDGE.test(after) && WORD_EDGE.test(words.at(-1)!));
+    if (!cut) return true;
+  }
+  return false;
+}
 
 export function requireNeoAskScopeCut(
   input: Pick<z.infer<typeof Edit>, 'remove' | 'humanSaid'>,
@@ -813,12 +829,12 @@ export function requireNeoAskScopeCut(
     !turn.consultationId &&
     turn.isLive() &&
     words.length > 0 &&
-    said.some((text) => heardText(text).includes(words));
+    said.some((text) => isNeoHumanQuote(words, heardText(text)));
   return heard
     ? { value: ask }
     : {
         reason: fail(
-          `scope_kept: ${unfinished.map((item) => `${item.id} "${item.text}"`).join('; ')} is not done, and only the human drops unfinished work. Remove it only in the turn where they tell you to drop it, passing humanSaid with their words from that message; otherwise keep it pending and keep working on it, or settle waiting with a question if you need them to decide.`
+          `scope_kept: ${unfinished.map((item) => `${item.id} "${item.text}"`).join('; ')} is not done, and only the human drops unfinished work. Remove it only in the turn where they tell you to drop it, passing humanSaid with their words from that message (at least two whole words, or four characters of Chinese or Japanese); otherwise keep it pending and keep working on it, or settle waiting with a question if you need them to decide.`
         ),
       };
 }

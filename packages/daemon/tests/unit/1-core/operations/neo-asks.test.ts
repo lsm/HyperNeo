@@ -23,6 +23,7 @@ import {
   requireNeoAskApprovalLapsed,
   requireNeoAskItemKind,
   isNeoAskHandedOver,
+  isNeoHumanQuote,
   requireNeoAskEdit,
   planNeoAskWorkStops,
   planNeoCardAsk,
@@ -3559,5 +3560,19 @@ describe('neoAskTitleNamedIn', () => {
     ['a title shorter than four characters', 'Fix it now', 'Fix', false],
   ])('%s', (_label, text, title, named) => {
     expect(neoAskTitleNamedIn(text, title)).toBe(named);
+  });
+});
+
+describe('isNeoHumanQuote', () => {
+  test.each([
+    ['drop ci green', 'please drop ci green, we ship without it.', true],
+    ['ci green', 'skip ci green', true],
+    ['不要这个测试了', '那个不要这个测试了，先发布', true],
+    ['update', 'any update?', false],
+    ['y upd', 'any update?', false],
+    ['不要', '不要了', false],
+    ['drop it', 'never drop items', false],
+  ])('%s in %s → %s', (words, text, heard) => {
+    expect(isNeoHumanQuote(words, text)).toBe(heard);
   });
 });
