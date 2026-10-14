@@ -143,10 +143,12 @@ export function neoAskApproval(
   if (!ask.approvedAt) return null;
   const used = ask.approvedContinues ?? 0;
   const limit = ask.approvedContinueLimit;
-  const spent = actions.some((action) => action.kind === 'approve');
+  const approve = actions.find((action) => action.kind === 'approve');
+  const spent = !!approve;
   const count =
     limit !== undefined ? `${used} of ${limit} continues used` : `${used} continues used`;
-  return { line: spent ? `${count} · approval ran out` : count, spent };
+  const why = approve?.reason === 'stalled' ? 'a step stalled' : 'approval ran out';
+  return { line: spent ? `${count} · ${why}` : count, spent };
 }
 
 export type NeoAskApprovalBadge = { label: string; title: string };

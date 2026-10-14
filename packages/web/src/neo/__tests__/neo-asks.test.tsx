@@ -506,6 +506,22 @@ describe('NeoAskCard', () => {
     expect(within(card.getByRole('list', { name: 'Questions' })).getByText('Item i4')).toBeTruthy();
   });
 
+  it('points a reported question at its Confirm control, not an answer', () => {
+    const view = describeAsk(
+      {
+        ...ask('w', 'waiting', []),
+        doneItems: [item('i2', 'reported', { text: 'Ship it?', kind: 'decision' })],
+      },
+      [],
+      { humanActions: [{ kind: 'confirm', itemId: 'i2', step: 'Ship it?' }] }
+    );
+    const card = render(<NeoAskCard view={view} onDone={vi.fn()} />);
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    const questions = within(card.getByRole('list', { name: 'Questions' }));
+    expect(questions.getByRole('button', { name: 'Confirm above' })).toBeTruthy();
+    expect(questions.queryByRole('button', { name: 'Answer above' })).toBeNull();
+  });
+
   it('keeps Answer in chat when a question has no options to tap', () => {
     const inChat = vi.fn();
     const view = describeAsk(
@@ -601,6 +617,9 @@ describe('NeoAskCard', () => {
       line: '3 of 20 continues used · approval ran out',
       spent: true,
     });
+    expect(
+      neoAskApproval(budget, [{ kind: 'approve', reason: 'stalled', workIds: ['a1'] }])
+    ).toEqual({ line: '3 of 20 continues used · a step stalled', spent: true });
     const approve = vi.fn();
     const counted = { ...budget, approvedContinues: 20, approvalSpent: 'continues' as const };
     const quiet = render(<NeoAskCard view={describeAsk(counted, [])} onApprove={approve} />);

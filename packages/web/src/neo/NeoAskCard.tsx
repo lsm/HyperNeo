@@ -149,7 +149,7 @@ const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> =
   pending: { mark: '○', color: 'text-fg-faint' },
 };
 
-function ItemRow({ item, answerAbove }: { item: NeoAskItem; answerAbove?: boolean }) {
+function ItemRow({ item, above }: { item: NeoAskItem; above?: NeoAskItemAction['kind'] }) {
   const glyph = itemGlyphs[item.state];
   const tags = [
     item.removed && 'removed',
@@ -172,7 +172,7 @@ function ItemRow({ item, answerAbove }: { item: NeoAskItem; answerAbove?: boolea
           {item.text}
         </span>
         {tags.length > 0 && <span class="ml-2 text-xs text-fg-faint">{tags.join(' · ')}</span>}
-        {answerAbove && (
+        {above && (
           <button
             type="button"
             class="ml-2 text-xs text-accent hover:underline"
@@ -183,7 +183,7 @@ function ItemRow({ item, answerAbove }: { item: NeoAskItem; answerAbove?: boolea
                 ?.scrollIntoView({ block: 'nearest' })
             }
           >
-            Answer above
+            {above === 'confirm' ? 'Confirm above' : 'Answer above'}
           </button>
         )}
         {item.evidence && (item.state === 'met' || item.state === 'reported') && (
@@ -203,12 +203,12 @@ function Checklist({
 }: {
   items: readonly NeoAskItem[];
   label: string;
-  answerable?: ReadonlySet<string>;
+  answerable?: ReadonlyMap<string, NeoAskItemAction['kind']>;
 }) {
   return (
     <ul aria-label={label} class="space-y-1.5">
       {items.map((item) => (
-        <ItemRow key={item.id} item={item} answerAbove={answerable?.has(item.id)} />
+        <ItemRow key={item.id} item={item} above={answerable?.get(item.id)} />
       ))}
     </ul>
   );
@@ -320,7 +320,7 @@ export function NeoAskCard({
   const count = neoAskOutcomeCount(view.items);
   const outcomes = view.items.filter((item) => !isNeoAskQuestionItem(item));
   const questions = view.items.filter(isNeoAskQuestionItem);
-  const answerable = new Set(itemActions.map((action) => action.itemId));
+  const answerable = new Map(itemActions.map((action) => [action.itemId, action.kind]));
   const answeredAbove = itemActions.some(
     (action) =>
       action.kind === 'answer' && action.itemId === view.answer?.itemId && action.options.length > 0
@@ -497,7 +497,7 @@ export function NeoAskCard({
             type="button"
             class={neoPrimaryClass}
             disabled={disabled}
-            title="Work stopped until you approve again: the approval ran out."
+            title={badge?.title}
             onClick={onApprove}
           >
             Approve again
