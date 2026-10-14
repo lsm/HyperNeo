@@ -1569,6 +1569,16 @@ export class NeoService {
     return admitted;
   }
 
+  private waitingCardIds(): ReadonlySet<string> {
+    return new Set(this.waitingCards().keys());
+  }
+
+  private workerHeldElsewhere(work: NeoWork, ref: WorkRef): boolean {
+    return this.driverTargets
+      .occupiedWorkers(this.repo, work.id, this.waitingCardIds())
+      .has(neoWorkerRefKey(ref));
+  }
+
   private waitingCards() {
     return this.dependencies.waiting(neoOutcomeEligibility(this.checkRegistry()));
   }
@@ -1735,8 +1745,8 @@ export class NeoService {
     }
     if (
       target.verb === 'send' &&
-      awaitingNeoWorker(work) &&
-      work.report !== NEO_WORK_RESERVED_WORKER
+      ((awaitingNeoWorker(work) && work.report !== NEO_WORK_RESERVED_WORKER) ||
+        (work.status === 'proposed' && this.workerHeldElsewhere(work, target.ref)))
     ) {
       await this.rerouteDriverWork(work, target.ref, tried);
       return;
@@ -1816,7 +1826,8 @@ export class NeoService {
           report: NEO_WORK_AWAITING_WORKER,
         }),
       find: (input) => this.invokeAsCard(work, 'work.find', input),
-      reserve: (current, candidates) => this.driverTargets.reassign(this.repo, current, candidates),
+      reserve: (current, candidates) =>
+        this.driverTargets.reassign(this.repo, current, candidates, this.waitingCardIds()),
       start: (next, target) => this.startDriverWork(next, target, tried),
       returnToNeo: async (next, place) => {
         await this.deliver(
