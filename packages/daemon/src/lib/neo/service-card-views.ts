@@ -38,7 +38,7 @@ function projectNeoServiceCards(
     goals: service.workGoals.list(workIds),
     continues: service.workContinues.list(workIds),
     supersessions: service.workSupersessions.list(workIds),
-    refusals: service.workRefusals.list().filter((row) => workIds.includes(row.workId)),
+    refusals: service.workRefusals.list(workIds),
     asks,
   });
   return { asks, cards, workPrs };
