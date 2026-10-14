@@ -162,6 +162,25 @@ describe('NeoService.admitWork', () => {
     }
   });
 
+  test('a start already in flight shares the driver start, and a claim from before boot is uncertain', async () => {
+    const { db, service, starts } = await setup();
+    try {
+      const [, admitted] = await Promise.all([service.start('a'), service.admitWork('a', true)]);
+      expect(admitted).toEqual({ ok: true, handoff: 'started' });
+      expect(starts).toHaveLength(1);
+      db.getDatabase()
+        .prepare('UPDATE neo_work_driver_targets SET claimed_at = 1 WHERE work_id = ?')
+        .run('b');
+      expect(await service.admitWork('b', true)).toEqual({
+        ok: false,
+        reason: 'handoff_uncertain',
+      });
+      expect(starts).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test('automatic admission needs the current approved revision; a human start does not', async () => {
     const { db, service, starts } = await setup();
     try {

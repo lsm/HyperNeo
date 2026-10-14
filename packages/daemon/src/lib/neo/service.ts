@@ -479,6 +479,7 @@ export class NeoService {
   private readonly noteQueue: NeoNoteQueueDeps;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
+  private readonly bootedAt = Date.now();
   private readonly deliveries = new Map<string, Promise<void>>();
   private readonly processingStatus = new Map<string, string>();
   private readonly interruptedSessions = new Set<string>();
@@ -1245,6 +1246,10 @@ export class NeoService {
   }
 
   async start(id: string): Promise<void> {
+    return this.startPending(id);
+  }
+
+  private startPending(id: string): Promise<void> {
     const current = this.workPending.get(id);
     if (current) return current;
     const operation = this.startReservedWork(id)
@@ -1301,13 +1306,14 @@ export class NeoService {
   admitWork(id: string, human: boolean, now = Date.now()) {
     const eligible = neoOutcomeEligibility(this.checkRegistry());
     return admitNeoWork(id, human, now, {
+      bootedAt: this.bootedAt,
       readWork: (workId: string) => this.repo.getWork(workId),
       readAsk: (workId: string) => this.askRecords.forWork(workId),
       readCard: (workId: string) => this.driverTargets.readCard(workId),
       readBlockers: (workId: string) => this.dependencies.blockers(workId, eligible),
       claim: (workId: string, admitted: () => boolean) =>
         this.driverTargets.claimAdmission(workId, now, admitted),
-      handOff: (work: NeoWork) => this.startReservedWork(work.id),
+      handOff: (work: NeoWork) => this.startPending(work.id),
       release: (workId: string) => this.driverTargets.releaseAdmission(workId),
       markUncertain: (workId: string) => this.driverTargets.recordStartInterrupted(workId),
     });

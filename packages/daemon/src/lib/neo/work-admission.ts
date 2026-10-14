@@ -10,16 +10,18 @@ import type { buildNeoCheckRegistry } from './packs/check-registry.ts';
 
 type NeoAdmissionBlocker = { workId: string; reason: string; itemIds: string[] };
 type NeoAdmissionRefusal = { ok: false; reason: string; blockers?: NeoAdmissionBlocker[] };
-type NeoAdmissionHandoff = 'started' | 'uncertain' | 'not_started';
+type NeoAdmissionHandoff = 'started' | 'reported' | 'uncertain' | 'not_started';
 type NeoAdmissionSnapshot = {
   work: NeoWork | null;
   ask: NeoAsk | null;
   card: NeoDriverTargetCard | null;
   blockers: NeoAdmissionBlocker[];
+  bootedAt: number;
 };
 type Admissible = NeoAdmissionSnapshot & { work: NeoWork; card: NeoDriverTargetCard };
 
 export interface NeoAdmissionDeps {
+  bootedAt: number;
   readWork(id: string): NeoWork | null;
   readAsk(id: string): NeoAsk | null;
   readCard(id: string): NeoDriverTargetCard | null;
@@ -50,6 +52,7 @@ function readNeoAdmission(workId: string, deps: NeoAdmissionDeps): NeoAdmissionS
     ask: work ? deps.readAsk(workId) : null,
     card: work ? deps.readCard(workId) : null,
     blockers: work ? deps.readBlockers(workId) : [],
+    bootedAt: deps.bootedAt,
   };
 }
 
@@ -64,7 +67,9 @@ function requireNeoAdmissionCard(snapshot: NeoAdmissionSnapshot) {
 function requireNeoAdmissionHandoff(snapshot: Admissible) {
   if (snapshot.card.ref) return refuse('already_started');
   if (snapshot.card.startInterrupted) return refuse('handoff_uncertain');
-  if (snapshot.card.claimedAt !== null) return refuse('already_claimed');
+  const { claimedAt } = snapshot.card;
+  if (claimedAt !== null)
+    return refuse(claimedAt < snapshot.bootedAt ? 'handoff_uncertain' : 'already_claimed');
   return { value: snapshot };
 }
 
@@ -126,11 +131,12 @@ export const admitNeoWork = (superpipe({})('neo-work-admission') as PipelineAPI)
         deps.markUncertain(admitted.work.id);
         throw error;
       }
+      const work = deps.readWork(admitted.work.id);
       const card = deps.readCard(admitted.work.id);
-      if (card?.ref) return 'started';
       if (card?.startInterrupted) return 'uncertain';
-      deps.release(admitted.work.id);
-      return 'not_started';
+      if (!card?.ref) deps.release(admitted.work.id);
+      if (work?.status === 'reported') return 'reported';
+      return card?.ref && work?.status === 'queued' ? 'started' : 'not_started';
     },
     ['admission', 'deps'],
     'handoff'
