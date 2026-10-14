@@ -1,3 +1,4 @@
+import { NeoAskBindingError } from '../../storage/repositories/neo-ask-repository.ts';
 import type { NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
@@ -82,6 +83,7 @@ export const NeoAskSchema = z.object({
         evidence: z.string().nullable(),
         check: z.string().min(1).nullable(),
         verifiedDefinitionHash: z.string().nullable().optional(),
+        deliveredBy: z.string().nullable().optional(),
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
         removed: z.boolean(),
         addedAt: z.number().nullable(),
@@ -116,7 +118,11 @@ const WatchUrl = z
     new RegExp(`^https://${GITHUB_REF_PATH.source}$`),
     'Pass a GitHub pull request or issue URL.'
   );
+const DeliveredBy = z.string().trim().min(1).nullable().optional();
 const Item = z.object({
+  deliveredBy: DeliveredBy.describe(
+    'Stable card ID delivering this outcome. On open only an unlinked card from the same owner/project can be claimed; on edit use a card already on this ask.'
+  ),
   text: z.string().trim().min(1).max(300),
   check: CheckKind.nullable().default(null),
   watch: z.array(WatchUrl).min(1).max(10).optional(),
@@ -202,6 +208,9 @@ const Edit = z
     askId: z.string().min(1),
     add: z.array(Item).default([]),
     remove: z.array(z.string().min(1)).default([]),
+    bind: z
+      .array(z.object({ itemId: z.string().min(1), deliveredBy: DeliveredBy.unwrap() }))
+      .default([]),
     track: z
       .array(
         z
@@ -215,8 +224,8 @@ const Edit = z
       .default([]),
   })
   .refine(
-    (input) => input.add.length || input.remove.length || input.track.length,
-    'Pass items to add, remove or track.'
+    (input) => input.add.length || input.remove.length || input.track.length || input.bind.length,
+    'Pass items to add, remove, track or bind.'
   );
 
 const fail = (reason: string): Rejection => ({ ok: false, reason });
@@ -664,6 +673,7 @@ export function planNeoAskQuestion(
     add: [{ text: input.question, check: null }],
     remove: [],
     track: [],
+    bind: [],
   }).add;
   return {
     ...slot,
@@ -686,6 +696,7 @@ export function requireNeoAskQuestionRoom<T>(
       add: [{ text: item.text, check: null }],
       remove: [],
       track: [],
+      bind: [],
     },
     ask
   );
@@ -867,6 +878,7 @@ export function planNeoAskEdit(
   add: (NeoAskItemInput & { id: string; position: number })[];
   remove: string[];
   track: z.infer<typeof Edit>['track'];
+  bind: z.infer<typeof Edit>['bind'];
 } {
   const items = ask.doneItems ?? [];
   const next = Math.max(0, ...items.map((item) => Number(item.id.slice(1)) || 0));
@@ -878,6 +890,7 @@ export function planNeoAskEdit(
     })),
     remove: [...new Set(input.remove)],
     track: input.track,
+    bind: input.bind,
   };
 }
 
@@ -958,6 +971,14 @@ export function createNeoAskOperations(
           return { ...result, ask, view: view(ask) };
         })()
       : result;
+  const withBindingView = async (run: () => AskReceipt | Rejection) => {
+    try {
+      return withView(run());
+    } catch (error) {
+      if (error instanceof NeoAskBindingError) return fail(error.message);
+      throw error;
+    }
+  };
   const humanText = (sessionId: string, messageId: string) =>
     service.db
       .getSDKMessageRepo()
@@ -1536,7 +1557,8 @@ export function createNeoAskOperations(
           pair.target,
           planNeoAskFold(pair.source, pair.target),
           `Superseded: folded into ask ${pair.target.id}.`,
-          Date.now()
+          Date.now(),
+          true
         ),
         ask: service.askRecords.get(pair.target.id),
       }),
@@ -1559,11 +1581,11 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.fold',
       description:
-        "Fold one open ask into another when they are the same request, such as a duplicate opened by mistake: the folded ask's checklist items and cards move to intoAskId, and the folded ask closes as superseded. Both asks must be open and yours. Every item moves as it is.",
+        "Fold one open ask into another when they are the same request, such as a duplicate opened by mistake: the folded ask's checklist items and cards move to intoAskId, and the folded ask closes as superseded. Both asks must be open and yours. Card IDs and valid outcome evidence survive the fold; the kept ask requires approval for its new revision.",
       inputSchema: Fold,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => withView(await fold(input, caller)),
+      execute: async (input, caller) => withBindingView(() => fold(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.open',
@@ -1572,7 +1594,7 @@ export function createNeoAskOperations(
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => withView(await open(input, caller)),
+      execute: async (input, caller) => withBindingView(() => open(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.tick',
@@ -1613,11 +1635,11 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.edit',
       description:
-        "Change an open ask's done checklist when what done means changes: add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply, or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. New outcomes and changed tracking require the matching coding.pr_merged/coding.deployed check for PR merge or deploy outcomes; untouched legacy items stay unchanged. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
+        "Change an open ask's done checklist when what done means changes: bind [{itemId, deliveredBy}] links an outcome to a card on this ask (null removes it), invalidating its evidence and approval; material changes are refused after dispatch. add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply, or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. New outcomes and changed tracking require the matching coding.pr_merged/coding.deployed check for PR merge or deploy outcomes; untouched legacy items stay unchanged. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
       inputSchema: Edit,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => withView(await edit(input, caller)),
+      execute: async (input, caller) => withBindingView(() => edit(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.settle',

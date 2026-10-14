@@ -163,6 +163,214 @@ describe('neo.ask operations', () => {
     });
   }
 
+  test('binds outcomes through edit with one revision and atomically refuses invalid compound changes', async () => {
+    const askId = await openAsk();
+    const card = (await propose('bound-card', askId)).value!.work!.id;
+    const old = service.askRecords.get(askId)!.doneItems![0];
+    service.askRecords.tickItem(
+      askId,
+      { ...old, state: 'met', evidence: 'proof', metBy: 'daemon' },
+      Date.now(),
+      old,
+      true
+    );
+    const bound = await invoke('neo.ask.edit', {
+      askId,
+      add: [{ text: 'Added outcome', deliveredBy: card }],
+      bind: [{ itemId: 'i1', deliveredBy: card }],
+    });
+    expect(bound).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          revision: 1,
+          approvedAt: null,
+          approvedRevision: null,
+          doneItems: [
+            { id: 'i1', deliveredBy: card, state: 'pending', evidence: null },
+            { id: 'i2' },
+            { id: 'i3', deliveredBy: card },
+          ],
+        },
+      },
+    });
+    expect(
+      await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: card }] })
+    ).toMatchObject({ value: { ok: true, ask: { revision: 1 } } });
+    const before = service.askRecords.get(askId);
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        expectedRevision: 0,
+        bind: [{ itemId: 'i1', deliveredBy: null }],
+      })
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('stale_revision') } });
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        add: [{ text: 'Must roll back' }],
+        remove: ['i2'],
+        bind: [{ itemId: 'i1', deliveredBy: 'missing-card' }],
+      })
+    ).toMatchObject({ value: { ok: false, reason: 'binding_card_not_owned' } });
+    expect(service.askRecords.get(askId)).toEqual(before);
+    expect(
+      await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: null }] })
+    ).toMatchObject({
+      value: { ok: true, ask: { revision: 2, doneItems: [{ deliveredBy: null }, {}, {}] } },
+    });
+  });
+
+  test('opening claims only an unlinked same-owner card and retries preserve existing bindings', async () => {
+    const card = service.repo.proposeWork({
+      id: 'loose',
+      requestKey: 'loose',
+      projectId: null,
+      originSessionId: 'root',
+      originMessageId: 'ask-1',
+      title: 'Loose card',
+      instruction: 'Build it',
+    });
+    const request = { ...opening, doneItems: [{ text: 'Outcome', deliveredBy: card.id }] };
+    const opened = await invoke('neo.ask.open', request);
+    expect(opened).toMatchObject({
+      value: { ok: true, ask: { workIds: [card.id], doneItems: [{ deliveredBy: card.id }] } },
+    });
+    const askId = opened.value!.ask!.id;
+    const before = service.askRecords.get(askId);
+    expect(await invoke('neo.ask.open', request)).toMatchObject({
+      value: { ok: true, ask: { id: askId } },
+    });
+    expect(service.askRecords.get(askId)).toEqual(before);
+    for (const id of [card.id, 'missing']) {
+      expect(
+        await invoke(
+          'neo.ask.open',
+          {
+            ...request,
+            requestKey: `refused-${id}`,
+            doneItems: [{ text: 'Other', deliveredBy: id }],
+          },
+          nextMessage
+        )
+      ).toMatchObject({ value: { ok: false, reason: 'binding_card_not_owned' } });
+      expect(service.askRecords.list()).toHaveLength(1);
+    }
+    service.repo.proposeWork({
+      ...card,
+      id: 'foreign',
+      requestKey: 'foreign',
+      originSessionId: 'other',
+    });
+    expect(
+      await invoke(
+        'neo.ask.open',
+        {
+          ...request,
+          requestKey: 'foreign',
+          doneItems: [{ text: 'Other', deliveredBy: 'foreign' }],
+        },
+        nextMessage
+      )
+    ).toMatchObject({ value: { ok: false, reason: 'binding_card_not_owned' } });
+    expect(service.askRecords.forWork('foreign')).toBeNull();
+  });
+
+  test('refuses foreign-ask bindings, unauthorized edits and mutation after dispatch', async () => {
+    const askId = await openAsk();
+    const card = (await propose('bound-card', askId)).value!.work!.id;
+    const other = await invoke('neo.ask.open', { ...opening, requestKey: 'other' }, nextMessage);
+    const otherId = other.value!.ask!.id;
+    expect(
+      await invoke('neo.ask.edit', { askId: otherId, bind: [{ itemId: 'i1', deliveredBy: card }] })
+    ).toMatchObject({ value: { ok: false, reason: 'binding_card_not_owned' } });
+    expect(
+      await invoke(
+        'neo.ask.edit',
+        { askId, bind: [{ itemId: 'i1', deliveredBy: card }] },
+        { ...neo, sessionId: 'other' }
+      )
+    ).toMatchObject({ value: { ok: false } });
+    await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: card }] });
+    const nextCard = (await propose('next-card', askId)).value!.work!.id;
+    service.repo.transitionWork(card, service.repo.getWork(card)!, { status: 'queued' });
+    const before = service.askRecords.get(askId);
+    for (const change of [
+      { bind: [{ itemId: 'i1', deliveredBy: null }] },
+      { remove: ['i1'] },
+      { track: [{ itemId: 'i1', check: 'coding.pr_merged' }] },
+      { remove: ['i1'], add: [{ text: 'Uncommitted replacement', deliveredBy: nextCard }] },
+    ]) {
+      expect(await invoke('neo.ask.edit', { askId, ...change })).toMatchObject({
+        value: { ok: false, reason: 'binding_already_dispatched' },
+      });
+      expect(service.askRecords.get(askId)).toEqual(before);
+    }
+  });
+
+  test('public fold preserves bound proof and stable cards but never transfers source approval', async () => {
+    const targetId = await openAsk();
+    const source = await invoke(
+      'neo.ask.open',
+      {
+        ...opening,
+        requestKey: 'source',
+        doneItems: [
+          {
+            text: 'Verified output',
+            watch: ['https://github.com/lsm/HyperNeo/pull/1'],
+            check: 'coding.pr_merged',
+          },
+        ],
+      },
+      nextMessage
+    );
+    const sourceId = source.value!.ask!.id;
+    const card = (await propose('source-card', sourceId)).value!.work!.id;
+    await invoke('neo.ask.edit', { askId: sourceId, bind: [{ itemId: 'i1', deliveredBy: card }] });
+    const item = service.askRecords.get(sourceId)!.doneItems![0];
+    service.askRecords.tickItem(
+      sourceId,
+      { ...item, state: 'met', evidence: 'Remote proof', metBy: 'daemon' },
+      Date.now(),
+      item,
+      true
+    );
+    service.askRecords.approve(sourceId, Date.now(), 1);
+    const targetBefore = service.askRecords.get(targetId)!;
+    const folded = await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId });
+    expect(folded).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          revision: 1,
+          approvedAt: null,
+          approvedRevision: null,
+          workIds: [card],
+          doneItems: [
+            { id: 'i1' },
+            { id: 'i2' },
+            {
+              id: 'i3',
+              deliveredBy: card,
+              state: 'met',
+              evidence: 'Remote proof',
+              watch: item.watch,
+              verifiedDefinitionHash: service.askRecords.revisionPolicy.definitionHash(item),
+            },
+          ],
+        },
+      },
+    });
+    expect(service.askRecords.get(targetId)!.doneItems!.slice(0, 2)).toEqual(
+      targetBefore.doneItems
+    );
+    expect(service.askRecords.forWork(card)!.id).toBe(targetId);
+    expect(
+      isNeoAskStartApproved(service.repo.getWork(card)!, service.askRecords.get(targetId)!, neo)
+    ).toBe(false);
+  });
+
   test('rejects stale edits and approval while returning the current revision on success', async () => {
     const askId = await openAsk();
     expect(service.askRecords.get(askId)).toMatchObject({ revision: 0, approvedRevision: 0 });
