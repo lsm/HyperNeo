@@ -75,6 +75,9 @@ export const WorkRejectionSchema = z.enum([
   'claude_cli_login_expired',
   'unreachable',
   'invalid_place',
+  'busy',
+  'human_only',
+  'live_card',
 ]);
 
 export function workResultSchema<Value extends z.ZodType>(value: Value) {
@@ -112,7 +115,9 @@ export type WorkExchangeEntry = z.infer<typeof WorkExchangeEntrySchema>;
 export type Rejected = { ok: false; reason: WorkRejection; detail: string };
 export type Result<T> = { ok: true; value: T } | Rejected;
 
-export type WorkVerb = 'find' | 'start' | 'send' | 'status' | 'stop';
+export type WorkVerb = 'find' | 'start' | 'send' | 'status' | 'stop' | 'archive';
+
+export type ArchiveAdmission = () => Rejected | null;
 
 export interface FindQuery {
   text?: string;
@@ -152,4 +157,8 @@ export interface WorkAdapter {
   ) => Promise<Result<{ delivered: boolean }>>;
   readonly status?: (ref: WorkRef, since?: number) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
+  readonly archive?: (
+    ref: WorkRef,
+    admit: ArchiveAdmission
+  ) => Promise<Result<{ archived: boolean }>>;
 }

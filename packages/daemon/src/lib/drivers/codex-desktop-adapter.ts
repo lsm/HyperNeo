@@ -1,4 +1,5 @@
 import { basename, join } from 'node:path';
+import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
 import { gitWorktreeProject } from './acp-agent-adapter.ts';
@@ -785,7 +786,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
   return {
     id: 'codex-desktop',
     supportsStartEffort: true,
-    capabilities: ['find', 'start', 'send', 'status', 'stop'],
+    capabilities: ['find', 'start', 'send', 'status', 'stop', 'archive'],
     find: async (query) =>
       runCodexFind(
         query,
@@ -796,5 +797,28 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
     send: (ref, message) => runCodexSend(ref, message, deps),
     status: (ref, since) => runCodexStatus(ref, deps, since),
     stop: (ref) => runCodexStop(ref, deps),
+    archive: async (ref, admit) => {
+      const found = requireCodexThread(ref, deps);
+      if ('reason' in found) return found.reason;
+      if (found.value.thread.archived) return admit() ?? { ok: true, value: { archived: false } };
+      return withCodexAppServer(deps, async (server) => {
+        const read = z
+          .object({
+            thread: z.object({ id: z.literal(ref.id), status: z.object({ type: z.string() }) }),
+          })
+          .parse(await server.call('thread/read', { threadId: ref.id }));
+        if (
+          read.thread.status.type === 'active' ||
+          (await readActiveCodexTurn(found.value.thread.rolloutPath))
+        )
+          return reject('busy', 'The Codex thread still has a live turn.');
+        if (!['idle', 'notLoaded'].includes(read.thread.status.type))
+          return reject('unreachable', 'Codex cannot confirm an idle thread.');
+        const refused = admit();
+        if (refused) return refused;
+        await server.call('thread/archive', { threadId: ref.id });
+        return { ok: true, value: { archived: true } };
+      });
+    },
   };
 }
