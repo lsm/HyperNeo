@@ -2740,8 +2740,14 @@ describe('neo.ask operations', () => {
     ).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('because_card_unknown') },
     });
+    await invoke('neo.ask.question', { ...question, because: { card, reason: 'card_failed' } });
     await invoke('neo.ask.question', {
       ...question,
+      question: 'Slice 6 can’t reach its archived target. Retarget it?',
+      because: { card, reason: 'target_unavailable' },
+    });
+    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
+      text: 'Slice 6 can’t reach its archived target. Retarget it?',
       because: { card, reason: 'target_unavailable' },
     });
     const delivered = mock(async (..._args: unknown[]) => {});
@@ -3780,6 +3786,7 @@ describe('planNeoAskRestate', () => {
       kind: 'decision',
       options: ['Yes', 'No'],
       decides: 'slice 6 target',
+      because: null,
     });
     expect(
       planNeoAskRestate({ ...asked, decides: undefined }, { question: 'x', options: ['a', 'b'] })

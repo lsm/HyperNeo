@@ -703,6 +703,7 @@ export function planNeoAskRestate(
     options?: readonly string[];
     kind?: NeoAskItemKind;
     decides?: string;
+    because?: NeoAskQuestionBecause;
   }
 ): {
   id: string;
@@ -711,12 +712,15 @@ export function planNeoAskRestate(
   kind: NeoAskItemKind;
   options: string[];
   decides: string;
+  because: NeoAskQuestionBecause | null;
 } | null {
   const decides = asked?.decides ?? input.decides;
   if (!asked || !decides || !input.question || !input.options) return null;
   const kind = input.kind ?? asked.kind ?? 'decision';
+  const because = input.because ?? asked.because ?? null;
   const same =
     asked.decides === decides &&
+    JSON.stringify(asked.because ?? null) === JSON.stringify(because) &&
     asked.text === input.question &&
     asked.kind === kind &&
     JSON.stringify(asked.options ?? []) === JSON.stringify(input.options);
@@ -729,6 +733,7 @@ export function planNeoAskRestate(
         kind,
         options: [...input.options],
         decides,
+        because,
       };
 }
 

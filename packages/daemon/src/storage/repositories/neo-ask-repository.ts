@@ -268,19 +268,21 @@ export class NeoAskRepository {
       kind: NeoAskItem['kind'];
       options: string[];
       decides: string;
+      because?: NeoAskQuestionBecause | null;
     },
     at: number
   ): boolean {
     const changed = this.db.transaction(() => {
       const restated = this.db
         .prepare(`UPDATE neo_ask_items SET text = ?, question = ?, kind = ?, options = ?, decides = ?,
-          updated_at = ? WHERE ask_id = ? AND id = ? AND removed = 0 AND state = 'needs_you'`)
+          because = ?, updated_at = ? WHERE ask_id = ? AND id = ? AND removed = 0 AND state = 'needs_you'`)
         .run(
           item.text,
           item.question,
           item.kind ?? 'decision',
           JSON.stringify(item.options),
           item.decides,
+          item.because ? JSON.stringify(item.because) : null,
           at,
           askId,
           item.id
