@@ -15,6 +15,7 @@ import {
   PlaceSchema,
   WorkDetailSchema,
   WorkDeliverySchema,
+  WorkInputReceiptSchema,
   WorkRefSchema,
   WorkSummarySchema,
   workResultSchema,
@@ -66,6 +67,7 @@ export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
 export const WorkStatusInputSchema = z.object({
   ref: WorkRefSchema,
   since: z.number().int().min(0).optional(),
+  receipt: WorkInputReceiptSchema.optional(),
 });
 
 export const StartWorkResultSchema = workResultSchema(WorkSummarySchema);
@@ -254,11 +256,18 @@ export async function readWorkStatus(
   input: StatusInput,
   deps: WorkVerbDeps
 ): Promise<StatusResult> {
-  if ('local' in route) return route.local(input.ref, input.since);
+  if ('local' in route)
+    return input.receipt
+      ? route.local(input.ref, input.since, input.receipt)
+      : route.local(input.ref, input.since);
   const result = await forwardWork(
     route.daemon,
     'work.status',
-    { ref: localRef(input.ref), ...(input.since !== undefined ? { since: input.since } : {}) },
+    {
+      ref: localRef(input.ref),
+      ...(input.since !== undefined ? { since: input.since } : {}),
+      ...(input.receipt ? { receipt: input.receipt } : {}),
+    },
     WorkStatusResultSchema,
     deps.remote
   );
@@ -384,7 +393,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.status',
       description:
-        'Read the current status of work by ref: queued, running, needs_you, done, failed or stopped, with its last reply and link. With since (epoch ms on that machine), HyperNeo sessions, Space agents, Codex and Claude Code Desktop work also return exchange: the user and agent messages after that time, oldest first; exchangeCut true means earlier ones were not read; openedPrs lists pull requests the session created. Desktop execution, when present, identifies the actual working directory and its machine; place.folder may instead be a grouped project. Use this to follow up on work instead of searching again.',
+        'Read the current status of work by ref: queued, running, needs_you, done, failed or stopped, with its last reply and link. With since (epoch ms on that machine), HyperNeo sessions, Space agents, Codex and Claude Code Desktop work also return exchange: the user and agent messages after that time, oldest first; exchangeCut true means earlier ones were not read; openedPrs lists pull requests the session created. Desktop execution, when present, identifies the actual working directory and its machine; place.folder may instead be a grouped project. Optional receipt queries inputEvidence for that exact execution/input on the owning ref and daemon: unavailable means ownership/history cannot be verified; pending means accepted but not consumed; observed means the driver verified that input and returns its bounded ordered exchange (up to 40 entries, exchangeCut marks truncation). Match the echoed receipt before using evidence. Missing inputEvidence means unsupported or unknown. This evidence is separate from lastReply and does not prove task completion or aggregate-result origin. Use this to follow up on work instead of searching again.',
       inputSchema: WorkStatusInputSchema,
       resultSchema: WorkStatusResultSchema,
       policy: { safetyClass: 'read' },

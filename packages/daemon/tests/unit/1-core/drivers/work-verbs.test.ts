@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import {
   annotateUnreachable,
   SendWorkResultSchema,
+  WorkStatusInputSchema,
+  WorkStatusResultSchema,
   createWorkVerbOperations,
 } from '../../../../src/lib/drivers/work-operations';
-import type { WorkAdapter, WorkSummary } from '../../../../src/lib/drivers/types';
+import type { WorkAdapter, WorkSummary, WorkDetail } from '../../../../src/lib/drivers/types';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -461,6 +463,126 @@ describe('work verb operations', () => {
       ok: false,
       reason: 'unsupported',
     });
+  });
+
+  test.each(['unavailable', 'pending', 'observed'] as const)(
+    'preserves receipt-scoped %s evidence locally and remotely',
+    async (state) => {
+      const receipt = { executionId: 'node-session', inputId: 'accepted-input' };
+      const inputEvidence: NonNullable<WorkDetail['inputEvidence']> =
+        state === 'observed'
+          ? {
+              receipt,
+              state,
+              exchange: [
+                { at: 10, role: 'user', text: 'Own input' },
+                { at: 11, role: 'agent', text: 'Own reply' },
+              ],
+              exchangeCut: false,
+            }
+          : { receipt, state };
+      const ref = { adapter: 'hyperneo', id: 's1' };
+      const result = {
+        ok: true as const,
+        value: {
+          ...summary(ref.adapter, ref.id),
+          lastReply: 'Unrelated latest reply',
+          inputEvidence,
+        },
+      };
+      const received: unknown[] = [];
+      const adapter: WorkAdapter = {
+        ...hyperneo,
+        status: async (...args) => {
+          received.push(args);
+          return result;
+        },
+      };
+      expect(
+        await call('work.status', { ref, since: 5, receipt }, undefined, undefined, [adapter])
+      ).toEqual(result);
+      expect(received).toEqual([[ref, 5, receipt]]);
+      const forwarded: unknown[] = [];
+      expect(
+        await call(
+          'work.status',
+          { ref: { ...ref, daemon: 'laptop' }, receipt },
+          async (daemon, name, input) => {
+            forwarded.push({ daemon, name, input });
+            return result;
+          }
+        )
+      ).toMatchObject({
+        ok: true,
+        value: {
+          ref: { ...ref, daemon: 'laptop' },
+          inputEvidence,
+          lastReply: 'Unrelated latest reply',
+        },
+      });
+      expect(forwarded).toEqual([
+        { daemon: 'laptop', name: 'work.status', input: { ref, receipt } },
+      ]);
+    }
+  );
+
+  test('receipt queries keep legacy status replies explicitly without input evidence', async () => {
+    const receipt = { executionId: 'execution', inputId: 'input' };
+    for (const ref of [
+      { adapter: 'hyperneo', id: 's1' },
+      { adapter: 'hyperneo', id: 's1', daemon: 'laptop' },
+    ]) {
+      const result = await call('work.status', { ref, receipt }, async () => ({
+        ok: true,
+        value: summary('hyperneo', 's1'),
+      }));
+      expect(result).toMatchObject({ ok: true, value: { ref } });
+      expect((result as { value: WorkDetail }).value.inputEvidence).toBeUndefined();
+    }
+  });
+
+  test('rejects malformed receipt queries before calling a driver', async () => {
+    const ref = { adapter: 'hyperneo', id: 's1' };
+    for (const receipt of [null, {}, { executionId: 's1', inputId: '' }]) {
+      expect(WorkStatusInputSchema.safeParse({ ref, receipt }).success).toBe(false);
+      let calls = 0;
+      await expect(
+        call('work.status', { ref, receipt }, undefined, undefined, [
+          {
+            ...hyperneo,
+            status: async () => {
+              calls++;
+              return { ok: true, value: summary('hyperneo', 's1') };
+            },
+          },
+        ])
+      ).rejects.toThrow();
+      expect(calls).toBe(0);
+    }
+  });
+
+  test('rejects invalid remote evidence instead of promoting latest reply', async () => {
+    const receipt = { executionId: 'execution', inputId: 'input' };
+    const entry = { at: 10, role: 'user', text: 'Own input' };
+    for (const inputEvidence of [
+      { receipt, state: 'observed', exchange: [] },
+      { receipt, state: 'pending', exchange: [entry] },
+      { receipt: { ...receipt, inputId: '' }, state: 'unavailable' },
+      { receipt, state: 'observed', exchange: Array(41).fill(entry), exchangeCut: true },
+    ]) {
+      const result = { ok: true, value: { ...summary('hyperneo', 's1'), inputEvidence } };
+      expect(WorkStatusResultSchema.safeParse(result).success).toBe(false);
+      expect(
+        await call(
+          'work.status',
+          {
+            ref: { adapter: 'hyperneo', id: 's1', daemon: 'laptop' },
+            receipt,
+          },
+          async () => result
+        )
+      ).toMatchObject({ ok: false });
+    }
   });
 
   test('passes since to the adapter or the daemon that owns the work', async () => {
