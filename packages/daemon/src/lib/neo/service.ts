@@ -197,6 +197,7 @@ import {
 import {
   localCodingSessionId,
   localCodingExecutionDirectory,
+  currentCodingExecutionDirectory,
   neoWorkBranch,
   neoWorkRepoCwd,
   readGithubBranchPrs,
@@ -476,6 +477,7 @@ export class NeoService {
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
   readBranchPrs: NeoBranchPrReader = readGithubBranchPrs;
+  readCheckoutPrs = (cwd: string): Promise<string[]> => readGithubBranchPrs({ cwd });
   readWorkRepo: NeoWorkRepoReader = readGithubWorkRepo;
   readRefStates: NeoRefStateReader = readGithubRefStates;
   readDeploys: NeoDeployReader = (urls) =>
@@ -3055,11 +3057,12 @@ export class NeoService {
         ? await this.invokeAsCard(work, 'work.status', { ref, since: sent.inputBefore })
         : null;
     const window = outcome ? readDriverCardExchange(outcome, sent) : null;
+    const cwd = currentCodingExecutionDirectory(ref, outcome, hostname(), window?.current === true);
     return planNeoCardPrCandidates({
       window,
       report: work.report,
       brief,
-      branch: await this.branchPrUrls(work.id),
+      branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),
       opened: this.cardOpenedPrs.get(work.id) ?? [],
       stored: stored?.prs ?? [],
       refs: await this.cardPrRefs(work, brief, outcome),
