@@ -286,6 +286,65 @@ describe('space adapter send', () => {
     caller: { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const },
   };
 
+  test('task aggregate never borrows a node exchange across replacement or completion', async () => {
+    db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
+      timestamp TEXT, send_status TEXT, parent_tool_use_id TEXT)`);
+    const at = Date.parse('2026-10-14T10:00:00.000Z');
+    const insert = db.prepare('INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, NULL)');
+    for (const session of ['s-code', 's-review', 's-next']) {
+      insert.run(
+        session,
+        'user',
+        JSON.stringify({
+          inputKind: 'human',
+          message: { content: 'Build the report' },
+        }),
+        new Date(at + 1).toISOString(),
+        'consumed'
+      );
+      insert.run(
+        session,
+        'result',
+        JSON.stringify({ result: `Worker reply from ${session}` }),
+        new Date(at + 2).toISOString(),
+        null
+      );
+    }
+    db.prepare(`UPDATE space_tasks SET status = 'done', result = 'Task artifact summary',
+      completed_at = ?, updated_at = ? WHERE id = 't1'`).run(at + 10, at + 20);
+    const assertTaskResult = async (hasCurrentNode: boolean) => {
+      const result = await adapter().status!(ref('t1'), at);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.reason);
+      expect(result.value.lastReply).toBe('Task artifact summary');
+      expect(result.value.lastReplyAt).toBe(at + 10);
+      expect(result.value.exchange).toBeUndefined();
+      expect(result.value.recentInputs?.map((input) => input.text)).toEqual(
+        hasCurrentNode ? ['Build the report'] : []
+      );
+      const outcome = { kind: 'completed' as const, value: result };
+      expect(
+        readDriverSettlement({ updatedAt: at }, outcome, at + 30, at + 1, true, 'Build the report')
+      ).toEqual({
+        status: 'reported',
+        report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nTask artifact summary`,
+      });
+      expect(readDriverFollowUp(outcome, at + 15)).toBeNull();
+    };
+    await assertTaskResult(true);
+    db.exec("UPDATE node_executions SET status = 'cancelled' WHERE id = 'n2'");
+    db.exec("UPDATE node_executions SET status = 'in_progress' WHERE id = 'n1'");
+    await assertTaskResult(true);
+    db.exec("UPDATE node_executions SET status = 'idle' WHERE id = 'n1'");
+    await assertTaskResult(true);
+    db.exec("UPDATE node_executions SET status = 'cancelled' WHERE id = 'n1'");
+    await assertTaskResult(false);
+    db.exec(`INSERT INTO node_executions VALUES
+      ('n5', 'run-next', 'coder', 'node-code', 's-next', 'in_progress', 80, 80)`);
+    db.exec("UPDATE space_tasks SET workflow_run_id = 'run-next' WHERE id = 't1'");
+    await assertTaskResult(true);
+  });
+
   test('status exposes typed human input for the Space agent after the refusal time', async () => {
     db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
       timestamp TEXT, send_status TEXT, parent_tool_use_id TEXT)`);
