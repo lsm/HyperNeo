@@ -183,7 +183,7 @@ describe('NeoProjectBoardView', () => {
     expect(screen.getByText(/Session state describes its lifecycle/)).toBeTruthy();
     expect(screen.queryByRole('link')).toBeNull();
   });
-  it('labels returned claims as response ready, not completed work', () => {
+  it('labels returned claims as reply received, not completed work', () => {
     const source: NeoSnapshot = {
       ...snapshot,
       work: [{ ...snapshot.work[0], status: 'reported', report: 'Draft ready, not sent.' }],
@@ -192,7 +192,7 @@ describe('NeoProjectBoardView', () => {
       ],
     };
     render(<NeoProjectBoardView board={projectNeoProjectBoard(source, 'a', null)!} />);
-    expect(screen.getAllByText('Response ready')).toHaveLength(2);
+    expect(screen.getAllByText('Reply received')).toHaveLength(2);
     expect(screen.getByText('Draft ready, not sent.')).toBeTruthy();
     expect(screen.getByText('Awaiting your decision.')).toBeTruthy();
     expect(screen.queryByText('Completed')).toBeNull();
@@ -351,7 +351,7 @@ describe('NeoProjectBoardPanel', () => {
       />
     );
     await screen.findByText('Updated worker');
-    expect(screen.getByText('Response ready')).toBeTruthy();
+    expect(screen.getByText('Reply received')).toBeTruthy();
     expect(screen.getByText('A returned claim.')).toBeTruthy();
     expect(request).toHaveBeenCalledTimes(2);
     await act(async () => {});

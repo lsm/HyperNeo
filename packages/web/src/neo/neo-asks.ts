@@ -143,10 +143,52 @@ export function neoAskApproval(
   if (!ask.approvedAt) return null;
   const used = ask.approvedContinues ?? 0;
   const limit = ask.approvedContinueLimit;
-  const spent = actions.some((action) => action.kind === 'approve');
+  const approve = actions.find((action) => action.kind === 'approve');
+  const spent = !!approve;
   const count =
     limit !== undefined ? `${used} of ${limit} continues used` : `${used} continues used`;
-  return { line: spent ? `${count} · approval ran out` : count, spent };
+  const why = approve?.reason === 'stalled' ? 'a step stalled' : 'approval ran out';
+  return { line: spent ? `${count} · ${why}` : count, spent };
+}
+
+export type NeoAskApprovalBadge = { label: string; title: string };
+
+export function neoAskApprovalBadge(
+  ask: Pick<NeoAsk, 'approvedAt'>,
+  actions: readonly NeoAskHumanAction[]
+): NeoAskApprovalBadge | null {
+  const approve = actions.find((action) => action.kind === 'approve');
+  if (approve?.reason === 'expired')
+    return { label: 'Approval expired', title: 'The approval ran out. Approve again to continue.' };
+  if (approve?.reason === 'stalled')
+    return { label: 'Stalled', title: 'A step stalled. Approve again to continue.' };
+  if (!ask.approvedAt) return null;
+  return {
+    label: 'Approved',
+    title: 'You approved this ask: Neo starts its steps without asking again.',
+  };
+}
+
+export function isNeoAskQuestionItem(
+  item: Pick<NeoAskItem, 'kind' | 'question' | 'options' | 'decision'>
+): boolean {
+  return (
+    item.decision === true ||
+    item.kind !== undefined ||
+    item.question !== undefined ||
+    !!item.options?.length
+  );
+}
+
+export function neoAskOutcomeCount(
+  items: readonly NeoAskItem[]
+): { verified: number; total: number } | null {
+  const outcomes = items.filter((item) => !item.removed && !isNeoAskQuestionItem(item));
+  if (!outcomes.length) return null;
+  return {
+    verified: outcomes.filter((item) => item.state === 'met' && item.metBy !== 'neo').length,
+    total: outcomes.length,
+  };
 }
 
 export type NeoAskItemAction = Extract<NeoAskHumanAction, { kind: 'answer' | 'confirm' }>;

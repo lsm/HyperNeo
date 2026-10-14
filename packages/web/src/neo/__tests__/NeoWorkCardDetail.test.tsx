@@ -222,7 +222,7 @@ describe('NeoWorkCard detail opening', () => {
     const { card } = show(work('r', 'reported'));
     expect(card.getAttribute('data-scene-open')).toBeNull();
     expect(card.getAttribute('tabindex')).toBeNull();
-    fireEvent.click(within(card).getByText('Response ready'));
+    fireEvent.click(within(card).getByText('Reply received'));
     expect(screen.getByRole('article', { name: 'Title r' })).toBeTruthy();
   });
 
@@ -262,7 +262,7 @@ describe('NeoWorkCard detail opening', () => {
   ] as const)('honours a selection with %s', (_name, anchorIn, focusIn, opens) => {
     const open = vi.fn();
     const { card } = show(work('r', 'reported'), open);
-    const label = within(card).getByText('Response ready');
+    const label = within(card).getByText('Reply received');
     const outside = document.createElement('p');
     outside.textContent = 'chosen elsewhere';
     document.body.append(outside);
@@ -320,7 +320,9 @@ describe('NeoWorkCard continues', () => {
         onAction={() => {}}
       />
     );
-    expect(screen.getByText('Neo continued it 2').getAttribute('title')).toBe('Build settings.');
+    expect(screen.getByText('Neo continued it 2 times').getAttribute('title')).toBe(
+      'Build settings.'
+    );
   });
 
   it('drops the per-card limit when the work draws on its approved ask’s shared budget', () => {
@@ -337,7 +339,7 @@ describe('NeoWorkCard continues', () => {
         onAction={() => {}}
       />
     );
-    expect(screen.getByText('Neo continued it 7')).toBeTruthy();
+    expect(screen.getByText('Neo continued it 7 times')).toBeTruthy();
   });
 });
 

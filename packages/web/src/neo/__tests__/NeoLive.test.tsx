@@ -114,7 +114,7 @@ describe('Neo MVP controls', () => {
         onAction={action}
       />
     );
-    expect(screen.getByText('Response ready')).toBeTruthy();
+    expect(screen.getByText('Reply received')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.queryByText('A draft, not a booking.')).toBeNull();
