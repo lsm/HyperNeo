@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import {
   createNeoPublicationChangeOperations,
+  requireChangeable,
   requireCorrectable,
   requireOwnPublication,
 } from '../../../../src/lib/neo/publication-change-operation.ts';
@@ -17,6 +18,8 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 const conversation = '10000000-0000-4000-8000-000000000001';
 const original = '20000000-0000-4000-8000-000000000002';
 const correction = '30000000-0000-4000-8000-000000000003';
+const consultationReply = '50000000-0000-4000-8000-000000000005';
+const sameTurnReply = '60000000-0000-4000-8000-000000000006';
 const root: NeoBinding = { sessionId: `neo:${conversation}`, projectId: null, kind: 'neo' };
 const holder: NeoBinding = { sessionId: 'neo:holder', projectId: 'p1', kind: 'project' };
 
@@ -57,6 +60,8 @@ function setup() {
         getBinding: (id) => [root, holder].find((binding) => binding.sessionId === id) ?? null,
         getRootBinding: () => root,
         publications,
+        isConsultationReturn: (_conversationId, publicationId) =>
+          publicationId === consultationReply,
         notify: () => notified++,
       },
       () => new Date('2026-10-14T11:00:00.000Z')
@@ -205,5 +210,55 @@ describe('requireCorrectable', () => {
     expect(requireCorrectable({ publication: { corrects: original } } as never)).toEqual({
       reason: { accepted: false, reason: 'already_corrected' },
     });
+  });
+});
+
+describe('requireChangeable', () => {
+  test('a consultation reply is never edited or corrected', async () => {
+    expect(requireChangeable({} as never, true)).toEqual({
+      reason: { accepted: false, reason: 'consultation_return' },
+    });
+    const { db, insert, call } = setup();
+    try {
+      insert(consultationReply);
+      expect(
+        await call('neo.publication.edit', { publicationId: consultationReply, shortText: 'x' })
+      ).toEqual({ accepted: false, reason: 'consultation_return' });
+      expect(
+        await call('neo.publication.correct', {
+          publicationId: consultationReply,
+          correctionId: correction,
+          shortText: 'x',
+          fullText: 'y',
+        })
+      ).toEqual({ accepted: false, reason: 'consultation_return' });
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('NeoPublicationRepository.findByProducer', () => {
+  test('a correction made in the same turn as a reply does not make the turn ambiguous', async () => {
+    const { db, publications, insert, call } = setup();
+    try {
+      insert(original);
+      insert(sameTurnReply);
+      db.prepare(
+        `UPDATE neo_publications SET payload_json = json_set(payload_json, '$.producerInput.messageId', 'm-2')
+          WHERE publication_id = ?`
+      ).run(sameTurnReply);
+      expect(
+        await call('neo.publication.correct', {
+          publicationId: original,
+          correctionId: correction,
+          shortText: 'Correction.',
+          fullText: 'Correction.',
+        })
+      ).toMatchObject({ accepted: true });
+      expect(publications.findByProducer(root.sessionId, 'm-2')?.publicationId).toBe(sameTurnReply);
+    } finally {
+      db.close();
+    }
   });
 });

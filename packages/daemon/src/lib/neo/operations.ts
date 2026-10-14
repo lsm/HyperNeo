@@ -1989,6 +1989,8 @@ export function createNeoOperations(service: NeoService) {
       getBinding: (id) => service.repo.getBindingBySession(id),
       getRootBinding: () => service.repo.getBindingForProject(null),
       publications: service.publications,
+      isConsultationReturn: (conversationId, publicationId) =>
+        service.consultations.returnsPublication(conversationId, publicationId),
       notify: () => service.notifyChanged(),
     }),
     createNeoRouteCorrectOperation(service.db, service.repo),

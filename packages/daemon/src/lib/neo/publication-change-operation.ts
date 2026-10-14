@@ -49,6 +49,7 @@ export interface NeoPublicationChangeRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'correct'>;
+  isConsultationReturn(conversationId: string, publicationId: string): boolean;
   notify(): void;
 }
 
@@ -60,6 +61,15 @@ export function requireOwnPublication(
   return publication.producerInput.sessionId === producer.input.sessionId
     ? { value: { producer, publication } }
     : { reason: { accepted: false, reason: 'not_your_publication' } };
+}
+
+export function requireChangeable(
+  owned: Owned,
+  consultationReturn: boolean
+): { value: Owned } | { reason: Rejection } {
+  return consultationReturn
+    ? { reason: { accepted: false, reason: 'consultation_return' } }
+    : { value: owned };
 }
 
 export function requireCorrectable(owned: Owned): { value: Owned } | { reason: Rejection } {
@@ -105,6 +115,18 @@ function changePipeline(
           runtime.publications.get(producer.root.sessionId.slice(4), request.publicationId)
         ),
       ['change', 'request'],
+      'result:change'
+    )
+    .pipe(
+      (owned: Owned) =>
+        requireChangeable(
+          owned,
+          runtime.isConsultationReturn(
+            owned.publication.conversationId,
+            owned.publication.publicationId
+          )
+        ),
+      'change',
       'result:change'
     )
     .pipe(gate, 'change', 'result:change')
@@ -163,7 +185,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.edit',
       description:
-        "Fix the wording of one of your own published messages in place, by its publicationId. Use it only for wording: the meaning, facts and anything the human should do must stay the same. The message is marked edited. Links, the ask it answers and its trigger never change. Only the session that published it can edit it; anything else, including session messages and other sessions' output, is refused (not_found, not_your_publication).",
+        "Fix the wording of one of your own published messages in place, by its publicationId. Use it only for wording: the meaning, facts and anything the human should do must stay the same. The message is marked edited. Links, the ask it answers and its trigger never change. Only the session that published it can edit it; anything else, including session messages and other sessions' output, is refused (not_found, not_your_publication). A project holder's reply to a consultation is the record the consultation returns, so it cannot be changed (consultation_return).",
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: Result,
@@ -172,7 +194,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.correct',
       description:
-        'Correct one of your own published messages when a fact or an action for the human changed (for example it said a PR merged and it did not). This publishes a separate message labelled as a correction that cites the original by publicationId; it never rewrites what the human already read. Pass a new correctionId (reuse it only for identical retries). Each message takes at most one correction, and a correction cannot be corrected (already_corrected). Only the session that published the original can correct it (not_found, not_your_publication). It needs no notification trigger.',
+        'Correct one of your own published messages when a fact or an action for the human changed (for example it said a PR merged and it did not). This publishes a separate message labelled as a correction that cites the original by publicationId; it never rewrites what the human already read. Pass a new correctionId (reuse it only for identical retries). Each message takes at most one correction, and a correction cannot be corrected (already_corrected). Only the session that published the original can correct it (not_found, not_your_publication), and a consultation reply cannot be corrected (consultation_return). It needs no notification trigger.',
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: CorrectInput,
       resultSchema: Result,
