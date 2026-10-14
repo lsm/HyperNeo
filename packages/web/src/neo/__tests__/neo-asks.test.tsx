@@ -484,6 +484,28 @@ describe('NeoAskCard', () => {
     expect(card.getAllByRole('button', { name: /: Leave it$/ })).toHaveLength(1);
   });
 
+  it('counts only daemon- or human-checked outcomes as verified and keeps decisions out of the count', () => {
+    const view = describeAsk(
+      {
+        ...ask('a', 'open', []),
+        doneItems: [
+          item('i1', 'met', { metBy: 'daemon' }),
+          item('i2', 'met', { metBy: 'human' }),
+          item('i3', 'met', { metBy: 'neo' }),
+          item('i4', 'needs_you', { decision: true }),
+        ],
+      },
+      []
+    );
+    const card = render(<NeoAskCard view={view} />);
+    expect(card.getByText('2 of 3 outcomes verified')).toBeTruthy();
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    const done = within(card.getByRole('list', { name: 'Done when' }));
+    expect(done.getByText('Neo says done, not verified')).toBeTruthy();
+    expect(done.getByText('confirmed by you')).toBeTruthy();
+    expect(within(card.getByRole('list', { name: 'Questions' })).getByText('Item i4')).toBeTruthy();
+  });
+
   it('keeps Answer in chat when a question has no options to tap', () => {
     const inChat = vi.fn();
     const view = describeAsk(

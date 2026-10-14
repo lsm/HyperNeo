@@ -155,6 +155,8 @@ function ItemRow({ item, answerAbove }: { item: NeoAskItem; answerAbove?: boolea
     item.removed && 'removed',
     item.addedAt !== null && !item.removed && 'added',
     item.state === 'met' && item.metBy === 'daemon' && 'verified',
+    item.state === 'met' && item.metBy === 'human' && 'confirmed by you',
+    item.state === 'met' && item.metBy === 'neo' && 'Neo says done, not verified',
     item.state === 'needs_you' && 'needs you',
     item.state === 'reported' && 'reported, not verified',
   ].filter(Boolean);

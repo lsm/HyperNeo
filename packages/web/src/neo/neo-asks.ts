@@ -168,9 +168,14 @@ export function neoAskApprovalBadge(
 }
 
 export function isNeoAskQuestionItem(
-  item: Pick<NeoAskItem, 'kind' | 'question' | 'options'>
+  item: Pick<NeoAskItem, 'kind' | 'question' | 'options' | 'decision'>
 ): boolean {
-  return item.kind !== undefined || item.question !== undefined || !!item.options?.length;
+  return (
+    item.decision === true ||
+    item.kind !== undefined ||
+    item.question !== undefined ||
+    !!item.options?.length
+  );
 }
 
 export function neoAskOutcomeCount(
@@ -179,7 +184,7 @@ export function neoAskOutcomeCount(
   const outcomes = items.filter((item) => !item.removed && !isNeoAskQuestionItem(item));
   if (!outcomes.length) return null;
   return {
-    verified: outcomes.filter((item) => item.state === 'met').length,
+    verified: outcomes.filter((item) => item.state === 'met' && item.metBy !== 'neo').length,
     total: outcomes.length,
   };
 }
