@@ -131,7 +131,6 @@ function runOracle(script: string, env: NodeJS.ProcessEnv = {}): string {
   return execFileSync('bash', ['-c', script], {
     cwd: repoRoot,
     encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'inherit'],
     env: { ...process.env, ...env },
   });
@@ -147,11 +146,12 @@ export function listSplitSpecs(suite: ShardSuite): SplitSpec[] {
     `printf "%s\\t%s\\n" "testroot" "\${${rootVar}#"$REPO_ROOT"/}"`,
     `for spec in "\${${specVar}[@]}"; do`,
     '  IFS=\'|\' read -r prefix count globs weights <<< "$spec"',
+    '  printf "spec\\t%s\\t%s\\t%s\\t%s\\n" "$prefix" "$count" "$globs" "$weights"',
     '  IFS=\';\' read -ra glob_list <<< "$globs"',
     '  for g in "${glob_list[@]}"; do',
     `    for f in \${${rootVar}}/$g; do`,
     '      [ -f "$f" ] || continue',
-    '      printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$prefix" "$count" "$globs" "$weights" "${f#"$REPO_ROOT"/}"',
+    '      printf "file\\t%s\\t%s\\n" "$prefix" "${f#"$REPO_ROOT"/}"',
     '    done',
     '  done',
     'done',
@@ -166,19 +166,21 @@ export function listSplitSpecs(suite: ShardSuite): SplitSpec[] {
       testRoot = fields[1] ?? '';
       continue;
     }
-    if (fields.length !== 5) continue;
-    const [prefix, count, globsField, weightsField, file] = fields;
-    if (prefix === '' || file === '') continue;
-    const spec = byPrefix.get(prefix) ?? {
-      prefix,
-      splitCount: Number(count),
-      testRoot,
-      globs: globsField.split(';'),
-      weights: weightsField === '' ? null : weightsField,
-      files: [],
-    };
-    if (!spec.files.includes(file)) spec.files.push(file);
-    byPrefix.set(prefix, spec);
+    if (fields[0] === 'spec' && fields.length === 5) {
+      const [, prefix, count, globsField, weightsField] = fields;
+      byPrefix.set(prefix, {
+        prefix,
+        splitCount: Number(count),
+        testRoot,
+        globs: globsField.split(';'),
+        weights: weightsField === '' ? null : weightsField,
+        files: [],
+      });
+    } else if (fields[0] === 'file' && fields.length === 3) {
+      const [, prefix, file] = fields;
+      const spec = byPrefix.get(prefix);
+      if (spec && file !== '' && !spec.files.includes(file)) spec.files.push(file);
+    }
   }
   return [...byPrefix.values()].sort((a, b) => a.prefix.localeCompare(b.prefix));
 }
