@@ -196,6 +196,7 @@ import {
 } from './evidence.ts';
 import {
   localCodingSessionId,
+  localCodingExecutionDirectory,
   neoWorkBranch,
   neoWorkRepoCwd,
   readGithubBranchPrs,
@@ -2885,17 +2886,20 @@ export class NeoService {
       branch: await this.branchPrUrls(work.id),
       opened: this.cardOpenedPrs.get(work.id) ?? [],
       stored: stored?.prs ?? [],
-      refs: await this.cardPrRefs(work, brief),
+      refs: await this.cardPrRefs(work, brief, outcome),
     });
   }
 
   private async cardPrRefs(
     work: NeoWork,
-    brief: string
+    brief: string,
+    outcome: OperationOutcome | null
   ): Promise<{ named: string[]; mentioned: string[] }> {
     const ref = this.driverTargets.readRef(work.id);
     const localId = localCodingSessionId(ref);
-    const cwd = neoWorkRepoCwd(localId ? this.db.getSession(localId) : null);
+    const cwd =
+      neoWorkRepoCwd(localId ? this.db.getSession(localId) : null) ??
+      localCodingExecutionDirectory(ref, outcome, hostname());
     return readCodingCardRefs(
       brief,
       work.report,
