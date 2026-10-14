@@ -15,6 +15,15 @@ export function neoCardLabel(card: NeoCardView): string {
   return `${card.label} · not checked since ${time}`;
 }
 
+export function neoCardCheckedLabel(card: NeoCardView): string | null {
+  if (card.uncheckedSince || !card.checkedAt || !checkedPhases.has(card.phase)) return null;
+  const time = new Date(card.checkedAt).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  return `Checked ${time}`;
+}
+
 export function neoContinuedLabel(count: number): string {
   return `Neo continued it ${count === 1 ? 'once' : `${count} times`}`;
 }
