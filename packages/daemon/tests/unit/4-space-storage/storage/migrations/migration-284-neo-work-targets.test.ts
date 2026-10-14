@@ -44,6 +44,7 @@ describe('migration 284 and work-target storage', () => {
     try {
       await first.initialize(createReactiveDatabase(first));
       new NeoRepository(first.getDatabase()).proposeWork(proposal);
+      first.getDatabase().exec('DROP INDEX idx_neo_work_target_session');
       first.getDatabase().exec('ALTER TABLE neo_work DROP COLUMN target_session_id');
       first
         .getDatabase()
