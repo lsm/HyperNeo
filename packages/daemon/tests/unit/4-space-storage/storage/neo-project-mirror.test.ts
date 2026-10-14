@@ -13,6 +13,7 @@ import {
 } from '../../../../src/lib/neo/project-mirror.ts';
 import { mergePlaceGroups } from '../../../../src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
+import { isTempCwd } from '../../../../src/lib/drivers/claude-feed.ts';
 
 function workspace(folder: string, machine = 'laptop', identity = 'root:123'): PlaceGroup {
   return {
@@ -161,7 +162,7 @@ describe('isNeoPlumbingFolder', () => {
   const local = {
     machine: 'laptop',
     neoFolder: '/home/fictional/.hyperneo/Neo',
-    temp: ['/tmp', '/private/tmp'],
+    isTemp: isTempCwd,
     exists: (path: string) => path !== '/home/fictional/gone',
   };
 
@@ -170,6 +171,7 @@ describe('isNeoPlumbingFolder', () => {
       '/home/fictional/.hyperneo/Neo',
       '/home/fictional/.hyperneo/Neo/.coordinators/neo-1',
       '/private/tmp',
+      '/private/var/folders/xy/T/scratch',
       '/home/fictional/gone',
     ])
       expect(isNeoPlumbingFolder({ folder, machine: 'laptop' }, local)).toBe(true);

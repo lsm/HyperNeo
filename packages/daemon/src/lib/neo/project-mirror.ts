@@ -3,7 +3,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { existsSync } from 'node:fs';
-import { hostname, tmpdir } from 'node:os';
+import { hostname } from 'node:os';
+import { isTempCwd } from '../drivers/claude-feed.ts';
 import { sep } from 'node:path';
 import type { Place, PlaceGroup } from '../drivers/types.ts';
 import { placeKey } from '../drivers/places.ts';
@@ -19,7 +20,7 @@ export function isNeoPlumbingFolder(
   local: {
     machine: string;
     neoFolder: string;
-    temp: readonly string[];
+    isTemp(path: string): boolean;
     exists(path: string): boolean;
   }
 ): boolean {
@@ -28,7 +29,7 @@ export function isNeoPlumbingFolder(
   return (
     folder === local.neoFolder ||
     folder.startsWith(`${local.neoFolder}${sep}`) ||
-    local.temp.includes(folder) ||
+    local.isTemp(folder) ||
     !local.exists(folder)
   );
 }
@@ -111,7 +112,7 @@ export const mirrorNeoWorkspaceProjects = (superpipe({})('neo-project-mirror') a
       const local = {
         machine: hostname(),
         neoFolder: neoFolderPath(),
-        temp: [...new Set(['/tmp', '/private/tmp', tmpdir()])],
+        isTemp: isTempCwd,
         exists: existsSync,
       };
       return planNeoWorkspaceProjects(groups, (place) => isNeoPlumbingFolder(place, local));
