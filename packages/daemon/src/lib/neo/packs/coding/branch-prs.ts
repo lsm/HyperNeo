@@ -2,13 +2,16 @@ import type { WorkRef } from '../../../drivers/types.ts';
 import { WorkDetailSchema, workResultSchema } from '../../../drivers/types.ts';
 import type { OperationOutcome } from '../../../operations/invoke.ts';
 import { isAbsolute } from 'node:path';
+import simpleGit from 'simple-git';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorktreeMetadata } from '@hyperneo/shared';
 import { z } from 'zod';
-import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
+import { buildGitHubLookupEnv, runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { NEO_WORK_PR_READ_MS } from './work-prs.ts';
 
 type NeoWorkBranch = { branch: string; cwd: string };
+type BranchQuery = { cwd: string; branch?: string };
 export type NeoBranchPrReader = (branch: NeoWorkBranch) => Promise<string[]>;
 type NeoWorkRepo = { owner: string; repo: string };
 export type NeoWorkRepoReader = (cwd: string) => Promise<NeoWorkRepo | null>;
@@ -89,7 +92,7 @@ export function neoCardPrUrls(base: readonly string[], opened: readonly string[]
   return [...base, ...opened.filter((url) => !base.includes(url)).slice(0, NEO_BRANCH_PR_MAX)];
 }
 
-export async function readGithubBranchPrs(
+async function readNamedGithubBranchPrs(
   branch: NeoWorkBranch,
   spawnImpl: SpawnFn = spawnProcess
 ): Promise<string[]> {
@@ -119,4 +122,40 @@ export async function readGithubBranchPrs(
   const urls = parsed.data.map((pr) => pr.url);
   read.set(key, { at: Date.now(), urls });
   return urls;
+}
+
+function requireCodingCheckout(query: BranchQuery): { value: BranchQuery } | { reason: string[] } {
+  return isAbsolute(query.cwd) && !query.cwd.includes('\0') && query.branch !== ''
+    ? { value: query }
+    : { reason: [] };
+}
+
+async function resolveCodingBranch(
+  query: BranchQuery
+): Promise<{ value: NeoWorkBranch } | { reason: string[] }> {
+  if (query.branch !== undefined) return { value: { cwd: query.cwd, branch: query.branch } };
+  try {
+    const branch = (
+      await simpleGit({ baseDir: query.cwd, timeout: { block: 3_000 } })
+        .env(buildGitHubLookupEnv())
+        .raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])
+    ).trim();
+    return branch ? { value: { cwd: query.cwd, branch } } : { reason: [] };
+  } catch {
+    return { reason: [] };
+  }
+}
+
+const runCodingBranchPrs = (superpipe({})('neo-coding-branch-prs') as PipelineAPI)
+  .input(['query', 'spawn'])
+  .pipe(requireCodingCheckout, 'query', 'result:prs')
+  .pipe(resolveCodingBranch, 'prs', 'result:prs')
+  .pipe(readNamedGithubBranchPrs, ['prs', 'spawn'], 'prs')
+  .endAsync('prs') as (query: BranchQuery, spawn: SpawnFn) => Promise<string[]>;
+
+export function readGithubBranchPrs(
+  query: BranchQuery,
+  spawnImpl: SpawnFn = spawnProcess
+): Promise<string[]> {
+  return runCodingBranchPrs(query, spawnImpl);
 }
