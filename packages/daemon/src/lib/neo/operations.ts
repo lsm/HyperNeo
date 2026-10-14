@@ -61,7 +61,7 @@ import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
 import { createNeoAskForwardOperation, neoForwardedText } from './ask-forward-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
-import { readNeoProjectIdentities } from './project-merge.ts';
+import { mergeNeoDuplicateProjects, readNeoProjectIdentities } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './direct-reply-fallback.ts';
 import { createNeoRouter, type NeoRouter, reopenNeoHolder } from './router.ts';
@@ -790,10 +790,11 @@ export function neoReorganizeRuntime(
         merges.localFolders(hostname()),
         readWorkspaceIdentity
       );
-      return merges.plan(fresh).flatMap((input) => {
-        const merged = merges.merge(input);
-        return merged.ok ? [{ sourceId: merged.sourceId, targetId: merged.targetId }] : [];
-      });
+      return mergeNeoDuplicateProjects(
+        () => merges.plan(fresh),
+        (input) => merges.merge(input),
+        (line) => service.logReorganize(line)
+      );
     },
     log: (line) => service.logReorganize(line),
   };
@@ -1252,7 +1253,10 @@ export function createNeoOperations(service: NeoService) {
     'neo.open',
     (input: z.infer<typeof Scope>) => input.projectId,
     async (input, caller) => {
-      if (input.projectId && !service.repo.getProject(input.projectId))
+      const projectId = input.projectId
+        ? (service.repo.projectMerges.resolve(input.projectId) ?? input.projectId)
+        : null;
+      if (projectId && !service.repo.getProject(projectId))
         return { ok: false as const, reason: 'Project not found.' };
       await invokeOperation(
         service.sessions.getOperationRegistry(),
@@ -1260,7 +1264,7 @@ export function createNeoOperations(service: NeoService) {
         { limit: 50 },
         caller
       );
-      return { ...snapshot(caller), sessionId: await service.open(input.projectId ?? null) };
+      return { ...snapshot(caller), sessionId: await service.open(projectId) };
     }
   );
   const cancelConsultation = path(

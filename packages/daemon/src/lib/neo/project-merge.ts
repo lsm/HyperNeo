@@ -138,6 +138,26 @@ export function planNeoProjectMerges(
   });
 }
 
+export function mergeNeoDuplicateProjects(
+  plan: () => readonly NeoProjectMergeInput[],
+  merge: (input: NeoProjectMergeInput) => NeoProjectMergeResult,
+  log: (line: string) => void
+): { sourceId: string; targetId: string }[] {
+  const merged: { sourceId: string; targetId: string }[] = [];
+  const refused = new Set<string>();
+  for (;;) {
+    const next = plan().find((input) => !refused.has(`${input.sourceId}\u0000${input.targetId}`));
+    if (!next) return merged;
+    const result = merge(next);
+    if (result.ok) {
+      merged.push({ sourceId: result.sourceId, targetId: result.targetId });
+      continue;
+    }
+    refused.add(`${next.sourceId}\u0000${next.targetId}`);
+    log(`neo reorganize: did not merge ${next.sourceId} into ${next.targetId}: ${result.reason}`);
+  }
+}
+
 export function createNeoProjectMergePipeline(
   read: () => NeoProjectMergeState,
   write: (plan: Plan) => NeoProjectMergeResult
