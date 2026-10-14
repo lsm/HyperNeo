@@ -30,6 +30,7 @@ export interface NeoNoteQueueDeps {
 
 const SUBJECTS: ReadonlyArray<readonly [RegExp, NeoNoteSubject['kind']]> = [
   [/^neo-ask-(?:evidence|ticked):([^:]+):/, 'ask'],
+  [/^neo-trigger:(?:action|failed):([^:]+):/, 'ask'],
   [/^neo-card-pr:([^:]+):/, 'card'],
   [/^([^:]+):(?:done-check|stall|needs-you):/, 'card'],
 ];

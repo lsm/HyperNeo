@@ -147,6 +147,12 @@ describe('runtime-bound publication operation', () => {
       getConsultation: (id) => consultations.get(id),
       resolveAskOrigin: resolve,
       append: (input) => ledger.append(input),
+      isHumanInput: (input) =>
+        mailbox.sdkMessageRepo
+          .getStoredPromptsByUuid(input.sessionId, input.messageId)
+          .some((message) => 'inputKind' in message && message.inputKind === 'human'),
+      isTriggerPublished: (conversationId, triggerId, publicationId) =>
+        ledger.hasTrigger(conversationId, triggerId, publicationId),
       notify,
     };
     publish = createNeoPublisher(runtime);
@@ -330,6 +336,40 @@ describe('runtime-bound publication operation', () => {
     expect(first.accepted && ledger.list(conversationId)![0]).toEqual(
       first.accepted ? first.publication : false
     );
+  });
+
+  test('a trigger note turn records its trigger, and the same transition never posts twice', () => {
+    const triggerId = 'outcome:ask-1:abc';
+    const note = `neo-trigger:${triggerId}`;
+    prompt(root.sessionId, note, 'system');
+    stamps.set(`${root.sessionId}\0${note}`, ask);
+    const who = {
+      ...caller(root.sessionId, note),
+      neoTurn: { ...caller().neoTurn, messageId: note },
+    };
+    expect(publish({ ...draft, triggerId }, who)).toMatchObject({
+      accepted: true,
+      publication: { triggerId },
+    });
+    expect(
+      publish({ ...draft, publicationId: '20000000-0000-4000-8000-000000000002' }, who)
+    ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+  });
+
+  test('a turn no trigger note woke is not stamped, and a triggerId it names is refused', () => {
+    expect(publish(draft, caller())).toMatchObject({ accepted: true });
+    expect(ledger.list(conversationId)![0].triggerId).toBeUndefined();
+    expect(
+      publish(
+        {
+          ...draft,
+          publicationId: '20000000-0000-4000-8000-000000000003',
+          triggerId: 'outcome:x:1',
+        },
+        caller()
+      )
+    ).toMatchObject({ accepted: false, reason: 'wrong_trigger' });
   });
 
   test('preserves arbitrary authored labels and validates actual work/consultation ownership', async () => {
