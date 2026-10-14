@@ -380,6 +380,15 @@ const Propose = z.object({
 });
 const Refused = z.object({ workId: z.string().min(1), what: z.string().trim().min(1).max(500) });
 const WorkId = z.object({ id: z.string().min(1) });
+const StartWork = WorkId.extend({
+  dependsOn: z
+    .array(z.string().min(1))
+    .max(20)
+    .optional()
+    .describe(
+      'Card ids this card must wait for. Each card needs an outcome item bound to it (deliveredBy); changing them needs the ask approved again.'
+    ),
+});
 const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
 const SessionMuteResult = z.union([
   Failure,
@@ -1718,7 +1727,7 @@ export function createNeoOperations(service: NeoService) {
   const start = (superpipe({})('neo.work.start') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof WorkId>) => {
+      (input: z.infer<typeof StartWork>) => {
         const work = service.repo.getWork(input.id);
         return { work, ask: work ? service.askRecords.forWork(work.id) : null };
       },
@@ -1762,6 +1771,17 @@ export function createNeoOperations(service: NeoService) {
       'result:start'
     )
     .pipe(
+      (input: z.infer<typeof StartWork>, work: NeoWork) => {
+        if (!input.dependsOn) return { value: work };
+        const edited = service.editDependencies(work.id, input.dependsOn);
+        return edited.ok
+          ? { value: work }
+          : { reason: { ok: false, reason: edited.reason ?? 'dependency_rejected' } };
+      },
+      ['input', 'start'],
+      'result:start'
+    )
+    .pipe(
       async (work: NeoWork, authority: { approved: boolean }) => {
         const refused = neoAdmissionRefusal(await service.admitWork(work.id, !authority.approved));
         return refused
@@ -1772,7 +1792,7 @@ export function createNeoOperations(service: NeoService) {
       'result:start'
     )
     .endAsync('start') as (
-    input: z.infer<typeof WorkId>,
+    input: z.infer<typeof StartWork>,
     caller: OperationCaller
   ) => Promise<z.infer<typeof WorkResult> | Rejection>;
   const continueWork = path(
@@ -2126,8 +2146,8 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.start',
       description:
-        'Start a user-approved delegation through the existing session runtime: in the turn where the human asked for it, or any proposed work item under an ask the human approved (neo.ask.approve).',
-      inputSchema: WorkId,
+        "Start a user-approved delegation through the existing session runtime: in the turn where the human asked for it, or any proposed work item under an ask the human approved (neo.ask.approve). With dependsOn, the card waits until every listed card's bound outcome items are verified met; the result lists blockers while it waits.",
+      inputSchema: StartWork,
       resultSchema: WorkResult,
       policy: { safetyClass: 'human_only' },
       execute: async (input, caller) => withAskView(await start(input, caller)),

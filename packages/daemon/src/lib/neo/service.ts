@@ -1510,8 +1510,8 @@ export class NeoService {
     return this.dependencies.blockers(id, neoOutcomeEligibility(this.checkRegistry()));
   }
 
-  admitWork(id: string, authorized: boolean, now = Date.now()) {
-    return admitNeoWork(id, authorized, now, {
+  async admitWork(id: string, authorized: boolean, now = Date.now()) {
+    const admitted = await admitNeoWork(id, authorized, now, {
       bootedAt: this.bootedAt,
       readWork: (workId: string) => this.repo.getWork(workId),
       readAsk: (workId: string) => this.askRecords.forWork(workId),
@@ -1523,6 +1523,24 @@ export class NeoService {
       release: (workId: string) => this.driverTargets.releaseAdmission(workId),
       markUncertain: (workId: string) => this.driverTargets.recordStartInterrupted(workId),
     });
+    if (authorized && !admitted.ok && admitted.reason === 'prerequisites_unmet')
+      this.dependencies.recordStartIntent(id, now);
+    return admitted;
+  }
+
+  editDependencies(workId: string, dependsOn: readonly string[], now = Date.now()) {
+    const work = this.repo.getWork(workId);
+    if (work && awaitingNeoWorker(work))
+      return { ok: false, reason: 'dependency_already_dispatched' };
+    const expectedRevision = this.askRecords.forWork(workId)?.revision ?? 0;
+    const edited = this.dependencies.replace(
+      { workId, dependsOn, expectedRevision },
+      new Set(this.repo.listWork().map((work) => work.id)),
+      now
+    );
+    if (edited.ok && edited.revision !== expectedRevision)
+      this.dependencies.clearStartIntent(workId);
+    return edited;
   }
 
   async continueWork(
@@ -1849,6 +1867,8 @@ export class NeoService {
         this.log.warn('Neo recovery pending', error);
       }
     }
+    for (const workId of new Set(this.dependencies.edges().map((edge) => edge.workId)))
+      scheduleNeoAdmissionWake(this.db.getJobQueueRepo(), workId);
     await this.reclaimCardPrs();
   }
 

@@ -22,6 +22,22 @@ export class NeoDependencyRepository {
       .all() as Edge[];
   }
 
+  hasStartIntent(workId: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM neo_work_start_intents WHERE work_id = ?').get(workId);
+  }
+
+  recordStartIntent(workId: string, at: number): void {
+    this.db
+      .prepare(
+        'INSERT INTO neo_work_start_intents(work_id, intent_at) VALUES (?, ?) ON CONFLICT(work_id) DO NOTHING'
+      )
+      .run(workId, at);
+  }
+
+  clearStartIntent(workId: string): void {
+    this.db.prepare('DELETE FROM neo_work_start_intents WHERE work_id = ?').run(workId);
+  }
+
   dependents(prerequisiteId: string): string[] {
     return (
       this.db
