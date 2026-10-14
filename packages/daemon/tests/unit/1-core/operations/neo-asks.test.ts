@@ -991,6 +991,114 @@ describe('neo.ask operations', () => {
     expect(service.packBriefs().map((brief) => brief.id)).toEqual(['coding']);
   });
 
+  test('loaded pack checks pass open/edit and execute, while unloading refuses mutations but preserves retries', async () => {
+    service.filePacks = [
+      {
+        id: 'legal',
+        describe: 'Legal',
+        instructions: () => null,
+        askCardEvidence: () => [
+          { key: 'receipt:1', state: 'done', summary: 'Signed', blockers: [] },
+        ],
+        checks: {
+          'legal.confirmed': (_item, evidence) =>
+            evidence.some((entry) => entry.key === 'receipt:1')
+              ? { value: 'Signed receipt' }
+              : { reason: 'pending' },
+        },
+      },
+    ];
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'legal'] } });
+    const input = { ...opening, doneItems: [{ text: 'Letter signed', check: 'legal.confirmed' }] };
+    const opened = await invoke('neo.ask.open', input);
+    expect(opened).toMatchObject({ value: { ok: true } });
+    const askId = opened.value!.ask!.id;
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        add: [{ text: 'Second letter', check: 'legal.confirmed' }],
+      })
+    ).toMatchObject({ value: { ok: true } });
+    Object.assign(service, { deliver: async () => {} });
+    await service.refreshDriverWork();
+    expect(
+      service.askRecords.get(askId)?.doneItems?.map((item) => [item.state, item.evidence])
+    ).toEqual([
+      ['met', 'Signed receipt'],
+      ['met', 'Signed receipt'],
+    ]);
+    db.updateGlobalSettings({ neo: { packs: ['coding'] } });
+    expect(await invoke('neo.ask.open', input)).toMatchObject({
+      value: { ok: true, ask: { id: askId } },
+    });
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        add: [{ text: 'Unavailable', check: 'legal.confirmed' }],
+      })
+    ).toMatchObject({ value: { ok: false, reason: 'unsupported_check: legal.confirmed' } });
+    expect(
+      await invoke(
+        'neo.ask.tick',
+        { askId, itemId: 'i1', state: 'met', evidence: 'Trust me' },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: false, reason: 'unsupported_check: legal.confirmed' } });
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
+  });
+
+  test.each(['legal.missing', '__proto__'])(
+    'refuses unknown check %s before opening an ask',
+    async (check) => {
+      expect(
+        await invoke('neo.ask.open', { ...opening, doneItems: [{ text: 'Letter signed', check }] })
+      ).toMatchObject({ value: { ok: false, reason: `unsupported_check: ${check}` } });
+      expect(service.askRecords.listLive()).toEqual([]);
+    }
+  );
+
+  test('refuses invalid loaded check registrations at the operations door', async () => {
+    service.filePacks = [
+      {
+        id: 'legal',
+        describe: 'Legal',
+        instructions: () => null,
+        checks: { 'coding.pr_merged': () => ({ value: 'forged' }) },
+      },
+    ];
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'legal'] } });
+    expect(await invoke('neo.ask.open', opening)).toMatchObject({
+      value: { ok: false, reason: 'invalid_check_kind: coding.pr_merged' },
+    });
+    expect(service.askRecords.listLive()).toEqual([]);
+  });
+
+  test('does not commit an in-flight check after its pack is unloaded', async () => {
+    service.filePacks = [
+      {
+        id: 'legal',
+        describe: 'Legal',
+        instructions: () => null,
+        askTickChecks: ['legal.filed'],
+        readAskTicks: async () => {
+          db.updateGlobalSettings({ neo: { packs: ['coding'] } });
+          return [{ id: 'i1', evidence: 'Filed before unload' }];
+        },
+      },
+    ];
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'legal'] } });
+    const opened = await invoke('neo.ask.open', {
+      ...opening,
+      doneItems: [{ text: 'Letter filed', check: 'legal.filed' }],
+    });
+    expect(opened).toMatchObject({ value: { ok: true } });
+    Object.assign(service, { deliver: async () => {} });
+    await service.refreshDriverWork();
+    expect(service.askRecords.get(opened.value!.ask!.id)?.doneItems).toEqual([
+      expect.objectContaining({ state: 'pending', evidence: null, verifiedDefinitionHash: null }),
+    ]);
+  });
+
   test('refuses work under a missing or achieved ask, and settling is final', async () => {
     const askId = await openAsk();
     expect(await propose('card-1', 'nope')).toMatchObject({

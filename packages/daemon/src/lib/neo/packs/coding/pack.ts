@@ -53,7 +53,7 @@ export const CODING_PACK_BRIEF: NeoPackBrief = {
   guidance: NEO_PACK_CODING_INSTRUCTIONS,
 };
 
-export const CODING_CHECK_PR_MERGED = 'coding.pr_merged';
+const CODING_CHECK_PR_MERGED = 'coding.pr_merged';
 
 export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoEvidence[]) => {
   const prs = evidence.filter((item) => /^https?:\/\//.test(item.key));

@@ -2783,14 +2783,19 @@ export class NeoService {
   }
 
   private writeAskTicks(ask: NeoAsk, ticks: readonly { id: string; evidence: string }[]): NeoAsk {
-    for (const tick of ticks)
+    const registry = this.checkRegistry();
+    if (!registry.ok) return this.askRecords.get(ask.id) ?? ask;
+    for (const tick of ticks) {
+      const item = ask.doneItems?.find((item) => item.id === tick.id);
+      if (!item || (item.check && !registry.resolve(item.check).ok)) continue;
       this.askRecords.tickItem(
         ask.id,
         { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
         Date.now(),
-        ask.doneItems?.find((item) => item.id === tick.id),
+        item,
         true
       );
+    }
     const ticked = ticks.length ? this.askRecords.get(ask.id) : null;
     return ticked
       ? (writeNeoAskTickStatus(this.askRecords, ticked, planNeoAskTickStatus(ticked)) ?? ticked)
