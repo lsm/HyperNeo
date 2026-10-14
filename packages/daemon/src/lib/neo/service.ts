@@ -1460,7 +1460,11 @@ export class NeoService {
       const opening = messageOpening(String(call.input.message));
       this.driverTargets.recordSent(
         queued.id,
-        probe ? probe.sent : opening ? { inputBefore: 0, opening } : null
+        probe
+          ? probe.sent && { ...probe.sent, receipt: result.receipt }
+          : opening
+            ? { inputBefore: 0, opening }
+            : null
       );
       const current = this.repo.getWork(queued.id);
       if (current?.status !== 'queued') {
