@@ -24,6 +24,7 @@ import {
   requireNeoAskItemKind,
   isNeoAskHandedOver,
   isNeoHumanQuote,
+  isNeoQuoteNaming,
   requireNeoAskEdit,
   planNeoAskWorkStops,
   planNeoCardAsk,
@@ -2720,6 +2721,7 @@ describe('neo.ask operations', () => {
     for (const [change, caller] of [
       [{ remove: ['i2'] }, neo],
       [{ remove: ['i2'], humanSaid: 'drop CI green' }, neo],
+      [{ remove: ['i2'], humanSaid: 'any update' }, neo],
       [{ remove: ['i2'], humanSaid: 'any update' }, quiet],
       [{ remove: ['i2'], humanSaid: 'any update' }, gone],
     ] as const)
@@ -3574,5 +3576,18 @@ describe('isNeoHumanQuote', () => {
     ['drop it', 'never drop items', false],
   ])('%s in %s → %s', (words, text, heard) => {
     expect(isNeoHumanQuote(words, text)).toBe(heard);
+  });
+});
+
+describe('isNeoQuoteNaming', () => {
+  test.each([
+    ['drop the ci part', 'CI green', true],
+    ['skip the release notes', 'Release notes published', true],
+    ['先不做真机测试了', '真机测试通过', true],
+    ['any update', 'CI green', false],
+    ['drop the rest of it', 'The fix is live', false],
+    ['不要这个了', '真机测试通过', false],
+  ])('%s names %s → %s', (words, text, named) => {
+    expect(isNeoQuoteNaming(words, { text })).toBe(named);
   });
 });

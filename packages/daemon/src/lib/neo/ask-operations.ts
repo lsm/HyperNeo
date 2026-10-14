@@ -805,6 +805,30 @@ export function isNeoHumanQuote(words: string, text: string): boolean {
   return false;
 }
 
+const QUOTE_FILLER = new Set(
+  'the a an and or but to of in on at it is be for with this that these those we you i me my our your its from by as not no do'.split(
+    ' '
+  )
+);
+
+function namingTerms(text: string): Set<string> {
+  const lower = text.toLowerCase();
+  const words = (lower.match(/[\p{Script=Latin}\p{N}]{2,}/gu) ?? []).filter(
+    (word) => !QUOTE_FILLER.has(word)
+  );
+  const runs = lower.match(new RegExp(`${CJK.source}+`, 'gu')) ?? [];
+  const pairs = runs.flatMap((run) => {
+    const chars = [...run];
+    return chars.slice(1).map((char, index) => `${chars[index]}${char}`);
+  });
+  return new Set([...words, ...pairs]);
+}
+
+export function isNeoQuoteNaming(words: string, item: Pick<NeoAskItem, 'text'>): boolean {
+  const named = namingTerms(item.text);
+  return [...namingTerms(words)].some((term) => named.has(term));
+}
+
 export function requireNeoAskScopeCut(
   input: Pick<z.infer<typeof Edit>, 'remove' | 'humanSaid'>,
   ask: NeoAsk,
@@ -829,12 +853,13 @@ export function requireNeoAskScopeCut(
     !turn.consultationId &&
     turn.isLive() &&
     words.length > 0 &&
-    said.some((text) => isNeoHumanQuote(words, heardText(text)));
+    said.some((text) => isNeoHumanQuote(words, heardText(text))) &&
+    unfinished.every((item) => isNeoQuoteNaming(words, item));
   return heard
     ? { value: ask }
     : {
         reason: fail(
-          `scope_kept: ${unfinished.map((item) => `${item.id} "${item.text}"`).join('; ')} is not done, and only the human drops unfinished work. Remove it only in the turn where they tell you to drop it, passing humanSaid with their words from that message (at least two whole words, or four characters of Chinese or Japanese); otherwise keep it pending and keep working on it, or settle waiting with a question if you need them to decide.`
+          `scope_kept: ${unfinished.map((item) => `${item.id} "${item.text}"`).join('; ')} is not done, and only the human drops unfinished work. Remove it only in the turn where they tell you to drop it, passing humanSaid with their words from that message that name it (at least two whole words, or four characters of Chinese or Japanese, sharing a word with the item); when they only point at it, ask them with neo.ask.question or let them remove it in the app; otherwise keep it pending and keep working on it, or settle waiting with a question if you need them to decide.`
         ),
       };
 }
