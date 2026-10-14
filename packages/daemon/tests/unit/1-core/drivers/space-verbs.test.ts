@@ -1,4 +1,8 @@
-import { readDriverFollowUp, readDriverSettlement } from '../../../../src/lib/neo/driver-work';
+import {
+  NEO_WORK_UNVERIFIED_REPLY_NOTE,
+  readDriverFollowUp,
+  readDriverSettlement,
+} from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   createSpaceAdapter,
@@ -158,15 +162,20 @@ describe('space adapter start, status and stop', () => {
     expect(readDriverFollowUp(outcome, 30)).toBeNull();
     expect(
       readDriverSettlement({ updatedAt: 10 }, outcome, 50, 10, true, 'original ask')
-    ).toMatchObject({ status: 'reported', report: 'Merged in #5600' });
+    ).toMatchObject({
+      status: 'reported',
+      report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nMerged in #5600`,
+    });
     db.exec(
       "UPDATE space_tasks SET completed_at = 60, updated_at = 60, result = 'New completion' WHERE id = 't2'"
     );
     const next = { kind: 'completed' as const, value: await adapter().status!(ref('t2')) };
-    expect(readDriverFollowUp(next, 40)).toBe('New completion');
+    expect(readDriverFollowUp(next, 40)).toBe(
+      `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nNew completion`
+    );
     expect(readDriverSettlement({ updatedAt: 40 }, next, 70, 40, true, 'new ask')).toMatchObject({
       status: 'reported',
-      report: 'New completion',
+      report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nNew completion`,
     });
   });
 
