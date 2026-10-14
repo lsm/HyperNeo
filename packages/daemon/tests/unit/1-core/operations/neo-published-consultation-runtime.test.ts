@@ -235,13 +235,16 @@ describe('published consultation runtime activation', () => {
         undefined,
         undefined,
         undefined,
-        { autoReplayPendingMessages: false }
+        {
+          autoReplayPendingMessages: false,
+          operationRegistryProvider: () => createOperationRegistry(createNeoOperations(service)),
+        }
       );
       agents.push(agent);
       const options = agent.optionsBuilder.addSessionStateOptions(
         await agent.optionsBuilder.build()
       );
-      expect(options.resume).toBe(session.sdkSessionId);
+      expect(options.resume).toBe(kind === 'project' ? undefined : session.sdkSessionId);
       expect(options.model).toBe('default');
       expect(options.maxTurns).toBe(17);
       if (kind === 'worker') {
@@ -254,9 +257,16 @@ describe('published consultation runtime activation', () => {
       } else {
         expect(options.systemPrompt).toEqual({
           type: 'custom',
-          prompt: neoPrompt(projectId),
+          prompt:
+            kind === 'project'
+              ? expect.stringContaining(neoPrompt(projectId))
+              : neoPrompt(projectId),
           snapshot: false,
         });
+        if (kind === 'project')
+          expect(options.systemPrompt).toMatchObject({
+            prompt: expect.stringContaining('"title":"Plans"'),
+          });
         expect(options.permissionMode).toBe('dontAsk');
         expect(options.tools).toEqual(neoCoordinatorNativeTools(projectId));
         expect(options.plugins).toEqual([]);
@@ -264,11 +274,7 @@ describe('published consultation runtime activation', () => {
         expect(options.agents).toEqual({});
         expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
         const rebuilt = await new QueryOptionsBuilder(agent).build();
-        expect(rebuilt.systemPrompt).toEqual({
-          type: 'custom',
-          prompt: neoPrompt(projectId),
-          snapshot: false,
-        });
+        expect(rebuilt.systemPrompt).toEqual(options.systemPrompt);
       }
     }
   );
