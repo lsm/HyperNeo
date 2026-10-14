@@ -202,9 +202,19 @@ describe('projectNeoCardViews', () => {
         work: [work('w', 'reported')],
         prs: [{ workId: 'w', prs: [pr(1)], waiting: false }],
         asks: [ask({ workIds: ['w'] })],
+        drivers: [driver('w', 'done', { model: 'gpt-6.1-sol', effort: 'medium' })],
       })
     );
     expect(NeoCardViewSchema.parse(cards[0])).toEqual(cards[0]);
+    expect(cards[0]).toMatchObject({ model: 'gpt-6.1-sol', effort: 'medium' });
+  });
+
+  test('does not invent configuration for a legacy receipt', () => {
+    const [card] = projectNeoCardViews(
+      parts({ work: [work('w', 'queued')], drivers: [driver('w', 'running')] })
+    );
+    expect(card.model).toBeUndefined();
+    expect(card.effort).toBeUndefined();
   });
 
   test('a card needing you in its own chat still asks for an answer', () => {

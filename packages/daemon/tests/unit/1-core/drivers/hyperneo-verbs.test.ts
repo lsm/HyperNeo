@@ -1,13 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { createHyperneoAdapter } from '../../../../src/lib/drivers/hyperneo-adapter';
+import {
+  createHyperneoAdapter,
+  type HyperneoSessionControl,
+} from '../../../../src/lib/drivers/hyperneo-adapter';
+import { ModelUnavailableError } from '../../../../src/lib/session/session-lifecycle';
 import type { ArchiveAdmission } from '../../../../src/lib/drivers/types';
 import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function control(db: Database, events: string[]) {
+  let selectedModel = 'gpt-6-luna';
   return {
     sessions: {
+      resolveModel: async (model: string) =>
+        model === 'GLM 5.3' ? 'glm-5.3' : ['glm-5.3', 'gpt-6-luna'].includes(model) ? model : null,
       create: async (workspacePath: string, title: string, model?: string) => {
+        selectedModel = model ?? selectedModel;
         const status = workspacePath === '/focus/repo' ? 'pending_worktree_choice' : 'active';
         db.prepare(
           `INSERT INTO sessions (id, title, workspace_path, status, last_active_at, type)
@@ -16,7 +24,7 @@ function control(db: Database, events: string[]) {
         events.push(`create ${workspacePath}${model ? ` on ${model}` : ''}`);
         return 'new';
       },
-      model: (sessionId: string) => (sessionId === 'new' ? 'gpt-6-luna' : null),
+      model: (sessionId: string) => (sessionId === 'new' ? selectedModel : null),
       chooseWorktree: async (sessionId: string) => {
         db.exec(`UPDATE sessions SET status = 'active' WHERE id = '${sessionId}'`);
         events.push(`worktree ${sessionId}`);
@@ -274,7 +282,8 @@ describe('hyperneo adapter start and stop', () => {
 
   afterEach(() => db.close());
 
-  function adapter() {
+  function adapter(overrides: Partial<HyperneoSessionControl> = {}) {
+    const controls = control(db, events);
     return createHyperneoAdapter({
       db: () => db,
       machine: 'imac',
@@ -283,7 +292,8 @@ describe('hyperneo adapter start and stop', () => {
         handed.push(`${sessionId}: ${message}`);
         return { kind: 'enqueued', id: 'mb1' };
       },
-      ...control(db, events),
+      ...controls,
+      sessions: { ...controls.sessions, ...overrides },
     });
   }
 
@@ -313,11 +323,56 @@ describe('hyperneo adapter start and stop', () => {
   });
 
   test('start opens the session on the model Neo picked', async () => {
-    await adapter().start?.(
-      { place: place('/focus/notes'), title: 'essay', message: 'write it', model: 'glm-5.3' },
+    const result = await adapter().start?.(
+      { place: place('/focus/notes'), title: 'essay', message: 'write it', model: 'GLM 5.3' },
       from
     );
     expect(events[0]).toBe('create /focus/notes on glm-5.3');
+    expect(result).toMatchObject({ ok: true, value: { model: 'glm-5.3' } });
+    expect(handed).toEqual(['new: write it']);
+  });
+
+  test.each([{ model: 'unavailable' }, { effort: 'medium' }])(
+    'refuses unsupported configuration before creating a session: %j',
+    async (configuration) => {
+      expect(
+        await adapter().start!(
+          { place: place('/focus/notes'), title: 'essay', message: 'write it', ...configuration },
+          from
+        )
+      ).toMatchObject({
+        ok: false,
+        reason: 'model' in configuration ? 'unsupported_model' : 'unsupported_effort',
+      });
+      expect(events).toEqual([]);
+      expect(handed).toEqual([]);
+    }
+  );
+
+  test.each(['gpt-6-luna', null])(
+    'keeps the first message unsent for observed model %s',
+    async (model) => {
+      const result = await adapter({ model: () => model }).start!(
+        { place: place('/focus/notes'), title: 'essay', message: 'write it', model: 'glm-5.3' },
+        from
+      );
+      expect(result).toMatchObject({ ok: false, reason: 'not_delivered' });
+      expect(handed).toEqual([]);
+      expect(events).toContain('create /focus/notes on glm-5.3');
+    }
+  );
+
+  test('reports a model that becomes unavailable during creation as a typed refusal', async () => {
+    const result = await adapter({
+      create: async () => {
+        throw new ModelUnavailableError('Model became unavailable.');
+      },
+    }).start!(
+      { place: place('/focus/notes'), title: 'essay', message: 'write it', model: 'glm-5.3' },
+      from
+    );
+    expect(result).toMatchObject({ ok: false, reason: 'unsupported_model' });
+    expect(handed).toEqual([]);
   });
 
   test('start refuses work with no folder instead of using the Neo folder', async () => {

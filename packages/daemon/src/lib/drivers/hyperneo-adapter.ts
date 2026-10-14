@@ -5,9 +5,11 @@ import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
+import { ModelUnavailableError } from '../session/session-lifecycle.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
+import { workStartConfiguration } from './start-configuration.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -64,6 +66,7 @@ export interface HyperneoSessionRow {
 export interface HyperneoSessionControl {
   archive?: WorkAdapter['archive'];
   create(workspacePath: string, title: string, model?: string): Promise<string>;
+  resolveModel(model: string): Promise<string | null>;
   model(sessionId: string): string | null;
   chooseWorktree(sessionId: string): Promise<void>;
   announce(sessionId: string): void;
@@ -434,21 +437,59 @@ export async function createHyperneoSession(
   folder: string,
   request: StartRequest,
   deps: HyperneoAdapterDeps
-): Promise<string> {
-  const sessionId = await deps.sessions.create(folder, request.title, request.model);
+): Promise<Gate<string>> {
+  let sessionId: string;
+  try {
+    sessionId = await deps.sessions.create(folder, request.title, request.model);
+  } catch (error) {
+    if (request.model !== undefined && error instanceof ModelUnavailableError)
+      return { reason: reject('unsupported_model', error.message) };
+    throw error;
+  }
   if (readHyperneoSession(deps.db(), sessionId)?.status === 'pending_worktree_choice') {
     await deps.sessions.chooseWorktree(sessionId);
   }
   deps.sessions.announce(sessionId);
-  return sessionId;
+  return { value: sessionId };
+}
+
+async function requireHyperneoStartConfiguration(
+  request: StartRequest,
+  deps: HyperneoAdapterDeps
+): Promise<Gate<StartRequest>> {
+  if (request.effort !== undefined)
+    return { reason: reject('unsupported_effort', 'HyperNeo cannot confirm a requested effort.') };
+  if (request.model === undefined) return { value: request };
+  const model = await deps.sessions.resolveModel(request.model);
+  return model
+    ? { value: { ...request, model } }
+    : { reason: reject('unsupported_model', `No available model matches ${request.model}.`) };
+}
+
+function confirmHyperneoStart(
+  sessionId: string,
+  request: StartRequest,
+  deps: HyperneoAdapterDeps
+): Gate<{ sessionId: string; model: string | null }> {
+  const model = deps.sessions.model(sessionId);
+  const confirmed = workStartConfiguration.confirm(request, model ? { model } : {});
+  return confirmed.ok
+    ? { value: { sessionId, model } }
+    : {
+        reason: reject(
+          confirmed.reason,
+          `${confirmed.detail} Session ${sessionId} was created without its first message.`
+        ),
+      };
 }
 
 export async function openHyperneoWork(
-  sessionId: string,
+  confirmed: { sessionId: string; model: string | null },
   request: StartRequest,
   context: WorkCallContext,
   deps: HyperneoAdapterDeps
 ): Promise<Result<WorkSummary>> {
+  const { sessionId, model } = confirmed;
   const outcome = await deps.handoff(sessionId, request.message, context.from);
   if (outcome.kind === 'rejected') {
     return reject(
@@ -459,7 +500,6 @@ export async function openHyperneoWork(
   const row = readHyperneoSession(deps.db(), sessionId);
   if (!row) return reject('not_found', `Session ${sessionId} is gone.`);
   const work = toWork(row, deps.machine);
-  const model = deps.sessions.model(sessionId);
   return {
     ok: true,
     value: {
@@ -482,9 +522,12 @@ export function stopHyperneoWork(
 
 const runHyperneoStart = (superpipe({})('hyperneo-start-work') as PipelineAPI)
   .input(['request', 'context', 'deps'])
-  .pipe(selectStartFolder, ['request', 'deps'], 'result:outcome')
-  .pipe(createHyperneoSession, ['outcome', 'request', 'deps'], 'sessionId')
-  .pipe(openHyperneoWork, ['sessionId', 'request', 'context', 'deps'], 'outcome')
+  .pipe(requireHyperneoStartConfiguration, ['request', 'deps'], 'result:outcome')
+  .pipe((request: StartRequest) => request, 'outcome', 'configured')
+  .pipe(selectStartFolder, ['configured', 'deps'], 'result:outcome')
+  .pipe(createHyperneoSession, ['outcome', 'configured', 'deps'], 'result:outcome')
+  .pipe(confirmHyperneoStart, ['outcome', 'configured', 'deps'], 'result:outcome')
+  .pipe(openHyperneoWork, ['outcome', 'configured', 'context', 'deps'], 'outcome')
   .endAsync('outcome') as (
   request: StartRequest,
   context: WorkCallContext,

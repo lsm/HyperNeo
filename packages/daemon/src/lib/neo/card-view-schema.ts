@@ -36,6 +36,8 @@ const CardPhase = z.enum([
 ]);
 
 export const NeoCardViewSchema = z.object({
+  model: z.string().optional(),
+  effort: z.string().optional(),
   workId: z.string(),
   phase: CardPhase,
   group: CardGroup,
