@@ -217,6 +217,8 @@ export function NeoLive() {
         disabled={!connected || !!neo.busyWork}
         onAction={(id, action) => void neo.act(id, action)}
         onOpen={() => openScene(scene.ref)}
+        onOpenWork={(id) => openScene({ kind: 'work', id })}
+        canOpenWork={canOpenScene}
         presentation={neoWorkPresentation(card, {
           compact: !!publicConversation,
           attention: groupKey === 'attention',
@@ -401,18 +403,25 @@ export function NeoLive() {
     requestAnimationFrame(() => revealNeoAsk(sceneSheet.current, askId));
   }
 
+  function sceneShown(id: string) {
+    return sceneGroups.some(
+      (group) =>
+        group.scenes.some((scene) => scene.ref.id === id) ||
+        group.asks.some((ask) => ask.scenes.some((scene) => scene.ref.id === id))
+    );
+  }
+
+  function canOpenScene(id: string) {
+    return !!relevant.find((item) => item.id === id)?.sessionId || sceneShown(id);
+  }
+
   function openScene(ref: NeoSceneRef) {
     const work = relevant.find((item) => item.id === ref.id);
     if (work?.sessionId) {
       setChat({ sessionId: work.sessionId, title: work.title });
       return;
     }
-    const shown = sceneGroups.some(
-      (group) =>
-        group.scenes.some((scene) => scene.ref.id === ref.id) ||
-        group.asks.some((ask) => ask.scenes.some((scene) => scene.ref.id === ref.id))
-    );
-    if (!shown) return;
+    if (!sceneShown(ref.id)) return;
     setChat(null);
     setScenesOpen(true);
     requestAnimationFrame(() => revealNeoWork(sceneSheet.current, ref.id));

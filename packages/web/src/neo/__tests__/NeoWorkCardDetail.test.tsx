@@ -458,3 +458,107 @@ describe('NeoWorkCard reply attribution', () => {
     expect(container.querySelector('[data-reply-unverified]')).toBeNull();
   });
 });
+
+describe('NeoWorkCard dependency waits', () => {
+  afterEach(() => cleanup());
+  const api = {
+    workId: 'api',
+    title: 'Ship the API',
+    reason: 'outcomes_unverified',
+    items: [
+      { id: 'i1', text: 'PR merged' },
+      { id: 'i2', text: 'Deployed' },
+    ],
+  };
+  const proposed = (extra: Partial<NeoCardView>) =>
+    testCard(work('ui', 'proposed'), {
+      phase: 'proposed',
+      primary: { kind: 'start', label: 'Start work', link: null },
+      waitingFor: [
+        api,
+        { ...api, workId: 'old', title: 'Old card', reason: 'prerequisite_cancelled' },
+      ],
+      ...extra,
+    });
+
+  it('lists what a proposed card waits for and opens each prerequisite', () => {
+    const openWork = vi.fn();
+    render(
+      <NeoWorkCard
+        work={work('ui', 'proposed')}
+        card={proposed({})}
+        busy={false}
+        disabled={false}
+        onAction={() => {}}
+        onOpenWork={openWork}
+        canOpenWork={(id) => id === 'api'}
+      />
+    );
+    expect(screen.getByText('Waits for')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Ship the API: PR merged, Deployed' }));
+    expect(openWork).toHaveBeenCalledExactlyOnceWith('api');
+    expect(screen.getByText('Old card was cancelled').closest('button')).toBeNull();
+    expect(screen.getByRole('button', { name: /Start work/ })).toBeTruthy();
+  });
+
+  it('a summary card keeps its prerequisite links outside its own button', () => {
+    const openWork = vi.fn();
+    const { container } = render(
+      <NeoWorkCard
+        work={work('ui', 'proposed')}
+        card={proposed({})}
+        busy={false}
+        disabled={false}
+        onAction={() => {}}
+        onOpen={() => {}}
+        onOpenWork={openWork}
+        presentation="summary"
+      />
+    );
+    expect(container.querySelector('[data-scene-open] [data-neo-waits]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Ship the API: PR merged, Deployed' }));
+    expect(openWork).toHaveBeenCalledExactlyOnceWith('api');
+  });
+
+  it('a card that starts by itself offers only Cancel', () => {
+    const act = vi.fn();
+    render(
+      <NeoWorkCard
+        work={work('ui', 'proposed')}
+        card={proposed({ autoStart: true })}
+        busy={false}
+        disabled={false}
+        onAction={act}
+      />
+    );
+    expect(screen.getByText('Starts by itself once these are done')).toBeTruthy();
+    expect(screen.getByText('Starts by itself')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Start work/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(act).toHaveBeenCalledExactlyOnceWith('ui', 'cancel');
+  });
+
+  it('a card that may have started warns and offers a check instead of Start', () => {
+    render(
+      <NeoWorkCard
+        work={work('ui', 'proposed')}
+        card={proposed({
+          waitingFor: undefined,
+          uncertain: true,
+          adapter: 'codex-desktop',
+          open: { link: 'codex://threads/t1', remoteLink: null, sessionId: null, daemon: null },
+        })}
+        busy={false}
+        disabled={false}
+        onAction={() => {}}
+      />
+    );
+    expect(
+      screen.getByText('It may have started already. Check it before starting it again.')
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Start work/ })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open Title ui' }).textContent).toContain(
+      'Check in Codex'
+    );
+  });
+});

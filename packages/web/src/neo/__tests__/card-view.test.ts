@@ -3,6 +3,7 @@ import type { NeoAsk, NeoAskView, NeoCardView } from '@hyperneo/shared/types/neo
 import { describe, expect, it } from 'vitest';
 import {
   neoCardLabel,
+  neoCardWaitLine,
   neoCardMeta,
   neoCardOpenLabel,
   neoCardPrimaryAction,
@@ -236,5 +237,65 @@ describe('neoAskOpenTarget', () => {
     const view = describeNeoAskFromView(ask('a', ['w']), scenes, askView('a', { workIds: ['w'] }));
     const target = neoAskOpenTarget(view, new Map([['w', card('w')]]));
     expect(target).toMatchObject({ link: 'codex://threads/t1', card: { workId: 'w' } });
+  });
+});
+
+const api = {
+  workId: 'api',
+  title: 'Ship the API',
+  reason: 'outcomes_unverified',
+  items: [
+    { id: 'i1', text: 'PR merged' },
+    { id: 'i2', text: 'Deployed' },
+  ],
+};
+
+describe('neoCardWaitLine', () => {
+  it('names what each prerequisite still needs, or why it cannot be met', () => {
+    expect(
+      [
+        api,
+        { ...api, reason: 'prerequisite_cancelled' },
+        { ...api, reason: 'prerequisite_missing' },
+        { ...api, reason: 'dependency_outcomes_missing' },
+      ].map(neoCardWaitLine)
+    ).toEqual([
+      'Ship the API: PR merged, Deployed',
+      'Ship the API was cancelled',
+      'Ship the API no longer exists',
+      'Ship the API has no outcome to wait for',
+    ]);
+  });
+});
+
+describe('neoCardLabel waits', () => {
+  it('says what a proposed card waits for, and that it starts by itself when it will', () => {
+    const waiting = card('w', { phase: 'proposed', waitingFor: [api] });
+    expect(neoCardLabel(waiting)).toBe('Waits for Ship the API');
+    expect(neoCardLabel({ ...waiting, autoStart: true })).toBe(
+      'Starts by itself after Ship the API'
+    );
+    expect(neoCardLabel({ ...waiting, phase: 'running' })).toBe('Running in Codex Desktop');
+  });
+});
+
+describe('neoCardPrimaryAction uncertain', () => {
+  it('turns an uncertain start into a check in its app, never Start', () => {
+    const uncertain = card('w', {
+      phase: 'proposed',
+      uncertain: true,
+      primary: { kind: 'start', label: 'Start work', link: null },
+    });
+    expect(neoCardPrimaryAction(uncertain, work('w', 'proposed'))).toEqual({
+      kind: 'open',
+      label: 'Check in Codex',
+      link: 'codex://threads/t1',
+    });
+    expect(
+      neoCardPrimaryAction(
+        { ...uncertain, open: { ...uncertain.open, link: null } },
+        work('w', 'proposed')
+      )
+    ).toEqual({ kind: 'none' });
   });
 });
