@@ -3,7 +3,7 @@ import { isNeoWorkClosedDone, type NeoAsk } from '@hyperneo/shared/types/neo-sna
 import type { WorkRef, WorkStatus } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import { isNeoAskLive } from './done-check.ts';
-import { readDriverFollowUp, readDriverLive } from './driver-work.ts';
+import { readDriverFollowUp, readDriverLive, type DriverSent } from './driver-work.ts';
 import { isNeoCardDoneWhenMet } from './card-wake.ts';
 
 type Gate<T> = { value: T } | { reason: null };
@@ -68,9 +68,9 @@ export function requireNeoWorkFollowAnswered(
 export function planNeoWorkFollow(
   work: Pick<NeoWork, 'updatedAt' | 'report'>,
   read: { outcome: OperationOutcome },
-  card: { since: number }
+  card: { since: number; sent?: DriverSent | null }
 ): Gate<string> {
-  const said = readDriverFollowUp(read.outcome, card.since);
+  const said = readDriverFollowUp(read.outcome, card.since, card.sent ?? null);
   if (!said) return { reason: null };
   const report = `${said}\n\nEarlier report:\n${work.report ?? ''}`;
   return { value: report.slice(0, NEO_WORK_REPORT_MAX) };

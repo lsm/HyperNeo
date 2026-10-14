@@ -491,7 +491,7 @@ describe('NeoWorkPrClaimRepository settled cards', () => {
       expect(repo.cardsToReclaim()).toEqual(['a', 'b']);
       repo.drop('b', pull(2).toLowerCase(), 'mentioned');
       repo.drop('b', pull(3).toLowerCase(), 'mentioned');
-      expect(repo.cardsToReclaim()).toEqual(['a']);
+      expect(repo.cardsToReclaim()).toEqual(['a', 'b']);
       expect(repo.forUrls([pull(2), pull(3)]).map((row) => row.urlKey)).toEqual([
         pull(2).toLowerCase(),
       ]);

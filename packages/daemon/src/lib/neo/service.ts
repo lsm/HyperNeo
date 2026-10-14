@@ -127,6 +127,7 @@ import {
   driverAdoptedReport,
   readDriverLive,
   readDriverOpenedPrs,
+  readDriverCardExchange,
   readDriverSendBaseline,
   neoCardSent,
   readDriverSent,
@@ -288,9 +289,8 @@ import {
   requireNeoCardPrRelay,
 } from './card-pr-relay.ts';
 import {
-  extractNeoCardRefs,
+  readCodingCardRefs,
   readGithubRefStates,
-  readNeoPrRefUrls,
   type NeoRefStateReader,
 } from './packs/coding/ask-prs.ts';
 import {
@@ -489,10 +489,18 @@ export class NeoService {
     )
     .pipe(requireNeoWorkFollow, ['work', 'card', 'now'], 'result:follow')
     .pipe(
-      async (work: NeoWork, ref: WorkRef, now: number, card: { since: number }) => {
+      async (
+        work: NeoWork,
+        ref: WorkRef,
+        now: number,
+        card: { since: number; sent: DriverSent | null }
+      ) => {
         this.followReads.set(work.id, now);
         return {
-          outcome: await this.invokeAsCard(work, 'work.status', { ref, since: card.since }),
+          outcome: await this.invokeAsCard(work, 'work.status', {
+            ref,
+            since: card.sent?.inputBefore ?? card.since,
+          }),
         };
       },
       ['work', 'follow', 'now', 'card'],
@@ -514,7 +522,11 @@ export class NeoService {
         live: ReturnType<typeof planNeoWorkFollowLive>,
         read: { outcome: OperationOutcome }
       ) => {
-        if (live?.status !== 'needs_you') return;
+        if (
+          live?.status !== 'needs_you' ||
+          !readDriverCardExchange(read.outcome, this.driverTargets.readSent(work.id))?.current
+        )
+          return;
         const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
         if (queued) await this.noteDriverNeedsYou(queued, ref, read.outcome);
       },
@@ -1737,7 +1749,10 @@ export class NeoService {
     return [...ids];
   }
 
-  private followCard(work: NeoWork, readAt: number | null): NeoWorkFollowCard & { since: number } {
+  private followCard(
+    work: NeoWork,
+    readAt: number | null
+  ): NeoWorkFollowCard & { since: number; sent: DriverSent | null } {
     const driver = this.driverTargets.readCard(work.id);
     return {
       ref: driver?.ref ?? null,
@@ -1745,6 +1760,7 @@ export class NeoService {
       ask: this.askRecords.forWork(work.id),
       readAt,
       since: driver?.followAnchor ?? work.updatedAt,
+      sent: this.driverTargets.readSent(work.id),
       superseded: this.driverTargets.readSupersededAt(work.id) !== null,
       live: driver?.liveStatus ?? null,
     };
@@ -2851,7 +2867,15 @@ export class NeoService {
     const brief = [work.title, work.instruction, goal?.goal, goal?.doneWhen]
       .filter(Boolean)
       .join('\n');
+    const ref = this.driverTargets.readRef(work.id);
+    const sent = neoCardSent(this.driverTargets.readSent(work.id), work);
+    const outcome =
+      ref && sent
+        ? await this.invokeAsCard(work, 'work.status', { ref, since: sent.inputBefore })
+        : null;
+    const window = outcome ? readDriverCardExchange(outcome, sent) : null;
     return planNeoCardPrCandidates({
+      window,
       report: work.report,
       brief,
       branch: await this.branchPrUrls(work.id),
@@ -2865,13 +2889,14 @@ export class NeoService {
     work: NeoWork,
     brief: string
   ): Promise<{ named: string[]; mentioned: string[] }> {
-    if (!/#\d/.test(`${brief}\n${work.report ?? ''}`)) return { named: [], mentioned: [] };
     const ref = this.driverTargets.readRef(work.id);
     const cwd = neoWorkRepoCwd(ref?.adapter === 'hyperneo' ? this.db.getSession(ref.id) : null);
-    const repo = cwd ? await this.readWorkRepo(cwd) : null;
-    const read = (text: string) =>
-      readNeoPrRefUrls(extractNeoCardRefs(text, repo), (refs) => this.readRefStates(refs));
-    return { named: await read(brief), mentioned: await read(work.report ?? '') };
+    return readCodingCardRefs(
+      brief,
+      work.report,
+      () => (cwd ? this.readWorkRepo(cwd) : Promise.resolve(null)),
+      (refs) => this.readRefStates(refs)
+    );
   }
 
   private async branchPrUrls(workId: string): Promise<string[]> {

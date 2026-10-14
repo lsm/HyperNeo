@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository';
 import { NeoDependencyRepository } from '../../../../src/storage/repositories/neo-dependency-repository';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
-import { runMigration365 } from '../../../../src/storage/schema/m365-neo-work-dependencies';
+import { runMigration366 } from '../../../../src/storage/schema/m366-neo-work-dependencies';
 import { createTestDb } from '../../../helpers/database';
 
 const visible = new Set(['a', 'b', 'c']);
@@ -239,12 +239,12 @@ describe('NeoDependencyRepository', () => {
   });
 });
 
-describe('runMigration365', () => {
+describe('runMigration366', () => {
   test('is registered on fresh databases and reruns without losing edges', async () => {
     const db = await createTestDb();
     try {
       db.getDatabase().exec(
-        "DROP TABLE neo_work_dependencies; DELETE FROM migration_markers WHERE key = 'migration_365'"
+        "DROP TABLE neo_work_dependencies; DROP TABLE neo_cross_project_dispatch_members; DROP TABLE neo_cross_project_dispatches; DELETE FROM migration_markers WHERE key = 'migration_366'"
       );
       const backup = mock(() => {});
       runMigrations(db.getDatabase(), backup);
@@ -252,9 +252,9 @@ describe('runMigration365', () => {
       expect(
         db
           .getDatabase()
-          .prepare("SELECT key FROM migration_markers WHERE key = 'migration_365'")
+          .prepare("SELECT key FROM migration_markers WHERE key = 'migration_366'")
           .get()
-      ).toEqual({ key: 'migration_365' });
+      ).toEqual({ key: 'migration_366' });
       const repo = new NeoRepository(db.getDatabase());
       for (const id of ['a', 'b'])
         repo.proposeWork({
@@ -266,7 +266,13 @@ describe('runMigration365', () => {
           instruction: id,
         });
       db.getDatabase().exec("INSERT INTO neo_work_dependencies VALUES ('b', 'a')");
-      runMigration365(db.getDatabase());
+      runMigration366(db.getDatabase());
+      expect(
+        db
+          .getDatabase()
+          .prepare("SELECT name FROM sqlite_master WHERE name = 'neo_cross_project_dispatches'")
+          .get()
+      ).toBeTruthy();
       expect(db.getDatabase().prepare('SELECT * FROM neo_work_dependencies').all()).toEqual([
         { work_id: 'b', prerequisite_id: 'a' },
       ]);

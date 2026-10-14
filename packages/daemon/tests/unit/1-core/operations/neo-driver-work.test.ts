@@ -677,7 +677,7 @@ describe('driverExchangeReport', () => {
   const agent = (at: number, text: string) => ({ at, role: 'agent' as const, text });
   const user = (at: number, text: string) => ({ at, role: 'user' as const, text });
 
-  test('gives every message after Neo’s, oldest first, without Neo’s own message', () => {
+  test('includes only replies before the next input', () => {
     expect(
       driverExchangeReport(
         [
@@ -689,7 +689,7 @@ describe('driverExchangeReport', () => {
         false,
         'Raise the font.'
       )
-    ).toBe('Agent: Looking.\n\nInput: also the footer\n\nAgent: Both done.');
+    ).toBe('Agent: Looking.');
     expect(
       driverExchangeReport(
         [
@@ -700,7 +700,7 @@ describe('driverExchangeReport', () => {
         false,
         'Raise the font.'
       )
-    ).toBe('Input: Raise the font. I mean the footer too\n\nAgent: Done.');
+    ).toBeNull();
     expect(driverExchangeReport([user(1, 'hi')], false, null)).toBeNull();
     expect(driverExchangeReport(undefined, false, null)).toBeNull();
   });
@@ -758,7 +758,29 @@ describe('Neo work with a drivers target', () => {
         execute: async (input, caller) => {
           calls.push({ name, input, caller });
           if (name === 'work.start') await during?.(service);
-          if (name === 'work.status') return status(input);
+          if (name === 'work.status') {
+            const result = status(input) as { ok?: boolean; value?: Record<string, unknown> };
+            const value = result.value;
+            if (!value || value.exchange !== undefined || typeof value.lastReply !== 'string')
+              return result;
+            const sent = service.driverTargets.readSent('work-1');
+            if (!sent) return result;
+            const at = Number(value.lastReplyAt ?? value.lastActivityAt);
+            return {
+              ...result,
+              value: {
+                ...value,
+                exchange: [
+                  {
+                    at: Math.min(at - 0.1, sent.inputBefore + 0.1),
+                    role: 'user',
+                    text: sent.opening,
+                  },
+                  { at, role: 'agent', text: value.lastReply },
+                ],
+              },
+            };
+          }
           if (name === 'work.find') return find(input);
           return name === 'work.stop'
             ? { ok: true, value: { stopped: true } }
@@ -1418,7 +1440,7 @@ describe('Neo work with a drivers target', () => {
         report: 'Agent: Font is 16px.',
       });
       expect(returned).toEqual(['work-1']);
-      const since = service.driverTargets.readStartedAt('work-1');
+      const since = service.driverTargets.readSent('work-1')?.inputBefore;
       expect(calls.filter((call) => call.name === 'work.status').map((call) => call.input)).toEqual(
         [
           { ref, since },
@@ -1806,6 +1828,55 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('unrelated event turns neither replace the report nor reopen its card', async () => {
+    const ref = { adapter: 'codex-desktop', id: 'worker' };
+    const at = Date.now() + 10_000;
+    const own = [
+      { at, role: 'user', text: work.instruction },
+      { at: at + 1, role: 'agent', text: 'Own result' },
+    ];
+    let reply: unknown = {
+      ok: true,
+      value: { status: 'done', lastActivityAt: at + 1, exchange: own },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    const clock = spyOn(Date, 'now');
+    Object.assign(service, { returnReport: async () => {}, checkDone: async () => {} });
+    service.workGoals.record('work-1', 'Font', '- checked');
+    fileUnderAsk(service);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      const original = service.repo.getWork('work-1')!;
+      expect(original.report).toBe('Agent: Own result');
+      for (const [index, status] of ['needs_you', 'done'].entries()) {
+        const later = at + (index + 1) * 180_000;
+        clock.mockReturnValue(later);
+        reply = {
+          ok: true,
+          value: {
+            status,
+            lastActivityAt: later,
+            lastReply: 'Other PR result',
+            exchange: [
+              ...own,
+              { at: later - 1, role: 'user', text: 'PR event for another card' },
+              { at: later, role: 'agent', text: 'Other PR result' },
+            ],
+          },
+        };
+        await service.refreshDriverWork();
+        expect(service.repo.getWork('work-1')).toMatchObject({
+          status: 'reported',
+          report: original.report,
+        });
+      }
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
   test('a reported card follows its session when it merges on its own later', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/neo-ios/pull/25';
@@ -1843,11 +1914,14 @@ describe('Neo work with a drivers target', () => {
     });
     const statusCalls = () => calls.filter((call) => call.name === 'work.status').length;
     try {
+      db.getDatabase()
+        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
+        .run(`\nPR: ${url}`, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       const reported = service.repo.getWork('work-1')!;
       expect(reported.report).toContain('Waiting for the build.');
-      expect(notes).toEqual(['work-1:done-check:0']);
+      expect(notes).toEqual(['work-1:done-check:0:pr:1']);
 
       const later = reported.updatedAt + 60_000;
       reply = {
@@ -1856,16 +1930,19 @@ describe('Neo work with a drivers target', () => {
           status: 'done',
           lastActivityAt: later,
           lastReplyAt: later,
-          exchange: [{ at: later, role: 'agent', text: `CI passed; merged ${url}.` }],
+          exchange: [
+            { at: 1, role: 'user', text: service.driverTargets.readSent('work-1')!.opening },
+            { at: later, role: 'agent', text: `CI passed; merged ${url}.` },
+          ],
         },
       };
       const before = statusCalls();
       await service.refreshDriverWork();
       const followed = service.repo.getWork('work-1')!;
-      expect(statusCalls()).toBe(before + 1);
+      expect(statusCalls()).toBe(before + 2);
       expect(calls.filter((call) => call.name === 'work.status').at(-1)?.input).toEqual({
         ref,
-        since: reportedAt,
+        since: service.driverTargets.readSent('work-1')?.inputBefore,
       });
       expect(followed.report).toContain(`merged ${url}`);
       expect(followed.report).toContain('Earlier report:');
@@ -1873,12 +1950,12 @@ describe('Neo work with a drivers target', () => {
         { url, state: 'MERGED', checks: 'passing', review: 'approved' },
       ]);
       expect(notes).toEqual([
-        'work-1:done-check:0',
+        'work-1:done-check:0:pr:1',
         `work-1:done-check:0:pr:1:at:${followed.updatedAt}`,
       ]);
 
       await service.refreshDriverWork();
-      expect(statusCalls()).toBe(before + 1);
+      expect(statusCalls()).toBe(before + 2);
 
       await service.reconcile('work-1');
       expect(notes).toHaveLength(2);
@@ -1911,6 +1988,9 @@ describe('Neo work with a drivers target', () => {
     let now = Date.now();
     const clock = spyOn(Date, 'now').mockImplementation(() => now);
     try {
+      db.getDatabase()
+        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
+        .run(`\nPR: ${url}`, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(doneChecks()).toEqual([]);
@@ -2260,7 +2340,13 @@ describe('Neo work with a drivers target', () => {
       return [url];
     };
     service.readPrs = async (urls) =>
-      urls.map((item) => ({ url: item, state: 'OPEN', checks: 'pending', review: 'none' }));
+      urls.map((item) => ({
+        url: item,
+        createdAt: Date.now(),
+        state: 'OPEN',
+        checks: 'pending',
+        review: 'none',
+      }));
     Object.assign(service, { deliver: async () => {} });
     try {
       db.createSession({ ...createTestSession('card-session'), worktree });
@@ -2273,7 +2359,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('attaches the pull request a desktop worker opened while its card still runs', async () => {
+  test('does not claim a desktop PR without branch provenance', async () => {
     const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_worker' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6651';
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
@@ -2296,13 +2382,13 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
-      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);
+      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([]);
     } finally {
       db.close();
     }
   });
 
-  test('tracks the pull requests a card reports by bare number in its repository', async () => {
+  test('does not claim PRs mentioned only in a report', async () => {
     const ref = { adapter: 'hyperneo', id: 'card-session' };
     const pull = (n: number) => `https://github.com/lsm/HyperNeo/pull/${n}`;
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
@@ -2346,10 +2432,7 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(cwds).toContain('/repo');
-      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([
-        pull(6403),
-        pull(6440),
-      ]);
+      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([]);
     } finally {
       db.close();
     }
@@ -2371,6 +2454,9 @@ describe('Neo work with a drivers target', () => {
       },
     });
     try {
+      db.getDatabase()
+        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
+        .run(`\nPR: ${url}`, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('reported');
@@ -2416,6 +2502,9 @@ describe('Neo work with a drivers target', () => {
       },
     });
     try {
+      db.getDatabase()
+        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
+        .run(`\nPR: ${url}`, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.askRecords.get(opened.id)?.doneItems).toEqual([
@@ -2473,6 +2562,9 @@ describe('Neo work with a drivers target', () => {
       },
     });
     try {
+      db.getDatabase()
+        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
+        .run(`\nPR: ${url}`, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.askRecords.get(opened.id)?.doneItems?.map((item) => item.state)).toEqual([
@@ -2628,6 +2720,9 @@ describe('Neo work with a drivers target', () => {
     service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
     Object.assign(service, { deliver: async () => {} });
     try {
+      db.getDatabase()
+        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
+        .run(`\nPR: ${url}`, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.askRecords.get(opened.id)).toMatchObject({
@@ -2698,6 +2793,9 @@ describe('Neo work with a drivers target', () => {
       await service.refreshDriverWork();
     };
     try {
+      db.getDatabase()
+        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
+        .run(`\nPR: ${url}`, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       service.workPrs.record('work-1', [open], 0);
@@ -2745,6 +2843,9 @@ describe('Neo work with a drivers target', () => {
       await service.refreshDriverWork();
     };
     try {
+      db.getDatabase()
+        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
+        .run(`\nPR: ${url}`, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('reported');
@@ -2825,6 +2926,9 @@ describe('Neo work with a drivers target', () => {
       },
     });
     try {
+      db.getDatabase()
+        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
+        .run(`\nPR: ${url}`, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(reads).toBe(0);
@@ -2874,7 +2978,7 @@ describe('Neo work with a drivers target', () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
       ok: true,
-      value: { status: 'failed', lastActivityAt: Date.now() + 1_000 },
+      value: { status: 'failed', lastActivityAt: Date.now() + 1_000, lastReply: 'Tests failed.' },
     }));
     Object.assign(service, {
       returnReport: async () => {
@@ -3447,7 +3551,7 @@ describe('Neo work with a drivers target', () => {
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')).toMatchObject({
         status: 'reported',
-        report: 'Voice is durable.',
+        report: 'Agent: Voice is durable.',
       });
       expect(returned).toEqual(['work-1']);
       expect(calls.map((call) => call.name)).toEqual([
@@ -3596,6 +3700,7 @@ describe('Neo work with a drivers target', () => {
           lastReply: 'Blocked on X.',
           lastReplyAt: 7,
           exchange: [
+            { at: 3, role: 'user', text: work.instruction },
             { at: 5, role: 'agent', text: 'Checked the tree.' },
             { at: 7, role: 'agent', text: 'Blocked on X.' },
           ],
