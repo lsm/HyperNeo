@@ -412,6 +412,25 @@ describe('Neo MVP', () => {
     expect(finds).toEqual([{ limit: 50 }]);
   });
 
+  test('opening reads the snapshot after the conversation is open', async () => {
+    const order: string[] = [];
+    (sessions as unknown as { getOperationRegistry: () => unknown }).getOperationRegistry = () =>
+      createOperationRegistry([]);
+    const open = service.open.bind(service);
+    service.open = async (projectId) => {
+      const id = await open(projectId);
+      order.push('open');
+      return id;
+    };
+    const listProjects = service.repo.listProjects.bind(service.repo);
+    service.repo.listProjects = () => {
+      order.push('read');
+      return listProjects();
+    };
+    await invoke('neo.open');
+    expect(order).toEqual(['open', 'read']);
+  });
+
   test('trusts bindings, not a claimed role; project holders cannot read or mutate other contexts', async () => {
     await invoke('neo.project.save', project);
     const id = await service.open(project.id);

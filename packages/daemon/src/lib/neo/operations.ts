@@ -1350,7 +1350,8 @@ export function createNeoOperations(service: NeoService) {
           )
         )
         .catch(() => null);
-      return { ...snapshot(caller), sessionId: await service.open(projectId) };
+      const sessionId = await service.open(projectId);
+      return { ...snapshot(caller), sessionId };
     }
   );
   const cancelConsultation = path(
