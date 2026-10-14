@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 
 export interface NeoProjectMergeInput {
@@ -155,6 +156,90 @@ export function mergeNeoDuplicateProjects(
     }
     refused.add(`${next.sourceId}\u0000${next.targetId}`);
     log(`neo reorganize: did not merge ${next.sourceId} into ${next.targetId}: ${result.reason}`);
+  }
+}
+
+export const NEO_PROJECT_SAME = 'Same project';
+export const NEO_PROJECT_SEPARATE = 'Keep separate';
+
+export type NeoProjectQuestion = NeoProjectMergeInput & { key: string; repository: string };
+
+export function planNeoProjectQuestions(
+  state: NeoProjectMergeState,
+  fresh: Readonly<Record<string, readonly string[]>>,
+  repositories: Readonly<Record<string, readonly string[]>>
+): NeoProjectQuestion[] {
+  const identities = (id: string) =>
+    [...new Set([...(state.identities[id] ?? []), ...(fresh[id] ?? [])])].sort().join(' ');
+  const live = state.projects
+    .filter((project) => !state.retired.includes(project.id) && project.id !== 'inbox')
+    .filter((project) => !project.epicUrl)
+    .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+  const paired = new Set<string>();
+  return live.flatMap((target, index) =>
+    live.slice(index + 1).flatMap((source) => {
+      if (paired.has(target.id) || paired.has(source.id)) return [];
+      const repository = (repositories[source.id] ?? []).find((name) =>
+        repositories[target.id]?.includes(name)
+      );
+      if (
+        !repository ||
+        (source.parentId ?? null) !== (target.parentId ?? null) ||
+        (identities(source.id) && identities(target.id))
+      )
+        return [];
+      paired.add(source.id);
+      return [
+        {
+          key: `neo-project-merge:${[target.id, source.id].sort().join('\u0000')}`,
+          repository,
+          sourceId: source.id,
+          targetId: target.id,
+          sourceRevision: source.revision,
+          targetRevision: target.revision,
+          sourceIdentities: fresh[source.id] ?? [],
+          targetIdentities: fresh[target.id] ?? [],
+        },
+      ];
+    })
+  );
+}
+
+export function readNeoProjectDecision(
+  ask: Pick<NeoAsk, 'doneItems'> | null,
+  key: string
+): 'same' | 'separate' | 'pending' | null {
+  const item = ask?.doneItems?.find((entry) => entry.decides === key && !entry.removed);
+  if (!item) return null;
+  if (item.state !== 'met') return 'pending';
+  return item.evidence?.endsWith(`: ${NEO_PROJECT_SAME}`) ? 'same' : 'separate';
+}
+
+export function settleNeoProjectQuestions(
+  questions: () => readonly NeoProjectQuestion[],
+  decision: (question: NeoProjectQuestion) => ReturnType<typeof readNeoProjectDecision>,
+  merge: (input: NeoProjectMergeInput) => NeoProjectMergeResult,
+  ask: (question: NeoProjectQuestion) => boolean,
+  log: (line: string) => void
+): {
+  merged: { sourceId: string; targetId: string }[];
+  asked: { sourceId: string; targetId: string }[];
+} {
+  const merged: { sourceId: string; targetId: string }[] = [];
+  const asked: { sourceId: string; targetId: string }[] = [];
+  const handled = new Set<string>();
+  for (;;) {
+    const next = questions().find((question) => !handled.has(question.key));
+    if (!next) return { merged, asked };
+    handled.add(next.key);
+    const decided = decision(next);
+    const pair = { sourceId: next.sourceId, targetId: next.targetId };
+    if (decided === null && ask(next)) asked.push(pair);
+    if (decided !== 'same') continue;
+    const result = merge({ ...next, humanApproved: true });
+    if (result.ok) merged.push(pair);
+    else
+      log(`neo reorganize: did not merge ${next.sourceId} into ${next.targetId}: ${result.reason}`);
   }
 }
 

@@ -62,7 +62,15 @@ import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
 import { createNeoAskForwardOperation, neoForwardedText } from './ask-forward-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
-import { mergeNeoDuplicateProjects, readNeoProjectIdentities } from './project-merge.ts';
+import {
+  mergeNeoDuplicateProjects,
+  NEO_PROJECT_SAME,
+  NEO_PROJECT_SEPARATE,
+  type NeoProjectQuestion,
+  readNeoProjectDecision,
+  readNeoProjectIdentities,
+  settleNeoProjectQuestions,
+} from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './direct-reply-fallback.ts';
 import { createNeoRouter, type NeoRouter, reopenNeoHolder } from './router.ts';
@@ -133,6 +141,7 @@ import {
   isNeoCardAsk,
   NeoAskSchema,
   planNeoAskItems,
+  planNeoAskQuestion,
   planNeoCardAsk,
   projectNeoSnapshotAsks,
   requireNeoWorkAsk,
@@ -767,6 +776,36 @@ function admitNeoCaller(
   return { value: caller };
 }
 
+function askNeoProjectQuestion(
+  service: Pick<NeoService, 'repo' | 'askRecords'>,
+  question: NeoProjectQuestion
+): boolean {
+  const root = service.repo.getBindingForProject(null)?.sessionId;
+  if (!root) return false;
+  const [source, target] = [question.sourceId, question.targetId].map(
+    (id) => service.repo.getProject(id)?.title ?? id
+  );
+  const text = `Are ${source} and ${target} the same project? Both point at ${question.repository.slice(5)}.`;
+  const opened = service.askRecords.open({
+    id: crypto.randomUUID(),
+    requestKey: question.key,
+    projectId: null,
+    originSessionId: root,
+    originMessageId: null,
+    title: `${source} and ${target}: one project?`,
+    ask: `${text} The daemon asked this while reorganizing projects; after the human answers, run neo.projects.reorganize to apply it.`,
+    doneWhen: 'The human decided whether the two are one project.',
+    doneSource: 'daemon',
+  });
+  if (!opened || opened.doneItems?.length) return false;
+  const item = planNeoAskQuestion(opened, {
+    question: text,
+    options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
+    decides: question.key,
+  });
+  return !!service.askRecords.settle(opened, 'waiting', text, text, item.id, item);
+}
+
 export function neoReorganizeRuntime(
   service: NeoService,
   router: NeoRouter = createNeoRouter(service.db, service.repo, (projectId) =>
@@ -792,11 +831,20 @@ export function neoReorganizeRuntime(
         merges.localFolders(hostname()),
         readWorkspaceIdentity
       );
-      return mergeNeoDuplicateProjects(
+      const merged = mergeNeoDuplicateProjects(
         () => merges.plan(fresh),
         (input) => merges.merge(input),
         (line) => service.logReorganize(line)
       );
+      const settled = settleNeoProjectQuestions(
+        () => merges.questions(fresh),
+        (question) =>
+          readNeoProjectDecision(service.askRecords.forRequest(question.key), question.key),
+        (input) => merges.merge(input),
+        (question) => askNeoProjectQuestion(service, question),
+        (line) => service.logReorganize(line)
+      );
+      return { merged: [...merged, ...settled.merged], asked: settled.asked };
     },
     log: (line) => service.logReorganize(line),
   };

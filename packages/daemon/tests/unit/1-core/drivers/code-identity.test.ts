@@ -84,14 +84,15 @@ describe('git history workspace discovery', () => {
     expect((await readCodeIdentity(clone)).codeIdentity).toBe(identity.codeIdentity);
   });
 
-  test('does not manufacture history for shallow, empty, missing or non-git folders', async () => {
+  test("does not manufacture history for shallow, empty, missing or non-git folders, but keeps a shallow clone's remotes", async () => {
     git(repo, 'commit', '--allow-empty', '-m', 'second');
     const shallow = join(dir, 'shallow');
     git(dir, 'clone', '--depth=1', `file://${repo}`, shallow);
     const empty = join(dir, 'empty');
     mkdirSync(empty);
     git(empty, 'init');
-    for (const folder of [shallow, empty, dir, join(dir, 'missing')]) {
+    expect(await readCodeIdentity(shallow)).toEqual({ remotes: [`file://${repo}`] });
+    for (const folder of [empty, dir, join(dir, 'missing')]) {
       expect(await readCodeIdentity(folder)).toEqual({});
     }
   });

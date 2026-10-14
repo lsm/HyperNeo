@@ -6,18 +6,20 @@ type CodeIdentity = Pick<Place, 'codeIdentity' | 'remotes'>;
 export async function readCodeIdentity(folder: string): Promise<CodeIdentity> {
   try {
     const git = simpleGit({ baseDir: folder, timeout: { block: 3_000 } });
-    if ((await git.raw(['rev-parse', '--is-shallow-repository'])).trim() !== 'false') return {};
+    const shallow = (await git.raw(['rev-parse', '--is-shallow-repository'])).trim() !== 'false';
+    const remotes = [
+      ...new Set(
+        (await git.getRemotes(true)).flatMap(({ refs }) => [refs.fetch, refs.push]).filter(Boolean)
+      ),
+    ];
+    if (shallow) return remotes.length ? { remotes } : {};
     const roots = (await git.raw(['--no-replace-objects', 'rev-list', '--max-parents=0', 'HEAD']))
       .trim()
       .split(/\s+/)
       .filter((root) => /^[a-f0-9]{40,64}$/.test(root))
       .sort();
     if (!roots.length) return {};
-    const remotes = await git.getRemotes(true);
-    return {
-      codeIdentity: `git:${roots.join(':')}`,
-      remotes: [...new Set(remotes.flatMap(({ refs }) => [refs.fetch, refs.push]).filter(Boolean))],
-    };
+    return { codeIdentity: `git:${roots.join(':')}`, remotes };
   } catch {
     return {};
   }

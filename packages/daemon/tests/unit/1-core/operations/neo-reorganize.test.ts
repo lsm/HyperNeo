@@ -218,7 +218,7 @@ describe('neo.projects.reorganize', () => {
       },
       move: (item, _cards, owner) =>
         moves.push({ askId: item.id, projectId: owner.projectId, messageId: owner.messageId }),
-      mergeProjects: async () => merged,
+      mergeProjects: async () => ({ merged, asked: [] }),
       log: (line) => {
         logged.push(line);
       },
@@ -242,6 +242,7 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps)).toEqual({
       ok: true,
       merged: [],
+      asked: [],
       moved: [{ askId: 'a', projectId: 'drivers' }],
       stayed: [
         { askId: 'b', reason: 'waiting_on_human' },
@@ -267,6 +268,7 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps)).toEqual({
       ok: true,
       merged: [{ sourceId: 'web-2', targetId: 'web' }],
+      asked: [],
       moved: [],
       stayed: [],
     });
@@ -287,6 +289,7 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps)).toEqual({
       ok: true,
       merged: [],
+      asked: [],
       moved: [{ askId: 'a', projectId: 'drivers' }],
       stayed: [{ askId: 'b', reason: 'project_busy' }],
     });
@@ -313,6 +316,7 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps)).toEqual({
       ok: true,
       merged: [],
+      asked: [],
       moved: [],
       stayed: [
         { askId: 'a', reason: 'changed' },
@@ -332,6 +336,7 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps)).toEqual({
       ok: true,
       merged: [],
+      asked: [],
       moved: [],
       stayed: [{ askId: 'a', reason: 'handoff_failed' }],
     });
