@@ -18,7 +18,7 @@ type NeoAdmissionSnapshot = {
   blockers: NeoAdmissionBlocker[];
   bootedAt: number;
 };
-type Admissible = NeoAdmissionSnapshot & { work: NeoWork; card: NeoDriverTargetCard };
+type Admissible = NeoAdmissionSnapshot & { work: NeoWork };
 
 export interface NeoAdmissionDeps {
   bootedAt: number;
@@ -60,14 +60,15 @@ function requireNeoAdmissionCard(snapshot: NeoAdmissionSnapshot) {
   const { work, ask, card } = snapshot;
   if (!work || !['proposed', 'queued'].includes(work.status)) return refuse('card_not_active');
   if (ask && ['achieved', 'abandoned'].includes(ask.status)) return refuse('ask_not_live');
-  if (!card?.target) return refuse('no_driver_target');
+  if (card && !card.target) return refuse('no_driver_target');
   return { value: snapshot as Admissible };
 }
 
 function requireNeoAdmissionHandoff(snapshot: Admissible) {
-  if (snapshot.card.ref) return refuse('already_started');
-  if (snapshot.card.startInterrupted) return refuse('handoff_uncertain');
-  const { claimedAt } = snapshot.card;
+  const { card } = snapshot;
+  if (card?.ref) return refuse('already_started');
+  if (card?.startInterrupted) return refuse('handoff_uncertain');
+  const claimedAt = card?.claimedAt ?? null;
   if (claimedAt !== null)
     return refuse(claimedAt < snapshot.bootedAt ? 'handoff_uncertain' : 'already_claimed');
   return { value: snapshot };
@@ -136,7 +137,7 @@ export const admitNeoWork = (superpipe({})('neo-work-admission') as PipelineAPI)
       if (card?.startInterrupted) return 'uncertain';
       if (!card?.ref) deps.release(admitted.work.id);
       if (work?.status === 'reported') return 'reported';
-      return card?.ref && work?.status === 'queued' ? 'started' : 'not_started';
+      return work?.status === 'queued' && (!card || card.ref) ? 'started' : 'not_started';
     },
     ['admission', 'deps'],
     'handoff'

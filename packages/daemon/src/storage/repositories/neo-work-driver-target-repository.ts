@@ -153,14 +153,17 @@ export class NeoWorkDriverTargetRepository {
   }
 
   claimAdmission(workId: string, at: number, admitted: () => boolean): boolean {
-    return this.db.transaction(
-      () =>
-        admitted() &&
+    return this.db.transaction(() => {
+      if (!admitted()) return false;
+      if (!this.db.prepare('SELECT 1 FROM neo_work_driver_targets WHERE work_id = ?').get(workId))
+        return true;
+      return (
         this.db
           .prepare(`UPDATE neo_work_driver_targets SET claimed_at = ?
             WHERE work_id = ? AND claimed_at IS NULL AND ref IS NULL AND start_interrupted = 0`)
           .run(at, workId).changes === 1
-    )();
+      );
+    })();
   }
 
   releaseAdmission(workId: string): void {
