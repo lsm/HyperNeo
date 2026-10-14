@@ -126,7 +126,8 @@ describe('coding pack instructions', () => {
     expect(coding.instructions(null)).toBe(NEO_PACK_CODING_INSTRUCTIONS);
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('merged to the');
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('git remote');
-    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('own worktree');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('freshly fetched remote target');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('work.preparationParameters.target');
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('operation:"neo.github.read"');
     expect(NEO_SYSTEM_PROMPT).not.toContain('neo.github.read');
   });
