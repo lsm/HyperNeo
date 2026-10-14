@@ -1,5 +1,6 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import { prepareCodingExecution } from './prepare-execution.ts';
+import { readCodingPrerequisiteBase } from './prerequisite-base.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { ExternalEvent } from '../../../external-events/types.ts';
@@ -25,6 +26,7 @@ import {
   neoWatchTopics,
 } from './watch-checks.ts';
 import {
+  readMergeCommit,
   readNeoDeployTicks,
   CODING_CHECK_DEPLOYED,
   type NeoDeployReader,
@@ -248,6 +250,11 @@ export function createCodingPack(
   return {
     ...CODING_PACK_BRIEF,
     prepareExecution: prepareCodingExecution,
+    prerequisiteParameters: (items) =>
+      readCodingPrerequisiteBase(items, {
+        readRefStates: deps.readRefStates,
+        readMergeCommit: (url) => readMergeCommit(url),
+      }),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     checks: { [CODING_CHECK_PR_MERGED]: codingPrMergedCheck },
     checkEvidence: { [CODING_CHECK_PR_MERGED]: { independent: true } },

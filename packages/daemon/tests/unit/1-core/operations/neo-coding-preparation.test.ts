@@ -171,6 +171,24 @@ describe('prepareCodingExecution', () => {
     expect(f.calls.some((call) => call[1] === 'worktree')).toBe(false);
   });
 
+  test("a base that contains the prerequisite's merge is prepared from that merge onward", async () => {
+    const f = fixture();
+    git(f.remote, 'checkout', '-b', 'feature');
+    writeFileSync(join(f.remote, 'prerequisite'), 'done');
+    git(f.remote, 'add', '.');
+    git(f.remote, 'commit', '-m', 'prerequisite work');
+    git(f.remote, 'checkout', 'dev');
+    git(f.remote, 'merge', '--no-ff', 'feature', '-m', 'Merge prerequisite');
+    const merged = git(f.remote, 'rev-parse', 'HEAD');
+    const result = await prepareCodingExecution(
+      { ...f.request, parameters: { target: 'dev', prerequisiteCommits: [merged] } },
+      f.effects
+    );
+    expect(result.ok).toBe(true);
+    expect(git(f.destination, 'rev-parse', 'HEAD')).toBe(merged);
+    expect(readFileSync(join(f.destination, 'prerequisite'), 'utf8')).toBe('done');
+  });
+
   test('a prerequisite on another branch cannot unlock preparation', async () => {
     const f = fixture();
     git(f.remote, 'checkout', '-b', 'unmerged');

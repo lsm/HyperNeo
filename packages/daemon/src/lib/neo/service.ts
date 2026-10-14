@@ -1540,6 +1540,20 @@ export class NeoService {
     return verdict.state !== 'idle' || work.status === 'queued';
   }
 
+  private prerequisiteParameters(workId: string, pack: NeoPack) {
+    const items = this.dependencies
+      .edges()
+      .filter((edge) => edge.workId === workId)
+      .flatMap((edge) =>
+        (this.askRecords.forWork(edge.prerequisiteId)?.doneItems ?? []).filter(
+          (item) => item.deliveredBy === edge.prerequisiteId
+        )
+      );
+    return items.length && pack.prerequisiteParameters
+      ? pack.prerequisiteParameters(items)
+      : Promise.resolve({ ok: true as const, value: {} });
+  }
+
   reconcileHandoff(id: string) {
     return reconcileNeoHandoff(id, {
       bootedAt: this.bootedAt,
@@ -1763,8 +1777,17 @@ export class NeoService {
       await this.failWork(queued, `unsupported_preparation: pack ${packId} is not installed.`);
       return;
     }
-    if (target.verb === 'start' && pack?.prepareExecution)
-      call.input.preparation = { pack: pack.id, parameters: target.preparationParameters ?? {} };
+    if (target.verb === 'start' && pack?.prepareExecution) {
+      const base = await this.prerequisiteParameters(queued.id, pack);
+      if (!base.ok) {
+        await this.failWork(queued, `prerequisite_base_unknown: ${base.reason}`);
+        return;
+      }
+      call.input.preparation = {
+        pack: pack.id,
+        parameters: { ...(target.preparationParameters ?? {}), ...base.value },
+      };
+    }
     const probe =
       target.verb === 'send'
         ? await this.readSendBaseline(target.ref, queued, String(call.input.message))

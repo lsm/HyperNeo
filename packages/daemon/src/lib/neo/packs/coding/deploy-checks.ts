@@ -72,7 +72,10 @@ const CompareSchema = z.object({ status: z.string() });
 const merged = new Map<string, string>();
 const contained = new Map<string, boolean>();
 
-async function readMergeCommit(url: string, spawnImpl: SpawnFn): Promise<string | null> {
+export async function readMergeCommit(
+  url: string,
+  spawnImpl: SpawnFn = spawnProcess
+): Promise<string | null> {
   const known = merged.get(githubUrlKey(url));
   if (known) return known;
   const outcome = await runGhJson(
