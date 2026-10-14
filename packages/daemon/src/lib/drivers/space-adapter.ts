@@ -51,6 +51,7 @@ export interface SpaceTaskRow {
 
 export interface SpaceTaskDetailRow extends SpaceTaskRow {
   spaceName: string;
+  completedAt: number | null;
   result: string | null;
   reportedSummary: string | null;
   blockReason: string | null;
@@ -324,7 +325,7 @@ export function readSpaceTask(db: BunDatabase, id: string): SpaceTaskDetailRow |
   const row = db
     .prepare(
       `SELECT t.id, t.space_id AS spaceId, t.task_number AS taskNumber, t.title, t.status,
-         t.updated_at AS updatedAt, t.result, t.reported_summary AS reportedSummary,
+         t.updated_at AS updatedAt, t.completed_at AS completedAt, t.result, t.reported_summary AS reportedSummary,
          t.block_reason AS blockReason, s.name AS spaceName
          FROM space_tasks t JOIN spaces s ON s.id = t.space_id WHERE t.id = ?`
     )
@@ -335,7 +336,15 @@ export function readSpaceTask(db: BunDatabase, id: string): SpaceTaskDetailRow |
 function describeTask(task: SpaceTaskDetailRow, machine: string): WorkDetail {
   const work = toWork(task, { id: task.spaceId, name: task.spaceName }, machine);
   const lastReply = task.result ?? task.reportedSummary ?? task.blockReason;
-  return lastReply ? { ...work, lastReply } : work;
+  return lastReply
+    ? {
+        ...work,
+        lastReply,
+        ...(task.status === 'done' && task.completedAt !== null
+          ? { lastReplyAt: task.completedAt }
+          : {}),
+      }
+    : work;
 }
 
 export function requireSpaceTask(ref: WorkRef, deps: SpaceAdapterDeps): Gate<SpaceTaskDetailRow> {

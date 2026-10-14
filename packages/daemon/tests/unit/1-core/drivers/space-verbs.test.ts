@@ -1,3 +1,4 @@
+import { readDriverFollowUp, readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   createSpaceAdapter,
@@ -40,9 +41,9 @@ describe('space adapter start, status and stop', () => {
     db = new Database(':memory:');
     db.exec(`CREATE TABLE spaces (id TEXT PRIMARY KEY, name TEXT)`);
     db.exec(`CREATE TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT, task_number INTEGER,
-      title TEXT, status TEXT, updated_at INTEGER, result TEXT, reported_summary TEXT, block_reason TEXT)`);
+      title TEXT, status TEXT, updated_at INTEGER, result TEXT, reported_summary TEXT, block_reason TEXT, completed_at INTEGER)`);
     db.exec(`INSERT INTO spaces VALUES ('sp1', 'dev-neokai')`);
-    db.exec(`INSERT INTO space_tasks VALUES
+    db.exec(`INSERT INTO space_tasks (id, space_id, task_number, title, status, updated_at, result, reported_summary, block_reason) VALUES
       ('t1', 'sp1', 7, 'font size', 'blocked', 10, NULL, NULL, 'human_input_requested'),
       ('t2', 'sp1', 8, 'shipped', 'done', 20, 'Merged in #5600', NULL, NULL)`);
   });
@@ -59,7 +60,7 @@ describe('space adapter start, status and stop', () => {
           calls.push(`create ${spaceId} ${title}: ${description} as ${caller.source}`);
           if (refuse) return { reason: refuse };
           db.exec(
-            `INSERT INTO space_tasks VALUES ('t3', '${spaceId}', 9, '${title}', 'open', 30, NULL, NULL, NULL)`
+            `INSERT INTO space_tasks (id, space_id, task_number, title, status, updated_at, result, reported_summary, block_reason) VALUES ('t3', '${spaceId}', 9, '${title}', 'open', 30, NULL, NULL, NULL)`
           );
           return { taskId: 't3' };
         },
@@ -145,9 +146,42 @@ describe('space adapter start, status and stop', () => {
     expect(await adapter().status?.(ref('nope'))).toMatchObject({ ok: false, reason: 'not_found' });
   });
 
+  test('metadata edits do not make an old completion a fresh reply', async () => {
+    db.exec(
+      "UPDATE space_tasks SET completed_at = 20, title = 'renamed', updated_at = 40 WHERE id = 't2'"
+    );
+    const outcome = { kind: 'completed' as const, value: await adapter().status!(ref('t2')) };
+    expect(outcome.value).toMatchObject({
+      value: { lastActivityAt: 40, lastReplyAt: 20, lastReply: 'Merged in #5600' },
+    });
+    expect(readDriverSettlement({ updatedAt: 30 }, outcome, 50, 30, true, 'new ask')).toBeNull();
+    expect(readDriverFollowUp(outcome, 30)).toBeNull();
+    expect(
+      readDriverSettlement({ updatedAt: 10 }, outcome, 50, 10, true, 'original ask')
+    ).toMatchObject({ status: 'reported', report: 'Merged in #5600' });
+    db.exec(
+      "UPDATE space_tasks SET completed_at = 60, updated_at = 60, result = 'New completion' WHERE id = 't2'"
+    );
+    const next = { kind: 'completed' as const, value: await adapter().status!(ref('t2')) };
+    expect(readDriverFollowUp(next, 40)).toBe('New completion');
+    expect(readDriverSettlement({ updatedAt: 40 }, next, 70, 40, true, 'new ask')).toMatchObject({
+      status: 'reported',
+      report: 'New completion',
+    });
+  });
+
+  test('missing completion metadata is not replaced by the task activity time', async () => {
+    const result = await adapter().status!(ref('t2'));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.value.lastReply).toBe('Merged in #5600');
+    expect(result.value.lastReplyAt).toBeUndefined();
+    expect(result.value.exchange).toBeUndefined();
+  });
+
   test('stop leaves a draft alone because it never started', async () => {
     db.exec(
-      `INSERT INTO space_tasks VALUES ('t4', 'sp1', 10, 'idea', 'draft', 40, NULL, NULL, NULL)`
+      `INSERT INTO space_tasks (id, space_id, task_number, title, status, updated_at, result, reported_summary, block_reason) VALUES ('t4', 'sp1', 10, 'idea', 'draft', 40, NULL, NULL, NULL)`
     );
     expect(await adapter().stop?.(ref('t4'), { from: 'chat', caller: rpc })).toEqual({
       ok: true,
@@ -186,7 +220,7 @@ describe('space adapter send', () => {
     db.exec(`CREATE TABLE spaces (id TEXT PRIMARY KEY, name TEXT)`);
     db.exec(`CREATE TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT, task_number INTEGER,
       title TEXT, status TEXT, updated_at INTEGER, result TEXT, reported_summary TEXT,
-      block_reason TEXT, workflow_run_id TEXT)`);
+      block_reason TEXT, workflow_run_id TEXT, completed_at INTEGER)`);
     db.exec(`CREATE TABLE node_executions (id TEXT PRIMARY KEY, workflow_run_id TEXT, agent_name TEXT,
       workflow_node_id TEXT, agent_session_id TEXT, status TEXT, last_activity_at INTEGER,
       updated_at INTEGER)`);
@@ -201,7 +235,7 @@ describe('space adapter send', () => {
       ('a1', 'sp1', 'ui-ux', 'Designer', 'active', 's1', 40),
       ('a2', 'sp1', 'docs', 'Writer', 'active', NULL, 30),
       ('a3', 'sp1', 'old', 'Retired', 'archived', NULL, 20)`);
-    db.exec(`INSERT INTO space_tasks VALUES
+    db.exec(`INSERT INTO space_tasks (id, space_id, task_number, title, status, updated_at, result, reported_summary, block_reason, workflow_run_id) VALUES
       ('t1', 'sp1', 7, 'font size', 'in_progress', 10, NULL, NULL, NULL, 'run-1'),
       ('t2', 'sp1', 8, 'shipped', 'done', 20, NULL, NULL, NULL, 'run-2'),
       ('t3', 'sp1', 9, 'idea', 'open', 30, NULL, NULL, NULL, NULL),
