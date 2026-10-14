@@ -225,6 +225,7 @@ import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { buildNeoCheckRegistry } from './packs/check-registry.ts';
+import { admitNeoWork, neoOutcomeEligibility } from './work-admission.ts';
 import {
   neoEnabledPacks,
   neoSettingsPackBriefs,
@@ -1295,6 +1296,21 @@ export class NeoService {
       work,
       'Neo did not choose where this work runs. Ask Neo again and say which project, Space or chat it belongs to.'
     );
+  }
+
+  admitWork(id: string, human: boolean, now = Date.now()) {
+    const eligible = neoOutcomeEligibility(this.checkRegistry());
+    return admitNeoWork(id, human, now, {
+      readWork: (workId: string) => this.repo.getWork(workId),
+      readAsk: (workId: string) => this.askRecords.forWork(workId),
+      readCard: (workId: string) => this.driverTargets.readCard(workId),
+      readBlockers: (workId: string) => this.dependencies.blockers(workId, eligible),
+      claim: (workId: string, admitted: () => boolean) =>
+        this.driverTargets.claimAdmission(workId, now, admitted),
+      handOff: (work: NeoWork) => this.startReservedWork(work.id),
+      release: (workId: string) => this.driverTargets.releaseAdmission(workId),
+      markUncertain: (workId: string) => this.driverTargets.recordStartInterrupted(workId),
+    });
   }
 
   async continueWork(
