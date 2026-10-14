@@ -1,3 +1,4 @@
+import { hostname } from 'node:os';
 import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -6,11 +7,18 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import { mirrorNeoWorkspaceProjects } from '../../../../src/lib/neo/project-mirror.ts';
+import {
+  isNeoPlumbingFolder,
+  mirrorNeoWorkspaceProjects,
+  planNeoWorkspaceProjects,
+} from '../../../../src/lib/neo/project-mirror.ts';
 import { mergePlaceGroups } from '../../../../src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
+import { isTempCwd } from '../../../../src/lib/drivers/claude-feed.ts';
 
-function workspace(folder: string, machine = 'laptop', identity = 'root:123'): PlaceGroup {
+const elsewhere = `not-${hostname()}`;
+
+function workspace(folder: string, machine = elsewhere, identity = 'root:123'): PlaceGroup {
   return {
     place: { folder, machine, name: 'HyperNeo', codeIdentity: identity },
     lastActivityAt: 0,
@@ -82,7 +90,10 @@ describe('mirrorNeoWorkspaceProjects', () => {
 
   test('does not let a reused folder collapse unrelated repository histories', () => {
     mirrorNeoWorkspaceProjects(db, mergePlaceGroups([workspace('/one')], 50));
-    mirrorNeoWorkspaceProjects(db, mergePlaceGroups([workspace('/one', 'laptop', 'root:456')], 50));
+    mirrorNeoWorkspaceProjects(
+      db,
+      mergePlaceGroups([workspace('/one', elsewhere, 'root:456')], 50)
+    );
     expect(repo.listProjects()).toHaveLength(2);
     const owner = db
       .prepare("SELECT project_id FROM neo_project_workspaces WHERE alias = 'root:456'")
@@ -96,7 +107,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
     repo.saveProject({ id: 'travel', title: 'Travel', summary: '', context: 'Passport' }, 0);
     mirrorNeoWorkspaceProjects(
       db,
-      mergePlaceGroups([workspace('/one'), workspace('/other', 'laptop', 'root:456')], 50)
+      mergePlaceGroups([workspace('/one'), workspace('/other', elsewhere, 'root:456')], 50)
     );
     mirrorNeoWorkspaceProjects(db, []);
     expect(repo.listProjects()).toHaveLength(3);
@@ -104,7 +115,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
   });
 
   test('mirrors several folders in a named tool project with different histories once', () => {
-    const groups = [workspace('/one'), workspace('/other', 'laptop', 'root:456')].map((group) => ({
+    const groups = [workspace('/one'), workspace('/other', elsewhere, 'root:456')].map((group) => ({
       ...group,
       place: { ...group.place, toolProject: { id: 'product', name: 'Product' } },
     }));
@@ -150,5 +161,68 @@ describe('runMigration361', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('isNeoPlumbingFolder', () => {
+  const local = {
+    machine: 'laptop',
+    neoFolder: '/home/fictional/.hyperneo/Neo',
+    isTemp: isTempCwd,
+    exists: (path: string) => path !== '/home/fictional/gone',
+  };
+
+  test("skips Neo's own runtime folders, temp folders and folders that are gone on this machine", () => {
+    for (const folder of [
+      '/home/fictional/.hyperneo/Neo',
+      '/home/fictional/.hyperneo/Neo/.coordinators/neo-1',
+      '/private/tmp',
+      '/private/var/folders/xy/T/scratch',
+      '/home/fictional/gone',
+    ])
+      expect(isNeoPlumbingFolder({ folder, machine: 'laptop' }, local)).toBe(true);
+  });
+
+  test('keeps real folders, and judges only shape, never existence, on another machine', () => {
+    expect(isNeoPlumbingFolder({ folder: '/home/fictional/tmp', machine: 'laptop' }, local)).toBe(
+      false
+    );
+    expect(
+      isNeoPlumbingFolder(
+        { folder: '/home/fictional/.hyperneo/Neo-site', machine: 'laptop' },
+        local
+      )
+    ).toBe(false);
+    expect(isNeoPlumbingFolder({ folder: '/home/fictional/gone', machine: 'imac' }, local)).toBe(
+      false
+    );
+    for (const folder of ['/tmp', '/Users/other/.hyperneo/Neo/.coordinators/neo-2'])
+      expect(isNeoPlumbingFolder({ folder, machine: 'imac', daemon: 'tts' }, local)).toBe(true);
+  });
+});
+
+describe('planNeoWorkspaceProjects', () => {
+  test('mints no project for a plumbing folder', () => {
+    const plan = planNeoWorkspaceProjects(
+      [workspace('/repo'), workspace('/home/fictional/.hyperneo/Neo/.coordinators/neo-1')],
+      (place) => place.folder?.includes('.coordinators') ?? false
+    );
+    expect(
+      plan.map((project) => project.aliases.find((alias) => alias.startsWith('folder:')))
+    ).toEqual([`folder:${elsewhere}\u0000/repo`]);
+  });
+});
+
+describe('planNeoWorkspaceProjects with a gone primary', () => {
+  test('keeps the live workspaces of a group whose primary folder is gone', () => {
+    const group = workspace('/gone');
+    const [plan] = planNeoWorkspaceProjects(
+      [{ ...group, workspaces: [group.place, { ...group.place, folder: '/live', name: 'live' }] }],
+      (place) => place.folder === '/gone'
+    );
+    expect(plan.title).toBe('live');
+    expect(plan.aliases.filter((alias) => alias.startsWith('folder:'))).toEqual([
+      `folder:${elsewhere}\u0000/live`,
+    ]);
   });
 });

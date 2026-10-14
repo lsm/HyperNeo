@@ -2,7 +2,11 @@ import { neoRepoAlias } from './project-route-facts.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import type { PlaceGroup } from '../drivers/types.ts';
+import { existsSync } from 'node:fs';
+import { hostname } from 'node:os';
+import { isTempCwd } from '../drivers/claude-feed.ts';
+import { sep } from 'node:path';
+import type { Place, PlaceGroup } from '../drivers/types.ts';
 import { placeKey } from '../drivers/places.ts';
 import { neoFolderPath } from './folder.ts';
 
@@ -11,17 +15,37 @@ export interface NeoWorkspaceProject {
   title: string;
 }
 
+export function isNeoPlumbingFolder(
+  place: Pick<Place, 'folder' | 'machine' | 'daemon'>,
+  local: {
+    machine: string;
+    neoFolder: string;
+    isTemp(path: string): boolean;
+    exists(path: string): boolean;
+  }
+): boolean {
+  const folder = place.folder;
+  if (!folder) return false;
+  const here = !place.daemon && place.machine === local.machine;
+  return (
+    folder === local.neoFolder ||
+    folder.startsWith(`${local.neoFolder}${sep}`) ||
+    /[/\\]Neo[/\\]\.coordinators([/\\]|$)/.test(folder) ||
+    local.isTemp(folder) ||
+    (here && !local.exists(folder))
+  );
+}
+
 export function planNeoWorkspaceProjects(
   groups: readonly PlaceGroup[],
-  rootFolder?: string
+  plumbing: (place: Place) => boolean = () => false
 ): NeoWorkspaceProject[] {
   return groups
-    .filter(
-      (group) =>
-        (group.place.folder || group.place.toolProject) && group.place.folder !== rootFolder
-    )
-    .map((group) => {
-      const workspaces = group.workspaces ?? [group.place];
+    .filter((group) => group.place.folder || group.place.toolProject)
+    .flatMap((group) => {
+      const workspaces = (group.workspaces ?? [group.place]).filter((place) => !plumbing(place));
+      if (!workspaces.length) return [];
+      const primary = plumbing(group.place) ? workspaces[0] : group.place;
       return {
         aliases: [
           ...new Set([
@@ -43,7 +67,7 @@ export function planNeoWorkspaceProjects(
             ]),
           ]),
         ],
-        title: workspaces.find((place) => place.toolProject)?.toolProject?.name ?? group.place.name,
+        title: workspaces.find((place) => place.toolProject)?.toolProject?.name ?? primary.name,
       };
     });
 }
@@ -88,7 +112,15 @@ export function persistNeoWorkspaceProjects(
 export const mirrorNeoWorkspaceProjects = (superpipe({})('neo-project-mirror') as PipelineAPI)
   .input(['db', 'groups'])
   .pipe(
-    (groups: readonly PlaceGroup[]) => planNeoWorkspaceProjects(groups, neoFolderPath()),
+    (groups: readonly PlaceGroup[]) => {
+      const local = {
+        machine: hostname(),
+        neoFolder: neoFolderPath(),
+        isTemp: isTempCwd,
+        exists: existsSync,
+      };
+      return planNeoWorkspaceProjects(groups, (place) => isNeoPlumbingFolder(place, local));
+    },
     'groups',
     'projects'
   )
