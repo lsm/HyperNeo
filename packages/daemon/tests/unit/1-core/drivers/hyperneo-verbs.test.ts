@@ -55,7 +55,7 @@ function control(db: Database, events: string[]) {
 
 describe('hyperneo adapter send and status', () => {
   let db: Database;
-  let handed: Array<{ sessionId: string; message: string; from: string }>;
+  let handed: Array<{ sessionId: string; message: string; from: string; messageUuid: string }>;
   let outcome: MailboxHandoffOutcome;
   let events: string[];
 
