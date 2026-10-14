@@ -1,3 +1,4 @@
+import { NeoDependencyRepository } from '../../storage/repositories/neo-dependency-repository.ts';
 import { runNeoReadWork } from './read-work.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-refusal-repository.ts';
@@ -395,6 +396,7 @@ export class NeoService {
   readonly workWakes: NeoWorkWakeRepository;
   readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
+  readonly dependencies: NeoDependencyRepository;
   readonly workPrs: NeoWorkPrRepository;
   readonly cardEvents: NeoCardEventSubscriptionRepository;
   private readonly sessionEvents: SessionExternalEventStore;
@@ -700,6 +702,11 @@ export class NeoService {
     this.workWakes = new NeoWorkWakeRepository(db.getDatabase());
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged);
+    this.dependencies = new NeoDependencyRepository(
+      db.getDatabase(),
+      this.askRecords,
+      this.notifyChanged
+    );
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
     this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
