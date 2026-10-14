@@ -125,7 +125,7 @@ describe('NeoService.admitWork on the remaining start paths', () => {
     }
   });
 
-  test('a retry is refused while a prerequisite is unverified and starts once it is answered', async () => {
+  test('a blocked retry keeps the failed card retryable and starts it once answered', async () => {
     const { db, service, starts, answer } = await setup();
     try {
       const failed = service.repo.transitionWork('b', service.repo.getWork('b')!, {
@@ -137,7 +137,11 @@ describe('NeoService.admitWork on the remaining start paths', () => {
         reason: 'prerequisites_unmet',
       });
       expect(starts).toHaveLength(0);
-      expect(service.repo.getWork('b')?.status).toBe('proposed');
+      expect(service.repo.getWork('b')).toMatchObject({
+        status: 'failed',
+        report: 'Could not start the execution: logged out',
+      });
+      expect(service.isRetryable('b')).toBe(true);
       answer();
       expect(await service.retryWork(service.repo.getWork('b')!)).toMatchObject({
         ok: true,

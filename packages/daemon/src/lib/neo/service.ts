@@ -1306,14 +1306,17 @@ export class NeoService {
     );
   }
 
+  private dependencyBlockers(id: string) {
+    return this.dependencies.blockers(id, neoOutcomeEligibility(this.checkRegistry()));
+  }
+
   admitWork(id: string, authorized: boolean, now = Date.now()) {
-    const eligible = neoOutcomeEligibility(this.checkRegistry());
     return admitNeoWork(id, authorized, now, {
       bootedAt: this.bootedAt,
       readWork: (workId: string) => this.repo.getWork(workId),
       readAsk: (workId: string) => this.askRecords.forWork(workId),
       readCard: (workId: string) => this.driverTargets.readCard(workId),
-      readBlockers: (workId: string) => this.dependencies.blockers(workId, eligible),
+      readBlockers: (workId: string) => this.dependencyBlockers(workId),
       claim: (workId: string, admitted: () => boolean) =>
         this.driverTargets.claimAdmission(workId, now, admitted),
       handOff: (work: NeoWork) => this.startPending(work.id),
@@ -1584,6 +1587,7 @@ export class NeoService {
     work: NeoWork
   ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
     const id = work.id;
+    if (this.dependencyBlockers(id).length) return { ok: false, reason: 'prerequisites_unmet' };
     const proposed = this.repo.transitionWork(id, work, {
       status: 'proposed',
       report: awaitingNeoWorker(work) ? work.report : null,
