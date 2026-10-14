@@ -927,6 +927,7 @@ export function createNeoOperations(service: NeoService) {
     const cards = projectNeoCardViews({
       work: visibleWork,
       drivers: workDrivers(workIds),
+      waits: service.cardWaits(workIds),
       prs: workPrs,
       goals: service.workGoals.list(workIds),
       continues: service.workContinues.list(workIds),

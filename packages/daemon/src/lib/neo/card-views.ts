@@ -8,6 +8,7 @@ import {
   type NeoCardPrSummary,
   type NeoCardTone,
   type NeoCardView,
+  type NeoCardWaiting,
   type NeoWorkContinue,
   type NeoWorkDriverReceipt,
   type NeoWorkGoal,
@@ -20,7 +21,15 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { NEO_WORK_UNANCHORED_NOTE, NEO_WORK_UNVERIFIED_REPLY_NOTE } from './driver-work.ts';
 import { neoCardGroup, neoCardPhase, neoCardPrInProgress, neoHeadlinePr } from './card-phase.ts';
 
+export type NeoCardWait = {
+  workId: string;
+  waitingFor: NeoCardWaiting[];
+  autoStart: boolean;
+  uncertain: boolean;
+};
+
 export type NeoCardViewParts = {
+  waits?: readonly NeoCardWait[];
   refusals?: readonly { workId: string; what: string }[];
   work: readonly NeoWork[];
   drivers: readonly NeoWorkDriverReceipt[];
@@ -32,6 +41,7 @@ export type NeoCardViewParts = {
 };
 
 type CardIndex = {
+  waits: Map<string, NeoCardWait>;
   refusals: Map<string, string>;
   drivers: Map<string, NeoWorkDriverReceipt>;
   prs: Map<string, NeoWorkPr[]>;
@@ -206,6 +216,7 @@ export function neoCardTone(
 
 export function indexNeoCardParts(parts: NeoCardViewParts): CardIndex {
   return {
+    waits: new Map(parts.waits?.map((row) => [row.workId, row]) ?? []),
     refusals: new Map(parts.refusals?.map((row) => [row.workId, row.what]) ?? []),
     drivers: new Map(parts.drivers.map((driver) => [driver.workId, driver])),
     prs: new Map(parts.prs.map((receipt) => [receipt.workId, receipt.prs])),
@@ -236,7 +247,10 @@ export function describeNeoCard(work: NeoWork, index: CardIndex): NeoCardView {
   const retryable = !!driver?.retryable;
   const talk = work.status === 'cancelled' ? undefined : index.refusals.get(work.id);
   const replyUnverified = pr ? null : neoCardReplyUnverified(work);
+  const wait = index.waits.get(work.id);
   return {
+    ...(wait?.waitingFor.length ? { waitingFor: wait.waitingFor, autoStart: wait.autoStart } : {}),
+    ...(wait?.uncertain ? { uncertain: true } : {}),
     ...(talk ? { talk } : {}),
     ...(replyUnverified ? { replyUnverified } : {}),
     workId: work.id,

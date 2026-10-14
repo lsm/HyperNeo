@@ -78,6 +78,26 @@ export class NeoDependencyRepository {
     });
   }
 
+  waiting(eligible?: Eligibility) {
+    return this.db.transaction(() => {
+      const cards = this.cards(eligible);
+      const edges = this.edges();
+      const proposed = new Set(cards.filter((card) => card.status === 'proposed').map((c) => c.id));
+      return new Map(
+        [...new Set(edges.map((edge) => edge.workId))]
+          .filter((id) => proposed.has(id))
+          .map((id) => [
+            id,
+            this.policy.blockers(id, cards, edges).filter((blocker) => blocker.workId !== id),
+          ])
+          .filter(([, blockers]) => blockers.length) as [
+          string,
+          ReturnType<typeof this.policy.blockers>,
+        ][]
+      );
+    })();
+  }
+
   blockers(workId: string, eligible?: Eligibility) {
     return this.db.transaction(() =>
       this.policy.blockers(workId, this.cards(eligible), this.edges())

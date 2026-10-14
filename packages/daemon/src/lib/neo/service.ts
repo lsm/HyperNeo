@@ -228,7 +228,13 @@ import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { buildNeoCheckRegistry } from './packs/check-registry.ts';
 import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-wake.ts';
-import { admitNeoWork, neoAdmissionRefusal, neoOutcomeEligibility } from './work-admission.ts';
+import {
+  admitNeoWork,
+  isNeoAdmissionApproved,
+  neoAdmissionRefusal,
+  neoOutcomeEligibility,
+} from './work-admission.ts';
+import type { NeoCardWait } from './card-views.ts';
 import { reconcileNeoHandoff } from './handoff-reconcile.ts';
 import {
   neoEnabledPacks,
@@ -1518,6 +1524,24 @@ export class NeoService {
     return this.dependencies.blockers(id, neoOutcomeEligibility(this.checkRegistry()));
   }
 
+  private async holdUncertainHandoff(work: NeoWork, target: NeoDriverTarget): Promise<void> {
+    this.driverTargets.recordStartInterrupted(work.id);
+    if (work.status !== 'queued') return;
+    await this.failWork(
+      work,
+      `${NEO_DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : 'ref' in target ? target.ref.adapter : target.verb} confirmed it. It may still have started; check work.find before trying again.`
+    );
+  }
+
+  private async recoverHandoff(work: NeoWork): Promise<boolean> {
+    const target = this.driverTargets.get(work.id);
+    if (!target || (target.verb !== 'start' && target.verb !== 'send')) return false;
+    const verdict = await this.reconcileHandoff(work.id);
+    if (verdict.state === 'uncertain') await this.holdUncertainHandoff(work, target);
+    else if (verdict.state === 'not_started') await this.admitWork(work.id, true);
+    return verdict.state !== 'idle' || work.status === 'queued';
+  }
+
   reconcileHandoff(id: string) {
     return reconcileNeoHandoff(id, {
       bootedAt: this.bootedAt,
@@ -1545,6 +1569,45 @@ export class NeoService {
     if (authorized && !admitted.ok && admitted.reason === 'prerequisites_unmet')
       this.dependencies.recordStartIntent(id, now);
     return admitted;
+  }
+
+  private waitingCards() {
+    return this.dependencies.waiting(neoOutcomeEligibility(this.checkRegistry()));
+  }
+
+  cardWaits(workIds: readonly string[], now = Date.now()): NeoCardWait[] {
+    const waiting = this.waitingCards();
+    const auto = this.db.getGlobalSettings?.().neo?.autoDispatch === true;
+    return workIds.flatMap((id) => {
+      const blockers = waiting.get(id) ?? [];
+      const status = this.repo.getWork(id)?.status;
+      const uncertain =
+        ['proposed', 'queued', 'failed'].includes(status ?? '') &&
+        this.driverTargets.readStartInterrupted(id);
+      if (!blockers.length && !uncertain) return [];
+      const authorized =
+        this.dependencies.hasStartIntent(id) ||
+        isNeoAdmissionApproved(this.askRecords.forWork(id), now);
+      return [
+        {
+          workId: id,
+          waitingFor: blockers.map((blocker) => {
+            const items = this.askRecords.forWork(blocker.workId)?.doneItems ?? [];
+            return {
+              workId: blocker.workId,
+              title: this.repo.getWork(blocker.workId)?.title ?? blocker.workId,
+              reason: blocker.reason,
+              items: blocker.itemIds.map((itemId) => ({
+                id: itemId,
+                text: items.find((item) => item.id === itemId)?.text ?? itemId,
+              })),
+            };
+          }),
+          autoStart: auto && blockers.length > 0 && authorized,
+          uncertain,
+        },
+      ];
+    });
   }
 
   editDependencies(workId: string, dependsOn: readonly string[], now = Date.now()) {
@@ -1683,11 +1746,8 @@ export class NeoService {
     if (work.status === 'queued') {
       if (this.driverTargets.readRef(work.id)) return;
       if (target.verb === 'adopt') return this.adoptDriverWork(work, target.ref);
-      this.driverTargets.recordStartInterrupted(work.id);
-      await this.failWork(
-        work,
-        `${NEO_DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : target.ref.adapter} confirmed it. It may still have started; check work.find before trying again.`
-      );
+      const verdict = await this.reconcileHandoff(work.id);
+      if (verdict.state === 'uncertain') await this.holdUncertainHandoff(work, target);
       return;
     }
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
@@ -1875,10 +1935,12 @@ export class NeoService {
     );
     for (const work of this.repo.listWork()) {
       try {
-        if (work.status === 'queued') await this.start(work.id);
+        const recovered = await this.recoverHandoff(work);
+        if (!recovered && work.status === 'queued') await this.start(work.id);
         else if (
-          awaitingNeoWorker(work) ||
-          (work.status === 'proposed' && this.driverTargets.get(work.id)?.verb === 'read')
+          !recovered &&
+          (awaitingNeoWorker(work) ||
+            (work.status === 'proposed' && this.driverTargets.get(work.id)?.verb === 'read'))
         )
           await this.admitWork(work.id, true);
         await this.reconcile(work.id);
