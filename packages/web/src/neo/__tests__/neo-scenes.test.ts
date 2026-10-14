@@ -80,11 +80,11 @@ const rows: SceneRow[] = [
   wRow('proposed', 'attention', 'Your call', 10),
   wRow('failed', 'outcomes', 'Failed', 40),
   wRow('queued', 'running', 'Handed to HyperNeo', 20),
-  wRow('reported', 'outcomes', 'Response ready', 30),
+  wRow('reported', 'outcomes', 'Reply received', 30),
   wRow('cancelled', 'outcomes', 'Stopped', 50),
   cRow('pending', 'running', 'Checking context', 60),
   cRow('failed', 'attention', 'Needs attention', 80),
-  cRow('reported', 'outcomes', 'Response ready', 70),
+  cRow('reported', 'outcomes', 'Reply received', 70),
   cRow('queued', 'running', 'Waiting for context', 90),
 ];
 

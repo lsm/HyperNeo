@@ -246,7 +246,7 @@ describe('NeoLive native question failure attention', () => {
   it.each([
     ['queued', 'worker-A', 'attention', 'Could not check questions'],
     ['queued', 'worker-B', 'running', 'Handed to HyperNeo'],
-    ['reported', 'worker-A', 'outcomes', 'Response ready'],
+    ['reported', 'worker-A', 'outcomes', 'Reply received'],
     ['cancelled', 'worker-A', 'outcomes', 'Stopped'],
     ['proposed', 'worker-A', 'attention', 'Your call'],
   ] as const)(

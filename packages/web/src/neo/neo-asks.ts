@@ -149,6 +149,41 @@ export function neoAskApproval(
   return { line: spent ? `${count} · approval ran out` : count, spent };
 }
 
+export type NeoAskApprovalBadge = { label: string; title: string };
+
+export function neoAskApprovalBadge(
+  ask: Pick<NeoAsk, 'approvedAt'>,
+  actions: readonly NeoAskHumanAction[]
+): NeoAskApprovalBadge | null {
+  const approve = actions.find((action) => action.kind === 'approve');
+  if (approve?.reason === 'expired')
+    return { label: 'Approval expired', title: 'The approval ran out. Approve again to continue.' };
+  if (approve?.reason === 'stalled')
+    return { label: 'Stalled', title: 'A step stalled. Approve again to continue.' };
+  if (!ask.approvedAt) return null;
+  return {
+    label: 'Approved',
+    title: 'You approved this ask: Neo starts its steps without asking again.',
+  };
+}
+
+export function isNeoAskQuestionItem(
+  item: Pick<NeoAskItem, 'kind' | 'question' | 'options'>
+): boolean {
+  return item.kind !== undefined || item.question !== undefined || !!item.options?.length;
+}
+
+export function neoAskOutcomeCount(
+  items: readonly NeoAskItem[]
+): { verified: number; total: number } | null {
+  const outcomes = items.filter((item) => !item.removed && !isNeoAskQuestionItem(item));
+  if (!outcomes.length) return null;
+  return {
+    verified: outcomes.filter((item) => item.state === 'met').length,
+    total: outcomes.length,
+  };
+}
+
 export type NeoAskItemAction = Extract<NeoAskHumanAction, { kind: 'answer' | 'confirm' }>;
 
 export function neoAskItemActions(view: Pick<NeoAskView, 'humanActions'>): NeoAskItemAction[] {

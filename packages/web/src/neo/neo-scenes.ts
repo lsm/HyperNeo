@@ -39,7 +39,7 @@ type SceneTruth = { group: NeoSceneGroup; label: string };
 const workScenes: Record<NeoWorkReceipt['status'], SceneTruth> = {
   proposed: { group: 'attention', label: 'Your call' },
   queued: { group: 'running', label: 'Handed to HyperNeo' },
-  reported: { group: 'outcomes', label: 'Response ready' },
+  reported: { group: 'outcomes', label: 'Reply received' },
   failed: { group: 'outcomes', label: 'Failed' },
   cancelled: { group: 'outcomes', label: 'Stopped' },
 };
@@ -47,7 +47,7 @@ const workScenes: Record<NeoWorkReceipt['status'], SceneTruth> = {
 const consultationScenes: Record<NeoConsultationReceipt['status'], SceneTruth> = {
   pending: { group: 'running', label: 'Checking context' },
   queued: { group: 'running', label: 'Waiting for context' },
-  reported: { group: 'outcomes', label: 'Response ready' },
+  reported: { group: 'outcomes', label: 'Reply received' },
   failed: { group: 'attention', label: 'Needs attention' },
 };
 

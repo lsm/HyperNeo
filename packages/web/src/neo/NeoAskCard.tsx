@@ -20,9 +20,12 @@ import {
   type NeoAskItemAction,
   type NeoAskOutcome,
   type NeoAskView,
+  isNeoAskQuestionItem,
   neoAskApproval,
+  neoAskApprovalBadge,
   neoAskItemActions,
   neoAskOpenTarget,
+  neoAskOutcomeCount,
 } from './neo-asks.ts';
 import type { NeoScene, NeoSceneCards } from './neo-scenes.ts';
 import { neoAppLabel, neoAppLogo, neoSessionLink } from './work-driver.ts';
@@ -146,7 +149,7 @@ const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> =
   pending: { mark: '○', color: 'text-fg-faint' },
 };
 
-function ItemRow({ item }: { item: NeoAskItem }) {
+function ItemRow({ item, answerAbove }: { item: NeoAskItem; answerAbove?: boolean }) {
   const glyph = itemGlyphs[item.state];
   const tags = [
     item.removed && 'removed',
@@ -167,6 +170,20 @@ function ItemRow({ item }: { item: NeoAskItem }) {
           {item.text}
         </span>
         {tags.length > 0 && <span class="ml-2 text-xs text-fg-faint">{tags.join(' · ')}</span>}
+        {answerAbove && (
+          <button
+            type="button"
+            class="ml-2 text-xs text-accent hover:underline"
+            onClick={(event) =>
+              event.currentTarget
+                .closest('[data-ask]')
+                ?.querySelector(`[data-ask-needs-you] [data-ask-item="${item.id}"]`)
+                ?.scrollIntoView({ block: 'nearest' })
+            }
+          >
+            Answer above
+          </button>
+        )}
         {item.evidence && (item.state === 'met' || item.state === 'reported') && (
           <span class="block truncate text-xs text-fg-faint" title={item.evidence}>
             {item.evidence}
@@ -177,11 +194,19 @@ function ItemRow({ item }: { item: NeoAskItem }) {
   );
 }
 
-function Checklist({ items, label }: { items: readonly NeoAskItem[]; label: string }) {
+function Checklist({
+  items,
+  label,
+  answerable,
+}: {
+  items: readonly NeoAskItem[];
+  label: string;
+  answerable?: ReadonlySet<string>;
+}) {
   return (
     <ul aria-label={label} class="space-y-1.5">
       {items.map((item) => (
-        <ItemRow key={item.id} item={item} />
+        <ItemRow key={item.id} item={item} answerAbove={answerable?.has(item.id)} />
       ))}
     </ul>
   );
@@ -289,6 +314,15 @@ export function NeoAskCard({
     return [{ workId: action.workId, title }];
   });
   const approval = neoAskApproval(ask, view.humanActions);
+  const badge = neoAskApprovalBadge(ask, view.humanActions);
+  const count = neoAskOutcomeCount(view.items);
+  const outcomes = view.items.filter((item) => !isNeoAskQuestionItem(item));
+  const questions = view.items.filter(isNeoAskQuestionItem);
+  const answerable = new Set(itemActions.map((action) => action.itemId));
+  const answeredAbove = itemActions.some(
+    (action) =>
+      action.kind === 'answer' && action.itemId === view.answer?.itemId && action.options.length > 0
+  );
   const target = neoAskOpenTarget(view, cards);
   const openName = `Open ${ask.title}`;
   const openControl =
@@ -321,17 +355,17 @@ export function NeoAskCard({
           pulse={tone === 'running'}
         />
         <span class="flex-1" />
-        {!view.settled && !!ask.approvedAt && (
+        {!view.settled && badge && (
           <span
-            class="shrink-0 text-xs text-fg-muted"
-            title="You approved this ask: Neo starts its steps without asking again."
+            class={`shrink-0 text-xs ${badge.label === 'Approved' ? 'text-fg-muted' : 'text-warning'}`}
+            title={badge.title}
           >
-            Approved
+            {badge.label}
           </span>
         )}
-        {!view.settled && view.total > 0 && (
+        {!view.settled && count && (
           <span class="shrink-0 text-xs text-fg-muted">
-            {view.done} of {view.total} done
+            {count.verified} of {count.total} outcomes verified
           </span>
         )}
         {onSettle && ask.status !== 'achieved' && ask.status !== 'abandoned' && (
@@ -397,14 +431,22 @@ export function NeoAskCard({
         <div data-ask-details class="mt-3 space-y-3">
           <div class="text-sm text-fg-muted">
             <p class="text-xs font-medium text-fg-faint">Done when</p>
-            {view.items.length > 0 ? (
+            {outcomes.length > 0 ? (
               <div class="mt-1.5">
-                <Checklist items={view.items} label="Done when" />
+                <Checklist items={outcomes} label="Done when" />
               </div>
             ) : (
               <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
             )}
           </div>
+          {questions.length > 0 && (
+            <div class="text-sm text-fg-muted">
+              <p class="text-xs font-medium text-fg-faint">Questions</p>
+              <div class="mt-1.5">
+                <Checklist items={questions} label="Questions" answerable={answerable} />
+              </div>
+            </div>
+          )}
           {!view.settled && approval && (
             <div class="text-sm text-fg-muted">
               <p class="text-xs font-medium text-fg-faint">Approval</p>
@@ -421,7 +463,7 @@ export function NeoAskCard({
         </div>
       )}
       <div class={neoFooterClass}>
-        {view.answer && onAnswerInChat ? (
+        {view.answer && onAnswerInChat && !answeredAbove ? (
           <button
             type="button"
             class={neoPrimaryClass}

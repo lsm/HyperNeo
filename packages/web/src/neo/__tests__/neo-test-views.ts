@@ -28,7 +28,7 @@ const byStatus: Record<
     phase: 'reported',
     group: 'outcomes',
     tone: 'success',
-    label: 'Response ready',
+    label: 'Reply received',
     actions: [],
   },
   failed: {
