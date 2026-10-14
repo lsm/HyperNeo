@@ -206,12 +206,12 @@ export function planNeoProjectQuestions(
 }
 
 export function readNeoProjectDecision(
-  ask: Pick<NeoAsk, 'doneItems'> | null,
+  ask: Pick<NeoAsk, 'doneItems' | 'status'> | null,
   key: string
 ): 'same' | 'separate' | 'pending' | null {
   const item = ask?.doneItems?.find((entry) => entry.decides === key && !entry.removed);
   if (!item) return null;
-  if (item.state !== 'met') return 'pending';
+  if (item.state !== 'met') return ask?.status === 'abandoned' ? 'separate' : 'pending';
   return item.evidence?.endsWith(`: ${NEO_PROJECT_SAME}`) ? 'same' : 'separate';
 }
 

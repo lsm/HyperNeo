@@ -73,8 +73,13 @@ describe('planNeoProjectQuestions', () => {
 });
 
 describe('readNeoProjectDecision', () => {
-  const ask = (state: 'pending' | 'met', evidence: string | null) =>
+  const ask = (
+    state: 'pending' | 'met',
+    evidence: string | null,
+    status: NeoAsk['status'] = 'waiting'
+  ) =>
     ({
+      status,
       doneItems: [
         {
           id: 'i1',
@@ -88,12 +93,13 @@ describe('readNeoProjectDecision', () => {
           decides: 'k',
         },
       ],
-    }) as Pick<NeoAsk, 'doneItems'>;
+    }) as Pick<NeoAsk, 'doneItems' | 'status'>;
 
   test('reads the saved answer for its key only', () => {
     expect(readNeoProjectDecision(null, 'k')).toBeNull();
     expect(readNeoProjectDecision(ask('pending', null), 'other')).toBeNull();
     expect(readNeoProjectDecision(ask('pending', null), 'k')).toBe('pending');
+    expect(readNeoProjectDecision(ask('pending', null, 'abandoned'), 'k')).toBe('separate');
     expect(readNeoProjectDecision(ask('met', `The human answered: ${NEO_PROJECT_SAME}`), 'k')).toBe(
       'same'
     );
