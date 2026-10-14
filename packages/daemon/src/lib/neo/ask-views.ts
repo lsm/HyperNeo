@@ -159,7 +159,7 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     (live.some((card) => card.talk || card.group === 'attention') ||
       sessions.some((session) => session.kind !== null));
   const doneWorkIds = live
-    .filter((card) => (card.phase === 'reported' || card.phase === 'merged') && !card.pr?.setback)
+    .filter((card) => card.phase === 'merged' && !card.pr?.setback)
     .map((card) => card.workId);
   const counted = (ask.doneItems ?? []).filter((item) => !item.removed);
   return {

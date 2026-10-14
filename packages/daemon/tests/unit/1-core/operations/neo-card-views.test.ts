@@ -184,6 +184,23 @@ describe('projectNeoCardViews', () => {
     ]);
   });
 
+  test('only a merged card is a success; a reply or an open PR is not', () => {
+    const cards = projectNeoCardViews(
+      parts({
+        work: [work('r', 'reported'), work('o', 'reported'), work('m', 'reported')],
+        prs: [
+          { workId: 'o', prs: [pr(1, { checks: 'pending' })], waiting: false },
+          { workId: 'm', prs: [pr(2, { state: 'MERGED' })], waiting: false },
+        ],
+      })
+    );
+    expect(cards.map((card) => [card.phase, card.label, card.tone])).toEqual([
+      ['reported', 'Reply received', 'accent'],
+      ['pr_open', 'Waiting on CI · #1', 'accent'],
+      ['merged', 'Merged · #2', 'success'],
+    ]);
+  });
+
   test('a proposed card can start or be declined; a sessionless cancel is hidden', () => {
     const cards = projectNeoCardViews(
       parts({ work: [work('p', 'proposed'), work('c', 'cancelled')] })
@@ -288,10 +305,16 @@ const item = (id: string, state: NeoAskItem['state'], removed = false): NeoAskIt
 describe('projectNeoAskViews', () => {
   test('an open ask needs you when a live card does, and skips a superseded failure', () => {
     const input = parts({
-      work: [work('old', 'failed'), work('new', 'queued'), work('done', 'reported')],
+      work: [
+        work('old', 'failed'),
+        work('new', 'queued'),
+        work('done', 'reported'),
+        work('replied', 'reported'),
+      ],
       drivers: [driver('new', 'needs_you')],
+      prs: [{ workId: 'done', prs: [pr(3, { state: 'MERGED' })], waiting: false }],
       supersessions: [{ workId: 'old', supersededBy: 'new', supersededAt: 1 }],
-      asks: [ask({ workIds: ['old', 'new', 'done'] })],
+      asks: [ask({ workIds: ['old', 'new', 'done', 'replied'] })],
     });
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
     expect(views[0]).toEqual({
@@ -301,8 +324,8 @@ describe('projectNeoAskViews', () => {
       settled: false,
       needsYou: true,
       done: 1,
-      total: 2,
-      workIds: ['new', 'done'],
+      total: 3,
+      workIds: ['new', 'done', 'replied'],
       doneWorkIds: ['done'],
       summary: null,
       sessions: [],
