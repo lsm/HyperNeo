@@ -19,6 +19,9 @@ export type NeoRefState = {
   at: number | null;
   done: boolean;
   closedBy: string | null;
+  base?: string | null;
+  merges?: { url: string; base: string | null }[];
+  defaultBase?: string | null;
   duplicate?: true;
   createdAt?: number | null;
   parent?: { url: string; at: number | null } | null;
@@ -30,10 +33,11 @@ const REF_NAME = /(?<![\w./-])([\w.-]+)\/([\w.-]+)#(\d+)\b/g;
 const REF_BARE = /(?<![\w./#-])#(\d+)\b/g;
 const NEO_ASK_REF_MAX = 10;
 const NOT_A_REF = /could not resolve to (an issue or pull request|a repository)/i;
-const REF_QUERY = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:5,includeClosedPrs:true){nodes{url merged}}}}}}`;
+const REF_QUERY = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){defaultBranchRef{name} issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt baseRefName} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:10,includeClosedPrs:true){nodes{url merged baseRefName}}}}}}`;
 const GhRefSchema = z.object({
   data: z.object({
     repository: z.object({
+      defaultBranchRef: z.object({ name: z.string() }).nullish(),
       issueOrPullRequest: z.discriminatedUnion('__typename', [
         z.object({
           __typename: z.literal('PullRequest'),
@@ -41,6 +45,7 @@ const GhRefSchema = z.object({
           state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
           mergedAt: z.string().nullish(),
           closedAt: z.string().nullish(),
+          baseRefName: z.string().nullish(),
         }),
         z.object({
           __typename: z.literal('Issue'),
@@ -55,7 +60,15 @@ const GhRefSchema = z.object({
             .object({ nodes: z.array(z.object({ createdAt: z.string().nullish() }).nullable()) })
             .nullish(),
           closedByPullRequestsReferences: z
-            .object({ nodes: z.array(z.object({ url: z.string(), merged: z.boolean() })) })
+            .object({
+              nodes: z.array(
+                z.object({
+                  url: z.string(),
+                  merged: z.boolean(),
+                  baseRefName: z.string().nullish(),
+                })
+              ),
+            })
             .nullish(),
         }),
       ]),
@@ -228,7 +241,12 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
     return null;
   }
   const found = parsed.data.data.repository.issueOrPullRequest;
+  const defaultBase = parsed.data.data.repository.defaultBranchRef?.name ?? null;
   const closed = found.state !== 'OPEN';
+  const closing =
+    found.__typename === 'Issue'
+      ? found.closedByPullRequestsReferences?.nodes.find((pr) => pr.merged)
+      : undefined;
   const state: NeoRefState =
     found.__typename === 'PullRequest'
       ? {
@@ -239,6 +257,8 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
             Date.parse((found.state === 'MERGED' ? found.mergedAt : found.closedAt) ?? '') || null,
           done: found.state === 'MERGED',
           closedBy: null,
+          base: found.baseRefName ?? null,
+          defaultBase,
         }
       : {
           url: found.url,
@@ -246,10 +266,14 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
           ...(found.title ? { title: found.title } : {}),
           state: found.state,
           at: closed ? Date.parse(found.closedAt ?? '') || null : null,
-          done: closed && found.stateReason !== 'NOT_PLANNED' && found.stateReason !== 'DUPLICATE',
+          done: closed && found.stateReason === 'COMPLETED',
           ...(closed && found.stateReason === 'DUPLICATE' ? { duplicate: true as const } : {}),
-          closedBy:
-            found.closedByPullRequestsReferences?.nodes.find((pr) => pr.merged)?.url ?? null,
+          closedBy: closing?.url ?? null,
+          base: closing?.baseRefName ?? null,
+          merges: (found.closedByPullRequestsReferences?.nodes ?? [])
+            .filter((pr) => pr.merged)
+            .map((pr) => ({ url: pr.url, base: pr.baseRefName ?? null })),
+          defaultBase,
           createdAt: Date.parse(found.createdAt ?? '') || null,
           parent: found.parent
             ? {
