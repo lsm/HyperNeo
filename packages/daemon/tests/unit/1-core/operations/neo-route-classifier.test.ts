@@ -338,19 +338,31 @@ describe('chooseNeoRoute with a new subject', () => {
     expect(route.choice).toBeNull();
   });
 
-  test('reuses a uniquely named existing target instead of creating a duplicate', async () => {
+  test('deduplicates against holders omitted from the capped classifier candidates', async () => {
     let opened = 0;
-    const target = { ...drivers, title: 'Spring garden' };
+    const holders = Array.from({ length: 20 }, (_, i) => ({
+      ...drivers,
+      projectId: `project-${i}`,
+      title: i === 19 ? 'Spring garden' : `Target ${i}`,
+    }));
     const route = await chooseNeoRoute('Help with spring planting', {
       ...base(async () => {
         opened++;
         return null;
       }),
-      holders: () => [target, youtube],
+      holders: () => holders,
+      classify: async (_text, options) => {
+        expect(options.some((holder) => holder.projectId === 'project-19')).toBe(false);
+        return {
+          decision: 'main',
+          confidence: 0.8,
+          basis: 'new_subject',
+          projectTitle: 'Spring garden',
+        };
+      },
     });
     expect(opened).toBe(0);
-    expect(route.choice?.projectId).toBe(target.projectId);
-    expect(route.choice?.signal).toBe('classifier:new_subject');
+    expect(route.choice?.projectId).toBe('project-19');
   });
 
   test('stays with main Neo when no project can be opened', async () => {

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { NeoWorkPrRepository } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
+import { runMigration365 } from '../../../../src/storage/schema/m365-neo-cross-project-dispatch.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -38,6 +40,51 @@ function work(id: string, projectId: string | null) {
 }
 
 describe('readNeoProjectFacts', () => {
+  test('backfills PR references and keeps them synchronized with recorded PR changes', () => {
+    work('card-one', 'alpha');
+    const sql = db.getDatabase();
+    const prs = new NeoWorkPrRepository(sql);
+    prs.record(
+      'card-one',
+      [
+        {
+          url: 'https://github.com/lsm/HyperNeo/pull/99',
+          state: 'OPEN',
+          checks: 'none',
+          review: 'none',
+        },
+      ],
+      0
+    );
+    sql.exec('DELETE FROM neo_route_pr_refs');
+    runMigration365(sql);
+    expect(neoFactOwners(readNeoProjectFacts(sql, 'lsm/HyperNeo#99 and #99'))).toEqual(['alpha']);
+    prs.replacePrs('card-one', []);
+    expect(neoFactOwners(readNeoProjectFacts(sql, '#99'))).toBeNull();
+  });
+  test('uses indexed lookups for only the references present in the message', () => {
+    work('card-one', 'alpha');
+    db.createSession(createTestSession('linked-session'));
+    const sql = db.getDatabase();
+    const queries = new Set<string>();
+    const tracked = {
+      prepare: (query: string) => {
+        queries.add(query);
+        return sql.prepare(query);
+      },
+    } as typeof sql;
+    expect(
+      neoFactOwners(
+        readNeoProjectFacts(tracked, 'card-one linked-session /missing unknown/repo#99 #99')
+      )
+    ).toBeNull();
+    for (const query of queries) {
+      const plans = sql
+        .prepare(`EXPLAIN QUERY PLAN ${query}`)
+        .all(...Array.from(query.matchAll(/\?/g), () => null)) as { detail: string }[];
+      expect(plans.map((plan) => plan.detail).join('\n')).not.toMatch(/\bSCAN\b/);
+    }
+  });
   test('uses exact object identities and combines owners without matching ID prefixes', () => {
     work('card-one', 'alpha');
     work('card-two', 'beta');

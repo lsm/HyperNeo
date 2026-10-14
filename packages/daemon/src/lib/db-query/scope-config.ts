@@ -457,6 +457,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_project_workspaces',
   'neo_cross_project_dispatches',
   'neo_cross_project_dispatch_members',
+  'neo_route_pr_refs',
   'neo_consultations',
   'neo_consultation_waiters',
   'neo_context_write_grants',

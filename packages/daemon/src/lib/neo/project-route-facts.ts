@@ -16,51 +16,63 @@ export function neoRepoAlias(remote: string): string | null {
   return ref ? `repo:${ref.owner.toLowerCase()}/${ref.repo.toLowerCase()}\u0000` : null;
 }
 
-function mentions(text: string, reference: string): boolean {
-  const escaped = reference.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^\\w:-])${escaped}(?=$|[^\\w:-])`, 'i').test(text);
-}
-
 export function readNeoProjectFacts(db: Database, text: string): NeoProjectFact[] {
   const facts: NeoProjectFact[] = [];
-  const objects = db
-    .prepare(`SELECT id AS reference, concern_id AS projectId FROM neo_asks
-    UNION ALL SELECT id, concern_id FROM neo_work
-    UNION ALL SELECT id, concern_id FROM neo_consultations
-    UNION ALL SELECT id, id FROM neo_concerns WHERE id LIKE 'project:%' OR length(id) = 36`)
-    .all() as NeoProjectFact[];
-  facts.push(...objects.filter((row) => mentions(text, row.reference)));
-  const aliases = db
-    .prepare('SELECT alias, project_id AS projectId FROM neo_project_workspaces')
-    .all() as { alias: string; projectId: string }[];
-  for (const row of aliases.filter((row) => row.alias.startsWith('work:'))) {
-    const reference = row.alias.split('\u0000').slice(2).join('\u0000');
-    if (mentions(text, reference)) facts.push({ reference, projectId: row.projectId });
-  }
-  const byFolder = (folder: string) =>
-    aliases.filter(
-      (row) => row.alias.startsWith('folder:') && row.alias.endsWith(`\u0000${folder}`)
+  const ids = [...new Set([...text.matchAll(/[\w:.-]+/g)].map(([id]) => id.replace(/\.+$/, '')))];
+  const aliasOwners = (kind: string, expression: string, reference: string) =>
+    db
+      .prepare(`SELECT project_id AS projectId FROM neo_project_workspaces
+      WHERE alias LIKE '${kind}:%' AND ${expression} = ?`)
+      .all(reference) as {
+      projectId: string;
+    }[];
+  const folderExpression =
+    "CAST(substr(CAST(alias AS BLOB), instr(CAST(alias AS BLOB), x'00') + 1) AS TEXT) COLLATE NOCASE";
+  const workExpression =
+    "CAST(substr(CAST(alias AS BLOB), instr(CAST(alias AS BLOB), x'00') + instr(substr(CAST(alias AS BLOB), instr(CAST(alias AS BLOB), x'00') + 1), x'00') + 1) AS TEXT) COLLATE NOCASE";
+  const add = (reference: string, rows: { projectId: string | null }[], unknown = false) =>
+    facts.push(
+      ...(rows.length ? rows : unknown ? [{ projectId: undefined }] : []).map((row) => ({
+        reference,
+        projectId: row.projectId,
+      }))
     );
-  for (const row of aliases) {
-    if (!row.alias.startsWith('folder:')) continue;
-    const folder = row.alias.slice(row.alias.indexOf('\u0000') + 1);
-    if (mentions(text, folder)) facts.push({ reference: folder, projectId: row.projectId });
+  const sessions: { id: string; folder: string | null; worktree: string | null }[] = [];
+  for (let start = 0; start < ids.length; start += 256) {
+    const batch = ids.slice(start, start + 256);
+    const placeholders = batch.map(() => '?').join(',');
+    for (const table of ['neo_asks', 'neo_work', 'neo_consultations', 'neo_concerns'])
+      facts.push(
+        ...(db
+          .prepare(`SELECT id AS reference, ${table === 'neo_concerns' ? 'id' : 'concern_id'} AS projectId
+        FROM ${table} WHERE id COLLATE NOCASE IN (${placeholders})
+        ${table === 'neo_concerns' ? "AND (id LIKE 'project:%' OR length(id) = 36)" : ''}`)
+          .all(...batch) as NeoProjectFact[])
+      );
+    sessions.push(
+      ...(db
+        .prepare(`SELECT id, workspace_path AS folder, worktree_path AS worktree
+      FROM sessions WHERE id COLLATE NOCASE IN (${placeholders})`)
+        .all(...batch) as typeof sessions)
+    );
   }
-  const sessions = db
-    .prepare('SELECT id, workspace_path AS folder, worktree_path AS worktree FROM sessions')
-    .all() as { id: string; folder: string | null; worktree: string | null }[];
-  for (const session of sessions.filter((row) => mentions(text, row.id))) {
+  for (const id of ids) add(id, aliasOwners('work', workExpression, id));
+  for (const match of text.matchAll(/["'`]([^"'`]+)["'`]|(\/[^\s"'`<>(){},;!?]+)/g)) {
+    const folder = (match[1] ?? match[2]).replace(/\.+$/, '');
+    if (folder.startsWith('/')) add(folder, aliasOwners('folder', folderExpression, folder));
+  }
+  for (const session of sessions) {
     const owned = db
       .prepare(
         'SELECT concern_id AS projectId FROM neo_work WHERE session_id = ? OR target_session_id = ?'
       )
       .all(session.id, session.id) as { projectId: string | null }[];
-    const matches = owned.length ? owned : byFolder(session.worktree ?? session.folder ?? '');
-    facts.push(
-      ...(matches.length ? matches : [{ projectId: undefined }]).map((row) => ({
-        reference: session.id,
-        projectId: row.projectId,
-      }))
+    add(
+      session.id,
+      owned.length
+        ? owned
+        : aliasOwners('folder', folderExpression, session.worktree ?? session.folder ?? ''),
+      true
     );
   }
   const urls = [
@@ -70,37 +82,23 @@ export function readNeoProjectFacts(db: Database, text: string): NeoProjectFact[
     reference: `${ref.owner}/${ref.repo}#${ref.number}`,
     ref,
   }));
-  const prs = db
-    .prepare(`SELECT json_extract(p.value, '$.url') AS url, w.concern_id AS projectId
-    FROM neo_work_prs r JOIN neo_work w ON w.id = r.work_id JOIN json_each(r.prs_json) p`)
-    .all() as { url: string; projectId: string | null }[];
+  const prOwners = (column: 'reference' | 'number', value: string | number) =>
+    db
+      .prepare(`SELECT w.concern_id AS projectId FROM neo_route_pr_refs r
+      JOIN neo_work w ON w.id = r.work_id WHERE r.${column} = ?`)
+      .all(value) as {
+      projectId: string | null;
+    }[];
   for (const [reference, number] of text.matchAll(/(?<![\w/])#(\d+)\b/g)) {
-    const matches = prs.filter((pr) => parseGitHubRefUrl(pr.url)?.number === Number(number));
-    if (matches.length)
-      facts.push(...matches.map((pr) => ({ reference, projectId: pr.projectId })));
-    else facts.push({ reference, projectId: undefined });
+    add(reference, prOwners('number', Number(number)), true);
   }
   for (const { reference, ref } of [...urls, ...named]) {
-    const explicit = prs.filter((pr) => {
-      const known = parseGitHubRefUrl(pr.url);
-      return (
-        known &&
-        known.owner.toLowerCase() === ref.owner.toLowerCase() &&
-        known.repo.toLowerCase() === ref.repo.toLowerCase() &&
-        known.number === ref.number
-      );
-    });
+    const repo = `${ref.owner.toLowerCase()}/${ref.repo.toLowerCase()}`;
+    const explicit = prOwners('reference', `https://github.com/${repo}/pull/${ref.number}`);
     const matches = explicit.length
       ? explicit
-      : aliases.filter((row) =>
-          row.alias.startsWith(`repo:${ref.owner.toLowerCase()}/${ref.repo.toLowerCase()}\u0000`)
-        );
-    facts.push(
-      ...(matches.length ? matches : [{ projectId: undefined }]).map((row) => ({
-        reference,
-        projectId: row.projectId,
-      }))
-    );
+      : aliasOwners('repo', 'substr(alias, 6, instr(alias, char(0)) - 6)', repo);
+    add(reference, matches, true);
   }
   for (const [reference] of text.matchAll(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi)) {
     if (!facts.some((fact) => fact.reference.toLowerCase().includes(reference.toLowerCase())))

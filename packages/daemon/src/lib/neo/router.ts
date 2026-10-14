@@ -318,7 +318,7 @@ async function classifyNeoAsk(
   verdict: NeoRouteVerdict,
   scores: readonly Score[],
   deps: NeoRouterDeps,
-  candidates: readonly NeoHolder[]
+  holders: readonly NeoHolder[]
 ): Promise<Routed> {
   const decided = verdict && typeof verdict === 'object' && 'decision' in verdict ? verdict : null;
   const chosen = decided
@@ -326,7 +326,7 @@ async function classifyNeoAsk(
     : (verdict as Exclude<NeoRouteVerdict, NeoRouteDecision>);
   const unheld = decided?.basis === 'new_subject' || decided?.basis === 'matches_project';
   if (chosen === 'main' && unheld && decided?.projectTitle && deps.newProject) {
-    const existing = candidates.filter(
+    const existing = holders.filter(
       (holder) => holder.title.trim().toLowerCase() === decided.projectTitle!.toLowerCase()
     );
     const project =
@@ -417,7 +417,7 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
     'context'
   )
   .pipe(askNeoRouteModel, ['text', 'candidates', 'context', 'withInbox', 'deps'], 'verdict')
-  .pipe(classifyNeoAsk, ['text', 'verdict', 'scores', 'deps', 'candidates'], 'route')
+  .pipe(classifyNeoAsk, ['text', 'verdict', 'scores', 'deps', 'holders'], 'route')
   .endAsync('route') as (text: string, deps: NeoRouterDeps) => Promise<Routed>;
 
 export function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRouted> {

@@ -166,7 +166,6 @@ export { runMigration186 } from './migrations.ts';
 export function createTables(db: BunDatabase): void {
   createNeoTables(db);
   runMigration361(db);
-  runMigration365(db);
   createNeoWorkResourceTable(db);
   createNeoPublicationTable(db);
   createNeoConversationAskTable(db);
@@ -1158,4 +1157,5 @@ function createIndexes(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
 		 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
   );
+  runMigration365(db);
 }
