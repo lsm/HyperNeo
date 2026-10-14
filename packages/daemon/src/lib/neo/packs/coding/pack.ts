@@ -26,7 +26,6 @@ import {
   neoWatchTopics,
 } from './watch-checks.ts';
 import {
-  readMergeCommit,
   readNeoDeployTicks,
   CODING_CHECK_DEPLOYED,
   type NeoDeployReader,
@@ -244,6 +243,7 @@ export function createCodingPack(
     cardReports: (workIds: readonly string[]) => string[];
     readRefStates: NeoRefStateReader;
     readDeploys: NeoDeployReader;
+    readMergeCommit: (url: string) => Promise<string | null>;
     cardBase: (workId: string) => string | null;
   }
 ): NeoPack {
@@ -253,7 +253,8 @@ export function createCodingPack(
     prerequisiteParameters: (items) =>
       readCodingPrerequisiteBase(items, {
         readRefStates: deps.readRefStates,
-        readMergeCommit: (url) => readMergeCommit(url),
+        readMergeCommit: deps.readMergeCommit,
+        cardBase: deps.cardBase,
       }),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     checks: { [CODING_CHECK_PR_MERGED]: codingPrMergedCheck },

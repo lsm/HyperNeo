@@ -30,22 +30,26 @@ const item = (watch: string[], extra: Partial<NeoAskItem> = {}): NeoAskItem => (
   metBy: 'daemon',
   removed: false,
   addedAt: 1,
+  deliveredBy: 'a',
   watch,
   ...extra,
 });
-const pr = (url: string, state: NeoRefState['state']): NeoRefState => ({
+const pr = (url: string, state: NeoRefState['state'], base = 'dev'): NeoRefState => ({
   url,
   kind: 'pr',
   state,
   at: 1,
   done: state === 'MERGED',
   closedBy: null,
+  base,
 });
 
 describe('readCodingPrerequisiteBase', () => {
   const readers = (states: NeoRefState[], commits: Record<string, string | null>) => ({
-    readRefStates: async () => states,
+    readRefStates: async (refs: readonly { number: number }[]) =>
+      states.filter((state) => refs.some((ref) => state.url.endsWith(`/${ref.number}`))),
     readMergeCommit: async (url: string) => commits[url] ?? null,
+    cardBase: () => 'dev',
   });
 
   test("returns the merge commits of a prerequisite's merged pull request or closing pull requests", async () => {
@@ -63,21 +67,30 @@ describe('readCodingPrerequisiteBase', () => {
       at: 1,
       done: true,
       closedBy: prUrl,
-      merges: [{ url: prUrl, base: 'dev' }],
+      merges: [
+        { url: prUrl, base: 'dev' },
+        { url: 'https://github.com/o/r/pull/8', base: 'release' },
+      ],
     };
     expect(
       await readCodingPrerequisiteBase([item([issue.url])], readers([issue], { [prUrl]: merge }))
     ).toEqual({ ok: true, value: { prerequisiteCommits: [merge] } });
   });
 
-  test('refuses when the merge cannot be read, and adds nothing without a merged-PR outcome', async () => {
+  test('refuses a merge it cannot read or that landed on another base, and adds nothing without a merged-PR outcome', async () => {
     const prUrl = 'https://github.com/o/r/pull/7';
     expect(
       await readCodingPrerequisiteBase([item([prUrl])], readers([pr(prUrl, 'MERGED')], {}))
     ).toEqual({ ok: false, reason: `prerequisite_merge_unknown: ${prUrl}` });
     expect(
       await readCodingPrerequisiteBase([item([prUrl])], readers([pr(prUrl, 'OPEN')], {}))
-    ).toEqual({ ok: false, reason: 'prerequisite_not_merged' });
+    ).toEqual({ ok: false, reason: `prerequisite_not_merged: ${prUrl}` });
+    expect(
+      await readCodingPrerequisiteBase(
+        [item([prUrl])],
+        readers([pr(prUrl, 'MERGED', 'release')], { [prUrl]: merge })
+      )
+    ).toEqual({ ok: false, reason: `prerequisite_not_merged: ${prUrl}` });
     expect(await readCodingPrerequisiteBase([item([prUrl])], readers([], {}))).toEqual({
       ok: false,
       reason: 'prerequisite_ref_unreadable',
@@ -203,7 +216,7 @@ describe('a dependent coding card start', () => {
     }
   });
 
-  test('never starts a dependent whose prerequisite merge cannot be read', async () => {
+  test('keeps a dependent waiting, not failed, while its prerequisite merge cannot be read', async () => {
     const { db, service, prepared, start } = await setup({
       ok: false,
       reason: 'prerequisite_merge_unknown: https://github.com/o/r/pull/7',
@@ -212,11 +225,8 @@ describe('a dependent coding card start', () => {
       prepared.length = 0;
       await start('b');
       expect(prepared).toEqual([]);
-      expect(service.repo.getWork('b')).toMatchObject({
-        status: 'failed',
-        report:
-          'prerequisite_base_unknown: prerequisite_merge_unknown: https://github.com/o/r/pull/7',
-      });
+      expect(service.repo.getWork('b')?.status).toBe('proposed');
+      expect(service.driverTargets.readCard('b')?.claimedAt).toBeNull();
     } finally {
       db.close();
     }

@@ -236,6 +236,7 @@ import {
 } from './work-admission.ts';
 import type { NeoCardWait } from './card-views.ts';
 import { reconcileNeoHandoff } from './handoff-reconcile.ts';
+import { readMergeCommit } from './packs/coding/deploy-checks.ts';
 import {
   neoEnabledPacks,
   neoSettingsPackBriefs,
@@ -492,6 +493,7 @@ export class NeoService {
   readCheckoutPrs = (cwd: string): Promise<string[]> => readGithubBranchPrs({ cwd });
   readWorkRepo: NeoWorkRepoReader = readGithubWorkRepo;
   readRefStates: NeoRefStateReader = readGithubRefStates;
+  readMergeCommit = (url: string): Promise<string | null> => readMergeCommit(url);
   readDeploys: NeoDeployReader = (urls) =>
     readGithubDeploys(urls, () =>
       readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
@@ -830,6 +832,7 @@ export class NeoService {
         cardReports: (workIds) => workIds.flatMap((id) => this.repo.getWork(id)?.report ?? []),
         readRefStates: (refs) => this.readRefStates(refs),
         readDeploys: (urls) => this.readDeploys(urls),
+        readMergeCommit: (url) => this.readMergeCommit(url),
         cardBase: (workId) => codingCardBase(this.driverTargets.get(workId)),
       }),
       createLifeAdminPack(),
@@ -1540,7 +1543,12 @@ export class NeoService {
     return verdict.state !== 'idle' || work.status === 'queued';
   }
 
-  private prerequisiteParameters(workId: string, pack: NeoPack) {
+  private async prerequisiteParameters(
+    workId: string,
+    target: NeoDriverTarget
+  ): Promise<{ ok: true; value: Record<string, string[]> } | { ok: false; reason: string }> {
+    const pack = this.pack(this.askRecords.forWork(workId)?.pack ?? '');
+    if (target.verb !== 'start' || !pack?.prepareExecution) return { ok: true, value: {} };
     const items = this.dependencies
       .edges()
       .filter((edge) => edge.workId === workId)
@@ -1551,7 +1559,7 @@ export class NeoService {
       );
     return items.length && pack.prerequisiteParameters
       ? pack.prerequisiteParameters(items)
-      : Promise.resolve({ ok: true as const, value: {} });
+      : { ok: true, value: {} };
   }
 
   reconcileHandoff(id: string) {
@@ -1762,6 +1770,11 @@ export class NeoService {
       if (verdict.state === 'uncertain') await this.holdUncertainHandoff(work, target);
       return;
     }
+    const base = await this.prerequisiteParameters(work.id, target);
+    if (!base.ok) {
+      this.log.warn(`Neo card ${work.id} waits for its prerequisite base: ${base.reason}`);
+      return;
+    }
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
     if (!queued || queued.status !== 'queued') return;
     if (target.verb === 'adopt') return this.adoptDriverWork(queued, target.ref);
@@ -1777,17 +1790,11 @@ export class NeoService {
       await this.failWork(queued, `unsupported_preparation: pack ${packId} is not installed.`);
       return;
     }
-    if (target.verb === 'start' && pack?.prepareExecution) {
-      const base = await this.prerequisiteParameters(queued.id, pack);
-      if (!base.ok) {
-        await this.failWork(queued, `prerequisite_base_unknown: ${base.reason}`);
-        return;
-      }
+    if (target.verb === 'start' && pack?.prepareExecution)
       call.input.preparation = {
         pack: pack.id,
         parameters: { ...(target.preparationParameters ?? {}), ...base.value },
       };
-    }
     const probe =
       target.verb === 'send'
         ? await this.readSendBaseline(target.ref, queued, String(call.input.message))
