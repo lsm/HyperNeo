@@ -24,12 +24,29 @@ function decode(row: Row): NeoPublication {
   return { ...parsed.value, sequence: row.sequence, createdAt: row.createdAt };
 }
 
+function hasTrigger(
+  db: Database,
+  conversationId: string,
+  triggerId: string,
+  publicationId: string
+): boolean {
+  return !!db
+    .prepare(`SELECT 1 FROM neo_publications WHERE conversation_id = ?
+      AND json_extract(payload_json, '$.triggerId') = ? AND publication_id <> ? LIMIT 1`)
+    .get(conversationId, triggerId, publicationId);
+}
+
 function appendImmutable(
   db: Database,
   input: NeoPublicationInput,
   payload: string
 ): NeoPublicationAppendResult {
   return db.transaction((): NeoPublicationAppendResult => {
+    if (
+      input.triggerId &&
+      hasTrigger(db, input.conversationId, input.triggerId, input.publicationId)
+    )
+      return { accepted: false, reason: 'trigger_already_published' };
     const inserted = db
       .prepare(`INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at)
         VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id, publication_id) DO NOTHING
@@ -117,6 +134,10 @@ export class NeoPublicationRepository {
       )
       .get(conversationId, publicationId) as Row | null;
     return row ? decode(row) : null;
+  }
+
+  hasTrigger(conversationId: string, triggerId: string, publicationId: string): boolean {
+    return hasTrigger(this.db, conversationId, triggerId, publicationId);
   }
 
   list(conversationId: string, after = 0, limit = 50, before?: number): NeoPublication[] | null {

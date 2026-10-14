@@ -26,6 +26,7 @@ const Result = z.union([
   z.object({
     ok: z.literal(true),
     merged: z.array(z.object({ sourceId: z.string(), targetId: z.string() })),
+    asked: z.array(z.object({ sourceId: z.string(), targetId: z.string() })),
     moved: z.array(z.object({ askId: z.string(), projectId: z.string() })),
     stayed: z.array(Stayed),
   }),
@@ -53,7 +54,7 @@ export interface NeoReorganizeRuntime {
     parent: NeoAskOrigin | null
   ): Promise<void>;
   move(ask: NeoAsk, cards: readonly NeoWork[], owner: Project & { messageId: string }): void;
-  mergeProjects(): Promise<Merged[]>;
+  mergeProjects(): Promise<{ merged: Merged[]; asked: Merged[] }>;
   log(line: string): void;
 }
 
@@ -141,7 +142,12 @@ export function neoMovedAskNote(ask: NeoAsk, cards: readonly NeoWork[]): string 
   })}`;
 }
 
-export type NeoReorganized = { merged: Merged[]; moved: Moved[]; stayed: Stay[] };
+export type NeoReorganized = {
+  merged: Merged[];
+  asked: Merged[];
+  moved: Moved[];
+  stayed: Stay[];
+};
 
 export function createNeoProjectsReorganizer(
   runtime: NeoReorganizeRuntime
@@ -194,8 +200,8 @@ export function createNeoProjectsReorganizer(
     const root = runtime.rootSessionId();
     const moved: Moved[] = [];
     const stayed: Stay[] = [];
-    if (!root) return { merged: [], moved, stayed };
-    const merged = await runtime.mergeProjects();
+    if (!root) return { merged: [], asked: [], moved, stayed };
+    const { merged, asked } = await runtime.mergeProjects();
     for (const merge of merged)
       runtime.log(`neo reorganize: merged project ${merge.sourceId} into ${merge.targetId}`);
     for (const ask of selectNeoReorganizableAsks(runtime.liveAsks(), root)) {
@@ -208,7 +214,7 @@ export function createNeoProjectsReorganizer(
       if ('reason' in result) stayed.push(result);
       else moved.push(result);
     }
-    return { merged, moved, stayed };
+    return { merged, asked, moved, stayed };
   };
 }
 
@@ -226,7 +232,7 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
   return defineOperation({
     name: 'neo.projects.reorganize',
     description:
-      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working), then move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
+      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read are asked about once on main (asked): run this again after the human answers to apply it, and a saved answer is never asked again. Then move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

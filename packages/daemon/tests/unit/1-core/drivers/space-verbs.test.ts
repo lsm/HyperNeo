@@ -49,6 +49,8 @@ describe('space adapter start, status and stop', () => {
     db.exec(`CREATE TABLE spaces (id TEXT PRIMARY KEY, name TEXT)`);
     db.exec(`CREATE TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT, task_number INTEGER,
       title TEXT, status TEXT, updated_at INTEGER, result TEXT, reported_summary TEXT, block_reason TEXT, completed_at INTEGER)`);
+    db.exec(`CREATE TABLE sdk_messages (session_id TEXT, task_id TEXT, sdk_uuid TEXT,
+      message_type TEXT, sdk_message TEXT, timestamp TEXT, parent_tool_use_id TEXT)`);
     db.exec(`INSERT INTO spaces VALUES ('sp1', 'dev-neokai')`);
     db.exec(`INSERT INTO space_tasks (id, space_id, task_number, title, status, updated_at, result, reported_summary, block_reason) VALUES
       ('t1', 'sp1', 7, 'font size', 'blocked', 10, NULL, NULL, 'human_input_requested'),
@@ -84,6 +86,55 @@ describe('space adapter start, status and stop', () => {
   const ref = (id: string) => ({ adapter: 'space', id });
   const rpc = { source: 'rpc' as const };
   const space = { machine: 'imac', spaceId: 'sp1', name: 'dev-neokai' };
+
+  test('status names the first input of a task as its start receipt once it has one', async () => {
+    const status = async () => {
+      const result = await adapter().status!(ref('t1'));
+      if (!result.ok) throw new Error(result.detail);
+      return result.value;
+    };
+    expect('startReceipt' in (await status())).toBe(false);
+    const write = db.prepare('INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const user = (text: string) => JSON.stringify({ type: 'user', message: { content: text } });
+    write.run(
+      's-code',
+      't1',
+      'replay',
+      'user',
+      JSON.stringify({ type: 'user', isReplay: true }),
+      '2026-10-14T09:00:00.000Z',
+      null
+    );
+    write.run('s-code', 't1', 'tool', 'user', user('x'), '2026-10-14T09:00:01.000Z', 'call-1');
+    write.run(
+      's-code',
+      't1',
+      'kickoff',
+      'user',
+      user('font size'),
+      '2026-10-14T09:00:02.000Z',
+      null
+    );
+    write.run(
+      's-review',
+      't1',
+      'later',
+      'user',
+      user('review it'),
+      '2026-10-14T09:05:00.000Z',
+      null
+    );
+    write.run(
+      's-other',
+      't2',
+      'other',
+      'user',
+      user('other task'),
+      '2026-10-14T08:00:00.000Z',
+      null
+    );
+    expect((await status()).startReceipt).toEqual({ executionId: 's-code', inputId: 'kickoff' });
+  });
 
   test('start creates a task in the Space with the message as its description', async () => {
     expect(
@@ -463,9 +514,12 @@ describe('space adapter send', () => {
 
   test('task aggregate never borrows a node exchange across replacement or completion', async () => {
     db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
-      timestamp TEXT, send_status TEXT, parent_tool_use_id TEXT)`);
+      timestamp TEXT, send_status TEXT, parent_tool_use_id TEXT, task_id TEXT, sdk_uuid TEXT)`);
     const at = Date.parse('2026-10-14T10:00:00.000Z');
-    const insert = db.prepare('INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, NULL)');
+    const insert = db.prepare(
+      `INSERT INTO sdk_messages (session_id, message_type, sdk_message, timestamp, send_status,
+        parent_tool_use_id) VALUES (?, ?, ?, ?, ?, NULL)`
+    );
     for (const session of ['s-code', 's-review', 's-next']) {
       insert.run(
         session,

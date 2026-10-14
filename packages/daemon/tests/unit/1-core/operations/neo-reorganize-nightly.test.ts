@@ -63,6 +63,7 @@ describe('runNeoNightlyReorganize', () => {
         runs++;
         return {
           merged: [{ sourceId: 'x', targetId: 'y' }],
+          asked: [],
           moved: [{ askId: 'a', projectId: 'c' }],
           stayed: [{ askId: 'b', reason: 'stays_main' }],
         };
@@ -90,7 +91,7 @@ describe('runNeoNightlyReorganize', () => {
         lastHumanAt: () => now - 60_000,
         reorganize: async () => {
           runs++;
-          return { merged: [], moved: [], stayed: [] };
+          return { merged: [], asked: [], moved: [], stayed: [] };
         },
         log: () => {},
       }

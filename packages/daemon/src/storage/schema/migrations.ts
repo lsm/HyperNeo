@@ -3,6 +3,7 @@ import { runMigration371 } from './m371-neo-work-admission-claims.ts';
 import { runMigration372 } from './m372-neo-ask-item-removed-reason.ts';
 import { runMigration373 } from './m373-neo-ask-item-decides.ts';
 import { runMigration374 } from './m374-neo-ask-item-because.ts';
+import { runMigration375 } from './m375-neo-work-start-intent.ts';
 import { runMigration366 } from './m366-neo-work-dependencies.ts';
 import { runMigration367 } from './m367-neo-pr-claim-provenance.ts';
 import { runMigration368 } from './m368-neo-project-tree.ts';
@@ -126,6 +127,7 @@ import { runMigration352 } from './m352-neo-ask-item-watch.ts';
 import { runMigration353 } from './m353-neo-work-wakes.ts';
 import { runMigration354 } from './m354-neo-ask-needs-you-questions.ts';
 import { runMigration355 } from './m355-neo-card-event-subscriptions.ts';
+import { runMigration356 } from './m356-neo-notification-triggers.ts';
 import { runMigration357 } from './m357-neo-ask-item-deploy-check.ts';
 import { runMigration358 } from './m358-neo-ask-revisions.ts';
 import { runMigration359 } from './m359-neo-pack-check-registry.ts';
@@ -805,6 +807,7 @@ export function runMigrations(
   run(migrationMarkerKey(353), () => runMigration353(db));
   run(migrationMarkerKey(354), () => runMigration354(db));
   run(migrationMarkerKey(355), () => runMigration355(db));
+  run(migrationMarkerKey(356), () => runMigration356(db));
   run(migrationMarkerKey(357), () => runMigration357(db));
   run(migrationMarkerKey(358), () => runMigration358(db));
   rewrite(migrationMarkerKey(359), () => runMigration359(db));
@@ -826,6 +829,7 @@ export function runMigrations(
   run(migrationMarkerKey(372), () => runMigration372(db));
   run(migrationMarkerKey(373), () => runMigration373(db));
   run(migrationMarkerKey(374), () => runMigration374(db));
+  run(migrationMarkerKey(375), () => runMigration375(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

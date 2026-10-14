@@ -62,7 +62,17 @@ import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
 import { createNeoAskForwardOperation, neoForwardedText } from './ask-forward-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
-import { mergeNeoDuplicateProjects, readNeoProjectIdentities } from './project-merge.ts';
+import {
+  mergeNeoDuplicateProjects,
+  NEO_PROJECT_SAME,
+  NEO_PROJECT_SEPARATE,
+  type NeoProjectQuestion,
+  neoProjectQuestionKey,
+  NEO_PROJECT_QUESTION_ATTEMPTS,
+  readNeoProjectDecision,
+  readNeoProjectIdentities,
+  settleNeoProjectQuestions,
+} from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './direct-reply-fallback.ts';
 import { createNeoRouter, type NeoRouter, reopenNeoHolder } from './router.ts';
@@ -133,6 +143,7 @@ import {
   isNeoCardAsk,
   NeoAskSchema,
   planNeoAskItems,
+  planNeoAskQuestion,
   planNeoCardAsk,
   projectNeoSnapshotAsks,
   requireNeoWorkAsk,
@@ -369,6 +380,15 @@ const Propose = z.object({
 });
 const Refused = z.object({ workId: z.string().min(1), what: z.string().trim().min(1).max(500) });
 const WorkId = z.object({ id: z.string().min(1) });
+const StartWork = WorkId.extend({
+  dependsOn: z
+    .array(z.string().min(1))
+    .max(20)
+    .optional()
+    .describe(
+      'Card ids this card must wait for. Each card needs an outcome item bound to it (deliveredBy); changing them needs the ask approved again.'
+    ),
+});
 const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
 const SessionMuteResult = z.union([
   Failure,
@@ -767,6 +787,50 @@ function admitNeoCaller(
   return { value: caller };
 }
 
+function readNeoProjectQuestionAsks(
+  asks: Pick<NeoService['askRecords'], 'forRequest'>,
+  key: string
+): NeoAsk[] {
+  const found: NeoAsk[] = [];
+  for (let attempt = 1; attempt <= NEO_PROJECT_QUESTION_ATTEMPTS; attempt++) {
+    const ask = asks.forRequest(neoProjectQuestionKey(key, attempt));
+    if (!ask) break;
+    found.push(ask);
+  }
+  return found;
+}
+
+function askNeoProjectQuestion(
+  service: Pick<NeoService, 'repo' | 'askRecords'>,
+  question: NeoProjectQuestion,
+  attempt: number
+): boolean {
+  const root = service.repo.getBindingForProject(null)?.sessionId;
+  if (!root) return false;
+  const [source, target] = [question.sourceId, question.targetId].map(
+    (id) => service.repo.getProject(id)?.title ?? id
+  );
+  const text = `Are ${source} and ${target} the same project? Both point at ${question.repository.slice(5)}.`;
+  const opened = service.askRecords.open({
+    id: crypto.randomUUID(),
+    requestKey: neoProjectQuestionKey(question.key, attempt),
+    projectId: null,
+    originSessionId: root,
+    originMessageId: null,
+    title: `${source} and ${target}: one project?`,
+    ask: `${text} The daemon asked this while reorganizing projects; after the human answers, run neo.projects.reorganize to apply it.`,
+    doneWhen: 'The human decided whether the two are one project.',
+    doneSource: 'daemon',
+  });
+  if (!opened || opened.doneItems?.length) return false;
+  const item = planNeoAskQuestion(opened, {
+    question: text,
+    options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
+    decides: question.key,
+  });
+  return !!service.askRecords.settle(opened, 'waiting', text, text, item.id, item);
+}
+
 export function neoReorganizeRuntime(
   service: NeoService,
   router: NeoRouter = createNeoRouter(service.db, service.repo, (projectId) =>
@@ -792,11 +856,23 @@ export function neoReorganizeRuntime(
         merges.localFolders(hostname()),
         readWorkspaceIdentity
       );
-      return mergeNeoDuplicateProjects(
+      const merged = mergeNeoDuplicateProjects(
         () => merges.plan(fresh),
         (input) => merges.merge(input),
         (line) => service.logReorganize(line)
       );
+      const settled = settleNeoProjectQuestions(
+        () => merges.questions(fresh),
+        (question) =>
+          readNeoProjectDecision(
+            readNeoProjectQuestionAsks(service.askRecords, question.key),
+            question.key
+          ),
+        (input) => merges.merge(input),
+        (question, attempt) => askNeoProjectQuestion(service, question, attempt),
+        (line) => service.logReorganize(line)
+      );
+      return { merged: [...merged, ...settled.merged], asked: settled.asked };
     },
     log: (line) => service.logReorganize(line),
   };
@@ -1651,7 +1727,7 @@ export function createNeoOperations(service: NeoService) {
   const start = (superpipe({})('neo.work.start') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof WorkId>) => {
+      (input: z.infer<typeof StartWork>) => {
         const work = service.repo.getWork(input.id);
         return { work, ask: work ? service.askRecords.forWork(work.id) : null };
       },
@@ -1695,6 +1771,17 @@ export function createNeoOperations(service: NeoService) {
       'result:start'
     )
     .pipe(
+      (input: z.infer<typeof StartWork>, work: NeoWork) => {
+        if (!input.dependsOn) return { value: work };
+        const edited = service.editDependencies(work.id, input.dependsOn);
+        return edited.ok
+          ? { value: work }
+          : { reason: { ok: false, reason: edited.reason ?? 'dependency_rejected' } };
+      },
+      ['input', 'start'],
+      'result:start'
+    )
+    .pipe(
       async (work: NeoWork, authority: { approved: boolean }) => {
         const refused = neoAdmissionRefusal(await service.admitWork(work.id, !authority.approved));
         return refused
@@ -1705,7 +1792,7 @@ export function createNeoOperations(service: NeoService) {
       'result:start'
     )
     .endAsync('start') as (
-    input: z.infer<typeof WorkId>,
+    input: z.infer<typeof StartWork>,
     caller: OperationCaller
   ) => Promise<z.infer<typeof WorkResult> | Rejection>;
   const continueWork = path(
@@ -2059,8 +2146,8 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.start',
       description:
-        'Start a user-approved delegation through the existing session runtime: in the turn where the human asked for it, or any proposed work item under an ask the human approved (neo.ask.approve).',
-      inputSchema: WorkId,
+        "Start a user-approved delegation through the existing session runtime: in the turn where the human asked for it, or any proposed work item under an ask the human approved (neo.ask.approve). With dependsOn, the card waits until every listed card's bound outcome items are verified met; the result lists blockers while it waits.",
+      inputSchema: StartWork,
       resultSchema: WorkResult,
       policy: { safetyClass: 'human_only' },
       execute: async (input, caller) => withAskView(await start(input, caller)),

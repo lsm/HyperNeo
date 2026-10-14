@@ -479,6 +479,22 @@ export interface DriverSent {
   receipt?: WorkDelivery['receipt'];
 }
 
+export function readDriverStartReceipt(outcome: OperationOutcome): WorkDelivery['receipt'] | null {
+  const value = parseDriverStatus(outcome) as { startReceipt?: unknown } | null;
+  const parsed = WorkInputReceiptSchema.safeParse(value?.startReceipt);
+  return parsed.success ? parsed.data : null;
+}
+
+export function planNeoStartReceiptAdoption(
+  outcome: OperationOutcome,
+  sent: DriverSent | null,
+  verb: string | undefined
+): DriverSent | null {
+  if (verb !== 'start' || !sent || sent.receipt) return null;
+  const receipt = readDriverStartReceipt(outcome);
+  return receipt ? { ...sent, receipt } : null;
+}
+
 export function messageOpening(message: string): string {
   return message.trim().split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 80);
 }
