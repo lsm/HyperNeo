@@ -2130,7 +2130,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('a life-admin confirmation ticks the ask item that names it', async () => {
+  test('a life-admin confirmation in a worker report marks the item reported, not met', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const reply: unknown = {
       ok: true,
@@ -2169,11 +2169,12 @@ describe('Neo work with a drivers target', () => {
       expect(ask?.doneItems).toEqual([
         expect.objectContaining({
           text: 'Order confirmation from Amazon arrives',
-          state: 'met',
-          metBy: 'daemon',
+          state: 'reported',
+          metBy: null,
           evidence: expect.stringContaining('orders@amazon.com'),
         }),
       ]);
+      expect(ask?.doneItems?.[0]?.verifiedDefinitionHash ?? null).toBeNull();
     } finally {
       db.close();
     }
