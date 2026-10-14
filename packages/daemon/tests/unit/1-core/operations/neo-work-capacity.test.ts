@@ -27,7 +27,7 @@ const summary = (id: string, busy: boolean): WorkSummary => ({
   ...(busy ? { busy: true } : {}),
 });
 
-async function setup() {
+async function setup(workers = ['x', 'y']) {
   const db = await createTestDb();
   const busy = new Set<string>();
   const operation = (name: string) =>
@@ -39,7 +39,7 @@ async function setup() {
       execute: async (input) => {
         if (name === 'work.status') return { ok: true, value: { status: 'done' } };
         if (name === 'work.find') {
-          const ids = input.id ? [String(input.id)] : ['x', 'y'];
+          const ids = input.id ? [String(input.id)] : workers;
           return {
             places: [
               {
@@ -117,7 +117,11 @@ async function setup() {
     );
   };
   const workerOf = (id: string) => service.driverTargets.readRef(id)?.id ?? null;
-  return { db, service, answer, workerOf };
+  const settle = (id: string) => {
+    service.repo.transitionWork(id, service.repo.getWork(id)!, { status: 'reported' });
+    busy.delete(workerOf(id) ?? '');
+  };
+  return { db, service, answer, workerOf, settle };
 }
 
 describe('NeoWorkDriverTargetRepository.occupiedWorkers', () => {
@@ -197,6 +201,28 @@ describe('NeoService.admitWork after a prerequisite is met', () => {
       expect(await service.admitWork('b', true)).toEqual({ ok: true, handoff: 'started' });
       expect(workerOf('c')).toBe('x');
       expect(workerOf('b')).toBe('y');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a card whose only worker was taken gets it back once that worker is free again', async () => {
+    const { db, service, answer, workerOf, settle } = await setup(['x']);
+    try {
+      service.repo.transitionWork('c', service.repo.getWork('c')!, {
+        status: 'proposed',
+        report: NEO_WORK_AWAITING_WORKER,
+      });
+      await service.admitWork('c', true);
+      answer();
+      await service.admitWork('b', true);
+      expect(service.repo.getWork('b')).toMatchObject({
+        status: 'proposed',
+        report: NEO_WORK_AWAITING_WORKER,
+      });
+      settle('c');
+      expect(await service.admitWork('b', true)).toEqual({ ok: true, handoff: 'started' });
+      expect(workerOf('b')).toBe('x');
     } finally {
       db.close();
     }

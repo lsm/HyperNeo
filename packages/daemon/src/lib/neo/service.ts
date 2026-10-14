@@ -1811,14 +1811,19 @@ export class NeoService {
       return;
     }
     if (target.verb === 'send' && result.reason === 'not_open') {
-      await this.rerouteDriverWork(queued, target.ref, tried);
+      await this.rerouteDriverWork(queued, target.ref, tried, true);
       return;
     }
     await this.failWork(queued, `Could not start the execution: ${result.failure}`);
   }
 
-  private async rerouteDriverWork(work: NeoWork, ref: WorkRef, tried: Set<string>): Promise<void> {
-    tried.add(neoWorkerRefKey(ref));
+  private async rerouteDriverWork(
+    work: NeoWork,
+    ref: WorkRef,
+    tried: Set<string>,
+    closed = false
+  ): Promise<void> {
+    if (closed) tried.add(neoWorkerRefKey(ref));
     await rerouteNeoDriverWork(work, ref, tried, {
       pause: (current) =>
         this.repo.transitionWork(current.id, current, {
