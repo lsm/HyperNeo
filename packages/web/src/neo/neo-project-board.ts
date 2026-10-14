@@ -11,6 +11,7 @@ import type {
   DaemonSnapshot,
 } from '@hyperneo/shared/types/daemon-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { findNeoProject, resolveNeoProjectId } from './project-redirects.ts';
 
 type Selection = {
   snapshot: NeoSnapshot;
@@ -49,20 +50,20 @@ export function selectNeoProjectBoard(
   projectId: string | null
 ): { value: Selection } | { reason: null } {
   if (!snapshot) return { reason: null };
-  const project = snapshot.projects.find((item) => item.id === projectId) ?? null;
+  const project = findNeoProject(snapshot.projects, snapshot.projectRedirects, projectId) ?? null;
   if (projectId !== null && !project) return { reason: null };
+  const owns = (id: string | null) =>
+    projectId === null || resolveNeoProjectId(snapshot.projectRedirects, id) === project?.id;
   return {
     value: {
       snapshot,
       project,
-      work: snapshot.work.filter((item) => projectId === null || item.projectId === projectId),
-      consultations: (snapshot.consultations ?? []).filter(
-        (item) => projectId === null || item.projectId === projectId
-      ),
+      work: snapshot.work.filter((item) => owns(item.projectId)),
+      consultations: (snapshot.consultations ?? []).filter((item) => owns(item.projectId)),
       consultationWaiters: (snapshot.consultationWaiters ?? []).filter(
         (item) =>
           item.status === 'queued' &&
-          (projectId === null || item.projectId === projectId) &&
+          owns(item.projectId) &&
           !snapshot.consultations?.some((active) => active.id === item.id)
       ),
     },
