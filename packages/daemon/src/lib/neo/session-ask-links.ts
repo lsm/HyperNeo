@@ -52,7 +52,10 @@ export function neoAskPrKeys(
   const named = extractNeoAskRefs(ask, tracked).map(
     (ref) => `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`
   );
-  return new Set([...tracked, ...named].map(githubUrlKey));
+  const watched = (ask.doneItems ?? []).flatMap((item) =>
+    item.removed ? [] : (item.watch ?? []).filter((url) => /\/pull\/\d+/.test(url))
+  );
+  return new Set([...tracked, ...named, ...watched].map(githubUrlKey));
 }
 
 export function linkNeoSessionsToAsks(

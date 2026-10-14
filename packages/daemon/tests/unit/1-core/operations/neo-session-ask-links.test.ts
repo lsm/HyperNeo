@@ -132,6 +132,31 @@ describe('neoAskPrKeys', () => {
     );
     expect([...keys]).toEqual([pr(7).toLowerCase(), pr(12).toLowerCase()]);
   });
+  test('keys the pull requests its open items watch', () => {
+    const item = {
+      text: 'Ship it',
+      state: 'pending' as const,
+      evidence: null,
+      check: null,
+      metBy: null,
+      addedAt: null,
+    };
+    const keys = neoAskPrKeys(
+      askText({
+        doneItems: [
+          {
+            ...item,
+            id: 'i1',
+            removed: false,
+            watch: [pr(30), 'https://github.com/lsm/HyperNeo/issues/31'],
+          },
+          { ...item, id: 'i2', removed: true, watch: [pr(32)] },
+        ],
+      }),
+      []
+    );
+    expect([...keys]).toEqual([pr(30).toLowerCase()]);
+  });
 });
 
 describe('linkNeoSessionsToAsks', () => {
