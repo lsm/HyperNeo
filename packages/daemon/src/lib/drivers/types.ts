@@ -101,6 +101,7 @@ export const WorkExchangeEntrySchema = z.object({
 });
 
 export const WorkDetailSchema = WorkSummarySchema.extend({
+  execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   lastReply: z.string().optional(),
   lastReplyAt: z.number().optional(),
   recentInputs: z.array(WorkInputSchema).optional(),
