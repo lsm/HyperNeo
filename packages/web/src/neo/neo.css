@@ -400,9 +400,14 @@
   display: flex;
   gap: 8px;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.neo-ask-summary-links::-webkit-scrollbar {
+  display: none;
 }
 .neo-ask-summary-link {
+  flex-shrink: 0;
   max-width: 14rem;
   overflow: hidden;
   text-overflow: ellipsis;
