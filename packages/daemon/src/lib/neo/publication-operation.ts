@@ -24,6 +24,9 @@ const Draft = NeoPublicationSchema.omit({
   conversationId: true,
   askOrigin: true,
   producerInput: true,
+  editedAt: true,
+  corrects: true,
+  correctedBy: true,
 });
 type Draft = z.infer<typeof Draft>;
 type Rejection = { accepted: false; reason: string; detail?: string };

@@ -64,7 +64,13 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     !text(producer.sessionId, 160) ||
     !text(producer.messageId, 160) ||
     !Array.isArray(row.links) ||
-    row.links.length > 16
+    row.links.length > 16 ||
+    (row.editedAt !== undefined &&
+      (!text(row.editedAt, 40) || !Number.isFinite(Date.parse(row.editedAt)))) ||
+    (row.corrects !== undefined &&
+      (typeof row.corrects !== 'string' || !uuid.test(row.corrects))) ||
+    (row.correctedBy !== undefined &&
+      (typeof row.correctedBy !== 'string' || !uuid.test(row.correctedBy)))
   )
     return null;
   const links: NeoPublication['links'][number][] = [];
@@ -94,6 +100,9 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     askOrigin: { sessionId: ask.sessionId, messageId: ask.messageId },
     producerInput: { sessionId: producer.sessionId, messageId: producer.messageId },
     links,
+    ...(typeof row.editedAt === 'string' ? { editedAt: row.editedAt } : {}),
+    ...(typeof row.corrects === 'string' ? { corrects: row.corrects } : {}),
+    ...(typeof row.correctedBy === 'string' ? { correctedBy: row.correctedBy } : {}),
   };
 }
 

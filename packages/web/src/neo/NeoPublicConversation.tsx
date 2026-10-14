@@ -340,6 +340,33 @@ function PublicEntry({
             {time.label}
           </time>
         )}
+        {publication?.corrects && (
+          <a
+            data-publication-correction
+            href={`#${neoMessageAnchor(publication.conversationId, `publication-${publication.corrects}`)}`}
+            class="text-[11px] font-medium text-warning hover:underline"
+          >
+            Correction of an earlier reply
+          </a>
+        )}
+        {publication?.editedAt && (
+          <span
+            data-publication-edited
+            title={`Edited ${new Date(publication.editedAt).toLocaleString()}`}
+            class="text-[11px] text-fg-faint"
+          >
+            edited
+          </span>
+        )}
+        {publication?.correctedBy && (
+          <a
+            data-publication-corrected
+            href={`#${neoMessageAnchor(publication.conversationId, `publication-${publication.correctedBy}`)}`}
+            class="text-[11px] text-warning hover:underline"
+          >
+            Corrected below
+          </a>
+        )}
         {ask && !undelivered && (
           <span
             role="img"

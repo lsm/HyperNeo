@@ -207,6 +207,37 @@ describe('durable public conversation presentation', () => {
     expect(status.getAttribute('title')).toBe('Neo is working on this message now.');
   });
 
+  it('marks an edited reply and links a correction to the reply it corrects', () => {
+    const originalId = '20000000-0000-4000-8000-000000000001';
+    const correctionId = '20000000-0000-4000-8000-000000000002';
+    const { container } = render(
+      <NeoPublicConversation
+        conversation={conversation(
+          [ask()],
+          [
+            publication({ editedAt: '2026-09-30T12:05:00Z', correctedBy: correctionId }),
+            publication({
+              publicationId: correctionId,
+              sequence: 2,
+              createdAt: '2026-09-30T12:10:00Z',
+              corrects: originalId,
+              links: [],
+            }),
+          ]
+        )}
+      />
+    );
+    expect(screen.getByText('edited')).toBeTruthy();
+    const corrected = screen.getByRole('link', { name: 'Corrected below' });
+    const correction = screen.getByRole('link', { name: 'Correction of an earlier reply' });
+    expect(corrected.getAttribute('href')).toBe(
+      `#${container.querySelector(`[data-public-entry*="${correctionId}"]`)?.id}`
+    );
+    expect(correction.getAttribute('href')).toBe(
+      `#${container.querySelector(`[data-public-entry*="${originalId}"]`)?.id}`
+    );
+  });
+
   it('leaves references as text when the scene owner is absent instead of creating inert controls', () => {
     render(<NeoPublicConversation conversation={conversation()} />);
     const refs = screen.getByRole('list', { name: 'Related Neo scenes' });
