@@ -382,6 +382,7 @@ function admitNeoIntakeTarget(
 const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   .input(['input', 'caller', 'db', 'repo', 'notify', 'router'])
   .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
+  .pipe(redirectNeoIntakeInput, ['input', 'repo'], 'input')
   .pipe(admitNeoIntakeTarget, ['input', 'db', 'repo'], 'result:receipt')
   .pipe(
     (
@@ -448,7 +449,6 @@ export function createNeoIntakeOperation(
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
-    execute: (input, caller) =>
-      runIntake(redirectNeoIntakeInput(input, repo), caller, db, repo, notify, router ?? null),
+    execute: (input, caller) => runIntake(input, caller, db, repo, notify, router ?? null),
   });
 }
