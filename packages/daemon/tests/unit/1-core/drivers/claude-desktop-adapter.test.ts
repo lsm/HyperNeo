@@ -912,6 +912,36 @@ describe('claudeInputEvidence', () => {
     expect(evidence.state === 'observed' && evidence.exchange).toHaveLength(40);
   });
 
+  test("skips a subagent's sidechain entries instead of ending the turn on them", () => {
+    const sidechain = (type: 'user' | 'assistant', text: string) =>
+      JSON.stringify({
+        type,
+        isSidechain: true,
+        timestamp: '2026-10-14T10:00:01.500Z',
+        message: { content: type === 'user' ? text : [{ type: 'text', text }] },
+      });
+    expect(
+      claudeInputEvidence(
+        [
+          input,
+          reply(0),
+          sidechain('user', 'search the repo'),
+          sidechain('assistant', 'found it'),
+          reply(900),
+        ],
+        receipt,
+        'cli-a1'
+      )
+    ).toMatchObject({
+      state: 'observed',
+      exchange: [
+        { role: 'user', text: 'go' },
+        { role: 'agent', text: 'step 0' },
+        { role: 'agent', text: 'step 900' },
+      ],
+    });
+  });
+
   test('is unavailable when a line in its window is malformed', () => {
     expect(claudeInputEvidence([input, '{broken', reply(1)], receipt, 'cli-a1')).toEqual({
       receipt,

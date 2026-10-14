@@ -354,6 +354,7 @@ export interface ClaudeTranscriptState {
 
 interface ClaudeTranscriptEntry {
   type?: unknown;
+  isSidechain?: unknown;
   timestamp?: unknown;
   isMeta?: unknown;
   turnOrigin?: unknown;
@@ -607,6 +608,7 @@ export function claudeInputEvidence(
     if (!line.trim()) continue;
     const entry = parseClaudeEntry(line);
     if (!entry) return unavailable;
+    if (entry.isSidechain === true) continue;
     if (claudeInputText(entry) !== null) break;
     const said = assistantText(line);
     const reply = said
