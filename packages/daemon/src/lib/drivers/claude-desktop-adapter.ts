@@ -682,6 +682,19 @@ const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as Pipel
   cache: ClaudeRecordCache
 ) => Promise<Result<{ delivered: boolean }>>;
 
+function admitClaudeStartConfiguration(request: StartRequest): Gate<StartRequest> {
+  const field =
+    request.model !== undefined ? 'model' : request.effort !== undefined ? 'effort' : null;
+  return field
+    ? {
+        reason: reject(
+          field === 'model' ? 'unsupported_model' : 'unsupported_effort',
+          `Claude desktop cannot confirm the requested ${field}. Choose an adapter that supports it.`
+        ),
+      }
+    : { value: request };
+}
+
 export function selectClaudeStartFolder(
   request: StartRequest,
   deps: ClaudeDesktopAdapterDeps
@@ -812,7 +825,8 @@ export async function startClaudeSession(
 
 const runClaudeDesktopStart = (superpipe({})('claude-desktop-start-work') as PipelineAPI)
   .input(['request', 'deps'])
-  .pipe(selectClaudeStartFolder, ['request', 'deps'], 'result:outcome')
+  .pipe(admitClaudeStartConfiguration, 'request', 'result:outcome')
+  .pipe(selectClaudeStartFolder, ['outcome', 'deps'], 'result:outcome')
   .pipe(startClaudeSession, ['outcome', 'request', 'deps'], 'outcome')
   .endAsync('outcome') as (
   request: StartRequest,
