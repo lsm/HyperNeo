@@ -1,3 +1,4 @@
+import { runMigration358 } from '../../../../src/storage/schema/m358-neo-ask-revisions.ts';
 import { runMigration362 } from '../../../../src/storage/schema/m362-neo-driver-configuration.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
@@ -331,6 +332,7 @@ describe('real SQLite ask lineage facade', () => {
     runMigration340(mailbox.db);
     runMigration345(mailbox.db);
     runMigration344(mailbox.db);
+    runMigration358(mailbox.db);
     runMigration362(mailbox.db);
     db = {
       getDatabase: () => mailbox.db,

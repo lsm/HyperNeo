@@ -2185,7 +2185,7 @@ export class NeoService {
           const ticks = await readNeoAskEventTicks(this.packs(), ask, event, (id, error) =>
             this.log.warn(`Neo pack ${id} event ticks pending`, error)
           );
-          if (ticks.length) this.writeAskTicks(this.askRecords.get(ask.id) ?? ask, ticks);
+          if (ticks.length) this.writeAskTicks(ask, ticks);
         }
       },
       'event',
@@ -2410,7 +2410,8 @@ export class NeoService {
           this.askRecords.tickItem(
             plan.resume.ask.id,
             { id, state: 'pending', evidence: null, metBy: null },
-            Date.now()
+            Date.now(),
+            plan.resume.ask.doneItems?.find((item) => item.id === id)
           );
         if (plan.resume.reopen) this.askRecords.reopen(plan.resume.ask);
         if (plan.resume.items.length && this.db.getSession(plan.resume.ask.originSessionId))
@@ -2535,7 +2536,8 @@ export class NeoService {
           evidence: withdrawQuestions ? entry.why : null,
           metBy: withdrawQuestions ? 'daemon' : null,
         },
-        now
+        now,
+        ask.doneItems?.find((item) => item.id === entry.id)
       );
     if (withdrawQuestions) {
       const remove = cleared
@@ -2785,7 +2787,9 @@ export class NeoService {
       this.askRecords.tickItem(
         ask.id,
         { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
-        Date.now()
+        Date.now(),
+        ask.doneItems?.find((item) => item.id === tick.id),
+        true
       );
     const ticked = ticks.length ? this.askRecords.get(ask.id) : null;
     return ticked
@@ -2811,7 +2815,7 @@ export class NeoService {
     )
     .pipe(
       (ask: NeoAsk, plan: { ticks: { id: string; evidence: string }[] }) => ({
-        value: this.writeAskTicks(this.askRecords.get(ask.id) ?? ask, plan.ticks),
+        value: this.writeAskTicks(ask, plan.ticks),
       }),
       ['ticks', 'plan'],
       'result:ticks'

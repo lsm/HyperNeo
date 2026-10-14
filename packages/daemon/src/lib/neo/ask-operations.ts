@@ -59,6 +59,8 @@ const NEO_ASK_CHECK_KINDS = [
 const NEO_ASK_ITEM_KINDS = ['decision', 'action', 'approval', 'wait'] as const;
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const NeoAskSchema = z.object({
+  revision: z.number().int().nonnegative().optional(),
+  approvedRevision: z.number().int().nonnegative().nullable().optional(),
   id: z.string(),
   requestKey: z.string(),
   projectId: z.string().nullable(),
@@ -88,6 +90,7 @@ export const NeoAskSchema = z.object({
         state: z.enum(['pending', 'met', 'needs_you', 'reported']),
         evidence: z.string().nullable(),
         check: z.string().min(1).nullable(),
+        verifiedDefinitionHash: z.string().nullable().optional(),
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
         removed: z.boolean(),
         addedAt: z.number().nullable(),
@@ -170,7 +173,14 @@ const Settle = z.preprocess(
     )
 );
 
+const ExpectedRevision = z
+  .number()
+  .int()
+  .nonnegative()
+  .default(0)
+  .describe('The revision from the current ask view; refresh after stale_revision.');
 const Tick = z.object({
+  expectedRevision: ExpectedRevision,
   askId: z.string().min(1),
   itemId: z.string().min(1),
   state: z.enum(['pending', 'met', 'needs_you', 'reported']),
@@ -185,17 +195,19 @@ const Question = z.object({
 });
 
 const Answer = z.object({
+  expectedRevision: ExpectedRevision,
   askId: z.string().min(1),
   itemId: z.string().min(1),
   choice: z.string().trim().min(1).max(1000),
 });
 
-const Approve = z.object({ askId: z.string().min(1) });
+const Approve = z.object({ askId: z.string().min(1), expectedRevision: ExpectedRevision });
 const Fold = z
   .object({ askId: z.string().min(1), intoAskId: z.string().min(1) })
   .refine((input) => input.askId !== input.intoAskId, 'Fold an ask into another ask.');
 const Edit = z
   .object({
+    expectedRevision: ExpectedRevision,
     askId: z.string().min(1),
     add: z.array(Item).default([]),
     remove: z.array(z.string().min(1)).default([]),
@@ -217,6 +229,10 @@ const Edit = z
   );
 
 const fail = (reason: string): Rejection => ({ ok: false, reason });
+const requireAskRevision = (input: { expectedRevision: number }, ask: NeoAsk): Gate<NeoAsk> =>
+  input.expectedRevision === (ask.revision ?? 0)
+    ? { value: ask }
+    : { reason: fail('stale_revision: refresh the ask before changing or approving it.') };
 
 function neoPromptText(message: SDKMessage): string {
   const content = (message as { message?: { content?: unknown } }).message?.content;
@@ -639,6 +655,7 @@ export function planNeoAskQuestion(
 ): NeoAskQuestionItem {
   const [slot] = planNeoAskEdit(ask, {
     askId: ask.id,
+    expectedRevision: ask.revision ?? 0,
     add: [{ text: input.question, check: null }],
     remove: [],
     track: [],
@@ -658,7 +675,13 @@ export function requireNeoAskQuestionRoom<T>(
 ): Gate<T> {
   if (!item) return { value };
   const room = requireNeoAskEdit(
-    { askId: ask.id, add: [{ text: item.text, check: null }], remove: [], track: [] },
+    {
+      askId: ask.id,
+      expectedRevision: ask.revision ?? 0,
+      add: [{ text: item.text, check: null }],
+      remove: [],
+      track: [],
+    },
     ask
   );
   return 'reason' in room ? room : { value };
@@ -924,7 +947,12 @@ export function createNeoAskOperations(
   view: (ask: NeoAsk) => z.infer<typeof NeoAskStateViewSchema> | null
 ) {
   const withView = <T extends AskReceipt | Rejection>(result: T) =>
-    result.ok ? { ...result, view: view(result.ask) } : result;
+    result.ok
+      ? service.db.getDatabase().transaction(() => {
+          const ask = service.askRecords.get(result.ask.id) ?? result.ask;
+          return { ...result, ask, view: view(ask) };
+        })()
+      : result;
   const humanText = (sessionId: string, messageId: string) =>
     service.db
       .getSDKMessageRepo()
@@ -1072,7 +1100,9 @@ export function createNeoAskOperations(
         isNeoAskHandedOver(caller) && receipt.ask.approvedAt == null
           ? {
               ...receipt,
-              ask: service.askRecords.approve(receipt.ask.id, Date.now()) ?? receipt.ask,
+              ask:
+                service.askRecords.approve(receipt.ask.id, Date.now(), receipt.ask.revision ?? 0) ??
+                receipt.ask,
             }
           : receipt,
       ['admission', 'caller'],
@@ -1197,6 +1227,7 @@ export function createNeoAskOperations(
       ['input', 'caller'],
       'result:admission'
     )
+    .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskTick, ['input', 'admission', 'caller'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Tick>, caller: OperationCaller, target: { item: NeoAskItem }) =>
@@ -1230,7 +1261,7 @@ export function createNeoAskOperations(
     )
     .pipe(
       (input: z.infer<typeof Tick>, target: { ask: NeoAsk }, caller: OperationCaller) => {
-        service.askRecords.tickItem(
+        const written = service.askRecords.tickItem(
           target.ask.id,
           {
             id: input.itemId,
@@ -1238,9 +1269,10 @@ export function createNeoAskOperations(
             evidence: input.evidence ?? null,
             metBy: input.state === 'met' ? (caller.source === 'mcp' ? 'neo' : 'human') : null,
           },
-          Date.now()
+          Date.now(),
+          target.ask.doneItems?.find((item) => item.id === input.itemId)
         );
-        return { ask: service.askRecords.get(target.ask.id) };
+        return { ask: written ? service.askRecords.get(target.ask.id) : null };
       },
       ['input', 'admission', 'caller'],
       'ticked'
@@ -1267,6 +1299,7 @@ export function createNeoAskOperations(
       ['input', 'caller'],
       'result:admission'
     )
+    .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskQuestion, ['input', 'admission'], 'result:admission')
     .pipe(readNeoAskReply, ['input', 'admission'], 'reply')
     .pipe(
@@ -1284,7 +1317,8 @@ export function createNeoAskOperations(
         target: { ask: NeoAsk },
         reply: { choice: string; met: boolean }
       ) => {
-        if (reply.met)
+        const written =
+          !reply.met ||
           service.askRecords.tickItem(
             target.ask.id,
             {
@@ -1293,9 +1327,11 @@ export function createNeoAskOperations(
               evidence: `The human answered: ${reply.choice}`,
               metBy: 'human',
             },
-            Date.now()
+            Date.now(),
+            target.ask.doneItems?.find((item) => item.id === input.itemId),
+            true
           );
-        return { ask: service.askRecords.get(target.ask.id) };
+        return { ask: written ? service.askRecords.get(target.ask.id) : null };
       },
       ['input', 'admission', 'reply'],
       'answered'
@@ -1361,9 +1397,10 @@ export function createNeoAskOperations(
       ['input', 'caller'],
       'result:admission'
     )
+    .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(
       (ask: NeoAsk) => {
-        const approved = service.askRecords.approve(ask.id, Date.now());
+        const approved = service.askRecords.approve(ask.id, Date.now(), ask.revision ?? 0);
         if (approved) service.resetCardStalls(approved.workIds);
         return { ask: approved };
       },
@@ -1396,6 +1433,7 @@ export function createNeoAskOperations(
       ['input', 'caller'],
       'result:admission'
     )
+    .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskEdit, ['input', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Edit>, ask: NeoAsk) => {
@@ -1424,8 +1462,8 @@ export function createNeoAskOperations(
     .pipe(planNeoAskEdit, ['admission', 'input'], 'plan')
     .pipe(
       (ask: NeoAsk, plan: ReturnType<typeof planNeoAskEdit>) => {
-        service.askRecords.editItems(ask.id, plan, Date.now());
-        return { ask: service.askRecords.get(ask.id) };
+        const written = service.askRecords.editItems(ask.id, plan, Date.now(), ask.revision ?? 0);
+        return { ask: written ? service.askRecords.get(ask.id) : null };
       },
       ['admission', 'plan'],
       'edited'
