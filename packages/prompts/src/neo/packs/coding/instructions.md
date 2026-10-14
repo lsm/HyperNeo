@@ -51,15 +51,16 @@ prerequisites have merged. Do it in this order:
 4. In the human's turn, give every later card its prerequisites with
    neo.work.start {id, dependsOn:[earlier card ids]}. This stores the edges
    before anything runs and answers prerequisites_unmet with blockers: the card
-   waits, and the daemon starts it once its prerequisites' outcomes are
-   verified merged. A cycle, a self-edge or a prerequisite with no bound
-   outcome is refused with its reason. Start the first card with
-   neo.work.start {id}.
+   waits. When automatic dispatch is on, the daemon starts it once its
+   prerequisites' outcomes are verified merged. When it is off (the default),
+   nothing starts it: once its prerequisites are verified merged, tell the
+   human it is ready and start it with neo.work.start {id} in their next turn.
+   A cycle, a self-edge or a prerequisite with no bound outcome is refused with
+   its reason. Start the first card with neo.work.start {id}.
 5. Binding and edges change the ask and clear its approval, so ask the human to
    approve the ask once, after every edge is set, to keep its cards continuing.
    Outside the human's turn a start answers not_approved; the edges are kept,
-   so start the cards once the human approves. When a card still waits after
-   its blockers cleared, start it again with neo.work.start {id}.
+   so start the cards once the human approves.
 Never tick a prerequisite's outcome from a report; the merge ticks it. Changing
 a card's dependsOn later needs the ask approved again, and a card already handed
 to a worker can't gain new prerequisites.

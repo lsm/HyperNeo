@@ -137,6 +137,7 @@ describe('dependency planning fixtures', () => {
       'neo.work.propose {askId}',
       'bind:[{itemId, deliveredBy: cardId}]',
       'neo.work.start {id, dependsOn:[earlier card ids]}',
+      'When it is off (the default),',
       'approve the ask once, after every edge is set',
     ].map((step) => NEO_PACK_CODING_INSTRUCTIONS.indexOf(step));
     expect(steps.every((at) => at >= 0)).toBe(true);
@@ -189,6 +190,36 @@ describe('dependency planning fixtures', () => {
     ]);
     expect(service.askRecords.get(askId)?.approvedAt ?? null).toBeNull();
 
+    const item = service.askRecords.get(askId)!.doneItems![0];
+    service.askRecords.tickItem(
+      askId,
+      { ...item, state: 'met', evidence: `${issue(6757)} closed by a merged PR`, metBy: 'daemon' },
+      Date.now(),
+      item,
+      true
+    );
+    const wake = async () => {
+      for (const job of db.getJobQueueRepo().dequeue(NEO_WORK_ADMISSION_WAKE, 10))
+        await runNeoAdmissionWake(job, service);
+    };
+    await wake();
+    expect(service.repo.getWork(second)?.status).toBe('proposed');
+    expect(started).toHaveLength(1);
+    expect(await invoke('neo.work.start', { id: second })).toMatchObject({
+      value: { ok: true, work: { status: 'queued' } },
+    });
+    expect(service.repo.getWork(third)?.status).toBe('proposed');
+    expect(started).toHaveLength(2);
+  });
+
+  test('with automatic dispatch on, a verified prerequisite starts the next card with Neo idle', async () => {
+    const { askId, cards } = await planEpic();
+    await invoke('neo.ask.edit', {
+      askId,
+      bind: cards.map((card, i) => ({ itemId: `i${i + 1}`, deliveredBy: card })),
+    });
+    await invoke('neo.work.start', { id: cards[1], dependsOn: [cards[0]] });
+    await invoke('neo.work.start', { id: cards[0] });
     db.updateGlobalSettings({ neo: { autoDispatch: true } });
     const item = service.askRecords.get(askId)!.doneItems![0];
     service.askRecords.tickItem(
@@ -200,10 +231,7 @@ describe('dependency planning fixtures', () => {
     );
     for (const job of db.getJobQueueRepo().dequeue(NEO_WORK_ADMISSION_WAKE, 10))
       await runNeoAdmissionWake(job, service);
-    expect([second, third].map((card) => service.repo.getWork(card)?.status)).toEqual([
-      'queued',
-      'proposed',
-    ]);
+    expect(service.repo.getWork(cards[1])?.status).toBe('queued');
     expect(started).toHaveLength(2);
   });
 
