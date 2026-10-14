@@ -33,7 +33,8 @@ export class NeoRepository {
   readonly projectMerges: NeoProjectMergeRepository;
   constructor(
     private readonly db: Database,
-    private readonly notify: () => void = () => {}
+    private readonly notify: () => void = () => {},
+    private readonly onSettled: (work: NeoWork) => void = () => {}
   ) {
     this.projectMerges = new NeoProjectMergeRepository(db, notify);
   }
@@ -373,6 +374,8 @@ export class NeoRepository {
         expected.report
       );
     if (row) this.notify();
+    if (row && expected.status === 'queued' && patch.status !== 'queued')
+      this.onSettled(row as NeoWork);
     return row as NeoWork | null;
   }
 }

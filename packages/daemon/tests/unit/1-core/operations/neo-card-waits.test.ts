@@ -151,30 +151,6 @@ describe('NeoService.cardWaits', () => {
   });
 });
 
-describe('NeoWorkDriverTargetRepository.reassign', () => {
-  test.each<[ReadonlySet<string>, typeof worker | null]>([
-    [new Set<string>(), null],
-    [new Set(['a', 'b']), worker],
-  ])(
-    'a card blocked on prerequisites does not hold its worker (waiting: %o)',
-    async (waiting, target) => {
-      const { db, service } = await setup();
-      try {
-        const reserved = service.driverTargets.reassign(
-          service.repo,
-          service.repo.getWork('c')!,
-          [worker],
-          waiting
-        );
-        const ref = reserved?.target?.verb === 'send' ? reserved.target.ref : null;
-        expect(ref).toEqual(target);
-      } finally {
-        db.close();
-      }
-    }
-  );
-});
-
 describe('requireNeoAskStalled', () => {
   test('an ask whose card waits on prerequisites is never reported as stalled', () => {
     expect(

@@ -227,7 +227,7 @@ import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { buildNeoCheckRegistry } from './packs/check-registry.ts';
-import { scheduleNeoAdmissionWake } from './admission-wake.ts';
+import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-wake.ts';
 import {
   admitNeoWork,
   isNeoAdmissionApproved,
@@ -791,7 +791,12 @@ export class NeoService {
       notifyChanged: () => this.notifyChanged(),
     });
     this.workRefusals = new NeoWorkRefusalRepository(db.getDatabase());
-    this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
+    this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged, (settled) => {
+      const wakes = planNeoAvailabilityWakes(settled, this.repo.listWork(), (id) =>
+        this.dependencyBlockers(id).some((blocker) => blocker.workId !== id)
+      );
+      for (const id of wakes) scheduleNeoAdmissionWake(db.getJobQueueRepo(), id);
+    });
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
@@ -1784,13 +1789,7 @@ export class NeoService {
           report: NEO_WORK_AWAITING_WORKER,
         }),
       find: (input) => this.invokeAsCard(work, 'work.find', input),
-      reserve: (current, candidates) =>
-        this.driverTargets.reassign(
-          this.repo,
-          current,
-          candidates,
-          new Set(this.waitingCards().keys())
-        ),
+      reserve: (current, candidates) => this.driverTargets.reassign(this.repo, current, candidates),
       start: (next, target) => this.startDriverWork(next, target, tried),
       returnToNeo: async (next, place) => {
         await this.deliver(
