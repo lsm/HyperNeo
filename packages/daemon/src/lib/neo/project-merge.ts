@@ -205,21 +205,39 @@ export function planNeoProjectQuestions(
   );
 }
 
+export const NEO_PROJECT_QUESTION_ATTEMPTS = 3;
+
+export function neoProjectQuestionKey(key: string, attempt: number): string {
+  return attempt === 1 ? key : `${key}#${attempt}`;
+}
+
+export type NeoProjectDecision = { decision: 'same' | 'separate' | 'pending' } | { ask: number };
+
 export function readNeoProjectDecision(
-  ask: Pick<NeoAsk, 'doneItems' | 'status'> | null,
+  asks: readonly (Pick<NeoAsk, 'doneItems' | 'status'> | null)[],
   key: string
-): 'same' | 'separate' | 'pending' | null {
-  const item = ask?.doneItems?.find((entry) => entry.decides === key && !entry.removed);
-  if (!item) return null;
-  if (item.state !== 'met') return ask?.status === 'abandoned' ? 'separate' : 'pending';
-  return item.evidence?.endsWith(`: ${NEO_PROJECT_SAME}`) ? 'same' : 'separate';
+): NeoProjectDecision {
+  for (const [index, ask] of asks.slice(0, NEO_PROJECT_QUESTION_ATTEMPTS).entries()) {
+    if (!ask) return { ask: index + 1 };
+    const item = ask.doneItems?.find((entry) => entry.decides === key && !entry.removed);
+    if (item?.state === 'met') {
+      const choice = item.evidence?.replace(/^The human answered: /, '');
+      if (choice === NEO_PROJECT_SAME) return { decision: 'same' };
+      if (choice === NEO_PROJECT_SEPARATE) return { decision: 'separate' };
+    } else if (item && ask.status !== 'abandoned' && ask.status !== 'achieved') {
+      return { decision: 'pending' };
+    }
+  }
+  return asks.length < NEO_PROJECT_QUESTION_ATTEMPTS
+    ? { ask: asks.length + 1 }
+    : { decision: 'separate' };
 }
 
 export function settleNeoProjectQuestions(
   questions: () => readonly NeoProjectQuestion[],
-  decision: (question: NeoProjectQuestion) => ReturnType<typeof readNeoProjectDecision>,
+  decision: (question: NeoProjectQuestion) => NeoProjectDecision,
   merge: (input: NeoProjectMergeInput) => NeoProjectMergeResult,
-  ask: (question: NeoProjectQuestion) => boolean,
+  ask: (question: NeoProjectQuestion, attempt: number) => boolean,
   log: (line: string) => void
 ): {
   merged: { sourceId: string; targetId: string }[];
@@ -234,8 +252,11 @@ export function settleNeoProjectQuestions(
     handled.add(next.key);
     const decided = decision(next);
     const pair = { sourceId: next.sourceId, targetId: next.targetId };
-    if (decided === null && ask(next)) asked.push(pair);
-    if (decided !== 'same') continue;
+    if ('ask' in decided) {
+      if (ask(next, decided.ask)) asked.push(pair);
+      continue;
+    }
+    if (decided.decision !== 'same') continue;
     const result = merge({ ...next, humanApproved: true });
     if (result.ok) merged.push(pair);
     else

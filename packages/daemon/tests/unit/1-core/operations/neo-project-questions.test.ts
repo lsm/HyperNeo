@@ -95,17 +95,28 @@ describe('readNeoProjectDecision', () => {
       ],
     }) as Pick<NeoAsk, 'doneItems' | 'status'>;
 
-  test('reads the saved answer for its key only', () => {
-    expect(readNeoProjectDecision(null, 'k')).toBeNull();
-    expect(readNeoProjectDecision(ask('pending', null), 'other')).toBeNull();
-    expect(readNeoProjectDecision(ask('pending', null), 'k')).toBe('pending');
-    expect(readNeoProjectDecision(ask('pending', null, 'abandoned'), 'k')).toBe('separate');
-    expect(readNeoProjectDecision(ask('met', `The human answered: ${NEO_PROJECT_SAME}`), 'k')).toBe(
-      'same'
-    );
+  test('reads only an exact button answer as a decision', () => {
+    expect(readNeoProjectDecision([], 'k')).toEqual({ ask: 1 });
+    expect(readNeoProjectDecision([ask('pending', null)], 'k')).toEqual({
+      decision: 'pending',
+    });
     expect(
-      readNeoProjectDecision(ask('met', `The human answered: ${NEO_PROJECT_SEPARATE}`), 'k')
-    ).toBe('separate');
+      readNeoProjectDecision([ask('met', `The human answered: ${NEO_PROJECT_SAME}`)], 'k')
+    ).toEqual({ decision: 'same' });
+    expect(
+      readNeoProjectDecision([ask('met', `The human answered: ${NEO_PROJECT_SEPARATE}`)], 'k')
+    ).toEqual({ decision: 'separate' });
+  });
+
+  test('asks again after a dropped or unclear question, at most three times', () => {
+    const dropped = ask('pending', null, 'abandoned');
+    const unclear = ask('met', 'The human answered: maybe, ask me later');
+    expect(readNeoProjectDecision([dropped], 'k')).toEqual({ ask: 2 });
+    expect(readNeoProjectDecision([dropped, unclear], 'k')).toEqual({ ask: 3 });
+    expect(readNeoProjectDecision([dropped, unclear, dropped], 'k')).toEqual({
+      decision: 'separate',
+    });
+    expect(readNeoProjectDecision([ask('pending', null)], 'other')).toEqual({ ask: 2 });
   });
 });
 
@@ -186,6 +197,17 @@ describe('reorganize merge questions on a real store', () => {
     });
     expect(repo.listProjects().map((item) => item.id)).toEqual(['web']);
     expect(await runtime().mergeProjects()).toEqual({ merged: [], asked: [] });
+  });
+
+  test('a dropped question is asked again under a new key', async () => {
+    await runtime().mergeProjects();
+    const first = asks.forRequest(key)!;
+    asks.settle(first, 'abandoned', 'Closed by the user.', 'Closed by the user.');
+    expect(await runtime().mergeProjects()).toEqual({
+      merged: [],
+      asked: [{ sourceId: 'web-shallow', targetId: 'web' }],
+    });
+    expect(asks.forRequest(`${key}#2`)?.status).toBe('waiting');
   });
 
   test('an answer to keep them separate is saved and never asked again', async () => {

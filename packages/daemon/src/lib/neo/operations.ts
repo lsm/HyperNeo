@@ -67,6 +67,8 @@ import {
   NEO_PROJECT_SAME,
   NEO_PROJECT_SEPARATE,
   type NeoProjectQuestion,
+  neoProjectQuestionKey,
+  NEO_PROJECT_QUESTION_ATTEMPTS,
   readNeoProjectDecision,
   readNeoProjectIdentities,
   settleNeoProjectQuestions,
@@ -776,9 +778,23 @@ function admitNeoCaller(
   return { value: caller };
 }
 
+function readNeoProjectQuestionAsks(
+  asks: Pick<NeoService['askRecords'], 'forRequest'>,
+  key: string
+): NeoAsk[] {
+  const found: NeoAsk[] = [];
+  for (let attempt = 1; attempt <= NEO_PROJECT_QUESTION_ATTEMPTS; attempt++) {
+    const ask = asks.forRequest(neoProjectQuestionKey(key, attempt));
+    if (!ask) break;
+    found.push(ask);
+  }
+  return found;
+}
+
 function askNeoProjectQuestion(
   service: Pick<NeoService, 'repo' | 'askRecords'>,
-  question: NeoProjectQuestion
+  question: NeoProjectQuestion,
+  attempt: number
 ): boolean {
   const root = service.repo.getBindingForProject(null)?.sessionId;
   if (!root) return false;
@@ -788,7 +804,7 @@ function askNeoProjectQuestion(
   const text = `Are ${source} and ${target} the same project? Both point at ${question.repository.slice(5)}.`;
   const opened = service.askRecords.open({
     id: crypto.randomUUID(),
-    requestKey: question.key,
+    requestKey: neoProjectQuestionKey(question.key, attempt),
     projectId: null,
     originSessionId: root,
     originMessageId: null,
@@ -839,9 +855,12 @@ export function neoReorganizeRuntime(
       const settled = settleNeoProjectQuestions(
         () => merges.questions(fresh),
         (question) =>
-          readNeoProjectDecision(service.askRecords.forRequest(question.key), question.key),
+          readNeoProjectDecision(
+            readNeoProjectQuestionAsks(service.askRecords, question.key),
+            question.key
+          ),
         (input) => merges.merge(input),
-        (question) => askNeoProjectQuestion(service, question),
+        (question, attempt) => askNeoProjectQuestion(service, question, attempt),
         (line) => service.logReorganize(line)
       );
       return { merged: [...merged, ...settled.merged], asked: settled.asked };
