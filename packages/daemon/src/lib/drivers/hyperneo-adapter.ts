@@ -407,7 +407,7 @@ function projectHyperneoExchange(rows: HyperneoExchangeRow[], since: number) {
   return boundExchange(entries, rows.length > 40);
 }
 
-function readHyperneoExchange(db: BunDatabase, id: string, since: number) {
+export function readHyperneoExchange(db: BunDatabase, id: string, since: number) {
   const rows = db
     .prepare(
       `SELECT timestamp, sdk_message AS message, message_type FROM sdk_messages

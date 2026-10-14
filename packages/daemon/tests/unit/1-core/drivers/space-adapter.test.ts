@@ -1,3 +1,4 @@
+import { readDriverAdoptedSent, readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   buildSpaceGroups,
@@ -201,6 +202,108 @@ describe('space adapter against the space tables', () => {
     ).toEqual([['dev-neokai', 1, 1, 30, ['t1']]]);
   });
 
+  describe('agent exchange evidence', () => {
+    const ref = { adapter: 'space', id: 'agent:a1' };
+    const base = Date.parse('2026-10-14T10:00:00.000Z');
+    const adapter = () =>
+      createSpaceAdapter({
+        db: () => db,
+        machine: 'imac',
+        searchChats: async () => [],
+        tasks: {
+          create: async () => ({ reason: 'unused' }),
+          cancel: async () => ({ reason: 'unused' }),
+          message: async () => ({ reason: 'unused' }),
+          messageAgent: async () => ({ reason: 'unused' }),
+        },
+      });
+    const write = (session: string, at: number, type: string, payload: unknown) =>
+      db
+        .prepare(`INSERT INTO sdk_messages VALUES (?, ?, ?, ?, NULL, 'consumed')`)
+        .run(session, type, JSON.stringify(payload), new Date(base + at).toISOString());
+    const user = (text: string, inputKind = 'human') => ({ inputKind, message: { content: text } });
+    const settle = (value: unknown) =>
+      readDriverSettlement(
+        { updatedAt: base },
+        { kind: 'completed', value },
+        base + 100,
+        base + 1,
+        true,
+        'Fix parser'
+      );
+    beforeEach(() => {
+      db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
+        timestamp TEXT, parent_tool_use_id TEXT, send_status TEXT);
+        INSERT INTO sessions VALUES ('s1', '{"status":"idle"}', '2026-10-14T10:00:00.020Z'),
+          ('s2', '{"status":"idle"}', '2026-10-14T10:00:00.030Z');
+        INSERT INTO space_long_horizon_agents VALUES ('a1', 'sp1', 'coder', 'Coder', 'active', 's1', 1)`);
+    });
+
+    test('adopts actual input and isolates its result from event turns and other sessions', async () => {
+      write('s1', 1, 'user', user('Fix parser'));
+      const adopted = await adapter().status!(ref);
+      expect(readDriverAdoptedSent({ kind: 'completed', value: adopted })).toEqual({
+        inputBefore: base,
+        opening: 'Fix parser',
+      });
+      write('s1', 2, 'result', { result: 'Parser fixed' });
+      write('s1', 3, 'user', user('Unrelated PR event', 'system'));
+      write('s1', 4, 'result', { result: 'Other PR result' });
+      write('s2', 5, 'result', { result: 'Another session result' });
+      const detail = await adapter().status!(ref, base);
+      expect(detail).toMatchObject({
+        value: {
+          lastReply: 'Other PR result',
+          lastReplyAt: base + 4,
+          exchange: [
+            { at: base + 1, role: 'user', text: 'Fix parser' },
+            { at: base + 2, role: 'agent', text: 'Parser fixed' },
+            { at: base + 3, role: 'user', text: 'Unrelated PR event' },
+            { at: base + 4, role: 'agent', text: 'Other PR result' },
+          ],
+        },
+      });
+      expect(settle(detail)).toEqual({ status: 'reported', report: 'Agent: Parser fixed' });
+      expect(settle(await adapter().status!(ref, base + 2))).toBeNull();
+    });
+
+    test('missing and replaced sessions never borrow previous execution history', async () => {
+      write('s1', 1, 'user', user('Fix parser'));
+      write('s1', 2, 'result', { result: 'Old result' });
+      db.exec("UPDATE space_long_horizon_agents SET session_id = NULL WHERE id = 'a1'");
+      const missing = await adapter().status!(ref, base);
+      expect(missing).toMatchObject({ value: { exchange: [], recentInputs: [] } });
+      expect(settle(missing)).toBeNull();
+      db.exec("UPDATE space_long_horizon_agents SET session_id = 's2' WHERE id = 'a1'");
+      write('s2', 3, 'user', user('Different work'));
+      write('s2', 4, 'result', { result: 'Different result' });
+      const replacement = await adapter().status!(ref, base);
+      expect(replacement).toMatchObject({
+        value: {
+          lastReply: 'Different result',
+          exchange: [
+            { at: base + 3, role: 'user', text: 'Different work' },
+            { at: base + 4, role: 'agent', text: 'Different result' },
+          ],
+        },
+      });
+      expect(settle(replacement)).toBeNull();
+    });
+
+    test('failed terminal results do not masquerade as successful agent completion', async () => {
+      write('s1', 1, 'user', user('Fix parser'));
+      write('s1', 2, 'result', { result: 'Provider error', is_error: true });
+      const detail = await adapter().status!(ref, base);
+      expect(detail).toMatchObject({ value: { status: 'failed', lastReplyAt: base + 2 } });
+      expect(settle(detail)).toMatchObject({
+        status: 'failed',
+        report: expect.stringContaining('Provider error'),
+      });
+      db.exec("UPDATE space_long_horizon_agents SET status = 'paused' WHERE id = 'a1'");
+      expect(await adapter().status!(ref, base)).toMatchObject({ value: { status: 'needs_you' } });
+    });
+  });
+
   test('lists active and paused Space agents with their live state and reports one', async () => {
     db.exec(`INSERT INTO sessions VALUES ('s1', '{"status":"processing"}', 'not a date'),
       ('s2', 'not json', '1970-01-01T00:00:00.100Z')`);
@@ -238,6 +341,7 @@ describe('space adapter against the space tables', () => {
         status: 'stopped',
         lastActivityAt: 50,
         link: '/space/sp1/agent/old',
+        recentInputs: [],
       },
     });
     expect(await adapter.status?.({ adapter: 'space', id: 'agent:nope' })).toMatchObject({
