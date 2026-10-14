@@ -270,7 +270,7 @@ function codexDesktopAdapters(
   ];
 }
 
-function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
+export function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
   const invoke = async (name: string, input: unknown, caller: OperationCaller) => {
     const outcome = await invokeOperation(
       context.deps.sessionManager.getOperationRegistry(),
@@ -325,7 +325,10 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
           !fromHuman
         );
         const sent = context.deps.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId);
-        return { delivered: sent?.sendStatus !== 'deferred' };
+        return {
+          delivered: sent?.sendStatus !== 'deferred',
+          ...(sent && messageId ? { receipt: { executionId: sessionId, inputId: messageId } } : {}),
+        };
       } catch (error) {
         return { reason: error instanceof Error ? error.message : String(error) };
       }

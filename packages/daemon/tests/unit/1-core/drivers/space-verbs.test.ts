@@ -1,3 +1,5 @@
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { spaceTaskControl } from '../../../../src/lib/rpc-handlers/family-operations/drivers';
 import {
   NEO_WORK_UNVERIFIED_REPLY_NOTE,
   readDriverFollowUp,
@@ -373,6 +375,67 @@ describe('space adapter send', () => {
       value: { recentInputs: [{ human: false }, { human: true }] },
     });
   });
+
+  test.each(['consumed', 'deferred', 'missing', 'wrong-session', 'failed'])(
+    'task send returns only persisted input receipts after session rebinding: %s',
+    async (state) => {
+      db.exec(`CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, message_type TEXT,
+        sdk_message TEXT, timestamp TEXT, send_status TEXT)`);
+      const repository = new SDKMessageRepository(db);
+      const injections: unknown[] = [];
+      const control = spaceTaskControl({
+        deps: { db: { getSDKMessageRepo: () => repository } },
+        spaceRuntimeService: {
+          ensureToolTargetSession: async () => ({ kind: 'resolved', sessionId: 's-rebound' }),
+        },
+        taskAgentManager: {
+          injectSubSessionMessage: async (
+            sessionId: string,
+            message: string,
+            internal: boolean
+          ) => {
+            injections.push({ sessionId, message, internal });
+            if (state === 'failed') throw new Error('injection refused');
+            if (state !== 'missing')
+              db.prepare('INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, ?)').run(
+                state === 'wrong-session' ? 's-code' : sessionId,
+                'input-123',
+                'user',
+                JSON.stringify({ message: { content: message } }),
+                new Date(100).toISOString(),
+                state === 'deferred' ? 'deferred' : 'consumed'
+              );
+            return 'input-123';
+          },
+        },
+      } as never);
+      const actual = createSpaceAdapter({
+        db: () => db,
+        machine: 'imac',
+        searchChats: async () => [],
+        tasks: control,
+      });
+      const result = await actual.send!(ref('t1'), 'Follow up', neo);
+      expect(injections).toEqual([
+        { sessionId: 's-rebound', message: 'Follow up', internal: true },
+      ]);
+      if (state === 'failed') {
+        expect(result).toEqual({ ok: false, reason: 'not_delivered', detail: 'injection refused' });
+      } else {
+        expect(result).toEqual({
+          ok: true,
+          value: {
+            delivered: state !== 'deferred',
+            ...(['consumed', 'deferred'].includes(state)
+              ? {
+                  receipt: { executionId: 's-rebound', inputId: 'input-123' },
+                }
+              : {}),
+          },
+        });
+      }
+    }
+  );
 
   test('sends to the workflow agent that is working on the task', async () => {
     expect(await adapter().send?.(ref('t1'), 'use 16px', neo)).toEqual({
