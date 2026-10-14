@@ -1,6 +1,7 @@
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { z } from 'zod';
 
 import type { MessageHub } from '@hyperneo/shared';
 import type { HookInput, Options } from '@anthropic-ai/claude-agent-sdk';
@@ -25,6 +26,7 @@ import {
 import { neoFolderPath } from '../../../../src/lib/neo/folder.ts';
 import {
   createOperationRegistry,
+  defineOperation,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation, isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
@@ -388,6 +390,26 @@ describe('Neo MVP', () => {
       value: { ok: false, reason: 'Project not found.' },
     });
     expect(created).toHaveLength(0);
+  });
+
+  test('opening returns the snapshot without waiting for work discovery', async () => {
+    const finds: unknown[] = [];
+    const find = defineOperation({
+      name: 'work.find',
+      description: 'never settles',
+      inputSchema: z.object({ limit: z.number() }),
+      resultSchema: z.unknown(),
+      execute: (input) => {
+        finds.push(input);
+        return new Promise<never>(() => {});
+      },
+    });
+    (sessions as unknown as { getOperationRegistry: () => unknown }).getOperationRegistry = () =>
+      createOperationRegistry([find]);
+    const opened = (await invoke('neo.open')) as { value: { ok: boolean; sessionId: string } };
+    expect(opened.value.ok).toBe(true);
+    expect(created.map((params) => params.sessionId)).toEqual([opened.value.sessionId]);
+    expect(finds).toEqual([{ limit: 50 }]);
   });
 
   test('trusts bindings, not a claimed role; project holders cannot read or mutate other contexts', async () => {

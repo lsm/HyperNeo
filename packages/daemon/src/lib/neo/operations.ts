@@ -1340,12 +1340,16 @@ export function createNeoOperations(service: NeoService) {
         : null;
       if (projectId && !service.repo.getProject(projectId))
         return { ok: false as const, reason: 'Project not found.' };
-      await invokeOperation(
-        service.sessions.getOperationRegistry(),
-        'work.find',
-        { limit: 50 },
-        caller
-      );
+      void Promise.resolve()
+        .then(() =>
+          invokeOperation(
+            service.sessions.getOperationRegistry(),
+            'work.find',
+            { limit: 50 },
+            caller
+          )
+        )
+        .catch(() => null);
       return { ...snapshot(caller), sessionId: await service.open(projectId) };
     }
   );
