@@ -2,7 +2,6 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskView, NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
 import { describe, expect, it } from 'vitest';
 import {
-  neoCardCheckedLabel,
   neoCardLabel,
   neoCardMeta,
   neoCardOpenLabel,
@@ -99,17 +98,18 @@ describe('neoCardLabel', () => {
       'Running in Codex Desktop'
     );
   });
-});
 
-describe('neoCardCheckedLabel', () => {
-  it('shows when Neo last checked a live card, and nothing on a finished or unchecked one', () => {
-    const checkedAt = new Date(2026, 9, 14, 14, 15).getTime();
-    const time = new Date(checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    const live = card('w1', { phase: 'running', checkedAt, uncheckedSince: null });
-    expect(neoCardCheckedLabel(live)).toBe(`Checked ${time}`);
-    expect(neoCardCheckedLabel({ ...live, phase: 'merged' })).toBeNull();
-    expect(neoCardCheckedLabel({ ...live, uncheckedSince: checkedAt })).toBeNull();
-    expect(neoCardCheckedLabel({ ...live, checkedAt: null })).toBeNull();
+  it('shows when Neo last checked a live card, and lets not-checked win', () => {
+    const at = new Date(2026, 9, 11, 14, 15).getTime();
+    expect(neoCardLabel(card('w', { checkedAt: at }))).toMatch(
+      /^Running in Codex Desktop · checked 2:15/
+    );
+    expect(neoCardLabel(card('w', { checkedAt: at, uncheckedSince: at }))).toMatch(
+      /· not checked since 2:15/
+    );
+    expect(neoCardLabel(card('w', { phase: 'merged', checkedAt: at }))).toBe(
+      'Running in Codex Desktop'
+    );
   });
 });
 

@@ -4,7 +4,6 @@ import { useMemo } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import {
-  neoCardCheckedLabel,
   neoCardLabel,
   neoCardMeta,
   neoCardOpenLabel,
@@ -80,7 +79,6 @@ export function NeoWorkCard({
     };
   }, [work.id, questionSlot]);
   const label = neoCardLabel(card);
-  const checked = neoCardCheckedLabel(card);
   const tone = neoCardTone(card, work, waiting);
   const active = work.status === 'queued';
   const primary = neoCardPrimaryAction(card, work, { waiting, chat: !!onOpen });
@@ -271,7 +269,6 @@ export function NeoWorkCard({
     >
       <div class="flex min-h-7 items-center gap-2">
         {chip}
-        {checked && <span class="shrink-0 text-xs text-fg-faint">{checked}</span>}
         <span class="flex-1" />
         {closable && (
           <Dropdown

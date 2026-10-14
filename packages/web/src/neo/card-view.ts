@@ -6,22 +6,13 @@ import { neoAppLabel } from './work-driver.ts';
 
 const checkedPhases = new Set<NeoCardView['phase']>(['handed', 'running', 'needs_you', 'checking']);
 
-export function neoCardLabel(card: NeoCardView): string {
-  if (!card.uncheckedSince || !checkedPhases.has(card.phase)) return card.label;
-  const time = new Date(card.uncheckedSince).toLocaleTimeString([], {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-  return `${card.label} · not checked since ${time}`;
-}
+const clock = (at: number) =>
+  new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-export function neoCardCheckedLabel(card: NeoCardView): string | null {
-  if (card.uncheckedSince || !card.checkedAt || !checkedPhases.has(card.phase)) return null;
-  const time = new Date(card.checkedAt).toLocaleTimeString([], {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-  return `Checked ${time}`;
+export function neoCardLabel(card: NeoCardView): string {
+  if (!checkedPhases.has(card.phase)) return card.label;
+  if (card.uncheckedSince) return `${card.label} · not checked since ${clock(card.uncheckedSince)}`;
+  return card.checkedAt ? `${card.label} · checked ${clock(card.checkedAt)}` : card.label;
 }
 
 export function neoContinuedLabel(count: number): string {
