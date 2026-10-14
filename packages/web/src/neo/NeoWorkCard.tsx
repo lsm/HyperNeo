@@ -312,6 +312,11 @@ export function NeoWorkCard({
           {note}
         </p>
       )}
+      {presentation === 'detail' && card.replyUnverified && (
+        <p data-reply-unverified class="mt-1 break-words text-xs text-fg-muted">
+          {card.replyUnverified}
+        </p>
+      )}
       {presentation === 'detail' && goalText && (
         <p class="mt-2 break-words text-sm text-fg-soft">
           <span class="text-fg-muted">Goal: </span>

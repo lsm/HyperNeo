@@ -1,6 +1,7 @@
 import { runMigration370 } from './m370-neo-project-merges.ts';
 import { runMigration371 } from './m371-neo-work-admission-claims.ts';
 import { runMigration372 } from './m372-neo-ask-item-removed-reason.ts';
+import { runMigration373 } from './m373-neo-ask-item-decides.ts';
 import { runMigration366 } from './m366-neo-work-dependencies.ts';
 import { runMigration367 } from './m367-neo-pr-claim-provenance.ts';
 import { runMigration368 } from './m368-neo-project-tree.ts';
@@ -824,6 +825,7 @@ export function runMigrations(
   run(migrationMarkerKey(370), () => runMigration370(db));
   run(migrationMarkerKey(371), () => runMigration371(db));
   run(migrationMarkerKey(372), () => runMigration372(db));
+  run(migrationMarkerKey(373), () => runMigration373(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

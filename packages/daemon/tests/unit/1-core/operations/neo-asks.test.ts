@@ -9,6 +9,7 @@ import {
   isPooledNeoAsk,
   NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
+  type NeoAskItem,
   neoAskApprovalSpent,
   type NeoSnapshot,
 } from '@hyperneo/shared/types/neo-snapshot';
@@ -25,6 +26,7 @@ import {
   isNeoAskHandedOver,
   isNeoHumanQuote,
   isNeoQuoteNaming,
+  planNeoAskRestate,
   requireNeoAskEdit,
   planNeoAskWorkStops,
   planNeoCardAsk,
@@ -139,6 +141,14 @@ describe('neo.ask operations', () => {
         ...input,
       };
     }
+    if (
+      ['neo.ask.question', 'neo.ask.settle'].includes(name) &&
+      input &&
+      typeof input === 'object' &&
+      'question' in input &&
+      !('decides' in input)
+    )
+      input = { ...input, decides: String(input.question) };
     return invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
       name,
@@ -1532,7 +1542,7 @@ describe('neo.ask operations', () => {
       await invoke('neo.ask.settle', { ...waiting, question: 'Did the keyboard hide?' })
     ).toMatchObject({
       kind: 'failed',
-      message: expect.stringContaining('Pass question and options together'),
+      message: expect.stringContaining('Pass question, decides and options together'),
     });
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
     expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
@@ -1923,6 +1933,7 @@ describe('neo.ask operations', () => {
       await invoke('neo.ask.question', {
         askId,
         question: 'Did the keyboard hide?',
+        decides: 'keyboard hides',
         options: ['Yes', 'Not yet'],
       })
     ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
@@ -2717,6 +2728,95 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: false } });
   });
 
+  test('a folded question keeps its wording and the decision it asks', async () => {
+    const sourceId = await openAsk();
+    const targetId = (
+      await invoke('neo.ask.open', { ...opening, requestKey: 'other' }, nextMessage)
+    ).value!.ask!.id;
+    await invoke('neo.ask.question', {
+      askId: sourceId,
+      question: 'Ship tonight?',
+      decides: 'release date',
+      options: ['Yes', 'No'],
+      kind: 'decision',
+    });
+    await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId });
+    expect(service.askRecords.get(targetId)!.doneItems!.at(-1)).toMatchObject({
+      text: 'Ship tonight?',
+      question: 'Ship tonight?',
+      decides: 'release date',
+      state: 'needs_you',
+    });
+  });
+
+  test('asking the same decision again restates its question; another decision is its own', async () => {
+    const askId = await openAsk();
+    const ask = (input: object) =>
+      invoke('neo.ask.question', { askId, kind: 'decision', ...input });
+    await ask({
+      question: 'Slice 6 check: retarget it?',
+      decides: 'Slice 6 target',
+      options: ['Retarget', 'Drop it'],
+    });
+    expect(
+      await ask({
+        question: 'Where should the slice 6 check run now?',
+        decides: 'slice 6 target ',
+        options: ['On dev', 'Skip'],
+      })
+    ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(askId)).toMatchObject({
+      status: 'waiting',
+      waitingItem: 'i3',
+      outcome: 'Where should the slice 6 check run now?',
+      evidence: 'Where should the slice 6 check run now?',
+    });
+    service.askRecords.reopen(service.askRecords.get(askId)!);
+    await ask({
+      question: 'Run the slice 6 check on dev?',
+      decides: 'slice 6 target',
+      options: ['On dev', 'Skip'],
+    });
+    expect(service.askRecords.get(askId)).toMatchObject({
+      status: 'waiting',
+      waitingItem: 'i3',
+      outcome: 'Run the slice 6 check on dev?',
+    });
+    await ask({ question: 'Ship tonight?', decides: 'release date', options: ['Yes', 'No'] });
+    await ask({ question: 'Ship tonight?', decides: 'release date', options: ['Yes', 'No'] });
+    const asked = service.askRecords.get(askId)!.doneItems!.filter((item) => item.decision);
+    expect(asked).toEqual([
+      expect.objectContaining({
+        id: 'i3',
+        text: 'Run the slice 6 check on dev?',
+        question: 'Run the slice 6 check on dev?',
+        decides: 'slice 6 target',
+        options: ['On dev', 'Skip'],
+        state: 'needs_you',
+      }),
+      expect.objectContaining({ id: 'i4', decides: 'release date', state: 'needs_you' }),
+    ]);
+    expect(
+      await invoke('neo.ask.settle', {
+        id: askId,
+        outcome: 'waiting',
+        summary: 'Waiting on the release date.',
+        evidence: 'Asked.',
+        question: 'Can it ship tonight or tomorrow?',
+        decides: 'release date',
+        options: ['Tonight', 'Tomorrow'],
+      })
+    ).toMatchObject({ value: { ok: true, ask: { waitingItem: 'i4' } } });
+    expect(service.askRecords.get(askId)!.doneItems!.filter((item) => item.decision)).toEqual([
+      expect.objectContaining({ id: 'i3' }),
+      expect.objectContaining({
+        id: 'i4',
+        text: 'Can it ship tonight or tomorrow?',
+        options: ['Tonight', 'Tomorrow'],
+      }),
+    ]);
+  });
+
   test('Neo drops unfinished work only on the human’s words in a live turn; the human drops it freely', async () => {
     const askId = await openAsk();
     humanSays('any update?');
@@ -3445,7 +3545,7 @@ describe('isNeoCardAsk', () => {
 describe('neoPrompt decision items', () => {
   test('tells Neo to ask a decision with neo.ask.question instead of ticking an outcome item', () => {
     expect(neoPrompt(null)).toContain(
-      'reaches them only as neo.ask.question {askId, question, options, kind}'
+      'reaches them only as neo.ask.question {askId, question, decides, options, kind}'
     );
     expect(neoPrompt(null)).toContain('never tick an outcome item for a decision');
     expect(neoPrompt(null)).not.toContain('needs_you');
@@ -3459,7 +3559,9 @@ describe('driverNeedsYouNote', () => {
       { adapter: 'claude-desktop', daemon: 'laptop', id: 't1' },
       'A or B?'
     );
-    expect(note).toContain('ask it with neo.ask.question {askId, question, options, kind}');
+    expect(note).toContain(
+      'ask it with neo.ask.question {askId, question, decides, options, kind}'
+    );
     expect(note).toContain('do not publish');
   });
 });
@@ -3598,5 +3700,45 @@ describe('isNeoQuoteNaming', () => {
     ['不要这个了', '真机测试通过', false],
   ])('%s names %s → %s', (words, text, named) => {
     expect(isNeoQuoteNaming(words, { text })).toBe(named);
+  });
+});
+
+describe('planNeoAskRestate', () => {
+  const asked: NeoAskItem = {
+    id: 'i3',
+    text: 'Retarget?',
+    state: 'needs_you',
+    evidence: null,
+    check: null,
+    metBy: null,
+    removed: false,
+    addedAt: 1,
+    decision: true,
+    kind: 'decision',
+    question: 'Retarget?',
+    decides: 'slice 6 target',
+    options: ['Yes', 'No'],
+  };
+  test('restates a keyed open question only when its wording or options change', () => {
+    expect(planNeoAskRestate(asked, { question: 'Retarget?', options: ['Yes', 'No'] })).toBe(null);
+    expect(
+      planNeoAskRestate(asked, { question: 'Run it on dev?', options: ['Yes', 'No'] })
+    ).toEqual({
+      id: 'i3',
+      text: 'Run it on dev?',
+      question: 'Run it on dev?',
+      kind: 'decision',
+      options: ['Yes', 'No'],
+      decides: 'slice 6 target',
+    });
+    expect(
+      planNeoAskRestate({ ...asked, decides: undefined }, { question: 'x', options: ['a', 'b'] })
+    ).toBe(null);
+    expect(
+      planNeoAskRestate(
+        { ...asked, decides: undefined },
+        { question: 'Retarget?', options: ['Yes', 'No'], decides: 'slice 6 target' }
+      )
+    ).toMatchObject({ id: 'i3', text: 'Retarget?', decides: 'slice 6 target' });
   });
 });

@@ -335,7 +335,7 @@ describe('NeoAskCard', () => {
             evidence: 'PR #6099 merged',
           }),
           item('i2', 'pending'),
-          item('i3', 'pending', { removed: true }),
+          item('i3', 'pending', { removed: true, removedReason: 'Removed by the human.' }),
           item('i4', 'needs_you', { text: 'Ship it?', options: ['Yes', 'No'] }),
         ],
       },
@@ -352,7 +352,7 @@ describe('NeoAskCard', () => {
     expect(rows).toEqual([
       ['i1', '✓Item i1verifiedPR #6099 merged'],
       ['i2', '○Item i2'],
-      ['i3', '○Item i3removed'],
+      ['i3', '○Item i3removedRemoved by the human.'],
     ]);
     expect(
       within(card.getByRole('list', { name: 'Questions' })).getByText('Ship it?')

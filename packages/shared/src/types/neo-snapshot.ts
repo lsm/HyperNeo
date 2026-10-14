@@ -112,6 +112,7 @@ export interface NeoAskItem {
   waitCard?: string;
   kind?: NeoAskItemKind;
   question?: string;
+  decides?: string;
   watch?: string[];
 }
 
@@ -223,6 +224,7 @@ export interface NeoCardView {
   model?: string;
   effort?: string;
   talk?: string;
+  replyUnverified?: string;
   workId: string;
   phase: NeoCardPhase;
   group: NeoCardGroup;

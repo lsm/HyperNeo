@@ -196,6 +196,17 @@ describe('durable public conversation presentation', () => {
     expect(refs.querySelector('a')).toBeNull();
   });
 
+  it('shows each message status with what it means', () => {
+    render(
+      <NeoPublicConversation
+        conversation={conversation([ask()], [])}
+        statuses={new Map([['original', 'working' as const]])}
+      />
+    );
+    const status = screen.getByText('Working');
+    expect(status.getAttribute('title')).toBe('Neo is working on this message now.');
+  });
+
   it('leaves references as text when the scene owner is absent instead of creating inert controls', () => {
     render(<NeoPublicConversation conversation={conversation()} />);
     const refs = screen.getByRole('list', { name: 'Related Neo scenes' });

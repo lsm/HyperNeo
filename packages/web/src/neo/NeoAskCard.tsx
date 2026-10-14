@@ -186,6 +186,9 @@ function ItemRow({ item, above }: { item: NeoAskItem; above?: NeoAskItemAction['
             {above === 'confirm' ? 'Confirm above' : 'Answer above'}
           </button>
         )}
+        {item.removed && item.removedReason && (
+          <span class="block break-words text-xs text-fg-faint">{item.removedReason}</span>
+        )}
         {item.evidence && (item.state === 'met' || item.state === 'reported') && (
           <span class="block truncate text-xs text-fg-faint" title={item.evidence}>
             {item.evidence}
