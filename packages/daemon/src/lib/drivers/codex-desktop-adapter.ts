@@ -23,6 +23,7 @@ import type {
   Result,
   StartRequest,
   WorkAdapter,
+  WorkDelivery,
   WorkDetail,
   WorkExchangeEntry,
   WorkInput,
@@ -552,6 +553,103 @@ export function describeCodexThread(
   };
 }
 
+type CodexReceipt = NonNullable<WorkDelivery['receipt']>;
+type CodexInputEvidence = NonNullable<WorkDetail['inputEvidence']>;
+
+function codexUserInput(
+  entry: ReturnType<typeof parseLine>
+): { id: string; text: string; at: number | undefined } | null {
+  const payload = entry?.type === 'response_item' ? (entry.payload ?? {}) : null;
+  const text = payload ? messageText(payload, 'user') : null;
+  if (!payload || text === null || INJECTED_INPUT.test(text) || typeof payload.id !== 'string')
+    return null;
+  return payload.id ? { id: payload.id, text, at: workEntryTime(entry?.timestamp) } : null;
+}
+
+export function codexUserInputIds(lines: readonly string[]): Set<string> {
+  return new Set(lines.flatMap((line) => codexUserInput(parseLine(line))?.id ?? []));
+}
+
+export function codexQueueDelivery(
+  lines: readonly string[],
+  message: string,
+  threadId: string,
+  before: ReadonlySet<string>
+): WorkDelivery {
+  const opening = message.trim().split('\n')[0].slice(0, 200);
+  const fresh = lines
+    .map((line) => codexUserInput(parseLine(line)))
+    .findLast((input) => !!input && !before.has(input.id) && input.text.includes(opening));
+  return {
+    delivered: rolloutHasUserMessage(lines, message),
+    ...(fresh ? { receipt: { executionId: threadId, inputId: fresh.id } } : {}),
+  };
+}
+
+export function codexInputEvidence(
+  lines: readonly string[],
+  receipt: CodexReceipt,
+  threadId: string
+): CodexInputEvidence {
+  const unavailable: CodexInputEvidence = { receipt, state: 'unavailable' };
+  if (receipt.executionId !== threadId) return unavailable;
+  const start = lines.findIndex((line) => codexUserInput(parseLine(line))?.id === receipt.inputId);
+  const input = start < 0 ? null : codexUserInput(parseLine(lines[start]));
+  const first = input ? exchangeEntry(input.at, 'user', input.text, -Infinity) : null;
+  if (!first) return unavailable;
+  const replies: WorkExchangeEntry[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (!line.trim()) continue;
+    const entry = parseLine(line);
+    if (!entry) return unavailable;
+    if (codexUserInput(entry)) break;
+    const payload = entry.payload ?? {};
+    const said =
+      entry.type === 'response_item'
+        ? messageText(payload, 'assistant')
+        : entry.type === 'event_msg' &&
+            payload.type === 'task_complete' &&
+            typeof payload.last_agent_message === 'string'
+          ? payload.last_agent_message
+          : null;
+    const reply = said
+      ? exchangeEntry(workEntryTime(entry.timestamp), 'agent', said, -Infinity)
+      : null;
+    if (reply && replies.at(-1)?.text !== reply.text) replies.push(reply);
+  }
+  return {
+    receipt,
+    state: 'observed',
+    exchange: [first, ...replies.slice(0, 39)],
+    exchangeCut: replies.length > 39,
+  };
+}
+
+export async function readCodexInputEvidence(
+  detail: CodexThreadDetail,
+  receipt: CodexReceipt | undefined
+): Promise<CodexInputEvidence | null> {
+  if (!receipt) return null;
+  try {
+    return codexInputEvidence(
+      await readRolloutTail(detail.thread.rolloutPath),
+      receipt,
+      detail.thread.id
+    );
+  } catch {
+    return { receipt, state: 'unavailable' };
+  }
+}
+
+export function withCodexInputEvidence(
+  outcome: Result<WorkDetail>,
+  evidence: CodexInputEvidence | null
+): Result<WorkDetail> {
+  return outcome.ok && evidence
+    ? { ok: true, value: { ...outcome.value, inputEvidence: evidence } }
+    : outcome;
+}
+
 export function rolloutHasUserMessage(lines: readonly string[], message: string): boolean {
   const opening = message.trim().split('\n')[0].slice(0, 200);
   return lines.some((line) => {
@@ -565,9 +663,12 @@ export async function queueCodexMessage(
   detail: CodexThreadDetail,
   message: string,
   deps: CodexDesktopAdapterDeps
-): Promise<Result<{ delivered: boolean }>> {
+): Promise<Result<WorkDelivery>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const before = codexUserInputIds(
+      await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
+    );
     const proc = deps.spawn(
       ['codex', 'queue', `--thread=${detail.thread.id}`, `--message=${message}`],
       { stdout: 'ignore', stderr: 'pipe' }
@@ -578,7 +679,10 @@ export async function queueCodexMessage(
       return reject('not_delivered', stderr.trim() || `codex queue exited with ${code}.`);
     }
     const tail = await readRolloutTail(detail.thread.rolloutPath).catch(() => []);
-    return { ok: true, value: { delivered: rolloutHasUserMessage(tail, message) } };
+    return {
+      ok: true,
+      value: codexQueueDelivery(tail, message, detail.thread.id, before),
+    };
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   } finally {
@@ -587,14 +691,18 @@ export async function queueCodexMessage(
 }
 
 const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
-  .input(['ref', 'deps', 'since'])
+  .input(['ref', 'deps', 'since', 'receipt'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
-  .pipe(readCodexTurn, ['outcome', 'since'], 'turn')
-  .pipe(describeCodexThread, ['outcome', 'turn', 'deps'], 'outcome')
+  .pipe((detail: CodexThreadDetail) => detail, 'outcome', 'detail')
+  .pipe(readCodexTurn, ['detail', 'since'], 'turn')
+  .pipe(readCodexInputEvidence, ['detail', 'receipt'], 'evidence')
+  .pipe(describeCodexThread, ['detail', 'turn', 'deps'], 'outcome')
+  .pipe(withCodexInputEvidence, ['outcome', 'evidence'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   deps: CodexDesktopAdapterDeps,
-  since: number | undefined
+  since: number | undefined,
+  receipt: CodexReceipt | undefined
 ) => Promise<Result<WorkDetail>>;
 
 const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
@@ -606,7 +714,7 @@ const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
   ref: WorkRef,
   message: string,
   deps: CodexDesktopAdapterDeps
-) => Promise<Result<{ delivered: boolean }>>;
+) => Promise<Result<WorkDelivery>>;
 
 export function selectCodexStartFolder(
   request: StartRequest,
@@ -823,7 +931,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
         deps
       ),
-    status: (ref, since) => runCodexStatus(ref, deps, since),
+    status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt),
     stop: (ref) => runCodexStop(ref, deps),
     archive: async (ref, admit) => {
       const found = requireCodexThread(ref, deps);
