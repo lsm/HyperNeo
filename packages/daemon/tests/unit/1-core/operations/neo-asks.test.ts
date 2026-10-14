@@ -3344,14 +3344,14 @@ describe('neoPrompt decision items', () => {
 });
 
 describe('driverNeedsYouNote', () => {
-  test('asks Neo to ask the decision with neo.ask.question before telling the human', () => {
-    expect(
-      driverNeedsYouNote(
-        { id: 'w1', title: 'Fix startup' },
-        { adapter: 'claude-desktop', daemon: 'laptop', id: 't1' },
-        'A or B?'
-      )
-    ).toContain('ask it first with neo.ask.question {askId, question, options}');
+  test('asks Neo to put the decision to the human as neo.ask.question with its kind, not a post', () => {
+    const note = driverNeedsYouNote(
+      { id: 'w1', title: 'Fix startup' },
+      { adapter: 'claude-desktop', daemon: 'laptop', id: 't1' },
+      'A or B?'
+    );
+    expect(note).toContain('ask it with neo.ask.question {askId, question, options, kind}');
+    expect(note).toContain('do not publish');
   });
 });
 

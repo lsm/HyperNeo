@@ -427,6 +427,33 @@ describe('NeoService notification triggers', () => {
     expect(mailbox()[1].messageUuid).toBe(`${first}#2`);
   });
 
+  test('a session that refused the card wakes Neo with a talk trigger', async () => {
+    const opened = open();
+    const work = service.repo.proposeWork({
+      id: 'w-talk',
+      requestKey: 'w-talk',
+      projectId: null,
+      originSessionId: root,
+      originMessageId: m0,
+      title: 'Update the iMac',
+      instruction: 'Update the iMac daemon.',
+    });
+    service.askRecords.link(opened.id, work.id);
+    service.repo.transitionWork(work.id, work, { status: 'queued' });
+    seed();
+    service.workRefusals.record({
+      workId: work.id,
+      ref: 'session:daemon-code',
+      what: 'update the iMac on Neo request',
+      at: Date.now(),
+    });
+    await sweep();
+    await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
+    expect(JSON.stringify(mailbox()[0].message)).toContain(
+      'needs the human to tell it directly: update the iMac on Neo request'
+    );
+  });
+
   test('a reply to one ask does not swallow a question that appeared on another', async () => {
     seed();
     const opened = open();
