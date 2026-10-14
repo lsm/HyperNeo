@@ -142,7 +142,7 @@ function toNeoRoute(turn: EvalTurn, index: number, awaiting: string | null): Neo
     ask: turn.ask,
     destination: turn.topic === 'main' ? 'main' : 'holder',
     targetSessionId: turn.topic === 'main' ? null : turn.topic,
-    concernId: turn.topic === 'main' ? null : turn.topic,
+    projectId: turn.topic === 'main' ? null : turn.topic,
     signal: 'eval',
     confidence: null,
     outcome: turn.answer,
@@ -157,7 +157,7 @@ export function productionRoutePrompt(evalCase: EvalCase): {
   options: NeoHolder[];
 } {
   const holders: NeoHolder[] = evalCase.topics.map((topic) => ({
-    concernId: topic.id,
+    projectId: topic.id,
     sessionId: topic.id,
     title: topic.title,
     summary: topic.summary,
@@ -167,13 +167,13 @@ export function productionRoutePrompt(evalCase: EvalCase): {
     toNeoRoute(turn, index, waiting.get(turn.topic) ?? null)
   );
   const recent = [...routes].reverse();
-  const latest = [...new Set(recent.map((route) => route.concernId ?? 'main'))].map(
-    (topic) => recent.find((route) => (route.concernId ?? 'main') === topic) as NeoRoute
+  const latest = [...new Set(recent.map((route) => route.projectId ?? 'main'))].map(
+    (topic) => recent.find((route) => (route.projectId ?? 'main') === topic) as NeoRoute
   );
   const context = renderNeoRouteContext(holders, holders, recent, latest, true);
   const options = [
     ...holders,
-    { concernId: NEO_INBOX_ID, sessionId: '', title: 'Inbox', summary: NEO_INBOX_SUMMARY },
+    { projectId: NEO_INBOX_ID, sessionId: '', title: 'Inbox', summary: NEO_INBOX_SUMMARY },
   ];
   return { prompt: buildNeoRoutePrompt(evalCase.message, options, context), options };
 }
@@ -256,7 +256,7 @@ export function productionDirectBackend(
     const raw = readNeoRouteStream(stream);
     const reply = readRouteReply(
       raw,
-      options.map((option) => option.concernId)
+      options.map((option) => option.projectId)
     );
     return {
       predicted: reply.id ?? 'main',

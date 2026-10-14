@@ -1,3 +1,4 @@
+import { neoRepoAlias } from './project-route-facts.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
@@ -25,8 +26,16 @@ export function planNeoWorkspaceProjects(
         aliases: [
           ...new Set([
             ...(group.projectId ? [group.projectId] : []),
+            ...group.work.map(
+              (work) =>
+                `work:${work.ref.daemon ?? work.place.daemon ?? work.place.machine}\u0000${work.ref.adapter}\u0000${work.ref.id}`
+            ),
             ...workspaces.flatMap((place) => [
               `folder:${placeKey(place)}`,
+              ...(place.remotes ?? []).flatMap((remote) => {
+                const alias = neoRepoAlias(remote);
+                return alias ? [`${alias}${group.projectId ?? placeKey(place)}`] : [];
+              }),
               ...(place.codeIdentity ? [place.codeIdentity] : []),
               ...(place.toolProject
                 ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`]
@@ -47,7 +56,10 @@ export function persistNeoWorkspaceProjects(
   return db.transaction(() => {
     let changed = false;
     for (const project of projects) {
-      const identities = project.aliases.filter((alias) => !alias.startsWith('folder:'));
+      const identities = project.aliases.filter(
+        (alias) =>
+          !alias.startsWith('folder:') && !alias.startsWith('repo:') && !alias.startsWith('work:')
+      );
       const known = (identities.length ? identities : project.aliases).flatMap((alias) => {
         const row = db
           .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')
@@ -66,7 +78,7 @@ export function persistNeoWorkspaceProjects(
         db.prepare(
           `INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)
           ON CONFLICT(alias) DO UPDATE SET project_id = excluded.project_id
-          WHERE excluded.alias LIKE 'folder:%'`
+          WHERE excluded.alias LIKE 'folder:%' OR excluded.alias LIKE 'work:%'`
         ).run(alias, id);
     }
     return changed;

@@ -46,6 +46,9 @@ import mdneoConsultationReceiptPending from './neo/consultation/receipt-pending.
 import mdneoConsultationReceiptReturned from './neo/consultation/receipt-returned.md' with {
   type: 'text',
 };
+import mdneoCrossProjectRequest from './neo/consultation/cross-project-request.md' with {
+  type: 'text',
+};
 import mdneoConsultationRequest from './neo/consultation/request.md' with { type: 'text' };
 import mdneoConsultationSettled from './neo/consultation/settled.md' with { type: 'text' };
 import mdneoConsultationSettledExpired from './neo/consultation/settled-expired.md' with {
@@ -353,6 +356,7 @@ const registry: Record<string, string> = {
   'neo/consultation/receipt-closed.md': mdneoConsultationReceiptClosed,
   'neo/consultation/receipt-pending.md': mdneoConsultationReceiptPending,
   'neo/consultation/receipt-returned.md': mdneoConsultationReceiptReturned,
+  'neo/consultation/cross-project-request.md': mdneoCrossProjectRequest,
   'neo/consultation/request.md': mdneoConsultationRequest,
   'neo/consultation/settled-expired.md': mdneoConsultationSettledExpired,
   'neo/consultation/settled-failed.md': mdneoConsultationSettledFailed,
@@ -542,6 +546,7 @@ export const {
   NEO_CONSULTATION_RECEIPT_PENDING,
   NEO_CONSULTATION_RECEIPT_RETURNED,
   NEO_CONSULTATION_REQUEST,
+  NEO_CROSS_PROJECT_REQUEST,
   NEO_CONSULTATION_SETTLED_EXPIRED,
   NEO_CONSULTATION_SETTLED_FAILED,
   NEO_CONSULTATION_SETTLED_REPORTED,

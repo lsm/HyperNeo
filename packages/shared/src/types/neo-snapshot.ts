@@ -328,6 +328,7 @@ export interface NeoSnapshot {
   scopedTo?: string;
   sessionId: string | null;
   projects: NeoProject[];
+  projectFacts?: { reference: string; projectId?: string | null }[];
   publicAuthorBindings?: { sessionId: string; projectId: string; kind: 'project' }[];
   askForwards?: NeoAskForwardView[];
   work: NeoWork[];

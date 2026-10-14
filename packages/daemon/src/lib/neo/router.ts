@@ -1,3 +1,4 @@
+import { neoFactOwners, readNeoProjectFacts, type NeoProjectFact } from './project-route-facts.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
@@ -39,17 +40,17 @@ const INBOX_CHOICE: NeoHolder = {
 const NEW_PROJECT_TITLE_CHARS = 60;
 
 export function neoNewProject(
-  text: string,
+  target: string,
   id: string
 ): { id: string; title: string; summary: string } {
-  const line = text.trim().split('\n')[0].replace(/\s+/g, ' ').trim();
+  const line = target.trim().replace(/\s+/g, ' ');
   return {
     id,
     title:
       line.length <= NEW_PROJECT_TITLE_CHARS
         ? line
         : `${line.slice(0, NEW_PROJECT_TITLE_CHARS - 1).trimEnd()}…`,
-    summary: neoExcerpt(text.trim(), PROJECT_SUMMARY_CHARS),
+    summary: neoExcerpt(target.trim(), PROJECT_SUMMARY_CHARS),
   };
 }
 
@@ -99,16 +100,18 @@ export interface NeoRouteDecision {
   decision: NeoHolder | 'main';
   confidence: number | null;
   basis: NeoRouteBasis | null;
+  projectTitle?: string;
 }
 export type NeoRouteVerdict = NeoRouteAnswer | NeoRouteDecision | 'timeout' | 'failed';
 const CLASSIFIER_CONFIDENCE = 0.6;
-export type NeoRouteSignal = 'embedding' | 'classifier' | `classifier:${NeoRouteBasis}`;
+export type NeoRouteSignal = 'facts' | 'embedding' | 'classifier' | `classifier:${NeoRouteBasis}`;
 
 function classifierSignal(basis: NeoRouteBasis | null | undefined): NeoRouteSignal {
   return basis ? `classifier:${basis}` : 'classifier';
 }
 
 export interface NeoRouterDeps {
+  facts?(text: string): readonly NeoProjectFact[] | Promise<readonly NeoProjectFact[]>;
   holders(): NeoHolder[] | Promise<NeoHolder[]>;
   recentTurns(): NeoRoute[];
   projectTurns(): NeoRoute[];
@@ -314,15 +317,24 @@ async function classifyNeoAsk(
   text: string,
   verdict: NeoRouteVerdict,
   scores: readonly Score[],
-  deps: NeoRouterDeps
+  deps: NeoRouterDeps,
+  candidates: readonly NeoHolder[]
 ): Promise<Routed> {
   const decided = verdict && typeof verdict === 'object' && 'decision' in verdict ? verdict : null;
   const chosen = decided
     ? decided.decision
     : (verdict as Exclude<NeoRouteVerdict, NeoRouteDecision>);
   const unheld = decided?.basis === 'new_subject' || decided?.basis === 'matches_project';
-  if (chosen === 'main' && unheld && deps.newProject) {
-    const project = await deps.newProject(text);
+  if (chosen === 'main' && unheld && decided?.projectTitle && deps.newProject) {
+    const existing = candidates.filter(
+      (holder) => holder.title.trim().toLowerCase() === decided.projectTitle!.toLowerCase()
+    );
+    const project =
+      existing.length === 1
+        ? existing[0]
+        : existing.length > 1
+          ? null
+          : await deps.newProject(decided.projectTitle);
     if (project)
       return {
         choice: {
@@ -350,15 +362,44 @@ async function classifyNeoAsk(
   };
 }
 
+export function requireNeoFactRoute(
+  facts: readonly NeoProjectFact[],
+  holders: readonly NeoHolder[]
+): { value: null } | Exit {
+  if (!facts.length) return { value: null };
+  const owners = neoFactOwners(facts);
+  if (!owners) return { reason: { choice: null, fallback: 'facts:unresolved' } };
+  if (owners.length > 1) return { reason: { choice: null, fallback: 'facts:cross_project' } };
+  const holder = holders.find((holder) => holder.projectId === owners[0]);
+  return {
+    reason: holder
+      ? {
+          choice: {
+            projectId: holder.projectId,
+            sessionId: holder.sessionId,
+            signal: 'facts',
+            confidence: 1,
+          },
+        }
+      : { choice: null, fallback: 'facts:root' },
+  };
+}
+
 const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
   .input(['text', 'deps'])
   .pipe(requireAskText, 'text', 'result:route')
+  .pipe(
+    async (text: string, deps: NeoRouterDeps) => (deps.facts ? await deps.facts(text) : []),
+    ['text', 'deps'],
+    'facts'
+  )
   .pipe(
     async (deps: NeoRouterDeps) =>
       (await deps.holders()).filter((holder) => holder.projectId !== NEO_INBOX_ID),
     'deps',
     'holders'
   )
+  .pipe(requireNeoFactRoute, ['facts', 'holders'], 'result:route')
   .pipe((deps: NeoRouterDeps) => deps.recentTurns(), 'deps', 'recent')
   .pipe((deps: NeoRouterDeps) => deps.projectTurns(), 'deps', 'latest')
   .pipe(scoreNeoHolders, ['text', 'holders', 'deps'], 'scores')
@@ -376,7 +417,7 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
     'context'
   )
   .pipe(askNeoRouteModel, ['text', 'candidates', 'context', 'withInbox', 'deps'], 'verdict')
-  .pipe(classifyNeoAsk, ['text', 'verdict', 'scores', 'deps'], 'route')
+  .pipe(classifyNeoAsk, ['text', 'verdict', 'scores', 'deps', 'candidates'], 'route')
   .endAsync('route') as (text: string, deps: NeoRouterDeps) => Promise<Routed>;
 
 export function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRouted> {
@@ -414,11 +455,20 @@ export async function wakeNeoRoute(routed: NeoRouted, holders: NeoHolderWake): P
 export function createNeoRouter(
   db: Database,
   repo: NeoRepository,
-  openHolder?: (projectId: string) => Promise<string>
+  openHolder?: (projectId: string) => Promise<string>,
+  refreshFacts?: (text: string) => Promise<void>
 ): NeoRouter {
   const log = new NeoRoutingLogRepository(db.getDatabase());
   const asks = new NeoAskRepository(db.getDatabase());
   const deps: NeoRouterDeps = {
+    facts: async (text) => {
+      const facts = readNeoProjectFacts(db.getDatabase(), text);
+      if (facts.some((fact) => fact.projectId === undefined) && refreshFacts) {
+        await refreshFacts(text);
+        return readNeoProjectFacts(db.getDatabase(), text);
+      }
+      return facts;
+    },
     holders: async () => {
       if (openHolder) {
         for (const project of repo.listProjects()) {
