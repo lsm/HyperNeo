@@ -331,23 +331,38 @@ export const coverNeoAskTriggers = (superpipe({})('neo-ask-trigger-cover') as Pi
   kinds: readonly NeoTriggerKind[]
 ) => string[] | null;
 
-export function stampNeoDaemonTrigger<T extends { triggerId?: string }>(
+export function requirePublicationTrigger<T>(
   value: T,
-  draft: { triggerId?: string },
+  draft: { triggerId?: string; interim?: true },
   trigger: string | null
-): { value: T } | { reason: Rejection } {
-  const daemon = trigger && !trigger.startsWith(NEO_HUMAN_TRIGGER_PREFIX) ? trigger : null;
-  if (draft.triggerId && draft.triggerId !== daemon)
+): { value: T & { triggerId: string } } | { reason: Rejection } {
+  if (draft.interim)
+    return {
+      reason: {
+        accepted: false,
+        reason: 'interim_refused',
+        detail:
+          'Interim status posts are not published. Publish once, when you have the reply itself, or end the turn.',
+      },
+    };
+  if (!trigger)
+    return {
+      reason: {
+        accepted: false,
+        reason: 'no_trigger',
+        detail:
+          'Nothing in this turn calls for a message to the human: only a human message, an ask outcome, or something the human must do or that broke does. The daemon wakes you with a note naming the trigger when one happens. End the turn.',
+      },
+    };
+  if (draft.triggerId && draft.triggerId !== trigger)
     return {
       reason: {
         accepted: false,
         reason: 'wrong_trigger',
-        detail: daemon
-          ? `This turn's trigger is ${daemon}, not ${draft.triggerId}. Publish with triggerId ${daemon}, or omit it.`
-          : `This turn was not woken by trigger ${draft.triggerId}. Omit triggerId.`,
+        detail: `This turn's trigger is ${trigger}, not ${draft.triggerId}. Publish with triggerId ${trigger}, or omit it.`,
       },
     };
-  return { value: daemon ? { ...value, triggerId: daemon } : value };
+  return { value: { ...value, triggerId: trigger } };
 }
 
 export function requireUnpublishedTrigger<T>(

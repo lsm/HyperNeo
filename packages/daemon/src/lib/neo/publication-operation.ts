@@ -11,17 +11,13 @@ import type { NeoAskOrigin } from './ask-origin.ts';
 import { NeoPublicationSchema } from './publication.ts';
 import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
+import { requirePublicationNews } from './publication-news.ts';
 import {
-  type NeoTurnReply,
-  neoTurnReplyKey,
-  recordNeoTurnReply,
-  requirePublicationNews,
-} from './publication-news.ts';
-import {
+  NEO_HUMAN_TRIGGER_PREFIX,
   neoConsultationTrigger,
   neoInputTrigger,
+  requirePublicationTrigger,
   requireUnpublishedTrigger,
-  stampNeoDaemonTrigger,
 } from './notification-triggers.ts';
 
 const Draft = NeoPublicationSchema.omit({
@@ -38,7 +34,8 @@ type Producer = {
   input: NeoAskOrigin;
   turn: NonNullable<OperationCaller['neoTurn']>;
 };
-type Proof = Producer & { ask: NeoAskOrigin; triggerId?: string };
+type Proof = Producer & { ask: NeoAskOrigin };
+type Triggered = Proof & { triggerId: string };
 type LinkEvidence = {
   link: NeoPublicationLink;
   exists: boolean;
@@ -65,10 +62,13 @@ export function neoPublicationTrigger(
   consultation: NeoConsultation | null,
   isHumanInput: (input: NeoAskOrigin) => boolean
 ): string | null {
-  return proof.turn.consultationId
-    ? neoConsultationTrigger(consultation, isHumanInput)
-    : neoInputTrigger(proof.input.messageId, proof.turn.human);
+  if (proof.turn.consultationId) return neoConsultationTrigger(consultation, isHumanInput);
+  if (CROSS_PROJECT_REPLY.test(proof.input.messageId))
+    return `${NEO_HUMAN_TRIGGER_PREFIX}${proof.ask.messageId}`;
+  return neoInputTrigger(proof.input.messageId, proof.turn.human);
 }
+
+const CROSS_PROJECT_REPLY = /^neo-cross-project:.+:reply$/;
 
 export function reusePublicationReceipt(
   draft: Draft,
@@ -193,7 +193,6 @@ function readLinkEvidence(link: NeoPublicationLink, runtime: NeoPublicationRunti
 }
 
 export function createNeoPublisher(runtime: NeoPublicationRuntime) {
-  const turnReplies = new Map<string, NeoTurnReply[]>();
   return (superpipe({})('neo-publication-publish') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
@@ -242,57 +241,43 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'publication',
       'trigger'
     )
-    .pipe(stampNeoDaemonTrigger, ['publication', 'draft', 'trigger'], 'result:publication')
+    .pipe(requirePublicationTrigger, ['publication', 'draft', 'trigger'], 'result:publication')
     .pipe(
-      (proof: Proof, draft: Draft) =>
-        proof.triggerId
-          ? requireUnpublishedTrigger(
-              proof,
-              proof.triggerId,
-              runtime.isTriggerPublished(
-                proof.root.sessionId.slice(4),
-                proof.triggerId,
-                draft.publicationId
-              )
-            )
-          : { value: proof },
-      ['publication', 'draft'],
-      'result:publication'
-    )
-    .pipe(
-      (proof: Proof, draft: Draft) =>
-        requirePublicationNews(
+      (proof: Triggered, draft: Draft) =>
+        requireUnpublishedTrigger(
           proof,
-          draft,
-          turnReplies.get(neoTurnReplyKey(proof.input, proof.ask)) ?? []
+          proof.triggerId,
+          runtime.isTriggerPublished(
+            proof.root.sessionId.slice(4),
+            proof.triggerId,
+            draft.publicationId
+          )
         ),
       ['publication', 'draft'],
       'result:publication'
     )
+    .pipe(requirePublicationNews, ['publication', 'draft'], 'result:publication')
     .pipe(
-      (draft: Draft, proof: Proof) => {
-        const input = {
-          ...draft,
-          ...(proof.triggerId ? { triggerId: proof.triggerId } : {}),
-          conversationId: proof.root.sessionId.slice(4),
-          askOrigin: proof.ask,
-          producerInput: proof.input,
-        };
-        return runtime.append(input, draft.interim ? undefined : proof.turn.consultationId);
-      },
+      (draft: Draft, proof: Triggered) =>
+        runtime.append(
+          {
+            ...draft,
+            triggerId: proof.triggerId,
+            conversationId: proof.root.sessionId.slice(4),
+            askOrigin: proof.ask,
+            producerInput: proof.input,
+          },
+          proof.turn.consultationId
+        ),
       ['draft', 'publication'],
       'publication'
     )
     .pipe(
-      (receipt: Receipt, draft: Draft) => {
-        if (receipt.accepted) {
-          const { askOrigin, producerInput } = receipt.publication;
-          recordNeoTurnReply(turnReplies, neoTurnReplyKey(producerInput, askOrigin), draft);
-          runtime.notify();
-        }
+      (receipt: Receipt) => {
+        if (receipt.accepted) runtime.notify();
         return receipt;
       },
-      ['publication', 'draft'],
+      'publication',
       'publication'
     )
     .end('publication') as (
@@ -305,7 +290,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Publish an explicitly authored short reply, full details and labelled Neo scene references from this live avatar input. Runtime supplies original human ask and producer attribution. Reuse publicationId only for identical retries; do not publish internal compaction or tool chatter. A bare acknowledgement ("收到", "got it"), a repeat of an earlier reply to the same ask in this turn, or more than 3 replies to one ask in a turn is refused; when refused, end the turn. Set interim:true on a message sent before the answer while you are still working on it; the answer itself omits interim. When a daemon trigger note wakes you, publish once for it (pass its triggerId, or omit it): the runtime records that trigger, and a second publication for it is refused. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
+      'Publish the one message a notification trigger allows: the reply to the human message this turn answers, or the sentence a daemon trigger note asks for (an ask outcome, what the human must do, or what broke). Write it in the language of the human\'s last message. Pass the note\'s triggerId, or omit it; the runtime derives the trigger from this turn and supplies the human ask and producer. Every other publication is refused with a reason: no trigger, a trigger already published, an interim status post, or a bare acknowledgement ("收到", "got it"). When refused, end the turn. Reuse publicationId only for identical retries. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: z.union([

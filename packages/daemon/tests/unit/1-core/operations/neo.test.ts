@@ -866,17 +866,20 @@ describe('Neo MVP', () => {
     }
   );
 
-  test('a failed holder review remains settled without looping or replacing the raw result', async () => {
+  test('a holder review that ends without an answer settles quietly, without looping or a root reply', async () => {
     const { work } = await concernWork();
     await finish(work.id);
     const review = service.consultations.list()[0];
     terminalSessions!.add(review.sessionId);
     await service.syncConsultation(review.id);
-    expect(service.consultations.get(review.id)?.status).toBe('failed');
+    expect(service.consultations.get(review.id)).toMatchObject({
+      status: 'reported',
+      answer: 'The context holder reviewed the returned work.',
+    });
     expect(service.repo.getWork(work.id)?.status).toBe('reported');
     await service.recover();
     expect(service.consultations.list()).toHaveLength(1);
-    expect(jobs).toHaveLength(3);
+    expect(jobs).toHaveLength(2);
   });
 
   test.each(['reported', 'failed', 'expired', 'stopped'])(
@@ -925,7 +928,7 @@ describe('Neo MVP', () => {
       }
       expect(service.repo.getProject(project.id)).toEqual(corrected);
       expect(service.consultations.get(review.id)?.status).toBe(
-        outcome === 'reported' ? 'reported' : 'failed'
+        outcome === 'reported' || outcome === 'failed' ? 'reported' : 'failed'
       );
       const receipt = service.repo.getWork(work.id);
       expect(receipt).toMatchObject({

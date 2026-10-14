@@ -65,17 +65,14 @@ describe('direct human publication prompt', () => {
     }
   });
   test.each([null, 'research'])(
-    'lets %s send an interim message before a long investigation',
+    'tells %s to publish only for a notification trigger, never an interim post',
     (projectId) => {
       const prompt = delivered(projectId);
+      expect(prompt).toContain('You publish to the human only for a notification trigger');
       expect(prompt).toContain(
-        'right after the turn-start neo.snapshot and before any other call, publish a brief neo.publication.publish message with interim:true'
+        'There are no interim or status posts; publish once, with the answer'
       );
-      expect(prompt).toContain('If it is one quick check that may well be fast, skip that message');
-      expect(prompt).toContain('never replaces the answer');
-      expect(NeoPublicationSchema.pick({ interim: true }).parse({ interim: true })).toEqual({
-        interim: true,
-      });
+      expect(prompt).not.toContain('interim:true');
     }
   );
   test.each([null, 'research'])('requires one call before the turn ends for %s', (projectId) => {
@@ -140,24 +137,20 @@ describe('direct human publication prompt', () => {
   test.each([null, 'research'])('excludes internal and non-human inputs for %s', (projectId) => {
     const prompt = delivered(projectId);
     expect(prompt).toContain(
-      'Never publish internal compaction, tool chatter, other system deliveries or returned legacy results as answers, except the work summary a returned-work or done-check note asks for'
+      'Never publish internal compaction, tool chatter, other system deliveries or returned results as answers'
     );
+    expect(prompt).toContain('or the sentence a trigger note asks for');
     expect(prompt).toContain('not a consultation request from Neo');
     expect(prompt).toContain('not a returned work or consultation result');
   });
-  test.each([null, 'research'])(
-    'publishes pending-status turns as interim messages for %s',
-    (c) => {
-      const prompt = delivered(c);
-      expect(prompt).toContain('When this turn only reports that a consultation');
-      expect(prompt).toContain('work check or other result is still pending');
-      expect(prompt).toContain('publish that short line with interim:true and end the turn');
-      expect(prompt).not.toContain('in ordinary text');
-      expect(prompt).not.toContain('pending-status lines');
-      expect(prompt).not.toContain('only a brief acknowledgement');
-      expect(prompt).not.toContain('acknowledgements as answers');
-    }
-  );
+  test.each([null, 'research'])('never publishes a pending-status line for %s', (c) => {
+    const prompt = delivered(c);
+    expect(prompt).not.toContain('When this turn only reports that a consultation');
+    expect(prompt).toContain('end the input turn without publishing');
+    expect(prompt).not.toContain('in ordinary text');
+    expect(prompt).not.toContain('pending-status lines');
+    expect(prompt).not.toContain('acknowledgements as answers');
+  });
   test.each([null, 'research'])('publishes every short reply for %s', (c) => {
     const prompt = delivered(c);
     expect(prompt).toContain('Every reply to the human must be published, however short');

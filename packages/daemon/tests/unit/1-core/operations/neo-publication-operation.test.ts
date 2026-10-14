@@ -21,7 +21,12 @@ import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
-import { neoReplyText, requirePublicationNews } from '../../../../src/lib/neo/publication-news.ts';
+import { requirePublicationNews } from '../../../../src/lib/neo/publication-news.ts';
+import {
+  neoInputTrigger,
+  neoTriggerMessageId,
+  requirePublicationTrigger,
+} from '../../../../src/lib/neo/notification-triggers.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
@@ -42,11 +47,20 @@ const draft = {
   fullText: '**Two differences** need a closer look. Nothing was published.',
   links: [],
 };
-const caller = (sessionId = root.sessionId, messageId = ask.messageId) => ({
+const caller = (sessionId = root.sessionId, messageId = ask.messageId, human = true) => ({
   source: 'mcp' as const,
   sessionId,
   role: 'neo' as const,
-  neoTurn: { messageId, human: false, isLive: () => true },
+  neoTurn: { messageId, human, isLive: () => true },
+});
+const consultCaller = (id: string): OperationCaller => ({
+  ...caller(holder.sessionId, `neo-consult:${id}:request`, false),
+  neoTurn: {
+    messageId: `neo-consult:${id}:request`,
+    consultationId: id,
+    human: false,
+    isLive: () => true,
+  },
 });
 
 describe('runtime-bound publication operation', () => {
@@ -173,7 +187,14 @@ describe('runtime-bound publication operation', () => {
       value: {
         accepted: true,
         created: true,
-        publication: { ...draft, conversationId, askOrigin: ask, producerInput: ask, sequence: 1 },
+        publication: {
+          ...draft,
+          conversationId,
+          askOrigin: ask,
+          producerInput: ask,
+          triggerId: `human:${ask.messageId}`,
+          sequence: 1,
+        },
       },
     });
     expect(ledger.list(conversationId)).toHaveLength(1);
@@ -194,32 +215,103 @@ describe('runtime-bound publication operation', () => {
     const input = `neo-consult:${item.id}:request`;
     prompt(holder.sessionId, input, 'system');
     prompt(root.sessionId, 'newer-ask');
-    expect(await invoke(draft, caller(holder.sessionId, input))).toMatchObject({
+    expect(await invoke(draft, consultCaller(item.id))).toMatchObject({
       value: {
         accepted: true,
         publication: {
           askOrigin: ask,
           producerInput: { sessionId: holder.sessionId, messageId: input },
+          triggerId: `human:${ask.messageId}`,
         },
       },
     });
     expect(ledger.list(conversationId)![0].askOrigin).toEqual(ask);
   });
 
-  test('work-return publication resolves the immutable original input without an avatar authority flag', async () => {
+  test('a returned-work note is not a trigger, so its publication is refused with a reason', async () => {
     const item = work();
     repo.transitionWork(item.id, item, { status: 'reported', report: 'Reported context only' });
     prompt(root.sessionId, item.id, 'system');
     stamps.set(`${root.sessionId}\0${item.id}`, ask);
-    expect(await invoke(draft, caller(root.sessionId, item.id))).toMatchObject({
+    expect(await invoke(draft, caller(root.sessionId, item.id, false))).toMatchObject({
       value: {
-        accepted: true,
-        publication: {
-          askOrigin: ask,
-          producerInput: { sessionId: root.sessionId, messageId: item.id },
-        },
+        accepted: false,
+        reason: 'no_trigger',
+        detail: expect.stringContaining('End the turn'),
       },
     });
+    expect(ledger.list(conversationId)).toEqual([]);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  test('a trigger note turn publishes once under its trigger id, and the same transition never posts twice', () => {
+    const triggerId = 'outcome:ask-1:abc';
+    const note = neoTriggerMessageId(triggerId);
+    prompt(root.sessionId, note, 'system');
+    stamps.set(`${root.sessionId}\0${note}`, ask);
+    expect(publish({ ...draft, triggerId }, caller(root.sessionId, note, false))).toMatchObject({
+      accepted: true,
+      publication: { triggerId, producerInput: { sessionId: root.sessionId, messageId: note } },
+    });
+    expect(
+      publish(
+        { ...draft, publicationId: '20000000-0000-4000-8000-000000000002' },
+        caller(root.sessionId, note, false)
+      )
+    ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
+    expect(
+      ledger.append({
+        ...draft,
+        publicationId: '20000000-0000-4000-8000-000000000099',
+        conversationId,
+        askOrigin: ask,
+        producerInput: { sessionId: root.sessionId, messageId: `${note}:again` },
+        triggerId,
+      })
+    ).toEqual({ accepted: false, reason: 'trigger_already_published' });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+  });
+
+  test('a cross-project return answers the human message that started it, once', () => {
+    const reply = 'neo-cross-project:group-1:reply';
+    prompt(root.sessionId, reply, 'system');
+    stamps.set(`${root.sessionId}\0${reply}`, ask);
+    expect(publish(draft, caller(root.sessionId, reply, false))).toMatchObject({
+      accepted: true,
+      publication: { triggerId: `human:${ask.messageId}` },
+    });
+    expect(
+      publish({ ...draft, publicationId: '20000000-0000-4000-8000-000000000002' }, caller())
+    ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
+  });
+
+  test('refuses a triggerId that is not this turn’s trigger', () => {
+    expect(publish({ ...draft, triggerId: 'outcome:other:1' }, caller())).toMatchObject({
+      accepted: false,
+      reason: 'wrong_trigger',
+    });
+    expect(ledger.list(conversationId)).toEqual([]);
+  });
+
+  test('refuses an interim status post even on a human turn', () => {
+    expect(publish({ ...draft, interim: true }, caller())).toMatchObject({
+      accepted: false,
+      reason: 'interim_refused',
+    });
+    expect(publish(draft, caller())).toMatchObject({ accepted: true });
+  });
+
+  test('a publish nudge answers the human message it nudges, under that message’s trigger', () => {
+    const nudge = `neo-nudge:${ask.messageId}`;
+    prompt(root.sessionId, nudge, 'system');
+    stamps.set(`${root.sessionId}\0${nudge}`, ask);
+    expect(publish(draft, caller(root.sessionId, nudge, false))).toMatchObject({
+      accepted: true,
+      publication: { triggerId: `human:${ask.messageId}` },
+    });
+    expect(
+      publish({ ...draft, publicationId: '20000000-0000-4000-8000-000000000002' }, caller())
+    ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
   });
 
   test.each([
@@ -299,30 +391,27 @@ describe('runtime-bound publication operation', () => {
     expect(notify).toHaveBeenCalledTimes(2);
   });
 
-  test('refuses a bare acknowledgement, a repeat in the same turn, and replies past the turn limit', () => {
+  test('one reply per human message: a bare acknowledgement and a second reply are refused', () => {
     const id = (n: number) => `20000000-0000-4000-8000-00000000010${n}`;
     expect(
       publish({ ...draft, publicationId: id(1), shortText: '收到。', fullText: '收到。' }, caller())
     ).toMatchObject({ accepted: false, reason: 'empty_acknowledgement' });
     expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({ accepted: true });
     expect(
-      publish({ ...draft, publicationId: id(3), shortText: 'ready view comparison' }, caller())
-    ).toMatchObject({ accepted: false, reason: 'repeated_reply' });
+      publish({ ...draft, publicationId: id(3), shortText: 'One more thing.' }, caller())
+    ).toMatchObject({
+      accepted: false,
+      reason: 'trigger_already_published',
+      detail: expect.stringContaining('told once'),
+    });
     expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({
       accepted: true,
       created: false,
     });
-    for (const n of [4, 5])
-      expect(
-        publish({ ...draft, publicationId: id(n), shortText: `Update ${n}.` }, caller())
-      ).toMatchObject({ accepted: true });
-    expect(
-      publish({ ...draft, publicationId: id(6), shortText: 'One more thing.' }, caller())
-    ).toMatchObject({ accepted: false, reason: 'reply_limit' });
-    expect(ledger.list(conversationId)).toHaveLength(3);
+    expect(ledger.list(conversationId)).toHaveLength(1);
     prompt(root.sessionId, 'next-ask');
     expect(
-      publish({ ...draft, publicationId: id(7) }, caller(root.sessionId, 'next-ask'))
+      publish({ ...draft, publicationId: id(4) }, caller(root.sessionId, 'next-ask'))
     ).toMatchObject({ accepted: true });
   });
 
@@ -357,9 +446,9 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
-  test('a turn no trigger note woke is not stamped, and a triggerId it names is refused', () => {
+  test('a human reply records its human trigger, and a triggerId it names is refused', () => {
     expect(publish(draft, caller())).toMatchObject({ accepted: true });
-    expect(ledger.list(conversationId)![0].triggerId).toBeUndefined();
+    expect(ledger.list(conversationId)![0].triggerId).toBe('human:ask-original');
     expect(
       publish(
         {
@@ -441,10 +530,7 @@ describe('runtime-bound publication operation', () => {
       const item = consultation();
       const input = `neo-consult:${item.id}:request`;
       prompt(holder.sessionId, input, 'system');
-      const who: OperationCaller = {
-        ...caller(holder.sessionId, input),
-        neoTurn: { messageId: input, consultationId: item.id, human: false, isLive: () => true },
-      };
+      const who = consultCaller(item.id);
       const resolve = runtime.resolveAskOrigin;
       runtime.resolveAskOrigin = (origin) => {
         const answer = resolve(origin);
@@ -513,7 +599,7 @@ describe('requirePublicationNews', () => {
     'refuses the bare acknowledgement %s',
     (text) => {
       expect(
-        requirePublicationNews('v', { ...reply, shortText: text, fullText: text }, [])
+        requirePublicationNews('v', { ...reply, shortText: text, fullText: text })
       ).toMatchObject({ reason: { reason: 'empty_acknowledgement' } });
     }
   );
@@ -522,19 +608,40 @@ describe('requirePublicationNews', () => {
     ['收到。', 'Got it.'],
     ['👍', '👍'],
   ])('refuses %s with full text %s', (shortText, fullText) => {
-    expect(requirePublicationNews('v', { ...reply, shortText, fullText }, [])).toMatchObject({
+    expect(requirePublicationNews('v', { ...reply, shortText, fullText })).toMatchObject({
       reason: { reason: 'empty_acknowledgement' },
     });
   });
 
-  test('keeps an acknowledgement that carries details, and an identical retry', () => {
-    expect(requirePublicationNews('v', { ...reply, shortText: '收到。' }, [])).toEqual({
+  test('keeps an acknowledgement that carries details', () => {
+    expect(requirePublicationNews('v', { ...reply, shortText: '收到。' })).toEqual({
       value: 'v',
     });
-    const prior = [{ publicationId: 'p1', text: neoReplyText(reply.shortText) }];
-    expect(requirePublicationNews('v', reply, prior)).toEqual({ value: 'v' });
-    expect(requirePublicationNews('v', { ...reply, publicationId: 'p2' }, prior)).toMatchObject({
-      reason: { reason: 'repeated_reply' },
+  });
+});
+
+describe('neoInputTrigger', () => {
+  test.each([
+    ['m1', true, 'human:m1'],
+    ['m1', false, null],
+    ['neo-trigger:action:a:1', false, 'action:a:1'],
+    ['neo-nudge:m1', false, 'human:m1'],
+    ['neo-forward:m1:0', false, 'human:m1'],
+    ['neo-nudge:neo-forward:m1:0', false, 'human:m1'],
+    ['work-1:done-check:0', false, null],
+  ] as const)('maps input %s (human %s) to trigger %s', (messageId, human, trigger) => {
+    expect(neoInputTrigger(messageId, human)).toBe(trigger);
+  });
+});
+
+describe('requirePublicationTrigger', () => {
+  test('stamps the turn trigger and refuses a turn without one', () => {
+    expect(requirePublicationTrigger({ a: 1 }, {}, 'human:m1')).toEqual({
+      value: { a: 1, triggerId: 'human:m1' },
     });
+    expect(requirePublicationTrigger({ a: 1 }, {}, null)).toHaveProperty(
+      'reason.reason',
+      'no_trigger'
+    );
   });
 });

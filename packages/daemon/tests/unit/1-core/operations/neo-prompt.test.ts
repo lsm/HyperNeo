@@ -124,7 +124,7 @@ describe('Neo world briefing delivery', () => {
         'Do not announce that all the user’s questions are settled from one return',
         'summary-only snapshot can be intentionally redacted',
         'do not describe hidden fields as empty facts to the human',
-        'give one short acknowledgement and end the input turn',
+        'end the input turn without publishing',
         'Do not give a preliminary substantive answer from the summary',
         'correction to that same project',
         'one or two conversational sentences',

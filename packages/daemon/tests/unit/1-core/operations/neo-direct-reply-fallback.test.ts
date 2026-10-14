@@ -85,6 +85,7 @@ describe('Neo direct reply fallback', () => {
         shortText: 'Fictional warm reply.',
         fullText: 'Fictional warm reply.',
         links: [],
+        triggerId: `human:${askA}`,
       },
     ]);
     expect(io.append).toHaveBeenCalledTimes(1);
