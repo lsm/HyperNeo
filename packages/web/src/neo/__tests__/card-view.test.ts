@@ -98,6 +98,20 @@ describe('neoCardLabel', () => {
       'Running in Codex Desktop'
     );
   });
+
+  it('shows when Neo last checked a live card, and lets not-checked win', () => {
+    const at = new Date(2026, 9, 11, 14, 15).getTime();
+    const time = new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    expect(neoCardLabel(card('w', { checkedAt: at }))).toBe(
+      `Running in Codex Desktop · checked ${time}`
+    );
+    expect(neoCardLabel(card('w', { checkedAt: at, uncheckedSince: at }))).toBe(
+      `Running in Codex Desktop · not checked since ${time}`
+    );
+    expect(neoCardLabel(card('w', { phase: 'merged', checkedAt: at }))).toBe(
+      'Running in Codex Desktop'
+    );
+  });
 });
 
 describe('neoContinuedLabel', () => {
