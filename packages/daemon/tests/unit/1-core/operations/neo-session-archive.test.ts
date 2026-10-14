@@ -55,7 +55,7 @@ describe('neo.session.archive', () => {
     repo = new NeoRepository(db.getDatabase());
     targets = new NeoWorkDriverTargetRepository(db.getDatabase());
     for (const id of ['root', 'worker']) db.createSession(createTestSession(id));
-    repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
     db.getSDKMessageRepo().saveSDKMessage('root', {
       type: 'user',
       uuid: 'human',
@@ -83,13 +83,29 @@ describe('neo.session.archive', () => {
         id: 'card',
         requestKey: 'card',
         originSessionId: 'root',
-        concernId: null,
+        projectId: null,
         title: 'Work',
         instruction: 'Finish',
       },
       { verb: 'adopt', ref: target }
     ).work;
   }
+
+  test('a read-only card has no driver ref to reserve against archiving', async () => {
+    targets.propose(
+      repo,
+      {
+        id: 'read',
+        requestKey: 'read',
+        originSessionId: 'root',
+        projectId: null,
+        title: 'Check state',
+        instruction: 'Read state',
+      },
+      { verb: 'read', operation: 'work.status', input: { ref } }
+    );
+    expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
+  });
 
   test('allows a verified live human turn and the local user', async () => {
     expect(await invoke()).toMatchObject({ value: { ok: true, value: { archived: true } } });
@@ -147,7 +163,7 @@ describe('neo.session.archive', () => {
       id: 'native',
       requestKey: 'native',
       originSessionId: 'root',
-      concernId: null,
+      projectId: null,
       title: 'Work',
       instruction: 'Finish',
       targetSessionId: 'worker',
