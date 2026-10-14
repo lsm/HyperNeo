@@ -27,6 +27,7 @@ async function setup() {
   const db = await createTestDb();
   db.createSession(createTestSession('neo:root'));
   const starts: string[] = [];
+  const reads: Record<string, unknown>[] = [];
   const operation = (name: string) =>
     defineOperation({
       name,
@@ -35,12 +36,16 @@ async function setup() {
       resultSchema: z.unknown(),
       execute: async (input) => {
         if (name === 'work.stop') return { ok: true, value: { stopped: true } };
+        if (name === 'work.status') {
+          reads.push(input);
+          return { ok: true, value: { status: 'running', lastActivityAt: 2 } };
+        }
         starts.push(name);
         return { ok: true, value: { ref: { adapter: 'codex-desktop', id: `t${starts.length}` } } };
       },
     });
   const registry = createOperationRegistry(
-    ['work.start', 'work.send', 'work.stop', 'work.find'].map(operation)
+    ['work.start', 'work.send', 'work.stop', 'work.find', 'work.status'].map(operation)
   );
   const service = new NeoService(
     db,
@@ -108,7 +113,7 @@ async function setup() {
       { askId: 'ask-bc', expectedRevision: edit.revision },
       { source: 'rpc', principal: 'local' }
     );
-  return { db, service, starts, answer, approve };
+  return { db, service, starts, reads, answer, approve };
 }
 
 describe('NeoService.admitWork on the remaining start paths', () => {
@@ -208,6 +213,62 @@ describe('NeoService.admitWork on the remaining start paths', () => {
         report: NEO_WORK_AWAITING_WORKER,
       });
       expect(service.repo.getWork('c')?.status).toBe('cancelled');
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('NeoService.recover after a restart mid-handoff', () => {
+  test('reuses a card whose worker was recorded, reading it with the card receipt', async () => {
+    const { db, service, starts, reads } = await setup();
+    try {
+      const queued = service.repo.transitionWork('c', service.repo.getWork('c')!, {
+        status: 'queued',
+      })!;
+      service.driverTargets.recordRef('c', { adapter: 'codex-desktop', id: 't9' }, 1);
+      service.driverTargets.recordSent('c', {
+        inputBefore: 0,
+        opening: 'Do c.',
+        receipt: { executionId: 't9', inputId: 'line-1' },
+      });
+      await service.recover();
+      expect(starts).toHaveLength(0);
+      expect(reads[0]).toMatchObject({
+        ref: { adapter: 'codex-desktop', id: 't9' },
+        receipt: { executionId: 't9', inputId: 'line-1' },
+      });
+      expect(service.repo.getWork('c')?.status).toBe(queued.status);
+      expect(service.driverTargets.readStartInterrupted('c')).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('never relaunches a card handed off without a recorded worker', async () => {
+    const { db, service, starts } = await setup();
+    try {
+      service.repo.transitionWork('c', service.repo.getWork('c')!, { status: 'queued' });
+      await service.recover();
+      await service.recover();
+      expect(starts).toHaveLength(0);
+      expect(service.repo.getWork('c')?.status).toBe('failed');
+      expect(service.driverTargets.readStartInterrupted('c')).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('starts a card whose claim predates the restart exactly once under duplicate recovery', async () => {
+    const { db, service, starts } = await setup();
+    try {
+      db.getDatabase()
+        .prepare("UPDATE neo_work_driver_targets SET claimed_at = 1 WHERE work_id = 'c'")
+        .run();
+      await Promise.all([service.recover(), service.recover()]);
+      await service.recover();
+      expect(starts).toEqual(['work.start']);
+      expect(service.repo.getWork('c')?.status).toBe('queued');
     } finally {
       db.close();
     }
