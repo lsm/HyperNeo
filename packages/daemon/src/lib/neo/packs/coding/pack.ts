@@ -95,7 +95,9 @@ export function neoCardPrsFresh(
   return (
     !force &&
     !shouldReadNeoWorkPrs(current.row, ownedUrls(plan), now) &&
-    plan.owned.every((item) => item.claimed)
+    plan.owned.every(
+      (item) => item.claimed && (item.scope === undefined || item.scoped || item.claim === 'named')
+    )
   );
 }
 
@@ -190,7 +192,7 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
         ...[...rejected, ...outmatched].map((item) => ({ ...item, claim: 'rejected' as const })),
       ]);
       const prs = mergeNeoWorkPrReads(
-        [...kept, ...pending].map((item) => item.url),
+        [...kept, ...pending.filter((item) => item.scope === undefined)].map((item) => item.url),
         fetched.prs,
         current.row?.prs
       );

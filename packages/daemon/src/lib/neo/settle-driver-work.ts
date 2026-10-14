@@ -91,7 +91,7 @@ async function readNeoDriverSettleEvidence(
 ): Promise<NeoDriverSettleEvidence> {
   const startedAt = deps.readStartedAt(work.id);
   const sent = deps.readSent(work.id);
-  const outcome = await deps.readStatus(work, ref, startedAt ?? sent?.inputBefore ?? null);
+  const outcome = await deps.readStatus(work, ref, sent?.inputBefore ?? startedAt);
   return {
     startedAt,
     sent,

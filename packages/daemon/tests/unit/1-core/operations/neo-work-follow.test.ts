@@ -132,75 +132,43 @@ describe('planNeoWorkFollowLive', () => {
 });
 
 describe('planNeoWorkFollow', () => {
-  const later = work.updatedAt + 30 * 60_000;
-  const read = (value: Record<string, unknown>) => ({
-    outcome: { kind: 'completed' as const, value: { ok: true, value } },
+  const sent = { inputBefore: 1, opening: 'Fix font' };
+  const read = (exchange: unknown[]) => ({
+    outcome: {
+      kind: 'completed' as const,
+      value: {
+        ok: true,
+        value: { status: 'done', lastActivityAt: 40, lastReply: 'Unrelated', exchange },
+      },
+    },
   });
-  test.each<[string, ReturnType<typeof read>, string | null]>([
-    [
-      'the session merged on its own after the report',
-      read({
-        status: 'done',
-        lastActivityAt: later,
-        lastReplyAt: later,
-        exchange: [
-          { at: later, role: 'agent', text: 'Merged https://github.com/lsm/neo-ios/pull/25.' },
-        ],
-      }),
-      'Agent: Merged https://github.com/lsm/neo-ios/pull/25.\n\nEarlier report:\nAgent: Waiting for the build.',
-    ],
-    ['nothing happened since', read({ status: 'done', lastActivityAt: work.updatedAt - 1 }), null],
-    [
-      'a session the app no longer has open, with a new reply',
-      read({
-        status: 'stopped',
-        lastActivityAt: later,
-        lastReplyAt: later,
-        exchange: [{ at: later, role: 'agent', text: 'PR C merged.' }],
-      }),
-      'Agent: PR C merged.\n\nEarlier report:\nAgent: Waiting for the build.',
-    ],
-    [
-      'a session that asks the human something',
-      read({
-        status: 'needs_you',
-        lastActivityAt: later,
-        lastReplyAt: later,
-        lastReply: 'Can I merge?',
-      }),
-      'Agent: Can I merge?\n\nEarlier report:\nAgent: Waiting for the build.',
-    ],
-    ['the session is still working', read({ status: 'running', lastActivityAt: later }), null],
-    ['the session said nothing new', read({ status: 'done', lastActivityAt: later }), null],
-    [
-      'the last reply predates the report',
-      read({
-        status: 'done',
-        lastActivityAt: later,
-        lastReplyAt: work.updatedAt - 1,
-        lastReply: 'Old.',
-      }),
-      null,
-    ],
-  ])('%s', (_label, status, report) => {
-    expect(planNeoWorkFollow(work, status, { since: work.updatedAt })).toEqual(
-      report === null ? { reason: null } : { value: report }
-    );
+  test('ignores another input and preserves the prior report', () => {
+    expect(
+      planNeoWorkFollow(
+        work,
+        read([
+          { at: 30, role: 'user', text: 'PR event' },
+          { at: 40, role: 'agent', text: 'Other PR merged' },
+        ]),
+        { since: 20, sent }
+      )
+    ).toEqual({ reason: null });
+    expect(
+      planNeoWorkFollow(work, read([{ at: 40, role: 'agent', text: 'No input proof' }]), {
+        since: 20,
+      })
+    ).toEqual({ reason: null });
   });
-
-  test('judges freshness by the work machine clock, even when it runs behind', () => {
-    const remoteSince = work.updatedAt - 60 * 60_000;
-    const behind = read({
-      status: 'done',
-      lastActivityAt: remoteSince + 60_000,
-      lastReplyAt: remoteSince + 60_000,
-      lastReply: 'Merged.',
+  test('follows only replies to the recorded input, using the worker clock', () => {
+    const own = read([
+      { at: 2, role: 'user', text: sent.opening },
+      { at: 25, role: 'agent', text: 'Font fixed' },
+      { at: 30, role: 'user', text: 'CI event' },
+      { at: 40, role: 'agent', text: 'Other result' },
+    ]);
+    expect(planNeoWorkFollow(work, own, { since: 20, sent })).toEqual({
+      value: `Agent: Font fixed\n\nEarlier report:\n${work.report}`,
     });
-    expect(planNeoWorkFollow(work, behind, { since: remoteSince })).toMatchObject({
-      value: expect.stringContaining('Merged.'),
-    });
-    expect(planNeoWorkFollow(work, behind, { since: work.updatedAt })).toEqual({
-      reason: null,
-    });
+    expect(planNeoWorkFollow(work, own, { since: 25, sent })).toEqual({ reason: null });
   });
 });

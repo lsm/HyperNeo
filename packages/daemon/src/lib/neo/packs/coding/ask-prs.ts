@@ -270,3 +270,15 @@ export async function readGithubRefStates(
   }
   return states;
 }
+
+export async function readCodingCardRefs(
+  brief: string,
+  report: string | null,
+  readRepo: () => Promise<{ owner: string; repo: string } | null>,
+  readStates: NeoRefStateReader
+): Promise<{ named: string[]; mentioned: string[] }> {
+  if (!/#\d/.test(`${brief}\n${report ?? ''}`)) return { named: [], mentioned: [] };
+  const repo = await readRepo();
+  const read = (text: string) => readNeoPrRefUrls(extractNeoCardRefs(text, repo), readStates);
+  return { named: await read(brief), mentioned: await read(report ?? '') };
+}

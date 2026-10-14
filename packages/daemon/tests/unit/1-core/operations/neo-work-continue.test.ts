@@ -214,6 +214,7 @@ describe('neo.work.continue', () => {
   let lastActivityAt: number;
   let recentInputs: Array<{ at: number; text: string }> | undefined;
   let duringSend: () => Promise<void>;
+  let exchange: { at: number; role: 'user' | 'agent'; text: string }[] | undefined;
   let delivered: boolean;
   let unreachable: boolean;
   const human: OperationCaller = { source: 'rpc', principal: 'local' };
@@ -225,6 +226,7 @@ describe('neo.work.continue', () => {
     sent = [];
     lastActivityAt = 0;
     recentInputs = undefined;
+    exchange = undefined;
     duringSend = async () => {};
     delivered = true;
     unreachable = false;
@@ -237,7 +239,13 @@ describe('neo.work.continue', () => {
         policy: { safetyClass: 'read' },
         execute: async () => ({
           ok: true,
-          value: { status: 'done', lastActivityAt, lastReply: 'Skeleton builds.', recentInputs },
+          value: {
+            status: 'done',
+            lastActivityAt,
+            lastReply: 'Skeleton builds.',
+            recentInputs,
+            exchange,
+          },
         }),
       }),
       defineOperation({
@@ -388,6 +396,10 @@ describe('neo.work.continue', () => {
     expect(service.repo.getWork(work.id)?.status).toBe('queued');
 
     lastActivityAt = Date.now() + 1_000;
+    exchange = [
+      { at: lastActivityAt - 1, role: 'user', text: 'Now build the chat screen.' },
+      { at: lastActivityAt, role: 'agent', text: 'Skeleton builds.' },
+    ];
     await service.refreshDriverWork();
     expect(service.repo.getWork(work.id)?.status).toBe('reported');
   });
@@ -447,6 +459,10 @@ describe('neo.work.continue', () => {
     expect(service.repo.getWork(work.id)?.status).toBe('queued');
 
     lastActivityAt = landedAt + 1_000;
+    exchange = [
+      { at: landedAt, role: 'user', text: 'Now build the chat screen.' },
+      { at: lastActivityAt, role: 'agent', text: 'Skeleton builds.' },
+    ];
     await service.refreshDriverWork();
     expect(service.repo.getWork(work.id)?.status).toBe('reported');
   });
@@ -475,6 +491,10 @@ describe('neo.work.continue', () => {
       value: { ok: true },
     });
     lastActivityAt = Date.now() + 1_000;
+    exchange = [
+      { at: lastActivityAt - 1, role: 'user', text: 'Too soon.' },
+      { at: lastActivityAt, role: 'agent', text: 'Skeleton builds.' },
+    ];
     await service.refreshDriverWork();
     expect(service.repo.getWork(work.id)?.status).toBe('reported');
     expect(service.workWakes.get(work.id)?.wakes).toBe(1);

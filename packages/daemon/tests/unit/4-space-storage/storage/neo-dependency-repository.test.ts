@@ -244,7 +244,7 @@ describe('runMigration366', () => {
     const db = await createTestDb();
     try {
       db.getDatabase().exec(
-        "DROP TABLE neo_work_dependencies; DELETE FROM migration_markers WHERE key = 'migration_366'"
+        "DROP TABLE neo_work_dependencies; DROP TABLE neo_cross_project_dispatch_members; DROP TABLE neo_cross_project_dispatches; DELETE FROM migration_markers WHERE key = 'migration_366'"
       );
       const backup = mock(() => {});
       runMigrations(db.getDatabase(), backup);
@@ -267,6 +267,12 @@ describe('runMigration366', () => {
         });
       db.getDatabase().exec("INSERT INTO neo_work_dependencies VALUES ('b', 'a')");
       runMigration366(db.getDatabase());
+      expect(
+        db
+          .getDatabase()
+          .prepare("SELECT name FROM sqlite_master WHERE name = 'neo_cross_project_dispatches'")
+          .get()
+      ).toBeTruthy();
       expect(db.getDatabase().prepare('SELECT * FROM neo_work_dependencies').all()).toEqual([
         { work_id: 'b', prerequisite_id: 'a' },
       ]);
