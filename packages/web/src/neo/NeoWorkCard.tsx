@@ -60,6 +60,7 @@ export function NeoWorkCard({
   onAction,
   onOpen,
   onOpenWork,
+  canOpenWork,
   presentation = 'detail',
   questionSlot,
   waiting = false,
@@ -72,6 +73,7 @@ export function NeoWorkCard({
   onAction: (id: string, action: NeoWorkAction) => void;
   onOpen?: (id: string) => void;
   onOpenWork?: (id: string) => void;
+  canOpenWork?: (id: string) => boolean;
   presentation?: 'detail' | 'summary';
   questionSlot?: (id: string, node: HTMLElement | null, previous: HTMLElement | null) => void;
   waiting?: boolean;
@@ -118,7 +120,7 @@ export function NeoWorkCard({
           <ul class="mt-1 space-y-1">
             {waits.map((wait) => (
               <li key={wait.workId}>
-                {onOpenWork ? (
+                {onOpenWork && (canOpenWork?.(wait.workId) ?? true) ? (
                   <button
                     type="button"
                     class="break-words text-left text-fg-muted hover:text-accent"

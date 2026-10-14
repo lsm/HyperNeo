@@ -491,12 +491,13 @@ describe('NeoWorkCard dependency waits', () => {
         disabled={false}
         onAction={() => {}}
         onOpenWork={openWork}
+        canOpenWork={(id) => id === 'api'}
       />
     );
     expect(screen.getByText('Waits for')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Ship the API: PR merged, Deployed' }));
     expect(openWork).toHaveBeenCalledExactlyOnceWith('api');
-    expect(screen.getByRole('button', { name: 'Old card was cancelled' })).toBeTruthy();
+    expect(screen.getByText('Old card was cancelled').closest('button')).toBeNull();
     expect(screen.getByRole('button', { name: /Start work/ })).toBeTruthy();
   });
 
