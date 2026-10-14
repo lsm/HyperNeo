@@ -18,6 +18,7 @@ import {
 } from '../../../../src/lib/neo/router.ts';
 import {
   createNeoSectionRefReader,
+  refineNeoCoarseFacts,
   readNeoSectionFacts,
 } from '../../../../src/lib/neo/section-route-facts.ts';
 import type { NeoRefState } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
@@ -372,6 +373,148 @@ describe('hierarchical Neo routing', () => {
         })
       ).choice?.projectId
     ).toBe('section');
+  });
+
+  test('coarse workspace and repository facts follow a refined section on the same path', async () => {
+    save('root');
+    workspace('root');
+    const section = repo.createSection('root', epicUrl, 'Neo');
+    if (!section.ok) throw new Error(section.reason);
+    const childUrl = 'https://github.com/lsm/hyperneo/issues/6761';
+    const otherUrl = 'https://github.com/lsm/hyperneo/issues/7000';
+    const facts = ['/repo', 'work:123', childUrl, otherUrl].map((reference) => ({
+      reference,
+      projectId: 'root',
+      projectOnly: true as const,
+    }));
+    const refined = await readNeoSectionFacts(
+      `${childUrl} ${otherUrl} /repo work:123`,
+      facts,
+      repo.listProjects(),
+      async ([ref]) => [
+        { ...epic, url: childUrl, parent: ref.number === 6761 ? { url: epicUrl, at: 1 } : null },
+      ]
+    );
+    expect(refined.map((fact) => fact.projectId)).toEqual(Array(4).fill(section.projectId));
+    const classify = mock(async () => 'main' as const);
+    expect(
+      (
+        await chooseNeoRoute('same project message', {
+          ...routeDeps([holder('root'), holder(section.projectId, 'root')]),
+          facts: () => refined,
+          classify,
+        })
+      ).choice?.projectId
+    ).toBe(section.projectId);
+    expect(classify).not.toHaveBeenCalled();
+    expect(facts.every((fact) => fact.projectId === 'root')).toBe(true);
+  });
+
+  test('coarse refinement preserves distinct explicit owners, sibling sections and other projects', async () => {
+    for (const id of ['root', 'a', 'b', 'other']) save(id);
+    repo.moveProject('a', 'root', 1);
+    repo.moveProject('b', 'root', 1);
+    const projects = repo.listProjects();
+    const holders = projects.map((project) => holder(project.id, project.parentId));
+    for (const facts of [
+      [
+        { reference: 'ask-root', projectId: 'root' },
+        { reference: 'ask-a', projectId: 'a' },
+      ],
+      [
+        { reference: '/root', projectId: 'root', projectOnly: true as const },
+        { reference: 'ask-a', projectId: 'a' },
+        { reference: 'ask-b', projectId: 'b' },
+      ],
+      [
+        { reference: '/other', projectId: 'other', projectOnly: true as const },
+        { reference: 'ask-a', projectId: 'a' },
+      ],
+    ]) {
+      const refined = refineNeoCoarseFacts(facts, projects);
+      expect(refined).toEqual(facts);
+      expect(
+        await chooseNeoRoute('multiple owners', { ...routeDeps(holders), facts: () => refined })
+      ).toEqual({ choice: null, fallback: 'facts:cross_project' });
+    }
+  });
+
+  test('classification reaches descendants at the nearest runnable ancestor during outages', async () => {
+    const tree = [
+      holder('root'),
+      holder('middle', 'root'),
+      holder('leaf', 'middle'),
+      holder('other'),
+    ];
+    const before = structuredClone(tree);
+    for (const unavailable of [['middle'], ['root'], ['root', 'middle']]) {
+      const holders = runnableNeoHolders(
+        tree.map((item) => ({
+          ...item,
+          provider: unavailable.includes(item.projectId) ? 'offline' : 'anthropic',
+        })),
+        new Map([['offline', false]])
+      );
+      const levels: string[][] = [];
+      expect(
+        (
+          await chooseNeoRoute('leaf work', {
+            ...routeDeps(holders),
+            classify: async (_text, choices) => {
+              levels.push(choices.map((choice) => choice.projectId));
+              return (
+                choices.find((choice) => choice.projectId === 'leaf') ??
+                choices.find((choice) => choice.projectId === 'middle') ??
+                choices.find((choice) => choice.projectId === 'root')!
+              );
+            },
+          })
+        ).choice?.projectId
+      ).toBe('leaf');
+      expect(levels).toEqual(
+        unavailable.length === 2
+          ? [['leaf', 'other']]
+          : unavailable[0] === 'root'
+            ? [
+                ['middle', 'other'],
+                ['middle', 'leaf'],
+              ]
+            : [
+                ['root', 'other'],
+                ['root', 'leaf'],
+              ]
+      );
+    }
+    expect(tree).toEqual(before);
+  });
+
+  test('unavailable workspace owners constrain classification to their runnable descendants', async () => {
+    const holders = runnableNeoHolders(
+      [{ ...holder('root'), provider: 'offline' }, holder('section', 'root'), holder('other')],
+      new Map([['offline', false]])
+    );
+    const classify = mock(async (_text: string, choices: readonly NeoHolder[]) => {
+      expect(choices.map((choice) => choice.projectId)).toEqual(['section']);
+      return choices[0];
+    });
+    expect(
+      (
+        await chooseNeoRoute('workspace section work', {
+          ...routeDeps(holders),
+          facts: () => [{ reference: '/repo', projectId: 'root', projectOnly: true }],
+          classify,
+        })
+      ).choice?.projectId
+    ).toBe('section');
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(
+      await chooseNeoRoute('root-owned ask', {
+        ...routeDeps(holders),
+        facts: () => [{ reference: 'ask', projectId: 'root' }],
+        classify,
+      })
+    ).toEqual({ choice: null, fallback: 'facts:root' });
+    expect(classify).toHaveBeenCalledTimes(1);
   });
 
   test('section lookups reuse concurrent issue reads and refresh changed ancestry after the TTL', async () => {

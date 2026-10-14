@@ -38,6 +38,26 @@ export function createNeoSectionRefReader(
 
 const readSectionRefs = createNeoSectionRefReader();
 
+export function refineNeoCoarseFacts(
+  facts: readonly NeoProjectFact[],
+  projects: readonly NeoProject[]
+): NeoProjectFact[] {
+  const owners = [...new Set(facts.flatMap((fact) => (fact.projectId ? [fact.projectId] : [])))];
+  const paths = new Map(
+    owners.map((owner) => [owner, neoProjectPath(projects, owner).map((node) => node.id)])
+  );
+  return facts.map((fact) => {
+    if (!fact.projectOnly || !fact.projectId) return fact;
+    const descendants = owners.filter(
+      (owner) => owner !== fact.projectId && paths.get(owner)?.includes(fact.projectId!)
+    );
+    const deepest = descendants.find((owner) =>
+      descendants.every((other) => paths.get(owner)?.includes(other))
+    );
+    return deepest ? { ...fact, projectId: deepest } : fact;
+  });
+}
+
 export async function readNeoSectionFacts(
   text: string,
   facts: readonly NeoProjectFact[],
@@ -45,7 +65,7 @@ export async function readNeoSectionFacts(
   read: NeoRefStateReader = readSectionRefs
 ): Promise<NeoProjectFact[]> {
   const sections = projects.filter((project) => project.epicUrl);
-  if (!sections.length) return [...facts];
+  if (!sections.length) return refineNeoCoarseFacts(facts, projects);
   const routes = new Map<string, string>();
   const urls = [
     ...text.matchAll(/https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+/g),
@@ -79,7 +99,7 @@ export async function readNeoSectionFacts(
       url = state.parent.url.toLowerCase();
     }
   }
-  return facts.map((fact) => {
+  const refined = facts.map((fact) => {
     const ref = parseGitHubRefUrl(fact.reference) ?? extractNeoCardRefs(fact.reference, null)[0];
     const section = ref && routes.get(`${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase());
     return section &&
@@ -89,4 +109,5 @@ export async function readNeoSectionFacts(
       ? { reference: fact.reference, projectId: section }
       : fact;
   });
+  return refineNeoCoarseFacts(refined, projects);
 }
