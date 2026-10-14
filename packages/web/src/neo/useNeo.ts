@@ -169,6 +169,7 @@ export function useNeo() {
       const hub = await connectionManager.getHub();
       const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.ask.approve', {
         askId,
+        expectedRevision: snapshot?.asks?.find((ask) => ask.id === askId)?.revision ?? 0,
       });
       if (!result.ok) throw new Error(result.reason);
       await refresh();
@@ -204,6 +205,7 @@ export function useNeo() {
       const hub = await connectionManager.getHub();
       const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.ask.tick', {
         askId,
+        expectedRevision: snapshot?.asks?.find((ask) => ask.id === askId)?.revision ?? 0,
         itemId,
         state: 'met',
         evidence: 'Confirmed by the user.',
@@ -226,6 +228,7 @@ export function useNeo() {
       const hub = await connectionManager.getHub();
       const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.ask.answer', {
         askId,
+        expectedRevision: snapshot?.asks?.find((ask) => ask.id === askId)?.revision ?? 0,
         itemId,
         choice,
       });

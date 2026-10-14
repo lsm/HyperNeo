@@ -320,7 +320,48 @@ describe('refreshDriverWork watch ticks', () => {
     expect(service.askRecords.get(opened.id)?.doneItems?.[0]).toMatchObject({
       state: 'met',
       metBy: 'daemon',
+      verifiedDefinitionHash: service.askRecords.revisionPolicy.definitionHash(
+        opened.doneItems![0]
+      ),
       evidence: `Watched: ${pull(67, 'lsm/neo-ios')} merged; ${pull(6647)} merged`,
+    });
+  });
+
+  test('does not verify a changed watch definition from an in-flight read', async () => {
+    const opened = service.askRecords.open(
+      {
+        id: 'a-watch-race',
+        requestKey: 'k-watch-race',
+        projectId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'm0',
+        title: 'Merge the fix',
+        ask: 'Land the fix',
+        doneWhen: '- merged',
+        doneSource: 'human',
+      },
+      [{ text: 'merged', check: null, watch: [pull(7100)] }]
+    )!;
+    service.readRefStates = async () => {
+      service.askRecords.editItems(
+        opened.id,
+        { add: [], remove: [], track: [{ itemId: 'i1', check: null, watch: [pull(7101)] }] },
+        Date.now()
+      );
+      return [prState(7100, 'MERGED')];
+    };
+    Object.assign(service, { deliver: async () => {} });
+    await service.refreshDriverWork();
+    expect(service.askRecords.get(opened.id)).toMatchObject({
+      revision: 1,
+      doneItems: [
+        {
+          watch: [pull(7101)],
+          state: 'pending',
+          evidence: null,
+          verifiedDefinitionHash: null,
+        },
+      ],
     });
   });
 });

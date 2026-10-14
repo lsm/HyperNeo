@@ -95,6 +95,7 @@ export function neoAskApprovalSpent(
 }
 
 export interface NeoAskItem {
+  verifiedDefinitionHash?: string | null;
   id: string;
   text: string;
   state: 'pending' | 'met' | 'needs_you' | 'reported';
@@ -115,6 +116,8 @@ export interface NeoAskItem {
 export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';
 
 export interface NeoAsk {
+  revision?: number;
+  approvedRevision?: number | null;
   id: string;
   requestKey: string;
   projectId: string | null;

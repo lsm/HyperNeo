@@ -1580,7 +1580,7 @@ export function createNeoOperations(service: NeoService) {
               service.driverTargets.adoptedRefs(Date.now() - NEO_WORK_FOLLOW_MAX_AGE_MS)
             )
           )
-            service.askRecords.approve(owned.id, Date.now());
+            service.askRecords.approve(owned.id, Date.now(), owned.revision ?? 0);
           return;
         }
         const tracked = service.trackedSessions;
@@ -1588,7 +1588,7 @@ export function createNeoOperations(service: NeoService) {
         service.trackedSessions = tracked;
         const owned = ask.askId && !input.askId ? service.askRecords.get(ask.askId) : null;
         if (owned && isNeoAdoptOnlyAsk(owned, receipt.work.id))
-          service.askRecords.approve(owned.id, Date.now());
+          service.askRecords.approve(owned.id, Date.now(), owned.revision ?? 0);
         await service.start(receipt.work.id);
       },
       ['input', 'ask', 'admission']

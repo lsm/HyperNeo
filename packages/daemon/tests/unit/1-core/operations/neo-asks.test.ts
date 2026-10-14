@@ -126,6 +126,17 @@ describe('neo.ask operations', () => {
   });
 
   function invoke(name: string, input: unknown, caller: OperationCaller = neo) {
+    if (
+      ['neo.ask.approve', 'neo.ask.edit', 'neo.ask.answer', 'neo.ask.tick'].includes(name) &&
+      input &&
+      typeof input === 'object' &&
+      'askId' in input
+    ) {
+      input = {
+        expectedRevision: service.askRecords.get(String(input.askId))?.revision ?? 0,
+        ...input,
+      };
+    }
     return invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
       name,
@@ -151,6 +162,162 @@ describe('neo.ask operations', () => {
       askId,
     });
   }
+
+  test('rejects stale edits and approval while returning the current revision on success', async () => {
+    const askId = await openAsk();
+    expect(service.askRecords.get(askId)).toMatchObject({ revision: 0, approvedRevision: 0 });
+    expect(
+      await invoke('neo.ask.edit', { askId, expectedRevision: 0, add: [{ text: 'Extra scope' }] })
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: { revision: 1, approvedRevision: null, approvedAt: null },
+        view: {
+          id: askId,
+          items: expect.arrayContaining([{ id: 'i3', state: 'pending', text: 'Extra scope' }]),
+        },
+      },
+    });
+    for (const [name, input] of [
+      ['neo.ask.edit', { askId, expectedRevision: 0, add: [{ text: 'Stale addition' }] }],
+      ['neo.ask.approve', { askId, expectedRevision: 0 }],
+      ['neo.ask.approve', { askId, expectedRevision: undefined }],
+      [
+        'neo.ask.tick',
+        { askId, expectedRevision: 0, itemId: 'i1', state: 'met', evidence: 'done' },
+      ],
+    ] as const)
+      expect(await invoke(name, input, { source: 'rpc', principal: 'local' })).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('stale_revision') },
+      });
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(3);
+    expect(
+      await invoke(
+        'neo.ask.approve',
+        { askId, expectedRevision: 1 },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true, ask: { revision: 1, approvedRevision: 1 } } });
+    expect(service.askRecords.approve(askId, Date.now(), 0)).toBeNull();
+  });
+
+  test('retains unchanged verified evidence but rejects changed-definition ticks and no-op bumps', async () => {
+    const askId = await openAsk();
+    const item = service.askRecords.get(askId)!.doneItems![0];
+    const tick = {
+      id: item.id,
+      state: 'met' as const,
+      evidence: 'Independent check',
+      metBy: 'daemon' as const,
+    };
+    expect(service.askRecords.tickItem(askId, tick, Date.now(), item, true)).toBe(true);
+    const hash = service.askRecords.revisionPolicy.definitionHash(item);
+    expect(
+      await invoke('neo.ask.edit', { askId, add: [{ text: 'Unrelated scope' }] })
+    ).toMatchObject({
+      value: {
+        ask: {
+          revision: 1,
+          doneItems: [
+            expect.objectContaining({ state: 'met', verifiedDefinitionHash: hash }),
+            expect.anything(),
+            expect.anything(),
+          ],
+        },
+      },
+    });
+    expect(
+      service.askRecords.editItems(
+        askId,
+        { add: [], remove: [], track: [{ itemId: item.id, check: 'coding.pr_merged' }] },
+        Date.now(),
+        1
+      )
+    ).toBe(true);
+    expect(service.askRecords.get(askId)).toMatchObject({
+      revision: 2,
+      doneItems: [
+        expect.objectContaining({ state: 'pending', evidence: null, verifiedDefinitionHash: null }),
+        expect.anything(),
+        expect.anything(),
+      ],
+    });
+    expect(service.askRecords.tickItem(askId, tick, Date.now(), item, true)).toBe(false);
+    expect(service.askRecords.editItems(askId, { add: [], remove: [] }, Date.now(), 1)).toBe(false);
+    const current = service.askRecords.get(askId)!.doneItems![0];
+    service.askRecords.tickItem(askId, tick, Date.now(), current, true);
+    service.askRecords.editItems(
+      askId,
+      { add: [], remove: [], track: [{ itemId: item.id, check: current.check }] },
+      Date.now(),
+      2
+    );
+    expect(service.askRecords.get(askId)?.revision).toBe(2);
+    expect(service.askRecords.get(askId)?.doneItems?.[0]).toMatchObject({
+      state: 'met',
+      verifiedDefinitionHash: service.askRecords.revisionPolicy.definitionHash(current),
+    });
+    service.askRecords.tickItem(askId, { ...tick, metBy: 'neo' }, Date.now(), current, true);
+    expect(service.askRecords.get(askId)?.doneItems?.[0].verifiedDefinitionHash).toBeNull();
+  });
+
+  test('binds human answers to the displayed revision and definition after delivery awaits', async () => {
+    const askId = await openAsk();
+    await invoke('neo.ask.question', {
+      askId,
+      question: 'Did the check pass?',
+      options: ['Yes', 'No'],
+      kind: 'action',
+    });
+    const user: OperationCaller = { source: 'rpc', principal: 'local' };
+    const question = service.askRecords.get(askId)!.doneItems!.at(-1)!;
+    const delivered = mock(async () => {});
+    service.deliverAskAnswer = delivered;
+    await invoke('neo.ask.edit', { askId, add: [{ text: 'New scope' }] });
+    expect(
+      await invoke(
+        'neo.ask.answer',
+        { askId, itemId: question.id, choice: 'Yes', expectedRevision: 0 },
+        user
+      )
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('stale_revision') } });
+    expect(delivered).not.toHaveBeenCalled();
+    service.deliverAskAnswer = async () => {
+      service.askRecords.editItems(
+        askId,
+        {
+          add: [],
+          remove: [],
+          track: [{ itemId: question.id, check: null, watch: ['https://github.com/o/r/pull/7'] }],
+        },
+        Date.now()
+      );
+    };
+    expect(
+      await invoke(
+        'neo.ask.answer',
+        { askId, itemId: question.id, choice: 'Yes', expectedRevision: 1 },
+        user
+      )
+    ).toMatchObject({ value: { ok: false } });
+    expect(
+      service.askRecords.get(askId)?.doneItems?.find((entry) => entry.id === question.id)
+    ).toMatchObject({ state: 'needs_you', verifiedDefinitionHash: null });
+    service.deliverAskAnswer = delivered;
+    expect(
+      await invoke(
+        'neo.ask.answer',
+        { askId, itemId: question.id, choice: 'Yes', expectedRevision: 1 },
+        user
+      )
+    ).toMatchObject({ value: { ok: true } });
+    const answered = service.askRecords
+      .get(askId)!
+      .doneItems!.find((entry) => entry.id === question.id)!;
+    expect(answered.verifiedDefinitionHash).toBe(
+      service.askRecords.revisionPolicy.definitionHash(answered)
+    );
+  });
 
   test('an ask opened in a turn the human sent is approved, so its cards start without Start', async () => {
     const askId = await openAsk();
