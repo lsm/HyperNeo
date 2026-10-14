@@ -2,7 +2,10 @@ import { neoRepoAlias } from './project-route-facts.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import type { PlaceGroup } from '../drivers/types.ts';
+import { existsSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
+import { sep } from 'node:path';
+import type { Place, PlaceGroup } from '../drivers/types.ts';
 import { placeKey } from '../drivers/places.ts';
 import { neoFolderPath } from './folder.ts';
 
@@ -11,15 +14,31 @@ export interface NeoWorkspaceProject {
   title: string;
 }
 
+export function isNeoPlumbingFolder(
+  place: Pick<Place, 'folder' | 'machine' | 'daemon'>,
+  local: {
+    machine: string;
+    neoFolder: string;
+    temp: readonly string[];
+    exists(path: string): boolean;
+  }
+): boolean {
+  const folder = place.folder;
+  if (!folder || place.daemon || place.machine !== local.machine) return false;
+  return (
+    folder === local.neoFolder ||
+    folder.startsWith(`${local.neoFolder}${sep}`) ||
+    local.temp.includes(folder) ||
+    !local.exists(folder)
+  );
+}
+
 export function planNeoWorkspaceProjects(
   groups: readonly PlaceGroup[],
-  rootFolder?: string
+  plumbing: (place: Place) => boolean = () => false
 ): NeoWorkspaceProject[] {
   return groups
-    .filter(
-      (group) =>
-        (group.place.folder || group.place.toolProject) && group.place.folder !== rootFolder
-    )
+    .filter((group) => (group.place.folder || group.place.toolProject) && !plumbing(group.place))
     .map((group) => {
       const workspaces = group.workspaces ?? [group.place];
       return {
@@ -88,7 +107,15 @@ export function persistNeoWorkspaceProjects(
 export const mirrorNeoWorkspaceProjects = (superpipe({})('neo-project-mirror') as PipelineAPI)
   .input(['db', 'groups'])
   .pipe(
-    (groups: readonly PlaceGroup[]) => planNeoWorkspaceProjects(groups, neoFolderPath()),
+    (groups: readonly PlaceGroup[]) => {
+      const local = {
+        machine: hostname(),
+        neoFolder: neoFolderPath(),
+        temp: [...new Set(['/tmp', '/private/tmp', tmpdir()])],
+        exists: existsSync,
+      };
+      return planNeoWorkspaceProjects(groups, (place) => isNeoPlumbingFolder(place, local));
+    },
     'groups',
     'projects'
   )

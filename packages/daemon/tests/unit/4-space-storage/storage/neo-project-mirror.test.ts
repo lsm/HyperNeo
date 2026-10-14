@@ -6,7 +6,11 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import { mirrorNeoWorkspaceProjects } from '../../../../src/lib/neo/project-mirror.ts';
+import {
+  isNeoPlumbingFolder,
+  mirrorNeoWorkspaceProjects,
+  planNeoWorkspaceProjects,
+} from '../../../../src/lib/neo/project-mirror.ts';
 import { mergePlaceGroups } from '../../../../src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
 
@@ -150,5 +154,54 @@ describe('runMigration361', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('isNeoPlumbingFolder', () => {
+  const local = {
+    machine: 'laptop',
+    neoFolder: '/home/fictional/.hyperneo/Neo',
+    temp: ['/tmp', '/private/tmp'],
+    exists: (path: string) => path !== '/home/fictional/gone',
+  };
+
+  test("skips Neo's own runtime folders, temp folders and folders that are gone on this machine", () => {
+    for (const folder of [
+      '/home/fictional/.hyperneo/Neo',
+      '/home/fictional/.hyperneo/Neo/.coordinators/neo-1',
+      '/private/tmp',
+      '/home/fictional/gone',
+    ])
+      expect(isNeoPlumbingFolder({ folder, machine: 'laptop' }, local)).toBe(true);
+  });
+
+  test('keeps real folders here and never judges another machine', () => {
+    expect(isNeoPlumbingFolder({ folder: '/home/fictional/tmp', machine: 'laptop' }, local)).toBe(
+      false
+    );
+    expect(
+      isNeoPlumbingFolder(
+        { folder: '/home/fictional/.hyperneo/Neo-site', machine: 'laptop' },
+        local
+      )
+    ).toBe(false);
+    expect(isNeoPlumbingFolder({ folder: '/home/fictional/gone', machine: 'imac' }, local)).toBe(
+      false
+    );
+    expect(isNeoPlumbingFolder({ folder: '/tmp', machine: 'laptop', daemon: 'tts' }, local)).toBe(
+      false
+    );
+  });
+});
+
+describe('planNeoWorkspaceProjects', () => {
+  test('mints no project for a plumbing folder', () => {
+    const plan = planNeoWorkspaceProjects(
+      [workspace('/repo'), workspace('/home/fictional/.hyperneo/Neo/.coordinators/neo-1')],
+      (place) => place.folder?.includes('.coordinators') ?? false
+    );
+    expect(
+      plan.map((project) => project.aliases.find((alias) => alias.startsWith('folder:')))
+    ).toEqual(['folder:laptop\u0000/repo']);
   });
 });
