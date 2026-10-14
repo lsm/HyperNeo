@@ -2197,7 +2197,7 @@ describe('neo.ask operations', () => {
         );
         expect(service.readRefStates).toHaveBeenCalledTimes(1);
         expect(delivered).toHaveBeenCalledTimes(1);
-        expect(delivered.mock.calls[0]?.[2]).toContain('withdrew obsolete PR questions');
+        expect(delivered.mock.calls[0]?.[2]).toContain('withdrew questions');
       }
     );
 
@@ -2721,6 +2721,71 @@ describe('neo.ask operations', () => {
     expect(
       await invoke('neo.ask.edit', { askId, add: [{ text: 'x' }] }, { ...neo, sessionId: 'other' })
     ).toMatchObject({ value: { ok: false } });
+  });
+
+  test('a question whose card reason is gone is withdrawn as no longer needed, never answered', async () => {
+    const askId = await openAsk();
+    const card = (await propose('slice-6', askId)).value!.work!.id;
+    const question = {
+      askId,
+      question: 'Slice 6 check can’t start: its target is archived. Retarget it?',
+      decides: 'slice 6 target',
+      options: ['Retarget', 'Drop it'],
+    };
+    expect(
+      await invoke('neo.ask.question', {
+        ...question,
+        because: { card: 'other-card', reason: 'target_unavailable' },
+      })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('because_card_unknown') },
+    });
+    await invoke('neo.ask.question', { ...question, because: { card, reason: 'card_failed' } });
+    await invoke('neo.ask.question', {
+      ...question,
+      question: 'Slice 6 can’t reach its archived target. Retarget it?',
+      because: { card, reason: 'target_unavailable' },
+    });
+    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
+      text: 'Slice 6 can’t reach its archived target. Retarget it?',
+      because: { card, reason: 'target_unavailable' },
+    });
+    const delivered = mock(async (..._args: unknown[]) => {});
+    const internals = service as unknown as {
+      deliverToOrigin: typeof delivered;
+      resolveWorkTarget: (id: string) => { accepted: boolean };
+    };
+    internals.deliverToOrigin = delivered;
+    internals.resolveWorkTarget = () => ({ accepted: false });
+    await service.clearStaleNeedsYou();
+    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
+      id: 'i3',
+      state: 'needs_you',
+      removed: false,
+    });
+    internals.resolveWorkTarget = () => ({ accepted: true });
+    await service.clearStaleNeedsYou();
+    await service.clearStaleNeedsYou();
+    const ask = service.askRecords.get(askId)!;
+    expect(ask.doneItems?.map((item) => [item.id, item.state, item.removed])).toEqual([
+      ['i1', 'pending', false],
+      ['i2', 'pending', false],
+      ['i3', 'pending', true],
+    ]);
+    expect(ask.doneItems?.[2]?.removedReason).toBe(
+      `No longer needed: card ${card} can reach its target again`
+    );
+    expect(ask.status).toBe('open');
+    expect(delivered).toHaveBeenCalledTimes(1);
+    expect(
+      await invoke(
+        'neo.ask.answer',
+        { askId, itemId: 'i3', choice: 'Retarget' },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('question_withdrawn') },
+    });
   });
 
   test('a folded question keeps its wording and the decision it asks', async () => {
@@ -3721,6 +3786,7 @@ describe('planNeoAskRestate', () => {
       kind: 'decision',
       options: ['Yes', 'No'],
       decides: 'slice 6 target',
+      because: null,
     });
     expect(
       planNeoAskRestate({ ...asked, decides: undefined }, { question: 'x', options: ['a', 'b'] })

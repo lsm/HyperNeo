@@ -10,6 +10,7 @@ import {
   planNeoAskResume,
   planNeoNeedsYou,
   planNeoNeedsYouCleared,
+  planNeoQuestionsWithdrawn,
 } from '../../../../src/lib/neo/needs-you.ts';
 
 const item = (id: string, state: NeoAskItem['state'], removed = false): NeoAskItem => ({
@@ -302,5 +303,49 @@ describe('neoAskTickedNote', () => {
     );
     const done = { ...open, doneItems: [item('i1', 'met')] };
     expect(neoAskTickedNote(done, item('i1', 'met'))).toContain('settle the ask achieved');
+  });
+});
+
+describe('planNeoQuestionsWithdrawn', () => {
+  const asked = (reason: 'target_unavailable' | 'card_waits' | 'card_failed'): NeoAskItem => ({
+    ...item('i3', 'needs_you'),
+    decision: true,
+    because: { card: 'c1', reason },
+  });
+  const card = (status: string, extra: { needsYou?: boolean; targetReady?: boolean } = {}) =>
+    new Map([['c1', { status, needsYou: false, stalled: false, ...extra }]]);
+
+  test.each([
+    [
+      'target_unavailable',
+      card('failed', { targetReady: true }),
+      'card c1 can reach its target again',
+    ],
+    ['target_unavailable', card('failed', { targetReady: false }), null],
+    ['card_waits', card('queued', { needsYou: false }), 'card c1 no longer waits on the human'],
+    ['card_waits', card('queued', { needsYou: true }), null],
+    ['card_failed', card('running'), 'card c1 is running, not failed'],
+    ['card_failed', card('failed', { targetReady: true }), null],
+    ['card_failed', new Map(), null],
+  ] as const)('%s → %s', (reason, cards, why) => {
+    expect(planNeoQuestionsWithdrawn({ doneItems: [asked(reason)] }, cards)).toEqual(
+      why ? [{ id: 'i3', why }] : []
+    );
+  });
+
+  test('leaves questions without a reason, answered and removed ones alone', () => {
+    const cards = card('running', { targetReady: true });
+    expect(
+      planNeoQuestionsWithdrawn(
+        {
+          doneItems: [
+            { ...item('i1', 'needs_you'), decision: true },
+            { ...asked('card_failed'), id: 'i2', state: 'met' },
+            { ...asked('card_failed'), id: 'i4', removed: true },
+          ],
+        },
+        cards
+      )
+    ).toEqual([]);
   });
 });

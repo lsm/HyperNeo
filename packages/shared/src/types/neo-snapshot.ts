@@ -114,7 +114,19 @@ export interface NeoAskItem {
   kind?: NeoAskItemKind;
   question?: string;
   decides?: string;
+  because?: NeoAskQuestionBecause;
   watch?: string[];
+}
+
+export const NEO_ASK_QUESTION_REASONS = [
+  'target_unavailable',
+  'card_waits',
+  'card_failed',
+] as const;
+
+export interface NeoAskQuestionBecause {
+  card: string;
+  reason: (typeof NEO_ASK_QUESTION_REASONS)[number];
 }
 
 export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';

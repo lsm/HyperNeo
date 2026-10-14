@@ -4,6 +4,7 @@ import {
   NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
   type NeoAskItem,
+  type NeoAskQuestionBecause,
   type NeoAskStatus,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
@@ -44,6 +45,7 @@ type NeoAskItemRow = Omit<
   | 'kind'
   | 'question'
   | 'decides'
+  | 'because'
   | 'watch'
 > & {
   askId: string;
@@ -56,6 +58,7 @@ type NeoAskItemRow = Omit<
   kind: NeoAskItem['kind'] | null;
   question: string | null;
   decides: string | null;
+  because: string | null;
   watch: string | null;
 };
 
@@ -63,7 +66,7 @@ const watchJson = (item: Pick<NeoAskItem, 'watch'>) =>
   item.watch?.length ? JSON.stringify(item.watch) : null;
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  delivered_by AS deliveredBy, verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, removed_reason AS removedReason, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, decides, watch`;
+  delivered_by AS deliveredBy, verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, removed_reason AS removedReason, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, decides, because, watch`;
 
 export interface NeoAskOwner {
   projectId: string;
@@ -265,19 +268,21 @@ export class NeoAskRepository {
       kind: NeoAskItem['kind'];
       options: string[];
       decides: string;
+      because?: NeoAskQuestionBecause | null;
     },
     at: number
   ): boolean {
     const changed = this.db.transaction(() => {
       const restated = this.db
         .prepare(`UPDATE neo_ask_items SET text = ?, question = ?, kind = ?, options = ?, decides = ?,
-          updated_at = ? WHERE ask_id = ? AND id = ? AND removed = 0 AND state = 'needs_you'`)
+          because = ?, updated_at = ? WHERE ask_id = ? AND id = ? AND removed = 0 AND state = 'needs_you'`)
         .run(
           item.text,
           item.question,
           item.kind ?? 'decision',
           JSON.stringify(item.options),
           item.decides,
+          item.because ? JSON.stringify(item.because) : null,
           at,
           askId,
           item.id
@@ -463,9 +468,9 @@ export class NeoAskRepository {
       if (!closed || !kept) throw new Error('neo-ask-fold-lost');
       const copy = this.db.prepare(`INSERT INTO neo_ask_items
         (ask_id, id, position, text, state, evidence, check_kind, met_by, removed, added_at,
-         updated_at, options, decision, action, wait_card, kind, question, decides)
+         updated_at, options, decision, action, wait_card, kind, question, decides, because)
         SELECT ?, ?, ?, text, state, evidence, check_kind, met_by, 0, ?, ?, options, decision,
-               action, wait_card, kind, question, decides
+               action, wait_card, kind, question, decides, because
           FROM neo_ask_items WHERE ask_id = ? AND id = ?`);
       for (const move of moves)
         copy.run(target.id, move.id, move.position, at, at, source.id, move.from);
@@ -601,6 +606,7 @@ export class NeoAskRepository {
       kind?: NeoAskItem['kind'];
       question?: string;
       decides?: string;
+      because?: NeoAskQuestionBecause;
       options?: readonly string[];
     } | null = null,
     decided = false
@@ -627,8 +633,8 @@ export class NeoAskRepository {
         decision &&
         this.db
           .prepare(`INSERT INTO neo_ask_items
-            (ask_id, id, position, text, state, evidence, decision, action, kind, question, decides, options, added_at, updated_at)
-            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
+            (ask_id, id, position, text, state, evidence, decision, action, kind, question, decides, because, options, added_at, updated_at)
+            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
           .run(
             expected.id,
             decision.id,
@@ -639,6 +645,7 @@ export class NeoAskRepository {
             decision.kind ?? 'decision',
             decision.question ?? null,
             decision.decides ?? null,
+            decision.because ? JSON.stringify(decision.because) : null,
             decision.options?.length ? JSON.stringify(decision.options) : null,
             now,
             now
@@ -723,6 +730,7 @@ export class NeoAskRepository {
             kind,
             question,
             decides,
+            because,
             watch,
             ...item
           }) => ({
@@ -736,6 +744,7 @@ export class NeoAskRepository {
             ...(kind ? { kind } : {}),
             ...(question ? { question } : {}),
             ...(decides ? { decides } : {}),
+            ...(because ? { because: JSON.parse(because) as NeoAskQuestionBecause } : {}),
             ...(watch ? { watch: JSON.parse(watch) as string[] } : {}),
           })
         ),

@@ -93,7 +93,12 @@ export function neoDaemonTickPath(
   return NEO_REF_NAMED.test(item.text) && NEO_REF_SETTLES.test(item.text) ? 'needs_watch' : null;
 }
 
-export type NeoAskCardWait = { status: string; needsYou: boolean; stalled: boolean };
+export type NeoAskCardWait = {
+  status: string;
+  needsYou: boolean;
+  stalled: boolean;
+  targetReady?: boolean;
+};
 
 function cardWaitsOnHuman(card: NeoAskCardWait | undefined): boolean {
   return card?.status === 'proposed' || (card?.status === 'queued' && card.needsYou);
@@ -127,6 +132,29 @@ export function planNeoNeedsYouCleared(
         : [{ id: item.id, why: `card ${item.waitCard} no longer waits on the human` }];
     if (item.kind || item.options?.length) return [];
     const why = neoUnkindedItemCleared(ask, own, now);
+    return why ? [{ id: item.id, why }] : [];
+  });
+}
+
+function questionReasonGone(
+  because: NonNullable<NeoAskItem['because']>,
+  card: NeoAskCardWait | undefined
+): string | null {
+  if (!card) return null;
+  if (because.reason === 'target_unavailable')
+    return card.targetReady ? `card ${because.card} can reach its target again` : null;
+  if (because.reason === 'card_waits')
+    return cardWaitsOnHuman(card) ? null : `card ${because.card} no longer waits on the human`;
+  return card.status === 'failed' ? null : `card ${because.card} is ${card.status}, not failed`;
+}
+
+export function planNeoQuestionsWithdrawn(
+  ask: Pick<NeoAsk, 'doneItems'>,
+  cards: ReadonlyMap<string, NeoAskCardWait>
+): { id: string; why: string }[] {
+  return (ask.doneItems ?? []).flatMap((item) => {
+    if (item.removed || item.state !== 'needs_you' || !item.because) return [];
+    const why = questionReasonGone(item.because, cards.get(item.because.card));
     return why ? [{ id: item.id, why }] : [];
   });
 }

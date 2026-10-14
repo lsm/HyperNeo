@@ -312,6 +312,7 @@ import {
   neoResumeWhy,
   planNeoNeedsYou,
   planNeoNeedsYouCleared,
+  planNeoQuestionsWithdrawn,
 } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
@@ -2635,15 +2636,23 @@ export class NeoService {
                     status: work.status,
                     needsYou: this.driverTargets.readNeedsYouSince(id) != null,
                     stalled: this.isContinueStalled(id),
+                    targetReady: this.resolveWorkTarget(id).accepted,
                   },
                 ] as const,
               ]
             : [];
         })
       );
-      const cleared = planNeoNeedsYouCleared(ask, cards, Date.now());
+      const withdrawn = planNeoQuestionsWithdrawn(ask, cards);
+      if (withdrawn.length)
+        await this.wakeForClearedNeedsYou(ask, withdrawn, true).catch((error) =>
+          this.log.warn('Obsolete question withdrawal pending', error)
+        );
+      const current = withdrawn.length ? this.askRecords.get(askId) : ask;
+      if (!current || !isNeoAskLive(current)) continue;
+      const cleared = planNeoNeedsYouCleared(current, cards, Date.now());
       if (cleared.length)
-        await this.wakeForClearedNeedsYou(ask, cleared).catch((error) =>
+        await this.wakeForClearedNeedsYou(current, cleared).catch((error) =>
           this.log.warn('Stale needs_you note pending', error)
         );
     }
@@ -2667,12 +2676,14 @@ export class NeoService {
         now,
         ask.doneItems?.find((item) => item.id === entry.id)
       );
-    if (withdrawQuestions) {
-      const remove = cleared
-        .filter((entry) => ask.doneItems?.some((item) => item.id === entry.id && item.decision))
-        .map((entry) => entry.id);
-      if (remove.length) this.askRecords.editItems(ask.id, { add: [], remove }, now);
-    }
+    if (withdrawQuestions)
+      for (const entry of cleared)
+        if (ask.doneItems?.some((item) => item.id === entry.id && item.decision))
+          this.askRecords.editItems(
+            ask.id,
+            { add: [], remove: [entry.id], removedReason: `No longer needed: ${entry.why}` },
+            now
+          );
     const ticked = this.askRecords.get(ask.id);
     if (ticked && neoAskReopensAfterClear(ticked)) this.askRecords.reopen(ticked);
     else if (ticked) writeNeoAskTickStatus(this.askRecords, ticked, planNeoAskTickStatus(ticked));
@@ -2681,7 +2692,7 @@ export class NeoService {
       ask.originSessionId,
       `neo-ask-cleared:${ask.id}:${cleared.map((entry) => entry.id).join(',')}:${now}`,
       withdrawQuestions
-        ? `The daemon withdrew obsolete PR questions on ask ${ask.id}. Standalone questions were removed; original outcome items remain pending.\n${cleared.map((entry) => `${entry.id}: ${entry.why}`).join('\n')}`
+        ? `The daemon withdrew questions on ask ${ask.id} whose reason is gone; the human sees them as no longer needed. Standalone questions were removed; original outcome items remain pending.\n${cleared.map((entry) => `${entry.id}: ${entry.why}`).join('\n')}`
         : neoNeedsYouClearedNote(ask, cleared, ask.doneItems ?? []),
       neoAskParent(ask)
     );
