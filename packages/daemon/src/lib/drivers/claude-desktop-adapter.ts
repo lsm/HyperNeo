@@ -16,6 +16,7 @@ import type {
   Result,
   StartRequest,
   WorkAdapter,
+  WorkDelivery,
   WorkDetail,
   WorkExchangeEntry,
   WorkInput,
@@ -353,6 +354,7 @@ export interface ClaudeTranscriptState {
 
 interface ClaudeTranscriptEntry {
   type?: unknown;
+  isSidechain?: unknown;
   timestamp?: unknown;
   isMeta?: unknown;
   turnOrigin?: unknown;
@@ -508,17 +510,21 @@ export function describeClaudeSession(
 }
 
 const runClaudeDesktopStatus = (superpipe({})('claude-desktop-work-status') as PipelineAPI)
-  .input(['ref', 'deps', 'cache', 'since'])
+  .input(['ref', 'deps', 'cache', 'since', 'receipt'])
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
   .pipe(requireClaudeRecord, ['ref', 'records'], 'result:outcome')
+  .pipe((record: ClaudeDesktopRecord) => record, 'outcome', 'record')
   .pipe(loadLiveClaudeSessions, ['deps', 'records'], 'liveSessions')
-  .pipe(readClaudeTranscript, ['outcome', 'deps', 'since'], 'transcript')
-  .pipe(describeClaudeSession, ['outcome', 'liveSessions', 'transcript', 'deps'], 'outcome')
+  .pipe(readClaudeTranscript, ['record', 'deps', 'since'], 'transcript')
+  .pipe(readClaudeInputEvidence, ['record', 'deps', 'receipt'], 'evidence')
+  .pipe(describeClaudeSession, ['record', 'liveSessions', 'transcript', 'deps'], 'outcome')
+  .pipe(withClaudeInputEvidence, ['outcome', 'evidence'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   deps: ClaudeDesktopAdapterDeps,
   cache: ClaudeRecordCache,
-  since: number | undefined
+  since: number | undefined,
+  receipt: ClaudeReceipt | undefined
 ) => Promise<Result<WorkDetail>>;
 
 export function requireOpenClaudeRecord(
@@ -535,9 +541,126 @@ export function claudeRelayPrompt(name: string, message: string): string {
   return fillPrompt(CLAUDE_DESKTOP_RELAY, { name: JSON.stringify(name), message });
 }
 
-export function transcriptHasRelayedMessage(lines: readonly string[], message: string): boolean {
-  const opening = JSON.stringify(message.trim().split('\n')[0].slice(0, 200)).slice(1, -1);
-  return lines.some((line) => line.includes('cross-session-message') && line.includes(opening));
+type ClaudeReceipt = NonNullable<WorkDelivery['receipt']>;
+type ClaudeInputEvidence = NonNullable<WorkDetail['inputEvidence']>;
+
+const messageOpening = (message: string) => message.trim().split('\n')[0].slice(0, 200);
+
+function parseClaudeEntry(line: string): (ClaudeTranscriptEntry & { uuid?: unknown }) | null {
+  try {
+    const entry = JSON.parse(line) as (ClaudeTranscriptEntry & { uuid?: unknown }) | null;
+    return entry && typeof entry === 'object' ? entry : null;
+  } catch {
+    return null;
+  }
+}
+
+function claudeReceipt(line: string | undefined, executionId: string): ClaudeReceipt | null {
+  const inputId = line ? parseClaudeEntry(line)?.uuid : undefined;
+  return typeof inputId === 'string' && inputId ? { executionId, inputId } : null;
+}
+
+function findRelayedMessage(lines: readonly string[], message: string): string | undefined {
+  const opening = JSON.stringify(messageOpening(message)).slice(1, -1);
+  return lines.find((line) => line.includes('cross-session-message') && line.includes(opening));
+}
+
+export function claudeRelayDelivery(
+  lines: readonly string[],
+  message: string,
+  executionId: string
+): WorkDelivery {
+  const line = findRelayedMessage(lines, message);
+  const receipt = claudeReceipt(line, executionId);
+  return { delivered: line !== undefined, ...(receipt ? { receipt } : {}) };
+}
+
+export function claudeResumeReceipt(
+  lines: readonly string[],
+  message: string,
+  executionId: string
+): ClaudeReceipt | null {
+  const opening = messageOpening(message);
+  const line = lines.find((candidate) => {
+    const entry = parseClaudeEntry(candidate);
+    return !!entry && entry.type === 'user' && !!claudeInputText(entry)?.includes(opening);
+  });
+  return claudeReceipt(line, executionId);
+}
+
+function claudeTurnEnded(entry: ClaudeTranscriptEntry): boolean {
+  const stop = (entry.message as { stop_reason?: unknown } | undefined)?.stop_reason;
+  return typeof stop === 'string' && stop !== 'tool_use';
+}
+
+export function claudeInputEvidence(
+  lines: readonly string[],
+  receipt: ClaudeReceipt,
+  cliSessionId: string | null | undefined
+): ClaudeInputEvidence {
+  const unavailable: ClaudeInputEvidence = { receipt, state: 'unavailable' };
+  if (receipt.executionId !== cliSessionId) return unavailable;
+  const start = lines.findIndex((line) => parseClaudeEntry(line)?.uuid === receipt.inputId);
+  const input = start < 0 ? null : parseClaudeEntry(lines[start]);
+  const text = input ? claudeInputText(input) : null;
+  const first =
+    input && text !== null
+      ? exchangeEntry(workEntryTime(input.timestamp), 'user', text || '[Non-text input]', -Infinity)
+      : null;
+  if (!first) return unavailable;
+  const replies: WorkExchangeEntry[] = [];
+  const window = lines.slice(start + 1).filter((line) => line.trim());
+  let ended = false;
+  for (const [index, line] of window.entries()) {
+    const entry = parseClaudeEntry(line);
+    if (!entry) {
+      if (index === window.length - 1) break;
+      return unavailable;
+    }
+    if (entry.isSidechain === true || entry.type === 'attachment') continue;
+    if (claudeInputText(entry) !== null) {
+      ended = true;
+      break;
+    }
+    if (entry.type === 'assistant') ended = claudeTurnEnded(entry);
+    const said = assistantText(line);
+    const reply = said
+      ? exchangeEntry(workEntryTime(entry.timestamp), 'agent', said, -Infinity)
+      : null;
+    if (reply) replies.push(reply);
+  }
+  if (!ended) return { receipt, state: 'pending' };
+  return {
+    receipt,
+    state: 'observed',
+    exchange: [first, ...replies.slice(0, 39)],
+    exchangeCut: replies.length > 39,
+  };
+}
+
+export async function readClaudeInputEvidence(
+  record: ClaudeDesktopRecord,
+  deps: ClaudeDesktopAdapterDeps,
+  receipt: ClaudeReceipt | undefined
+): Promise<ClaudeInputEvidence | null> {
+  if (!receipt) return null;
+  const path = claudeTranscriptPath(deps.projectsDir, record);
+  if (!path) return { receipt, state: 'unavailable' };
+  try {
+    const { lines } = await readTailLines(path, TRANSCRIPT_TAIL_BYTES);
+    return claudeInputEvidence(lines, receipt, record.cliSessionId);
+  } catch {
+    return { receipt, state: 'unavailable' };
+  }
+}
+
+export function withClaudeInputEvidence(
+  outcome: Result<WorkDetail>,
+  evidence: ClaudeInputEvidence | null
+): Result<WorkDetail> {
+  return outcome.ok && evidence
+    ? { ok: true, value: { ...outcome.value, inputEvidence: evidence } }
+    : outcome;
 }
 
 async function transcriptSize(path: string | null): Promise<number> {
@@ -580,11 +703,11 @@ export function claudeCliFailure(output: { stdout?: string; stderr?: string }, f
 }
 
 async function relayToLiveSession(
-  record: ClaudeDesktopRecord,
+  record: ClaudeDesktopRecord & { cliSessionId: string },
   name: string,
   message: string,
   deps: ClaudeDesktopAdapterDeps
-): Promise<Result<{ delivered: boolean }>> {
+): Promise<Result<WorkDelivery>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const path = claudeTranscriptPath(deps.projectsDir, record);
   const before = await transcriptSize(path);
@@ -618,7 +741,7 @@ async function relayToLiveSession(
     ]);
     if (code !== 0) return claudeCliFailure({ stdout, stderr }, `The relay exited with ${code}.`);
     const appended = path ? await readLinesAfter(path, before).catch(() => []) : [];
-    return { ok: true, value: { delivered: transcriptHasRelayedMessage(appended, message) } };
+    return { ok: true, value: claudeRelayDelivery(appended, message, record.cliSessionId) };
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   } finally {
@@ -631,7 +754,7 @@ export async function sendClaudeMessage(
   liveSessions: readonly ClaudeLiveSession[],
   message: string,
   deps: ClaudeDesktopAdapterDeps
-): Promise<Result<{ delivered: boolean }>> {
+): Promise<Result<WorkDelivery>> {
   const live = liveSessions.find((session) => session.sessionId === record.cliSessionId);
   if (live) {
     const name = live.name;
@@ -647,7 +770,7 @@ export async function resumeClaudeSession(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   message: string,
   deps: ClaudeDesktopAdapterDeps
-): Promise<Result<{ delivered: boolean }>> {
+): Promise<Result<WorkDelivery>> {
   const folder = record.cwd ?? record.originCwd;
   if (!folder || !deps.folderExists(folder)) {
     return reject(
@@ -656,6 +779,8 @@ export async function resumeClaudeSession(
     );
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const path = claudeTranscriptPath(deps.projectsDir, record);
+  const before = await transcriptSize(path);
   try {
     const proc = deps.spawn(['claude', '-p', '--resume', record.cliSessionId, '--', message], {
       cwd: folder,
@@ -671,8 +796,14 @@ export async function resumeClaudeSession(
         timer = setTimeout(() => resolve(null), RESUME_SETTLE_MS);
       }),
     ]);
-    if (early === null) return { ok: true, value: { delivered: false } };
-    if (early === 0) return { ok: true, value: { delivered: true } };
+    if (early === null || early === 0) {
+      const appended = path ? await readLinesAfter(path, before).catch(() => []) : [];
+      const receipt = claudeResumeReceipt(appended, message, record.cliSessionId);
+      return {
+        ok: true,
+        value: receipt ? { delivered: true, receipt } : { delivered: early === 0 },
+      };
+    }
     return claudeCliFailure(
       { stdout: await stdout, stderr: await stderr },
       `claude --resume exited with ${early}.`
@@ -698,7 +829,7 @@ const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as Pipel
   message: string,
   deps: ClaudeDesktopAdapterDeps,
   cache: ClaudeRecordCache
-) => Promise<Result<{ delivered: boolean }>>;
+) => Promise<Result<WorkDelivery>>;
 
 function admitClaudeStartConfiguration(request: StartRequest): Gate<StartRequest> {
   const field =
@@ -878,7 +1009,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
       ),
     start: (request) => runClaudeDesktopStart(request, deps),
     send: (ref, message) => runClaudeDesktopSend(ref, message, deps, cache),
-    status: (ref, since) => runClaudeDesktopStatus(ref, reused, cache, since),
+    status: (ref, since, receipt) => runClaudeDesktopStatus(ref, reused, cache, since, receipt),
     archive: (ref, admit) => archiveClaudeSession(ref, admit, deps),
   };
 }
