@@ -220,7 +220,12 @@ describe('Neo authored publication state', () => {
     await waitFor(() => expect(stateText()).toContain('ready/'));
     io.request.mockResolvedValue(page(1, 0));
     await changed();
-    await waitFor(() => expect(requests()).toHaveLength(2));
+    await waitFor(() => expect(requests()).toHaveLength(3));
+    expect(requests()[2][1].input).toMatchObject({
+      after: 0,
+      before: Number.MAX_SAFE_INTEGER,
+      limit: 50,
+    });
     expect(stateText()).toBe(`ready/${id}/1/false/false`);
     expect(screen.getByTestId('items').textContent).toBe('Reply 1');
   });
