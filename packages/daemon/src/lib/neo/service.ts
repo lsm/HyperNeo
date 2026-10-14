@@ -2,6 +2,13 @@ import { runNeoReadWork } from './read-work.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-refusal-repository.ts';
 import { reconcileNeoWorkRefusal } from './work-refusal.ts';
+import {
+  NeoCrossProjectRepository,
+  neoCrossProjectReplyId,
+  type NeoCrossProjectGroup,
+  type NeoCrossProjectMember,
+} from '../../storage/repositories/neo-cross-project-repository.ts';
+import { neoForwardedText } from './ask-forward-operation.ts';
 import { neoOutcomeCheckPolicy } from './outcome-check-policy.ts';
 import { neoPrQuestionWithdrawalPolicy } from './packs/coding/question-withdrawal-policy.ts';
 import {
@@ -451,6 +458,7 @@ export class NeoService {
       readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
     );
   private readonly watchedAskTopics = new Set<string>();
+  readonly crossProjects: NeoCrossProjectRepository;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
@@ -718,6 +726,7 @@ export class NeoService {
       }),
       createLifeAdminPack(),
     ];
+    this.crossProjects = new NeoCrossProjectRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), this.notifyChanged);
     this.consultationWaiters = new NeoConsultationWaiterRepository(
       db.getDatabase(),
@@ -790,6 +799,8 @@ export class NeoService {
         return { accepted: true, created: false, publication };
       },
       append: (input, consultationId) => {
+        const problem = this.crossProjects.publicationProblem(input, consultationId);
+        if (problem) return { accepted: false, reason: problem };
         if (!consultationId) return this.appendPublication(input);
         const receipt = publicationSettlements.settleWithPublication({
           consultationId,
@@ -987,7 +998,9 @@ export class NeoService {
       standingRules: neoStandingRules(this.db.getGlobalSettings?.().neo),
       stored: !!this.publications.get(input.conversationId, input.publicationId),
     });
-    const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
+    const receipt = this.crossProjects.append(input, undefined, () =>
+      this.publications.append(withNeoSavedRules(input, plan.rules))
+    );
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
     if (receipt.accepted && receipt.created && !input.interim)
       this.spendWaitingReminders(input.producerInput);
@@ -2607,12 +2620,48 @@ export class NeoService {
     );
   }
 
+  humanAskText(ask: NeoAskOrigin): string | null {
+    const root = this.repo.getBindingForProject(null)?.sessionId;
+    return root ? neoForwardedText(this.asks.find(root.slice(4), ask.messageId), ask) : null;
+  }
+
+  private readonly returnCrossProjectGroup = (
+    superpipe({})('neo-cross-project-return') as PipelineAPI
+  )
+    .input(['group'])
+    .pipe((group: NeoCrossProjectGroup) => this.crossProjects.members(group), 'group', 'members')
+    .pipe(
+      (group: NeoCrossProjectGroup, members: NeoCrossProjectMember[]) =>
+        members.length === (JSON.parse(group.partsJson) as unknown[]).length &&
+        members.every((member) => ['reported', 'failed', 'cancelled'].includes(member.status))
+          ? { value: group }
+          : { reason: null },
+      ['group', 'members'],
+      'result:return'
+    )
+    .pipe(
+      (group: NeoCrossProjectGroup, members: NeoCrossProjectMember[]) =>
+        this.deliver(
+          group.rootSessionId,
+          neoCrossProjectReplyId(group),
+          `All assigned cross-project owners have returned. Publish one combined answer for this original human ask, covering every reported, failed or cancelled part honestly. Do not consult or dispatch the parts again.\n${JSON.stringify({ humanMessageId: group.askMessageId, parts: JSON.parse(group.partsJson), results: members })}`,
+          group.rootSessionId,
+          { sessionId: group.askSessionId, messageId: group.askMessageId }
+        ),
+      ['return', 'members']
+    )
+    .endAsync() as (group: NeoCrossProjectGroup) => Promise<unknown>;
+
   async recoverConsultations(): Promise<void> {
     for (const item of this.consultations.unsettled()) {
       await this.syncConsultation(item.id).catch((error) =>
         this.log.warn('Consultation recovery pending', error)
       );
     }
+    for (const group of this.crossProjects.pending())
+      await this.returnCrossProjectGroup(group).catch((error) =>
+        this.log.warn('Cross-project return recovery pending', error)
+      );
     for (const projectId of this.consultationWaiters.queuedProjects())
       await this.dispatchConsultationWaiter(projectId).catch((error) =>
         this.log.warn('Consultation admission pending', error)
@@ -2640,7 +2689,11 @@ export class NeoService {
         );
       } else {
         await this.open(item.projectId);
-        const content = neoConsultationRequestContent(item);
+        const content = neoConsultationRequestContent(
+          item,
+          !!this.crossProjects.forReceipt(item.id),
+          this.crossProjects.forReceipt(item.id)?.askMessageId
+        );
         await this.deliver(
           item.sessionId,
           requestId,
@@ -2652,6 +2705,13 @@ export class NeoService {
       }
     }
     if (!item) return;
+    const group = this.crossProjects.forReceipt(id);
+    if (group) {
+      await this.returnCrossProjectGroup(group);
+      this.consultations.returned(id);
+      await this.dispatchConsultationWaiter(item.projectId);
+      return;
+    }
     const association = this.consultations.getPublication(id);
     const captured = this.consultations.getPublicationInput(id);
     const publication = association

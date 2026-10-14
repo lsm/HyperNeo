@@ -257,9 +257,12 @@ export function loggedNeoRoute(
           ? {
               projectId: earlier.projectId,
               sessionId: earlier.targetSessionId,
-              signal: earlier.signal.startsWith('classifier')
-                ? (earlier.signal as NeoRouteSignal)
-                : 'embedding',
+              signal:
+                earlier.signal === 'facts'
+                  ? 'facts'
+                  : earlier.signal.startsWith('classifier')
+                    ? (earlier.signal as NeoRouteSignal)
+                    : 'embedding',
               confidence: earlier.confidence ?? 0,
             }
           : null,

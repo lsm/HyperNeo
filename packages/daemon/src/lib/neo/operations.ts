@@ -1,3 +1,5 @@
+import { readNeoProjectFacts } from './project-route-facts.ts';
+import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
 import { existsSync } from 'node:fs';
 import { requireNeoReadOperation } from './read-work.ts';
 import {
@@ -222,6 +224,9 @@ const SnapshotOk = z.object({
   ok: z.literal(true),
   sessionId: z.string().nullable(),
   projects: z.array(Project),
+  projectFacts: z
+    .array(z.object({ reference: z.string(), projectId: z.string().nullable().optional() }))
+    .optional(),
   publicAuthorBindings: z
     .array(
       z.object({
@@ -912,6 +917,18 @@ export function createNeoOperations(service: NeoService) {
               toSessionId: forward.toSessionId,
             }))
           : [],
+      projectFacts:
+        binding?.kind === 'neo' && caller.sessionId && caller.neoTurn
+          ? readNeoProjectFacts(
+              service.db.getDatabase(),
+              service.humanAskText(
+                service.resolveAskOrigin({
+                  sessionId: caller.sessionId,
+                  messageId: caller.neoTurn.messageId,
+                }) ?? { sessionId: caller.sessionId, messageId: caller.neoTurn.messageId }
+              ) ?? ''
+            )
+          : undefined,
       projects: projects.map((item) => ({
         ...item,
         context: detailed ? item.context : '',
@@ -1821,8 +1838,22 @@ export function createNeoOperations(service: NeoService) {
         : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
     }
   );
-  const router = createNeoRouter(service.db, service.repo, (projectId) => service.open(projectId));
+  const router = createNeoRouter(
+    service.db,
+    service.repo,
+    (projectId) => service.open(projectId),
+    async (text) => {
+      const registry = service.sessions.getOperationRegistry();
+      const caller: OperationCaller = { source: 'rpc', principal: 'local' };
+      await invokeOperation(registry, 'work.find', { limit: 50 }, caller);
+      for (const [id] of [
+        ...text.matchAll(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi),
+      ].slice(0, 10))
+        await invokeOperation(registry, 'work.find', { id, limit: 50 }, caller);
+    }
+  );
   return [
+    createNeoCrossProjectOperation(service),
     createNeoIntakeOperation(service.db, service.repo, service.notifyChanged, router),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, router)),
     createNeoPublicationOperation(service.publish),

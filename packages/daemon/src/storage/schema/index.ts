@@ -1,3 +1,4 @@
+import { runMigration365 } from './m365-neo-cross-project-dispatch.ts';
 import { runMigration361 } from './m361-neo-project-avatars.ts';
 import { runMigration260 } from './m260-direct-start-requests.ts';
 import { runMigration363 } from './m363-neo-work-refusals.ts';
@@ -1156,4 +1157,5 @@ function createIndexes(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
 		 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
   );
+  runMigration365(db);
 }
