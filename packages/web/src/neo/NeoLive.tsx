@@ -34,7 +34,8 @@ import {
 } from './neo-scenes.ts';
 import { neoAwaitingReply } from './processing-activity.ts';
 import { neoWorkSummaries, neoWorkSummary } from './public-conversation.ts';
-import { revealNeoWork } from './reveal-work.ts';
+import { revealNeoAsk, revealNeoWork } from './reveal-work.ts';
+import { NeoAskSummaryLine, projectNeoAskSummary } from './NeoAskSummary.tsx';
 import { useNeo } from './useNeo.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { publicationConversationId } from './useNeoPublications.ts';
@@ -393,6 +394,12 @@ export function NeoLive() {
     neo.publications.refresh();
   }
 
+  function openAsk(askId: string) {
+    setChat(null);
+    setScenesOpen(true);
+    requestAnimationFrame(() => revealNeoAsk(sceneSheet.current, askId));
+  }
+
   function openScene(ref: NeoSceneRef) {
     const work = relevant.find((item) => item.id === ref.id);
     if (work?.sessionId) {
@@ -720,6 +727,12 @@ export function NeoLive() {
             <ScrollToBottomButton
               onClick={scrollToBottom}
               bottomClass="bottom-full mb-2 pointer-events-auto"
+            />
+          )}
+          {connected && conversationReady && (
+            <NeoAskSummaryLine
+              summary={projectNeoAskSummary(askGroups, cards)}
+              onOpenAsk={openAsk}
             />
           )}
           <NeoActivity

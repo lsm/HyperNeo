@@ -385,6 +385,33 @@
   color: var(--fg-muted);
   font-size: 12px;
 }
+.neo-ask-summary {
+  pointer-events: auto;
+  margin: 0 8px 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+  min-width: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.neo-ask-summary-links {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.neo-ask-summary-link {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+}
+.neo-ask-summary-link:hover {
+  text-decoration: underline;
+}
 .neo-activity[hidden] {
   display: flex;
   visibility: hidden;
