@@ -25,7 +25,14 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
-import { recentWorkInputs, workEntryTime, workInput } from './work-messages.ts';
+import {
+  boundExchange,
+  exchangeEntry,
+  recentWorkInputs,
+  withExchange,
+  workEntryTime,
+  workInput,
+} from './work-messages.ts';
 import { reject } from './work-operations.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
@@ -385,6 +392,37 @@ export function readHyperneoInputs(db: BunDatabase, id: string, since?: number):
   return recentWorkInputs(inputs, since);
 }
 
+type HyperneoExchangeRow = { timestamp: string; message: string; message_type: string };
+
+function projectHyperneoExchange(rows: HyperneoExchangeRow[], since: number) {
+  const entries = rows.flatMap((row) => {
+    const user = row.message_type === 'user';
+    const raw = user
+      ? hyperneoInputText(row.message)
+      : (JSON.parse(row.message).result as string | undefined);
+    const text = raw?.trim() || (user ? '[Non-text input]' : '[No written result]');
+    const entry = exchangeEntry(workEntryTime(row.timestamp), user ? 'user' : 'agent', text, since);
+    return entry ? [entry] : [];
+  });
+  return boundExchange(entries, rows.length > 40);
+}
+
+function readHyperneoExchange(db: BunDatabase, id: string, since: number) {
+  const rows = db
+    .prepare(
+      `SELECT timestamp, sdk_message AS message, message_type FROM sdk_messages
+      WHERE session_id = ? AND timestamp > ? AND parent_tool_use_id IS NULL
+        AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
+        AND (message_type = 'result' OR (message_type = 'user'
+          AND COALESCE(send_status, 'consumed') = 'consumed'
+          AND COALESCE(json_extract(sdk_message, '$.message.content[0].type'), 'text') <> 'tool_result'))
+      ORDER BY timestamp DESC, rowid DESC LIMIT 41`
+    )
+    .all(id, new Date(since).toISOString())
+    .reverse() as HyperneoExchangeRow[];
+  return projectHyperneoExchange(rows, since);
+}
+
 export function requireHyperneoSession(
   ref: WorkRef,
   deps: HyperneoAdapterDeps
@@ -420,6 +458,9 @@ export function describeHyperneoWork(
         ? { lastReply: last.reply.slice(0, REPLY_LIMIT), lastReplyAt: timestamp(last.at) }
         : {}),
       recentInputs: readHyperneoInputs(deps.db(), row.id, since),
+      ...withExchange(
+        since === undefined ? undefined : readHyperneoExchange(deps.db(), row.id, since)
+      ),
     },
   };
 }
