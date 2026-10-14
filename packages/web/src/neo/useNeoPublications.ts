@@ -89,6 +89,23 @@ export function prependPublicationWindow(
   };
 }
 
+export function mergePublicationEdits(
+  state: NeoPublicationState,
+  response: PublicationRead
+): NeoPublicationState {
+  if (response.state !== 'ready') return state;
+  const changed = new Map(response.items.map((item) => [item.publicationId, item]));
+  let touched = false;
+  const items = state.items.map((item) => {
+    const next = changed.get(item.publicationId);
+    if (!next || next.sequence !== item.sequence || JSON.stringify(next) === JSON.stringify(item))
+      return item;
+    touched = true;
+    return next;
+  });
+  return touched ? { ...state, items } : state;
+}
+
 const placePublications = (name: string, place: typeof appendPublicationWindow) =>
   (superpipe({})(name) as PipelineAPI)
     .input(['state', 'response'])
@@ -117,6 +134,7 @@ export function useNeoPublications(rootSessionId: string | null) {
     let disposed = false;
     let inFlight = false;
     let pending = false;
+    let edited = false;
     let value = empty(conversationId);
     let unsubscribe = () => {};
     let reconnect = () => {};
@@ -159,6 +177,16 @@ export function useNeoPublications(rootSessionId: string | null) {
           );
           if (!current()) return;
           publish((tail ? applyTail : applyPage)(before, result));
+          if (edited && !tail && value.status === 'ready' && value.items.length) {
+            const window = await readNeoPublications(
+              { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
+              async () => hub,
+              current
+            );
+            if (!current()) return;
+            if (window.state === 'ready') edited = false;
+            publish(mergePublicationEdits(value, window));
+          }
           inFlight = false;
           if (pending && value.status === 'ready') void update();
         };
@@ -182,7 +210,19 @@ export function useNeoPublications(rootSessionId: string | null) {
         refresh.current = () => {
           void update();
         };
-        unsubscribe = hub.onEvent('neo.changed', refresh.current);
+        const offChanged = hub.onEvent('neo.changed', refresh.current);
+        const offEdited = hub.onEvent(
+          'neo.publications.changed',
+          (event: { conversationId?: unknown } | undefined) => {
+            if (event?.conversationId !== conversationId) return;
+            edited = true;
+            void update();
+          }
+        );
+        unsubscribe = () => {
+          offChanged();
+          offEdited();
+        };
         reconnect = hub.onConnection((connection) => {
           if (connection === 'connected') void update();
         });

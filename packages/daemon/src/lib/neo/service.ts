@@ -512,6 +512,7 @@ export class NeoService {
   readonly askForwards: NeoAskForwardRepository;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
+  readonly notifyPublicationsChanged: (conversationId: string) => void;
   private readonly noteQueue: NeoNoteQueueDeps;
   private readonly triggers: NeoNotificationTriggerRepository;
   private readonly triggerDeps: NeoTriggerSweepDeps;
@@ -746,6 +747,9 @@ export class NeoService {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
       this.scheduleTriggerSweep();
+    };
+    this.notifyPublicationsChanged = (conversationId) => {
+      hub.event('neo.publications.changed', { conversationId });
     };
     this.triggers = new NeoNotificationTriggerRepository(db.getDatabase());
     this.triggerDeps = {

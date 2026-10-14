@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   admitPublicationUpdate,
   appendPublicationWindow,
+  mergePublicationEdits,
   publicationConversationId,
   useNeoPublications,
   type NeoPublicationState,
@@ -13,6 +14,7 @@ const io = vi.hoisted(() => ({
   request: vi.fn(),
   connect: vi.fn(),
   changed: new Set<() => void>(),
+  edited: new Set<(event: unknown) => void>(),
   connection: new Set<(state: string) => void>(),
 }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -28,9 +30,10 @@ const id = '10000000-0000-4000-8000-000000000001';
 const other = '10000000-0000-4000-8000-000000000002';
 const hub = {
   request: io.request,
-  onEvent: (_name: string, callback: () => void) => {
-    io.changed.add(callback);
-    return () => io.changed.delete(callback);
+  onEvent: (name: string, callback: (event: unknown) => void) => {
+    const listeners = name === 'neo.publications.changed' ? io.edited : io.changed;
+    listeners.add(callback);
+    return () => listeners.delete(callback);
   },
   onConnection: (callback: (state: string) => void) => {
     io.connection.add(callback);
@@ -96,6 +99,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   io.changed.clear();
+  io.edited.clear();
   io.connection.clear();
   vi.resetAllMocks();
 });
@@ -213,6 +217,46 @@ describe('Neo authored publication state', () => {
       expect(requests()[2][1].input.after).toBe(1);
     }
   );
+
+  it('re-reads the newest replies when Neo edits one in this conversation, and only then', async () => {
+    render(<Probe />);
+    await waitFor(() => expect(stateText()).toContain('ready/'));
+    const edited = page(0, 1);
+    edited.items[0].shortText = 'Edited reply';
+    io.request.mockResolvedValueOnce(page(1, 0)).mockResolvedValueOnce(edited);
+    await act(async () => {
+      for (const listener of io.edited) listener({ conversationId: other });
+    });
+    expect(requests()).toHaveLength(1);
+    await act(async () => {
+      for (const listener of io.edited) listener({ conversationId: id });
+    });
+    await waitFor(() => expect(screen.getByTestId('items').textContent).toBe('Edited reply'));
+    expect(requests().map((call) => call[1].input)).toMatchObject([
+      {},
+      { after: 1 },
+      { after: 0, before: Number.MAX_SAFE_INTEGER },
+    ]);
+  });
+
+  it('keeps an edit refresh pending when its re-read fails, and retries it on the next update', async () => {
+    render(<Probe />);
+    await waitFor(() => expect(stateText()).toContain('ready/'));
+    const edited = page(0, 1);
+    edited.items[0].shortText = 'Edited reply';
+    io.request
+      .mockResolvedValueOnce(page(1, 0))
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValueOnce(page(1, 0))
+      .mockResolvedValueOnce(edited);
+    await act(async () => {
+      for (const listener of io.edited) listener({ conversationId: id });
+    });
+    await waitFor(() => expect(requests()).toHaveLength(3));
+    expect(screen.getByTestId('items').textContent).toBe('Reply 1');
+    await changed();
+    await waitFor(() => expect(screen.getByTestId('items').textContent).toBe('Edited reply'));
+  });
 
   it('keeps an empty tail cursor and admitted history stable', async () => {
     render(<Probe />);
@@ -360,4 +404,31 @@ it('wires the consumer to the global root without querying SDK transcripts for p
   );
   expect(screen.getByText(`ready/${id}/1`)).toBeTruthy();
   expect(requests()).toHaveLength(1);
+});
+
+describe('mergePublicationEdits', () => {
+  it('swaps in an edited or corrected copy of a loaded reply and leaves the rest alone', () => {
+    const first = row(1) as NeoPublicationState['items'][number];
+    const second = row(2) as NeoPublicationState['items'][number];
+    const state: NeoPublicationState = {
+      conversationId: id,
+      status: 'ready',
+      items: [first, second],
+      nextAfter: 2,
+      hasMore: false,
+      hasEarlier: false,
+    };
+    const edited = { ...first, shortText: 'Fixed wording.', editedAt: '2026-09-30T09:00:00.000Z' };
+    const merged = mergePublicationEdits(state, {
+      state: 'ready',
+      items: [edited, second, { ...row(3), sequence: 3 } as typeof first],
+      nextAfter: 3,
+    });
+    expect(merged.items).toEqual([edited, second]);
+    expect(merged.nextAfter).toBe(2);
+    expect(
+      mergePublicationEdits(state, { state: 'ready', items: [first, second], nextAfter: 2 })
+    ).toBe(state);
+    expect(mergePublicationEdits(state, { state: 'stale' })).toBe(state);
+  });
 });

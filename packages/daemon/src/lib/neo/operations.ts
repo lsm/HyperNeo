@@ -1991,7 +1991,10 @@ export function createNeoOperations(service: NeoService) {
       publications: service.publications,
       isConsultationReturn: (conversationId, publicationId) =>
         service.consultations.returnsPublication(conversationId, publicationId),
-      notify: () => service.notifyChanged(),
+      notify: (conversationId) => {
+        service.notifyChanged();
+        service.notifyPublicationsChanged(conversationId);
+      },
     }),
     createNeoRouteCorrectOperation(service.db, service.repo),
     createNeoAskForwardOperation({

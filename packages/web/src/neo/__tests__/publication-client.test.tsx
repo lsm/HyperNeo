@@ -284,3 +284,27 @@ describe('useNeo client build reachability', () => {
     await waitFor(() => expect(hookRequest).toHaveBeenCalledWith('read-result', 'stale'));
   });
 });
+
+describe('presentPublicationPage edits and corrections', () => {
+  const correctionId = '30000000-0000-4000-8000-000000000003';
+
+  it('keeps edited and correction fields and drops a malformed one', () => {
+    const marked = {
+      ...item(),
+      editedAt: '2026-09-30T09:00:00.000Z',
+      corrects: correctionId,
+      correctedBy: correctionId,
+    };
+    expect(presentPublicationPage(response([marked]), page)).toEqual({
+      value: { state: 'ready', items: [marked], nextAfter: 1 },
+    });
+    expect(
+      presentPublicationPage(
+        response([{ ...item(), corrects: 'not-an-id' } as ReturnType<typeof item>]),
+        page
+      )
+    ).toEqual({
+      reason: { state: 'unavailable' },
+    });
+  });
+});
