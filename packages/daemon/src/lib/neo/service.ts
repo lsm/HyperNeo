@@ -226,6 +226,7 @@ import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { buildNeoCheckRegistry } from './packs/check-registry.ts';
+import { scheduleNeoAdmissionWake } from './admission-wake.ts';
 import { admitNeoWork, neoAdmissionRefusal, neoOutcomeEligibility } from './work-admission.ts';
 import {
   neoEnabledPacks,
@@ -787,7 +788,10 @@ export class NeoService {
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
     this.workWakes = new NeoWorkWakeRepository(db.getDatabase());
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
-    this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged);
+    this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged, (cardId) => {
+      for (const id of this.dependencies.dependents(cardId))
+        scheduleNeoAdmissionWake(db.getJobQueueRepo(), id);
+    });
     this.dependencies = new NeoDependencyRepository(
       db.getDatabase(),
       this.askRecords,
@@ -1672,7 +1676,7 @@ export class NeoService {
         probe
           ? probe.sent && { ...probe.sent, receipt: result.receipt }
           : opening
-            ? { inputBefore: 0, opening }
+            ? { inputBefore: 0, opening, ...(result.receipt ? { receipt: result.receipt } : {}) }
             : null
       );
       const current = this.repo.getWork(queued.id);

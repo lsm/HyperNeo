@@ -22,6 +22,14 @@ export class NeoDependencyRepository {
       .all() as Edge[];
   }
 
+  dependents(prerequisiteId: string): string[] {
+    return (
+      this.db
+        .prepare('SELECT work_id AS workId FROM neo_work_dependencies WHERE prerequisite_id = ?')
+        .all(prerequisiteId) as { workId: string }[]
+    ).map((row) => row.workId);
+  }
+
   private cards(eligible: Eligibility = () => false) {
     const asks = new Map(this.asks.list().map((ask) => [ask.id, ask]));
     const rows = this.db

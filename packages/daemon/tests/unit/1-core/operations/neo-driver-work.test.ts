@@ -587,6 +587,19 @@ describe('readDriverOutcome', () => {
     expect(
       readDriverOutcome(startTarget, { kind: 'failed', code: 'execution_failed', message: 'boom' })
     ).toEqual({ failure: 'boom' });
+    const receipt = { executionId: 'cli-1', inputId: 'u-1' };
+    expect(
+      readDriverOutcome(startTarget, {
+        kind: 'completed',
+        value: { ok: true, value: { ...started, receipt } },
+      })
+    ).toEqual({ ref: started.ref, receipt });
+    expect(
+      readDriverOutcome(startTarget, {
+        kind: 'completed',
+        value: { ok: true, value: { ...started, receipt: { inputId: 'u-1' } } },
+      })
+    ).toEqual({ ref: started.ref });
     expect(readDriverOutcome(startTarget, { kind: 'completed', value: 'nope' })).toEqual({
       failure: 'The work operation returned an unusable reply.',
     });
@@ -1377,6 +1390,22 @@ describe('Neo work with a drivers target', () => {
       });
       await service.refreshDriverWork();
       expect(calls.map((call) => call.name)).toContain('work.status');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('records the input receipt a start returns on the card', async () => {
+    const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_1' };
+    const receipt = { executionId: 'cli-1', inputId: 'u-1' };
+    const { db, service } = await setup({ ok: true, value: { ref, receipt } });
+    try {
+      await service.start('work-1');
+      expect(service.driverTargets.readSent('work-1')).toEqual({
+        inputBefore: 0,
+        opening: work.instruction,
+        receipt,
+      });
     } finally {
       db.close();
     }

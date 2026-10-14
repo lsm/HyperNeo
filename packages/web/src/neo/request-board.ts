@@ -1,6 +1,7 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { findNeoProject } from './project-redirects.ts';
 import { selectNeoReplyOrigin } from './reply-context.ts';
 
 export type NeoRequestOrigin = { sessionId: string; messageId: string };
@@ -97,7 +98,9 @@ export function neoRequestConsultationProgress(snapshot: NeoSnapshot | null) {
         !snapshot?.consultations?.some((active) => active.id === item.id)
     ),
   ].map((item) => {
-    const title = snapshot?.projects.find((project) => project.id === item.projectId)?.title;
+    const title = snapshot
+      ? findNeoProject(snapshot.projects, snapshot.projectRedirects, item.projectId)?.title
+      : undefined;
     return {
       id: item.id,
       status: item.status,

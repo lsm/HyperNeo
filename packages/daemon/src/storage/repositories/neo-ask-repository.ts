@@ -81,7 +81,8 @@ export class NeoAskRepository {
   readonly bindingPolicy = neoOutcomeBindingPolicy;
   constructor(
     private readonly db: Database,
-    private readonly notify: () => void = () => {}
+    private readonly notify: () => void = () => {},
+    private readonly outcomeVerified: (cardId: string) => void = () => {}
   ) {}
 
   open(input: NeoAskInput, items: readonly NeoAskItemInput[] = []): NeoAsk | null {
@@ -263,6 +264,7 @@ export class NeoAskRepository {
           item.id
         ).changes;
       if (ticked) this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
+      if (ticked && verified && current.deliveredBy) this.outcomeVerified(current.deliveredBy);
       return ticked > 0;
     })();
     if (changed) this.notify();

@@ -213,7 +213,7 @@ const Question = z.object({
   decides: Decides,
   because: Because.optional(),
   options: Options,
-  kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
+  kind: z.enum(NEO_ASK_ITEM_KINDS),
 });
 
 const Answer = z.object({
@@ -602,7 +602,7 @@ function requireNeoAskTick(
   if (input.state === 'needs_you')
     return {
       reason: fail(
-        'needs_you_removed: ask the human with neo.ask.question {askId, question, decides, options}. A decision is its own item, so never tick an outcome item needs_you; keep it pending.'
+        'needs_you_removed: ask the human with neo.ask.question {askId, question, decides, options, kind}. A decision is its own item, so never tick an outcome item needs_you; keep it pending.'
       ),
     };
   const path =
@@ -1864,7 +1864,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.question',
       description:
-        'Ask the human one question about this ask: the only way a decision, or a check only they can make, reaches them. question is one short question worded for this step; options are 2-4 short answers, which become their buttons. The question becomes its own checklist item and the ask waits on it; their answer ticks it met and is sent back to you, so act on it then. For a step only the human can check (on a device, or a machine the daemon cannot read), ask about its result with kind action and options written for that step in its own words, success first ("这一步成功了吗？" with "成功了" and "没成功"): the first option ticks it met, any other keeps it open and tells you. Never ask for re-approval: the daemon shows Approve itself when the approval expires or a card stalls. decides names the decision it asks: asking the same decision again, in any words, restates its open question (new wording and options) instead of adding another, and a different decision is its own question. When a card under this ask is why you ask, pass because {card, reason}: the daemon withdraws the question as no longer needed once that reason is gone (never as answered), and a late answer to it is refused. Only the Neo session that opened the ask or the user can ask on it.',
+        'Ask the human one question about this ask: the only way a decision, or a check only they can make, reaches them. question is one short question worded for this step; options are 2-4 short answers, which become their buttons; kind is required, decision (any answer settles it) or action (a check of the result of a step, met only on its first option). The question becomes its own checklist item and the ask waits on it; their answer ticks it met and is sent back to you, so act on it then. For a step only the human can check (on a device, or a machine the daemon cannot read), ask about its result with kind action and options written for that step in its own words, success first ("这一步成功了吗？" with "成功了" and "没成功"): the first option ticks it met, any other keeps it open and tells you. Never ask for re-approval: the daemon shows Approve itself when the approval expires or a card stalls. decides names the decision it asks: asking the same decision again, in any words, restates its open question (new wording and options) instead of adding another, and a different decision is its own question. When a card under this ask is why you ask, pass because {card, reason}: the daemon withdraws the question as no longer needed once that reason is gone (never as answered), and a late answer to it is refused. Only the Neo session that opened the ask or the user can ask on it.',
       inputSchema: Question,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

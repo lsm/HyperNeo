@@ -86,7 +86,7 @@ describe('claude-desktop start', () => {
         if (relay && options.relayWrites) {
           appendFileSync(
             join(transcripts, 'u1.jsonl'),
-            `${JSON.stringify({ type: 'user', message: { content: '<cross-session-message from="x">\nRaise the body font to 16px.\n</cross-session-message>' } })}\n`
+            `${JSON.stringify({ type: 'user', uuid: 'u-brief', message: { content: '<cross-session-message from="x">\nRaise the body font to 16px.\n</cross-session-message>' } })}\n`
           );
         }
         const code =
@@ -188,6 +188,7 @@ describe('claude-desktop start', () => {
         status: 'running',
         lastActivityAt: 1_000,
         link: 'claude://claude.ai/epitaxy/local_u1',
+        receipt: { executionId: 'u1', inputId: 'u-brief' },
       },
     });
     expect(spawned[0]).toEqual([
