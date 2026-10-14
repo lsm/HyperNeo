@@ -11,6 +11,7 @@ import {
 } from '../../../../src/lib/neo/admission-wake.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { NEO_WORK_AWAITING_WORKER } from '../../../../src/lib/neo/work-reroute.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -208,6 +209,23 @@ describe('neo.work.start with dependsOn', () => {
       expect(service.dependencies.hasStartIntent('d')).toBe(true);
       expect(service.editDependencies('d', [])).toMatchObject({ ok: true });
       expect(service.dependencies.hasStartIntent('d')).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a card already handed off and waiting for a worker cannot gain dependencies', async () => {
+    const { db, service } = await setup();
+    try {
+      service.repo.transitionWork('b', service.repo.getWork('b')!, {
+        status: 'proposed',
+        report: NEO_WORK_AWAITING_WORKER,
+      });
+      expect(service.editDependencies('b', ['a'])).toEqual({
+        ok: false,
+        reason: 'dependency_already_dispatched',
+      });
+      expect(service.dependencies.edges()).toEqual([]);
     } finally {
       db.close();
     }

@@ -1339,6 +1339,9 @@ export class NeoService {
   }
 
   editDependencies(workId: string, dependsOn: readonly string[], now = Date.now()) {
+    const work = this.repo.getWork(workId);
+    if (work && awaitingNeoWorker(work))
+      return { ok: false, reason: 'dependency_already_dispatched' };
     const expectedRevision = this.askRecords.forWork(workId)?.revision ?? 0;
     const edited = this.dependencies.replace(
       { workId, dependsOn, expectedRevision },
