@@ -46,7 +46,6 @@ export type NeoDriverTargetCard = {
   startInterrupted: boolean;
   needsYouSince: number | null;
   claimedAt: number | null;
-  startIntentAt: number | null;
 };
 
 export class NeoWorkDriverTargetRepository {
@@ -121,8 +120,7 @@ export class NeoWorkDriverTargetRepository {
       .prepare(
         `SELECT target, ref, follow_anchor AS followAnchor, live_status AS liveStatus,
                 started_at AS startedAt, retries, start_interrupted AS startInterrupted,
-                needs_you_since AS needsYouSince, claimed_at AS claimedAt,
-                start_intent_at AS startIntentAt
+                needs_you_since AS needsYouSince, claimed_at AS claimedAt
            FROM neo_work_driver_targets WHERE work_id = ?`
       )
       .get(workId) as
@@ -136,7 +134,6 @@ export class NeoWorkDriverTargetRepository {
           startInterrupted: number;
           needsYouSince: number | null;
           claimedAt: number | null;
-          startIntentAt: number | null;
         }
       | null
       | undefined;
@@ -152,22 +149,7 @@ export class NeoWorkDriverTargetRepository {
       startInterrupted: !!row.startInterrupted,
       needsYouSince: row.needsYouSince,
       claimedAt: row.claimedAt,
-      startIntentAt: row.startIntentAt,
     };
-  }
-
-  clearStartIntent(workId: string): void {
-    this.db
-      .prepare('UPDATE neo_work_driver_targets SET start_intent_at = NULL WHERE work_id = ?')
-      .run(workId);
-  }
-
-  recordStartIntent(workId: string, at: number): void {
-    this.db
-      .prepare(
-        'UPDATE neo_work_driver_targets SET start_intent_at = ? WHERE work_id = ? AND start_intent_at IS NULL'
-      )
-      .run(at, workId);
   }
 
   claimAdmission(workId: string, at: number, admitted: () => boolean, staleBefore = 0): boolean {

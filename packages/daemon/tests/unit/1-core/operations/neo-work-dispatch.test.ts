@@ -171,8 +171,43 @@ describe('neo.work.start with dependsOn', () => {
         value: { ok: false, reason: 'not_approved' },
       });
       expect(service.askRecords.get('ask-b')?.approvedAt ?? null).toBeNull();
-      expect(service.driverTargets.readCard('b')?.startIntentAt).toBeNull();
+      expect(service.dependencies.hasStartIntent('b')).toBe(false);
       expect(starts).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a blocked start keeps its intent for a card with no driver target row', async () => {
+    const { db, service } = await setup();
+    try {
+      service.repo.proposeWork({
+        id: 'd',
+        requestKey: 'neo:root:d',
+        projectId: null,
+        originSessionId: 'neo:root',
+        title: 'Card d',
+        instruction: 'Do d.',
+      });
+      service.askRecords.open(
+        {
+          id: 'ask-d',
+          requestKey: 'ask-d',
+          projectId: null,
+          originSessionId: 'neo:root',
+          originMessageId: 'm-d',
+          title: 'd',
+          ask: 'd',
+          doneWhen: 'd',
+          doneSource: 'human',
+        },
+        [{ text: 'Outcome d', check: null, deliveredBy: 'd' }]
+      );
+      expect(service.editDependencies('d', ['a'])).toMatchObject({ ok: true });
+      expect(await service.admitWork('d', true)).toMatchObject({ reason: 'prerequisites_unmet' });
+      expect(service.dependencies.hasStartIntent('d')).toBe(true);
+      expect(service.editDependencies('d', [])).toMatchObject({ ok: true });
+      expect(service.dependencies.hasStartIntent('d')).toBe(false);
     } finally {
       db.close();
     }

@@ -1334,7 +1334,7 @@ export class NeoService {
       markUncertain: (workId: string) => this.driverTargets.recordStartInterrupted(workId),
     });
     if (authorized && !admitted.ok && admitted.reason === 'prerequisites_unmet')
-      this.driverTargets.recordStartIntent(id, now);
+      this.dependencies.recordStartIntent(id, now);
     return admitted;
   }
 
@@ -1346,7 +1346,7 @@ export class NeoService {
       now
     );
     if (edited.ok && edited.revision !== expectedRevision)
-      this.driverTargets.clearStartIntent(workId);
+      this.dependencies.clearStartIntent(workId);
     return edited;
   }
 

@@ -7,7 +7,7 @@ function driverTargets(): Database {
   db.exec(`CREATE TABLE neo_work_driver_targets (
     work_id TEXT PRIMARY KEY, target TEXT NOT NULL, ref TEXT, follow_anchor INTEGER,
     live_status TEXT, started_at INTEGER, retries INTEGER NOT NULL DEFAULT 0,
-    start_interrupted INTEGER NOT NULL DEFAULT 0, needs_you_since INTEGER, claimed_at INTEGER, start_intent_at INTEGER)`);
+    start_interrupted INTEGER NOT NULL DEFAULT 0, needs_you_since INTEGER, claimed_at INTEGER)`);
   return db;
 }
 
@@ -32,7 +32,6 @@ describe('NeoWorkDriverTargetRepository.readCard', () => {
       startInterrupted: true,
       needsYouSince: 300,
       claimedAt: null,
-      startIntentAt: null,
     });
     expect(card?.target).toEqual(repo.get('w1'));
     expect(card?.ref).toEqual(repo.readRef('w1'));
@@ -65,7 +64,6 @@ describe('NeoWorkDriverTargetRepository.readCard', () => {
       startInterrupted: false,
       needsYouSince: null,
       claimedAt: null,
-      startIntentAt: null,
     });
     expect(repo.readCard('broken')?.target).toBeNull();
     expect(repo.readCard('missing')).toBeNull();

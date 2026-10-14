@@ -43,7 +43,7 @@ export const runNeoAdmissionWake = (superpipe({})('neo-work-admission-wake') as 
     async (work: NeoWork, service: NeoService) => {
       const admitted = await service.admitWork(
         work.id,
-        service.driverTargets.readCard(work.id)?.startIntentAt != null
+        service.dependencies.hasStartIntent(work.id)
       );
       return {
         value: admitted.ok
