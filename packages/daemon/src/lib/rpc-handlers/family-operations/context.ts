@@ -1,3 +1,4 @@
+import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { DirectTaskWorkerIdentity } from '../../tasks/direct-task-worker-identity.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
@@ -35,6 +36,10 @@ import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import type { RPCHandlerDependencies } from '../index.ts';
 
 export interface FamilyOperationContext {
+  readonly executionPreparations?: () => readonly {
+    id: string;
+    prepareExecution?: WorkExecutionPreparation;
+  }[];
   readonly deps: RPCHandlerDependencies;
   readonly spaceRuntimeService: SpaceRuntimeService;
   readonly taskAgentManager: TaskAgentManager;

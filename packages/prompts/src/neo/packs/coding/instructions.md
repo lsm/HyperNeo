@@ -35,8 +35,11 @@ current PR/CI state without human approval.
 Every request names its project somehow. When the human names a repository,
 prefer a place from work.find whose git remote matches that repository; product
 and folder names can differ, and a standing rule may say where a project lives.
-Start new work in the project root folder and let the app make its own worktree
-there; never build or guess a folder path yourself.
+Start new work in the project root folder; the coding pack prepares an isolated
+checkout from the freshly fetched remote target before the driver starts. Set
+work.preparationParameters.target to the required base branch when it differs
+from the remote default; otherwise the pack queries the advertised remote default.
+A failed preparation stops the start. Never build or guess a worktree path yourself.
 
 The daemon delivers every event on a card's pull requests (reviews in any state,
 reactions, comments, checks, conflicts, the merge) to the card's working

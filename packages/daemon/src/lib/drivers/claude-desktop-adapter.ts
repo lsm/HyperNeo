@@ -1,3 +1,4 @@
+import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { CLAUDE_DESKTOP_OPENING, CLAUDE_DESKTOP_RELAY, fillPrompt } from '@hyperneo/prompts';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
@@ -80,6 +81,7 @@ export interface ClaudeLiveSession {
 }
 
 export interface ClaudeDesktopAdapterDeps {
+  prepareExecution?: WorkExecutionPreparer;
   sessionsDir: string;
   projectsDir: string;
   machine: string;
@@ -701,6 +703,8 @@ export function selectClaudeStartFolder(
   request: StartRequest,
   deps: ClaudeDesktopAdapterDeps
 ): Gate<string> {
+  const admitted = workStartPreparation.admit(request.preparation, !!deps.prepareExecution);
+  if ('reason' in admitted) return admitted;
   return selectLocalStartFolder(request, deps, 'A Claude Code session needs a folder to work in.');
 }
 
@@ -761,12 +765,21 @@ export async function startClaudeSession(
 ): Promise<Result<WorkSummary>> {
   const cliSessionId = deps.newId();
   const sessionId = `local_${cliSessionId}`;
-  const placement = planWorkPlacement(await deps.gitCheckout(folder).catch(() => null));
+  const prepared = request.preparation
+    ? await deps.prepareExecution!(request.preparation, {
+        directory: folder,
+        destination: join(folder, '.claude', 'worktrees', `neo-${cliSessionId.slice(0, 8)}`),
+      })
+    : null;
+  if (prepared && !prepared.ok) return prepared;
+  const placement = planWorkPlacement(
+    prepared ? null : await deps.gitCheckout(folder).catch(() => null)
+  );
   const worktree = placement.kind === 'worktree' ? `neo-${cliSessionId.slice(0, 8)}` : null;
   const cwd =
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)
-      : folder;
+      : (prepared?.value.directory ?? folder);
   try {
     const opened = await runToExit(
       deps,
@@ -781,7 +794,7 @@ export async function startClaudeSession(
         '--',
         OPENING_MESSAGE,
       ],
-      folder
+      prepared?.value.directory ?? folder
     );
     if (opened.code !== 0) {
       return claudeCliFailure(opened, `claude -p exited with ${opened.code}.`);
@@ -840,6 +853,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
   const reused = { ...deps, liveSessions: reuseLiveSessions(deps.liveSessions, Date.now) };
   return {
     id: 'claude-desktop',
+    supportsStartPreparation: !!deps.prepareExecution,
     capabilities: ['find', 'start', 'send', 'status', 'archive'],
     find: async (query) =>
       runClaudeDesktopFind(

@@ -1458,7 +1458,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     })
   );
   const familyOperations = [
-    ...collectFamilyOperations(familyContext),
+    ...collectFamilyOperations({
+      ...familyContext,
+      executionPreparations: () => neoService.packs(),
+    }),
     ...createNeoOperations(neoService),
   ];
 

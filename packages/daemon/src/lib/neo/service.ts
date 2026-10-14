@@ -1366,6 +1366,14 @@ export class NeoService {
       this.workDoneGoal(queued.id),
       this.cardEventsDelivered()
     );
+    const packId = this.askRecords.forWork(queued.id)?.pack;
+    const pack = this.pack(packId ?? '');
+    if (target.verb === 'start' && packId && !pack) {
+      await this.failWork(queued, `unsupported_preparation: pack ${packId} is not installed.`);
+      return;
+    }
+    if (target.verb === 'start' && pack?.prepareExecution)
+      call.input.preparation = { pack: pack.id, parameters: target.preparationParameters ?? {} };
     const probe =
       target.verb === 'send'
         ? await this.readSendBaseline(target.ref, queued, String(call.input.message))

@@ -1,3 +1,4 @@
+import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   createHyperneoAdapter,
@@ -106,8 +107,9 @@ describe('hyperneo adapter send and status', () => {
 
   afterEach(() => db.close());
 
-  function adapter() {
+  function adapter(prepareExecution?: WorkExecutionPreparer) {
     return createHyperneoAdapter({
+      prepareExecution,
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -120,6 +122,52 @@ describe('hyperneo adapter send and status', () => {
   }
 
   const ref = (id: string) => ({ adapter: 'hyperneo', id });
+
+  test('creates the native session in the prepared directory without another worktree choice', async () => {
+    const driver = adapter(async () => ({
+      ok: true,
+      value: {
+        directory: '/fresh/remote-base',
+        release: async () => {
+          throw new Error('Live resource released');
+        },
+      },
+    }));
+    expect(
+      await driver.start!(
+        {
+          place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+          title: 't',
+          message: 'm',
+          preparation: { pack: 'coding', parameters: {} },
+        },
+        { from: 'user', caller: { source: 'rpc' } }
+      )
+    ).toMatchObject({ ok: true });
+    expect(events).toEqual(['create /fresh/remote-base', 'announce new']);
+    expect(handed).toHaveLength(1);
+  });
+
+  test('failed preparation creates no native session or handoff', async () => {
+    const driver = adapter(async () => ({
+      ok: false,
+      reason: 'preparation_failed',
+      detail: 'fetch failed',
+    }));
+    expect(
+      await driver.start!(
+        {
+          place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+          title: 't',
+          message: 'm',
+          preparation: { pack: 'coding', parameters: {} },
+        },
+        { from: 'user', caller: { source: 'rpc' } }
+      )
+    ).toMatchObject({ ok: false, reason: 'preparation_failed' });
+    expect(events).toEqual([]);
+    expect(handed).toEqual([]);
+  });
 
   test('archives an idle session but rejects live turns and owned Space sessions', async () => {
     const driver = adapter();

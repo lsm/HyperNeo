@@ -1168,6 +1168,55 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test.each(['coding', 'legal', 'life-admin'])(
+    'forwards preparation for independent %s cards only when their pack owns a stage',
+    async (pack) => {
+      const parameters = { target: 'release', prerequisiteCommits: ['a'.repeat(40)] };
+      const target = NeoDriverTargetSchema.parse({
+        ...startTarget,
+        preparationParameters: parameters,
+      });
+      const { db, service, calls } = await setup(
+        { ok: true, value: { ref: { adapter: 'codex-desktop', id: 'fresh' } } },
+        undefined,
+        undefined,
+        target
+      );
+      service.filePacks = [
+        {
+          id: 'legal',
+          describe: 'Legal',
+          instructions: () => null,
+          prepareExecution: async () => ({ ok: false, reason: 'not called here' }),
+        },
+      ];
+      db.updateGlobalSettings({ neo: { packs: ['coding', 'legal', 'life-admin'] } });
+      const ask = service.askRecords.open({
+        id: 'a1',
+        requestKey: 'pack-start',
+        projectId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'ask-1',
+        title: 't',
+        ask: 'a',
+        doneWhen: '- done',
+        doneSource: 'human',
+        pack,
+      })!;
+      service.askRecords.link(ask.id, 'work-1');
+      try {
+        expect(service.driverTargets.get('work-1')).toEqual(target);
+        await service.start('work-1');
+        expect(calls).toHaveLength(1);
+        const input = calls[0].input as Record<string, unknown>;
+        expect(input.preparation).toEqual(pack === 'life-admin' ? undefined : { pack, parameters });
+      } finally {
+        service.dispose();
+        db.close();
+      }
+    }
+  );
+
   test.each([undefined, 'sol 6.1'])(
     'starts from a stored effort target with model %s',
     async (model) => {

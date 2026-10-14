@@ -1,4 +1,5 @@
-import { basename, sep } from 'node:path';
+import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
+import { basename, join, sep } from 'node:path';
 import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
@@ -74,6 +75,7 @@ export interface HyperneoSessionControl {
 }
 
 export interface HyperneoAdapterDeps {
+  prepareExecution?: WorkExecutionPreparer;
   projects?: () => NonNullable<WorkspaceHistoryEntry['project']>[];
   db: () => BunDatabase;
   machine: string;
@@ -430,6 +432,8 @@ export async function deliverToHyperneo(
 }
 
 export function selectStartFolder(request: StartRequest, deps: HyperneoAdapterDeps): Gate<string> {
+  const admitted = workStartPreparation.admit(request.preparation, !!deps.prepareExecution);
+  if ('reason' in admitted) return admitted;
   return selectLocalStartFolder(request, deps, 'Start new work in a project folder or a Space.');
 }
 
@@ -438,13 +442,26 @@ export async function createHyperneoSession(
   request: StartRequest,
   deps: HyperneoAdapterDeps
 ): Promise<Gate<string>> {
-  let sessionId: string;
+  const prepared = request.preparation
+    ? await deps.prepareExecution!(request.preparation, {
+        directory: folder,
+        destination: join(deps.neoFolder(), 'worktrees', crypto.randomUUID()),
+      })
+    : null;
+  if (prepared && !prepared.ok) return { reason: prepared };
+  let sessionId: string | undefined;
   try {
-    sessionId = await deps.sessions.create(folder, request.title, request.model);
+    sessionId = await deps.sessions.create(
+      prepared?.value.directory ?? folder,
+      request.title,
+      request.model
+    );
   } catch (error) {
     if (request.model !== undefined && error instanceof ModelUnavailableError)
       return { reason: reject('unsupported_model', error.message) };
     throw error;
+  } finally {
+    if (!sessionId) await prepared?.value.release();
   }
   if (readHyperneoSession(deps.db(), sessionId)?.status === 'pending_worktree_choice') {
     await deps.sessions.chooseWorktree(sessionId);
@@ -565,6 +582,7 @@ const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
     id: 'hyperneo',
+    supportsStartPreparation: !!deps.prepareExecution,
     capabilities: [
       'find',
       'start',
