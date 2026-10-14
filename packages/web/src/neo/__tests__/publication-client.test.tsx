@@ -45,7 +45,7 @@ function item(sequence = 1) {
     producerInput: { sessionId: 'holder:research', messageId: 'return-input' },
     shortText: 'Two differences are worth checking.',
     fullText: '**Full details**\n\nKeep as a draft.',
-    links: [{ kind: 'concern', id: 'research', label: '查看对照 ↗' }],
+    links: [{ kind: 'project', id: 'research', label: '查看对照 ↗' }],
   };
 }
 function response(items = [item()], nextAfter = items.at(-1)?.sequence ?? 0) {
@@ -268,7 +268,7 @@ describe('useNeo client build reachability', () => {
     hookRequest.mockResolvedValue({
       ok: true,
       sessionId: `neo:${conversationId}`,
-      concerns: [],
+      projects: [],
       work: [],
     });
     render(<Probe />);

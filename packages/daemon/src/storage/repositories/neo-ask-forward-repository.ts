@@ -5,14 +5,14 @@ export interface NeoAskForward {
   hop: number;
   fromSessionId: string;
   toSessionId: string;
-  toConcernId: string | null;
+  toProjectId: string | null;
   forwardedAt: number;
 }
 
 type ForwardRow = NeoAskForward & { askSessionId: string; askMessageId: string };
 
 const columns = `hop, from_session_id AS fromSessionId, to_session_id AS toSessionId,
-  to_concern_id AS toConcernId, forwarded_at AS forwardedAt`;
+  to_concern_id AS toProjectId, forwarded_at AS forwardedAt`;
 
 export class NeoAskForwardRepository {
   constructor(private readonly db: Database) {}
@@ -78,7 +78,7 @@ export class NeoAskForwardRepository {
           forward.hop,
           forward.fromSessionId,
           forward.toSessionId,
-          forward.toConcernId,
+          forward.toProjectId,
           forward.forwardedAt
         ).changes > 0
     );

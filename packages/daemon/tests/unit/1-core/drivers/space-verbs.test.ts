@@ -97,6 +97,24 @@ describe('space adapter start, status and stop', () => {
     expect(calls).toEqual(['create sp1 bigger font: raise it to 16px as rpc']);
   });
 
+  test.each([
+    [{ model: 'sonnet' }, 'unsupported_model'],
+    [{ effort: 'medium' }, 'unsupported_effort'],
+    [{ model: 'sonnet', effort: 'medium' }, 'unsupported_model'],
+  ] as const)('refuses configuration %j without creating a task', async (configuration, reason) => {
+    expect(
+      await adapter().start?.(
+        { place: space, title: 'bigger font', message: 'raise it to 16px', ...configuration },
+        { from: 'chat', caller: rpc }
+      )
+    ).toMatchObject({ ok: false, reason });
+    expect(calls).toEqual([]);
+    expect(db.prepare('SELECT id FROM space_tasks ORDER BY id').all()).toEqual([
+      { id: 't1' },
+      { id: 't2' },
+    ]);
+  });
+
   test('start needs a Space on this machine and passes a refusal through', async () => {
     const start = (place: Record<string, string>, refuse?: string) =>
       adapter(refuse).start?.(

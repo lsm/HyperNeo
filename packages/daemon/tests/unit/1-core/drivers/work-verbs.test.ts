@@ -194,6 +194,44 @@ describe('work verb operations', () => {
     expect(forwarded).toBe(0);
   });
 
+  test.each([undefined, 'medium'])(
+    'refuses an unverified remote model with effort %s before forwarding',
+    async (effort) => {
+      let forwarded = 0;
+      let started = 0;
+      const capable: WorkAdapter = {
+        ...hyperneo,
+        id: 'codex-desktop',
+        supportsStartEffort: true,
+        start: async () => {
+          started++;
+          return { ok: true, value: summary('codex-desktop', 'local') };
+        },
+      };
+      expect(
+        await call(
+          'work.start',
+          {
+            adapter: capable.id,
+            place: { ...place, daemon: 'laptop' },
+            title: 't',
+            message: 'm',
+            model: 'gpt-6.1-sol',
+            ...(effort ? { effort } : {}),
+          },
+          async () => {
+            forwarded++;
+            return { ok: true, value: summary('codex-desktop', 'remote') };
+          },
+          undefined,
+          [capable]
+        )
+      ).toMatchObject({ ok: false, reason: 'unsupported_model' });
+      expect(forwarded).toBe(0);
+      expect(started).toBe(0);
+    }
+  );
+
   test('validates effort input before invoking the driver', async () => {
     let starts = 0;
     const capable: WorkAdapter = {

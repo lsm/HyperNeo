@@ -164,7 +164,7 @@ const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
   .input(['request', 'caller', 'repo', 'ledger', 'readSendStatus'])
   .pipe((request: AskPage): Page => request, 'request', 'page')
   .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
-  .pipe((repo: NeoRepository) => repo.getBindingForConcern(null), 'repo', 'root')
+  .pipe((repo: NeoRepository) => repo.getBindingForProject(null), 'repo', 'root')
   .pipe(requirePublicationConversation, ['page', 'root'], 'result:page')
   .pipe(
     (page: Page, ledger: NeoConversationAskRepository) =>
@@ -226,7 +226,7 @@ export function requireNeoImageConversation(
   input: ImageInput,
   repo: NeoRepository
 ): { value: ImageInput } | { reason: ImageFailure } {
-  const root = repo.getBindingForConcern(null);
+  const root = repo.getBindingForProject(null);
   return isMainNeoBinding(root) && root.sessionId === `neo:${input.conversationId}`
     ? { value: input }
     : { reason: { ok: false, reason: 'conversation_not_found' } };

@@ -274,12 +274,12 @@ function PublicEntry({
   onOpenScene,
   canOpenScene,
   onEditUndelivered,
-  topics,
+  projects,
   forwarders,
   onQuote,
 }: {
   entry: NeoPublicEntry;
-  topics?: ReadonlyMap<string, string>;
+  projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
   onQuote?: (quote: NeoQuote) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
@@ -302,11 +302,11 @@ function PublicEntry({
   const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : 'You';
-  const replier = publication ? topics?.get(publication.producerInput.sessionId) : undefined;
+  const replier = publication ? projects?.get(publication.producerInput.sessionId) : undefined;
   const forwarder = publication
     ? forwarders?.get(neoForwardKey(publication.askOrigin, publication.producerInput.sessionId))
     : undefined;
-  const topic = forwarder ? `${replier ?? 'Neo'} (forwarded from ${forwarder})` : replier;
+  const project = forwarder ? `${replier ?? 'Neo'} (forwarded from ${forwarder})` : replier;
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   const anchor = ask
     ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId)
@@ -323,9 +323,9 @@ function PublicEntry({
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${ask ? 'justify-end' : ''}`}
       >
         <span class="neo-message-name font-medium">{author}</span>
-        {topic && (
-          <span class="neo-message-topic max-w-[16rem] truncate text-fg-faint" title={topic}>
-            {topic}
+        {project && (
+          <span class="neo-message-project max-w-[16rem] truncate text-fg-faint" title={project}>
+            {project}
           </span>
         )}
         {time && (
@@ -582,7 +582,7 @@ export function NeoPublicConversation({
   onRetry,
   onLoadEarlier,
   onEditUndelivered,
-  topics,
+  projects,
   forwarders,
   mute,
   onQuote,
@@ -590,7 +590,7 @@ export function NeoPublicConversation({
   conversation: Conversation;
   onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
-  topics?: ReadonlyMap<string, string>;
+  projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
@@ -637,7 +637,7 @@ export function NeoPublicConversation({
             onOpenScene={onOpenScene}
             canOpenScene={canOpenScene}
             onEditUndelivered={onEditUndelivered}
-            topics={topics}
+            projects={projects}
             forwarders={forwarders}
             onQuote={onQuote}
           />

@@ -196,9 +196,9 @@ function applyNeoRoute(
 ): Routed {
   const opened = { binding, target, signal: fallback, confidence: 1 };
   if (binding.kind !== 'neo' || !route) return opened;
-  const holder = repo.getBindingForConcern(route.concernId);
+  const holder = repo.getBindingForProject(route.projectId);
   const session = holder ? db.getSession(holder.sessionId) : null;
-  return holder?.kind === 'concern' &&
+  return holder?.kind === 'project' &&
     holder.sessionId === route.sessionId &&
     session &&
     session.status !== 'archived'
@@ -220,9 +220,9 @@ function logNeoRoute(
       conversationId,
       askedAt: Date.now(),
       ask: neoAskText(message.message.content) || '(attachment)',
-      destination: routed.binding.kind === 'concern' ? 'holder' : 'main',
+      destination: routed.binding.kind === 'project' ? 'holder' : 'main',
       targetSessionId: routed.binding.sessionId,
-      concernId: routed.binding.concernId,
+      projectId: routed.binding.projectId,
       signal: routed.signal,
       confidence: routed.confidence,
     });
@@ -253,9 +253,9 @@ export function loggedNeoRoute(
   return {
     reason: {
       choice:
-        earlier.destination === 'holder' && earlier.concernId && earlier.targetSessionId
+        earlier.destination === 'holder' && earlier.projectId && earlier.targetSessionId
           ? {
-              concernId: earlier.concernId,
+              projectId: earlier.projectId,
               sessionId: earlier.targetSessionId,
               signal: earlier.signal.startsWith('classifier')
                 ? (earlier.signal as NeoRouteSignal)
@@ -277,9 +277,9 @@ export function replayedNeoRoute(
   return {
     reason: {
       choice:
-        holder?.kind === 'concern' && holder.concernId
+        holder?.kind === 'project' && holder.projectId
           ? {
-              concernId: holder.concernId,
+              projectId: holder.projectId,
               sessionId: asked.sessionId,
               signal: 'embedding',
               confidence: 1,
@@ -346,7 +346,7 @@ const readNeoIntakeTarget = (superpipe({})('neo-intake-target') as PipelineAPI)
     'session'
   )
   .pipe(requireNeoIntakeTarget, ['input', 'binding', 'session'], 'result:admission')
-  .pipe((repo: NeoRepository) => repo.getBindingForConcern(null), 'repo', 'root')
+  .pipe((repo: NeoRepository) => repo.getBindingForProject(null), 'repo', 'root')
   .pipe(
     (root: NeoBinding | null, db: Database) =>
       root ? (db.getSession(root.sessionId) ?? null) : null,

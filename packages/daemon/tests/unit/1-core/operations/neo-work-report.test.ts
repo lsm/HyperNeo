@@ -31,7 +31,7 @@ import {
 const work: NeoWork = Object.freeze({
   id: 'work:α/A',
   requestKey: 'request-A',
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'ask-A',
   title: 'Research status',
@@ -52,7 +52,7 @@ const caller: OperationCaller = Object.freeze({
   sessionId: work.sessionId!,
   role: 'universal_read',
 });
-const binding: NeoBinding = { sessionId: caller.sessionId!, kind: 'worker', concernId: null };
+const binding: NeoBinding = { sessionId: caller.sessionId!, kind: 'worker', projectId: null };
 type Result = Awaited<ReturnType<ReturnType<typeof createNeoWorkReporter>>>;
 type Failure = Extract<Result, { accepted: false }>;
 const failure = (reason: Failure['reason']): Failure => ({ accepted: false, reason });
@@ -118,7 +118,7 @@ describe('Neo recipient report pure stages', () => {
     expect(requireNeoWorkReportRecord(input, { work })).toEqual({ value: work });
     expect(requireNeoWorkReportBinding(work, { binding: value })).toEqual({ value: work });
   });
-  test.each(['neo', 'concern'] as const)('context %s bindings never execute reports', (kind) => {
+  test.each(['neo', 'project'] as const)('context %s bindings never execute reports', (kind) => {
     expect(requireNeoWorkReportBinding(work, { binding: { ...binding, kind } })).toEqual(
       rejection('recipient_is_coordinator')
     );
@@ -219,7 +219,7 @@ describe('Neo recipient report composition', () => {
     expect(f.deps.transitionWork).not.toHaveBeenCalled();
     expect(f.deps.returnReport).not.toHaveBeenCalled();
   });
-  test.each(['neo', 'concern'] as const)(
+  test.each(['neo', 'project'] as const)(
     'actual %s binding blocks writes and returns',
     async (kind) => {
       const f = fixture();
@@ -433,12 +433,12 @@ describe('NeoService recipient report facade', () => {
           status, config, metadata) VALUES (?, ?, NULL, '2026-09-28T12:00:00Z',
           '2026-09-28T12:00:00Z', 'active', '{}', '{}')`)
           .run(id, id);
-      service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
-      service.repo.saveConcern(
+      service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
+      service.repo.saveProject(
         { id: 'research', title: 'Research', summary: 'Learn', context: 'Private' },
         0
       );
-      service.repo.reserveBinding({ sessionId: 'holder', kind: 'concern', concernId: 'research' });
+      service.repo.reserveBinding({ sessionId: 'holder', kind: 'project', projectId: 'research' });
       const current = service.repo.proposeWork({ ...work });
       service.repo.transitionWork(current.id, current, {
         status: 'queued',

@@ -1,6 +1,7 @@
 export const WORK_OPERATION_NAMES = [
   'work.adapters',
   'work.find',
+  'work.project.addFolder',
   'work.read',
   'work.send',
   'work.start',

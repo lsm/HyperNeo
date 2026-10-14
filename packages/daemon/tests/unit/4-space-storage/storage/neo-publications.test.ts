@@ -77,7 +77,7 @@ describe('Neo publication ledger', () => {
     { askOrigin: { ...input.askOrigin, messageId: 'other-ask' } },
     { producerInput: { ...input.producerInput, sessionId: 'other-avatar' } },
     { links: [{ label: 'Changed label', kind: 'work', id: 'work-1' }] },
-    { links: [{ label: 'View comparison', kind: 'concern', id: 'work-1' }] },
+    { links: [{ label: 'View comparison', kind: 'project', id: 'work-1' }] },
     { links: [{ label: 'View comparison', kind: 'work', id: 'work-2' }] },
     { links: [] },
   ])('conflicting retry cannot rewrite any authored content or attribution: %j', (patch) => {
@@ -124,7 +124,7 @@ describe('Neo publication ledger', () => {
       fullText: 'a'.repeat(16000),
       links: Array.from({ length: 16 }, (_, index) => ({
         label: 'a'.repeat(120),
-        kind: 'concern',
+        kind: 'project',
         id: `${index}${'a'.repeat(158)}`,
       })),
     };

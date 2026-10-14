@@ -38,7 +38,7 @@ describe('Neo daemon notes', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       events
     );
-    service.repo.reserveBinding({ sessionId: rootId, concernId: null, kind: 'neo' });
+    service.repo.reserveBinding({ sessionId: rootId, projectId: null, kind: 'neo' });
   });
   afterEach(() => {
     service.dispose();

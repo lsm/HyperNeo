@@ -2,12 +2,12 @@ import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoScene } from './neo-scenes.ts';
 
-type Concern = { readonly id: string; readonly title: string };
+type Project = { readonly id: string; readonly title: string };
 type Activity = { readonly key: string; readonly text: string };
 
 export function neoActivityItems(
   scenes: readonly NeoScene[],
-  concerns: readonly Concern[]
+  projects: readonly Project[]
 ): Activity[] {
   return scenes
     .filter((scene) => scene.group === 'running')
@@ -16,7 +16,7 @@ export function neoActivityItems(
       const title =
         receipt.kind === 'work'
           ? receipt.title.trim() || 'Work'
-          : concerns.find((concern) => concern.id === receipt.concernId)?.title.trim() ||
+          : projects.find((project) => project.id === receipt.projectId)?.title.trim() ||
             'Your context holder';
       return {
         key: JSON.stringify([scene.ref.kind, scene.ref.id]),
@@ -26,25 +26,25 @@ export function neoActivityItems(
 }
 
 const projectActivity = (superpipe({})('neo-activity') as PipelineAPI)
-  .input(['scenes', 'concerns'])
-  .pipe(neoActivityItems, ['scenes', 'concerns'], 'items')
-  .end('items') as (scenes: readonly NeoScene[], concerns: readonly Concern[]) => Activity[];
+  .input(['scenes', 'projects'])
+  .pipe(neoActivityItems, ['scenes', 'projects'], 'items')
+  .end('items') as (scenes: readonly NeoScene[], projects: readonly Project[]) => Activity[];
 
 export function NeoActivity({
   scenes,
-  concerns,
+  projects,
   enabled,
   reply,
 }: {
   scenes: readonly NeoScene[];
-  concerns: readonly Concern[];
+  projects: readonly Project[];
   enabled: boolean;
   reply?: string | null;
 }) {
   const items = reply
     ? [{ key: 'neo-reply', text: reply }]
     : enabled
-      ? projectActivity(scenes, concerns)
+      ? projectActivity(scenes, projects)
       : [];
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const fingerprint = JSON.stringify(items);

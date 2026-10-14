@@ -36,14 +36,14 @@ type Proof = Producer & { ask: NeoAskOrigin };
 type LinkEvidence = {
   link: NeoPublicationLink;
   exists: boolean;
-  concernId: string | null;
+  projectId: string | null;
   origin: NeoAskOrigin | null;
 };
 
 interface NeoPublicationRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
-  hasConcern(id: string): boolean;
+  hasProject(id: string): boolean;
   getWork(id: string): NeoWork | null;
   getConsultation(id: string): NeoConsultation | null;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
@@ -78,7 +78,7 @@ export function requirePublicationProducer(
     isMainNeoBinding(root) &&
     root.sessionId.startsWith('neo:') &&
     ((isMainNeoBinding(binding) && binding.sessionId === root.sessionId) ||
-      (binding.kind === 'concern' && binding.concernId !== null)) &&
+      (binding.kind === 'project' && binding.projectId !== null)) &&
     turn?.messageId &&
     turn.isLive()
     ? {
@@ -103,15 +103,15 @@ export function requirePublicationAsk(
 
 function publicationLinkProblem(
   proof: Proof,
-  { link, exists, concernId, origin }: LinkEvidence
+  { link, exists, projectId, origin }: LinkEvidence
 ): string | null {
   const ref = `${link.kind} link "${link.id}"`;
   if (!exists)
-    return `${ref} does not exist; link only Neo concern, work or consultation ids, never work.find refs or session ids`;
-  if (proof.binding.kind !== 'neo' && concernId !== proof.binding.concernId)
-    return `${ref} belongs to another concern`;
+    return `${ref} does not exist; link only Neo project, work or consultation ids, never work.find refs or session ids`;
+  if (proof.binding.kind !== 'neo' && projectId !== proof.binding.projectId)
+    return `${ref} belongs to another project`;
   if (
-    link.kind !== 'concern' &&
+    link.kind !== 'project' &&
     (origin?.sessionId !== proof.ask.sessionId || origin.messageId !== proof.ask.messageId)
   )
     return `${ref} was not started for this ask; link only work or consultations this ask created`;
@@ -146,10 +146,10 @@ export function requirePublicationLifetime(
         now !== undefined &&
         now < consultation.createdAt + CONSULTATION_TIMEOUT_MS &&
         consultation.sessionId === proof.input.sessionId &&
-        consultation.concernId === proof.binding.concernId &&
+        consultation.projectId === proof.binding.projectId &&
         proof.input.messageId === `neo-consult:${consultation.id}:request`)) &&
     binding?.kind === proof.binding.kind &&
-    binding.concernId === proof.binding.concernId &&
+    binding.projectId === proof.binding.projectId &&
     binding.sessionId === proof.binding.sessionId &&
     isMainNeoBinding(root) &&
     root.sessionId === proof.root.sessionId
@@ -158,8 +158,8 @@ export function requirePublicationLifetime(
 }
 
 function readLinkEvidence(link: NeoPublicationLink, runtime: NeoPublicationRuntime): LinkEvidence {
-  if (link.kind === 'concern')
-    return { link, exists: runtime.hasConcern(link.id), concernId: link.id, origin: null };
+  if (link.kind === 'project')
+    return { link, exists: runtime.hasProject(link.id), projectId: link.id, origin: null };
   const item = link.kind === 'work' ? runtime.getWork(link.id) : runtime.getConsultation(link.id);
   const input = item?.originMessageId
     ? { sessionId: item.originSessionId, messageId: item.originMessageId }
@@ -169,7 +169,7 @@ function readLinkEvidence(link: NeoPublicationLink, runtime: NeoPublicationRunti
   return {
     link,
     exists: !!item,
-    concernId: item?.concernId ?? null,
+    projectId: item?.projectId ?? null,
     origin: input ? runtime.resolveAskOrigin(input) : null,
   };
 }

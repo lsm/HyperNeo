@@ -1,3 +1,4 @@
+import { mirrorNeoWorkspaceProjects } from '../../neo/project-mirror.ts';
 import { existsSync, mkdirSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +35,7 @@ import {
   spaceTaskCaller,
   taskOperationRejection,
 } from '../../drivers/space-adapter.ts';
-import type { WorkAdapter } from '../../drivers/types.ts';
+import type { PlaceGroup, WorkAdapter } from '../../drivers/types.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { readNeoSessionLoad } from '../../neo/session-load.ts';
@@ -343,6 +344,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   const ownChats = (text: string) => searchChats(text, ['message', 'task']);
   const adapters = [
     createHyperneoAdapter({
+      projects: () => context.deps.db.workspaceHistory.projects(),
       db,
       machine,
       searchChats: ownChats,
@@ -378,7 +380,15 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId))
     ),
   ];
-  const deps = { adapters: () => adapters, remote: remoteDaemons, daemonName: machine };
+  const deps = {
+    adapters: () => adapters,
+    remote: remoteDaemons,
+    daemonName: machine,
+    mirrorProjects: (groups: readonly PlaceGroup[]) => {
+      if (mirrorNeoWorkspaceProjects(db(), groups))
+        context.deps.messageHub.event('neo.changed', {});
+    },
+  };
   const readTurns = (
     sessionId: string,
     around: string | undefined,

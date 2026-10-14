@@ -2,8 +2,8 @@ import { cleanup, render, screen, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { neoBoardReceiptLabel } from '../board-receipt-label.ts';
-import { NeoConcernBoardView } from '../NeoConcernBoard.tsx';
-import { projectNeoConcernBoard } from '../neo-concern-board.ts';
+import { NeoProjectBoardView } from '../NeoProjectBoard.tsx';
+import { projectNeoProjectBoard } from '../neo-project-board.ts';
 
 vi.mock('../../lib/state.ts', () => ({ connectionState: { value: 'connected' } }));
 vi.mock('../../lib/connection-manager.ts', () => ({ connectionManager: {} }));
@@ -17,7 +17,7 @@ const snapshot: NeoSnapshot = {
   cards: [],
   askViews: [],
   sessionId: 'root',
-  concerns: [
+  projects: [
     {
       id: 'research',
       title: 'Research',
@@ -32,7 +32,7 @@ const snapshot: NeoSnapshot = {
     {
       id: 'work-A',
       requestKey: 'A',
-      concernId: 'research',
+      projectId: 'research',
       originSessionId: 'root',
       originMessageId: 'ask-A',
       title: 'Review the draft',
@@ -48,7 +48,7 @@ const snapshot: NeoSnapshot = {
     {
       id: 'neo-work:work-A:review',
       requestKey: 'neo-work:work-A:review',
-      concernId: 'research',
+      projectId: 'research',
       originSessionId: 'root',
       originMessageId: null,
       sessionId: 'holder',
@@ -59,7 +59,7 @@ const snapshot: NeoSnapshot = {
     },
   ],
 };
-const board = () => projectNeoConcernBoard(snapshot, 'research', null)!;
+const board = () => projectNeoProjectBoard(snapshot, 'research', null)!;
 
 describe('neoBoardReceiptLabel', () => {
   it('uses actual work titles and exact recorded review relationships without parsing reports', () => {
@@ -89,7 +89,7 @@ describe('neoBoardReceiptLabel', () => {
   it.each([
     { id: 'ordinary-check' },
     { requestKey: 'different-check' },
-    { concernId: 'family' },
+    { projectId: 'family' },
     { id: 'neo-work:work-A:review:extra', requestKey: 'neo-work:work-A:review:extra' },
   ])('does not infer a work relationship from prompt text or partial identity: %j', (patch) => {
     const receipts = board().receipts;
@@ -106,7 +106,7 @@ describe('neoBoardReceiptLabel', () => {
 
 describe('Recorded handoff disclosure', () => {
   it('keeps internal prompts out of the headline and preserves their exact text behind details', () => {
-    render(<NeoConcernBoardView board={board()} requestScoped />);
+    render(<NeoProjectBoardView board={board()} requestScoped />);
     const list = screen.getByRole('list', { name: 'Recorded handoffs' });
     const label = within(list).getByText('Context review · Review the draft');
     expect(label.textContent).not.toContain('work-A');
@@ -139,8 +139,8 @@ describe('Recorded handoff disclosure', () => {
         },
       ],
     };
-    const observed = projectNeoConcernBoard(source, 'research', null)!;
-    render(<NeoConcernBoardView board={observed} />);
+    const observed = projectNeoProjectBoard(source, 'research', null)!;
+    render(<NeoProjectBoardView board={observed} />);
     const label = screen.getByText('Context check');
     const details = label.closest('li')!.querySelector('details')!;
     expect(details.open).toBe(false);

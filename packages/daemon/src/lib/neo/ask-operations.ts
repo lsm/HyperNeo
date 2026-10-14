@@ -1,4 +1,4 @@
-import type { NeoConcern, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
   type NeoAsk,
@@ -43,7 +43,7 @@ type Gate<T> = { value: T } | { reason: Rejection };
 type NeoAdmit = (
   caller: OperationCaller,
   name: string,
-  concernId?: string | null
+  projectId?: string | null
 ) => Gate<OperationCaller>;
 type AskReceipt = { ok: true; ask: NeoAsk };
 type AskOpened = AskReceipt & { packBriefing?: string };
@@ -61,7 +61,7 @@ const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const NeoAskSchema = z.object({
   id: z.string(),
   requestKey: z.string(),
-  concernId: z.string().nullable(),
+  projectId: z.string().nullable(),
   originSessionId: z.string(),
   originMessageId: z.string().nullable(),
   title: z.string(),
@@ -130,7 +130,7 @@ const Item = z.object({
 const Open = z
   .object({
     requestKey: z.string().min(1).max(160),
-    concernId: z.string().min(1).nullable().default(null),
+    projectId: z.string().min(1).nullable().default(null),
     title: z.string().trim().min(1).max(160),
     ask: z.string().trim().min(1).max(4000),
     doneWhen: z.string().trim().min(1).max(2000).optional(),
@@ -254,15 +254,15 @@ export function requireNeoAskLive(ask: NeoAsk, hint = ''): Gate<NeoAsk> {
     : { value: ask };
 }
 
-type WorkAskInput = { askId?: string; concernId: string | null };
+type WorkAskInput = { askId?: string; projectId: string | null };
 
 export function requireNeoWorkAsk(
   ask: NeoAsk | null,
   input: WorkAskInput,
   caller: OperationCaller
 ): Gate<OperationCaller> {
-  return input.askId && ask && ask.concernId !== input.concernId
-    ? { reason: fail('This ask belongs to another concern; propose under its concernId.') }
+  return input.askId && ask && ask.projectId !== input.projectId
+    ? { reason: fail('This ask belongs to another project; propose under its projectId.') }
     : { value: caller };
 }
 
@@ -302,7 +302,7 @@ export function planNeoCardAsk(
   input: {
     askId?: string;
     requestKey: string;
-    concernId: string | null;
+    projectId: string | null;
     title: string;
     goal?: string;
     doneWhen?: string;
@@ -312,7 +312,7 @@ export function planNeoCardAsk(
   if (input.askId || !input.doneWhen) return null;
   return {
     requestKey: `card:${origin.originSessionId}:${input.requestKey}`,
-    concernId: input.concernId,
+    projectId: input.projectId,
     originSessionId: origin.originSessionId,
     originMessageId: origin.originMessageId,
     title: input.title,
@@ -348,12 +348,12 @@ export function projectNeoSnapshotAsks(
   }));
 }
 
-export function requireNeoAskConcern<T>(
-  input: { concernId: string | null },
-  found: { concern: NeoConcern | null },
+export function requireNeoAskProject<T>(
+  input: { projectId: string | null },
+  found: { project: NeoProject | null },
   value: T
 ): Gate<T> {
-  return input.concernId && !found.concern ? { reason: fail('Concern not found.') } : { value };
+  return input.projectId && !found.project ? { reason: fail('Project not found.') } : { value };
 }
 
 export function planNeoAskItems(input: {
@@ -464,7 +464,7 @@ export function requireNeoAskReceipt(
 ): Gate<AskReceipt> {
   const { ask } = opened;
   if (!ask) return { reason: fail('Asks are not available on this daemon yet.') };
-  const same = (['concernId', 'title', 'ask', 'doneWhen', 'doneSource'] as const).every(
+  const same = (['projectId', 'title', 'ask', 'doneWhen', 'doneSource'] as const).every(
     (field) => ask[field] === input[field]
   );
   return same && (ask.pack ?? null) === (input.pack ?? null)
@@ -953,7 +953,7 @@ export function createNeoAskOperations(
     .pipe((askId: string) => ({ ask: service.askRecords.get(askId) }), 'askId', 'current')
     .pipe(
       (caller: OperationCaller, current: { ask: NeoAsk | null }, name: string) =>
-        admit(caller, name, current.ask?.concernId),
+        admit(caller, name, current.ask?.projectId),
       ['caller', 'current', 'name'],
       'result:ask'
     )
@@ -977,18 +977,18 @@ export function createNeoAskOperations(
     .input(['input', 'caller'])
     .pipe(
       (input: z.infer<typeof Open>, caller: OperationCaller) =>
-        admit(caller, 'neo.ask.open', input.concernId),
+        admit(caller, 'neo.ask.open', input.projectId),
       ['input', 'caller'],
       'result:admission'
     )
     .pipe(
       (input: z.infer<typeof Open>) => ({
-        concern: input.concernId ? service.repo.getConcern(input.concernId) : null,
+        project: input.projectId ? service.repo.getProject(input.projectId) : null,
       }),
       'input',
-      'concern'
+      'project'
     )
-    .pipe(requireNeoAskConcern, ['input', 'concern', 'admission'], 'result:admission')
+    .pipe(requireNeoAskProject, ['input', 'project', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Open>) => requireNeoAskPack(input.pack, service.packs()),
       'input',
@@ -999,7 +999,7 @@ export function createNeoAskOperations(
       (input: z.infer<typeof Open>, caller: OperationCaller) =>
         admitNeoWorkOrigin(
           caller,
-          caller.sessionId ?? service.repo.getBindingForConcern(input.concernId)?.sessionId
+          caller.sessionId ?? service.repo.getBindingForProject(input.projectId)?.sessionId
         ),
       ['input', 'caller'],
       'result:admission'
@@ -1099,7 +1099,7 @@ export function createNeoAskOperations(
     )
     .pipe(
       (caller: OperationCaller, current: { ask: NeoAsk | null }) =>
-        admit(caller, 'neo.ask.settle', current.ask?.concernId),
+        admit(caller, 'neo.ask.settle', current.ask?.projectId),
       ['caller', 'current'],
       'result:admission'
     )

@@ -65,7 +65,7 @@ export function readNeoConversationPage<T extends { sequence: number }>(
 const read = (superpipe({})('neo-publication-read') as PipelineAPI)
   .input(['page', 'caller', 'repo', 'ledger'])
   .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
-  .pipe((repo: NeoRepository) => repo.getBindingForConcern(null), 'repo', 'root')
+  .pipe((repo: NeoRepository) => repo.getBindingForProject(null), 'repo', 'root')
   .pipe(requirePublicationConversation, ['page', 'root'], 'result:page')
   .pipe(
     (page: Page, ledger: NeoPublicationRepository) =>

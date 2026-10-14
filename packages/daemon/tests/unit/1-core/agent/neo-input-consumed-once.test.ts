@@ -12,7 +12,7 @@ import {
 async function driveThenClear(sessionId: string, bound: boolean) {
   const db = await createTestDb();
   db.createSession(createTestSession(sessionId));
-  new NeoRepository(db.getDatabase()).reserveBinding({ sessionId, kind: 'neo', concernId: null });
+  new NeoRepository(db.getDatabase()).reserveBinding({ sessionId, kind: 'neo', projectId: null });
   const agentSession = new AgentSession(
     db.getSession(sessionId)!,
     db,

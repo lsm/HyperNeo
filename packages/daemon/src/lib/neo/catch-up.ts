@@ -19,7 +19,7 @@ const VIEW_TURNS = 20;
 const VIEW_CHARS = 3_000;
 
 function where(route: NeoRoute, titles: ReadonlyMap<string, string>): string {
-  if (route.concernId) return titles.get(route.concernId) ?? route.concernId;
+  if (route.projectId) return titles.get(route.projectId) ?? route.projectId;
   return 'a holder';
 }
 
@@ -71,9 +71,9 @@ function requireMissedRoutes(
   return routes.length > 0 ? { value: [...routes] } : { reason: '' };
 }
 
-function loadNeoConcernTitles(db: BunDatabase): Map<string, string> {
+function loadNeoProjectTitles(db: BunDatabase): Map<string, string> {
   return new Map(
-    new NeoRepository(db).listConcernTitles().map((concern) => [concern.id, concern.title.trim()])
+    new NeoRepository(db).listProjectTitles().map((project) => [project.id, project.title.trim()])
   );
 }
 
@@ -81,7 +81,7 @@ export const readNeoCatchUp = (superpipe({})('neo-catch-up') as PipelineAPI)
   .input(['db'])
   .pipe(loadNeoCatchUpRoutes, 'db', 'routes')
   .pipe(requireMissedRoutes, 'routes', 'result:catchUp')
-  .pipe(loadNeoConcernTitles, 'db', 'titles')
+  .pipe(loadNeoProjectTitles, 'db', 'titles')
   .pipe(renderNeoCatchUp, ['catchUp', 'titles'], 'catchUp')
   .end('catchUp') as (db: BunDatabase) => string;
 
@@ -108,6 +108,6 @@ export const readNeoHolderView = (superpipe({})('neo-holder-view') as PipelineAP
   .input(['db'])
   .pipe(loadNeoRecentTurns, 'db', 'routes')
   .pipe(requireMissedRoutes, 'routes', 'result:view')
-  .pipe(loadNeoConcernTitles, 'db', 'titles')
+  .pipe(loadNeoProjectTitles, 'db', 'titles')
   .pipe(renderNeoHolderView, ['view', 'titles'], 'view')
   .end('view') as (db: BunDatabase) => string;

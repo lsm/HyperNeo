@@ -18,26 +18,27 @@ const MIN_MARGIN = 0.05;
 const PROFILE_ASKS = 8;
 const PROFILE_ASK_CHARS = 300;
 const CLASSIFY_FLOOR = 0.35;
-const TOPIC_LIMIT = 15;
+const PROJECT_LIMIT = 15;
 const RECENT_TURNS = 20;
 const TURNS_CHARS = 3_000;
 const TURN_TEXT_CHARS = 300;
-const TOPIC_SUMMARY_CHARS = 160;
+const PROJECT_SUMMARY_CHARS = 160;
 const PROFILE_VECTOR_LIMIT = 256;
 const OPEN_ASKS = 5;
 const OPEN_ASK_CHARS = 120;
 export const NEO_INBOX_ID = 'inbox';
-export const NEO_INBOX_SUMMARY = 'Self-contained one-off questions that need no continuing topic.';
+export const NEO_INBOX_SUMMARY =
+  'Self-contained one-off questions that need no continuing project.';
 const INBOX_CHOICE: NeoHolder = {
-  concernId: NEO_INBOX_ID,
+  projectId: NEO_INBOX_ID,
   sessionId: '',
   title: 'Inbox',
   summary: NEO_INBOX_SUMMARY,
 };
 
-const NEW_TOPIC_TITLE_CHARS = 60;
+const NEW_PROJECT_TITLE_CHARS = 60;
 
-export function neoNewTopic(
+export function neoNewProject(
   text: string,
   id: string
 ): { id: string; title: string; summary: string } {
@@ -45,31 +46,31 @@ export function neoNewTopic(
   return {
     id,
     title:
-      line.length <= NEW_TOPIC_TITLE_CHARS
+      line.length <= NEW_PROJECT_TITLE_CHARS
         ? line
-        : `${line.slice(0, NEW_TOPIC_TITLE_CHARS - 1).trimEnd()}…`,
-    summary: neoExcerpt(text.trim(), TOPIC_SUMMARY_CHARS),
+        : `${line.slice(0, NEW_PROJECT_TITLE_CHARS - 1).trimEnd()}…`,
+    summary: neoExcerpt(text.trim(), PROJECT_SUMMARY_CHARS),
   };
 }
 
-export async function openNeoNewTopic(
-  repo: Pick<NeoRepository, 'saveConcern' | 'getConcern' | 'discardUnopenedConcern'>,
-  openHolder: (concernId: string) => Promise<string>,
-  topic: { id: string; title: string; summary: string }
+export async function openNeoNewProject(
+  repo: Pick<NeoRepository, 'saveProject' | 'getProject' | 'discardUnopenedProject'>,
+  openHolder: (projectId: string) => Promise<string>,
+  project: { id: string; title: string; summary: string }
 ): Promise<NeoHolder | null> {
-  const saved = repo.saveConcern({ ...topic, context: '' }, 0) ?? repo.getConcern(topic.id);
+  const saved = repo.saveProject({ ...project, context: '' }, 0) ?? repo.getProject(project.id);
   if (!saved) return null;
   try {
     const sessionId = await openHolder(saved.id);
-    return { concernId: saved.id, sessionId, title: saved.title, summary: saved.summary };
+    return { projectId: saved.id, sessionId, title: saved.title, summary: saved.summary };
   } catch {
-    repo.discardUnopenedConcern(saved.id);
+    repo.discardUnopenedProject(saved.id);
     return null;
   }
 }
 
 export interface NeoHolder {
-  concernId: string;
+  projectId: string;
   sessionId: string;
   title: string;
   summary: string;
@@ -77,7 +78,7 @@ export interface NeoHolder {
 }
 
 export interface NeoRouteChoice {
-  concernId: string;
+  projectId: string;
   sessionId: string;
   signal: NeoRouteSignal;
   confidence: number;
@@ -87,10 +88,10 @@ type NeoRouteAnswer = NeoHolder | 'main' | null;
 export const NEO_ROUTE_BASES = [
   'continues_turn',
   'answers_waiting',
-  'matches_topic',
+  'matches_project',
   'one_off',
   'new_subject',
-  'cross_topic',
+  'cross_project',
   'unsure',
 ] as const;
 export type NeoRouteBasis = (typeof NEO_ROUTE_BASES)[number];
@@ -110,13 +111,13 @@ function classifierSignal(basis: NeoRouteBasis | null | undefined): NeoRouteSign
 export interface NeoRouterDeps {
   holders(): NeoHolder[] | Promise<NeoHolder[]>;
   recentTurns(): NeoRoute[];
-  topicTurns(): NeoRoute[];
-  recentAsks(concernId: string, limit: number): string[];
-  openAsks?(concernId: string): string[];
+  projectTurns(): NeoRoute[];
+  recentAsks(projectId: string, limit: number): string[];
+  openAsks?(projectId: string): string[];
   embed(text: string): Promise<Float32Array | null>;
   classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteVerdict>;
   inbox?(): Promise<NeoHolder | null>;
-  newTopic?(text: string, key?: string): Promise<NeoHolder | null>;
+  newProject?(text: string, key?: string): Promise<NeoHolder | null>;
   inboxRunnable?(): Promise<boolean>;
 }
 
@@ -129,7 +130,7 @@ export function pickNeoHolder(
   if (!top || top.similarity < MIN_SIMILARITY) return null;
   if (second && top.similarity - second.similarity < MIN_MARGIN) return null;
   return {
-    concernId: top.holder.concernId,
+    projectId: top.holder.projectId,
     sessionId: top.holder.sessionId,
     signal: 'embedding',
     confidence: Math.round(top.similarity * 1000) / 1000,
@@ -170,14 +171,14 @@ async function profileVector(profile: string, deps: NeoRouterDeps): Promise<Floa
 
 export async function scoreNeoHolders(
   text: string,
-  topical: readonly NeoHolder[],
+  projectal: readonly NeoHolder[],
   deps: NeoRouterDeps
 ): Promise<Score[]> {
-  const message = topical.length > 0 ? await deps.embed(text) : null;
+  const message = projectal.length > 0 ? await deps.embed(text) : null;
   if (!message) return [];
   const scores: Score[] = [];
-  for (const holder of topical) {
-    const profile = neoHolderProfile(holder, deps.recentAsks(holder.concernId, PROFILE_ASKS));
+  for (const holder of projectal) {
+    const profile = neoHolderProfile(holder, deps.recentAsks(holder.projectId, PROFILE_ASKS));
     const vector = await profileVector(profile, deps);
     if (vector) scores.push({ holder, similarity: cosineSimilarity(message, vector) ?? -1 });
   }
@@ -191,15 +192,15 @@ export function runnableNeoHolders(
   return holders.filter((holder) => available.get(holder.provider ?? 'anthropic') !== false);
 }
 
-function topicOf(route: NeoRoute): string {
-  return route.concernId ?? 'main';
+function projectOf(route: NeoRoute): string {
+  return route.projectId ?? 'main';
 }
 
 export function neoTurnLine(route: NeoRoute, titles: ReadonlyMap<string, string>): string {
-  const topic = topicOf(route);
+  const project = projectOf(route);
   const ask = neoExcerpt(route.askSummary ?? route.ask, TURN_TEXT_CHARS);
   const answer = route.outcome ? neoExcerpt(route.outcome, TURN_TEXT_CHARS) : '(no reply yet)';
-  return `[${titles.get(topic) ?? topic}] you: "${ask}" → ${answer}`;
+  return `[${titles.get(project) ?? project}] you: "${ask}" → ${answer}`;
 }
 
 export function neoRouteCandidates(
@@ -208,17 +209,17 @@ export function neoRouteCandidates(
   recent: readonly NeoRoute[],
   latest: readonly NeoRoute[]
 ): NeoHolder[] {
-  if (holders.length <= TOPIC_LIMIT) return [...holders];
+  if (holders.length <= PROJECT_LIMIT) return [...holders];
   const keep = new Set(
     [...recent, ...latest.filter((route) => route.awaiting)].flatMap((route) =>
-      route.concernId ? [route.concernId] : []
+      route.projectId ? [route.projectId] : []
     )
   );
   for (const score of [...scores].sort((a, b) => b.similarity - a.similarity)) {
-    if (keep.size >= TOPIC_LIMIT || score.similarity < CLASSIFY_FLOOR) break;
-    keep.add(score.holder.concernId);
+    if (keep.size >= PROJECT_LIMIT || score.similarity < CLASSIFY_FLOOR) break;
+    keep.add(score.holder.projectId);
   }
-  return holders.filter((holder) => keep.has(holder.concernId)).slice(0, TOPIC_LIMIT);
+  return holders.filter((holder) => keep.has(holder.projectId)).slice(0, PROJECT_LIMIT);
 }
 
 function requireRouteQuestion(
@@ -230,14 +231,14 @@ function requireRouteQuestion(
     : { reason: { choice: null } };
 }
 
-export function neoTopicOpenAsks(
+export function neoProjectOpenAsks(
   candidates: readonly NeoHolder[],
   deps: Pick<NeoRouterDeps, 'openAsks'>
 ): Map<string, string[]> {
   return new Map(
     candidates.map((holder) => [
-      holder.concernId,
-      (deps.openAsks?.(holder.concernId) ?? [])
+      holder.projectId,
+      (deps.openAsks?.(holder.projectId) ?? [])
         .slice(0, OPEN_ASKS)
         .map((ask) => neoExcerpt(ask, OPEN_ASK_CHARS)),
     ])
@@ -252,9 +253,9 @@ export function renderNeoRouteContext(
   withInbox: boolean,
   openAsks: ReadonlyMap<string, readonly string[]> = new Map()
 ): string {
-  const titles = new Map(holders.map((holder) => [holder.concernId, holder.title]));
-  const notes = (topic: string) => {
-    const route = latest.find((item) => topicOf(item) === topic);
+  const titles = new Map(holders.map((holder) => [holder.projectId, holder.title]));
+  const notes = (project: string) => {
+    const route = latest.find((item) => projectOf(item) === project);
     if (!route) return [];
     return [
       `    last: ${neoTurnLine(route, titles)}`,
@@ -263,29 +264,29 @@ export function renderNeoRouteContext(
         : []),
     ];
   };
-  const asks = (topic: string) => {
-    const open = openAsks.get(topic) ?? [];
+  const asks = (project: string) => {
+    const open = openAsks.get(project) ?? [];
     return open.length > 0 ? [`    open asks: ${open.map((ask) => `"${ask}"`).join('; ')}`] : [];
   };
-  const topics = [
-    '- main: Neo itself, the last resort for questions across topics or when you cannot tell',
+  const projects = [
+    '- main: Neo itself, the last resort for questions across projects or when you cannot tell',
     ...notes('main'),
     ...candidates.flatMap((holder) => [
-      `- ${holder.concernId}: ${holder.title}${holder.summary ? ` (${neoExcerpt(holder.summary, TOPIC_SUMMARY_CHARS)})` : ''}`,
-      ...asks(holder.concernId),
-      ...notes(holder.concernId),
+      `- ${holder.projectId}: ${holder.title}${holder.summary ? ` (${neoExcerpt(holder.summary, PROJECT_SUMMARY_CHARS)})` : ''}`,
+      ...asks(holder.projectId),
+      ...notes(holder.projectId),
     ]),
     ...(withInbox ? [`- ${NEO_INBOX_ID}: ${NEO_INBOX_SUMMARY}`, ...notes(NEO_INBOX_ID)] : []),
   ];
   const turns = fitLines(
     recent
-      .filter((route) => route.concernId !== null)
+      .filter((route) => route.projectId !== null)
       .map((route) => `- ${neoTurnLine(route, titles)}`),
     TURNS_CHARS
   );
   return [
-    'Topics:',
-    ...topics,
+    'Projects:',
+    ...projects,
     '',
     'Recent turns (newest first):',
     ...(turns.length > 0 ? turns : ['(none)']),
@@ -319,14 +320,14 @@ async function classifyNeoAsk(
   const chosen = decided
     ? decided.decision
     : (verdict as Exclude<NeoRouteVerdict, NeoRouteDecision>);
-  const unheld = decided?.basis === 'new_subject' || decided?.basis === 'matches_topic';
-  if (chosen === 'main' && unheld && deps.newTopic) {
-    const topic = await deps.newTopic(text);
-    if (topic)
+  const unheld = decided?.basis === 'new_subject' || decided?.basis === 'matches_project';
+  if (chosen === 'main' && unheld && deps.newProject) {
+    const project = await deps.newProject(text);
+    if (project)
       return {
         choice: {
-          concernId: topic.concernId,
-          sessionId: topic.sessionId,
+          projectId: project.projectId,
+          sessionId: project.sessionId,
           signal: classifierSignal(decided.basis),
           confidence: decided.confidence ?? CLASSIFIER_CONFIDENCE,
         },
@@ -335,11 +336,11 @@ async function classifyNeoAsk(
   if (chosen === 'main') return { choice: null, fallback: classifierSignal(decided?.basis) };
   if (!chosen || chosen === 'timeout' || chosen === 'failed')
     return { choice: pickNeoHolder(scores), fallback: `classifier-${chosen ?? 'unanswered'}` };
-  const holder = chosen.concernId === NEO_INBOX_ID ? await deps.inbox?.() : chosen;
+  const holder = chosen.projectId === NEO_INBOX_ID ? await deps.inbox?.() : chosen;
   return {
     choice: holder
       ? {
-          concernId: holder.concernId,
+          projectId: holder.projectId,
           sessionId: holder.sessionId,
           signal: classifierSignal(decided?.basis),
           confidence: decided?.confidence ?? CLASSIFIER_CONFIDENCE,
@@ -354,12 +355,12 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
   .pipe(requireAskText, 'text', 'result:route')
   .pipe(
     async (deps: NeoRouterDeps) =>
-      (await deps.holders()).filter((holder) => holder.concernId !== NEO_INBOX_ID),
+      (await deps.holders()).filter((holder) => holder.projectId !== NEO_INBOX_ID),
     'deps',
     'holders'
   )
   .pipe((deps: NeoRouterDeps) => deps.recentTurns(), 'deps', 'recent')
-  .pipe((deps: NeoRouterDeps) => deps.topicTurns(), 'deps', 'latest')
+  .pipe((deps: NeoRouterDeps) => deps.projectTurns(), 'deps', 'latest')
   .pipe(scoreNeoHolders, ['text', 'holders', 'deps'], 'scores')
   .pipe(neoRouteCandidates, ['holders', 'scores', 'recent', 'latest'], 'candidates')
   .pipe(requireRouteQuestion, ['candidates', 'recent'], 'result:route')
@@ -368,7 +369,7 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
     'deps',
     'withInbox'
   )
-  .pipe(neoTopicOpenAsks, ['candidates', 'deps'], 'openAsks')
+  .pipe(neoProjectOpenAsks, ['candidates', 'deps'], 'openAsks')
   .pipe(
     renderNeoRouteContext,
     ['holders', 'candidates', 'recent', 'latest', 'withInbox', 'openAsks'],
@@ -386,25 +387,25 @@ export type NeoRouter = (text: string, requestId?: string) => Promise<NeoRouted>
 
 export interface NeoHolderWake {
   asleep(sessionId: string): boolean;
-  wake?(concernId: string): Promise<string | null>;
+  wake?(projectId: string): Promise<string | null>;
 }
 
 export function reopenNeoHolder(
-  repo: Pick<NeoRepository, 'getBindingForConcern' | 'retireArchivedBinding'>,
+  repo: Pick<NeoRepository, 'getBindingForProject' | 'retireArchivedBinding'>,
   db: Pick<Database, 'getSession'>,
-  openHolder: (concernId: string) => Promise<string>,
-  concernId: string
+  openHolder: (projectId: string) => Promise<string>,
+  projectId: string
 ): Promise<string> {
-  const binding = repo.getBindingForConcern(concernId);
+  const binding = repo.getBindingForProject(projectId);
   if (binding && db.getSession(binding.sessionId)?.status === 'archived')
-    repo.retireArchivedBinding(concernId, binding.sessionId);
-  return openHolder(concernId);
+    repo.retireArchivedBinding(projectId, binding.sessionId);
+  return openHolder(projectId);
 }
 
 export async function wakeNeoRoute(routed: NeoRouted, holders: NeoHolderWake): Promise<NeoRouted> {
   const choice = routed.choice;
   if (!choice || !holders.asleep(choice.sessionId)) return routed;
-  const sessionId = holders.wake ? await holders.wake(choice.concernId) : null;
+  const sessionId = holders.wake ? await holders.wake(choice.projectId) : null;
   return sessionId
     ? { ...routed, choice: { ...choice, sessionId } }
     : { choice: null, fallback: 'holder-unavailable' };
@@ -413,22 +414,27 @@ export async function wakeNeoRoute(routed: NeoRouted, holders: NeoHolderWake): P
 export function createNeoRouter(
   db: Database,
   repo: NeoRepository,
-  openHolder?: (concernId: string) => Promise<string>
+  openHolder?: (projectId: string) => Promise<string>
 ): NeoRouter {
   const log = new NeoRoutingLogRepository(db.getDatabase());
   const asks = new NeoAskRepository(db.getDatabase());
   const deps: NeoRouterDeps = {
     holders: async () => {
-      const holders: NeoHolder[] = repo.listConcerns().flatMap((concern) => {
-        const binding = repo.getBindingForConcern(concern.id);
+      if (openHolder) {
+        for (const project of repo.listProjects()) {
+          if (!repo.getBindingForProject(project.id)) await openHolder(project.id);
+        }
+      }
+      const holders: NeoHolder[] = repo.listProjects().flatMap((project) => {
+        const binding = repo.getBindingForProject(project.id);
         const session = binding ? db.getSession(binding.sessionId) : null;
-        return binding?.kind === 'concern'
+        return binding?.kind === 'project'
           ? [
               {
-                concernId: concern.id,
+                projectId: project.id,
                 sessionId: binding.sessionId,
-                title: concern.title,
-                summary: concern.summary,
+                title: project.title,
+                summary: project.summary,
                 ...(session?.config.provider ? { provider: session.config.provider } : {}),
               },
             ]
@@ -452,11 +458,11 @@ export function createNeoRouter(
       return runnableNeoHolders(holders, available);
     },
     recentTurns: () => log.recent(RECENT_TURNS),
-    topicTurns: () => log.latestPerTopic(),
-    recentAsks: (concernId, limit) => log.recentAsks(concernId, limit),
-    openAsks: (concernId) =>
+    projectTurns: () => log.latestPerProject(),
+    recentAsks: (projectId, limit) => log.recentAsks(projectId, limit),
+    openAsks: (projectId) =>
       asks
-        .list(concernId)
+        .list(projectId)
         .filter((ask) => !isNeoAskSettled(ask))
         .map((ask) => ask.title),
     embed: async (text) =>
@@ -473,7 +479,7 @@ export function createNeoRouter(
     },
     inbox: openHolder
       ? async () => {
-          repo.saveConcern(
+          repo.saveProject(
             { id: NEO_INBOX_ID, title: 'Inbox', summary: NEO_INBOX_SUMMARY, context: '' },
             0
           );
@@ -481,13 +487,13 @@ export function createNeoRouter(
           return { ...INBOX_CHOICE, sessionId };
         }
       : undefined,
-    newTopic: openHolder
+    newProject: openHolder
       ? (text, key) =>
-          openNeoNewTopic(repo, openHolder, neoNewTopic(text, key ?? crypto.randomUUID()))
+          openNeoNewProject(repo, openHolder, neoNewProject(text, key ?? crypto.randomUUID()))
       : undefined,
     inboxRunnable: async () => {
       if (process.env.NODE_ENV === 'test') return true;
-      const binding = repo.getBindingForConcern(NEO_INBOX_ID) ?? repo.getBindingForConcern(null);
+      const binding = repo.getBindingForProject(NEO_INBOX_ID) ?? repo.getBindingForProject(null);
       const provider =
         (binding ? db.getSession(binding.sessionId)?.config.provider : undefined) ?? 'anthropic';
       return getProviderService()
@@ -501,21 +507,21 @@ export function createNeoRouter(
       return !session || session.status === 'archived';
     },
     wake: openHolder
-      ? async (concernId) => {
+      ? async (projectId) => {
           try {
-            return await reopenNeoHolder(repo, db, openHolder, concernId);
+            return await reopenNeoHolder(repo, db, openHolder, projectId);
           } catch {
             return null;
           }
         }
       : undefined,
   };
-  const newTopic = deps.newTopic;
+  const newProject = deps.newProject;
   return async (text, requestId) =>
     wakeNeoRoute(
       await chooseNeoRoute(text, {
         ...deps,
-        newTopic: newTopic && ((ask) => newTopic(ask, requestId)),
+        newProject: newProject && ((ask) => newProject(ask, requestId)),
       }),
       holders
     );

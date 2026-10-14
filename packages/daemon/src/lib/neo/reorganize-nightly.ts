@@ -2,7 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { NeoReorganized } from './reorganize-operation.ts';
 
-export const NEO_TOPICS_REORGANIZE_NIGHTLY = 'neo.topics.reorganize.nightly';
+export const NEO_TOPICS_REORGANIZE_NIGHTLY = 'neo.projects.reorganize.nightly';
 export const NEO_REORGANIZE_IDLE_MS = 3 * 60 * 60 * 1000;
 export const NEO_REORGANIZE_EVERY_MS = 20 * 60 * 60 * 1000;
 

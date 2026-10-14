@@ -1,7 +1,7 @@
 import type { PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { describe, expect, it } from 'vitest';
-import { projectNeoConcernBoard } from '../neo-concern-board.ts';
+import { projectNeoProjectBoard } from '../neo-project-board.ts';
 import {
   classifyNeoScene,
   groupNeoScenes,
@@ -15,7 +15,7 @@ import {
 const work = (id = 'work-A', status: NeoWork['status'] = 'queued'): NeoWork => ({
   id,
   requestKey: id,
-  concernId: 'fictional',
+  projectId: 'fictional',
   originSessionId: 'neo',
   originMessageId: 'ask',
   sessionId: 'worker-A',
@@ -41,13 +41,13 @@ const question = (): PendingUserQuestion => ({
 });
 const scene = (value: NeoWork = work()) => classifyNeoScene({ ...value, kind: 'work' });
 const board = (works: NeoWork[]) =>
-  projectNeoConcernBoard(
+  projectNeoProjectBoard(
     {
       ok: true,
       cards: [],
       askViews: [],
       sessionId: 'neo',
-      concerns: [
+      projects: [
         {
           id: 'fictional',
           title: 'Plans',
@@ -117,7 +117,7 @@ describe('promoteNeoQuestionScene', () => {
       kind: 'consultation',
       id: 'work-A',
       requestKey: 'check',
-      concernId: 'fictional',
+      projectId: 'fictional',
       originSessionId: 'neo',
       originMessageId: 'ask',
       sessionId: 'worker-A',

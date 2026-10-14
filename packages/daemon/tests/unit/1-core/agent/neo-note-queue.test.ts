@@ -139,7 +139,7 @@ afterEach(() => {
 async function makeHarness(sessionId: string): Promise<Harness> {
   const db = await createTestDb();
   db.createSession(createTestSession(sessionId));
-  new NeoRepository(db.getDatabase()).reserveBinding({ sessionId, kind: 'neo', concernId: null });
+  new NeoRepository(db.getDatabase()).reserveBinding({ sessionId, kind: 'neo', projectId: null });
   const events = new InternalEventBus<DaemonInternalEventMap>();
   const failed: string[][] = [];
   events.subscribe(
@@ -208,7 +208,7 @@ function settledCard(harness: Harness, id: string): void {
   const work = harness.service.repo.proposeWork({
     id,
     requestKey: `k-${id}`,
-    concernId: null,
+    projectId: null,
     originSessionId: harness.sessionId,
     title: 'Done card',
     instruction: 'Done.',
@@ -220,7 +220,7 @@ function settledAsk(harness: Harness, id: string): void {
   const ask = harness.service.askRecords.open({
     id,
     requestKey: `k-${id}`,
-    concernId: null,
+    projectId: null,
     originSessionId: harness.sessionId,
     originMessageId: `m-${id}`,
     title: 'Done ask',

@@ -391,7 +391,7 @@ describe('useNeo ask client build reachability', () => {
     hookRequest.mockImplementation(async (_method: string, payload: { name?: string }) =>
       payload?.name === 'neo.publication.read'
         ? response()
-        : { ok: true, sessionId: `neo:${conversationId}`, concerns: [], work: [] }
+        : { ok: true, sessionId: `neo:${conversationId}`, projects: [], work: [] }
     );
     render(<Probe />);
     await waitFor(() =>

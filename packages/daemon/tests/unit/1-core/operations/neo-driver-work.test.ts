@@ -15,6 +15,7 @@ import {
   withWorkGoal,
   driverWorkCaller,
   type NeoDriverTarget,
+  NeoDriverTargetSchema,
   driverExchangeReport,
   readDriverLanded,
   readDriverSent,
@@ -310,6 +311,23 @@ describe('requireNeoExecutionChoice', () => {
       )
     ).toEqual({ value: neo });
     expect(requireNeoExecutionChoice({ work: startTarget }, neo)).toEqual({ value: neo });
+  });
+});
+
+describe('NeoDriverTargetSchema', () => {
+  test('normalizes requested configuration and preserves omitted settings', () => {
+    expect(
+      NeoDriverTargetSchema.parse({ ...startTarget, model: ' sol 6.1 ', effort: ' medium ' })
+    ).toEqual({ ...startTarget, model: 'sol 6.1', effort: 'medium' });
+    expect(NeoDriverTargetSchema.parse(startTarget)).toEqual(startTarget);
+    expect(NeoDriverTargetSchema.parse({ ...startTarget, effort: 'high' })).toEqual({
+      ...startTarget,
+      effort: 'high',
+    });
+  });
+
+  test.each(['', '   ', 'x'.repeat(101), 1, null])('rejects invalid effort %j', (effort) => {
+    expect(NeoDriverTargetSchema.safeParse({ ...startTarget, effort }).success).toBe(false);
   });
 });
 
@@ -689,7 +707,7 @@ describe('Neo work with a drivers target', () => {
     const ask = service.askRecords.open({
       id: `ask-${workId}`,
       requestKey: `neo:root:${workId}`,
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       originMessageId: 'ask-1',
       title: 'Fix it',
@@ -751,7 +769,7 @@ describe('Neo work with a drivers target', () => {
       {
         id: 'work-1',
         requestKey: 'root:font',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'ask-1',
         title: work.title,
@@ -822,7 +840,7 @@ describe('Neo work with a drivers target', () => {
         {
           id: 'other-card',
           requestKey: 'other-card',
-          concernId: null,
+          projectId: null,
           originSessionId: 'neo:root',
           originMessageId: 'ask-1',
           ...work,
@@ -904,7 +922,7 @@ describe('Neo work with a drivers target', () => {
           {
             id: 'native-card',
             requestKey: 'native-card',
-            concernId: null,
+            projectId: null,
             originSessionId: 'neo:root',
             originMessageId: 'ask-1',
             targetSessionId: 'agent-session',
@@ -1134,6 +1152,58 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test.each([undefined, 'sol 6.1'])(
+    'starts from a stored effort target with model %s',
+    async (model) => {
+      const target: NeoDriverTarget = {
+        ...startTarget,
+        ...(model ? { model } : {}),
+        effort: 'medium',
+      };
+      const ref = { adapter: 'codex-desktop', id: 'configured' };
+      const { db, service, calls } = await setup(
+        { ok: true, value: { ref } },
+        undefined,
+        undefined,
+        target
+      );
+      try {
+        expect(service.driverTargets.get('work-1')).toEqual(target);
+        expect(service.driverTargets.readCard('work-1')?.target).toEqual(target);
+        await service.start('work-1');
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toMatchObject({ name: 'work.start', input: { effort: 'medium' } });
+        expect((calls[0].input as Record<string, unknown>).model).toBe(model);
+        expect(service.driverTargets.readRef('work-1')).toEqual(ref);
+      } finally {
+        service.dispose();
+        db.close();
+      }
+    }
+  );
+
+  test('keeps the requested effort when a driver refuses it without a receipt', async () => {
+    const { db, service } = await setup(
+      { ok: false, reason: 'unsupported_effort', detail: 'Route cannot confirm effort.' },
+      undefined,
+      undefined,
+      { ...startTarget, effort: 'medium' }
+    );
+    Object.assign(service, { returnReport: mock(async () => {}) });
+    try {
+      await service.start('work-1');
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'failed',
+        report: 'Could not start the execution: unsupported_effort: Route cannot confirm effort.',
+      });
+      expect(service.driverTargets.get('work-1')).toEqual({ ...startTarget, effort: 'medium' });
+      expect(service.driverTargets.readRef('work-1')).toBeNull();
+    } finally {
+      service.dispose();
+      db.close();
+    }
+  });
+
   test('starts the work through work.start as Neo and keeps the ref', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const { db, service, calls, proposed } = await setup({ ok: true, value: { ref } });
@@ -1297,7 +1367,7 @@ describe('Neo work with a drivers target', () => {
       {
         id: 'work-2',
         requestKey: 'root:invented',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'ask-2',
         title: 'Fix #5554',
@@ -1436,7 +1506,7 @@ describe('Neo work with a drivers target', () => {
     const ask = service.askRecords.open({
       id: 'ask-1',
       requestKey: 'neo:root:fix',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       originMessageId: null,
       title: 'Fix the bug',
@@ -1482,7 +1552,7 @@ describe('Neo work with a drivers target', () => {
     const opened = service.askRecords.open({
       id: 'ask-ship',
       requestKey: 'neo:root:ship',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       originMessageId: 'ask-1',
       title: 'Ship it',
@@ -1493,7 +1563,7 @@ describe('Neo work with a drivers target', () => {
     service.repo.proposeWork({
       id: 'work-2',
       requestKey: 'root:docs',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       originMessageId: 'ask-1',
       title: 'Ship the docs',
@@ -1655,7 +1725,7 @@ describe('Neo work with a drivers target', () => {
     const ask = service.askRecords.open({
       id: 'ask-tap',
       requestKey: 'neo:root:tap',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       originMessageId: 'ask-1',
       title: 'Fix the tap target',
@@ -1917,7 +1987,7 @@ describe('Neo work with a drivers target', () => {
       {
         id: 'ask-work-1',
         requestKey: 'neo:root:work-1',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'ask-1',
         title: 'Reorder the water filters',
@@ -2225,7 +2295,7 @@ describe('Neo work with a drivers target', () => {
       {
         id: 'ask-icons',
         requestKey: 'neo:root:icons',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'ask-1',
         title: 'Icons',
@@ -2277,7 +2347,7 @@ describe('Neo work with a drivers target', () => {
       {
         id: 'ask-icons-settle',
         requestKey: 'neo:root:icons-settle',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'ask-1',
         title: 'Icons',
@@ -2333,7 +2403,7 @@ describe('Neo work with a drivers target', () => {
       {
         id: 'ask-icons',
         requestKey: 'neo:root:icons',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'ask-1',
         title: 'Icons',
@@ -2346,7 +2416,7 @@ describe('Neo work with a drivers target', () => {
     service.repo.proposeWork({
       id: 'work-2',
       requestKey: 'root:docs',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       originMessageId: 'ask-1',
       title: 'Document the icons',
@@ -2387,7 +2457,7 @@ describe('Neo work with a drivers target', () => {
       {
         id: 'ask-icons',
         requestKey: 'neo:root:icons',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'ask-1',
         title: 'Icons',
@@ -2400,7 +2470,7 @@ describe('Neo work with a drivers target', () => {
     service.repo.proposeWork({
       id: 'work-2',
       requestKey: 'root:docs',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       originMessageId: 'ask-1',
       title: 'Document the icons',
@@ -2434,7 +2504,7 @@ describe('Neo work with a drivers target', () => {
       {
         id: 'ask-icons',
         requestKey: 'neo:root:icons',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'ask-1',
         title: 'Icons',
@@ -2477,7 +2547,7 @@ describe('Neo work with a drivers target', () => {
       {
         id: 'ask-icons',
         requestKey: 'neo:root:icons',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'ask-1',
         title: 'Icons',
@@ -3069,7 +3139,7 @@ describe('Neo work with a drivers target', () => {
       {
         id: 'ask-1',
         requestKey: 'neo:root:startup',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'ask-1',
         title: 'Desktop app stuck on startup',
@@ -3125,7 +3195,7 @@ describe('Neo work with a drivers target', () => {
         {
           id: 'work-2',
           requestKey: 'root:font-2',
-          concernId: null,
+          projectId: null,
           originSessionId: 'neo:root',
           originMessageId: 'ask-1',
           title: work.title,
@@ -3547,7 +3617,7 @@ describe('Neo work with a drivers target', () => {
     try {
       await service.start('work-1');
       db.createSession(createTestSession('neo:root'));
-      service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', concernId: null });
+      service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
       const registry = createOperationRegistry(createNeoOperations(service));
       const neo: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
       expect(
@@ -3898,7 +3968,7 @@ describe('neo.work.propose with a drivers target', () => {
       new InternalEventBus<DaemonInternalEventMap>()
     );
     db.createSession(createTestSession('root'));
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
     const neo: OperationCaller = {
       source: 'mcp',
       sessionId: 'root',
@@ -3963,7 +4033,7 @@ describe('neo.work.propose with a drivers target', () => {
       new InternalEventBus<DaemonInternalEventMap>()
     );
     db.createSession(createTestSession('root'));
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
     const neo: OperationCaller = {
       source: 'mcp',
       sessionId: 'root',

@@ -21,7 +21,7 @@ export const NeoPublicationSchema = z
         z
           .object({
             label: text(120),
-            kind: z.enum(['concern', 'work', 'consultation']),
+            kind: z.enum(['project', 'work', 'consultation']),
             id: text(160),
           })
           .strict()

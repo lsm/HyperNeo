@@ -109,7 +109,7 @@ export function createNeoPreferenceOperation(service: NeoService) {
   return defineOperation({
     name: 'neo.preferences.set',
     description:
-      'Set the model, provider and thinking level every Neo session uses (root Neo and each topic), for the user only. Thinking is clamped to what the model supports. Each session switches at its next idle point, never mid-turn; a session whose provider is unavailable keeps its current model.',
+      'Set the model, provider and thinking level every Neo session uses (root Neo and each project), for the user only. Thinking is clamped to what the model supports. Each session switches at its next idle point, never mid-turn; a session whose provider is unavailable keeps its current model.',
     inputSchema: PreferenceInput,
     resultSchema: PreferenceResult,
     policy: { safetyClass: 'human_only' },

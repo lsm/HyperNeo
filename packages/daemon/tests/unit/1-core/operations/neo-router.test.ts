@@ -17,7 +17,7 @@ import {
   renderNeoRouteContext,
   runnableNeoHolders,
   scoreNeoHolders,
-  neoTopicOpenAsks,
+  neoProjectOpenAsks,
   reopenNeoHolder,
   wakeNeoRoute,
 } from '../../../../src/lib/neo/router.ts';
@@ -36,14 +36,14 @@ import { createTables } from '../../../../src/storage/schema/index.ts';
 import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 
 const drivers: NeoHolder = {
-  concernId: 'drivers',
+  projectId: 'drivers',
   sessionId: 'neo:holder:drivers',
   title: 'Neo driver epic',
   summary: 'drivers',
 };
 const youtube: NeoHolder = {
   ...drivers,
-  concernId: 'youtube',
+  projectId: 'youtube',
   sessionId: 'neo:holder:yt',
   title: 'YouTube',
 };
@@ -55,7 +55,7 @@ const route = (fields: Partial<NeoRoute>): NeoRoute => ({
   ask: 'a',
   destination: 'holder',
   targetSessionId: drivers.sessionId,
-  concernId: 'drivers',
+  projectId: 'drivers',
   signal: 'embedding',
   confidence: 0.8,
   outcome: null,
@@ -68,7 +68,7 @@ const route = (fields: Partial<NeoRoute>): NeoRoute => ({
 describe('neoHolderProfile', () => {
   test('trims each recent ask so one long ask cannot swamp the profile', () => {
     const profile = neoHolderProfile(
-      { concernId: 'drivers', sessionId: 's', title: 'Drivers', summary: 'Work adapters' },
+      { projectId: 'drivers', sessionId: 's', title: 'Drivers', summary: 'Work adapters' },
       [`${'z'.repeat(9_000)} end`, 'short ask']
     );
     expect(profile.split('\n')).toHaveLength(4);
@@ -84,7 +84,7 @@ describe('pickNeoHolder', () => {
         { holder: drivers, similarity: 0.7 },
         { holder: youtube, similarity: 0.6 },
       ])
-    ).toMatchObject({ concernId: 'drivers', confidence: 0.7 });
+    ).toMatchObject({ projectId: 'drivers', confidence: 0.7 });
     expect(
       pickNeoHolder([
         { holder: drivers, similarity: 0.7 },
@@ -100,13 +100,13 @@ describe('renderNeoRouteContext', () => {
     const pr = route({
       id: 2,
       destination: 'main',
-      concernId: null,
+      projectId: null,
       ask: 'is the font-size PR done?',
       outcome: 'Still in review.',
     });
     const blog = route({
       id: 1,
-      concernId: 'youtube',
+      projectId: 'youtube',
       ask: 'https://example.com long ask',
       askSummary: 'What is the post?',
       outcome: 'A git beta.',
@@ -120,7 +120,7 @@ describe('renderNeoRouteContext', () => {
       true
     );
     expect(context).toContain(
-      '- main: Neo itself, the last resort for questions across topics or when you cannot tell\n    last: [main] you: "is the font-size PR done?" → Still in review.'
+      '- main: Neo itself, the last resort for questions across projects or when you cannot tell\n    last: [main] you: "is the font-size PR done?" → Still in review.'
     );
     expect(context).toContain(
       '- youtube: YouTube (drivers)\n    last: [YouTube] you: "What is the post?" → A git beta.\n    WAITING ON YOU: "Draft a reply?"'
@@ -160,7 +160,7 @@ describe('runnableNeoHolders', () => {
   test('drops holders whose provider cannot run, keeping unknown ones', () => {
     const glm = { ...drivers, provider: 'glm' };
     const opus = { ...youtube, provider: 'anthropic' };
-    const unset = { ...drivers, concernId: 'legacy' };
+    const unset = { ...drivers, projectId: 'legacy' };
     expect(
       runnableNeoHolders(
         [glm, opus, unset],
@@ -168,9 +168,9 @@ describe('runnableNeoHolders', () => {
           ['glm', true],
           ['anthropic', false],
         ])
-      ).map((holder) => holder.concernId)
+      ).map((holder) => holder.projectId)
     ).toEqual(['drivers']);
-    expect(runnableNeoHolders([glm], new Map()).map((holder) => holder.concernId)).toEqual([
+    expect(runnableNeoHolders([glm], new Map()).map((holder) => holder.projectId)).toEqual([
       'drivers',
     ]);
   });
@@ -179,33 +179,33 @@ describe('runnableNeoHolders', () => {
 describe('neoRouteCandidates', () => {
   test('offers every topic when there are few, otherwise recent, waiting and close ones', () => {
     expect(neoRouteCandidates([drivers, youtube], [], [], [])).toEqual([drivers, youtube]);
-    const many = Array.from({ length: 30 }, (_, n) => ({ ...drivers, concernId: `t${n}` }));
+    const many = Array.from({ length: 30 }, (_, n) => ({ ...drivers, projectId: `t${n}` }));
     const picked = neoRouteCandidates(
       many,
       [
         { holder: many[7], similarity: 0.5 },
         { holder: many[8], similarity: 0.2 },
       ],
-      [route({ concernId: 't3' })],
-      [route({ concernId: 't5', awaiting: 'Ship it?' }), route({ concernId: 't6' })]
+      [route({ projectId: 't3' })],
+      [route({ projectId: 't5', awaiting: 'Ship it?' }), route({ projectId: 't6' })]
     );
-    expect(picked.map((holder) => holder.concernId)).toEqual(['t3', 't5', 't7']);
+    expect(picked.map((holder) => holder.projectId)).toEqual(['t3', 't5', 't7']);
   });
 });
 
-describe('neoTopicOpenAsks', () => {
+describe('neoProjectOpenAsks', () => {
   test("keeps each candidate's first five open asks, shortened", () => {
     const asked: string[] = [];
-    const asks = neoTopicOpenAsks([drivers, youtube], {
-      openAsks: (concernId) => {
-        asked.push(concernId);
-        return concernId === 'youtube' ? ['a', 'b', 'c', 'd', 'e', 'f', 'x'.repeat(500)] : [];
+    const asks = neoProjectOpenAsks([drivers, youtube], {
+      openAsks: (projectId) => {
+        asked.push(projectId);
+        return projectId === 'youtube' ? ['a', 'b', 'c', 'd', 'e', 'f', 'x'.repeat(500)] : [];
       },
     });
     expect(asked).toEqual(['drivers', 'youtube']);
     expect(asks.get('drivers')).toEqual([]);
     expect(asks.get('youtube')).toEqual(['a', 'b', 'c', 'd', 'e']);
-    expect(neoTopicOpenAsks([drivers], {}).get('drivers')).toEqual([]);
+    expect(neoProjectOpenAsks([drivers], {}).get('drivers')).toEqual([]);
   });
 });
 
@@ -243,7 +243,7 @@ describe('askNeoRouteModel', () => {
     const offered: string[][] = [];
     await askNeoRouteModel('hi', [drivers], 'ctx', true, {
       classify: async (_text, options) => {
-        offered.push(options.map((option) => option.concernId));
+        offered.push(options.map((option) => option.projectId));
         return 'main';
       },
     });
@@ -261,7 +261,7 @@ describe('chooseNeoRoute', () => {
   const deps = (recent: NeoRoute[] = []): NeoRouterDeps => ({
     holders: () => [drivers, youtube],
     recentTurns: () => recent,
-    topicTurns: () => recent.slice(0, 1),
+    projectTurns: () => recent.slice(0, 1),
     recentAsks: () => [],
     embed: async (text) => (vectors[text] ? Float32Array.from(vectors[text]) : null),
   });
@@ -269,12 +269,12 @@ describe('chooseNeoRoute', () => {
   test('falls back to a clear embedding match when no classifier answers', async () => {
     expect(
       (await chooseNeoRoute('restart the daemon after the driver merge', deps())).choice
-    ).toMatchObject({ concernId: 'drivers', signal: 'embedding' });
+    ).toMatchObject({ projectId: 'drivers', signal: 'embedding' });
     expect((await chooseNeoRoute('unknown text', deps())).choice).toBeNull();
   });
 
   test('sends a follow-up to main when the classifier reads it as continuing main', async () => {
-    const recent = [route({ destination: 'main', concernId: null, ask: 'is PR 5650 done?' })];
+    const recent = [route({ destination: 'main', projectId: null, ask: 'is PR 5650 done?' })];
     const seen: string[] = [];
     const choice = await chooseNeoRoute('how about 5060 now?', {
       ...deps(recent),
@@ -303,7 +303,7 @@ describe('chooseNeoRoute', () => {
 
 describe('wakeNeoRoute', () => {
   const choice = {
-    concernId: 'drivers',
+    projectId: 'drivers',
     sessionId: drivers.sessionId,
     signal: 'embedding' as const,
     confidence: 0.8,
@@ -323,8 +323,8 @@ describe('wakeNeoRoute', () => {
       { choice },
       {
         asleep: (id) => id === drivers.sessionId,
-        wake: async (concernId) => {
-          woken.push(concernId);
+        wake: async (projectId) => {
+          woken.push(projectId);
           return 'neo:holder:drivers-2';
         },
       }
@@ -348,11 +348,11 @@ describe('wakeNeoRoute', () => {
 
 describe('neo.message.send with a router', () => {
   const conversationId = '10000000-0000-4000-8000-000000000001';
-  const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', concernId: null };
+  const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', projectId: null };
   const holder: NeoBinding = {
     sessionId: drivers.sessionId,
-    kind: 'concern',
-    concernId: 'drivers',
+    kind: 'project',
+    projectId: 'drivers',
   };
   const ask = (n: number) => `20000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
   let directory: string;
@@ -407,7 +407,7 @@ describe('neo.message.send with a router', () => {
             return text.includes('driver')
               ? {
                   choice: {
-                    concernId: 'drivers',
+                    projectId: 'drivers',
                     sessionId: drivers.sessionId,
                     signal: 'embedding',
                     confidence: 0.71,
@@ -431,7 +431,7 @@ describe('neo.message.send with a router', () => {
     ]);
     expect(new NeoRoutingLogRepository(writer).find(ask(1))).toMatchObject({
       destination: 'holder',
-      concernId: 'drivers',
+      projectId: 'drivers',
       signal: 'embedding',
       confidence: 0.71,
     });
@@ -462,9 +462,9 @@ describe('neo.message.send with a router', () => {
 
   test('reopens an archived holder on a fresh session, and a live one as it is', async () => {
     const opened: string[] = [];
-    const open = async (concernId: string) => {
-      opened.push(concernId);
-      return repo.getBindingForConcern(concernId)?.sessionId ?? 'neo:fresh';
+    const open = async (projectId: string) => {
+      opened.push(projectId);
+      return repo.getBindingForProject(projectId)?.sessionId ?? 'neo:fresh';
     };
     expect(await reopenNeoHolder(repo, db, open, 'drivers')).toBe(holder.sessionId);
     new SessionRepository(writer).updateSession(holder.sessionId, { status: 'archived' });
@@ -475,8 +475,8 @@ describe('neo.message.send with a router', () => {
   test('retires the binding of an archived holder so the next open makes a fresh session', () => {
     expect(repo.retireArchivedBinding('drivers', 'neo:other')).toBe(false);
     expect(repo.retireArchivedBinding('drivers', holder.sessionId)).toBe(true);
-    expect(repo.getBindingForConcern('drivers')).toBeNull();
-    expect(repo.getBindingForConcern(null)).toMatchObject({ sessionId: root.sessionId });
+    expect(repo.getBindingForProject('drivers')).toBeNull();
+    expect(repo.getBindingForProject(null)).toMatchObject({ sessionId: root.sessionId });
   });
 
   test('does not reroute an ask sent to a holder directly', async () => {
@@ -490,7 +490,7 @@ describe('scoreNeoHolders', () => {
   test('keeps a bounded number of holder profile vectors, dropping the least recently used', async () => {
     const prefix = `cap-${Date.now()}`;
     const holders: NeoHolder[] = Array.from({ length: 257 }, (_, index) => ({
-      concernId: `c${index}`,
+      projectId: `c${index}`,
       sessionId: `s${index}`,
       title: `${prefix} topic ${index}`,
       summary: '',

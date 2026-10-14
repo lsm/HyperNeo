@@ -1,20 +1,20 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 
 type Rejection = { ok: false; reason: string };
-type SupersedeInput = { supersedes?: string | null; concernId: string | null };
+type SupersedeInput = { supersedes?: string | null; projectId: string | null };
 
 export const NEO_SUPERSEDE_WINDOW_MS = 3 * 24 * 60 * 60_000;
 
 export function neoWorkSupersedeCandidates(
-  works: readonly Pick<NeoWork, 'id' | 'title' | 'status' | 'concernId' | 'updatedAt'>[],
+  works: readonly Pick<NeoWork, 'id' | 'title' | 'status' | 'projectId' | 'updatedAt'>[],
   superseded: ReadonlySet<string>,
-  concernId: string | null,
+  projectId: string | null,
   now: number
 ): { id: string; title: string }[] {
   return works
     .filter(
       (work) =>
-        work.concernId === concernId &&
+        work.projectId === projectId &&
         (work.status === 'failed' || work.status === 'cancelled') &&
         now - work.updatedAt < NEO_SUPERSEDE_WINDOW_MS &&
         !superseded.has(work.id)
@@ -33,14 +33,14 @@ export function requireNeoWorkSupersedeDecision<T>(
   return {
     reason: {
       ok: false,
-      reason: `This concern has failed or cancelled work from the last three days: ${listed}. Pass supersedes with the id this work replaces, or supersedes: null if it replaces none.`,
+      reason: `This project has failed or cancelled work from the last three days: ${listed}. Pass supersedes with the id this work replaces, or supersedes: null if it replaces none.`,
     },
   };
 }
 
 export function requireNeoWorkSupersedable<T>(
   input: SupersedeInput,
-  old: Pick<NeoWork, 'id' | 'status' | 'concernId'> | null,
+  old: Pick<NeoWork, 'id' | 'status' | 'projectId'> | null,
   admitted: T
 ): { value: T } | { reason: Rejection } {
   if (!input.supersedes) return { value: admitted };
@@ -52,7 +52,7 @@ export function requireNeoWorkSupersedable<T>(
         reason: `Only failed or cancelled work can be superseded; ${old.id} is ${old.status}.`,
       },
     };
-  return old.concernId === input.concernId
+  return old.projectId === input.projectId
     ? { value: admitted }
-    : { reason: { ok: false, reason: 'The work this supersedes belongs to another concern.' } };
+    : { reason: { ok: false, reason: 'The work this supersedes belongs to another project.' } };
 }

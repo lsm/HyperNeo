@@ -37,7 +37,7 @@ const item = (id: string, watch: string[], extra: Partial<NeoAskItem> = {}): Neo
 const ask = (items: NeoAskItem[], id = 'a1'): NeoAsk => ({
   id,
   requestKey: `k-${id}`,
-  concernId: null,
+  projectId: null,
   originSessionId: 'neo:root',
   originMessageId: 'm0',
   title: 'Watch',
@@ -296,7 +296,7 @@ describe('refreshDriverWork watch ticks', () => {
       {
         id: 'a-watch',
         requestKey: 'k-watch',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'm0',
         title: 'Thumbnails',
