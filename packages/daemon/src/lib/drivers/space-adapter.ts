@@ -9,6 +9,7 @@ import {
   readHyperneoLastResult,
 } from './hyperneo-adapter.ts';
 import { withExchange, workEntryTime } from './work-messages.ts';
+import { readSpaceInputEvidence } from './space-input-evidence.ts';
 import { withChatEvidence } from './places.ts';
 import type {
   FindQuery,
@@ -571,8 +572,18 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
       ref.id.startsWith(AGENT_REF)
         ? runSpaceAgentSend(ref, message, context, deps)
         : runSpaceSend(ref, message, context, deps),
-    status: async (ref, since) => {
-      const result = reportSpaceAgent(ref, deps) ?? runSpaceStatus(ref, deps);
+    status: async (ref, since, receipt) => {
+      const status = reportSpaceAgent(ref, deps) ?? runSpaceStatus(ref, deps);
+      const result =
+        status.ok && receipt
+          ? {
+              ...status,
+              value: {
+                ...status.value,
+                inputEvidence: readSpaceInputEvidence(deps.db(), ref, receipt),
+              },
+            }
+          : status;
       const agent = ref.id.startsWith(AGENT_REF);
       if (!result.ok || (since === undefined && !agent)) return result;
       const sessionId = agent
