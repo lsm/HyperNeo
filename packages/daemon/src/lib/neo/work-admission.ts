@@ -41,6 +41,14 @@ export function neoOutcomeEligibility(registry: ReturnType<typeof buildNeoCheckR
   };
 }
 
+const NEO_ADMISSION_SETTLED = ['card_not_active', 'already_started', 'already_claimed'];
+
+export function neoAdmissionRefusal(
+  result: { ok: true } | NeoAdmissionRefusal
+): NeoAdmissionRefusal | null {
+  return result.ok || NEO_ADMISSION_SETTLED.includes(result.reason) ? null : result;
+}
+
 const refuse = (reason: string, blockers?: NeoAdmissionBlocker[]) => ({
   reason: { ok: false as const, reason, ...(blockers ? { blockers } : {}) },
 });
@@ -69,13 +77,14 @@ function requireNeoAdmissionHandoff(snapshot: Admissible) {
   if (card?.ref) return refuse('already_started');
   if (card?.startInterrupted) return refuse('handoff_uncertain');
   const claimedAt = card?.claimedAt ?? null;
-  if (claimedAt !== null)
-    return refuse(claimedAt < snapshot.bootedAt ? 'handoff_uncertain' : 'already_claimed');
+  const stale = claimedAt !== null && claimedAt < snapshot.bootedAt;
+  if (claimedAt !== null && !(stale && snapshot.work.status === 'proposed'))
+    return refuse(stale ? 'handoff_uncertain' : 'already_claimed');
   return { value: snapshot };
 }
 
-function requireNeoAdmissionAuthorized(snapshot: Admissible, human: boolean, now: number) {
-  if (human) return { value: snapshot };
+function requireNeoAdmissionAuthorized(snapshot: Admissible, authorized: boolean, now: number) {
+  if (authorized) return { value: snapshot };
   const { ask } = snapshot;
   if (!ask || ask.approvedAt == null) return refuse('not_approved');
   if ((ask.approvedRevision ?? null) !== (ask.revision ?? 0)) return refuse('approval_stale');
@@ -90,15 +99,15 @@ function requireNeoAdmissionPrerequisites(snapshot: Admissible) {
 }
 
 const checkNeoAdmission = (superpipe({})('neo-work-admission-check') as PipelineAPI)
-  .input(['workId', 'human', 'now', 'deps'])
+  .input(['workId', 'authorized', 'now', 'deps'])
   .pipe(readNeoAdmission, ['workId', 'deps'], 'snapshot')
   .pipe(requireNeoAdmissionCard, 'snapshot', 'result:admission')
   .pipe(requireNeoAdmissionHandoff, 'admission', 'result:admission')
-  .pipe(requireNeoAdmissionAuthorized, ['admission', 'human', 'now'], 'result:admission')
+  .pipe(requireNeoAdmissionAuthorized, ['admission', 'authorized', 'now'], 'result:admission')
   .pipe(requireNeoAdmissionPrerequisites, 'admission', 'result:admission')
   .end('admission') as (
   workId: string,
-  human: boolean,
+  authorized: boolean,
   now: number,
   deps: NeoAdmissionDeps
 ) => Admissible | NeoAdmissionRefusal;
@@ -107,21 +116,27 @@ const asNeoAdmissionGate = (checked: Admissible | NeoAdmissionRefusal) =>
   'ok' in checked ? { reason: checked } : { value: checked };
 
 export const admitNeoWork = (superpipe({})('neo-work-admission') as PipelineAPI)
-  .input(['workId', 'human', 'now', 'deps'])
+  .input(['workId', 'authorized', 'now', 'deps'])
   .pipe(
-    (workId: string, human: boolean, now: number, deps: NeoAdmissionDeps) =>
-      asNeoAdmissionGate(checkNeoAdmission(workId, human, now, deps)),
-    ['workId', 'human', 'now', 'deps'],
+    (workId: string, authorized: boolean, now: number, deps: NeoAdmissionDeps) =>
+      asNeoAdmissionGate(checkNeoAdmission(workId, authorized, now, deps)),
+    ['workId', 'authorized', 'now', 'deps'],
     'result:admission'
   )
   .pipe(
-    (admitted: Admissible, workId: string, human: boolean, now: number, deps: NeoAdmissionDeps) => {
-      if (deps.claim(workId, () => !('ok' in checkNeoAdmission(workId, human, now, deps))))
+    (
+      admitted: Admissible,
+      workId: string,
+      authorized: boolean,
+      now: number,
+      deps: NeoAdmissionDeps
+    ) => {
+      if (deps.claim(workId, () => !('ok' in checkNeoAdmission(workId, authorized, now, deps))))
         return { value: admitted };
-      const checked = checkNeoAdmission(workId, human, now, deps);
+      const checked = checkNeoAdmission(workId, authorized, now, deps);
       return 'ok' in checked ? { reason: checked } : refuse('already_claimed');
     },
-    ['admission', 'workId', 'human', 'now', 'deps'],
+    ['admission', 'workId', 'authorized', 'now', 'deps'],
     'result:admission'
   )
   .pipe(
@@ -145,7 +160,7 @@ export const admitNeoWork = (superpipe({})('neo-work-admission') as PipelineAPI)
   .pipe((handoff: NeoAdmissionHandoff) => ({ ok: true as const, handoff }), 'handoff', 'admission')
   .endAsync('admission') as (
   workId: string,
-  human: boolean,
+  authorized: boolean,
   now: number,
   deps: NeoAdmissionDeps
 ) => Promise<{ ok: true; handoff: NeoAdmissionHandoff } | NeoAdmissionRefusal>;
