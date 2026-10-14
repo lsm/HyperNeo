@@ -74,7 +74,12 @@ import {
 } from './output-limiter-hook.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
-import { neoCoordinatorBinding, neoQueryContext, restrictNeoQuery } from '../neo/session-policy.ts';
+import {
+  isNeoProjectSession,
+  neoCoordinatorBinding,
+  neoQueryContext,
+  restrictNeoQuery,
+} from '../neo/session-policy.ts';
 import { neoSettingsPackBriefs } from '../neo/packs/index.ts';
 
 const log = new Logger('QueryOptionsBuilder');
@@ -247,6 +252,7 @@ export function buildProviderSettings(
 }
 
 export interface QueryOptionsBuilderContext {
+  getNeoProjectSnapshot?(): Promise<string>;
   getOperationMcpServer?(): SdkMcpServerConfig;
   getSpaceBriefing?(): string | undefined;
   readonly session: Session;
@@ -566,14 +572,20 @@ export class QueryOptionsBuilder {
     }
 
     const neoBinding = neoCoordinatorBinding(this.ctx.db, this.ctx.session.id);
-    if (neoBinding)
+    if (neoBinding) {
+      const context = [neoQueryContext(neoBinding, this.ctx.db)];
+      if (neoBinding.kind === 'project') {
+        if (!this.ctx.getNeoProjectSnapshot) throw new Error('Neo project snapshot unavailable.');
+        context.push(await this.ctx.getNeoProjectSnapshot());
+      }
       restrictNeoQuery(
         queryOptions,
         neoBinding.projectId,
         this.ctx.session.id,
-        neoQueryContext(neoBinding, this.ctx.db),
+        context.filter(Boolean).join('\n\n'),
         neoSettingsPackBriefs(this.ctx.settingsManager.getGlobalSettings().neo)
       );
+    }
 
     const cleanedOptions = Object.fromEntries(
       Object.entries(queryOptions).filter(([, v]) => v !== undefined)
@@ -602,7 +614,12 @@ export class QueryOptionsBuilder {
   addSessionStateOptions(options: Options): Options {
     const result = { ...options } as Options & { thinking?: ThinkingConfig };
 
-    if (this.ctx.session.sdkSessionId) {
+    if (isNeoProjectSession(this.ctx.db, this.ctx.session.id)) {
+      delete result.resume;
+      delete result.resumeSessionAt;
+      delete result.continue;
+      delete result.forkSession;
+    } else if (this.ctx.session.sdkSessionId) {
       result.resume = this.ctx.session.sdkSessionId;
     }
 

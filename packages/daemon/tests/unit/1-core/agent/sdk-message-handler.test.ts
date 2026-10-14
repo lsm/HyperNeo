@@ -20,6 +20,8 @@ import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/mod
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { Database } from '../../../../src/storage/database';
+import { createNeoTables } from '../../../../src/storage/schema/neo';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat';
 import type { DaemonHub } from '../../../helpers/daemon-hub';
 
 class TranslatingMockProvider implements Provider {
@@ -869,6 +871,57 @@ describe('SDKMessageHandler', () => {
   });
 
   describe('handleSystemMessage', () => {
+    it.each([0.5, 1, 2])(
+      'preserves project query costs when a fresh turn costs %s',
+      async (cost) => {
+        const sqlite = new Sqlite(':memory:');
+        try {
+          createNeoTables(sqlite);
+          sqlite
+            .prepare(
+              "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p','P','','',1,1,1)"
+            )
+            .run();
+          sqlite
+            .prepare(
+              "INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES ('neo:cost','p','project')"
+            )
+            .run();
+          mockDb.getDatabase = () => sqlite;
+          mockSession.id = 'neo:cost';
+          mockSession.sdkSessionId = 'old-sdk';
+          mockSession.metadata = {
+            ...mockSession.metadata,
+            lastSdkCost: 1,
+            costBaseline: 3,
+            totalCost: 4,
+          };
+          const init = {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'fresh-sdk',
+            uuid: 'init',
+          } as unknown as SDKMessage;
+          await handler.handleMessage(init);
+          await handler.handleMessage(init);
+          await handler.handleMessage({
+            type: 'result',
+            subtype: 'success',
+            uuid: 'result',
+            usage: { input_tokens: 100, output_tokens: 50 },
+            total_cost_usd: cost,
+            modelUsage: {},
+          } as unknown as SDKMessage);
+          expect(mockSession.metadata?.totalCost).toBe(4 + cost);
+          expect(mockSession.metadata?.costBaseline).toBe(4);
+          expect(mockSession.metadata?.pastSdkSessionIds).toEqual(['old-sdk']);
+          expect(mockSession.sdkSessionId).toBe('fresh-sdk');
+        } finally {
+          sqlite.close();
+        }
+      }
+    );
+
     it('should capture SDK session ID and sdkOriginPath', async () => {
       const message: SDKMessage = {
         type: 'system',

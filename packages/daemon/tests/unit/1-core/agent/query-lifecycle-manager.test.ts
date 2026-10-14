@@ -14,6 +14,8 @@ import type { ProcessingStateManager } from '../../../../src/lib/agent/processin
 import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
 import type { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
+import { createNeoTables } from '../../../../src/storage/schema/neo';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat';
 
 describe('QueryLifecycleManager', () => {
   let manager: QueryLifecycleManager;
@@ -963,6 +965,42 @@ describe('QueryLifecycleManager', () => {
   });
 
   describe('ensureQueryStarted', () => {
+    test.each(['project', 'neo', 'worker'] as const)(
+      'only project sessions can start when the previous transcript is missing (%s)',
+      async (kind) => {
+        const sqlite = new Sqlite(':memory:');
+        try {
+          createNeoTables(sqlite);
+          sqlite
+            .prepare(
+              "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p','P','','',1,1,1)"
+            )
+            .run();
+          const sessionId = `neo:missing-${kind}`;
+          sqlite
+            .prepare('INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES (?,?,?)')
+            .run(sessionId, kind === 'neo' ? null : 'p', kind);
+          mockContext = {
+            ...mockContext,
+            session: {
+              ...mockContext.session,
+              id: sessionId,
+              sdkSessionId: 'missing-project-transcript',
+            },
+            db: { ...mockContext.db, getDatabase: () => sqlite } as Database,
+          };
+          manager = new QueryLifecycleManager(mockContext);
+          expect(await manager.ensureQueryStarted()).toBe(
+            kind === 'project' ? 'started' : 'blocked'
+          );
+          expect(startStreamingCalled).toBe(kind === 'project');
+          expect(saveHyperNeoActionMessageSpy).toHaveBeenCalledTimes(kind === 'project' ? 0 : 1);
+        } finally {
+          sqlite.close();
+        }
+      }
+    );
+
     test('returns early if message queue is already running and queryPromise is active', async () => {
       messageQueue.start(async function* () {
         yield 'test';
