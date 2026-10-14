@@ -1516,6 +1516,24 @@ export class NeoService {
     return this.dependencies.blockers(id, neoOutcomeEligibility(this.checkRegistry()));
   }
 
+  private async holdUncertainHandoff(work: NeoWork, target: NeoDriverTarget): Promise<void> {
+    this.driverTargets.recordStartInterrupted(work.id);
+    if (work.status !== 'queued') return;
+    await this.failWork(
+      work,
+      `${NEO_DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : 'ref' in target ? target.ref.adapter : target.verb} confirmed it. It may still have started; check work.find before trying again.`
+    );
+  }
+
+  private async recoverHandoff(work: NeoWork): Promise<boolean> {
+    const target = this.driverTargets.get(work.id);
+    if (!target || (target.verb !== 'start' && target.verb !== 'send')) return false;
+    const verdict = await this.reconcileHandoff(work.id);
+    if (verdict.state === 'uncertain') await this.holdUncertainHandoff(work, target);
+    else if (verdict.state === 'not_started') await this.admitWork(work.id, true);
+    return verdict.state !== 'idle' || work.status === 'queued';
+  }
+
   reconcileHandoff(id: string) {
     return reconcileNeoHandoff(id, {
       bootedAt: this.bootedAt,
@@ -1681,11 +1699,8 @@ export class NeoService {
     if (work.status === 'queued') {
       if (this.driverTargets.readRef(work.id)) return;
       if (target.verb === 'adopt') return this.adoptDriverWork(work, target.ref);
-      this.driverTargets.recordStartInterrupted(work.id);
-      await this.failWork(
-        work,
-        `${NEO_DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : target.ref.adapter} confirmed it. It may still have started; check work.find before trying again.`
-      );
+      const verdict = await this.reconcileHandoff(work.id);
+      if (verdict.state === 'uncertain') await this.holdUncertainHandoff(work, target);
       return;
     }
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
@@ -1873,10 +1888,12 @@ export class NeoService {
     );
     for (const work of this.repo.listWork()) {
       try {
-        if (work.status === 'queued') await this.start(work.id);
+        const recovered = await this.recoverHandoff(work);
+        if (!recovered && work.status === 'queued') await this.start(work.id);
         else if (
-          awaitingNeoWorker(work) ||
-          (work.status === 'proposed' && this.driverTargets.get(work.id)?.verb === 'read')
+          !recovered &&
+          (awaitingNeoWorker(work) ||
+            (work.status === 'proposed' && this.driverTargets.get(work.id)?.verb === 'read'))
         )
           await this.admitWork(work.id, true);
         await this.reconcile(work.id);
