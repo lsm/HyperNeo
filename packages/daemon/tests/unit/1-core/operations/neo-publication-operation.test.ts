@@ -285,6 +285,26 @@ describe('runtime-bound publication operation', () => {
     ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
   });
 
+  test('a returned consultation answers the human message that asked it, but not a note', () => {
+    const reply = 'neo-consult:consult:1:reply';
+    prompt(root.sessionId, reply, 'system');
+    stamps.set(`${root.sessionId}\0${reply}`, ask);
+    expect(publish(draft, caller(root.sessionId, reply, false))).toMatchObject({
+      accepted: true,
+      publication: { triggerId: `human:${ask.messageId}` },
+    });
+    const noted = 'neo-consult:consult:2:reply';
+    prompt(root.sessionId, 'note-1', 'system');
+    prompt(root.sessionId, noted, 'system');
+    stamps.set(`${root.sessionId}\0${noted}`, { sessionId: root.sessionId, messageId: 'note-1' });
+    expect(
+      publish(
+        { ...draft, publicationId: '20000000-0000-4000-8000-000000000004' },
+        caller(root.sessionId, noted, false)
+      )
+    ).toMatchObject({ accepted: false, reason: 'no_trigger' });
+  });
+
   test('refuses a triggerId that is not this turn’s trigger', () => {
     expect(publish({ ...draft, triggerId: 'outcome:other:1' }, caller())).toMatchObject({
       accepted: false,

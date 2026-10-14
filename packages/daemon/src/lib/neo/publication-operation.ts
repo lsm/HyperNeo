@@ -63,12 +63,16 @@ export function neoPublicationTrigger(
   isHumanInput: (input: NeoAskOrigin) => boolean
 ): string | null {
   if (proof.turn.consultationId) return neoConsultationTrigger(consultation, isHumanInput);
-  if (CROSS_PROJECT_REPLY.test(proof.input.messageId))
+  if (
+    CROSS_PROJECT_REPLY.test(proof.input.messageId) ||
+    (CONSULTATION_REPLY.test(proof.input.messageId) && isHumanInput(proof.ask))
+  )
     return `${NEO_HUMAN_TRIGGER_PREFIX}${proof.ask.messageId}`;
   return neoInputTrigger(proof.input.messageId, proof.turn.human);
 }
 
 const CROSS_PROJECT_REPLY = /^neo-cross-project:.+:reply$/;
+const CONSULTATION_REPLY = /^neo-consult:.+:reply$/;
 
 export function reusePublicationReceipt(
   draft: Draft,
