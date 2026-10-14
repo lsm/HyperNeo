@@ -131,6 +131,7 @@ function runOracle(script: string, env: NodeJS.ProcessEnv = {}): string {
   return execFileSync('bash', ['-c', script], {
     cwd: repoRoot,
     encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'inherit'],
     env: { ...process.env, ...env },
   });

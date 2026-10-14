@@ -177,12 +177,12 @@ describe('buildMeasuredFromJunit', () => {
 });
 
 describe('listSplitSpecs', () => {
-  it('reads the real split table: weighted 5-space unit, rpc/space online', () => {
+  it('reads the real split table: weighted daemon unit, rpc/space online', () => {
     const specs = listSplitSpecs('daemon-unit');
-    const space = specs.find((spec) => spec.prefix === '5-space');
+    const space = specs.find((spec) => spec.prefix === 'daemon');
 
     expect(space).toBeDefined();
-    expect(space?.splitCount).toBe(2);
+    expect(space?.splitCount).toBe(8);
     expect(space?.weights).toBe('scripts/shard-weights.tsv');
     expect(space?.testRoot).toBe('packages/daemon/tests/unit');
     expect(space?.globs).toContain('5-space/runtime/*.test.ts');
@@ -222,7 +222,7 @@ describe('main', () => {
       `would write ${outPath}: 1 entry (1 updated, 0 kept, 0 stale-dropped)`
     );
     expect(out.join('\n')).toMatch(
-      /preview 5-space 2-way split, \d+ files \(1 weighted, \d+ hash-fallback\)/
+      /preview daemon 8-way split, \d+ files \(1 weighted, \d+ hash-fallback\)/
     );
     expect(out.join('\n')).toContain('hash today:');
     expect(out.join('\n')).toContain('packed:');
@@ -241,7 +241,7 @@ describe('main', () => {
       junitPath,
       junitXml([
         {
-          name: 'tests/unit/2-handlers/db-query/db-query-integration.test.ts',
+          name: 'packages/shared/tests/logger.test.ts',
           time: 3.0,
           tests: 2,
         },
@@ -291,7 +291,7 @@ describe('main', () => {
     expect(manifest).toContain(
       '500\tpackages/daemon/tests/unit/1-core/core/main-import-order.test.ts'
     );
-    expect(out.join('\n')).toContain('(1 updated, 0 kept, 0 stale-dropped)');
+    expect(out.join('\n')).toContain('(1 updated, 1 kept, 0 stale-dropped)');
   }, 120000);
 
   it('rejects an unknown suite and missing junit inputs', () => {

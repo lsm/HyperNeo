@@ -400,12 +400,9 @@ jobs:
   # ============================================
   # DAEMON + SHARED UNIT TESTS
   # Run on: PR to dev (daemon paths), push to dev
-  # 6 legs (task #1399 rebalance): shared · 1-core (whole tree + migration
-  # bucket 0) · handlers-migrations · storage-migrations · 5-space-a/b
-  # (duration-weighted 2-way over the whole 5-space tree; the 117s migration
-  # chain is dealt 3-way across the three directory legs). Shard definitions
-  # live in scripts/test-daemon.sh (source of truth); validate-test-matrix.sh
-  # guards that every unit test file is owned by exactly one shard.
+  # Shared plus eight duration-balanced daemon buckets. Definitions and
+  # generated timing weights live in scripts/test-daemon.sh; the matrix guard
+  # verifies that every unit-test file belongs to exactly one bucket.
   # ============================================
 
   test-daemon-shared-unit:
@@ -417,7 +414,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [shared, 1-core, handlers-migrations, storage-migrations, 5-space-a, 5-space-b]
+        shard: [shared, daemon-a, daemon-b, daemon-c, daemon-d, daemon-e, daemon-f, daemon-g, daemon-h]
 
     steps:
       - uses: actions/checkout@v6

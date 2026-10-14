@@ -6,7 +6,7 @@
 # Usage:
 #   ./scripts/test-daemon.sh                # All shards in parallel (fast, no coverage)
 #   ./scripts/test-daemon.sh --coverage     # All shards with coverage
-#   ./scripts/test-daemon.sh 5-space-a # Run a single shard
+#   ./scripts/test-daemon.sh daemon-a # Run a single shard
 #   ./scripts/test-daemon.sh --rerun        # Rerun only previously failing files
 #   ./scripts/test-daemon.sh --show-failures # Show failure details from last run
 #   ./scripts/test-daemon.sh --verify       # Validate shard config without running tests
@@ -21,30 +21,11 @@ cd "$REPO_ROOT"
 
 export HYPERNEO_ALLOW_ROOT_TEST=1
 
-# Free-tier squeeze (task #1399 rebalance): the CI matrix runs these 6 shards
-# — one runner each, ~50s fixed setup per job, so shards are duration-merged
-# to keep the whole PR run inside the repo's 20 concurrent runners. Measured
-# times per shard (2026-09-21, 22598 tests, six shards in parallel):
-#   shared 7s · 1-core 713s (whole tree + migration bucket 0) ·
-#   handlers-migrations 665s · storage-migrations 763s ·
-#   5-space-a 499s · 5-space-b 314s (weighted 2-way over the whole 5-space
-#   tree; the migration chain is dealt 3-way across the three directory
-#   legs). These are ~6x the 2026-08-24 figures they replace, and three
-#   shards now sit at or past the old 12-minute step cap — see #4987, which
-#   tracks the rebalance. The CI step cap must cover the flaky retry policy,
-#   not one pass: flaky-test-runner.ts reruns the WHOLE shard command up to
-#   policy.maxRetries extra times (2, so 3 attempts), and the slowest shard
-#   carries a registered flaky test, so the budget is 3 x 763s ~= 38min.
-#   Rebalance with the CI balance report + test:generate-shard-weights; a
-#   rebalance that lowers per-attempt time should lower the cap with it.
-SHARDS=(
-	shared
-	1-core
-	handlers-migrations
-	storage-migrations
-	5-space-a
-	5-space-b
-)
+# All daemon unit files are duration-packed into eight buckets; shared stays
+# separate. CI run 38484640994 measured 1503s across the five old daemon legs,
+# with 590s in core alone (765s wall). Eight buckets target ~188s of test time
+# each without multiplying runners for each former directory group.
+SHARDS=(shared daemon-a daemon-b daemon-c daemon-d daemon-e daemon-f daemon-g daemon-h)
 RESULTS_DIR="$REPO_ROOT/test-results/daemon"
 FAILURES_FILE="$RESULTS_DIR/failures.txt"
 LOCK_DIR="$RESULTS_DIR/.run-lock"
@@ -83,8 +64,15 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 # Changing N also means adding/removing the matching -a/-b/… entry in the SHARDS
 # list below and in the CI matrix at .github/workflows/main.yml — but a FILE LIST
 # is never edited by hand. Validate any change with: ./scripts/test-daemon.sh --verify
+# Discover directories, not individual files: nested and newly added suites
+# join the split automatically. Both Vitest suffixes share the same buckets.
+DAEMON_UNIT_GLOBS=$(find "$TEST_ROOT" -type d | LC_ALL=C sort | while IFS= read -r dir; do
+	relative=${dir#"$TEST_ROOT"}
+	relative=${relative#/}
+	printf '%s*.test.ts;%s*_test.ts;' "${relative:+$relative/}" "${relative:+$relative/}"
+done)
 HASH_SPLIT_SPECS=(
-	"5-space|2|5-space/*.test.ts;5-space/actions/*.test.ts;5-space/agent/*.test.ts;5-space/evolution/*.test.ts;5-space/goals/*.test.ts;5-space/operations/*.test.ts;5-space/other/*.test.ts;5-space/tools/*.test.ts;5-space/workflow/*.test.ts;5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts;5-space/workspaces/*.test.ts|scripts/shard-weights.tsv"
+	"daemon|8|$DAEMON_UNIT_GLOBS|scripts/shard-weights.tsv"
 )
 
 # Map a hash-split shard's suffix letter to a 0-based bucket index (a→0 … z→25).
@@ -104,7 +92,7 @@ shard_index_to_suffix() {
 	printf '%s' "${letters:i:1}"
 }
 
-# Resolve a hash-split shard name (e.g. 5-space-a) to its bucket's files.
+# Resolve a hash-split shard name (e.g. daemon-a) to its bucket's files.
 # Prints absolute test paths and returns 0 on a match, 1 if $1 is not a hash split.
 # A spec with a 4th <weights> field resolves its bucket by duration-aware packing
 # (see HASH_SPLIT_SPECS above); the union of buckets is the full glob set either way.
@@ -247,7 +235,7 @@ verify_shards() {
 		local IFS=';'
 		for g in $globs; do
 			abs+=("$TEST_ROOT/$g")
-			dirs+=("$TEST_ROOT/$(dirname "$g")")
+			dirs+=("$(dirname "$TEST_ROOT/$g")")
 		done
 
 		# 2b-w. A spec that opts into a weights manifest gets the manifest audit:
@@ -322,30 +310,6 @@ verify_shards() {
 	fi
 }
 
-# Split storage migration tests dynamically so new files are picked up without
-# editing this script. Bash glob order is deterministic. The 117s migration
-# chain is dealt 3-way (modulo over glob order) across the 1-core,
-# handlers-migrations, and storage-migrations legs so no single leg carries it
-# all (task #1399 rebalance).
-migration_shard_paths() {
-	local bucket="$1"
-	local files=(
-		"$TEST_ROOT/4-space-storage/storage"/migration*.test.ts
-		"$TEST_ROOT/4-space-storage/storage/migrations"/*.test.ts
-		"$TEST_ROOT/4-space-storage/storage/migrations"/*_test.ts
-	)
-	local index=0
-	local file
-
-	for file in "${files[@]}"; do
-		[ -e "$file" ] || continue
-		if [ $((index % 3)) -eq "$bucket" ]; then
-			printf '%s\n' "$file"
-		fi
-		index=$((index + 1))
-	done
-}
-
 # Shards that build a fresh on-disk SQLite DB per test are I/O-heavy and
 # intermittently exceed vitest's 5s test / 10s hook defaults under CI parallel
 # load — a different file flakes on different runs. Budget the whole shard
@@ -353,14 +317,14 @@ migration_shard_paths() {
 # run_shard and --rerun both ask it, so a rerun keeps a file's own shard budget.
 shard_timeout_flags() {
 	case "$1" in
-		1-core | *-migrations | 5-space*) printf '%s' "--testTimeout=30000 --hookTimeout=30000" ;;
+		daemon-*) printf '%s' "--testTimeout=30000 --hookTimeout=30000" ;;
 		*) printf '' ;;
 	esac
 }
 
 # Map shard name to one or more test paths. Shards are balanced by CI wall time.
 shard_paths() {
-	# Hash-split shards (e.g. 5-space-a/b) are resolved dynamically by
+	# Hash-split shards (daemon-a through daemon-h) are resolved dynamically by
 	# stable hash — no hand-listed files. See HASH_SPLIT_SPECS above.
 	local resolved
 	if resolved=$(hash_split_resolve "$1"); then
@@ -375,53 +339,6 @@ shard_paths() {
 		# here with its own vitest config.
 		printf '%s\n' "$REPO_ROOT/packages/shared/tests"
 		;;
-	1-core)
-		# The whole 1-core tree plus its helpers/lib satellites (~80s measured)
-		# and migration bucket 0 — one unsplit leg (task #1399 rebalance: the
-		# former 2-way split made two ~40s legs while online legs carried ~150s).
-		# Directory args are recursive in vitest; a new 1-core subdirectory is
-		# picked up automatically.
-		printf '%s\n' \
-			"$TEST_ROOT/1-core" \
-			"$TEST_ROOT/helpers" \
-			"$TEST_ROOT/lib/acp" \
-			"$TEST_ROOT/lib/event-loop-watchdog.test.ts" \
-			"$TEST_ROOT/lib/job-handlers" \
-			"$TEST_ROOT/lib/voice" \
-			"$TEST_ROOT/lib/runtime-server.test.ts" \
-			"$TEST_ROOT/lib/runtime-spawn.test.ts"
-		migration_shard_paths 0
-		;;
-	handlers-migrations)
-		# The whole 2-handlers tree plus migration bucket 1. A new 2-handlers
-		# subdirectory must be listed here — validate-test-matrix.sh fails
-		# loudly on any uncovered unit test file, so it cannot be silently
-		# dropped from CI.
-		printf '%s\n' \
-			"$TEST_ROOT/2-handlers/db-query" \
-			"$TEST_ROOT/2-handlers/github" \
-			"$TEST_ROOT/2-handlers/job-handlers" \
-			"$TEST_ROOT/2-handlers/mcp" \
-			"$TEST_ROOT/2-handlers/routes" \
-			"$TEST_ROOT/2-handlers/rpc" \
-			"$TEST_ROOT/2-handlers/rpc-handlers" \
-			"$TEST_ROOT/2-handlers/short-id"
-		migration_shard_paths 1
-		;;
-	storage-migrations)
-		# 4-space-storage (non-migration files) plus migration bucket 2.
-		printf '%s\n' "$TEST_ROOT/4-space-storage"/*.test.ts "$TEST_ROOT/4-space-storage/app"
-		for file in "$TEST_ROOT/4-space-storage/storage"/*.test.ts; do
-			case "$(basename "$file")" in
-			migration-*) ;;
-			*) printf '%s\n' "$file" ;;
-			esac
-		done
-		migration_shard_paths 2
-		;;
-	# 5-space-a/b are resolved by hash_split_resolve above
-	# (duration-weighted packing over the full tree, so no file is ever
-	# hand-listed or dropped).
 	*)
 		return 1
 		;;
@@ -429,7 +346,7 @@ shard_paths() {
 }
 
 # When sourced (e.g. by scripts/validate-test-matrix.sh) expose only the shard
-# definitions above (SHARDS, HASH_SPLIT_SPECS, shard_paths, migration_shard_paths,
+# definitions above (SHARDS, HASH_SPLIT_SPECS, shard_paths,
 # hash_split_resolve, TEST_ROOT) and skip the test-execution logic below.
 # Executing this file directly runs tests as before (BASH_SOURCE[0] == $0 → the
 # guard is skipped).
@@ -512,8 +429,7 @@ if [ "$RERUN" = true ]; then
 	echo "Rerunning $FILE_COUNT failing test file(s)..."
 	# Give a rerun the same budget run_shard would give each failing file's own
 	# shard. Membership is resolved from shard_paths rather than matched by path
-	# pattern, so satellites (1-core's helpers/, lib/acp/, lib/voice/, …) and the
-	# non-migration files carried by the *-migrations shards are covered too.
+	# pattern, so every daemon bucket keeps the same timeout during reruns.
 	# failures.txt holds vitest junit classnames, which are relative to the
 	# vitest root (packages/daemon) — `tests/unit/…` — so shard_paths must be
 	# made relative to the same root before comparing.
