@@ -355,7 +355,7 @@ it('wires the consumer to the global root without querying SDK transcripts for p
     expect(
       io.request.mock.calls
         .slice(before)
-        .some(([, call]) => call.name === 'neo.snapshot' && Object.keys(call.input).length === 0)
+        .some(([, call]) => call.name === 'neo.open' && Object.keys(call.input).length === 0)
     ).toBe(true)
   );
   expect(screen.getByText(`ready/${id}/1`)).toBeTruthy();
