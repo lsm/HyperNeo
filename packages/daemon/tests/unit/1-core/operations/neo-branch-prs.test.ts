@@ -1,12 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import {
   localCodingSessionId,
+  localCodingExecutionDirectory,
   neoCardPrUrls,
   neoWorkBranch,
   neoWorkRepoCwd,
   readGithubBranchPrs,
   readGithubWorkRepo,
 } from '../../../../src/lib/neo/packs/coding/branch-prs.ts';
+
+import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 
 const worktree = {
   isWorktree: true as const,
@@ -23,6 +26,66 @@ describe('localCodingSessionId', () => {
     ).toBeNull();
     expect(localCodingSessionId({ adapter: 'codex-desktop', id: 'same-id' })).toBeNull();
     expect(localCodingSessionId(null)).toBeNull();
+  });
+});
+
+describe('localCodingExecutionDirectory', () => {
+  const ref = { adapter: 'codex-desktop', id: 'worker' };
+  const detail = {
+    ref,
+    execution: { directory: '/repo/worktree', machine: 'local' },
+    place: { folder: '/wrong/project' },
+  };
+  const reply = (value: unknown): OperationOutcome => ({
+    kind: 'completed',
+    value: { ok: true, value },
+  });
+
+  test.each(['codex-desktop', 'claude-desktop'])(
+    'accepts matching local %s evidence',
+    (adapter) => {
+      const expected = { ...ref, adapter };
+      expect(
+        localCodingExecutionDirectory(expected, reply({ ...detail, ref: expected }), 'local')
+      ).toBe('/repo/worktree');
+    }
+  );
+
+  test.each([
+    { ...detail, ref: { ...ref, id: 'other' } },
+    { ...detail, ref: { ...ref, adapter: 'claude-desktop' } },
+    { ...detail, ref: { ...ref, daemon: 'remote' } },
+    { ...detail, execution: undefined },
+    { ...detail, execution: { directory: '/repo', machine: 'remote' } },
+    { ...detail, execution: { directory: 'relative', machine: 'local' } },
+    { ...detail, execution: { directory: '/repo\0other', machine: 'local' } },
+  ])('rejects missing, foreign or malformed evidence %#', (value) => {
+    expect(localCodingExecutionDirectory(ref, reply(value), 'local')).toBeNull();
+  });
+
+  test('rejects remote refs, unsupported adapters and failed status reads', () => {
+    expect(
+      localCodingExecutionDirectory({ ...ref, daemon: 'remote' }, reply(detail), 'local')
+    ).toBeNull();
+    expect(
+      localCodingExecutionDirectory({ ...ref, adapter: 'space' }, reply(detail), 'local')
+    ).toBeNull();
+    expect(localCodingExecutionDirectory(null, reply(detail), 'local')).toBeNull();
+    expect(localCodingExecutionDirectory(ref, null, 'local')).toBeNull();
+    expect(
+      localCodingExecutionDirectory(
+        ref,
+        { kind: 'failed', code: 'execution_failed', message: 'offline' },
+        'local'
+      )
+    ).toBeNull();
+    expect(
+      localCodingExecutionDirectory(
+        ref,
+        { kind: 'completed', value: { ok: false, reason: 'unreachable', detail: 'offline' } },
+        'local'
+      )
+    ).toBeNull();
   });
 });
 

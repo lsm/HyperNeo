@@ -1,3 +1,4 @@
+import { hostname } from 'node:os';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
@@ -2432,6 +2433,80 @@ describe('Neo work with a drivers target', () => {
       db.close();
     }
   });
+
+  test.each([
+    { adapter: 'codex-desktop', evidence: 'local' },
+    { adapter: 'claude-desktop', evidence: 'local' },
+    { adapter: 'codex-desktop', evidence: 'remote' },
+    { adapter: 'codex-desktop', evidence: 'foreign-machine' },
+    { adapter: 'codex-desktop', evidence: 'other-ref' },
+    { adapter: 'codex-desktop', evidence: 'missing' },
+  ])(
+    'resolves card refs only from matching execution evidence: $adapter/$evidence',
+    async ({ adapter, evidence }) => {
+      const ref = { adapter, id: 'worker', ...(evidence === 'remote' ? { daemon: 'other' } : {}) };
+      const at = Date.now() + 10_000;
+      const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+        ok: true,
+        value: {
+          ref: { ...ref, id: evidence === 'other-ref' ? 'other-worker' : ref.id },
+          execution:
+            evidence === 'missing'
+              ? undefined
+              : {
+                  directory: '/actual/checkout',
+                  machine: evidence === 'foreign-machine' ? 'other-machine' : hostname(),
+                },
+          place: { folder: '/wrong/project' },
+          status: 'done',
+          lastActivityAt: at + 2,
+          exchange: [
+            { at, role: 'user', text: work.instruction },
+            { at: at + 2, role: 'agent', text: 'Checked #6651 and mentioned #6652.' },
+          ],
+        },
+      }));
+      const cwds: string[] = [];
+      service.readWorkRepo = async (cwd) => {
+        cwds.push(cwd);
+        return { owner: 'actual', repo: 'checkout' };
+      };
+      service.readRefStates = async (refs) =>
+        refs.map((item) => ({
+          url: `https://github.com/${item.owner}/${item.repo}/pull/${item.number}`,
+          kind: 'pr' as const,
+          state: 'OPEN' as const,
+          at: null,
+          done: false,
+          closedBy: null,
+        }));
+      service.readPrs = async (urls) =>
+        urls.map((url) => ({
+          url,
+          state: 'OPEN' as const,
+          checks: 'pending' as const,
+          review: 'none' as const,
+          createdAt: at + 1,
+        }));
+      service.readBranchPrs = async () => [];
+      Object.assign(service, { deliver: async () => {} });
+      db.createSession(createTestSession('neo:root'));
+      service.workGoals.record('work-1', 'Review #6651', '- merged to dev');
+      fileUnderAsk(service);
+      try {
+        await service.start('work-1');
+        await service.refreshDriverWork();
+        expect(service.repo.getWork('work-1')?.status).toBe('reported');
+        expect(cwds.length > 0).toBe(evidence === 'local');
+        expect(cwds.every((cwd) => cwd === '/actual/checkout')).toBe(true);
+        expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url) ?? []).toEqual(
+          evidence === 'local' ? ['https://github.com/actual/checkout/pull/6651'] : []
+        );
+      } finally {
+        db.close();
+      }
+    }
+  );
 
   test('does not claim PRs mentioned only in a report', async () => {
     const ref = { adapter: 'hyperneo', id: 'card-session' };
