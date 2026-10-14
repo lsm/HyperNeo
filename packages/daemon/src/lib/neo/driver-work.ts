@@ -267,7 +267,14 @@ export function readDriverOutcome(
   target: NeoDriverTarget,
   outcome: OperationOutcome
 ):
-  | { ref: WorkRef; link?: string; model?: string; startedAt?: number; queued?: true }
+  | {
+      ref: WorkRef;
+      link?: string;
+      model?: string;
+      effort?: string;
+      startedAt?: number;
+      queued?: true;
+    }
   | { failure: string; reason?: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
   const reply = DriverReplySchema.safeParse(outcome.value);
@@ -275,16 +282,18 @@ export function readDriverOutcome(
   if (!reply.data.ok)
     return { failure: `${reply.data.reason}: ${reply.data.detail}`, reason: reply.data.reason };
   if ('ref' in reply.data.value) {
-    const { ref, link, model, lastActivityAt } = reply.data.value as {
+    const { ref, link, model, effort, lastActivityAt } = reply.data.value as {
       ref: WorkRef;
       link?: unknown;
       model?: unknown;
+      effort?: unknown;
       lastActivityAt?: unknown;
     };
     return {
       ref,
       ...(typeof link === 'string' ? { link } : {}),
       ...(typeof model === 'string' ? { model } : {}),
+      ...(typeof effort === 'string' ? { effort } : {}),
       ...(typeof lastActivityAt === 'number' ? { startedAt: lastActivityAt } : {}),
     };
   }

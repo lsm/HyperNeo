@@ -534,6 +534,22 @@ describe('readDriverNeedsYou', () => {
 });
 
 describe('readDriverOutcome', () => {
+  test('retains reported effort and ignores malformed effort without inventing a value', () => {
+    const ref = { adapter: 'codex-desktop', id: 't1' };
+    for (const effort of ['medium', undefined, null, 3, { value: 'high' }]) {
+      expect(
+        readDriverOutcome(startTarget, {
+          kind: 'completed',
+          value: { ok: true, value: { ref, model: 'gpt-6.1-sol', effort } },
+        })
+      ).toEqual({
+        ref,
+        model: 'gpt-6.1-sol',
+        ...(typeof effort === 'string' ? { effort } : {}),
+      });
+    }
+  });
+
   test('keeps the started ref, or the sent-to ref, and explains every failure', () => {
     const started = { ref: { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' }, title: 'x' };
     expect(
@@ -1198,6 +1214,8 @@ describe('Neo work with a drivers target', () => {
       });
       expect(service.driverTargets.get('work-1')).toEqual({ ...startTarget, effort: 'medium' });
       expect(service.driverTargets.readRef('work-1')).toBeNull();
+      expect(service.driverTargets.receipts(['work-1'])[0]).not.toHaveProperty('model');
+      expect(service.driverTargets.receipts(['work-1'])[0]).not.toHaveProperty('effort');
     } finally {
       service.dispose();
       db.close();
@@ -1225,6 +1243,38 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       expect(calls).toHaveLength(1);
     } finally {
+      db.close();
+    }
+  });
+
+  test.each([
+    { model: 'gpt-6.1-sol', effort: 'medium' },
+    { model: 'gpt-6.1-sol' },
+    { effort: 'low' },
+    {},
+  ])('records only observed start configuration %j and preserves it on retry', async (observed) => {
+    const ref = { adapter: 'codex-desktop', id: 'configured-thread' };
+    const target = { ...startTarget, model: 'sol 6.1', effort: 'high' };
+    const { db, service, calls } = await setup(
+      { ok: true, value: { ref, ...observed } },
+      undefined,
+      undefined,
+      target
+    );
+    try {
+      await service.start('work-1');
+      const receipt = service.driverTargets.receipts(['work-1'])[0];
+      for (const field of ['model', 'effort'] as const) {
+        if (field in observed) expect(receipt[field]).toBe(observed[field]);
+        else expect(receipt).not.toHaveProperty(field);
+      }
+      expect(service.driverTargets.get('work-1')).toEqual(target);
+      expect(service.driverTargets.readRef('work-1')).toEqual(ref);
+      await service.start('work-1');
+      expect(calls).toHaveLength(1);
+      expect(service.driverTargets.receipts(['work-1'])[0]).toEqual(receipt);
+    } finally {
+      service.dispose();
       db.close();
     }
   });
