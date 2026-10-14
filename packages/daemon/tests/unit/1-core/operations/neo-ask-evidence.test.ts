@@ -461,6 +461,7 @@ describe('readAskEvidence', () => {
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [url(6283), url(32, 'lsm/neo-ios')],
       cardReports: () => ['Filed https://github.com/lsm/HyperNeo/issues/6600 under the epic.'],
+      readMergeCommit: async () => null,
       cardBase: () => null,
       readRefStates: async (refs) => {
         read.push([...refs]);

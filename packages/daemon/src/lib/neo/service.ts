@@ -1548,7 +1548,9 @@ export class NeoService {
   private async prerequisiteParameters(
     workId: string,
     target: NeoDriverTarget
-  ): Promise<{ ok: true; value: Record<string, string[]> } | { ok: false; reason: string }> {
+  ): Promise<
+    { ok: true; value: Record<string, string[]> } | { ok: false; reason: string; retry: boolean }
+  > {
     const pack = this.pack(this.askRecords.forWork(workId)?.pack ?? '');
     if (target.verb !== 'start' || !pack?.prepareExecution) return { ok: true, value: {} };
     const items = this.dependencies
@@ -1773,13 +1775,17 @@ export class NeoService {
       return;
     }
     const base = await this.prerequisiteParameters(work.id, target);
-    if (!base.ok) {
+    if (!base.ok && base.retry && this.db.getGlobalSettings?.().neo?.autoDispatch === true) {
       this.log.warn(`Neo card ${work.id} waits for its prerequisite base: ${base.reason}`);
       scheduleNeoAdmissionWake(
         this.db.getJobQueueRepo(),
         work.id,
         Date.now() + NEO_PREREQUISITE_BASE_RETRY_MS
       );
+      return;
+    }
+    if (!base.ok) {
+      await this.failWork(work, `prerequisite_base: ${base.reason}`);
       return;
     }
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });

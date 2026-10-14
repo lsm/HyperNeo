@@ -35,7 +35,9 @@ export interface NeoPack extends NeoPackBrief {
   prepareExecution?: NeoExecutionPreparation;
   prerequisiteParameters?(
     items: readonly NeoAskItem[]
-  ): Promise<{ ok: true; value: Record<string, string[]> } | { ok: false; reason: string }>;
+  ): Promise<
+    { ok: true; value: Record<string, string[]> } | { ok: false; reason: string; retry: boolean }
+  >;
   instructions(ask: NeoAsk | null): string | null;
   readEvidence?(work: NeoWork): Promise<NeoEvidenceRead | null>;
   reportEvidence?(work: NeoWork): NeoEvidence[];

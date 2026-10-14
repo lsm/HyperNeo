@@ -81,26 +81,27 @@ describe('readCodingPrerequisiteBase', () => {
     const prUrl = 'https://github.com/o/r/pull/7';
     expect(
       await readCodingPrerequisiteBase([item([prUrl])], readers([pr(prUrl, 'MERGED')], {}))
-    ).toEqual({ ok: false, reason: `prerequisite_merge_unknown: ${prUrl}` });
+    ).toEqual({ ok: false, reason: `prerequisite_merge_unknown: ${prUrl}`, retry: true });
     expect(
       await readCodingPrerequisiteBase([item([prUrl])], readers([pr(prUrl, 'OPEN')], {}))
-    ).toEqual({ ok: false, reason: `prerequisite_not_merged: ${prUrl}` });
+    ).toEqual({ ok: false, reason: `prerequisite_not_merged: ${prUrl}`, retry: false });
     expect(
       await readCodingPrerequisiteBase(
         [item([prUrl])],
         readers([pr(prUrl, 'MERGED', 'release')], { [prUrl]: merge })
       )
-    ).toEqual({ ok: false, reason: `prerequisite_not_merged: ${prUrl}` });
+    ).toEqual({ ok: false, reason: `prerequisite_not_merged: ${prUrl}`, retry: false });
     expect(await readCodingPrerequisiteBase([item([prUrl])], readers([], {}))).toEqual({
       ok: false,
       reason: 'prerequisite_ref_unreadable',
+      retry: true,
     });
     expect(
       await readCodingPrerequisiteBase([item([prUrl], { check: null })], readers([], {}))
     ).toEqual({ ok: true, value: {} });
     expect(
       await readCodingPrerequisiteBase([item(['https://example.com/not-github'])], readers([], {}))
-    ).toEqual({ ok: false, reason: 'prerequisite_ref_unreadable' });
+    ).toEqual({ ok: false, reason: 'prerequisite_ref_missing', retry: false });
   });
 });
 
@@ -219,12 +220,14 @@ describe('a dependent coding card start', () => {
     }
   });
 
-  test('keeps a dependent waiting, not failed, and retries later while its prerequisite merge cannot be read', async () => {
+  test('keeps a dependent waiting and retries later while its prerequisite merge cannot be read', async () => {
     const { db, service, prepared, start } = await setup({
       ok: false,
       reason: 'prerequisite_merge_unknown: https://github.com/o/r/pull/7',
+      retry: true,
     });
     try {
+      db.updateGlobalSettings({ neo: { autoDispatch: true } });
       db.getDatabase().prepare("DELETE FROM job_queue WHERE queue = 'neo.work.admission'").run();
       prepared.length = 0;
       await start('b');
@@ -240,6 +243,35 @@ describe('a dependent coding card start', () => {
       expect(retry?.runAt).toBeGreaterThan(Date.now() + 60_000);
     } finally {
       db.close();
+    }
+  });
+
+  test('fails a dependent whose prerequisite will never land on its base, and a transient refusal no wake will retry', async () => {
+    for (const [base, auto] of [
+      {
+        ok: false as const,
+        reason: 'prerequisite_not_merged: https://github.com/o/r/pull/7',
+        retry: false,
+      },
+      {
+        ok: false as const,
+        reason: 'prerequisite_merge_unknown: https://github.com/o/r/pull/7',
+        retry: true,
+      },
+    ].map((base, index) => [base, index === 0] as const)) {
+      const { db, service, prepared, start } = await setup(base);
+      try {
+        if (auto) db.updateGlobalSettings({ neo: { autoDispatch: true } });
+        prepared.length = 0;
+        await start('b');
+        expect(prepared).toEqual([]);
+        expect(service.repo.getWork('b')).toMatchObject({
+          status: 'failed',
+          report: `prerequisite_base: ${base.reason}`,
+        });
+      } finally {
+        db.close();
+      }
     }
   });
 });
