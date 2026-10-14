@@ -2723,6 +2723,26 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: false } });
   });
 
+  test('a folded question keeps its wording and the decision it asks', async () => {
+    const sourceId = await openAsk();
+    const targetId = (
+      await invoke('neo.ask.open', { ...opening, requestKey: 'other' }, nextMessage)
+    ).value!.ask!.id;
+    await invoke('neo.ask.question', {
+      askId: sourceId,
+      question: 'Ship tonight?',
+      decides: 'release date',
+      options: ['Yes', 'No'],
+    });
+    await invoke('neo.ask.fold', { askId: sourceId, intoAskId: targetId });
+    expect(service.askRecords.get(targetId)!.doneItems!.at(-1)).toMatchObject({
+      text: 'Ship tonight?',
+      question: 'Ship tonight?',
+      decides: 'release date',
+      state: 'needs_you',
+    });
+  });
+
   test('asking the same decision again restates its question; another decision is its own', async () => {
     const askId = await openAsk();
     const ask = (input: object) => invoke('neo.ask.question', { askId, ...input });

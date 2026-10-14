@@ -463,9 +463,9 @@ export class NeoAskRepository {
       if (!closed || !kept) throw new Error('neo-ask-fold-lost');
       const copy = this.db.prepare(`INSERT INTO neo_ask_items
         (ask_id, id, position, text, state, evidence, check_kind, met_by, removed, added_at,
-         updated_at, options, decision, action, wait_card, kind)
+         updated_at, options, decision, action, wait_card, kind, question, decides)
         SELECT ?, ?, ?, text, state, evidence, check_kind, met_by, 0, ?, ?, options, decision,
-               action, wait_card, kind
+               action, wait_card, kind, question, decides
           FROM neo_ask_items WHERE ask_id = ? AND id = ?`);
       for (const move of moves)
         copy.run(target.id, move.id, move.position, at, at, source.id, move.from);
