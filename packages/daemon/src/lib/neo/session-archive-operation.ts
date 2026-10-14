@@ -47,7 +47,7 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
     const target = targets.get(work.id);
     const held =
       targets.readRef(work.id) ??
-      (target && target.verb !== 'start' ? target.ref : null) ??
+      (target && 'ref' in target ? target.ref : null) ??
       (!target && (work.sessionId || work.targetSessionId)
         ? { adapter: 'hyperneo', id: (work.sessionId || work.targetSessionId)! }
         : null);
