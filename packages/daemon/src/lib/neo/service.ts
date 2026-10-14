@@ -134,6 +134,7 @@ import {
   neoCardSent,
   readDriverSent,
   messageOpening,
+  planNeoStartReceiptAdoption,
   readDriverNeedsYou,
   driverNeedsYouNote,
   driverStuckNote,
@@ -518,6 +519,11 @@ export class NeoService {
       },
       ['work', 'follow', 'now', 'card'],
       'read'
+    )
+    .pipe(
+      (work: NeoWork, read: { outcome: OperationOutcome }) =>
+        this.adoptStartReceipt(work.id, read.outcome),
+      ['work', 'read']
     )
     .pipe(planNeoWorkFollowLive, 'read', 'live')
     .pipe(
@@ -982,6 +988,15 @@ export class NeoService {
       offDeleted();
       offExternal();
     };
+  }
+
+  private adoptStartReceipt(workId: string, outcome: OperationOutcome): void {
+    const sent = planNeoStartReceiptAdoption(
+      outcome,
+      this.driverTargets.readSent(workId),
+      this.driverTargets.get(workId)?.verb
+    );
+    if (sent) this.driverTargets.recordSent(workId, sent);
   }
 
   private recordCardCheck(workId: string, read: boolean, now: number): boolean {
@@ -2385,12 +2400,15 @@ export class NeoService {
     isContinuing: (workId) =>
       !!this.workContinues.get(workId) ||
       ['send', 'adopt'].includes(this.driverTargets.get(workId)?.verb ?? ''),
-    readStatus: (work, ref, since, receipt) =>
-      this.invokeAsCard(work, 'work.status', {
+    readStatus: async (work, ref, since, receipt) => {
+      const outcome = await this.invokeAsCard(work, 'work.status', {
         ref,
         ...(since !== null ? { since } : {}),
         ...(receipt ? { receipt } : {}),
-      }),
+      });
+      this.adoptStartReceipt(work.id, outcome);
+      return outcome;
+    },
     recordStartedAt: (workId, at) => this.driverTargets.recordStartedAt(workId, at),
     recordLive: (workId, status, live) =>
       this.driverTargets.recordLive(workId, status, live.link, live.remoteLink),
