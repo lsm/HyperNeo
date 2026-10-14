@@ -326,6 +326,8 @@ describe('readGithubRefStates', () => {
         at: null,
         done: false,
         closedBy: null,
+        base: null,
+        defaultBase: null,
         createdAt: Date.parse(issue.createdAt),
         parent: { url: issue.parent.url, at: Date.parse('2026-10-10T15:05:00Z') },
       },
@@ -357,6 +359,8 @@ describe('readGithubRefStates', () => {
         at: Date.parse(issue.closedAt),
         done: false,
         closedBy: null,
+        base: null,
+        defaultBase: null,
         duplicate: true,
         createdAt: null,
         parent: null,
@@ -374,6 +378,7 @@ describe('readGithubRefStates', () => {
             state: 'MERGED',
             mergedAt: '2026-10-10T14:31:00Z',
             closedAt: '2026-10-10T14:31:00Z',
+            baseRefName: 'dev',
           }
         : number === 9002
           ? {
@@ -382,7 +387,9 @@ describe('readGithubRefStates', () => {
               state: 'CLOSED',
               stateReason: 'COMPLETED',
               closedAt: '2026-10-10T15:00:00Z',
-              closedByPullRequestsReferences: { nodes: [{ url: url(9001), merged: true }] },
+              closedByPullRequestsReferences: {
+                nodes: [{ url: url(9001), merged: true, baseRefName: 'dev' }],
+              },
             }
           : null;
     const spawn = (args: string[]) => {
@@ -391,7 +398,13 @@ describe('readGithubRefStates', () => {
       const found = node(number);
       return {
         stdout: new Response(
-          found ? JSON.stringify({ data: { repository: { issueOrPullRequest: found } } }) : ''
+          found
+            ? JSON.stringify({
+                data: {
+                  repository: { defaultBranchRef: { name: 'dev' }, issueOrPullRequest: found },
+                },
+              })
+            : ''
         ).body,
         stderr: new Response(
           found
@@ -407,7 +420,7 @@ describe('readGithubRefStates', () => {
     };
     const refs = [ref(9001), ref(9002), ref(9003), ref(9004)];
     expect(await readGithubRefStates(refs, spawn as never)).toEqual([
-      merged(9001, Date.parse('2026-10-10T14:31:00Z')),
+      { ...merged(9001, Date.parse('2026-10-10T14:31:00Z')), base: 'dev', defaultBase: 'dev' },
       {
         url: 'https://github.com/lsm/HyperNeo/issues/9002',
         kind: 'issue',
@@ -415,6 +428,8 @@ describe('readGithubRefStates', () => {
         at: Date.parse('2026-10-10T15:00:00Z'),
         done: true,
         closedBy: url(9001),
+        base: 'dev',
+        defaultBase: 'dev',
         createdAt: null,
         parent: null,
       },
@@ -443,6 +458,7 @@ describe('readAskEvidence', () => {
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [url(6283), url(32, 'lsm/neo-ios')],
       cardReports: () => ['Filed https://github.com/lsm/HyperNeo/issues/6600 under the epic.'],
+      cardBase: () => null,
       readRefStates: async (refs) => {
         read.push([...refs]);
         return [merged(6159, 200), merged(6205, 50)];

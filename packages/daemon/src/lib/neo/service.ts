@@ -219,6 +219,7 @@ import {
   type NeoCardPrDeps,
   readNeoCardPrs,
 } from './packs/coding/pack.ts';
+import { codingCardBase } from './packs/coding/watch-checks.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
 import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-checks.ts';
 import { readNeoDaemonCommits } from './daemon-commits.ts';
@@ -751,6 +752,7 @@ export class NeoService {
         cardReports: (workIds) => workIds.flatMap((id) => this.repo.getWork(id)?.report ?? []),
         readRefStates: (refs) => this.readRefStates(refs),
         readDeploys: (urls) => this.readDeploys(urls),
+        cardBase: (workId) => codingCardBase(this.driverTargets.get(workId)),
       }),
       createLifeAdminPack(),
     ];

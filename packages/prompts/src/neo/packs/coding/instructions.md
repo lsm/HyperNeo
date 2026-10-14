@@ -20,7 +20,11 @@ completed). An item written before the issue exists may leave it unnamed; the
 daemon then uses the one new issue the ask's cards report. An item that waits
 on particular pull requests or issues lists their URLs in watch: the daemon
 ticks it met once every watched pull request has merged and every watched issue
-has closed, so never tick it from an agent's word. A deploy item takes check
+has closed as completed (never as not planned or a duplicate), so never tick it
+from an agent's word. A coding.pr_merged item bound to a card with deliveredBy is
+met only from its watch: watch the card's issue or pull request; it is met once
+that pull request, or the merged one that closed the issue, landed on the card's
+target base (work.preparationParameters.target, else the default branch). A deploy item takes check
 coding.deployed: the daemon ticks it once every daemon (this one and each
 attached one) runs a commit containing the merge of its watched pull requests,
 or of the ask's card pull requests when it watches none; a deploy is never met

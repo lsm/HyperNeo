@@ -8,10 +8,13 @@ import { readNeoGithubRef } from '../../../../src/lib/neo/packs/coding/github-re
 import { readNeoAskPackTicks, readNeoAskEventTicks } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import {
+  codingCardBase,
   judgeNeoWatchTicks,
   neoWatchRefs,
+  readNeoWatchEventTicks,
   readNeoWatchTicks,
 } from '../../../../src/lib/neo/packs/coding/watch-checks.ts';
+import { codingPrMergedCheck } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   InternalEventBus,
@@ -110,6 +113,107 @@ describe('judgeNeoWatchTicks', () => {
     expect(judgeNeoWatchTicks(watched, [prState(7, 'MERGED')])).toEqual([
       { id: 'i1', evidence: `Watched: ${pull(7)} merged` },
     ]);
+  });
+});
+
+describe('judgeNeoWatchTicks for coding.pr_merged', () => {
+  const merged = { check: 'coding.pr_merged' };
+  const bound = { ...merged, deliveredBy: 'card-a' };
+  const base = (state: NeoRefState, branch: string | null) => ({
+    ...state,
+    base: branch,
+    defaultBase: 'dev',
+  });
+
+  test('an issue closed as not planned or as a duplicate never ticks a watch item', () => {
+    const watched = ask([item('i1', [issueUrl(2)]), item('i2', [issueUrl(3)], merged)]);
+    expect(
+      judgeNeoWatchTicks(watched, [
+        issueState(2, { state: 'CLOSED', done: false, duplicate: true }),
+        issueState(3, { state: 'CLOSED', done: false }),
+      ])
+    ).toEqual([]);
+    expect(judgeNeoWatchTicks(watched, [issueState(2, { state: 'CLOSED', done: true })])).toEqual([
+      { id: 'i1', evidence: `Watched: ${issueUrl(2)} closed as completed` },
+    ]);
+  });
+
+  test('a merged outcome needs a merged PR, or an issue closed as completed by one', () => {
+    const watched = ask([item('i1', [issueUrl(2)], merged), item('i2', [pull(4)], merged)]);
+    expect(
+      judgeNeoWatchTicks(watched, [
+        issueState(2, { state: 'CLOSED', done: true }),
+        prState(4, 'CLOSED'),
+      ])
+    ).toEqual([]);
+    expect(
+      judgeNeoWatchTicks(watched, [
+        issueState(2, { state: 'CLOSED', done: true, closedBy: pull(1) }),
+        prState(4, 'MERGED'),
+      ])
+    ).toEqual([
+      { id: 'i1', evidence: `Watched: ${issueUrl(2)} closed as completed by ${pull(1)}` },
+      { id: 'i2', evidence: `Watched: ${pull(4)} merged` },
+    ]);
+  });
+
+  test("a card's bound outcome needs the merge into its target base, or the default branch", () => {
+    const watched = ask([item('i1', [issueUrl(2)], bound), item('i2', [pull(4)], bound)]);
+    const closed = issueState(2, { state: 'CLOSED', done: true, closedBy: pull(1) });
+    expect(
+      judgeNeoWatchTicks(watched, [base(closed, 'feature'), base(prState(4, 'MERGED'), 'dev')])
+    ).toEqual([{ id: 'i2', evidence: `Watched: ${pull(4)} merged into dev` }]);
+    expect(
+      judgeNeoWatchTicks(
+        watched,
+        [base(closed, 'release'), base(prState(4, 'MERGED'), 'dev')],
+        () => 'release'
+      )
+    ).toEqual([
+      {
+        id: 'i1',
+        evidence: `Watched: ${issueUrl(2)} closed as completed by ${pull(1)} into release`,
+      },
+    ]);
+    expect(judgeNeoWatchTicks(watched, [prState(4, 'MERGED')])).toEqual([]);
+  });
+
+  test('a merge event without its base ticks an unbound outcome but not a bound one', async () => {
+    const watched = ask([item('i1', [pull(4)], merged), item('i2', [pull(4)], bound)]);
+    const event = {
+      id: 'e1',
+      topic: 'github/lsm/HyperNeo/pull_request/4.closed',
+      summary: 'merged',
+      occurredAt: 6_000,
+      payload: { merged: true },
+    };
+    expect(await readNeoWatchEventTicks(watched, event as never, async () => [])).toEqual([
+      { id: 'i1', evidence: `Watched: ${pull(4)} merged (event e1: merged)` },
+    ]);
+  });
+});
+
+describe('codingPrMergedCheck', () => {
+  test('a bound outcome is never met from the ask-wide card PRs, only from its watch', () => {
+    const done = [{ key: pull(1), state: 'done' as const, summary: 'merged', blockers: [] }];
+    expect(codingPrMergedCheck(item('i1', [], { deliveredBy: 'card-a' }), done)).toEqual({
+      reason: 'watch_required',
+    });
+    expect(codingPrMergedCheck(item('i1', []), done)).toEqual({ value: `Merged: ${pull(1)}` });
+  });
+});
+
+describe('codingCardBase', () => {
+  test("reads a start card's preparation target and ignores HEAD and other verbs", () => {
+    const start = (target?: unknown) => ({
+      verb: 'start',
+      preparationParameters: target === undefined ? undefined : { target },
+    });
+    expect(codingCardBase(start('release'))).toBe('release');
+    expect(codingCardBase(start('HEAD'))).toBeNull();
+    expect(codingCardBase(start())).toBeNull();
+    expect(codingCardBase({ verb: 'send' })).toBeNull();
+    expect(codingCardBase(null)).toBeNull();
   });
 });
 

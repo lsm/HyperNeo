@@ -13,7 +13,7 @@ const pack = (id: string): NeoPack => ({
 });
 
 describe('buildNeoCheckRegistry', () => {
-  test('preserves all six built-in kinds and their existing evaluation routes', () => {
+  test('preserves all six built-in kinds and their routes; only coding.pr_merged is independent', () => {
     const coding = createCodingPack({
       prCandidates: async () => [],
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
@@ -22,6 +22,7 @@ describe('buildNeoCheckRegistry', () => {
       readPrs: async () => [],
       readRefStates: async () => [],
       readDeploys: async () => ({ prs: [], daemons: [] }),
+      cardBase: () => null,
       workPrs: { get: () => null, list: () => [], recordFailedRead: () => {} },
       record: () => null,
     });
@@ -42,7 +43,7 @@ describe('buildNeoCheckRegistry', () => {
         ok: true,
         value: {
           packId: source.id,
-          independent: false,
+          independent: kind === 'coding.pr_merged',
           ...(source.checks?.[kind]
             ? { mode: 'evidence', check: source.checks[kind] }
             : { mode: 'ask-ticks', readAskTicks: source.readAskTicks }),
