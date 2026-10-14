@@ -18,6 +18,7 @@ import type {
   WorkAdapter,
   WorkDelivery,
   WorkDetail,
+  WorkStarted,
   WorkExchangeEntry,
   WorkInput,
   WorkRef,
@@ -907,7 +908,7 @@ export async function startClaudeSession(
   folder: string,
   request: StartRequest,
   deps: ClaudeDesktopAdapterDeps
-): Promise<Result<WorkSummary>> {
+): Promise<Result<WorkStarted>> {
   const cliSessionId = deps.newId();
   const sessionId = `local_${cliSessionId}`;
   const prepared = request.preparation
@@ -979,6 +980,7 @@ export async function startClaudeSession(
       ),
       place: { machine: deps.machine, folder, name: request.place.name },
       status: sent.value.delivered ? 'running' : 'queued',
+      ...(sent.value.receipt ? { receipt: sent.value.receipt } : {}),
     },
   };
 }
@@ -991,7 +993,7 @@ const runClaudeDesktopStart = (superpipe({})('claude-desktop-start-work') as Pip
   .endAsync('outcome') as (
   request: StartRequest,
   deps: ClaudeDesktopAdapterDeps
-) => Promise<Result<WorkSummary>>;
+) => Promise<Result<WorkStarted>>;
 
 export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): WorkAdapter {
   const cache: ClaudeRecordCache = new Map();
