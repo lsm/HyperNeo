@@ -227,7 +227,7 @@ import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { buildNeoCheckRegistry } from './packs/check-registry.ts';
-import { scheduleNeoAdmissionWake } from './admission-wake.ts';
+import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-wake.ts';
 import { admitNeoWork, neoAdmissionRefusal, neoOutcomeEligibility } from './work-admission.ts';
 import {
   neoEnabledPacks,
@@ -785,7 +785,12 @@ export class NeoService {
       notifyChanged: () => this.notifyChanged(),
     });
     this.workRefusals = new NeoWorkRefusalRepository(db.getDatabase());
-    this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
+    this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged, (settled) => {
+      const wakes = planNeoAvailabilityWakes(settled, this.repo.listWork(), (id) =>
+        this.dependencyBlockers(id).some((blocker) => blocker.workId !== id)
+      );
+      for (const id of wakes) scheduleNeoAdmissionWake(db.getJobQueueRepo(), id);
+    });
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());

@@ -2,6 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { NeoService } from './service.ts';
+import { awaitingNeoWorker } from './work-reroute.ts';
 
 export const NEO_WORK_ADMISSION_WAKE = 'neo.work.admission';
 
@@ -17,6 +18,26 @@ export function scheduleNeoAdmissionWake(
     activeStatuses: ['pending'],
     runAt,
   });
+}
+
+export function planNeoAvailabilityWakes(
+  settled: Pick<NeoWork, 'id' | 'projectId'>,
+  work: readonly NeoWork[],
+  blocked: (workId: string) => boolean
+): string[] {
+  return work
+    .filter(
+      (card) =>
+        card.id !== settled.id &&
+        card.projectId === settled.projectId &&
+        awaitingNeoWorker(card) &&
+        !blocked(card.id)
+    )
+    .map((card) => card.id);
+}
+
+export function neoAdmissionWakeAuthorized(work: NeoWork, startIntent: boolean): boolean {
+  return startIntent || awaitingNeoWorker(work);
 }
 
 export const runNeoAdmissionWake = (superpipe({})('neo-work-admission-wake') as PipelineAPI)
@@ -43,7 +64,7 @@ export const runNeoAdmissionWake = (superpipe({})('neo-work-admission-wake') as 
     async (work: NeoWork, service: NeoService) => {
       const admitted = await service.admitWork(
         work.id,
-        service.dependencies.hasStartIntent(work.id)
+        neoAdmissionWakeAuthorized(work, service.dependencies.hasStartIntent(work.id))
       );
       return {
         value: admitted.ok
