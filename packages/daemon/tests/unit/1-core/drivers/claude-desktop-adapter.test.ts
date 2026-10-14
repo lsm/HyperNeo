@@ -619,12 +619,12 @@ describe('claude-desktop adapter against the app session records', () => {
     const transcripts = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
     mkdirSync(transcripts, { recursive: true });
     const at = (second: number) => `2026-10-14T10:00:0${second}.000Z`;
-    const said = (uuid: string, text: string, second: number) =>
+    const said = (uuid: string, text: string, second: number, stop = 'end_turn') =>
       JSON.stringify({
         type: 'assistant',
         uuid,
         timestamp: at(second),
-        message: { content: [{ type: 'text', text }] },
+        message: { content: [{ type: 'text', text }], stop_reason: stop },
       });
     writeFileSync(
       join(transcripts, 'cli-a1.jsonl'),
@@ -642,7 +642,7 @@ describe('claude-desktop adapter against the app session records', () => {
           timestamp: at(2),
           message: { content: 'load orders' },
         }),
-        said('a1', 'loading', 3),
+        said('a1', 'loading', 3, 'tool_use'),
         said('a2', 'loaded 12 orders', 4),
         JSON.stringify({
           type: 'user',
@@ -895,12 +895,30 @@ describe('claudeInputEvidence', () => {
     timestamp: '2026-10-14T10:00:00.000Z',
     message: { content: 'go' },
   });
-  const reply = (n: number) =>
+  const reply = (n: number, stop: string | null = 'end_turn') =>
     JSON.stringify({
       type: 'assistant',
       timestamp: new Date(Date.parse('2026-10-14T10:00:01.000Z') + n).toISOString(),
-      message: { content: [{ type: 'text', text: `step ${n}` }] },
+      message: { content: [{ type: 'text', text: `step ${n}` }], stop_reason: stop },
     });
+
+  test('is pending until the turn ends, and a half-written last line is still being written', () => {
+    expect(claudeInputEvidence([input], receipt, 'cli-a1')).toEqual({ receipt, state: 'pending' });
+    expect(claudeInputEvidence([input, reply(0, 'tool_use')], receipt, 'cli-a1')).toEqual({
+      receipt,
+      state: 'pending',
+    });
+    expect(
+      claudeInputEvidence(
+        [input, reply(0, 'tool_use'), reply(1), '{"type":"assist'],
+        receipt,
+        'cli-a1'
+      )
+    ).toMatchObject({
+      state: 'observed',
+      exchange: [{ text: 'go' }, { text: 'step 0' }, { text: 'step 1' }],
+    });
+  });
 
   test('cuts the exchange at forty entries and says so', () => {
     const evidence = claudeInputEvidence(

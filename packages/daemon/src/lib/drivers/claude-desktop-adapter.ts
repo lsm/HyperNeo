@@ -588,6 +588,11 @@ export function claudeResumeReceipt(
   return claudeReceipt(line, executionId);
 }
 
+function claudeTurnEnded(entry: ClaudeTranscriptEntry): boolean {
+  const stop = (entry.message as { stop_reason?: unknown } | undefined)?.stop_reason;
+  return typeof stop === 'string' && stop !== 'tool_use';
+}
+
 export function claudeInputEvidence(
   lines: readonly string[],
   receipt: ClaudeReceipt,
@@ -604,18 +609,27 @@ export function claudeInputEvidence(
       : null;
   if (!first) return unavailable;
   const replies: WorkExchangeEntry[] = [];
-  for (const line of lines.slice(start + 1)) {
-    if (!line.trim()) continue;
+  const window = lines.slice(start + 1).filter((line) => line.trim());
+  let ended = false;
+  for (const [index, line] of window.entries()) {
     const entry = parseClaudeEntry(line);
-    if (!entry) return unavailable;
+    if (!entry) {
+      if (index === window.length - 1) break;
+      return unavailable;
+    }
     if (entry.isSidechain === true) continue;
-    if (claudeInputText(entry) !== null) break;
+    if (claudeInputText(entry) !== null) {
+      ended = true;
+      break;
+    }
+    if (entry.type === 'assistant') ended = claudeTurnEnded(entry);
     const said = assistantText(line);
     const reply = said
       ? exchangeEntry(workEntryTime(entry.timestamp), 'agent', said, -Infinity)
       : null;
     if (reply) replies.push(reply);
   }
+  if (!ended) return { receipt, state: 'pending' };
   return {
     receipt,
     state: 'observed',
