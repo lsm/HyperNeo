@@ -1,5 +1,5 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import type { ExternalEvent } from '../../external-events/types.ts';
 import { isNeoAskLive } from '../done-check.ts';
 import { combineNeoEvidenceReads, type NeoEvidence, type NeoEvidenceRead } from '../evidence.ts';
@@ -181,6 +181,22 @@ export function requireNeoPackTickable(read: {
     )
     ? { value: read.ask }
     : { reason: null };
+}
+
+type NeoCheckRegistration = Extract<
+  ReturnType<Extract<ReturnType<typeof buildNeoCheckRegistry>, { ok: true }>['resolve']>,
+  { ok: true }
+>['value'];
+
+export function neoPackTickWrite(
+  item: Pick<NeoAskItem, 'id' | 'state' | 'evidence'>,
+  registration: NeoCheckRegistration | null,
+  evidence: string
+): Pick<NeoAskItem, 'id' | 'state' | 'evidence' | 'metBy'> | null {
+  if (registration?.mode !== 'evidence' || registration.independent)
+    return { id: item.id, state: 'met', evidence, metBy: 'daemon' };
+  if (item.state === 'reported' && item.evidence === evidence) return null;
+  return { id: item.id, state: 'reported', evidence, metBy: null };
 }
 
 export function planNeoPackTicks(

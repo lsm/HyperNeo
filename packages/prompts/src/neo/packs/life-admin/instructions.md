@@ -53,4 +53,5 @@ can read it:
 Use `event=<calendar event id>` instead of `id=` for a calendar event; keep the
 line to those fields, and give the date with its UTC offset — a confirmation
 dated before the card started does not count, and a date the daemon cannot
-place counts as undated.
+place counts as undated. The line is the worker's own report, so the daemon
+marks the item reported, not met: it is verified once the human confirms it.

@@ -1241,6 +1241,7 @@ describe('neo.ask operations', () => {
               ? { value: 'Signed receipt' }
               : { reason: 'pending' },
         },
+        checkEvidence: { 'legal.confirmed': { independent: true } },
       },
     ];
     db.updateGlobalSettings({ neo: { packs: ['coding', 'legal'] } });

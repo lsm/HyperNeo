@@ -17,8 +17,11 @@ import {
   neoPackBriefs,
   neoPackChecks,
   neoPackAskCardEvidence,
+  neoPackTickWrite,
   planNeoPackTicks,
 } from '../../../../src/lib/neo/packs/index.ts';
+import { buildNeoCheckRegistry } from '../../../../src/lib/neo/packs/check-registry.ts';
+import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 
 const item = (overrides: Partial<NeoAskItem> = {}): NeoAskItem => ({
   id: 'i1',
@@ -205,6 +208,51 @@ describe('planNeoPackTicks', () => {
         neoPackChecks([createLifeAdminPack()])
       )
     ).toEqual([{ id: 'i1', evidence: 'Confirmed: orders@amazon.com — Your order is confirmed' }]);
+  });
+});
+
+describe('neoPackTickWrite', () => {
+  const signed = {
+    id: 'legal',
+    describe: 'Legal',
+    guidance: '',
+    instructions: () => '',
+    checks: { 'legal.signed': () => ({ reason: 'not_signed' }) },
+    checkEvidence: { 'legal.signed': { independent: true } },
+  } as unknown as NeoPack;
+  const registry = buildNeoCheckRegistry([createLifeAdminPack(), signed]);
+  const entry = (kind: string) => {
+    if (!registry.ok) throw new Error(registry.reason);
+    const resolved = registry.resolve(kind);
+    if (!resolved.ok) throw new Error(resolved.reason);
+    return resolved.value;
+  };
+
+  test('a worker-reported confirmation is reported for the human, never met by the daemon', () => {
+    expect(neoPackTickWrite(item(), entry(LIFE_ADMIN_CHECK_CONFIRMED), 'Confirmed: x')).toEqual({
+      id: 'i1',
+      state: 'reported',
+      evidence: 'Confirmed: x',
+      metBy: null,
+    });
+    expect(
+      neoPackTickWrite(
+        item({ state: 'reported', evidence: 'Confirmed: x' }),
+        entry(LIFE_ADMIN_CHECK_CONFIRMED),
+        'Confirmed: x'
+      )
+    ).toBeNull();
+  });
+
+  test('an independent check, or a watch with no check, is met by the daemon', () => {
+    expect(neoPackTickWrite(item(), entry('legal.signed'), 'Signed')).toMatchObject({
+      state: 'met',
+      metBy: 'daemon',
+    });
+    expect(neoPackTickWrite(item({ check: null }), null, 'Closed #2')).toMatchObject({
+      state: 'met',
+      metBy: 'daemon',
+    });
   });
 });
 

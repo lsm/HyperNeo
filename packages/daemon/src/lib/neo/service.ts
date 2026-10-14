@@ -237,6 +237,7 @@ import {
   neoPackEvidenceOrNone,
   neoPackFragment,
   neoPacks,
+  neoPackTickWrite,
   planNeoPackTicks,
   readNeoAskEventTicks,
   readNeoAskPackEvidence,
@@ -2988,14 +2989,10 @@ export class NeoService {
     if (!registry.ok) return this.askRecords.get(ask.id) ?? ask;
     for (const tick of ticks) {
       const item = ask.doneItems?.find((item) => item.id === tick.id);
-      if (!item || (item.check && !registry.resolve(item.check).ok)) continue;
-      this.askRecords.tickItem(
-        ask.id,
-        { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
-        Date.now(),
-        item,
-        true
-      );
+      const entry = item?.check ? registry.resolve(item.check) : null;
+      if (!item || (entry && !entry.ok)) continue;
+      const write = neoPackTickWrite(item, entry?.ok ? entry.value : null, tick.evidence);
+      if (write) this.askRecords.tickItem(ask.id, write, Date.now(), item, write.state === 'met');
     }
     const ticked = ticks.length ? this.askRecords.get(ask.id) : null;
     return ticked
