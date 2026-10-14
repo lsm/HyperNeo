@@ -477,6 +477,15 @@ export function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null 
   return parseDriverStatus(outcome)?.recentInputs ?? null;
 }
 
+export function readDriverAdoptedSent(outcome: OperationOutcome): DriverSent | null {
+  const value = parseDriverStatus(outcome);
+  const input = (
+    value?.recentInputs ?? value?.exchange?.filter((entry) => entry.role === 'user')
+  )?.at(-1);
+  const opening = input ? messageOpening(input.text) : '';
+  return input && opening ? { inputBefore: input.at - 1, opening } : null;
+}
+
 export function readDriverOpenedPrs(outcome: OperationOutcome): string[] {
   return parseDriverStatus(outcome)?.openedPrs ?? [];
 }
@@ -731,6 +740,43 @@ export function driverNeedsYouNote(
   return `${NEO_WORK_NEEDS_YOU}\n${JSON.stringify({ workId: work.id, title: work.title, ref, lastReply: lastReply?.slice(0, 2000) ?? null })}`;
 }
 
+export function readDriverCardExchange(outcome: OperationOutcome, sent: DriverSent | null) {
+  const value = parseDriverStatus(outcome);
+  if (!value || !sent) return null;
+  const entries = value.exchange ?? [];
+  const start = entries.findIndex(
+    (entry) =>
+      entry.role === 'user' &&
+      entry.at > sent.inputBefore &&
+      entry.text.replace(/\s+/g, ' ').includes(sent.opening)
+  );
+  if (start < 0) return null;
+  const next = entries.findIndex((entry, index) => index > start && entry.role === 'user');
+  const replies = entries.slice(start + 1, next < 0 ? undefined : next);
+  return {
+    current: next < 0,
+    start: entries[start].at,
+    end:
+      next < 0 && ['running', 'queued', 'needs_you'].includes(value.status)
+        ? null
+        : (replies.at(-1)?.at ?? entries[start].at),
+    replies,
+  };
+}
+
+export function isDriverCardCurrent(outcome: OperationOutcome, sent: DriverSent | null): boolean {
+  const value = parseDriverStatus(outcome);
+  if (!value) return false;
+  if (value.exchange !== undefined) return readDriverCardExchange(outcome, sent)?.current ?? false;
+  return (
+    !sent ||
+    !(value.recentInputs ?? []).some(
+      (input) =>
+        input.at > sent.inputBefore && !input.text.replace(/\s+/g, ' ').includes(sent.opening)
+    )
+  );
+}
+
 const EXCHANGE_REPORT_LIMIT = 12_000;
 
 export function driverExchangeReport(
@@ -743,8 +789,10 @@ export function driverExchangeReport(
     (entry) =>
       entry.role === 'user' && !!opening && entry.text.replace(/\s+/g, ' ').includes(opening)
   );
-  const parts = entries
-    .filter((_, index) => index !== own)
+  if (opening && own < 0) return null;
+  const next = entries.findIndex((entry, index) => index > own && entry.role === 'user');
+  const parts = (opening ? entries.slice(own + 1, next < 0 ? undefined : next) : entries)
+    .filter((entry) => !opening || entry.role === 'agent')
     .map((entry) => `${entry.role === 'agent' ? 'Agent' : 'Input'}: ${entry.text}`);
   if (!parts.some((part) => part.startsWith('Agent: '))) return null;
   const head = cut ? ['(Earlier messages were not read; this is not the whole exchange.)'] : [];
@@ -780,15 +828,20 @@ function readUnanchoredSettlement(
   };
 }
 
-export function readDriverFollowUp(outcome: OperationOutcome, since: number): string | null {
+export function readDriverFollowUp(
+  outcome: OperationOutcome,
+  since: number,
+  sent: DriverSent | null = null
+): string | null {
   const value = parseDriverStatus(outcome);
   if (!value || value.status === 'running' || value.status === 'queued') return null;
-  if (value.lastActivityAt <= since) return null;
-  const said = driverExchangeReport(value.exchange, value.exchangeCut ?? false, null);
-  if (said) return said;
-  return value.lastReplyAt !== undefined && value.lastReplyAt > since && value.lastReply
-    ? `Agent: ${value.lastReply}`
-    : null;
+  if (value.exchange === undefined)
+    return (value.lastReplyAt ?? value.lastActivityAt) > since && isDriverCardCurrent(outcome, sent)
+      ? (value.lastReply ?? null)
+      : null;
+  const own = readDriverCardExchange(outcome, sent);
+  const replies = own?.replies.filter((entry) => entry.at > since);
+  return replies?.length ? driverExchangeReport(replies, false, null) : null;
 }
 
 export function readDriverSettlement(
@@ -807,11 +860,22 @@ export function readDriverSettlement(
       : null;
   }
   const { status, lastActivityAt, lastReplyAt, exchange, exchangeCut } = reply.value;
-  if (requireFresh && startedAt === null) return readUnanchoredSettlement(work, reply.value, now);
+  if (requireFresh && startedAt === null)
+    return opening ? null : readUnanchoredSettlement(work, reply.value, now);
   const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
   if (!fresh && (requireFresh || now - work.updatedAt < SETTLE_GRACE_MS)) return null;
-  const said =
-    driverExchangeReport(exchange, exchangeCut ?? false, opening) ?? reply.value.lastReply;
+  const report = driverExchangeReport(exchange, exchangeCut ?? false, opening);
+  if (opening && !report && exchange !== undefined) return null;
+  if (
+    exchange === undefined &&
+    opening &&
+    !isDriverCardCurrent(outcome, {
+      opening,
+      inputBefore: (startedAt ?? work.updatedAt) - 1,
+    })
+  )
+    return null;
+  const said = report ?? reply.value.lastReply;
   if (status === 'done') {
     const staleReply =
       requireFresh && startedAt !== null && lastReplyAt !== undefined && lastReplyAt <= startedAt;

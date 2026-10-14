@@ -28,7 +28,17 @@ const work: NeoWork = Object.freeze({
 const ref: WorkRef = { adapter: 'codex-desktop', id: 'thread-1' };
 const status = (value: Record<string, unknown>) => ({
   kind: 'completed' as const,
-  value: { ok: true, value: { lastActivityAt: 200, ...value } },
+  value: {
+    ok: true,
+    value: {
+      lastActivityAt: 200,
+      exchange: [
+        { at: 151, role: 'user', text: work.instruction },
+        { at: 200, role: 'agent', text: String(value.lastReply ?? 'Shipped.') },
+      ],
+      ...value,
+    },
+  },
 });
 const evidence = (extra: Partial<NeoDriverSettleEvidence> = {}): NeoDriverSettleEvidence => ({
   startedAt: 150,
@@ -45,7 +55,7 @@ describe('planNeoDriverSettlement', () => {
     expect(planNeoDriverSettlement(work, evidence())).toMatchObject({
       landed: null,
       cardStatus: 'done',
-      settled: { status: 'reported', report: 'Shipped.' },
+      settled: { status: 'reported', report: 'Agent: Shipped.' },
     });
   });
 
@@ -137,14 +147,14 @@ describe('settleNeoDriverWork', () => {
   });
 
   test('finished work is reported, anchored for follow-up and returned to Neo', async () => {
-    const reported = { ...work, status: 'reported' as const, report: 'Shipped.' };
+    const reported = { ...work, status: 'reported' as const, report: 'Agent: Shipped.' };
     const { deps, calls } = harness(
       status({ status: 'done', lastReply: 'Shipped.', lastReplyAt: 200 }),
       reported
     );
     expect(await settleNeoDriverWork(deps, work, ref)).toEqual({
       status: 'reported',
-      report: 'Shipped.',
+      report: 'Agent: Shipped.',
     });
     expect(calls).toEqual([
       'status since 150',

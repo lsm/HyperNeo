@@ -5,11 +5,17 @@ import { extractNeoWorkPrUrls, neoTextRefs } from './work-prs.ts';
 import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 
 export type NeoPrClaim = 'branch' | 'opened' | 'named' | 'mentioned';
-export type NeoCardPrCandidate = { url: string; claim: NeoPrClaim };
+type PrWindow = { start: number; end: number | null };
+export type NeoCardPrCandidate = {
+  url: string;
+  claim: NeoPrClaim;
+  scope?: { window: PrWindow | null; onBranch: boolean };
+};
 export type NeoCardPrOwned = NeoCardPrCandidate & {
   claimedAt: number;
   claimed: boolean;
   score: number | null;
+  scoped?: boolean;
 };
 export type NeoPrClaimState = NeoPrClaim | 'rejected';
 export interface NeoPrClaimRow {
@@ -19,12 +25,14 @@ export interface NeoPrClaimRow {
   claimedAt: number;
   cardCreatedAt: number;
   score: number | null;
+  scoped?: boolean;
 }
 
 const RANK: Record<NeoPrClaim, number> = { branch: 0, opened: 0, named: 1, mentioned: 2 };
 const key = githubUrlKey;
 
 export function planNeoCardPrCandidates(input: {
+  window?: PrWindow | null;
   report: string | null;
   brief: string;
   branch: readonly string[];
@@ -60,7 +68,15 @@ export function planNeoCardPrCandidates(input: {
         : opened.has(key(url))
           ? 'opened'
           : 'mentioned';
-    return [{ url, claim }];
+    return [
+      {
+        url,
+        claim: input.window !== undefined && named.has(key(url)) ? 'named' : claim,
+        ...(input.window !== undefined
+          ? { scope: { window: input.window, onBranch: onBranch.has(key(url)) } }
+          : {}),
+      },
+    ];
   });
 }
 
@@ -134,28 +150,40 @@ export function planNeoCardPrOwnership(
     const same = claims.filter((row) => row.urlKey === key(candidate.url));
     const mine = same.find((row) => row.workId === card.id);
     if (
+      candidate.scope === undefined &&
       mine?.claim === 'rejected' &&
       (candidate.claim === 'mentioned' || candidate.claim === 'opened')
     )
       return [];
     const prior = mine && isRanked(mine) ? mine : undefined;
     const claim =
-      prior && RANK[prior.claim] < RANK[candidate.claim] ? prior.claim : candidate.claim;
+      prior &&
+      (prior.scoped || candidate.scope === undefined) &&
+      RANK[prior.claim] < RANK[candidate.claim]
+        ? prior.claim
+        : candidate.claim;
     const own = {
       claim,
       claimedAt: prior?.claimedAt ?? now,
       cardCreatedAt: card.createdAt,
       score: prior?.score ?? null,
     };
-    return same.some((row) => row.workId !== card.id && isRanked(row) && beatsNeoPrClaim(row, own))
+    return same.some(
+      (row) =>
+        row.workId !== card.id &&
+        isRanked(row) &&
+        (candidate.scope === undefined || row.scoped || row.claim === 'named') &&
+        beatsNeoPrClaim(row, own)
+    )
       ? []
       : [
           {
-            url: candidate.url,
+            ...candidate,
             claim,
             claimedAt: own.claimedAt,
             claimed: !!prior,
             score: own.score,
+            ...(prior?.scoped ? { scoped: true } : {}),
           },
         ];
   });
@@ -170,6 +198,7 @@ export function keepNeoUnbeatenPrs(
     claims
       .filter((row) => row.workId !== card.id && row.urlKey === key(item.url))
       .filter(isRanked)
+      .filter((row) => item.scope === undefined || row.scoped || row.claim === 'named')
       .some((row) => beatsNeoPrClaim(row, { ...item, cardCreatedAt: card.createdAt }))
   );
   return { owned: owned.filter((item) => !beaten.includes(item)), beaten };
@@ -216,7 +245,20 @@ export function keepNeoCardPrReads(
   const named = new Set(neoTextRefs(`${card.title}\n${card.instruction}`));
   for (const candidate of owned) {
     const pr = prs.find((item) => key(item.url) === key(candidate.url));
-    if (
+    if (candidate.scope !== undefined && candidate.claim !== 'named') {
+      const { window, onBranch } = candidate.scope;
+      if (candidate.scoped) sorted.kept.push(candidate);
+      else if (
+        window &&
+        onBranch &&
+        pr?.createdAt !== undefined &&
+        pr.createdAt >= window.start &&
+        (window.end === null || pr.createdAt <= window.end)
+      )
+        sorted.kept.push({ ...candidate, scoped: true });
+      else if (!pr && window && onBranch) sorted.pending.push(candidate);
+      else sorted.rejected.push(candidate);
+    } else if (
       candidate.claim === 'opened' &&
       pr &&
       !candidate.claimed &&
