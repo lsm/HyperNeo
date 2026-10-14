@@ -1592,17 +1592,24 @@ export function createNeoAskOperations(
       (
         ask: NeoAsk,
         item: NeoAskQuestionItem | null,
-        restate: ReturnType<typeof planNeoAskRestate>
+        restate: ReturnType<typeof planNeoAskRestate>,
+        asked: NeoAskItem | null
       ) => {
         if (item)
           return {
             ask: service.askRecords.settle(ask, 'waiting', item.text, item.text, item.id, item),
           };
-        if (restate && service.askRecords.restateQuestion(ask.id, restate, Date.now()))
-          return { ask: service.askRecords.get(ask.id) };
-        return { ask };
+        if (restate) service.askRecords.restateQuestion(ask.id, restate, Date.now());
+        const current = restate ? service.askRecords.get(ask.id) : ask;
+        const text = restate?.text ?? asked?.text;
+        return {
+          ask:
+            current?.status === 'open' && asked && text
+              ? service.askRecords.settle(current, 'waiting', text, text, asked.id)
+              : current,
+        };
       },
-      ['admission', 'item', 'restate'],
+      ['admission', 'item', 'restate', 'asked'],
       'written'
     )
     .pipe(requireNeoAskWritten, 'written', 'result:admission')

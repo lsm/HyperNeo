@@ -2744,14 +2744,25 @@ describe('neo.ask operations', () => {
       outcome: 'Where should the slice 6 check run now?',
       evidence: 'Where should the slice 6 check run now?',
     });
+    service.askRecords.reopen(service.askRecords.get(askId)!);
+    await ask({
+      question: 'Run the slice 6 check on dev?',
+      decides: 'slice 6 target',
+      options: ['On dev', 'Skip'],
+    });
+    expect(service.askRecords.get(askId)).toMatchObject({
+      status: 'waiting',
+      waitingItem: 'i3',
+      outcome: 'Run the slice 6 check on dev?',
+    });
     await ask({ question: 'Ship tonight?', decides: 'release date', options: ['Yes', 'No'] });
     await ask({ question: 'Ship tonight?', decides: 'release date', options: ['Yes', 'No'] });
     const asked = service.askRecords.get(askId)!.doneItems!.filter((item) => item.decision);
     expect(asked).toEqual([
       expect.objectContaining({
         id: 'i3',
-        text: 'Where should the slice 6 check run now?',
-        question: 'Where should the slice 6 check run now?',
+        text: 'Run the slice 6 check on dev?',
+        question: 'Run the slice 6 check on dev?',
         decides: 'slice 6 target',
         options: ['On dev', 'Skip'],
         state: 'needs_you',
