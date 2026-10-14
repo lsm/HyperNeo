@@ -129,6 +129,17 @@ describe('NeoDependencyRepository', () => {
     expect(work.getWork('b')!.status).toBe('cancelled');
   });
 
+  test('removing all dependent outcomes blocks existing edges without affecting independent cards', () => {
+    replace('b', ['a']);
+    db.getDatabase().exec(
+      "UPDATE neo_ask_items SET removed = 1 WHERE ask_id IN ('ask-b', 'ask-c')"
+    );
+    expect(graph.blockers('b', () => true)).toEqual([
+      { workId: 'b', reason: 'dependency_outcomes_missing', itemIds: [] },
+    ]);
+    expect(graph.blockers('c', () => true)).toEqual([]);
+  });
+
   test('post-dispatch material edits are refused but identical edges are idempotent', () => {
     replace('b', ['a']);
     work.transitionWork('b', work.getWork('b')!, { status: 'queued' });

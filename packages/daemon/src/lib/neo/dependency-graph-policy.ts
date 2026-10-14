@@ -65,7 +65,10 @@ function blockers(workId: string, cards: readonly Card[], edges: readonly Edge[]
   const blocked: { workId: string; reason: string; itemIds: string[] }[] = [];
   if (!card || card.status === 'cancelled' || card.askStatus === 'abandoned')
     return [{ workId, reason: 'dependent_unavailable', itemIds: [] }];
-  for (const edge of edges.filter((edge) => edge.workId === workId)) {
+  const prerequisites = edges.filter((edge) => edge.workId === workId);
+  if (prerequisites.length && !card.items.length)
+    return [{ workId, reason: 'dependency_outcomes_missing', itemIds: [] }];
+  for (const edge of prerequisites) {
     const prerequisite = byId.get(edge.prerequisiteId);
     const reason = !prerequisite
       ? 'prerequisite_missing'
