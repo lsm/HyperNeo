@@ -25,12 +25,14 @@ export function isNeoPlumbingFolder(
   }
 ): boolean {
   const folder = place.folder;
-  if (!folder || place.daemon || place.machine !== local.machine) return false;
+  if (!folder) return false;
+  const here = !place.daemon && place.machine === local.machine;
   return (
     folder === local.neoFolder ||
     folder.startsWith(`${local.neoFolder}${sep}`) ||
+    /[/\\]Neo[/\\]\.coordinators([/\\]|$)/.test(folder) ||
     local.isTemp(folder) ||
-    !local.exists(folder)
+    (here && !local.exists(folder))
   );
 }
 

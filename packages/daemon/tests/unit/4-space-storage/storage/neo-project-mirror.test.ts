@@ -183,7 +183,7 @@ describe('isNeoPlumbingFolder', () => {
       expect(isNeoPlumbingFolder({ folder, machine: 'laptop' }, local)).toBe(true);
   });
 
-  test('keeps real folders here and never judges another machine', () => {
+  test('keeps real folders, and judges only shape, never existence, on another machine', () => {
     expect(isNeoPlumbingFolder({ folder: '/home/fictional/tmp', machine: 'laptop' }, local)).toBe(
       false
     );
@@ -196,9 +196,8 @@ describe('isNeoPlumbingFolder', () => {
     expect(isNeoPlumbingFolder({ folder: '/home/fictional/gone', machine: 'imac' }, local)).toBe(
       false
     );
-    expect(isNeoPlumbingFolder({ folder: '/tmp', machine: 'laptop', daemon: 'tts' }, local)).toBe(
-      false
-    );
+    for (const folder of ['/tmp', '/Users/other/.hyperneo/Neo/.coordinators/neo-2'])
+      expect(isNeoPlumbingFolder({ folder, machine: 'imac', daemon: 'tts' }, local)).toBe(true);
   });
 });
 
