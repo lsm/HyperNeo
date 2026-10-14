@@ -11,6 +11,7 @@ import {
   createAcpAgentAdapter,
   findAcpAgentBinary,
   gitWorktreeProject,
+  readAcpSessionPages,
   reuseAcpSessionList,
 } from '../../../../src/lib/drivers/acp-agent-adapter';
 
@@ -149,5 +150,32 @@ describe('ACP agent helpers', () => {
     expect(await list()).toHaveLength(1);
     await list();
     expect(calls).toBe(2);
+  });
+
+  test('readAcpSessionPages stops paging once a page reaches sessions older than the horizon', async () => {
+    const at = (day: number) => new Date(day * 86_400_000).toISOString();
+    const pages = [
+      {
+        sessions: [{ sessionId: 'a', cwd: '/r', title: 'A', updatedAt: at(100) }],
+        nextCursor: '1',
+      },
+      { sessions: [{ sessionId: 'b', cwd: '/r', title: 'B', updatedAt: at(40) }], nextCursor: '2' },
+      {
+        sessions: [{ sessionId: 'c', cwd: '/r', title: 'C', updatedAt: at(10) }],
+        nextCursor: null,
+      },
+    ];
+    const cursors: (string | undefined)[] = [];
+    const client = {
+      initialize: async () => ({}) as never,
+      canListSessions: () => true,
+      listSessions: async (params: { cursor?: string } = {}) => {
+        cursors.push(params.cursor);
+        return pages[Number(params.cursor ?? 0)];
+      },
+    };
+    const sessions = await readAcpSessionPages(client, {}, '/home', 50 * 86_400_000);
+    expect(sessions.map((s) => s.sessionId)).toEqual(['a', 'b']);
+    expect(cursors).toEqual([undefined, '1']);
   });
 });
