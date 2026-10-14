@@ -104,6 +104,17 @@ export function pickRoute<Verb extends RoutedVerb>(
   return { value: { local, supportsStartEffort: adapter.supportsStartEffort } };
 }
 
+function admitRemoteStartModel(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
+  return input.model !== undefined && 'daemon' in route
+    ? {
+        reason: reject(
+          'unsupported_model',
+          'This remote route cannot confirm the requested model. Choose a supported local adapter.'
+        ),
+      }
+    : { value: route };
+}
+
 export function admitStartEffort(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
   return input.effort === undefined || ('local' in route && route.supportsStartEffort === true)
     ? { value: route }
@@ -266,6 +277,7 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(admitRemoteStartModel, ['outcome', 'input'], 'result:outcome')
   .pipe(admitStartEffort, ['outcome', 'input'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(startWork, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
@@ -330,7 +342,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.start',
       description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Only Neo or the user can change work on another daemon; other agents get unsupported. For a new project, give the folder to create in place.folder and set createFolder true: it must be inside the home folder, outside hidden folders, Library and Applications, with an existing parent. model picks the model of a new HyperNeo session or Codex thread; Codex resolves catalog aliases and refuses unsupported models. Other adapters run on the model their app uses. Optional effort is currently supported by local Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. Without model, a HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the new work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
+        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For a new project, give the folder to create in place.folder and set createFolder true: it must be inside the home folder, outside hidden folders, Library and Applications, with an existing parent. model picks the model of a new HyperNeo session or Codex thread; Codex resolves catalog aliases and refuses unsupported models. Other adapters run on the model their app uses. Optional effort is currently supported by local Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. Without model, a HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the new work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },
