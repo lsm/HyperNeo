@@ -10,6 +10,10 @@ import { projectNeoAskViews } from '../../../../src/lib/neo/ask-views.ts';
 import { neoCardPhase } from '../../../../src/lib/neo/card-phase.ts';
 import { NeoAskViewSchema, NeoCardViewSchema } from '../../../../src/lib/neo/card-view-schema.ts';
 import { type NeoCardViewParts, projectNeoCardViews } from '../../../../src/lib/neo/card-views.ts';
+import {
+  NEO_WORK_UNANCHORED_NOTE,
+  NEO_WORK_UNVERIFIED_REPLY_NOTE,
+} from '../../../../src/lib/neo/driver-work.ts';
 
 const work = (id: string, status: NeoWork['status'], sessionId: string | null = null): NeoWork => ({
   id,
@@ -199,6 +203,38 @@ describe('projectNeoCardViews', () => {
       ['pr_open', 'Waiting on CI · #1', 'accent'],
       ['merged', 'Merged · #2', 'success'],
     ]);
+  });
+
+  test('a reply that cannot be attributed says so and where it came from', () => {
+    const reported = (id: string, report: string) => ({ ...work(id, 'reported'), report });
+    const cards = projectNeoCardViews(
+      parts({
+        work: [
+          reported('u', `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nAgent: Done.`),
+          reported('a', `${NEO_WORK_UNANCHORED_NOTE}\n\nDone.`),
+          reported('v', 'Agent: Done.'),
+          reported('p', `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nAgent: Opened it.`),
+          { ...work('f', 'failed'), report: `It stopped. ${NEO_WORK_UNVERIFIED_REPLY_NOTE}` },
+        ],
+        prs: [{ workId: 'p', prs: [pr(3, { state: 'MERGED' })], waiting: false }],
+      })
+    );
+    expect(cards.map((card) => [card.label, card.tone, card.replyUnverified])).toEqual([
+      [
+        'Reply received · not verified',
+        'accent',
+        "This is the session's latest reply. Its history could not show which message it answers.",
+      ],
+      [
+        'Reply received · not verified',
+        'accent',
+        "This is the session's latest reply. Neo's message was not found in its history.",
+      ],
+      ['Reply received', 'accent', undefined],
+      ['Merged · #3', 'success', undefined],
+      ['Failed', 'warning', undefined],
+    ]);
+    expect(NeoCardViewSchema.parse(cards[0])).toEqual(cards[0]);
   });
 
   test('a proposed card can start or be declined; a sessionless cancel is hidden', () => {

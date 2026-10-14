@@ -39,6 +39,7 @@ export const NeoCardViewSchema = z.object({
   model: z.string().optional(),
   effort: z.string().optional(),
   talk: z.string().optional(),
+  replyUnverified: z.string().optional(),
   workId: z.string(),
   phase: CardPhase,
   group: CardGroup,

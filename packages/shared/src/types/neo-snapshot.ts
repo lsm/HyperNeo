@@ -223,6 +223,7 @@ export interface NeoCardView {
   model?: string;
   effort?: string;
   talk?: string;
+  replyUnverified?: string;
   workId: string;
   phase: NeoCardPhase;
   group: NeoCardGroup;

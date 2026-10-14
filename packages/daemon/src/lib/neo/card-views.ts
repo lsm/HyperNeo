@@ -17,6 +17,7 @@ import {
   neoWorkPrVerdict,
 } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { NEO_WORK_UNANCHORED_NOTE, NEO_WORK_UNVERIFIED_REPLY_NOTE } from './driver-work.ts';
 import { neoCardGroup, neoCardPhase, neoCardPrInProgress, neoHeadlinePr } from './card-phase.ts';
 
 export type NeoCardViewParts = {
@@ -215,6 +216,17 @@ export function indexNeoCardParts(parts: NeoCardViewParts): CardIndex {
   };
 }
 
+const NEO_CARD_REPLY_UNVERIFIED_LABEL = 'Reply received · not verified';
+
+function neoCardReplyUnverified(work: Pick<NeoWork, 'status' | 'report'>): string | null {
+  if (work.status !== 'reported') return null;
+  if (work.report?.startsWith(NEO_WORK_UNANCHORED_NOTE))
+    return "This is the session's latest reply. Neo's message was not found in its history.";
+  if (work.report?.startsWith(NEO_WORK_UNVERIFIED_REPLY_NOTE))
+    return "This is the session's latest reply. Its history could not show which message it answers.";
+  return null;
+}
+
 export function describeNeoCard(work: NeoWork, index: CardIndex): NeoCardView {
   const driver = index.drivers.get(work.id);
   const prs = index.prs.get(work.id) ?? [];
@@ -223,8 +235,10 @@ export function describeNeoCard(work: NeoWork, index: CardIndex): NeoCardView {
   const goal = index.goals.get(work.id);
   const retryable = !!driver?.retryable;
   const talk = work.status === 'cancelled' ? undefined : index.refusals.get(work.id);
+  const replyUnverified = pr ? null : neoCardReplyUnverified(work);
   return {
     ...(talk ? { talk } : {}),
+    ...(replyUnverified ? { replyUnverified } : {}),
     workId: work.id,
     phase,
     group: talk ? 'attention' : neoCardGroup(phase),
@@ -232,7 +246,9 @@ export function describeNeoCard(work: NeoWork, index: CardIndex): NeoCardView {
     label:
       work.status === 'queued' && driver
         ? neoCardDriverLabel(driver)
-        : (work.status === 'reported' && pr?.label) || workLabels[work.status],
+        : replyUnverified
+          ? NEO_CARD_REPLY_UNVERIFIED_LABEL
+          : (work.status === 'reported' && pr?.label) || workLabels[work.status],
     hidden: work.status === 'cancelled' && !work.sessionId,
     primary: neoCardPrimary(work, driver, !!talk),
     actions: neoCardActions(work, retryable),
