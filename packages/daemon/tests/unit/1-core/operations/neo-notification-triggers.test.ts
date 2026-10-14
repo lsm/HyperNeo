@@ -153,7 +153,9 @@ describe('planNeoTriggerRetry', () => {
   ] as const)('published %s with note statuses %j is %s', (published, statuses, plan) => {
     expect(planNeoTriggerRetry(published, statuses)).toBe(plan);
   });
+});
 
+describe('neoTriggerMessageId', () => {
   test('a retried note keeps its trigger id', () => {
     expect(neoTriggerMessageId('outcome:a1:x', 1)).toBe('neo-trigger:outcome:a1:x#2');
     expect(neoInputTrigger(neoTriggerMessageId('outcome:a1:x', 1), false)).toBe('outcome:a1:x');
