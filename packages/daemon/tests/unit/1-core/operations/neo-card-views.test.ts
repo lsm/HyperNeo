@@ -237,6 +237,24 @@ describe('projectNeoCardViews', () => {
     expect(NeoCardViewSchema.parse(cards[0])).toEqual(cards[0]);
   });
 
+  test('a card carries when Neo last checked it, checked or not', () => {
+    const cards = projectNeoCardViews(
+      parts({
+        work: [work('a', 'queued'), work('b', 'queued'), work('c', 'queued')],
+        drivers: [
+          driver('a', 'running', { checkedAt: 7 }),
+          driver('b', 'running', { checkedAt: 5, uncheckedSince: 5 }),
+          driver('c', 'running'),
+        ],
+      })
+    );
+    expect(cards.map((card) => [card.checkedAt, card.uncheckedSince])).toEqual([
+      [7, null],
+      [5, 5],
+      [null, null],
+    ]);
+  });
+
   test('a proposed card can start or be declined; a sessionless cancel is hidden', () => {
     const cards = projectNeoCardViews(
       parts({ work: [work('p', 'proposed'), work('c', 'cancelled')] })

@@ -146,6 +146,7 @@ describe('NeoProjectBoardView', () => {
             pooled: false,
             superseded: false,
             uncheckedSince: null,
+            checkedAt: null,
             unconfirmed: false,
             abandoned: false,
             retryable: false,

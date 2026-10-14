@@ -17,6 +17,7 @@ export interface NeoWorkDriverReceipt {
   link: string | null;
   remoteLink?: string;
   uncheckedSince?: number;
+  checkedAt?: number;
   unconfirmed?: true;
   abandoned?: true;
   retryable?: true;
@@ -243,6 +244,7 @@ export interface NeoCardView {
   pooled: boolean;
   superseded: boolean;
   uncheckedSince: number | null;
+  checkedAt: number | null;
   unconfirmed: boolean;
   abandoned: boolean;
   retryable: boolean;

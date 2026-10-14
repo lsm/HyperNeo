@@ -639,7 +639,9 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
       scopedTo?: string;
     } {
   if (!snapshot.ok) return snapshot;
-  const rev = hashString32(JSON.stringify(snapshot)).toString(36);
+  const rev = hashString32(
+    JSON.stringify(snapshot, (key, value) => (key === 'checkedAt' ? undefined : value))
+  ).toString(36);
   const scoped = scopedTo ? { scopedTo } : {};
   return sinceRev === rev
     ? {
@@ -845,9 +847,11 @@ export function createNeoOperations(service: NeoService) {
   function workDrivers(workIds: string[]) {
     return service.driverTargets.receipts(workIds).map((receipt) => {
       const since = service.uncheckedSince(receipt.workId);
+      const checkedAt = service.checkedAt(receipt.workId);
       return {
         ...receipt,
         ...(since === null ? {} : { uncheckedSince: since }),
+        ...(checkedAt === null ? {} : { checkedAt }),
         ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
       };
     });

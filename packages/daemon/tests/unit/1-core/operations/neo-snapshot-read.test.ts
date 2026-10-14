@@ -3,6 +3,7 @@ import {
   planNeoSnapshotRead,
   rememberNeoSnapshotRead,
 } from '../../../../src/lib/neo/snapshot-read.ts';
+import { neoSnapshotRevision } from '../../../../src/lib/neo/operations.ts';
 
 describe('planNeoSnapshotRead', () => {
   const full = { ok: true, rev: 'r1', scopedTo: 'ask-1' };
@@ -58,5 +59,21 @@ describe('rememberNeoSnapshotRead', () => {
     expect(reads.has('k43')).toBe(false);
     expect(reads.get('k100')).toEqual({ rev: 'r2', compaction: 0 });
     expect([...reads.keys()].at(-1)).toBe('k100');
+  });
+});
+
+describe('neoSnapshotRevision', () => {
+  const at = (checkedAt: number | null, label = 'Running') => ({
+    ok: true,
+    cards: [{ workId: 'w', label, checkedAt }],
+  });
+
+  test('a fresh check time alone keeps the rev, so a re-read still answers unchanged', () => {
+    const first = neoSnapshotRevision(at(1), undefined, undefined);
+    if (!('rev' in first)) throw new Error('expected a rev');
+    expect(neoSnapshotRevision(at(2), first.rev, undefined)).toMatchObject({ unchanged: true });
+    expect(neoSnapshotRevision(at(2, 'Needs you'), first.rev, undefined)).not.toHaveProperty(
+      'unchanged'
+    );
   });
 });
