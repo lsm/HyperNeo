@@ -2489,6 +2489,7 @@ describe('Neo work with a drivers target', () => {
           createdAt: at + 1,
         }));
       service.readBranchPrs = async () => [];
+      service.readCheckoutPrs = async () => [];
       Object.assign(service, { deliver: async () => {} });
       db.createSession(createTestSession('neo:root'));
       service.workGoals.record('work-1', 'Review #6651', '- merged to dev');
@@ -2502,6 +2503,94 @@ describe('Neo work with a drivers target', () => {
         expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url) ?? []).toEqual(
           evidence === 'local' ? ['https://github.com/actual/checkout/pull/6651'] : []
         );
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  test.each([
+    { adapter: 'codex-desktop', evidence: 'current' },
+    { adapter: 'claude-desktop', evidence: 'current' },
+    { adapter: 'codex-desktop', evidence: 'stale' },
+    { adapter: 'codex-desktop', evidence: 'missing-exchange' },
+    { adapter: 'codex-desktop', evidence: 'remote' },
+    { adapter: 'codex-desktop', evidence: 'foreign-machine' },
+    { adapter: 'codex-desktop', evidence: 'other-ref' },
+    { adapter: 'codex-desktop', evidence: 'missing-directory' },
+  ])(
+    'attributes checkout PRs only to current local cards: $adapter/$evidence',
+    async ({ adapter, evidence }) => {
+      const ref = { adapter, id: 'worker', ...(evidence === 'remote' ? { daemon: 'other' } : {}) };
+      const at = Date.now() + 10_000;
+      let laterInput = evidence === 'stale';
+      const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+        ok: true,
+        value: {
+          ref: { ...ref, id: evidence === 'other-ref' ? 'another-worker' : ref.id },
+          execution:
+            evidence === 'missing-directory'
+              ? undefined
+              : {
+                  directory: '/actual/checkout',
+                  machine: evidence === 'foreign-machine' ? 'another-machine' : hostname(),
+                },
+          status: 'done',
+          lastActivityAt: at + 4,
+          exchange:
+            evidence === 'missing-exchange'
+              ? undefined
+              : [
+                  { at, role: 'user', text: work.instruction },
+                  {
+                    at: at + 2,
+                    role: 'agent',
+                    text: 'Fixed it. https://github.com/actual/checkout/pull/3',
+                  },
+                  ...(laterInput
+                    ? [
+                        { at: at + 3, role: 'user', text: 'Unrelated PR event' },
+                        { at: at + 4, role: 'agent', text: 'Acknowledged.' },
+                      ]
+                    : []),
+                ],
+        },
+      }));
+      const urls = [1, 2, 3].map((number) => `https://github.com/actual/checkout/pull/${number}`);
+      const cwds: string[] = [];
+      service.readCheckoutPrs = async (cwd) => {
+        cwds.push(cwd);
+        return urls;
+      };
+      service.readBranchPrs = async () => [];
+      service.readWorkRepo = async () => null;
+      service.readPrs = async (requested) =>
+        requested.map((url) => ({
+          url,
+          state: 'OPEN' as const,
+          checks: 'pending' as const,
+          review: 'none' as const,
+          createdAt: [at + 1, at - 1, at + 3][urls.indexOf(url)],
+        }));
+      Object.assign(service, { deliver: async () => {} });
+      db.createSession(createTestSession('neo:root'));
+      service.workGoals.record('work-1', 'Fix the font', '- merged to dev');
+      fileUnderAsk(service);
+      try {
+        await service.start('work-1');
+        await service.refreshDriverWork();
+        const claimed = () => service.workPrs.get('work-1')?.prs.map((pr) => pr.url) ?? [];
+        expect(cwds.length > 0).toBe(evidence === 'current');
+        expect(cwds.every((cwd) => cwd === '/actual/checkout')).toBe(true);
+        expect(claimed()).toEqual(evidence === 'current' ? [urls[0]] : []);
+        if (evidence === 'current') {
+          cwds.length = 0;
+          laterInput = true;
+          await service.refreshDriverWork();
+          expect(cwds).toEqual([]);
+          expect(claimed()).toEqual([urls[0]]);
+          expect(service.repo.getWork('work-1')?.report).toBe(`Agent: Fixed it. ${urls[2]}`);
+        }
       } finally {
         db.close();
       }

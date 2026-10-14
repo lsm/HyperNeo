@@ -57,6 +57,15 @@ export function localCodingSessionId(ref: WorkRef | null): string | null {
   return ref?.adapter === 'hyperneo' && !ref.daemon ? ref.id : null;
 }
 
+export function currentCodingExecutionDirectory(
+  ref: WorkRef | null,
+  outcome: OperationOutcome | null,
+  machine: string,
+  current: boolean
+): string | null {
+  return current ? localCodingExecutionDirectory(ref, outcome, machine) : null;
+}
+
 export function neoWorkBranch(
   session: { worktree?: WorktreeMetadata } | null
 ): NeoWorkBranch | null {
