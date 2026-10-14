@@ -1,3 +1,4 @@
+import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -210,6 +211,125 @@ describe('hyperneo adapter send and status', () => {
         lastReplyAt: Date.parse('2026-10-04T10:00:00.000Z'),
         recentInputs: [],
       },
+    });
+  });
+
+  describe('persisted exchange evidence', () => {
+    const base = Date.parse('2026-10-04T08:00:00.000Z');
+    const write = (
+      at: number,
+      type: string,
+      payload: unknown,
+      extra: { parent?: string; sent?: string } = {}
+    ) =>
+      db
+        .prepare(`INSERT INTO sdk_messages (session_id, message_type, sdk_message, timestamp, parent_tool_use_id, send_status)
+        VALUES ('idle', ?, ?, ?, ?, ?)`)
+        .run(
+          type,
+          JSON.stringify(payload),
+          new Date(base + at).toISOString(),
+          extra.parent ?? null,
+          extra.sent ?? 'consumed'
+        );
+    const input = (text: unknown, inputKind = 'human') => ({
+      message: { content: text },
+      inputKind,
+    });
+    const settle = (value: unknown) =>
+      readDriverSettlement(
+        { updatedAt: base },
+        { kind: 'completed', value },
+        base + 100,
+        base + 1,
+        true,
+        'Fix parser'
+      );
+    beforeEach(() => {
+      db.prepare("DELETE FROM sdk_messages WHERE session_id = 'idle'").run();
+    });
+
+    test('real adapter evidence isolates the card reply from PR events and human inputs', async () => {
+      write(1, 'user', input('Fix parser', 'task'));
+      write(2, 'result', { result: 'Parser fixed' });
+      write(3, 'user', input('PR event for another card', 'system'));
+      write(4, 'result', { result: 'Other PR reviewed' });
+      write(5, 'user', input('New human ask'));
+      write(6, 'result', { result: 'Human answer' });
+      const detail = await adapter().status!(ref('idle'), base);
+      expect(detail).toMatchObject({
+        value: {
+          exchange: [
+            { at: base + 1, role: 'user', text: 'Fix parser' },
+            { at: base + 2, role: 'agent', text: 'Parser fixed' },
+            { at: base + 3, role: 'user', text: 'PR event for another card' },
+            { at: base + 4, role: 'agent', text: 'Other PR reviewed' },
+            { at: base + 5, role: 'user', text: 'New human ask' },
+            { at: base + 6, role: 'agent', text: 'Human answer' },
+          ],
+        },
+      });
+      expect(settle(detail)).toEqual({ status: 'reported', report: 'Agent: Parser fixed' });
+      expect(settle(await adapter().status!(ref('idle'), base + 1))).toBeNull();
+    });
+
+    test('excludes queued, tool, subagent and compaction rows but retains non-text boundaries', async () => {
+      write(1, 'user', input('Fix parser'));
+      write(2, 'user', input('Queued ask'), { sent: 'enqueued' });
+      write(3, 'user', input([{ type: 'tool_result', content: 'tool output' }]));
+      write(4, 'user', input('Nested ask'), { parent: 'tool' });
+      write(5, 'result', { result: 'Nested answer' }, { parent: 'tool' });
+      write(6, 'result', { result: 'Compacted', internal_compaction_turn: 1 });
+      write(7, 'assistant', { message: { content: 'Intermediate text' } });
+      write(8, 'result', { result: 'Parser fixed' });
+      write(9, 'user', input([{ type: 'image', source: {} }]));
+      write(10, 'result', { result: 'Image answer' });
+      const detail = await adapter().status!(ref('idle'), base);
+      expect(detail).toMatchObject({
+        value: {
+          exchange: [
+            { at: base + 1, role: 'user', text: 'Fix parser' },
+            { at: base + 8, role: 'agent', text: 'Parser fixed' },
+            { at: base + 9, role: 'user', text: '[Non-text input]' },
+            { at: base + 10, role: 'agent', text: 'Image answer' },
+          ],
+        },
+      });
+      expect(settle(detail)?.report).toBe('Agent: Parser fixed');
+    });
+
+    test('bounds history and text, reporting truncation instead of inventing an anchor', async () => {
+      write(1, 'user', input('Fix parser'));
+      for (let at = 2; at <= 45; at++) write(at, 'result', { result: 'x'.repeat(5_000) });
+      const detail = await adapter().status!(ref('idle'), base);
+      expect(detail.ok).toBe(true);
+      if (!detail.ok) throw new Error(detail.reason);
+      expect(detail.value.exchangeCut).toBe(true);
+      expect(detail.value.exchange).toHaveLength(40);
+      expect(detail.value.exchange?.[0]).toEqual({
+        at: base + 6,
+        role: 'agent',
+        text: 'x'.repeat(4_000),
+      });
+      expect(detail.value.exchange?.at(-1)?.at).toBe(base + 45);
+      expect(settle(detail)).toBeNull();
+    });
+
+    test('empty history is explicit and equal timestamps retain storage order', async () => {
+      expect(await adapter().status!(ref('idle'), base)).toMatchObject({ value: { exchange: [] } });
+      write(1, 'user', input('Fix parser'));
+      write(1, 'result', { result: '   ' });
+      write(1, 'user', input('   ', 'system'));
+      const detail = await adapter().status!(ref('idle'), base);
+      expect(detail).toMatchObject({
+        value: {
+          exchange: [
+            { at: base + 1, role: 'user', text: 'Fix parser' },
+            { at: base + 1, role: 'agent', text: '[No written result]' },
+            { at: base + 1, role: 'user', text: '[Non-text input]' },
+          ],
+        },
+      });
     });
   });
 
