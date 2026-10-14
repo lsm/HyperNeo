@@ -320,7 +320,11 @@ const SnapshotUnchanged = z.object({
 const Snapshot = z.union([Failure, SnapshotUnchanged, SnapshotOk]);
 const WorkAskView = NeoAskStateViewSchema;
 const WorkResult = z.union([
-  Failure,
+  Failure.extend({
+    blockers: z
+      .array(z.object({ workId: z.string(), reason: z.string(), itemIds: z.array(z.string()) }))
+      .optional(),
+  }),
   z.object({ ok: z.literal(true), work: Work, ask: WorkAskView.nullable().optional() }),
 ]);
 const Scope = z
@@ -411,6 +415,7 @@ const WorkReportResult = z.union([
   }),
 ]);
 type Rejection = { ok: false; reason: string };
+const NEO_WORK_START_SETTLED = ['card_not_active', 'already_started', 'already_claimed'];
 type NeoWorkRetryFound = {
   work: NeoWork | null;
   target: ReturnType<NeoService['driverTargets']['get']>;
@@ -1606,7 +1611,7 @@ export function createNeoOperations(service: NeoService) {
         const owned = ask.askId && !input.askId ? service.askRecords.get(ask.askId) : null;
         if (owned && isNeoAdoptOnlyAsk(owned, receipt.work.id))
           service.askRecords.approve(owned.id, Date.now(), owned.revision ?? 0);
-        await service.start(receipt.work.id);
+        await service.admitWork(receipt.work.id, true);
       },
       ['input', 'ask', 'admission']
     )
@@ -1664,11 +1669,13 @@ export function createNeoOperations(service: NeoService) {
       'result:start'
     )
     .pipe(
-      async (work: NeoWork) => {
-        await service.start(work.id);
-        return { value: { ok: true as const, work: service.repo.getWork(work.id)! } };
+      async (work: NeoWork, authority: { approved: boolean }) => {
+        const admitted = await service.admitWork(work.id, !authority.approved);
+        return admitted.ok || NEO_WORK_START_SETTLED.includes(admitted.reason)
+          ? { value: { ok: true as const, work: service.repo.getWork(work.id)! } }
+          : { reason: admitted };
       },
-      'start',
+      ['start', 'authority'],
       'result:start'
     )
     .endAsync('start') as (
