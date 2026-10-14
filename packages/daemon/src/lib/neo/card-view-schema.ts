@@ -5,6 +5,7 @@ import type {
   NeoCardPrimary,
   NeoCardPrSummary,
   NeoCardView,
+  NeoCardWaiting,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 
@@ -36,6 +37,18 @@ const CardPhase = z.enum([
 ]);
 
 export const NeoCardViewSchema = z.object({
+  waitingFor: z
+    .array(
+      z.object({
+        workId: z.string(),
+        title: z.string(),
+        reason: z.string(),
+        items: z.array(z.object({ id: z.string(), text: z.string() })),
+      } satisfies ZodShape<NeoCardWaiting>)
+    )
+    .optional(),
+  autoStart: z.boolean().optional(),
+  uncertain: z.boolean().optional(),
   model: z.string().optional(),
   effort: z.string().optional(),
   talk: z.string().optional(),

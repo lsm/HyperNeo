@@ -83,13 +83,19 @@ function requireNeoAdmissionHandoff(snapshot: Admissible) {
   return { value: snapshot };
 }
 
+function neoAdmissionApproval(ask: NeoAsk | null, now: number): string | null {
+  if (!ask || ask.approvedAt == null) return 'not_approved';
+  if ((ask.approvedRevision ?? null) !== (ask.revision ?? 0)) return 'approval_stale';
+  return neoAskApprovalSpent(ask, now) ? 'approval_expired' : null;
+}
+
+export function isNeoAdmissionApproved(ask: NeoAsk | null, now: number): boolean {
+  return neoAdmissionApproval(ask, now) === null;
+}
+
 function requireNeoAdmissionAuthorized(snapshot: Admissible, authorized: boolean, now: number) {
-  if (authorized) return { value: snapshot };
-  const { ask } = snapshot;
-  if (!ask || ask.approvedAt == null) return refuse('not_approved');
-  if ((ask.approvedRevision ?? null) !== (ask.revision ?? 0)) return refuse('approval_stale');
-  if (neoAskApprovalSpent(ask, now)) return refuse('approval_expired');
-  return { value: snapshot };
+  const refused = authorized ? null : neoAdmissionApproval(snapshot.ask, now);
+  return refused ? refuse(refused) : { value: snapshot };
 }
 
 function requireNeoAdmissionPrerequisites(snapshot: Admissible) {

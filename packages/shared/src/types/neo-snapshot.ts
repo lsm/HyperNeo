@@ -233,7 +233,17 @@ export interface NeoCardOpenTarget {
   daemon: string | null;
 }
 
+export interface NeoCardWaiting {
+  workId: string;
+  title: string;
+  reason: string;
+  items: { id: string; text: string }[];
+}
+
 export interface NeoCardView {
+  waitingFor?: NeoCardWaiting[];
+  autoStart?: boolean;
+  uncertain?: boolean;
   model?: string;
   effort?: string;
   talk?: string;
