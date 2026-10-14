@@ -2345,6 +2345,65 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('a remote HyperNeo ref cannot borrow a colliding local session repository or branch', async () => {
+    const ref = { adapter: 'hyperneo', daemon: 'other-host', id: 'collision' };
+    const at = Date.now() + 10_000;
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: at + 2,
+        exchange: [
+          { at, role: 'user', text: work.instruction },
+          { at: at + 2, role: 'agent', text: 'Fixed #6301' },
+        ],
+      },
+    }));
+    const localReads: string[] = [];
+    service.readBranchPrs = async () => {
+      localReads.push('branch');
+      return ['https://github.com/local/repo/pull/6301'];
+    };
+    service.readWorkRepo = async () => {
+      localReads.push('repo');
+      return { owner: 'local', repo: 'repo' };
+    };
+    service.readPrs = async (urls) =>
+      urls.map((url) => ({
+        url,
+        createdAt: at + 1,
+        state: 'OPEN',
+        checks: 'pending',
+        review: 'none',
+      }));
+    service.readRefStates = async () => {
+      localReads.push('relative ref');
+      return [];
+    };
+    Object.assign(service, { deliver: async () => {} });
+    db.createSession(createTestSession('neo:root'));
+    db.createSession({
+      ...createTestSession('collision'),
+      worktree: {
+        isWorktree: true,
+        worktreePath: '/local/repo/worktree',
+        mainRepoPath: '/local/repo',
+        branch: 'local/branch',
+      },
+    });
+    service.workGoals.record('work-1', 'Fix #6301', '- merged to dev');
+    fileUnderAsk(service);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.report).toContain('Fixed #6301');
+      expect(localReads).toEqual([]);
+      expect(service.workPrs.get('work-1')?.prs ?? []).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('does not claim a desktop PR without branch provenance', async () => {
     const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_worker' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6651';
