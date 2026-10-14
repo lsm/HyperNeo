@@ -62,6 +62,7 @@ describe('runNeoNightlyReorganize', () => {
       reorganize: async () => {
         runs++;
         return {
+          merged: [{ sourceId: 'x', targetId: 'y' }],
           moved: [{ askId: 'a', projectId: 'c' }],
           stayed: [{ askId: 'b', reason: 'stays_main' }],
         };
@@ -71,7 +72,9 @@ describe('runNeoNightlyReorganize', () => {
 
     expect(result).toEqual({ ran: true, moved: 1, stayed: 1 });
     expect(runs).toBe(1);
-    expect(lines).toEqual(['neo reorganize: nightly run moved 1 ask(s), left 1 with main']);
+    expect(lines).toEqual([
+      'neo reorganize: nightly run merged 1 project(s), moved 1 ask(s), left 1 with main',
+    ]);
     expect(pending()).toHaveLength(1);
     expect(pending()[0].payload).toEqual({ scope: 'neo', lastRunAt: now });
     expect(pending()[0].runAt).toBe(now + NEO_REORGANIZE_EVERY_MS);
@@ -87,7 +90,7 @@ describe('runNeoNightlyReorganize', () => {
         lastHumanAt: () => now - 60_000,
         reorganize: async () => {
           runs++;
-          return { moved: [], stayed: [] };
+          return { merged: [], moved: [], stayed: [] };
         },
         log: () => {},
       }

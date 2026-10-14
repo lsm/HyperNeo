@@ -72,9 +72,9 @@ export const runNeoNightlyReorganize = (
   .pipe(requireNeoNightlyDue, 'plan', 'result:result')
   .pipe(
     async (deps: NeoNightlyReorganizeDeps): Promise<NightlyResult> => {
-      const { moved, stayed } = await deps.reorganize();
+      const { merged, moved, stayed } = await deps.reorganize();
       deps.log(
-        `neo reorganize: nightly run moved ${moved.length} ask(s), left ${stayed.length} with main`
+        `neo reorganize: nightly run merged ${merged.length} project(s), moved ${moved.length} ask(s), left ${stayed.length} with main`
       );
       return { ran: true, moved: moved.length, stayed: stayed.length };
     },

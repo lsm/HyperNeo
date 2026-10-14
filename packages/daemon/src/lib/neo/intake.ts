@@ -429,6 +429,12 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   router: NeoRouter | null
 ) => Promise<IntakeResult>;
 
+export function redirectNeoIntakeInput(input: IntakeInput, repo: NeoRepository): IntakeInput {
+  if (repo.getBindingBySession(input.sessionId)) return input;
+  const sessionId = repo.projectMerges.redirectSession(input.sessionId);
+  return sessionId ? { ...input, sessionId } : input;
+}
+
 export function createNeoIntakeOperation(
   db: Database,
   repo: NeoRepository,
@@ -442,6 +448,7 @@ export function createNeoIntakeOperation(
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
-    execute: (input, caller) => runIntake(input, caller, db, repo, notify, router ?? null),
+    execute: (input, caller) =>
+      runIntake(redirectNeoIntakeInput(input, repo), caller, db, repo, notify, router ?? null),
   });
 }

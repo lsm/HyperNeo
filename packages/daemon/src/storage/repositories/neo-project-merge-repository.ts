@@ -2,6 +2,7 @@ import type { Database } from '../sqlite-compat.ts';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import {
   createNeoProjectMergePipeline,
+  planNeoProjectMerges,
   type NeoProjectMergeInput,
   type NeoProjectMergeResult,
   type NeoProjectMergeState,
@@ -25,6 +26,47 @@ export class NeoProjectMergeRepository {
       id = row.target_id;
     }
     return null;
+  }
+
+  redirects(): { sourceId: string; targetId: string }[] {
+    return (
+      this.db.prepare('SELECT source_id FROM neo_project_merges').all() as { source_id: string }[]
+    ).flatMap(({ source_id: sourceId }) => {
+      const targetId = this.resolve(sourceId);
+      return targetId ? [{ sourceId, targetId }] : [];
+    });
+  }
+
+  redirectSession(sessionId: string): string | null {
+    const row = this.db
+      .prepare('SELECT source_id FROM neo_project_merges WHERE source_session_id = ?')
+      .get(sessionId) as { source_id: string } | null;
+    const target = row ? this.resolve(row.source_id) : null;
+    const binding = target
+      ? (this.db
+          .prepare(
+            "SELECT session_id FROM neo_session_bindings WHERE concern_id = ? AND kind = 'project'"
+          )
+          .get(target) as { session_id: string } | null)
+      : null;
+    return binding?.session_id ?? null;
+  }
+
+  localFolders(machine: string): { projectId: string; folder: string }[] {
+    const prefix = `folder:${machine}\u0000`;
+    return (
+      this.db
+        .prepare("SELECT alias, project_id FROM neo_project_workspaces WHERE alias LIKE 'folder:%'")
+        .all() as { alias: string; project_id: string }[]
+    ).flatMap((row) =>
+      row.alias.startsWith(prefix)
+        ? [{ projectId: row.project_id, folder: row.alias.slice(prefix.length) }]
+        : []
+    );
+  }
+
+  plan(fresh: Readonly<Record<string, readonly string[]>>): NeoProjectMergeInput[] {
+    return planNeoProjectMerges(this.state(), fresh);
   }
 
   private state(): NeoProjectMergeState {

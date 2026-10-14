@@ -560,6 +560,14 @@ export async function wakeNeoRoute(routed: NeoRouted, holders: NeoHolderWake): P
     : { choice: null, fallback: 'holder-unavailable' };
 }
 
+function neoRedirectTurns(turns: readonly NeoRoute[], repo: NeoRepository): NeoRoute[] {
+  return turns.map((turn) =>
+    turn.projectId
+      ? { ...turn, projectId: repo.projectMerges.resolve(turn.projectId) ?? turn.projectId }
+      : turn
+  );
+}
+
 export function createNeoRouter(
   db: Database,
   repo: NeoRepository,
@@ -620,8 +628,8 @@ export function createNeoRouter(
       );
       return runnableNeoHolders(holders, available);
     },
-    recentTurns: () => log.recent(RECENT_TURNS),
-    projectTurns: () => log.latestPerProject(),
+    recentTurns: () => neoRedirectTurns(log.recent(RECENT_TURNS), repo),
+    projectTurns: () => neoRedirectTurns(log.latestPerProject(), repo),
     recentAsks: (projectId, limit) => log.recentAsks(projectId, limit),
     openAsks: (projectId) =>
       asks

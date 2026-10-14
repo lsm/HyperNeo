@@ -40,7 +40,8 @@ export class NeoRepository {
 
   listProjects(): NeoProject[] {
     return this.db
-      .prepare(`SELECT ${concernColumns} FROM neo_concerns ORDER BY updated_at DESC, id`)
+      .prepare(`SELECT ${concernColumns} FROM neo_concerns
+        WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id`)
       .all() as NeoProject[];
   }
 

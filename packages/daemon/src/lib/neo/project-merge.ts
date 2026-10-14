@@ -90,6 +90,54 @@ export function requireNeoMergeIdentity(
     : { reason: { ok: false, reason: 'needs_human' } };
 }
 
+export async function readNeoProjectIdentities(
+  folders: readonly { projectId: string; folder: string }[],
+  read: (folder: string) => Promise<{ codeIdentity?: string }>
+): Promise<Record<string, string[]>> {
+  const fresh: Record<string, string[]> = {};
+  for (const { projectId, folder } of folders) {
+    const { codeIdentity } = await read(folder);
+    if (codeIdentity) fresh[projectId] = [...new Set([...(fresh[projectId] ?? []), codeIdentity])];
+  }
+  return fresh;
+}
+
+export function planNeoProjectMerges(
+  state: NeoProjectMergeState,
+  fresh: Readonly<Record<string, readonly string[]>>
+): NeoProjectMergeInput[] {
+  const key = (id: string) =>
+    [...new Set([...(state.identities[id] ?? []), ...(fresh[id] ?? [])])].sort().join(' ');
+  const live = state.projects
+    .filter((project) => !state.retired.includes(project.id) && project.id !== 'inbox')
+    .filter((project) => !project.epicUrl && key(project.id))
+    .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+  const merged = new Set<string>();
+  return live.flatMap((target) => {
+    if (merged.has(target.id)) return [];
+    merged.add(target.id);
+    return live.flatMap((source) => {
+      if (
+        merged.has(source.id) ||
+        (source.parentId ?? null) !== (target.parentId ?? null) ||
+        key(source.id) !== key(target.id)
+      )
+        return [];
+      merged.add(source.id);
+      return [
+        {
+          sourceId: source.id,
+          targetId: target.id,
+          sourceRevision: source.revision,
+          targetRevision: target.revision,
+          sourceIdentities: fresh[source.id] ?? [],
+          targetIdentities: fresh[target.id] ?? [],
+        },
+      ];
+    });
+  });
+}
+
 export function createNeoProjectMergePipeline(
   read: () => NeoProjectMergeState,
   write: (plan: Plan) => NeoProjectMergeResult
