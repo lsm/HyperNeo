@@ -176,21 +176,6 @@ export function useNeoPublications(rootSessionId: string | null) {
           );
           if (!current()) return;
           publish((tail ? applyTail : applyPage)(before, result));
-          if (
-            !tail &&
-            result.state === 'ready' &&
-            result.items.length === 0 &&
-            value.status === 'ready' &&
-            value.items.length
-          ) {
-            const window = await readNeoPublications(
-              { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
-              async () => hub,
-              current
-            );
-            if (!current()) return;
-            publish(mergePublicationEdits(value, window));
-          }
           inFlight = false;
           if (pending && value.status === 'ready') void update();
         };
@@ -211,10 +196,29 @@ export function useNeoPublications(rootSessionId: string | null) {
             if (pending && value.status === 'ready') void update();
           });
         };
+        const reread = async () => {
+          if (!current() || value.status !== 'ready' || !value.items.length) return;
+          const window = await readNeoPublications(
+            { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
+            async () => hub,
+            current
+          );
+          if (current()) publish(mergePublicationEdits(value, window));
+        };
         refresh.current = () => {
           void update();
         };
-        unsubscribe = hub.onEvent('neo.changed', refresh.current);
+        const offChanged = hub.onEvent('neo.changed', refresh.current);
+        const offEdited = hub.onEvent(
+          'neo.publications.changed',
+          (event: { conversationId?: unknown } | undefined) => {
+            if (event?.conversationId === conversationId) void reread();
+          }
+        );
+        unsubscribe = () => {
+          offChanged();
+          offEdited();
+        };
         reconnect = hub.onConnection((connection) => {
           if (connection === 'connected') void update();
         });

@@ -50,7 +50,7 @@ export interface NeoPublicationChangeRuntime {
   getRootBinding(): NeoBinding | null;
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'correct'>;
   isConsultationReturn(conversationId: string, publicationId: string): boolean;
-  notify(): void;
+  notify(conversationId: string): void;
 }
 
 export function requireOwnPublication(
@@ -133,7 +133,7 @@ function changePipeline(
     .pipe(
       (owned: Owned, request: never) => {
         const result = change(owned, request);
-        if (result.accepted) runtime.notify();
+        if (result.accepted) runtime.notify(result.publication.conversationId);
         return result;
       },
       ['change', 'request'],

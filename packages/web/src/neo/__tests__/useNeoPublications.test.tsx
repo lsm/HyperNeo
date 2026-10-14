@@ -14,6 +14,7 @@ const io = vi.hoisted(() => ({
   request: vi.fn(),
   connect: vi.fn(),
   changed: new Set<() => void>(),
+  edited: new Set<(event: unknown) => void>(),
   connection: new Set<(state: string) => void>(),
 }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -29,9 +30,10 @@ const id = '10000000-0000-4000-8000-000000000001';
 const other = '10000000-0000-4000-8000-000000000002';
 const hub = {
   request: io.request,
-  onEvent: (_name: string, callback: () => void) => {
-    io.changed.add(callback);
-    return () => io.changed.delete(callback);
+  onEvent: (name: string, callback: (event: unknown) => void) => {
+    const listeners = name === 'neo.publications.changed' ? io.edited : io.changed;
+    listeners.add(callback);
+    return () => listeners.delete(callback);
   },
   onConnection: (callback: (state: string) => void) => {
     io.connection.add(callback);
@@ -97,6 +99,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   io.changed.clear();
+  io.edited.clear();
   io.connection.clear();
   vi.resetAllMocks();
 });
@@ -215,17 +218,29 @@ describe('Neo authored publication state', () => {
     }
   );
 
+  it('re-reads the newest replies when Neo edits one in this conversation, and only then', async () => {
+    render(<Probe />);
+    await waitFor(() => expect(stateText()).toContain('ready/'));
+    const edited = page(0, 1);
+    edited.items[0].shortText = 'Edited reply';
+    io.request.mockResolvedValue(edited);
+    await act(async () => {
+      for (const listener of io.edited) listener({ conversationId: other });
+    });
+    expect(requests()).toHaveLength(1);
+    await act(async () => {
+      for (const listener of io.edited) listener({ conversationId: id });
+    });
+    await waitFor(() => expect(screen.getByTestId('items').textContent).toBe('Edited reply'));
+    expect(requests()[1][1].input).toMatchObject({ after: 0, before: Number.MAX_SAFE_INTEGER });
+  });
+
   it('keeps an empty tail cursor and admitted history stable', async () => {
     render(<Probe />);
     await waitFor(() => expect(stateText()).toContain('ready/'));
     io.request.mockResolvedValue(page(1, 0));
     await changed();
-    await waitFor(() => expect(requests()).toHaveLength(3));
-    expect(requests()[2][1].input).toMatchObject({
-      after: 0,
-      before: Number.MAX_SAFE_INTEGER,
-      limit: 50,
-    });
+    await waitFor(() => expect(requests()).toHaveLength(2));
     expect(stateText()).toBe(`ready/${id}/1/false/false`);
     expect(screen.getByTestId('items').textContent).toBe('Reply 1');
   });
