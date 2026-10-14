@@ -394,7 +394,9 @@ describe('ModelSwitchHandler', () => {
               const projectId = scenario.binding === 'project' ? 'project' : null;
               if (projectId) {
                 sqlite
-                  .prepare('INSERT INTO neo_concerns VALUES (?, ?, ?, ?, 1, 0, 0)')
+                  .prepare(
+                    'INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 0, 0)'
+                  )
                   .run(projectId, 'Project', '', '');
               }
               sqlite

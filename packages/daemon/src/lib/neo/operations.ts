@@ -1,3 +1,4 @@
+import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { readNeoProjectFacts } from './project-route-facts.ts';
 import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
 import { existsSync } from 'node:fs';
@@ -158,6 +159,9 @@ const Project = z.object({
   title: z.string(),
   summary: z.string(),
   context: z.string(),
+  parentId: z.string().nullable().optional(),
+  epicUrl: z.string().nullable().optional(),
+  workspaceAliases: z.array(z.string()).optional(),
   revision: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -931,6 +935,7 @@ export function createNeoOperations(service: NeoService) {
           : undefined,
       projects: projects.map((item) => ({
         ...item,
+        ...(item.epicUrl ? { workspaceAliases: service.repo.workspaceAliases(item.id) } : {}),
         context: detailed ? item.context : '',
       })),
       consultations: consultations.map((item) =>
@@ -1853,6 +1858,7 @@ export function createNeoOperations(service: NeoService) {
     }
   );
   return [
+    ...createNeoProjectTreeOperations(service.repo),
     createNeoCrossProjectOperation(service),
     createNeoIntakeOperation(service.db, service.repo, service.notifyChanged, router),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, router)),

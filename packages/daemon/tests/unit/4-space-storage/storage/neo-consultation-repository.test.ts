@@ -22,7 +22,7 @@ describe('NeoConsultationRepository deadlines', () => {
       runMigration279(db);
       runMigration282(db);
       db.exec(
-        "INSERT INTO neo_concerns VALUES ('club', 'Club', 'Sunday', 'Keep this context', 1, 1, 1)"
+        "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('club', 'Club', 'Sunday', 'Keep this context', 1, 1, 1)"
       );
       let notifications = 0;
       let repo = new NeoConsultationRepository(db, () => {

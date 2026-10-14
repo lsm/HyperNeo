@@ -1,3 +1,5 @@
+import { NeoProjectTree } from './NeoProjectTree.tsx';
+import { neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -77,7 +79,11 @@ export function NeoLive() {
   const cards = new Map((view?.cards ?? []).map((card) => [card.workId, card]));
   const projectTitles = new Map(
     (view?.publicAuthorBindings ?? []).flatMap((binding) => {
-      const title = projects.find((project) => project.id === binding.projectId)?.title.trim();
+      const title = binding.projectId
+        ? neoProjectPath(projects, binding.projectId)
+            .map((project) => project.title)
+            .join(' › ')
+        : '';
       return title ? [[binding.sessionId, title] as const] : [];
     })
   );
@@ -453,6 +459,7 @@ export function NeoLive() {
             <rect x="60" y="97" width="42" height="79" rx="6" />
           </svg>
         </button>
+        <NeoProjectTree projects={projects} refresh={neo.refresh} />
         {sheet && workCount > 0 && (
           <button
             type="button"

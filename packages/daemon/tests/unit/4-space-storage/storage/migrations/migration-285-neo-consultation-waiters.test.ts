@@ -21,7 +21,9 @@ describe('migration 285 consultation waiters', () => {
       runMigration279(db);
       runMigration282(db);
       runMigration280(db);
-      db.exec("INSERT INTO neo_concerns VALUES ('club', 'Club', 'Sunday', 'Recorded', 3, 1, 1)");
+      db.exec(
+        "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('club', 'Club', 'Sunday', 'Recorded', 3, 1, 1)"
+      );
       const consultations = new NeoConsultationRepository(db, () => {});
       const active = consultations.reserve({
         id: 'active',
