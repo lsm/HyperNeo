@@ -18,7 +18,7 @@ import { runMigration349 } from '../../../../src/storage/schema/m349-neo-convers
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
-const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, concernId: null };
+const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 
 const b64 = (bytes: number[]) => Buffer.from(bytes).toString('base64');

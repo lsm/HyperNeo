@@ -13,7 +13,7 @@ import { createReactiveDatabase } from '../../../../../src/storage/reactive-data
 const proposal = {
   id: 'work-A',
   requestKey: 'request-A',
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'ask-A',
   title: 'Project readiness',

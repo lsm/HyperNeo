@@ -1,4 +1,5 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
+import { prepareCodingExecution } from './prepare-execution.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { ExternalEvent } from '../../../external-events/types.ts';
@@ -10,10 +11,19 @@ import {
   neoAskRefNews,
   type NeoRefStateReader,
 } from './ask-prs.ts';
-import { readNeoIssueTicks } from './issue-checks.ts';
+import {
+  readNeoIssueTicks,
+  CODING_CHECK_ISSUE_FILED,
+  CODING_CHECK_ISSUE_SUB_ISSUE,
+  CODING_CHECK_ISSUE_CLOSED,
+} from './issue-checks.ts';
 import { neoCardPrTopics, routeNeoCardPrEvent } from './card-pr-events.ts';
 import { readNeoWatchEventTicks, readNeoWatchTicks, neoWatchTopics } from './watch-checks.ts';
-import { readNeoDeployTicks, type NeoDeployReader } from './deploy-checks.ts';
+import {
+  readNeoDeployTicks,
+  CODING_CHECK_DEPLOYED,
+  type NeoDeployReader,
+} from './deploy-checks.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
 import {
@@ -230,8 +240,15 @@ export function createCodingPack(
 ): NeoPack {
   return {
     ...CODING_PACK_BRIEF,
+    prepareExecution: prepareCodingExecution,
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     checks: { [CODING_CHECK_PR_MERGED]: codingPrMergedCheck },
+    askTickChecks: [
+      CODING_CHECK_ISSUE_FILED,
+      CODING_CHECK_ISSUE_SUB_ISSUE,
+      CODING_CHECK_ISSUE_CLOSED,
+      CODING_CHECK_DEPLOYED,
+    ],
     externalTopics: (work: NeoWork) => neoCardPrTopics(deps.workPrs.get(work.id)?.prs ?? []),
     routeExternalEvent: routeNeoCardPrEvent,
     readEvidence: async (work: NeoWork) => {

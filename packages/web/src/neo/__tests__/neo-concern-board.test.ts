@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import type { NeoConcern, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoProject, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import type { DaemonInventoryLink, DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import {
-  selectNeoConcernBoard,
+  selectNeoProjectBoard,
   neoBoardReceipts,
   neoBoardReferences,
   observedNeoBoardResources,
-  projectNeoConcernBoard,
-} from '../neo-concern-board.ts';
+  projectNeoProjectBoard,
+} from '../neo-project-board.ts';
 
 const ref = (kind: string, id: string): DaemonInventoryLink => ({ kind, id });
-const concern = (id: string): NeoConcern => ({
+const project = (id: string): NeoProject => ({
   id,
   title: id,
   summary: 'Summary',
@@ -20,10 +20,10 @@ const concern = (id: string): NeoConcern => ({
   createdAt: 1,
   updatedAt: 2,
 });
-const work = (id: string, concernId: string | null, sessionId: string | null = null): NeoWork => ({
+const work = (id: string, projectId: string | null, sessionId: string | null = null): NeoWork => ({
   id,
   requestKey: id,
-  concernId,
+  projectId,
   originSessionId: 'root',
   originMessageId: null,
   title: id,
@@ -34,13 +34,13 @@ const work = (id: string, concernId: string | null, sessionId: string | null = n
   createdAt: 2,
   updatedAt: 3,
 });
-const check = (id: string, concernId: string): NeoConsultation => ({
+const check = (id: string, projectId: string): NeoConsultation => ({
   ...{ originMessageId: null },
   id,
   requestKey: id,
-  concernId,
+  projectId,
   originSessionId: 'root',
-  sessionId: `${concernId}-holder`,
+  sessionId: `${projectId}-holder`,
   question: 'Next?',
   status: 'pending',
   answer: null,
@@ -51,7 +51,7 @@ const snapshot: NeoSnapshot = {
   cards: [],
   askViews: [],
   sessionId: 'root',
-  concerns: [concern('a'), concern('b')],
+  projects: [project('a'), project('b')],
   work: [work('a-work', 'a', 'a-worker'), work('b-work', 'b', 'b-worker'), work('one-off', null)],
   consultations: [check('a-check', 'a'), check('b-check', 'b')],
 };
@@ -80,26 +80,26 @@ function inventory(rows: Row[], truncatedKinds: string[] = []): DaemonSnapshot {
   };
 }
 const selection = () => {
-  const result = selectNeoConcernBoard(snapshot, 'a');
-  if ('reason' in result) throw new Error('Expected concern A');
+  const result = selectNeoProjectBoard(snapshot, 'a');
+  if ('reason' in result) throw new Error('Expected project A');
   return result.value;
 };
 
-describe('selectNeoConcernBoard', () => {
+describe('selectNeoProjectBoard', () => {
   it.each([
     [null, null],
     [null, 'a'],
     [snapshot, 'missing'],
   ] as const)('has no board for an unavailable scope: %j', (source, id) => {
-    expect(selectNeoConcernBoard(source, id)).toEqual({ reason: null });
-    expect(projectNeoConcernBoard(source, id, null)).toBeNull();
+    expect(selectNeoProjectBoard(source, id)).toEqual({ reason: null });
+    expect(projectNeoProjectBoard(source, id, null)).toBeNull();
   });
-  it('keeps overview one-offs but excludes unrelated concerns in a selected board', () => {
-    expect(projectNeoConcernBoard(snapshot, null, null)?.receipts).toHaveLength(5);
-    const result = selectNeoConcernBoard(snapshot, 'a');
-    if ('reason' in result) throw new Error('Expected concern A');
+  it('keeps overview one-offs but excludes unrelated projects in a selected board', () => {
+    expect(projectNeoProjectBoard(snapshot, null, null)?.receipts).toHaveLength(5);
+    const result = selectNeoProjectBoard(snapshot, 'a');
+    if ('reason' in result) throw new Error('Expected project A');
     const selected = result.value;
-    expect(selected.concern?.id).toBe('a');
+    expect(selected.project?.id).toBe('a');
     expect(selected.work.map((item) => item.id)).toEqual(['a-work']);
     expect(selected.consultations.map((item) => item.id)).toEqual(['a-check']);
   });
@@ -118,7 +118,7 @@ describe('Queued Neo board projection', () => {
       })),
     };
     const before = structuredClone(source);
-    const board = projectNeoConcernBoard(source, 'a', null)!;
+    const board = projectNeoProjectBoard(source, 'a', null)!;
     const queued = board.receipts.filter((row) => row.id === 'a-queued');
     expect(queued).toMatchObject([{ kind: 'consultation', status: 'queued', answer: null }]);
     expect(board.receipts.some((row) => row.id === 'b-queued')).toBe(false);
@@ -130,7 +130,7 @@ describe('Queued Neo board projection', () => {
       status: 'pending',
       answer: null,
     });
-    const promoted = projectNeoConcernBoard(source, 'a', null)!;
+    const promoted = projectNeoProjectBoard(source, 'a', null)!;
     expect(promoted.receipts.filter((row) => row.id === 'a-queued')).toMatchObject([
       { kind: 'consultation', status: 'pending' },
     ]);
@@ -146,7 +146,7 @@ describe('Queued Neo board projection', () => {
         consultations: [],
         consultationWaiters: [{ ...check('old', 'a'), originMessageId: 'ask-a', status }],
       };
-      expect(projectNeoConcernBoard(source, 'a', null)!.receipts).toEqual([]);
+      expect(projectNeoProjectBoard(source, 'a', null)!.receipts).toEqual([]);
     }
   );
 });
@@ -176,7 +176,7 @@ describe('neoBoardReferences', () => {
       ],
       targets: [ref('session', 'a-worker'), ref('session', 'a-holder')],
     });
-    const proposed = projectNeoConcernBoard(
+    const proposed = projectNeoProjectBoard(
       { ...snapshot, work: [work('only', null)], consultations: [] },
       null,
       null
@@ -211,7 +211,7 @@ describe('Neo board resource projection', () => {
       },
       { kind: 'session', id: 'unrelated-child', links: [ref('session', 'root')] },
     ]);
-    const board = projectNeoConcernBoard(snapshot, 'a', observed)!;
+    const board = projectNeoProjectBoard(snapshot, 'a', observed)!;
     expect(board.participants.map((item) => item.ref)).toEqual([
       ref('agent', 'agent-a'),
       ref('session', 'a-holder'),
@@ -262,14 +262,14 @@ describe('Neo board resource projection', () => {
       [{ kind: 'session', id: 'a-worker', links: [ref('goal', 'older-goal')] }],
       ['goal', 'agent']
     );
-    const board = projectNeoConcernBoard(snapshot, 'a', observed)!;
+    const board = projectNeoProjectBoard(snapshot, 'a', observed)!;
     expect(board.participants.find((item) => item.ref.id === 'older-goal')).toEqual({
       ref: ref('goal', 'older-goal'),
       metadata: null,
     });
     expect(board.participants.find((item) => item.ref.id === 'a-holder')?.metadata).toBeNull();
     expect(board.truncatedKinds).toEqual(['agent', 'goal']);
-    expect(projectNeoConcernBoard(snapshot, 'a', null)).toMatchObject({
+    expect(projectNeoProjectBoard(snapshot, 'a', null)).toMatchObject({
       inventoryCapturedAt: null,
       truncatedKinds: [],
     });
@@ -279,8 +279,8 @@ describe('Neo board resource projection', () => {
       { kind: 'session', id: 'a-worker', links: [ref('space', 'shared')] },
     ]);
     const original = JSON.stringify({ snapshot, observed });
-    projectNeoConcernBoard(snapshot, 'a', observed);
-    projectNeoConcernBoard(snapshot, null, observed);
+    projectNeoProjectBoard(snapshot, 'a', observed);
+    projectNeoProjectBoard(snapshot, null, observed);
     expect(JSON.stringify({ snapshot, observed })).toBe(original);
   });
 });

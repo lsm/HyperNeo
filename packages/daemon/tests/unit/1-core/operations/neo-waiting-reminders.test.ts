@@ -32,7 +32,7 @@ const root = `neo:${conversationId}`;
 const ask: NeoAsk & { remindedAt: number | null } = {
   id: 'a1',
   requestKey: 'k1',
-  concernId: null,
+  projectId: null,
   originSessionId: root,
   originMessageId: 'm0',
   title: 'Voice composer design',
@@ -183,7 +183,7 @@ describe('Neo turns with an ask waiting on the human', () => {
       ask: 'something else',
       destination: 'main',
       targetSessionId: root,
-      concernId: null,
+      projectId: null,
       signal: 'opened',
       confidence: 1,
     });
@@ -198,7 +198,7 @@ describe('Neo turns with an ask waiting on the human', () => {
       new InternalEventBus<DaemonInternalEventMap>()
     );
     db.createSession(createTestSession(root));
-    service.repo.reserveBinding({ sessionId: root, kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -234,7 +234,7 @@ describe('Neo turns with an ask waiting on the human', () => {
     const opened = service.askRecords.open({
       id,
       requestKey,
-      concernId: null,
+      projectId: null,
       originSessionId: root,
       originMessageId,
       title,
@@ -288,7 +288,7 @@ describe('Neo turns with an ask waiting on the human', () => {
     const opened = service.askRecords.open({
       id,
       requestKey,
-      concernId: null,
+      projectId: null,
       originSessionId: root,
       originMessageId,
       title,

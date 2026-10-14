@@ -70,12 +70,12 @@ describe('Neo existing chat work', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       events
     );
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
-    service.repo.saveConcern(
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
+    service.repo.saveProject(
       { id: 'research', title: 'Research', summary: 'Learn', context: 'Private context' },
       0
     );
-    service.repo.reserveBinding({ sessionId: 'holder', kind: 'concern', concernId: 'research' });
+    service.repo.reserveBinding({ sessionId: 'holder', kind: 'project', projectId: 'research' });
   });
   afterEach(() => {
     service.dispose();

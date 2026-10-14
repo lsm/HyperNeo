@@ -154,7 +154,7 @@ describe('NeoService relayCardPr', () => {
     const work = service.repo.proposeWork({
       id: 'w-pr',
       requestKey: 'k-pr',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       title: 'Fix login',
       instruction: 'Fix login.',

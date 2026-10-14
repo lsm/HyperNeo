@@ -407,7 +407,7 @@ describe('refreshDriverWork', () => {
       } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
   });
   afterEach(() => {
     service.dispose();
@@ -420,7 +420,7 @@ describe('refreshDriverWork', () => {
       {
         id: 'w-card',
         requestKey: 'root:card',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         title: 'Card',
         instruction: 'Do it.',

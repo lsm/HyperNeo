@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { workStartConfiguration } from './start-configuration.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 
 export const WorkStatusSchema = z.enum([
@@ -16,6 +17,9 @@ export const PlaceSchema = z.object({
   folder: z.string().optional(),
   spaceId: z.string().optional(),
   name: z.string(),
+  codeIdentity: z.string().optional(),
+  remotes: z.array(z.string()).optional(),
+  toolProject: z.object({ id: z.string(), name: z.string() }).optional(),
 });
 
 export const WorkRefSchema = z.object({
@@ -40,6 +44,7 @@ export const WorkSummarySchema = z.object({
   lastActivityAt: z.number(),
   link: z.string().optional(),
   model: z.string().optional(),
+  effort: z.string().optional(),
   remoteLink: z.string().optional(),
   score: z.number().optional(),
   hits: z.number().int().nonnegative().optional(),
@@ -51,6 +56,8 @@ export const WorkSummarySchema = z.object({
 
 export const PlaceGroupSchema = z.object({
   place: PlaceSchema,
+  projectId: z.string().optional(),
+  workspaces: z.array(PlaceSchema).optional(),
   lastActivityAt: z.number(),
   openCount: z.number().int().nonnegative(),
   archivedCount: z.number().int().nonnegative(),
@@ -59,6 +66,7 @@ export const PlaceGroupSchema = z.object({
 });
 
 export const WorkRejectionSchema = z.enum([
+  ...workStartConfiguration.refusalSchema.options,
   'unknown_adapter',
   'unsupported',
   'not_found',
@@ -120,6 +128,7 @@ export interface StartRequest {
   message: string;
   createFolder?: boolean;
   model?: string;
+  effort?: string;
 }
 
 export interface WorkCallContext {
@@ -130,6 +139,7 @@ export interface WorkCallContext {
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
+  readonly supportsStartEffort?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
   readonly start?: (
     request: StartRequest,

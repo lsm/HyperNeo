@@ -25,11 +25,11 @@ import { createTables } from '../../../../src/storage/schema/index.ts';
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
-const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', concernId: null };
+const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', projectId: null };
 const holder: NeoBinding = {
   sessionId: 'neo:holder:research',
-  kind: 'concern',
-  concernId: 'research',
+  kind: 'project',
+  projectId: 'research',
 };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const requestId = '20000000-0000-4000-8000-000000000001';

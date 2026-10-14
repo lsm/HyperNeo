@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubGraphqlArgs, githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
+import { isNeoCardPrRoutine } from '../../card-wake.ts';
 import type { NeoEvidence, planNeoDoneCheck } from '../../evidence.ts';
 
 export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
@@ -109,7 +110,7 @@ export const isNeoWorkPrWaiting = (prs: readonly NeoWorkPr[]) =>
 export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
   return prs.map((pr) => ({
     key: pr.url,
-    state: neoWorkPrVerdict(pr),
+    state: isNeoCardPrRoutine(pr) ? 'waiting' : neoWorkPrVerdict(pr),
     summary: `${pr.state.toLowerCase()}, checks ${pr.checks}, review ${pr.review}`,
     blockers: pr.blockers ?? [],
   }));

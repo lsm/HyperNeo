@@ -59,6 +59,7 @@ import {
 import { deliverMessage } from './lib/agent/message-delivery.ts';
 import {
   RESTART_RECOVERY_NOTE,
+  RESTART_RECOVERY_PREFIX,
   type RestartRecoveryDeps,
   recoverRestartCutTurns,
 } from './lib/agent/restart-turn-recovery.ts';
@@ -867,7 +868,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         const outcome = await handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
           origin: 'recovery',
-          messageUuid: `restart-recovery:${promptUuid}`,
+          messageUuid: `${RESTART_RECOVERY_PREFIX}${promptUuid}`,
           deliveryMode: 'immediate',
           message: {
             type: 'user',

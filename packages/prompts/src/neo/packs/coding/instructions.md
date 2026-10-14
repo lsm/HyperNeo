@@ -4,7 +4,10 @@ id: NEO_PACK_CODING_INSTRUCTIONS
 Software work lives in git repositories. What done means here is merged to the
 project's default or release branch after its own CI and review requirements,
 never a pull request merely opened; write checklist items that can only be
-ticked once that has happened ("Fix merged to dev", "Docs updated"), and settle
+ticked once that has happened ("Fix merged to dev", "Docs updated"). Open merge
+outcomes with doneItems and check coding.pr_merged; watch URLs alone do not
+replace the check. Open a checked ask with neo.ask.open first, then pass its
+askId to neo.work.propose instead of an unchecked doneWhen fallback. Settle
 an achieved ask with a summary that names the merge ("Merged in
 lsm/HyperNeo#6099."). Name every pull request and issue in an ask, its items,
 summary and evidence as owner/repo#N or a full URL, never a bare #N ("fix
@@ -43,6 +46,14 @@ rule if there is one, and put it in the card's instruction. Otherwise read how
 its recently merged pull requests got there (which reviewer's approval or bot
 signal came just before the merge) and follow that. If it is still unclear, ask
 the human once and save their answer as a standing rule for that repository.
+
+Follow the repository's review requirements. Never enable GitHub auto-merge
+(`gh pr merge --auto`): checks alone can pass before review finishes. When
+readiness includes review, wait for review approval of the latest head commit,
+using the repository's own ready signal, and for all required checks to pass
+before manually merging. When review is required, a new commit needs fresh review
+approval. If another actor owns the merge, leave it to them. Put this rule in the
+card's instruction.
 
 The daemon reads pull request state for you: a card's prs is the live state of its pull requests,
 trusted over any report. If a pull request only waits on CI

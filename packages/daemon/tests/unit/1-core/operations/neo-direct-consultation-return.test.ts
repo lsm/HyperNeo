@@ -98,7 +98,7 @@ describe('NeoService direct consultation return', () => {
     service.consultations.reserve({
       id,
       requestKey: id,
-      concernId: 'fictional',
+      projectId: 'fictional',
       originSessionId: root,
       originMessageId,
       sessionId: holder,
@@ -146,9 +146,9 @@ describe('NeoService direct consultation return', () => {
     getSessionAsync.mockReset();
     for (const id of [root, holder]) db.createSession(createTestSession(id));
     restart();
-    service.repo.saveConcern({ id: 'fictional', title: 'Sources', summary: '', context: '' }, 0);
-    service.repo.reserveBinding({ sessionId: root, concernId: null, kind: 'neo' });
-    service.repo.reserveBinding({ sessionId: holder, concernId: 'fictional', kind: 'concern' });
+    service.repo.saveProject({ id: 'fictional', title: 'Sources', summary: '', context: '' }, 0);
+    service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+    service.repo.reserveBinding({ sessionId: holder, projectId: 'fictional', kind: 'project' });
     prompt(root, ask.messageId, 'human');
     reserve();
   });
@@ -218,7 +218,7 @@ describe('NeoService direct consultation return', () => {
     const work = service.repo.proposeWork({
       id: 'work',
       requestKey: 'work',
-      concernId: 'fictional',
+      projectId: 'fictional',
       originSessionId: holder,
       originMessageId: 'holder-human',
       title: 'Fictional work',
@@ -330,7 +330,7 @@ describe('NeoService direct consultation return', () => {
     service.consultationWaiters.enqueue({
       id: 'next',
       requestKey: 'next',
-      concernId: 'fictional',
+      projectId: 'fictional',
       originSessionId: root,
       originMessageId: ask.messageId,
       sessionId: holder,
@@ -339,7 +339,7 @@ describe('NeoService direct consultation return', () => {
     const work = service.repo.proposeWork({
       id: 'other-work',
       requestKey: 'other-work',
-      concernId: 'fictional',
+      projectId: 'fictional',
       originSessionId: root,
       originMessageId: ask.messageId,
       title: 'Other work',

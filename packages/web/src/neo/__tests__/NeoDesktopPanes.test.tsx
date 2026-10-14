@@ -57,7 +57,7 @@ const work = (id: string, status: NeoWork['status']): NeoWork => ({
   id,
   status,
   requestKey: id,
-  concernId: 'a',
+  projectId: 'a',
   originSessionId: root,
   originMessageId: `ask-${id}`,
   title: `Fictional ${id}`,
@@ -72,7 +72,7 @@ function mount(publicMode = true, status = 'ready') {
   const snapshot = {
     ok: true,
     sessionId: root,
-    concerns: [],
+    projects: [],
     work: [work('proposal', 'proposed'), work('failure', 'failed'), work('result', 'reported')],
     consultations: [],
   };

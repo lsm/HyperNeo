@@ -46,6 +46,17 @@ describe('neoPackBriefs', () => {
     const briefs = neoPackBriefs(['coding', 'legal-review'], [{ id: 'coding', describe: 'code' }]);
     expect(briefs.map((brief) => brief.id)).toEqual(['coding']);
   });
+
+  test('requires repository review before manual merging and forbids auto-merge', () => {
+    const guidance = neoPackBriefs(NEO_DEFAULT_PACKS)[0].guidance?.replace(/\s+/g, ' ');
+    expect(guidance).toContain("Follow the repository's review requirements");
+    expect(guidance).toContain('Never enable GitHub auto-merge');
+    expect(guidance).toContain('review approval of the latest head commit');
+    expect(guidance).toContain("using the repository's own ready signal");
+    expect(guidance).toContain('all required checks to pass before manually merging');
+    expect(guidance).toContain('When review is required, a new commit needs fresh review approval');
+    expect(guidance).toContain('If another actor owns the merge, leave it to them');
+  });
 });
 
 describe('requireNeoAskPack', () => {
@@ -561,6 +572,12 @@ describe('requireNeoEvidenceRefresh', () => {
       refresh({ updatedAt: 21 * 60_000 }),
       { goal: true, session: true, row: null, packEvidence: true, toldAt: 19 * 60_000 },
       { value: expect.objectContaining({ row: null }) },
+    ],
+    [
+      'a card whose done list is met',
+      refresh(),
+      { goal: true, session: true, row: due, packEvidence: true, toldAt: null, doneWhenMet: true },
+      { reason: 'not_due' },
     ],
     [
       'a card with neither a row nor an evidence-reading pack',

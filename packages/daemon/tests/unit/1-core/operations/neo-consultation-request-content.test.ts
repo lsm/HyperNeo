@@ -12,7 +12,7 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 const item: NeoConsultation = Object.freeze({
   id: 'fictional-check',
   requestKey: 'fictional-request',
-  concernId: 'fictional',
+  projectId: 'fictional',
   originSessionId: 'root',
   originMessageId: 'original-ask',
   sessionId: 'holder',
@@ -37,9 +37,9 @@ describe('NeoService extracted consultation request delivery', () => {
     );
     try {
       for (const id of ['root', 'holder']) db.createSession(createTestSession(id));
-      service.repo.saveConcern({ id: 'fictional', title: 'Drafts', summary: '', context: '' }, 0);
-      service.repo.reserveBinding({ sessionId: 'root', concernId: null, kind: 'neo' });
-      service.repo.reserveBinding({ sessionId: 'holder', concernId: 'fictional', kind: 'concern' });
+      service.repo.saveProject({ id: 'fictional', title: 'Drafts', summary: '', context: '' }, 0);
+      service.repo.reserveBinding({ sessionId: 'root', projectId: null, kind: 'neo' });
+      service.repo.reserveBinding({ sessionId: 'holder', projectId: 'fictional', kind: 'project' });
       db.getSDKMessageRepo().saveSDKMessage('root', {
         type: 'user',
         uuid: 'original-ask',
@@ -85,9 +85,9 @@ describe('NeoService extracted consultation request delivery', () => {
 });
 
 describe('neoConsultationRequestContent', () => {
-  test('a consultation from a daemon note answers Neo with neo.concern.respond, never a publication', () => {
+  test('a consultation from a daemon note answers Neo with neo.project.respond, never a publication', () => {
     const internal = neoConsultationRequestContent(item, false);
-    expect(internal).toContain('Answer with neo.concern.respond {id, answer}');
+    expect(internal).toContain('Answer with neo.project.respond {id, answer}');
     expect(internal).toContain('Do not publish');
     expect(neoConsultationRequestContent(item)).toContain('call neo.publication.publish');
   });

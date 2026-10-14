@@ -9,6 +9,14 @@ const NOW = Date.parse('2026-10-05T12:00:00.000Z');
 const user = { from: 'user', caller: { source: 'rpc' as const } };
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' };
 const request = { place, title: 'Bigger font', message: 'Raise the body font to 16px.' };
+const model = {
+  id: 'sol-catalog-entry',
+  model: 'gpt-6.1-sol',
+  displayName: 'GPT-6.1 Sol',
+  isDefault: true,
+  supportedReasoningEfforts: [{ reasoningEffort: 'medium' }],
+};
+const catalog = { data: [model], nextCursor: null };
 
 function adapter(
   server: Partial<CodexAppServer> | Error,
@@ -65,6 +73,180 @@ describe('startedThreadId', () => {
 });
 
 describe('codex-desktop start', () => {
+  test('resolves an alias and returns the model confirmed by thread/start', async () => {
+    const { instance, calls, closed } = adapter({
+      call: async (method) =>
+        method === 'model/list'
+          ? catalog
+          : method === 'thread/start'
+            ? { thread: { id: 'th1' }, model: model.model }
+            : {},
+    });
+    expect(await instance.start?.({ ...request, model: 'sol 6.1' }, user)).toMatchObject({
+      ok: true,
+      value: { model: 'gpt-6.1-sol', ref: { id: 'th1' }, status: 'running' },
+    });
+    expect(calls).toEqual([
+      ['model/list', { limit: 100, includeHidden: false }],
+      ['thread/start', { cwd: '/focus/dolmen', model: 'gpt-6.1-sol' }],
+      ['thread/name/set', { threadId: 'th1', name: request.title }],
+      ['turn/start', { threadId: 'th1', input: [{ type: 'text', text: request.message }] }],
+    ]);
+    expect(closed()).toBe(true);
+  });
+
+  test.each([undefined, 'sol 6.1'])('applies and confirms effort with model %s', async (name) => {
+    const { instance, calls } = adapter({
+      call: async (method) =>
+        method === 'model/list'
+          ? catalog
+          : method === 'thread/start'
+            ? { thread: { id: 'th1' }, model: model.model, reasoningEffort: 'medium' }
+            : {},
+    });
+    expect(
+      await instance.start?.({ ...request, model: name, effort: ' MEDIUM ' }, user)
+    ).toMatchObject({
+      ok: true,
+      value: { model: model.model, effort: 'medium', status: 'running' },
+    });
+    expect(calls).toEqual([
+      ['model/list', { limit: 100, includeHidden: false }],
+      [
+        'thread/start',
+        { cwd: '/focus/dolmen', model: model.model, config: { model_reasoning_effort: 'medium' } },
+      ],
+      ['thread/name/set', { threadId: 'th1', name: request.title }],
+      ['turn/start', { threadId: 'th1', input: [{ type: 'text', text: request.message }] }],
+    ]);
+  });
+
+  test('rejects unsupported effort before preparing work', async () => {
+    const { instance, calls, spawned, closed } = adapter(
+      { call: async () => catalog },
+      ['/focus/dolmen'],
+      { root: '/focus/dolmen' }
+    );
+    expect(
+      await instance.start?.({ ...request, model: model.model, effort: 'ultra' }, user)
+    ).toMatchObject({
+      ok: false,
+      reason: 'unsupported_effort',
+    });
+    expect(calls.map(([method]) => method)).toEqual(['model/list']);
+    expect(spawned).toEqual([]);
+    expect(closed()).toBe(true);
+  });
+
+  test.each([undefined, null, '', ' ', 42, 'high'])(
+    'refuses an unconfirmed effort receipt: %s',
+    async (reported) => {
+      const { instance, calls, closed } = adapter({
+        call: async (method) =>
+          method === 'model/list'
+            ? catalog
+            : { thread: { id: 'th1' }, model: model.model, reasoningEffort: reported },
+      });
+      expect(await instance.start?.({ ...request, effort: 'medium' }, user)).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+        detail: expect.stringContaining('confirm effort'),
+      });
+      expect(calls.map(([method]) => method)).toEqual(['model/list', 'thread/start']);
+      expect(closed()).toBe(true);
+    }
+  );
+
+  test('reports effective default effort without overriding or inventing it', async () => {
+    for (const reported of ['high', null]) {
+      const { instance, calls } = adapter({
+        call: async (method) =>
+          method === 'thread/start'
+            ? { thread: { id: 'th1' }, model: 'configured-default', reasoningEffort: reported }
+            : {},
+      });
+      const result = await instance.start?.(request, user);
+      expect(result?.ok).toBe(true);
+      expect(result?.ok && result.value.effort).toBe(reported ?? undefined);
+      expect(calls[0]).toEqual(['thread/start', { cwd: '/focus/dolmen' }]);
+      expect(calls.some(([method]) => method === 'model/list')).toBe(false);
+    }
+  });
+
+  test('records an effective default model without querying or overriding the catalog', async () => {
+    const { instance, calls } = adapter({
+      call: async (method) =>
+        method === 'thread/start' ? { thread: { id: 'th1' }, model: 'configured-default' } : {},
+    });
+    expect(await instance.start?.(request, user)).toMatchObject({
+      ok: true,
+      value: { model: 'configured-default' },
+    });
+    expect(calls[0]).toEqual(['thread/start', { cwd: '/focus/dolmen' }]);
+    expect(calls.some(([method]) => method === 'model/list')).toBe(false);
+  });
+
+  for (const [name, data] of [
+    ['missing', []],
+    ['hidden', [{ ...model, hidden: true }]],
+    ['ambiguous', [model, { ...model, id: 'other', model: 'other', displayName: 'sol 6.1' }]],
+  ] as const) {
+    test(`refuses a ${name} model before creating a worktree or thread`, async () => {
+      const { instance, calls, spawned, closed } = adapter(
+        { call: async () => ({ data, nextCursor: null }) },
+        ['/focus/dolmen'],
+        { root: '/focus/dolmen' }
+      );
+      expect(await instance.start?.({ ...request, model: 'sol 6.1' }, user)).toMatchObject({
+        ok: false,
+        reason: 'unsupported_model',
+      });
+      expect(calls.map(([method]) => method)).toEqual(['model/list']);
+      expect(spawned).toEqual([]);
+      expect(closed()).toBe(true);
+    });
+  }
+
+  test('cannot start work when the model catalog is unavailable', async () => {
+    const { instance, calls, spawned, closed } = adapter(
+      {
+        call: async () => {
+          throw new Error('catalog offline');
+        },
+      },
+      ['/focus/dolmen'],
+      { root: '/focus/dolmen' }
+    );
+    expect(await instance.start?.({ ...request, model: model.model }, user)).toMatchObject({
+      ok: false,
+      reason: 'unreachable',
+    });
+    expect(calls.map(([method]) => method)).toEqual(['model/list']);
+    expect(spawned).toEqual([]);
+    expect(closed()).toBe(true);
+  });
+
+  for (const reported of [undefined, null, '', ' ', 42, 'gpt-6-astra']) {
+    test(`does not send the first turn for an unconfirmed model receipt: ${reported}`, async () => {
+      const { instance, calls, spawned, closed } = adapter(
+        {
+          call: async (method) =>
+            method === 'model/list' ? catalog : { thread: { id: 'th1' }, model: reported },
+        },
+        ['/focus/dolmen'],
+        { root: '/focus/dolmen' }
+      );
+      const result = await instance.start?.({ ...request, model: model.model }, user);
+      expect(result).toMatchObject({ ok: false, reason: 'not_delivered' });
+      expect(result && !result.ok && result.detail).toContain(
+        'Thread th1 was created without its first turn.'
+      );
+      expect(calls.map(([method]) => method)).toEqual(['model/list', 'thread/start']);
+      expect(spawned.map(({ args }) => args.slice(0, 3))).toEqual([['git', 'worktree', 'add']]);
+      expect(closed()).toBe(true);
+    });
+  }
+
   test('starts a named thread in the folder and sends the first turn', async () => {
     const { instance, calls, closed } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),

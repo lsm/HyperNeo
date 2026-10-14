@@ -13,7 +13,10 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { planNeoCardSend } from '../../../../src/lib/neo/card-events.ts';
-import { neoCardPrTopics } from '../../../../src/lib/neo/packs/coding/card-pr-events.ts';
+import {
+  isNeoCardPrActionable,
+  neoCardPrTopics,
+} from '../../../../src/lib/neo/packs/coding/card-pr-events.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   createOperationRegistry,
@@ -40,6 +43,28 @@ describe('neoCardPrTopics', () => {
         { ...open, url: 'https://github.com/lsm/HyperNeo/pull/8', state: 'MERGED' },
       ])
     ).toEqual(['github/lsm/HyperNeo/pull_request/7.*']);
+  });
+});
+
+describe('isNeoCardPrActionable', () => {
+  test.each([
+    ['review_submitted', true],
+    ['review_comment_created', true],
+    ['comment_polled', true],
+    ['reaction_added', true],
+    ['check_failed', true],
+    ['suite_failed', true],
+    ['status_failure', true],
+    ['merge_conflict', true],
+    ['polled', false],
+    ['check_skipped', false],
+    ['check_cancelled', false],
+    ['status_pending', false],
+    ['status_success', false],
+    ['merge_conflict_resolved', false],
+    ['synchronize', false],
+  ])('%s forwards: %s', (action, forwards) => {
+    expect(isNeoCardPrActionable(action)).toBe(forwards);
   });
 });
 
@@ -90,7 +115,7 @@ describe('Neo card pull request events', () => {
     service.watchExternalTopic = async (topic) => {
       watched.push(topic);
     };
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
     publisher = new ExternalEventService(new SessionExternalEventStore(db.getDatabase()), bus);
   });
   afterEach(() => {
@@ -104,7 +129,7 @@ describe('Neo card pull request events', () => {
       {
         id: 'w-desktop',
         requestKey: 'root:desktop',
-        concernId: null,
+        projectId: null,
         originSessionId: 'root',
         title: 'Fix the bug',
         instruction: 'Fix it and merge.',
@@ -182,7 +207,7 @@ describe('Neo card pull request events', () => {
     const proposed = service.repo.proposeWork({
       id: 'w-native',
       requestKey: 'root:native',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'm1',
       title: 'Fix it',
@@ -229,7 +254,7 @@ describe('Neo card pull request events', () => {
       service.repo.proposeWork({
         id: 'w-live',
         requestKey: 'root:live',
-        concernId: null,
+        projectId: null,
         originSessionId: 'root',
         originMessageId: 'm2',
         title: 'Fix more',
@@ -266,7 +291,7 @@ describe('Neo card pull request events', () => {
     const proposed = service.repo.proposeWork({
       id: 'w-legacy',
       requestKey: 'root:legacy',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'm3',
       title: 'Fix it',
@@ -294,7 +319,7 @@ describe('Neo card pull request events', () => {
     const proposed = service.repo.proposeWork({
       id: 'w-done',
       requestKey: 'root:done',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'm4',
       title: 'Fix it',
@@ -325,5 +350,16 @@ describe('Neo card pull request events', () => {
 
     expect(sent.map((item) => item.message)).toEqual([expect.stringContaining('7.closed')]);
     expect(subscriptions()).toEqual([]);
+  });
+
+  test('routine polls and skipped checks never reach the card; an open PR stays followed', async () => {
+    attach(desktopCard());
+
+    await event('polled', 'PR #7 state: open', { state: 'open' });
+    await event('check_skipped', 'CI check skipped', { conclusion: 'skipped' });
+    await event('check_failed', 'CI check failed', { conclusion: 'failure' });
+
+    expect(sent.map((item) => item.message)).toEqual([expect.stringContaining('failure')]);
+    expect(subscriptions()).toHaveLength(1);
   });
 });

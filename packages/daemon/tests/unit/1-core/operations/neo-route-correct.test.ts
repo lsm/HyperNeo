@@ -17,8 +17,8 @@ describe('neo.route.correct', () => {
     createNeoTables(sqlite);
     repo = new NeoRepository(sqlite);
     log = new NeoRoutingLogRepository(sqlite);
-    repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', concernId: null });
-    repo.reserveBinding({ sessionId: 'neo:holder:drivers', kind: 'concern', concernId: 'drivers' });
+    repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
+    repo.reserveBinding({ sessionId: 'neo:holder:drivers', kind: 'project', projectId: 'drivers' });
     log.record({
       messageId: 'ask-1',
       conversationId: 'c',
@@ -26,7 +26,7 @@ describe('neo.route.correct', () => {
       ask: 'restart the daemon',
       destination: 'holder',
       targetSessionId: 'neo:holder:yt',
-      concernId: 'youtube',
+      projectId: 'youtube',
       signal: 'embedding',
       confidence: 0.6,
     });
@@ -44,10 +44,10 @@ describe('neo.route.correct', () => {
     ).then((outcome) => (outcome.kind === 'completed' ? outcome.value : outcome));
 
   test('moves the logged ask to the right topic so the router learns from it', async () => {
-    expect(await correct({ messageId: 'ask-1', concernId: 'drivers' })).toEqual({ ok: true });
+    expect(await correct({ messageId: 'ask-1', projectId: 'drivers' })).toEqual({ ok: true });
     expect(log.find('ask-1')).toMatchObject({
       destination: 'holder',
-      concernId: 'drivers',
+      projectId: 'drivers',
       targetSessionId: 'neo:holder:drivers',
       signal: 'corrected',
       confidence: 1,
@@ -65,21 +65,21 @@ describe('neo.route.correct', () => {
           ),
         ]),
         'neo.route.correct',
-        { messageId: 'ask-1', concernId: 'drivers' },
+        { messageId: 'ask-1', projectId: 'drivers' },
         { source: 'mcp', sessionId: 'neo:holder:drivers', role: 'neo' } as never
       ).then((outcome) => (outcome.kind === 'completed' ? outcome.value : outcome))
     ).toEqual({ ok: false, reason: 'main_neo_only' });
-    expect(log.find('ask-1')?.concernId).toBe('youtube');
+    expect(log.find('ask-1')?.projectId).toBe('youtube');
   });
 
   test('rejects an unknown ask or a topic without a holder', async () => {
-    expect(await correct({ messageId: 'nope', concernId: 'drivers' })).toEqual({
+    expect(await correct({ messageId: 'nope', projectId: 'drivers' })).toEqual({
       ok: false,
       reason: 'unknown_ask',
     });
-    expect(await correct({ messageId: 'ask-1', concernId: 'garden' })).toEqual({
+    expect(await correct({ messageId: 'ask-1', projectId: 'garden' })).toEqual({
       ok: false,
-      reason: 'unknown_topic',
+      reason: 'unknown_project',
     });
   });
 });

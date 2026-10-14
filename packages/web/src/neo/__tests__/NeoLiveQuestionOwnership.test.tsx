@@ -37,10 +37,10 @@ vi.mock('../NeoSessionPane.tsx', () => ({
 }));
 
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
-const work = (id: string, status: NeoWork['status'] = 'queued', concernId = 'a'): NeoWork => ({
+const work = (id: string, status: NeoWork['status'] = 'queued', projectId = 'a'): NeoWork => ({
   id,
   requestKey: id,
-  concernId,
+  projectId,
   originSessionId: root,
   originMessageId: `ask-${id}`,
   title: `Title ${id}`,
@@ -137,9 +137,9 @@ const renderLive = () => {
   const snapshot = {
     ok: true,
     sessionId: root,
-    concerns: ['a', 'b'].map((id) => ({
+    projects: ['a', 'b'].map((id) => ({
       id,
-      title: `Concern ${id}`,
+      title: `Project ${id}`,
       summary: 'Summary',
       context: 'Context',
       revision: 1,

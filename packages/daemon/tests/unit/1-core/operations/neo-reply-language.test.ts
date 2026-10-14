@@ -2,10 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 describe('Neo reply language guidance', () => {
-  test.each([null, 'mixed-name-concern'])(
+  test.each([null, 'mixed-name-project'])(
     'rendered prompt keeps human language distinct from names for %j',
-    (concernId) => {
-      const prompt = neoPrompt(concernId);
+    (projectId) => {
+      const prompt = neoPrompt(projectId);
       expect(prompt).toContain("Choose the reply language from the human question's phrasing");
       expect(prompt).toContain('not its project\nnames, tool names, or these English instructions');
       expect(prompt).toContain('This also applies to a brief\nacknowledgement');
@@ -21,11 +21,11 @@ describe('Neo reply language guidance', () => {
 
   test('language refinement preserves the different root and holder roles', () => {
     const root = neoPrompt(null);
-    const holder = neoPrompt('mixed-name-concern');
+    const holder = neoPrompt('mixed-name-project');
     expect(root).toContain('Native question cards are not available to root Neo');
-    expect(root).toContain('A new message is NOT a new concern');
-    expect(holder).toContain('You are the context holder for concern');
-    expect(holder).toContain('The human sees which topic answered each message');
+    expect(root).toContain('A new message is NOT a new project');
+    expect(holder).toContain('You are the context holder for project');
+    expect(holder).toContain('The human sees which project answered each message');
     expect(holder).not.toContain('never sees holders');
     expect(holder).toContain("Reply in the language of the user's latest message.");
     expect(holder).not.toContain('分身');
@@ -33,7 +33,7 @@ describe('Neo reply language guidance', () => {
     for (const prompt of [root, holder]) {
       expect(prompt).toContain('Respond to the current input, not the whole visible backlog');
       expect(prompt).toContain('one or two conversational sentences');
-      expect(prompt).toContain('You and the concern holders NEVER execute worker jobs directly');
+      expect(prompt).toContain('You and the project holders NEVER execute worker jobs directly');
     }
   });
 });

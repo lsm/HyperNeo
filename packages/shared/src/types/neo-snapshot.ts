@@ -1,5 +1,5 @@
 import type { DaemonInventoryLink } from './daemon-snapshot.ts';
-import type { NeoConcern, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
+import type { NeoProject, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
 import type { NeoModelPreference } from './settings.ts';
 
 export interface NeoWorkResourceReceipt {
@@ -97,14 +97,7 @@ export interface NeoAskItem {
   text: string;
   state: 'pending' | 'met' | 'needs_you' | 'reported';
   evidence: string | null;
-  check:
-    | 'coding.pr_merged'
-    | 'coding.issue_filed'
-    | 'coding.issue_sub_issue'
-    | 'coding.issue_closed'
-    | 'coding.deployed'
-    | 'life-admin.confirmed'
-    | null;
+  check: string | null;
   metBy: 'neo' | 'daemon' | 'human' | null;
   removed: boolean;
   addedAt: number | null;
@@ -122,7 +115,7 @@ export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';
 export interface NeoAsk {
   id: string;
   requestKey: string;
-  concernId: string | null;
+  projectId: string | null;
   originSessionId: string;
   originMessageId: string | null;
   title: string;
@@ -324,8 +317,8 @@ export interface NeoSnapshot {
   rev?: string;
   scopedTo?: string;
   sessionId: string | null;
-  concerns: NeoConcern[];
-  publicAuthorBindings?: { sessionId: string; concernId: string; kind: 'concern' }[];
+  projects: NeoProject[];
+  publicAuthorBindings?: { sessionId: string; projectId: string; kind: 'project' }[];
   askForwards?: NeoAskForwardView[];
   work: NeoWork[];
   consultations: NeoConsultation[];

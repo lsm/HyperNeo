@@ -20,7 +20,7 @@ const originalAsk = Object.freeze({ sessionId: 'neo:holder:source', messageId: '
 const item: NeoConsultation = Object.freeze({
   id: 'check',
   requestKey: 'request',
-  concernId: 'fictional',
+  projectId: 'fictional',
   originSessionId: 'neo:root',
   originMessageId: 'root-system-input',
   sessionId: 'neo:holder:fictional',
@@ -39,7 +39,7 @@ const publication: NeoPublication = Object.freeze({
   }),
   shortText: 'The second source differs.',
   fullText: item.answer!,
-  links: Object.freeze([{ kind: 'concern' as const, id: 'fictional', label: 'View comparison' }]),
+  links: Object.freeze([{ kind: 'project' as const, id: 'fictional', label: 'View comparison' }]),
   sequence: 1,
   createdAt: '2026-10-01T00:00:00.000Z',
 });
@@ -112,7 +112,7 @@ describe('requireConsultationPublication', () => {
     { producerInput: { ...publication.producerInput, sessionId: 'other-holder' } },
     { producerInput: { ...publication.producerInput, messageId: 'neo-consult:other:request' } },
     { askOrigin: { ...originalAsk, messageId: '' } },
-    { links: [{ kind: 'concern' as const, id: 'fictional', label: '' }] },
+    { links: [{ kind: 'project' as const, id: 'fictional', label: '' }] },
   ])('rejects invalid or mismatched publication evidence: %j', (patch) => {
     expect(requireConsultationPublication(association, item, { ...publication, ...patch })).toEqual(
       { reason: 'inconsistent' }
@@ -144,8 +144,8 @@ describe('requireConsultationAsk', () => {
 
 describe('planNeoConsultationReturn', () => {
   test('preserves the original narrow legacy caller contract without admitting missing holder evidence', () => {
-    const { id, status, answer, concernId, originMessageId } = item;
-    const legacy = { id, status, answer, concernId, originMessageId };
+    const { id, status, answer, projectId, originMessageId } = item;
+    const legacy = { id, status, answer, projectId, originMessageId };
     expect(neoConsultationReplyContent(legacy)).toBe(neoConsultationReplyContent(item));
     expect(planNeoConsultationReturn(legacy, association, publication, originalAsk)).toBe(
       'inconsistent'

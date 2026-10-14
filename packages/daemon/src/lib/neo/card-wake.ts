@@ -45,6 +45,18 @@ export function isNeoCardPrAwaited(pr: NeoWorkPr): boolean {
   return blockers.length > 0 && blockers.every((blocker) => APPROVAL_ONLY.test(blocker));
 }
 
+export function isNeoCardPrRoutine(pr: NeoWorkPr): boolean {
+  if (pr.state !== 'OPEN') return false;
+  if (pr.checks === 'pending') return true;
+  if (pr.checks === 'failing' || pr.review !== 'none') return false;
+  return (pr.blockers ?? []).every((blocker) => APPROVAL_ONLY.test(blocker));
+}
+
+export function isNeoCardAwaitingPr(prs: readonly NeoWorkPr[]): boolean {
+  const open = prs.filter((pr) => pr.state === 'OPEN');
+  return open.length > 0 && open.every(isNeoCardPrRoutine);
+}
+
 export function isNeoCardDoneWhenMet(
   work: Pick<NeoWork, 'report'>,
   ask: Pick<NeoAsk, 'doneItems'> | null

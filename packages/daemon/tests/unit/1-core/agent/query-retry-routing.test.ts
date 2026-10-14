@@ -3,6 +3,7 @@ import { ErrorCategory } from '../../../../src/lib/error-manager';
 import {
   classifyQueryRetryRoute,
   decideQueryRetry,
+  planTurnEndedGeneration,
   type QueryRetryEnvironment,
   type QueryRetryErrorSignal,
   type QueryRetryFinalizer,
@@ -1027,5 +1028,38 @@ describe('decideQueryRetry', () => {
         expect(decision.route.action).toBe(expectedAction);
       });
     }
+  });
+});
+
+describe('planTurnEndedGeneration', () => {
+  it.each([
+    ['a top-level result ends the turn', 3, { type: 'result' }, 7, 7],
+    ['a subagent result does not', null, { type: 'result', parent_tool_use_id: 't1' }, 7, null],
+    [
+      'a trailing idle state keeps it ended',
+      7,
+      { type: 'system', subtype: 'session_state_changed', state: 'idle' },
+      7,
+      7,
+    ],
+    [
+      'a running state starts a new turn',
+      7,
+      { type: 'system', subtype: 'session_state_changed', state: 'running' },
+      7,
+      null,
+    ],
+    [
+      'other system messages keep it ended',
+      7,
+      { type: 'system', subtype: 'files_persisted' },
+      7,
+      7,
+    ],
+    ['an assistant message starts a new turn', 7, { type: 'assistant' }, 7, null],
+    ['a user message starts a new turn', 7, { type: 'user' }, 7, null],
+    ['a stream event starts a new turn', 7, { type: 'stream_event' }, 7, null],
+  ])('%s', (_label, current, message, generation, expected) => {
+    expect(planTurnEndedGeneration(current, message, generation)).toBe(expected);
   });
 });

@@ -48,8 +48,8 @@ describe('Neo existing trusted human work input', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       new InternalEventBus()
     );
-    service.repo.reserveBinding({ sessionId: root, kind: 'neo', concernId: null });
-    service.repo.saveConcern(
+    service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+    service.repo.saveProject(
       {
         id: 'fictional-concern',
         title: 'Fictional',
@@ -60,8 +60,8 @@ describe('Neo existing trusted human work input', () => {
     );
     service.repo.reserveBinding({
       sessionId: holder,
-      kind: 'concern',
-      concernId: 'fictional-concern',
+      kind: 'project',
+      projectId: 'fictional-concern',
     });
     attempts = new QueryAttemptRegistry();
     turns = [];
@@ -105,7 +105,7 @@ describe('Neo existing trusted human work input', () => {
       'neo.work.propose',
       {
         requestKey: key,
-        concernId: source.sessionId === holder ? 'fictional-concern' : null,
+        projectId: source.sessionId === holder ? 'fictional-concern' : null,
         title: 'Fictional bounded work',
         instruction: 'Use only the existing fictional target.',
         doneWhen: '- target used',
@@ -232,7 +232,7 @@ describe('Neo existing trusted human work input', () => {
         'neo.work.propose',
         {
           requestKey: key,
-          concernId: null,
+          projectId: null,
           askId: opened.id,
           title: `Fictional ${key}`,
           instruction: 'Use only the existing fictional target.',
@@ -247,7 +247,9 @@ describe('Neo existing trusted human work input', () => {
     const second = await under('second', target);
     const stuck = await under('stuck', gone);
     db.updateSession(gone, { status: 'archived' });
-    expect(service.askRecords.get(opened.id)?.workIds).toEqual([first.id, second.id, stuck.id]);
+    expect([...(service.askRecords.get(opened.id)?.workIds ?? [])].sort()).toEqual(
+      [first.id, second.id, stuck.id].sort()
+    );
 
     const later = caller(root, '00000000-0000-4000-8000-000000000009');
     expect(later.neoTurn?.human).toBe(false);
@@ -330,7 +332,7 @@ describe('Neo existing trusted human work input', () => {
     service.consultations.reserve({
       id,
       requestKey: id,
-      concernId: 'fictional-concern',
+      projectId: 'fictional-concern',
       originSessionId: root,
       sessionId: holder,
       question: 'Fictional context check',
@@ -393,7 +395,7 @@ describe('Neo existing trusted human work input', () => {
   test('a claimed Neo role cannot turn an execution worker into a human coordinator', async () => {
     const work = await propose(local);
     storeInput(target);
-    service.repo.reserveBinding({ sessionId: target, kind: 'worker', concernId: null });
+    service.repo.reserveBinding({ sessionId: target, kind: 'worker', projectId: null });
     const source = { ...caller(target), role: 'neo' as const };
     expect(await invoke('neo.work.start', { id: work.id }, source)).toMatchObject({
       value: { ok: false },

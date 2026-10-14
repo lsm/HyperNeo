@@ -4,7 +4,13 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 export const NEO_SEND_TIMEOUT_MS = 90_000;
 
-export type NeoDraft = { sessionId: string; text: string; images?: readonly MessageImage[] };
+export type NeoQuote = { author: 'You' | 'Neo'; text: string; anchor: string };
+export type NeoDraft = {
+  sessionId: string;
+  text: string;
+  images?: readonly MessageImage[];
+  quote?: NeoQuote;
+};
 type Submission = NeoDraft & { requestId: string };
 type PendingSubmission = { submission: Submission; flight?: Promise<IntakeReceipt> };
 type IntakeReceipt =
@@ -105,7 +111,7 @@ const thumbnailsMade = new WeakMap<Submission, Promise<NeoThumbnail[]>>();
 export function neoDraftThumbnails(submission: Submission): Promise<NeoThumbnail[]> {
   const made = thumbnailsMade.get(submission);
   if (made) return made;
-  const offset = submission.text.trim() ? 1 : 0;
+  const offset = submission.text.trim() || submission.quote ? 1 : 0;
   const making = Promise.all(
     (submission.images ?? []).map((image, index) =>
       neoPhotoThumbnail(image).then(
@@ -118,8 +124,24 @@ export function neoDraftThumbnails(submission: Submission): Promise<NeoThumbnail
   return making;
 }
 
+export function neoQuoteExcerpt(text: string): string {
+  const chars = Array.from(text.replace(/\r\n?|\u2028|\u2029/g, '\n').trim());
+  return chars.length > 500 ? `${chars.slice(0, 500).join('')}…` : chars.join('');
+}
+
+function neoDraftText({ text, quote }: NeoDraft): string {
+  if (!quote) return text;
+  const quoted = neoQuoteExcerpt(quote.text)
+    .split('\n')
+    .map((line) => (line ? `> ${line}` : '>'))
+    .join('\n');
+  const head = `Replying to ${quote.author === 'You' ? 'my earlier message' : quote.author}:\n${quoted}`;
+  return text ? `${head}\n\n${text}` : head;
+}
+
 export function neoDraftPayload(submission: Submission, thumbnails: readonly NeoThumbnail[] = []) {
-  const { sessionId, requestId, text, images } = submission;
+  const { sessionId, requestId, images } = submission;
+  const text = neoDraftText(submission);
   return {
     sessionId,
     requestId,
@@ -190,6 +212,9 @@ function sameDraft(submission: Submission, draft: NeoDraft): boolean {
   return (
     submission.sessionId === draft.sessionId &&
     submission.text === draft.text &&
+    submission.quote?.anchor === draft.quote?.anchor &&
+    submission.quote?.text === draft.quote?.text &&
+    submission.quote?.author === draft.quote?.author &&
     prior.length === current.length &&
     prior.every(
       (image, index) =>
@@ -218,7 +243,7 @@ export function createNeoIntakeClient(
     shown.set(submission.requestId, {
       requestId: submission.requestId,
       sessionId: submission.sessionId,
-      text: submission.text,
+      text: neoDraftText(submission),
       images: submission.images ?? [],
       createdAt: shown.get(submission.requestId)?.createdAt ?? new Date().toISOString(),
       state,
@@ -266,6 +291,7 @@ export function createNeoIntakeClient(
       entry = {
         submission: {
           ...draft,
+          ...(draft.quote ? { quote: { ...draft.quote } } : {}),
           images: draft.images?.map((image) => ({ ...image })),
           requestId: generateUUID(),
         },
@@ -285,8 +311,8 @@ export function createNeoIntakeClient(
     pending.get(entry.submission.sessionId)?.delete(entry);
     shown.delete(requestId);
     onPending([...shown.values()]);
-    const { sessionId, text, images } = entry.submission;
-    return { sessionId, text, images };
+    const { sessionId, text, images, quote } = entry.submission;
+    return { sessionId, text, images, ...(quote ? { quote } : {}) };
   }
   function settle(delivered: ReadonlySet<string>) {
     let changed = false;

@@ -10,7 +10,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { CONSULTATION_EXPIRED, CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { planNeoConsultationReturn } from './consultation-return-route.ts';
 
-type Reply = Pick<NeoConsultation, 'id' | 'originMessageId' | 'concernId' | 'status' | 'answer'>;
+type Reply = Pick<NeoConsultation, 'id' | 'originMessageId' | 'projectId' | 'status' | 'answer'>;
 
 function selectSettledReply(item: Reply): { value: Reply } | { reason: null } {
   return planNeoConsultationReturn(item, null, null, null) === 'legacy'
@@ -27,7 +27,7 @@ function presentReply(item: Reply): string {
         : item.answer === CONSULTATION_STOPPED
           ? NEO_CONSULTATION_SETTLED_STOPPED
           : NEO_CONSULTATION_SETTLED_FAILED;
-  return `${NEO_CONSULTATION_SETTLED}\n${JSON.stringify({ consultationId: item.id, originMessageId: item.originMessageId, concernId: item.concernId, status: item.status, answer: item.answer, replyGuidance })}`;
+  return `${NEO_CONSULTATION_SETTLED}\n${JSON.stringify({ consultationId: item.id, originMessageId: item.originMessageId, projectId: item.projectId, status: item.status, answer: item.answer, replyGuidance })}`;
 }
 
 export const neoConsultationReplyContent = (

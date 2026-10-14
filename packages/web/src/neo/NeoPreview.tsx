@@ -1,16 +1,16 @@
 import { generateUUID } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Button } from '../components/ui/Button.tsx';
-import { previewConcerns } from './preview-concerns.ts';
+import { previewProjects } from './preview-projects.ts';
 
 export function NeoPreview() {
-  const [concerns, setConcerns] = useState(previewConcerns);
+  const [projects, setProjects] = useState(previewProjects);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [decision, setDecision] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
   const heading = useRef<HTMLHeadingElement>(null);
-  const selected = concerns.find((concern) => concern.id === selectedId);
+  const selected = projects.find((project) => project.id === selectedId);
   const draftKey = selected?.id ?? 'neo';
   const draft = drafts[draftKey] ?? '';
 
@@ -18,7 +18,7 @@ export function NeoPreview() {
     heading.current?.focus();
   }, [selectedId]);
 
-  function openConcern(id: string | null) {
+  function openProject(id: string | null) {
     setSelectedId(id);
     setNotice('');
   }
@@ -27,15 +27,15 @@ export function NeoPreview() {
     const text = draft.trim();
     if (!text) return;
     if (selected) {
-      setConcerns((items) =>
+      setProjects((items) =>
         items.map((item) =>
           item.id === selected.id ? { ...item, context: [...item.context, text] } : item
         )
       );
-      setNotice('Added to this concern in the preview. No work was started.');
+      setNotice('Added to this project in the preview. No work was started.');
     } else {
       const id = generateUUID();
-      setConcerns((items) => [
+      setProjects((items) => [
         ...items,
         {
           id,
@@ -54,7 +54,7 @@ export function NeoPreview() {
 
   function chooseTiming(value: string) {
     setDecision(value);
-    setConcerns((items) =>
+    setProjects((items) =>
       items.map((item) =>
         item.id === 'launch'
           ? { ...item, context: [...item.context, `Preview decision: ${value}`] }
@@ -85,7 +85,7 @@ export function NeoPreview() {
         </p>
         {selected ? (
           <>
-            <Button variant="ghost" class="mb-5 -ml-4" onClick={() => openConcern(null)}>
+            <Button variant="ghost" class="mb-5 -ml-4" onClick={() => openProject(null)}>
               ← Back to Neo
             </Button>
             <p class="mb-3 text-xs uppercase tracking-[0.2em] text-fg-muted">
@@ -101,7 +101,7 @@ export function NeoPreview() {
             </h1>
             <p class="mt-5 max-w-xl text-lg leading-relaxed text-fg-muted">{selected.summary}</p>
             <section
-              aria-label="Concern context"
+              aria-label="Project context"
               class="my-8 rounded-2xl border border-line bg-surface p-6"
             >
               <h2 class="mb-4 text-sm font-medium">What I’m keeping in mind</h2>
@@ -148,7 +148,7 @@ export function NeoPreview() {
             </h1>
             <p class="mt-3 text-base leading-relaxed text-fg-muted">
               {decision
-                ? 'Your other concerns are still here. What’s on your mind?'
+                ? 'Your other projects are still here. What’s on your mind?'
                 : 'The launch timing. Everything else can stay in the background.'}
             </p>
             <section
@@ -157,7 +157,7 @@ export function NeoPreview() {
             >
               <button
                 type="button"
-                onClick={() => openConcern('launch')}
+                onClick={() => openProject('launch')}
                 class="mb-3 text-sm text-accent hover:underline focus-visible:outline-2"
               >
                 From your launch context ↗
@@ -173,7 +173,7 @@ export function NeoPreview() {
               </p>
               <div class="mt-5 flex flex-wrap gap-3">
                 {decision ? (
-                  <Button variant="ghost" onClick={() => openConcern('launch')}>
+                  <Button variant="ghost" onClick={() => openProject('launch')}>
                     See the updated context →
                   </Button>
                 ) : (
@@ -191,19 +191,19 @@ export function NeoPreview() {
                 )}
               </div>
             </section>
-            <details aria-label="Your concerns" class="mb-5 text-sm">
+            <details aria-label="Your projects" class="mb-5 text-sm">
               <summary class="cursor-pointer text-fg-muted">
-                {concerns.length} things I’m holding for you
+                {projects.length} things I’m holding for you
               </summary>
               <div class="divide-y divide-line">
-                {concerns.map((concern) => (
+                {projects.map((project) => (
                   <button
                     type="button"
-                    key={concern.id}
-                    onClick={() => openConcern(concern.id)}
+                    key={project.id}
+                    onClick={() => openProject(project.id)}
                     class="flex w-full items-center justify-between gap-5 rounded-lg px-1 py-4 text-left hover:bg-fill-soft focus-visible:outline-2 focus-visible:outline-accent"
                   >
-                    <span class="min-w-0 break-words text-sm">{concern.title}</span>
+                    <span class="min-w-0 break-words text-sm">{project.title}</span>
                     <span aria-hidden="true" class="shrink-0 text-fg-faint">
                       ↗
                     </span>

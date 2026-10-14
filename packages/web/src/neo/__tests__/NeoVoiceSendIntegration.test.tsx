@@ -3,6 +3,7 @@ import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
+import type { NeoQuote } from '../neo-intake.ts';
 
 type IntakeInput = { sessionId: string; requestId: string; content: unknown };
 
@@ -98,7 +99,7 @@ function makeStore(): SessionStore {
   } as unknown as SessionStore;
 }
 
-function renderComposer(draft = 'typed first') {
+function renderComposer(draft = 'typed first', quote?: NeoQuote) {
   const current = signal(draft);
   const onDraft = vi.fn((value: string) => {
     current.value = value;
@@ -107,25 +108,34 @@ function renderComposer(draft = 'typed first') {
     async () => ({ ok: true, requestId: 'typed-1', messageId: 'typed-1', created: true }) as const
   );
   const onError = vi.fn();
-  const onTranscript = vi.fn();
-  const view = render(
+  const onTranscript = vi.fn((text: string) => {
+    current.value = [current.value, text].filter(Boolean).join('\n');
+  });
+  const onCancelQuote = vi.fn();
+  const sessionStore = makeStore();
+  const composer = (selectedQuote?: NeoQuote) => (
     <NeoComposer
-      store={makeStore()}
+      store={sessionStore}
       sessionId="neo-1"
       draft={current.value}
       onDraft={onDraft}
       onError={onError}
       onTranscript={onTranscript}
       onSend={onSend}
+      quote={selectedQuote}
+      onCancelQuote={onCancelQuote}
     />
   );
+  const view = render(composer(quote));
   return {
     current,
     onDraft,
     onSend,
     onError,
     onTranscript,
-    rerender: () => view.rerender(view.container),
+    onCancelQuote,
+    unmount: view.unmount,
+    rerender: (selectedQuote?: NeoQuote) => view.rerender(composer(selectedQuote)),
   };
 }
 
@@ -167,6 +177,53 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('NeoComposer and NeoVoice send integration', () => {
+  it('sends the typed draft and transcript with the selected quote only through normal send', async () => {
+    const quote: NeoQuote = { author: 'Neo', text: 'Earlier answer', anchor: 'source' };
+    const { current, onTranscript, onSend, rerender } = renderComposer('typed first', quote);
+    const stop = await screen.findByRole('button', {
+      name: 'Stop recording and add it to your draft',
+    });
+    fireEvent.click(stop);
+    await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('spoken second'));
+    expect(asks()).toHaveLength(0);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(current.value).toBe('typed first\nspoken second');
+    rerender(quote);
+    const input = await screen.findByRole('textbox', { name: 'Message Neo' });
+    expect(input).toHaveProperty('value', 'typed first\nspoken second');
+    expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(
+      'Earlier answer'
+    );
+    fireEvent.click(buttonNamed('Send message'));
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend).toHaveBeenCalledWith({
+      sessionId: 'neo-1',
+      text: 'typed first\nspoken second',
+      images: [],
+      quote: { author: 'Neo', text: 'Earlier answer', anchor: 'source' },
+    });
+    expect(asks()).toHaveLength(0);
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumes ordinary voice send after cancelling the quote while recording', async () => {
+    const { onSend, onTranscript, onCancelQuote, rerender } = renderComposer('typed first', {
+      author: 'Neo',
+      text: 'Earlier answer',
+      anchor: 'source',
+    });
+    await screen.findByRole('button', { name: 'Stop recording and add it to your draft' });
+    fireEvent.click(buttonNamed('Remove reply'));
+    expect(onCancelQuote).toHaveBeenCalledTimes(1);
+    rerender();
+    await awaitRecordingComposer();
+    expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull();
+    fireEvent.click(sendControl());
+    await waitFor(() => expect(asks()).toHaveLength(1));
+    expect(asks()[0][1].input.content).toBe('typed first\nspoken second');
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onTranscript).not.toHaveBeenCalled();
+  });
   it('the existing Send control is the only send affordance and is enabled while recording', async () => {
     renderComposer();
     await awaitRecordingComposer();
@@ -229,6 +286,78 @@ describe('NeoComposer and NeoVoice send integration', () => {
     );
     await waitFor(() => expect(store.records.size).toBe(0));
   });
+
+  it.each([false, true])(
+    'keeps a newer draft when retrying an older voice payload (quoted: %s)',
+    async (quoted) => {
+      hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
+        if (method === 'operation.invoke') throw new Error('Request timeout: operation.invoke');
+        return defaultHub(method, payload);
+      });
+      const { current, onDraft, rerender } = renderComposer();
+      await awaitRecordingComposer();
+      fireEvent.click(sendControl());
+      await screen.findByTestId('resend-voice-audio');
+      const original = asks()[0][1].input;
+      expect(store.records.get(original.requestId)?.sendText).toBe('typed first\nspoken second');
+      current.value = 'new reply';
+      rerender(quoted ? { author: 'Neo', text: 'New source', anchor: 'new-source' } : undefined);
+      hubRequest.mockImplementation(defaultHub);
+      fireEvent.click(screen.getByTestId('resend-voice-audio'));
+      await waitFor(() => expect(store.records.size).toBe(0));
+      expect(asks()).toHaveLength(2);
+      expect(asks()[1][1].input).toEqual(original);
+      expect(current.value).toBe('new reply');
+      if (quoted) {
+        expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(
+          'New source'
+        );
+      } else {
+        expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull();
+      }
+      expect(onDraft).not.toHaveBeenCalledWith('');
+    }
+  );
+
+  it.each(['quote', 'unmount'])(
+    'keeps the typed draft after %s during an accepted voice request',
+    async (change) => {
+      let accept: () => void = () => {};
+      hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
+        if (method !== 'operation.invoke') return defaultHub(method, payload);
+        const { input } = payload as { input: IntakeInput };
+        return new Promise((resolve) => {
+          accept = () =>
+            resolve({
+              ok: true,
+              requestId: input.requestId,
+              messageId: input.requestId,
+              created: true,
+            });
+        });
+      });
+      const { current, onDraft, rerender, unmount } = renderComposer();
+      await awaitRecordingComposer();
+      fireEvent.click(sendControl());
+      await waitFor(() => expect(asks()).toHaveLength(1));
+      expect(asks()[0][1].input.content).toBe('typed first\nspoken second');
+      if (change === 'quote') {
+        rerender({ author: 'Neo', text: 'Selected while sending', anchor: 'new-source' });
+      } else {
+        unmount();
+      }
+      accept();
+      await waitFor(() => expect(store.records.size).toBe(0));
+      expect(asks()).toHaveLength(1);
+      expect(current.value).toBe('typed first');
+      if (change === 'quote') {
+        expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(
+          'Selected while sending'
+        );
+      }
+      expect(onDraft).not.toHaveBeenCalledWith('');
+    }
+  );
 
   it('with attachments staged, the arrow adds the transcript to the draft instead of sending', async () => {
     attachmentFiles.current = [{ id: 'f1', kind: 'text', name: 'notes.txt', text: 'hi' }];

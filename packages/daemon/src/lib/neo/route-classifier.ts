@@ -117,7 +117,7 @@ export function buildNeoRoutePrompt(
   candidates: readonly NeoHolder[],
   context: string
 ): string {
-  const ids = ['main', ...candidates.map((holder) => holder.concernId)].join(', ');
+  const ids = ['main', ...candidates.map((holder) => holder.projectId)].join(', ');
   return fillPrompt(NEO_ROUTE_PROMPT, {
     context,
     message: neoExcerpt(text, ASK_CHARS),
@@ -155,7 +155,7 @@ export function readNeoRouteDecision(
       : ''
     : plainRouteId(raw);
   const decision =
-    id === 'main' ? 'main' : (candidates.find((holder) => holder.concernId === id) ?? null);
+    id === 'main' ? 'main' : (candidates.find((holder) => holder.projectId === id) ?? null);
   if (!decision) return null;
   const confidence =
     typeof object?.confidence === 'number' && Number.isFinite(object.confidence)

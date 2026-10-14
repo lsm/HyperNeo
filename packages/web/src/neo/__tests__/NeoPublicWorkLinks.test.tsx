@@ -33,7 +33,7 @@ const root = `neo:${conversationId}`;
 const work = (status: NeoWork['status'] = 'proposed'): NeoWork => ({
   id: 'garden',
   requestKey: 'garden',
-  concernId: null,
+  projectId: null,
   originSessionId: root,
   originMessageId: 'ask',
   title: 'Fictional flower review',
@@ -49,7 +49,7 @@ const snapshot = (items: NeoWork[]): NeoSnapshot => ({
   cards: [],
   askViews: [],
   sessionId: root,
-  concerns: [
+  projects: [
     {
       id: 'garden',
       title: 'Fictional garden',
@@ -60,7 +60,7 @@ const snapshot = (items: NeoWork[]): NeoSnapshot => ({
       updatedAt: 1,
     },
   ],
-  publicAuthorBindings: [{ kind: 'concern', concernId: 'garden', sessionId: 'holder' }],
+  publicAuthorBindings: [{ kind: 'project', projectId: 'garden', sessionId: 'holder' }],
   work: items,
   consultations: [],
 });
@@ -73,7 +73,7 @@ const publication: NeoPublication = {
   fullText: 'Full fictional response',
   links: [
     { kind: 'work', id: 'garden', label: 'Flower work' },
-    { kind: 'concern', id: 'garden', label: 'Garden context' },
+    { kind: 'project', id: 'garden', label: 'Garden context' },
     { kind: 'consultation', id: 'garden', label: 'Context return' },
     { kind: 'work', id: 'missing', label: 'Unavailable work' },
   ],
@@ -130,7 +130,7 @@ afterEach(() => {
 
 describe('public work reference navigation', () => {
   it.each(['proposed', 'queued', 'reported', 'failed', 'cancelled'] as const)(
-    'opens a current %s work id and drops matching concern or consultation links',
+    'opens a current %s work id and drops matching project or consultation links',
     (status) => {
       const openWork = vi.fn();
       render(

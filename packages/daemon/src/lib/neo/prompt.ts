@@ -33,21 +33,21 @@ function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
 }
 
 export function neoPrompt(
-  concernId: string | null,
+  projectId: string | null,
   packs: readonly NeoPackBrief[] = neoSettingsPackBriefs()
 ): string {
   return fillPrompt(NEO_SYSTEM_PROMPT, {
     capabilities: NEO_CAPABILITIES_BRIEFING,
-    root_clarify: concernId ? '' : NEO_ROOT_CLARIFY,
-    role: concernId
-      ? fillPrompt(NEO_HOLDER_ROLE, { concern_id: JSON.stringify(concernId) })
+    root_clarify: projectId ? '' : NEO_ROOT_CLARIFY,
+    role: projectId
+      ? fillPrompt(NEO_HOLDER_ROLE, { project_id: JSON.stringify(projectId) })
       : NEO_ROOT_ROLE,
-    snapshot_scope: concernId ? NEO_HOLDER_SNAPSHOT_SCOPE : NEO_ROOT_SNAPSHOT_SCOPE,
-    rule_save: concernId ? '' : ` ${NEO_ROOT_RULE_SAVE}`,
+    snapshot_scope: projectId ? NEO_HOLDER_SNAPSHOT_SCOPE : NEO_ROOT_SNAPSHOT_SCOPE,
+    rule_save: projectId ? '' : ` ${NEO_ROOT_RULE_SAVE}`,
     packs: neoPackBriefing(packs),
     done_check_steps: NEO_DONE_CHECK_STEPS,
-    operations: concernId ? NEO_HOLDER_OPERATIONS : NEO_ROOT_OPERATIONS,
-    consultation_return: concernId ? NEO_HOLDER_CONSULTATION_RETURN : NEO_ROOT_CONSULTATION_RETURN,
+    operations: projectId ? NEO_HOLDER_OPERATIONS : NEO_ROOT_OPERATIONS,
+    consultation_return: projectId ? NEO_HOLDER_CONSULTATION_RETURN : NEO_ROOT_CONSULTATION_RETURN,
     response_focus: NEO_RESPONSE_FOCUS_BRIEFING,
     look_up: NEO_LOOK_UP,
   });

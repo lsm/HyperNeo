@@ -1,3 +1,4 @@
+import { mirrorNeoWorkspaceProjects } from '../../neo/project-mirror.ts';
 import { existsSync, mkdirSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +18,7 @@ import {
   type ClaudeDesktopAdapterDeps,
   type ClaudeRecordCache,
 } from '../../drivers/claude-desktop-adapter.ts';
+import { readHyperneoSdkSessions } from '../../drivers/claude-feed.ts';
 import { createClaudeCodeAdapter } from '../../drivers/claude-code-adapter.ts';
 import { withClaudeRemoteControl } from '../../drivers/claude-remote-control.ts';
 import { connectCodexAppServer } from '../../drivers/codex-app-server.ts';
@@ -33,7 +35,7 @@ import {
   spaceTaskCaller,
   taskOperationRejection,
 } from '../../drivers/space-adapter.ts';
-import type { WorkAdapter } from '../../drivers/types.ts';
+import type { PlaceGroup, WorkAdapter } from '../../drivers/types.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { readNeoSessionLoad } from '../../neo/session-load.ts';
@@ -139,12 +141,15 @@ const CLAUDE_DESKTOP_SESSIONS = join(
 );
 
 function claudeCodeAdapters(
-  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>
+  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
+  ownedSessions: () => ReadonlySet<string>
 ): WorkAdapter[] {
   if (!existsSync(join(homedir(), '.claude', 'projects'))) return [];
   const cache: ClaudeRecordCache = new Map();
   return [
     createClaudeCodeAdapter({
+      projectsDir: join(homedir(), '.claude', 'projects'),
+      ownedSessions,
       machine: hostname(),
       searchChats: (text) => searchChats(text, ['claude']),
       desktopSessions: async () =>
@@ -339,6 +344,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   const ownChats = (text: string) => searchChats(text, ['message', 'task']);
   const adapters = [
     createHyperneoAdapter({
+      projects: () => context.deps.db.workspaceHistory.projects(),
       db,
       machine,
       searchChats: ownChats,
@@ -369,12 +375,20 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     }),
     ...codexDesktopAdapters(searchChats),
     ...claudeDesktopAdapters(searchChats),
-    ...claudeCodeAdapters(searchChats),
+    ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db())),
     ...acpAgentAdapters(
       () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId))
     ),
   ];
-  const deps = { adapters: () => adapters, remote: remoteDaemons, daemonName: machine };
+  const deps = {
+    adapters: () => adapters,
+    remote: remoteDaemons,
+    daemonName: machine,
+    mirrorProjects: (groups: readonly PlaceGroup[]) => {
+      if (mirrorNeoWorkspaceProjects(db(), groups))
+        context.deps.messageHub.event('neo.changed', {});
+    },
+  };
   const readTurns = (
     sessionId: string,
     around: string | undefined,

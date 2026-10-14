@@ -2,7 +2,7 @@ import type { NeoInputOrigin } from './neo-message.ts';
 
 export interface NeoPublicationLink {
   readonly label: string;
-  readonly kind: 'concern' | 'work' | 'consultation';
+  readonly kind: 'project' | 'work' | 'consultation';
   readonly id: string;
 }
 

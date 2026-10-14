@@ -36,7 +36,7 @@ const m1 = '30000000-0000-4000-8000-000000000001';
 const ask: NeoAsk = {
   id: 'a1',
   requestKey: 'k1',
-  concernId: null,
+  projectId: null,
   originSessionId: root,
   originMessageId: 'm0',
   title: 'Fix the composer',
@@ -273,7 +273,7 @@ describe('NeoService notification triggers', () => {
       {
         id: 'a1',
         requestKey: 'k1',
-        concernId: null,
+        projectId: null,
         originSessionId: root,
         originMessageId: m0,
         title: 'Fix the composer',
@@ -301,7 +301,7 @@ describe('NeoService notification triggers', () => {
       new InternalEventBus<DaemonInternalEventMap>()
     );
     db.createSession(createTestSession(root));
-    service.repo.reserveBinding({ sessionId: root, kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     human(m0, '把输入框修好');
   });
   afterEach(() => {

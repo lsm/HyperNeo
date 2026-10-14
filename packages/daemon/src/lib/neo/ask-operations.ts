@@ -1,4 +1,4 @@
-import type { NeoConcern, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
   type NeoAsk,
@@ -43,7 +43,7 @@ type Gate<T> = { value: T } | { reason: Rejection };
 type NeoAdmit = (
   caller: OperationCaller,
   name: string,
-  concernId?: string | null
+  projectId?: string | null
 ) => Gate<OperationCaller>;
 type AskReceipt = { ok: true; ask: NeoAsk };
 type AskOpened = AskReceipt & { packBriefing?: string };
@@ -61,7 +61,7 @@ const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const NeoAskSchema = z.object({
   id: z.string(),
   requestKey: z.string(),
-  concernId: z.string().nullable(),
+  projectId: z.string().nullable(),
   originSessionId: z.string(),
   originMessageId: z.string().nullable(),
   title: z.string(),
@@ -87,7 +87,7 @@ export const NeoAskSchema = z.object({
         text: z.string(),
         state: z.enum(['pending', 'met', 'needs_you', 'reported']),
         evidence: z.string().nullable(),
-        check: z.enum(NEO_ASK_CHECK_KINDS).nullable(),
+        check: z.string().min(1).nullable(),
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
         removed: z.boolean(),
         addedAt: z.number().nullable(),
@@ -130,7 +130,7 @@ const Item = z.object({
 const Open = z
   .object({
     requestKey: z.string().min(1).max(160),
-    concernId: z.string().min(1).nullable().default(null),
+    projectId: z.string().min(1).nullable().default(null),
     title: z.string().trim().min(1).max(160),
     ask: z.string().trim().min(1).max(4000),
     doneWhen: z.string().trim().min(1).max(2000).optional(),
@@ -254,15 +254,15 @@ export function requireNeoAskLive(ask: NeoAsk, hint = ''): Gate<NeoAsk> {
     : { value: ask };
 }
 
-type WorkAskInput = { askId?: string; concernId: string | null };
+type WorkAskInput = { askId?: string; projectId: string | null };
 
 export function requireNeoWorkAsk(
   ask: NeoAsk | null,
   input: WorkAskInput,
   caller: OperationCaller
 ): Gate<OperationCaller> {
-  return input.askId && ask && ask.concernId !== input.concernId
-    ? { reason: fail('This ask belongs to another concern; propose under its concernId.') }
+  return input.askId && ask && ask.projectId !== input.projectId
+    ? { reason: fail('This ask belongs to another project; propose under its projectId.') }
     : { value: caller };
 }
 
@@ -302,7 +302,7 @@ export function planNeoCardAsk(
   input: {
     askId?: string;
     requestKey: string;
-    concernId: string | null;
+    projectId: string | null;
     title: string;
     goal?: string;
     doneWhen?: string;
@@ -312,7 +312,7 @@ export function planNeoCardAsk(
   if (input.askId || !input.doneWhen) return null;
   return {
     requestKey: `card:${origin.originSessionId}:${input.requestKey}`,
-    concernId: input.concernId,
+    projectId: input.projectId,
     originSessionId: origin.originSessionId,
     originMessageId: origin.originMessageId,
     title: input.title,
@@ -348,12 +348,12 @@ export function projectNeoSnapshotAsks(
   }));
 }
 
-export function requireNeoAskConcern<T>(
-  input: { concernId: string | null },
-  found: { concern: NeoConcern | null },
+export function requireNeoAskProject<T>(
+  input: { projectId: string | null },
+  found: { project: NeoProject | null },
   value: T
 ): Gate<T> {
-  return input.concernId && !found.concern ? { reason: fail('Concern not found.') } : { value };
+  return input.projectId && !found.project ? { reason: fail('Project not found.') } : { value };
 }
 
 export function planNeoAskItems(input: {
@@ -418,6 +418,17 @@ function githubRefForms(url: string): RegExp[] {
   ];
 }
 
+const NEO_ASK_TITLE_MIN = 4;
+
+export function neoAskTitleNamedIn(text: string, rawTitle: string): boolean {
+  const title = rawTitle.trim();
+  if ([...title].length < NEO_ASK_TITLE_MIN) return false;
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const before = /^\w/.test(title) ? '(?<!\\w)' : '';
+  const after = /\w$/.test(title) ? '(?!\\w)' : '';
+  return new RegExp(`${before}${escaped}${after}`).test(text);
+}
+
 export function neoAskNamedBy(said: readonly string[], ask: NeoAskNameable): boolean {
   const text = said.join('\n');
   const ids = [ask.id, ...ask.cardIds].map((id) => id.toLowerCase());
@@ -425,7 +436,11 @@ export function neoAskNamedBy(said: readonly string[], ask: NeoAskNameable): boo
     const prefix = token.toLowerCase().replace(/-+$/, '');
     return ids.some((id) => id.startsWith(prefix));
   });
-  return named || ask.refs.some((url) => githubRefForms(url).some((form) => form.test(text)));
+  return (
+    named ||
+    neoAskTitleNamedIn(text, ask.title) ||
+    ask.refs.some((url) => githubRefForms(url).some((form) => form.test(text)))
+  );
 }
 
 export function requireNeoAskUnnamed(
@@ -449,7 +464,7 @@ export function requireNeoAskReceipt(
 ): Gate<AskReceipt> {
   const { ask } = opened;
   if (!ask) return { reason: fail('Asks are not available on this daemon yet.') };
-  const same = (['concernId', 'title', 'ask', 'doneWhen', 'doneSource'] as const).every(
+  const same = (['projectId', 'title', 'ask', 'doneWhen', 'doneSource'] as const).every(
     (field) => ask[field] === input[field]
   );
   return same && (ask.pack ?? null) === (input.pack ?? null)
@@ -938,7 +953,7 @@ export function createNeoAskOperations(
     .pipe((askId: string) => ({ ask: service.askRecords.get(askId) }), 'askId', 'current')
     .pipe(
       (caller: OperationCaller, current: { ask: NeoAsk | null }, name: string) =>
-        admit(caller, name, current.ask?.concernId),
+        admit(caller, name, current.ask?.projectId),
       ['caller', 'current', 'name'],
       'result:ask'
     )
@@ -962,18 +977,18 @@ export function createNeoAskOperations(
     .input(['input', 'caller'])
     .pipe(
       (input: z.infer<typeof Open>, caller: OperationCaller) =>
-        admit(caller, 'neo.ask.open', input.concernId),
+        admit(caller, 'neo.ask.open', input.projectId),
       ['input', 'caller'],
       'result:admission'
     )
     .pipe(
       (input: z.infer<typeof Open>) => ({
-        concern: input.concernId ? service.repo.getConcern(input.concernId) : null,
+        project: input.projectId ? service.repo.getProject(input.projectId) : null,
       }),
       'input',
-      'concern'
+      'project'
     )
-    .pipe(requireNeoAskConcern, ['input', 'concern', 'admission'], 'result:admission')
+    .pipe(requireNeoAskProject, ['input', 'project', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Open>) => requireNeoAskPack(input.pack, service.packs()),
       'input',
@@ -984,7 +999,7 @@ export function createNeoAskOperations(
       (input: z.infer<typeof Open>, caller: OperationCaller) =>
         admitNeoWorkOrigin(
           caller,
-          caller.sessionId ?? service.repo.getBindingForConcern(input.concernId)?.sessionId
+          caller.sessionId ?? service.repo.getBindingForProject(input.projectId)?.sessionId
         ),
       ['input', 'caller'],
       'result:admission'
@@ -1014,6 +1029,20 @@ export function createNeoAskOperations(
       'result:admission'
     )
     .pipe(planNeoAskItems, 'input', 'checklist')
+    .pipe(
+      (
+        checklist: ReturnType<typeof planNeoAskItems>,
+        origin: NeoWorkOrigin,
+        input: z.infer<typeof Open>
+      ) => {
+        if (service.askRecords.forRequest(`${origin.originSessionId}:${input.requestKey}`))
+          return { value: origin };
+        const checked = service.outcomeCheckPolicy.requireChecks(checklist.items);
+        return 'reason' in checked ? checked : { value: origin };
+      },
+      ['checklist', 'admission', 'input'],
+      'result:admission'
+    )
     .pipe(
       (input: z.infer<typeof Open>, checklist: ReturnType<typeof planNeoAskItems>): Opening => {
         const { doneItems: _items, ...rest } = input;
@@ -1070,7 +1099,7 @@ export function createNeoAskOperations(
     )
     .pipe(
       (caller: OperationCaller, current: { ask: NeoAsk | null }) =>
-        admit(caller, 'neo.ask.settle', current.ask?.concernId),
+        admit(caller, 'neo.ask.settle', current.ask?.projectId),
       ['caller', 'current'],
       'result:admission'
     )
@@ -1369,6 +1398,24 @@ export function createNeoAskOperations(
     )
     .pipe(requireNeoAskEdit, ['input', 'admission'], 'result:admission')
     .pipe(
+      (input: z.infer<typeof Edit>, ask: NeoAsk) => {
+        const tracked = new Map<string, NeoAskItem>();
+        for (const change of input.track) {
+          const item =
+            tracked.get(change.itemId) ??
+            ask.doneItems?.find((entry) => entry.id === change.itemId);
+          if (item) tracked.set(item.id, { ...item, check: change.check ?? item.check });
+        }
+        const checked = service.outcomeCheckPolicy.requireChecks([
+          ...input.add,
+          ...tracked.values(),
+        ]);
+        return 'reason' in checked ? checked : { value: ask };
+      },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (input: z.infer<typeof Edit>, ask: NeoAsk, caller: OperationCaller) =>
         requireNeoAskDecisionKept(ask, caller, input.remove, ask),
       ['input', 'admission', 'caller'],
@@ -1444,7 +1491,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps. Reuse requestKey only to retry this input.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; new merge/deploy outcomes require the matching coding.pr_merged/coding.deployed check in doneItems; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps. Reuse requestKey only to retry this input.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1489,7 +1536,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.edit',
       description:
-        "Change an open ask's done checklist when what done means changes: add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply, or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
+        "Change an open ask's done checklist when what done means changes: add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply, or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. New outcomes and changed tracking require the matching coding.pr_merged/coding.deployed check for PR merge or deploy outcomes; untouched legacy items stay unchanged. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
       inputSchema: Edit,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

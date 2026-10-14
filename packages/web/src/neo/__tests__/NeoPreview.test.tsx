@@ -4,12 +4,12 @@ import { NeoPreview } from '../NeoPreview.tsx';
 
 afterEach(() => cleanup());
 
-function openConcern(title: string) {
-  const concerns = screen.getByLabelText('Your concerns') as HTMLDetailsElement;
-  if (!concerns.open) {
-    fireEvent.click(within(concerns).getByText(/things I’m holding for you/));
+function openProject(title: string) {
+  const projects = screen.getByLabelText('Your projects') as HTMLDetailsElement;
+  if (!projects.open) {
+    fireEvent.click(within(projects).getByText(/things I’m holding for you/));
   }
-  fireEvent.click(within(concerns).getByRole('button', { name: title }));
+  fireEvent.click(within(projects).getByRole('button', { name: title }));
 }
 
 function returnToNeo() {
@@ -26,56 +26,56 @@ describe('NeoPreview', () => {
     expect(label?.textContent).toContain('Changes reset on reload.');
     expect(screen.getByText('Preview only · stays on this page')).toBeTruthy();
 
-    const concerns = screen.getByLabelText('Your concerns') as HTMLDetailsElement;
-    expect(concerns.open).toBe(false);
-    expect(within(concerns).getByText('3 things I’m holding for you')).toBeTruthy();
+    const projects = screen.getByLabelText('Your projects') as HTMLDetailsElement;
+    expect(projects.open).toBe(false);
+    expect(within(projects).getByText('3 things I’m holding for you')).toBeTruthy();
   });
 
-  it('drills into a concern and returns to the Neo overview', () => {
+  it('drills into a project and returns to the Neo overview', () => {
     render(<NeoPreview />);
 
-    openConcern('Finding our next home');
+    openProject('Finding our next home');
 
     expect(screen.getByRole('heading', { level: 1, name: 'Finding our next home' })).toBeTruthy();
-    expect(screen.getByRole('region', { name: 'Concern context' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Project context' })).toBeTruthy();
 
     returnToNeo();
 
     expect(
       screen.getByRole('heading', { level: 1, name: 'One thing needs your call.' })
     ).toBeTruthy();
-    expect((screen.getByLabelText('Your concerns') as HTMLDetailsElement).open).toBe(false);
+    expect((screen.getByLabelText('Your projects') as HTMLDetailsElement).open).toBe(false);
   });
 
-  it('keeps added context isolated to its concern', () => {
+  it('keeps added context isolated to its project', () => {
     render(<NeoPreview />);
 
-    openConcern('Finding our next home');
+    openProject('Finding our next home');
     const note = 'The new place must allow cats.';
     fireEvent.input(screen.getByRole('textbox'), { target: { value: note } });
     fireEvent.click(screen.getByRole('button', { name: /Add context/ }));
 
     expect(
-      within(screen.getByRole('region', { name: 'Concern context' })).getByText(note)
+      within(screen.getByRole('region', { name: 'Project context' })).getByText(note)
     ).toBeTruthy();
 
     returnToNeo();
-    openConcern('The September launch');
+    openProject('The September launch');
 
     expect(screen.queryByText(note)).toBeNull();
 
     returnToNeo();
-    openConcern('Finding our next home');
+    openProject('Finding our next home');
 
     expect(
-      within(screen.getByRole('region', { name: 'Concern context' })).getByText(note)
+      within(screen.getByRole('region', { name: 'Project context' })).getByText(note)
     ).toBeTruthy();
   });
 
-  it('preserves independent drafts while moving between concerns and the overview', () => {
+  it('preserves independent drafts while moving between projects and the overview', () => {
     render(<NeoPreview />);
 
-    openConcern('The September launch');
+    openProject('The September launch');
     fireEvent.input(screen.getByRole('textbox'), {
       target: { value: 'Launch draft that is not submitted' },
     });
@@ -84,7 +84,7 @@ describe('NeoPreview', () => {
     fireEvent.input(screen.getByRole('textbox'), {
       target: { value: 'Overview draft that is not submitted' },
     });
-    openConcern('Finding our next home');
+    openProject('Finding our next home');
     fireEvent.input(screen.getByRole('textbox'), {
       target: { value: 'Home draft that is not submitted' },
     });
@@ -94,13 +94,13 @@ describe('NeoPreview', () => {
       'Overview draft that is not submitted'
     );
 
-    openConcern('The September launch');
+    openProject('The September launch');
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(
       'Launch draft that is not submitted'
     );
 
     returnToNeo();
-    openConcern('Finding our next home');
+    openProject('Finding our next home');
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(
       'Home draft that is not submitted'
     );
@@ -138,9 +138,9 @@ describe('NeoPreview', () => {
     returnToNeo();
 
     expect(
-      within(screen.getByLabelText('Your concerns')).getByText('4 things I’m holding for you')
+      within(screen.getByLabelText('Your projects')).getByText('4 things I’m holding for you')
     ).toBeTruthy();
-    openConcern(ask);
+    openProject(ask);
     expect(screen.getByRole('heading', { level: 1, name: ask })).toBeTruthy();
   });
 
@@ -159,14 +159,14 @@ describe('NeoPreview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'See the updated context →' }));
     const decision = 'Preview decision: Give testing until Monday.';
     expect(
-      within(screen.getByRole('region', { name: 'Concern context' })).getByText(decision)
+      within(screen.getByRole('region', { name: 'Project context' })).getByText(decision)
     ).toBeTruthy();
 
     returnToNeo();
     fireEvent.click(screen.getByRole('button', { name: 'From your launch context ↗' }));
 
     expect(
-      within(screen.getByRole('region', { name: 'Concern context' })).getByText(decision)
+      within(screen.getByRole('region', { name: 'Project context' })).getByText(decision)
     ).toBeTruthy();
   });
 });

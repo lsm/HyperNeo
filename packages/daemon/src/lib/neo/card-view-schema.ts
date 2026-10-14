@@ -19,23 +19,25 @@ const OpenTarget = z.object({
   daemon: z.string().nullable(),
 } satisfies ZodShape<NeoCardOpenTarget>);
 
+const CardPhase = z.enum([
+  'proposed',
+  'handed',
+  'running',
+  'needs_you',
+  'checking',
+  'abandoned',
+  'stopped',
+  'pr_open',
+  'pr_setback',
+  'merged',
+  'reported',
+  'failed',
+  'cancelled',
+]);
+
 export const NeoCardViewSchema = z.object({
   workId: z.string(),
-  phase: z.enum([
-    'proposed',
-    'handed',
-    'running',
-    'needs_you',
-    'checking',
-    'abandoned',
-    'stopped',
-    'pr_open',
-    'pr_setback',
-    'merged',
-    'reported',
-    'failed',
-    'cancelled',
-  ]),
+  phase: CardPhase,
   group: CardGroup,
   tone: z.enum(['accent', 'warning', 'success']),
   label: z.string(),
@@ -131,6 +133,14 @@ export const NeoAskStateViewSchema = z.object({
   status: z.string(),
   outcome: z.string().nullable(),
   items: z.array(z.object({ id: z.string(), state: z.string(), text: z.string().optional() })),
-  cards: z.array(z.object({ id: z.string(), title: z.string(), status: z.string() })),
+  cards: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      status: z.string(),
+      phase: CardPhase.nullable(),
+      pr: z.enum(['done', 'failed', 'waiting', 'ready', 'pending']).nullable(),
+    })
+  ),
   humanActions: z.array(HumanAction),
 });

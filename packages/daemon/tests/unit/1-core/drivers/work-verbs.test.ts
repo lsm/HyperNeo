@@ -64,11 +64,12 @@ async function call(
   name: string,
   input: unknown,
   invoke: Invoke = async () => ({}),
-  caller: OperationCaller = { source: 'rpc' }
+  caller: OperationCaller = { source: 'rpc' },
+  adapters: readonly WorkAdapter[] = [hyperneo, desktop]
 ) {
   const registry = createOperationRegistry(
     createWorkVerbOperations({
-      adapters: () => [hyperneo, desktop],
+      adapters: () => adapters,
       remote: { list: () => [{ daemonId: 'laptop' }], invoke },
       daemonName: 'imac',
     })
@@ -97,6 +98,168 @@ describe('work verb operations', () => {
     expect(
       await call('work.start', { adapter: 'hyperneo', place, title: 'font size', message: 'go' })
     ).toMatchObject({ ok: true, value: { title: 'font size' } });
+  });
+
+  test('passes explicit effort only to an opted-in local adapter and retains its receipt', async () => {
+    const received: unknown[] = [];
+    const capable: WorkAdapter = {
+      ...hyperneo,
+      id: 'codex-desktop',
+      supportsStartEffort: true,
+      start: async (request) => {
+        received.push(request);
+        return {
+          ok: true,
+          value: { ...summary('codex-desktop', 't1'), model: 'gpt-6.1-sol', effort: 'medium' },
+        };
+      },
+    };
+    expect(
+      await call(
+        'work.start',
+        {
+          adapter: capable.id,
+          place,
+          title: 't',
+          message: 'm',
+          model: 'sol 6.1',
+          effort: ' medium ',
+        },
+        undefined,
+        undefined,
+        [capable]
+      )
+    ).toMatchObject({
+      ok: true,
+      value: { model: 'gpt-6.1-sol', effort: 'medium' },
+    });
+    expect(received).toEqual([expect.objectContaining({ model: 'sol 6.1', effort: 'medium' })]);
+  });
+
+  test.each([false, undefined])(
+    'refuses effort before executing an adapter with support %s',
+    async (supportsStartEffort) => {
+      let starts = 0;
+      const unsupported: WorkAdapter = {
+        ...hyperneo,
+        supportsStartEffort,
+        start: async () => {
+          starts++;
+          return { ok: true, value: summary('hyperneo', 's1') };
+        },
+      };
+      expect(
+        await call(
+          'work.start',
+          {
+            adapter: unsupported.id,
+            place,
+            title: 't',
+            message: 'm',
+            effort: 'medium',
+          },
+          undefined,
+          undefined,
+          [unsupported]
+        )
+      ).toMatchObject({ ok: false, reason: 'unsupported_effort' });
+      expect(starts).toBe(0);
+    }
+  );
+
+  test('refuses unverified remote effort without forwarding even when the local adapter supports it', async () => {
+    let forwarded = 0;
+    const remote: Invoke = async () => {
+      forwarded++;
+      return { ok: true, value: summary('codex-desktop', 't1') };
+    };
+    expect(
+      await call(
+        'work.start',
+        {
+          adapter: 'codex-desktop',
+          place: { ...place, daemon: 'laptop' },
+          title: 't',
+          message: 'm',
+          effort: 'medium',
+        },
+        remote,
+        undefined,
+        [{ ...hyperneo, id: 'codex-desktop', supportsStartEffort: true }]
+      )
+    ).toMatchObject({
+      ok: false,
+      reason: 'unsupported_effort',
+    });
+    expect(forwarded).toBe(0);
+  });
+
+  test.each([undefined, 'medium'])(
+    'refuses an unverified remote model with effort %s before forwarding',
+    async (effort) => {
+      let forwarded = 0;
+      let started = 0;
+      const capable: WorkAdapter = {
+        ...hyperneo,
+        id: 'codex-desktop',
+        supportsStartEffort: true,
+        start: async () => {
+          started++;
+          return { ok: true, value: summary('codex-desktop', 'local') };
+        },
+      };
+      expect(
+        await call(
+          'work.start',
+          {
+            adapter: capable.id,
+            place: { ...place, daemon: 'laptop' },
+            title: 't',
+            message: 'm',
+            model: 'gpt-6.1-sol',
+            ...(effort ? { effort } : {}),
+          },
+          async () => {
+            forwarded++;
+            return { ok: true, value: summary('codex-desktop', 'remote') };
+          },
+          undefined,
+          [capable]
+        )
+      ).toMatchObject({ ok: false, reason: 'unsupported_model' });
+      expect(forwarded).toBe(0);
+      expect(started).toBe(0);
+    }
+  );
+
+  test('validates effort input before invoking the driver', async () => {
+    let starts = 0;
+    const capable: WorkAdapter = {
+      ...hyperneo,
+      supportsStartEffort: true,
+      start: async () => {
+        starts++;
+        return { ok: true, value: summary('hyperneo', 's1') };
+      },
+    };
+    for (const effort of [' ', 'x'.repeat(101), 42]) {
+      await expect(
+        call(
+          'work.start',
+          {
+            adapter: capable.id,
+            place,
+            title: 't',
+            message: 'm',
+            effort,
+          },
+          undefined,
+          undefined,
+          [capable]
+        )
+      ).rejects.toThrow();
+    }
+    expect(starts).toBe(0);
   });
 
   test('tells the adapter who is sending', async () => {

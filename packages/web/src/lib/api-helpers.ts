@@ -383,6 +383,14 @@ export async function getWorkspaceHistory(): Promise<WorkspaceHistoryEntry[]> {
   return entries;
 }
 
+export async function addFolderToProject(projectPath: string, path: string): Promise<void> {
+  const result = await getHubOrThrow().request<{ accepted: boolean; reason?: string }>(
+    'operation.invoke',
+    { name: 'work.project.addFolder', input: { projectPath, path } }
+  );
+  if (!result.accepted) throw new Error(result.reason ?? 'Could not add folder to project.');
+}
+
 export async function addWorkspaceToHistory(path: string): Promise<WorkspaceHistoryEntry> {
   const hub = getHubOrThrow();
   const { entry } = await hub.request<WorkspaceAddResponse>('workspace.add', { path });

@@ -1,4 +1,4 @@
-export interface PreviewConcern {
+export interface PreviewProject {
   id: string;
   title: string;
   summary: string;
@@ -6,7 +6,7 @@ export interface PreviewConcern {
   sources: string[];
 }
 
-export const previewConcerns: PreviewConcern[] = [
+export const previewProjects: PreviewProject[] = [
   {
     id: 'launch',
     title: 'The September launch',

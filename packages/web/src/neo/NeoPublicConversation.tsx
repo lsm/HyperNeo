@@ -14,7 +14,7 @@ import { messageTime } from './NeoMessage.tsx';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 import { neoMessageAnchor } from './reply-context.ts';
 import { neoAppLabel, neoSessionLink } from './work-driver.ts';
-import type { NeoPendingAsk } from './neo-intake.ts';
+import type { NeoPendingAsk, NeoQuote } from './neo-intake.ts';
 import type {
   NeoPublicConversation as Conversation,
   NeoPublicEntry,
@@ -274,12 +274,14 @@ function PublicEntry({
   onOpenScene,
   canOpenScene,
   onEditUndelivered,
-  topics,
+  projects,
   forwarders,
+  onQuote,
 }: {
   entry: NeoPublicEntry;
-  topics?: ReadonlyMap<string, string>;
+  projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
+  onQuote?: (quote: NeoQuote) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   onEditUndelivered?: NeoEditUndelivered;
@@ -300,15 +302,20 @@ function PublicEntry({
   const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : 'You';
-  const replier = publication ? topics?.get(publication.producerInput.sessionId) : undefined;
+  const replier = publication ? projects?.get(publication.producerInput.sessionId) : undefined;
   const forwarder = publication
     ? forwarders?.get(neoForwardKey(publication.askOrigin, publication.producerInput.sessionId))
     : undefined;
-  const topic = forwarder ? `${replier ?? 'Neo'} (forwarded from ${forwarder})` : replier;
+  const project = forwarder ? `${replier ?? 'Neo'} (forwarded from ${forwarder})` : replier;
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
+  const anchor = ask
+    ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId)
+    : publication
+      ? neoMessageAnchor(publication.conversationId, `publication-${publication.publicationId}`)
+      : '';
   return (
     <article
-      id={ask ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId) : undefined}
+      id={anchor || undefined}
       data-public-entry={entry.key}
       class={`neo-arrive neo-message w-fit break-words ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%]'}`}
     >
@@ -316,9 +323,9 @@ function PublicEntry({
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${ask ? 'justify-end' : ''}`}
       >
         <span class="neo-message-name font-medium">{author}</span>
-        {topic && (
-          <span class="neo-message-topic max-w-[16rem] truncate text-fg-faint" title={topic}>
-            {topic}
+        {project && (
+          <span class="neo-message-project max-w-[16rem] truncate text-fg-faint" title={project}>
+            {project}
           </span>
         )}
         {time && (
@@ -450,6 +457,19 @@ function PublicEntry({
           label={ask ? 'Copy your message' : 'Copy Neo’s message'}
           disabled={!text.trim()}
         />
+        {onQuote && (ask ? text : full || text).trim() && (
+          <button
+            type="button"
+            aria-label={ask ? 'Reply to your message' : 'Reply to Neo’s message'}
+            title="Reply"
+            class="rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            onClick={() =>
+              onQuote({ author: ask ? 'You' : 'Neo', text: ask ? text : full || text, anchor })
+            }
+          >
+            <NeoIcon name="reply" class="!h-4 !w-4" />
+          </button>
+        )}
       </div>
     </article>
   );
@@ -562,13 +582,15 @@ export function NeoPublicConversation({
   onRetry,
   onLoadEarlier,
   onEditUndelivered,
-  topics,
+  projects,
   forwarders,
   mute,
+  onQuote,
 }: {
   conversation: Conversation;
+  onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
-  topics?: ReadonlyMap<string, string>;
+  projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
@@ -615,8 +637,9 @@ export function NeoPublicConversation({
             onOpenScene={onOpenScene}
             canOpenScene={canOpenScene}
             onEditUndelivered={onEditUndelivered}
-            topics={topics}
+            projects={projects}
             forwarders={forwarders}
+            onQuote={onQuote}
           />
         )
       )}

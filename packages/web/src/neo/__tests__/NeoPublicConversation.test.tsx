@@ -46,7 +46,7 @@ const publication = (fields: Partial<NeoPublication> = {}): NeoPublication => ({
   fullText:
     '## Evidence\n\n| Source | Finding |\n| --- | --- |\n| A | Different |\n\n> Reported evidence, not verified completion.\n\n```text\nFictional detail\n```',
   links: [
-    { kind: 'concern', id: 'fictional', label: 'Source context' },
+    { kind: 'project', id: 'fictional', label: 'Source context' },
     { kind: 'consultation', id: 'fictional-check', label: 'Read comparison' },
     { kind: 'work', id: 'fictional-work', label: 'Read work detail' },
   ],
@@ -480,10 +480,10 @@ describe('durable public conversation presentation', () => {
   });
 });
 
-describe('NeoPublicConversation topic labels', () => {
+describe('NeoPublicConversation project labels', () => {
   afterEach(cleanup);
 
-  it('names the topic that replied and the topic that forwarded the message to it', () => {
+  it('names the project that replied and the project that forwarded the message to it', () => {
     const forwardedToMain = publication({
       publicationId: '20000000-0000-4000-8000-000000000003',
       producerInput: { sessionId: root, messageId: 'neo-forward:original:1' },
@@ -494,7 +494,7 @@ describe('NeoPublicConversation topic labels', () => {
     render(
       <NeoPublicConversation
         conversation={conversation([ask()], [publication(), forwardedToMain])}
-        topics={new Map([[holder, 'Neo iOS']])}
+        projects={new Map([[holder, 'Neo iOS']])}
         forwarders={
           new Map([
             [neoForwardKey(original, holder), 'HyperNeo'],
@@ -503,12 +503,14 @@ describe('NeoPublicConversation topic labels', () => {
         }
       />
     );
-    const replies = screen.getAllByRole('article').filter((item) => !item.id);
+    const replies = screen
+      .getAllByRole('article')
+      .filter((item) => item.classList.contains('neo-message-assistant'));
     expect(within(replies[0]).getByText('Neo iOS (forwarded from HyperNeo)')).toBeTruthy();
     expect(within(replies[1]).getByText('Neo (forwarded from Neo iOS)')).toBeTruthy();
   });
 
-  it('labels a holder reply with its topic and leaves main Neo replies plain', () => {
+  it('labels a holder reply with its project and leaves main Neo replies plain', () => {
     const mainReply = publication({
       publicationId: '20000000-0000-4000-8000-000000000002',
       producerInput: { sessionId: root, messageId: 'original' },
@@ -519,10 +521,12 @@ describe('NeoPublicConversation topic labels', () => {
     render(
       <NeoPublicConversation
         conversation={conversation([ask()], [publication(), mainReply])}
-        topics={new Map([[holder, 'Fictional research']])}
+        projects={new Map([[holder, 'Fictional research']])}
       />
     );
-    const replies = screen.getAllByRole('article').filter((item) => !item.id);
+    const replies = screen
+      .getAllByRole('article')
+      .filter((item) => item.classList.contains('neo-message-assistant'));
     expect(within(replies[0]).getByText('Fictional research')).toBeTruthy();
     expect(within(replies[1]).queryByText('Fictional research')).toBeNull();
     expect(within(replies[1]).getByText('Neo')).toBeTruthy();

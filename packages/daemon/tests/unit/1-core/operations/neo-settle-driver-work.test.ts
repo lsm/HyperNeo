@@ -15,7 +15,7 @@ const work: NeoWork = Object.freeze({
   requestKey: 'root:k',
   originSessionId: 'root',
   originMessageId: 'm1',
-  concernId: null,
+  projectId: null,
   title: 'Font',
   instruction: 'Raise the font.',
   targetSessionId: null,

@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation } from '../operations/registry.ts';
+import { readWorkspaceIdentity, identifyWorkspaces } from './code-identity.ts';
 import { mergePlaceGroups, stampDaemon } from './places.ts';
 import { PlaceGroupSchema, type FindQuery, type PlaceGroup, type WorkAdapter } from './types.ts';
 
@@ -46,6 +47,7 @@ export interface RemoteDaemons {
 export interface FindWorkDeps {
   adapters(): readonly WorkAdapter[];
   remote: RemoteDaemons;
+  mirrorProjects?(groups: readonly PlaceGroup[]): void;
 }
 
 function describe(error: unknown): string {
@@ -193,7 +195,14 @@ export function combineFindResults(
     mergePlaceGroups([...local.groups, ...remote.groups], input.id ? 51 : input.limit + 1),
     input.id
   );
-  const fitted = fitFindBudget(merged.slice(0, input.limit), budget);
+  const open =
+    input.includeClosed || input.id
+      ? merged
+      : merged.map((group) => ({
+          ...group,
+          work: group.work.filter((work) => work.status !== 'stopped'),
+        }));
+  const fitted = fitFindBudget(open.slice(0, input.limit), budget);
   return {
     places: fitted.places,
     unreachable: [...local.unreachable, ...remote.unreachable],
@@ -206,8 +215,26 @@ const runFindWork = (superpipe({})('find-work') as PipelineAPI)
   .pipe(selectFindAdapters, ['input', 'deps'], 'adapters')
   .pipe(toFindQuery, 'input', 'query')
   .pipe(findLocally, ['adapters', 'query'], 'local')
+  .pipe(
+    async (local: SourceOutcome, input: FindInput) => ({
+      ...local,
+      groups: await identifyWorkspaces(local.groups, (folder) =>
+        readWorkspaceIdentity(folder, input.folder === folder)
+      ),
+    }),
+    ['local', 'input'],
+    'local'
+  )
   .pipe(findRemotely, ['input', 'deps'], 'remote')
   .pipe(combineFindResults, ['local', 'remote', 'input', 'budget'], 'result')
+  .pipe(
+    (result: FindResult, deps: FindWorkDeps) => {
+      deps.mirrorProjects?.(result.places);
+      return result;
+    },
+    ['result', 'deps'],
+    'result'
+  )
   .endAsync('result') as (
   input: FindInput,
   deps: FindWorkDeps,

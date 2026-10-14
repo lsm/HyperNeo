@@ -54,6 +54,8 @@ import { hashString32 } from '../runtime-hash.ts';
 import { WORK_MESSAGE_MAX, WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
+import { awaitingNeoWorker } from './work-reroute.ts';
+import { workStartConfiguration } from '../drivers/start-configuration.ts';
 
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   z.object({
@@ -61,7 +63,7 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
     adapter: z.string().min(1).max(80),
     place: PlaceSchema,
     createFolder: z.boolean().optional(),
-    model: z.string().trim().min(1).max(200).optional(),
+    ...workStartConfiguration.schema.shape,
   }),
   z.object({ verb: z.literal('send'), ref: WorkRefSchema }),
   z.object({ verb: z.literal('adopt'), ref: WorkRefSchema }),
@@ -234,6 +236,7 @@ export function driverWorkCall(
           message,
           ...(target.createFolder ? { createFolder: true } : {}),
           ...(target.model ? { model: target.model } : {}),
+          ...(target.effort ? { effort: target.effort } : {}),
         },
       }
     : { name: 'work.send', input: { ref: target.ref, message } };
@@ -259,11 +262,12 @@ export function readDriverOutcome(
   outcome: OperationOutcome
 ):
   | { ref: WorkRef; link?: string; model?: string; startedAt?: number; queued?: true }
-  | { failure: string } {
+  | { failure: string; reason?: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
   const reply = DriverReplySchema.safeParse(outcome.value);
   if (!reply.success) return { failure: 'The work operation returned an unusable reply.' };
-  if (!reply.data.ok) return { failure: `${reply.data.reason}: ${reply.data.detail}` };
+  if (!reply.data.ok)
+    return { failure: `${reply.data.reason}: ${reply.data.detail}`, reason: reply.data.reason };
   if ('ref' in reply.data.value) {
     const { ref, link, model, lastActivityAt } = reply.data.value as {
       ref: WorkRef;
@@ -377,7 +381,7 @@ export const NEO_DRIVER_START_INTERRUPTED = 'Starting was interrupted before';
 export type NeoWorkRetryCard = { target: boolean; ref: boolean; interrupted: boolean };
 
 export function requireNeoWorkRetryable<T>(
-  work: Pick<NeoWork, 'status'>,
+  work: Pick<NeoWork, 'status'> & Partial<Pick<NeoWork, 'report'>>,
   card: NeoWorkRetryCard,
   admitted: T
 ): { value: T } | { reason: { ok: false; reason: string } } {
@@ -389,7 +393,10 @@ export function requireNeoWorkRetryable<T>(
           'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
       },
     };
-  return work.status === 'failed' && card.target && !card.ref
+  return (work.status === 'failed' ||
+    awaitingNeoWorker({ ...work, report: work.report ?? null })) &&
+    card.target &&
+    !card.ref
     ? { value: admitted }
     : {
         reason: {
@@ -552,10 +559,14 @@ export function isNeoDoneWhenRestated(doneWhen: string, ask: NeoAsk): boolean {
   return lines.length > 0 && lines.every((line) => texts.has(line));
 }
 
+export function neoNotePrVerdict(prs: readonly NeoWorkPr[]) {
+  const verdicts = prs.map(neoWorkPrVerdict);
+  return verdicts.find((verdict) => verdict !== 'done') ?? verdicts[0];
+}
+
 export function neoNoteCards(cards: readonly NeoAskCard[]) {
   return cards.map(({ id, title, status, prs }) => {
-    const verdicts = (prs ?? []).map(neoWorkPrVerdict);
-    const pr = verdicts.find((verdict) => verdict !== 'done') ?? verdicts[0];
+    const pr = neoNotePrVerdict(prs ?? []);
     return { id, title, status, ...(pr ? { pr } : {}) };
   });
 }

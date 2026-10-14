@@ -99,10 +99,10 @@ function withShortText(snapshot: NeoSnapshot): NeoSnapshot {
         evidence: item.evidence?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
       })),
     })),
-    concerns: snapshot.concerns.map((concern) => ({
-      ...concern,
-      summary: concern.summary.slice(0, TRIMMED_TEXT_LIMIT),
-      context: concern.context.slice(0, TRIMMED_TEXT_LIMIT),
+    projects: snapshot.projects.map((project) => ({
+      ...project,
+      summary: project.summary.slice(0, TRIMMED_TEXT_LIMIT),
+      context: project.context.slice(0, TRIMMED_TEXT_LIMIT),
     })),
     cards: snapshot.cards.map((card) => ({
       ...card,
@@ -142,7 +142,7 @@ function withBareText(snapshot: NeoSnapshot): NeoSnapshot {
         evidence: null,
       })),
     })),
-    concerns: snapshot.concerns.map((concern) => ({ ...concern, summary: '', context: '' })),
+    projects: snapshot.projects.map((project) => ({ ...project, summary: '', context: '' })),
     cards: snapshot.cards.map((card) => ({
       ...card,
       goal: null,
@@ -197,7 +197,7 @@ function withSkeleton(snapshot: NeoSnapshot): NeoSnapshot {
     sessionNoticeGroups: [],
     consultations: [],
     consultationWaiters: [],
-    concerns: snapshot.concerns.slice(0, SKELETON_LIST_LIMIT),
+    projects: snapshot.projects.slice(0, SKELETON_LIST_LIMIT),
     asks: snapshot.asks?.map((ask) => ({
       ...ask,
       doneItems: ask.doneItems
@@ -221,7 +221,7 @@ function bareMinimum(snapshot: NeoSnapshot): NeoSnapshot {
   return {
     ok: true,
     sessionId: snapshot.sessionId,
-    concerns: [],
+    projects: [],
     consultations: [],
     work: snapshot.work.map((item) => ({ ...item, instruction: '', report: null })),
     asks: snapshot.asks?.map((ask) => ({
@@ -264,7 +264,7 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
     fitted = {
       ok: true,
       sessionId: fitted.sessionId,
-      concerns: [],
+      projects: [],
       consultations: [],
       work: [],
       cards: [],

@@ -45,12 +45,12 @@ describe('fileNeoSessions', () => {
         updateSession: (id, update) => updates.push([id, update]),
       },
       {
-        getBindingForConcern: () => ({ sessionId: 'neo:root', kind: 'neo', concernId: null }),
-        listConcernBindings: () =>
+        getBindingForProject: () => ({ sessionId: 'neo:root', kind: 'neo', projectId: null }),
+        listProjectBindings: () =>
           ['neo:inbox', 'neo:plans', 'neo:gone'].map((sessionId) => ({
             sessionId,
-            kind: 'concern' as const,
-            concernId: sessionId,
+            kind: 'project' as const,
+            projectId: sessionId,
           })),
       },
       '/data/Neo'

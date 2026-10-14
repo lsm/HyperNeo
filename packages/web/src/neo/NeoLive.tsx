@@ -21,7 +21,7 @@ import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
 import { groupNeoAsks } from './neo-asks.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
-import { projectNeoConcernBoard } from './neo-concern-board.ts';
+import { projectNeoProjectBoard } from './neo-project-board.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import {
   NEO_QUICK_CHOICE_LABEL,
@@ -42,6 +42,7 @@ import { neoWorkPresentation } from './work-actions.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 import { neoForwardKey } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoQuote } from './neo-intake.ts';
 
 export function NeoLive() {
   const neo = useNeo();
@@ -55,6 +56,9 @@ export function NeoLive() {
   const [replyProgress, setReplyProgress] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
+  const [quoted, setQuoted] = useState<{ scope: string; quote: NeoQuote } | null>(null);
+  const quote = quoted?.scope === neo.sessionId ? quoted.quote : undefined;
+  useEffect(() => setQuoted(null), [neo.sessionId]);
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
   const reloadBuffer = useRef(createNeoDraftReloadBuffer()).current;
   const acceptedCleanups = useRef(new Map<string, () => Promise<void>>()).current;
@@ -67,13 +71,13 @@ export function NeoLive() {
   const nearBottom = useRef(true);
   const lastScrollTop = useRef(0);
   const scrollProgress = useRef(1);
-  const concerns = neo.snapshot?.concerns ?? [];
+  const projects = neo.snapshot?.projects ?? [];
   const view = neo.snapshot;
   const relevant = view?.work ?? [];
   const cards = new Map((view?.cards ?? []).map((card) => [card.workId, card]));
-  const topics = new Map(
+  const projectTitles = new Map(
     (view?.publicAuthorBindings ?? []).flatMap((binding) => {
-      const title = concerns.find((concern) => concern.id === binding.concernId)?.title.trim();
+      const title = projects.find((project) => project.id === binding.projectId)?.title.trim();
       return title ? [[binding.sessionId, title] as const] : [];
     })
   );
@@ -85,7 +89,7 @@ export function NeoLive() {
             { sessionId: forward.askSessionId, messageId: forward.askMessageId },
             forward.toSessionId
           ),
-          topics.get(forward.fromSessionId) ?? 'Neo',
+          projectTitles.get(forward.fromSessionId) ?? 'Neo',
         ] as const
     )
   );
@@ -159,7 +163,7 @@ export function NeoLive() {
     [sceneScope]
   );
   const scenes = projectNeoScenes(
-    projectNeoConcernBoard(view, null, null),
+    projectNeoProjectBoard(view, null, null),
     publicConversation && questions.scope === sceneScope ? questions.values : undefined,
     publicConversation && unavailableSessions.scope === sceneScope
       ? unavailableSessions.values
@@ -525,10 +529,11 @@ export function NeoLive() {
           )}
           {conversationReady && neo.sessionId ? (
             <NeoConversation
+              onQuote={ready ? (quote) => setQuoted({ scope: neo.sessionId!, quote }) : undefined}
               store={neo.store}
               sessionId={neo.sessionId}
               works={relevant}
-              topics={topics}
+              projects={projectTitles}
               forwarders={forwarders}
               publicConversation={publicConversation}
               onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
@@ -555,9 +560,13 @@ export function NeoLive() {
                     );
                   return;
                 }
-                if (!neo.discardSend(requestId)) return;
+                const restored = neo.discardSend(requestId);
+                if (!restored) return;
                 acceptedCleanups.delete(requestId);
-                writeDraft(failed.text);
+                writeDraft(restored.text);
+                setQuoted(
+                  restored.quote ? { scope: restored.sessionId, quote: restored.quote } : null
+                );
               }}
               mute={{
                 muted: new Set(view?.mutedSessions ?? []),
@@ -711,7 +720,7 @@ export function NeoLive() {
             scenes={(scenes?.running ?? []).filter(
               (scene) => !askGroups.settledWork.has(scene.ref.id)
             )}
-            concerns={concerns}
+            projects={projects}
             enabled={connected && conversationReady}
             reply={
               replyProgress ??
@@ -728,6 +737,8 @@ export function NeoLive() {
           />
           {ready && neo.sessionId && (
             <NeoComposer
+              quote={quote}
+              onCancelQuote={() => setQuoted(null)}
               key={neo.sessionId}
               store={neo.store}
               sessionId={neo.sessionId}
@@ -753,8 +764,11 @@ export function NeoLive() {
                 const submitted = draft ?? '';
                 const sessionId = neo.sessionId ?? '';
                 const captured = reloadBuffer.read(sessionId);
+                const submittedQuote = quoted;
                 setDraft('');
                 const cleanup = async () => {
+                  if (input.quote)
+                    setQuoted((current) => (current === submittedQuote ? null : current));
                   await inputDraft.clearSubmitted(sessionId, submitted);
                   if (captured?.text === submitted) reloadBuffer.forget(sessionId, captured.id);
                 };

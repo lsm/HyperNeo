@@ -1,4 +1,6 @@
+import { runMigration361 } from './m361-neo-project-avatars.ts';
 import { runMigration260 } from './m260-direct-start-requests.ts';
+import { runMigration360 } from './m360-workspace-projects.ts';
 import { runMigration258 } from './m258-direct-process-ownership.ts';
 import { runMigration257 } from './m257-direct-outcome-job.ts';
 import { runMigration256 } from './m256-direct-finalization.ts';
@@ -161,6 +163,7 @@ export { runMigration186 } from './migrations.ts';
 
 export function createTables(db: BunDatabase): void {
   createNeoTables(db);
+  runMigration361(db);
   createNeoWorkResourceTable(db);
   createNeoPublicationTable(db);
   createNeoConversationAskTable(db);
@@ -856,6 +859,7 @@ export function createTables(db: BunDatabase): void {
         use_count INTEGER NOT NULL DEFAULT 1
       )
 	    `);
+  runMigration360(db);
 
   db.exec(`
 	      CREATE TABLE IF NOT EXISTS tool_continuation_recovery (

@@ -344,6 +344,19 @@ export function reportSpaceTask(
   return { ok: true, value: describeTask(task, deps.machine) };
 }
 
+function admitSpaceStartConfiguration(request: StartRequest): Gate<StartRequest> {
+  const field =
+    request.model !== undefined ? 'model' : request.effort !== undefined ? 'effort' : null;
+  return field
+    ? {
+        reason: reject(
+          field === 'model' ? 'unsupported_model' : 'unsupported_effort',
+          `Space task creation cannot apply the requested ${field}. Choose an adapter that supports it.`
+        ),
+      }
+    : { value: request };
+}
+
 export function requireTaskSpace(request: StartRequest, deps: SpaceAdapterDeps): Gate<string> {
   const { place } = request;
   if (!place.spaceId)
@@ -384,7 +397,8 @@ export async function cancelSpaceTask(
 
 const runSpaceStart = (superpipe({})('space-start-work') as PipelineAPI)
   .input(['request', 'context', 'deps'])
-  .pipe(requireTaskSpace, ['request', 'deps'], 'result:outcome')
+  .pipe(admitSpaceStartConfiguration, 'request', 'result:outcome')
+  .pipe(requireTaskSpace, ['outcome', 'deps'], 'result:outcome')
   .pipe(createSpaceTask, ['outcome', 'request', 'context', 'deps'], 'outcome')
   .endAsync('outcome') as (
   request: StartRequest,

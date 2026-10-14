@@ -1298,6 +1298,16 @@ export class SDKMessageRepository {
     return row ? inflatePersistedMessage(row) : null;
   }
 
+  latestCompactionSeq(sessionId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT MAX(seq) AS seq FROM sdk_messages
+          WHERE session_id = ? AND message_subtype_norm = 'compact_boundary'`
+      )
+      .get(sessionId) as { seq: number | null } | undefined;
+    return row?.seq ?? 0;
+  }
+
   getSDKMessageCount(sessionId: string): number {
     const stmt = this.db.prepare(
       `SELECT COUNT(*) as count FROM sdk_messages
@@ -2185,7 +2195,7 @@ export class SDKMessageRepository {
       .prepare(
         `SELECT 1 FROM sdk_messages
            WHERE session_id = ? AND timestamp > ? AND message_type = 'user'
-             AND substr(sdk_uuid, 1, ?) = ?
+             AND substr(sdk_uuid, 1, ?) = ? AND send_status IS NOT 'failed'
            LIMIT 1`
       )
       .get(sessionId, since, prefix.length, prefix);

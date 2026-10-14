@@ -14,7 +14,7 @@ const base: NeoWork = Object.freeze({
   requestKey: 'root:k',
   originSessionId: 'root',
   originMessageId: 'm1',
-  concernId: null,
+  projectId: null,
   title: 'Title',
   instruction: 'Do it.',
   targetSessionId: null,
@@ -34,9 +34,13 @@ describe('planNeoWorkClose', () => {
       'done',
       { reason: { ok: false, reason: 'work_closed: cancelled work stays cancelled' } },
     ],
-    ['reported', 'done', { reason: { ok: true, work: at('reported') } }],
   ] as const)('%s work closed as %s settles without a write', (status, outcome, expected) => {
     expect(planNeoWorkClose(at(status), outcome)).toEqual(expected);
+  });
+
+  test('reported work already closed as done settles without a write', () => {
+    const closed = { ...at('reported'), report: NEO_WORK_CLOSED_DONE };
+    expect(planNeoWorkClose(closed, 'done')).toEqual({ reason: { ok: true, work: closed } });
   });
 
   test('missing work is not found', () => {
@@ -51,6 +55,7 @@ describe('planNeoWorkClose', () => {
     ['queued', 'done', { status: 'reported', report: NEO_WORK_CLOSED_DONE }, true],
     ['failed', 'done', { status: 'reported', report: NEO_WORK_CLOSED_DONE }, false],
     ['reported', 'cancelled', { status: 'cancelled' }, false],
+    ['reported', 'done', { status: 'reported', report: NEO_WORK_CLOSED_DONE }, false],
   ] as const)(
     '%s work closed as %s writes %j, stopping the driver: %s',
     (status, outcome, patch, stop) => {

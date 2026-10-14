@@ -26,7 +26,7 @@ export const returnWorkThroughHolder = (superpipe({})('neo-work-holder-return') 
     'result:admission'
   )
   .pipe(
-    (service: NeoService, work: NeoWork) => service.open(work.concernId),
+    (service: NeoService, work: NeoWork) => service.open(work.projectId),
     ['service', 'work'],
     'holderId'
   )
@@ -41,7 +41,7 @@ export const returnWorkThroughHolder = (superpipe({})('neo-work-holder-return') 
       const item = service.consultations.reserve({
         id,
         requestKey: id,
-        concernId: work.concernId!,
+        projectId: work.projectId!,
         originSessionId: rootId,
         sessionId: holderId,
         question: `${NEO_WORK_RETURN_REVIEW}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`,

@@ -217,7 +217,7 @@ describe('Neo reply after a rule save', () => {
       new InternalEventBus<DaemonInternalEventMap>()
     );
     db.createSession(createTestSession(root));
-    service.repo.reserveBinding({ sessionId: root, kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     db.getSDKMessageRepo().saveSDKMessage(root, {
       type: 'user',
       uuid: 'ask-1',

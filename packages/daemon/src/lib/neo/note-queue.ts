@@ -5,6 +5,8 @@ import type { Database } from '../../storage/database.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { isNeoFoldableNote } from './ask-origin.ts';
+import { NEO_TURN_LIMIT_PREFIX } from './turn-limit.ts';
+import { RESTART_RECOVERY_PREFIX } from '../agent/restart-turn-recovery.ts';
 
 export type NeoNoteSubject = { kind: 'card' | 'ask'; id: string };
 export type NeoNoteDropReason = 'settled' | 'superseded' | 'stale';
@@ -45,6 +47,12 @@ export function isNeoWakeNote(messageId: string): boolean {
   return neoNoteSubject(messageId) !== null || isNeoFoldableNote(messageId);
 }
 
+export function isNeoTurnResumeNote(messageId: string): boolean {
+  return (
+    messageId.startsWith(NEO_TURN_LIMIT_PREFIX) || messageId.startsWith(RESTART_RECOVERY_PREFIX)
+  );
+}
+
 export function isNeoNoteSubjectSettled(
   subject: NeoNoteSubject,
   work: Pick<NeoWork, 'status' | 'report'> | null,
@@ -70,7 +78,7 @@ export function planNeoNoteQueue(
     if (subject) newest.set(subjectKey(subject), note.seq);
   }
   return queue.queued.flatMap((note): NeoNoteDrop[] => {
-    if (!isNeoWakeNote(note.uuid)) return [];
+    if (!isNeoWakeNote(note.uuid) && !isNeoTurnResumeNote(note.uuid)) return [];
     const subject = neoNoteSubject(note.uuid);
     if (subject && isSettled(subject)) return [{ uuid: note.uuid, reason: 'settled' }];
     if (queue.lastConsumedSeq !== null && note.seq < queue.lastConsumedSeq)

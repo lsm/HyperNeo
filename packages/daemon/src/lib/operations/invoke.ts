@@ -13,6 +13,51 @@ type Gate<T> = { value: T } | { reason: OperationFailure };
 type PreparedOperation = { operation: OperationDefinition; input: unknown };
 type ExecutedOperation = { operation: OperationDefinition; result: unknown };
 
+function levenshtein(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+function suggestOperationNames(registry: OperationRegistry, name: string): string[] {
+  const requestedSegments = name.split('.');
+  return registry.entries
+    .map((entry) => entry.name)
+    .filter((candidate) => candidate !== name)
+    .map((candidate) => ({
+      candidate,
+      sharedSegments: candidate.split('.').filter((segment) => requestedSegments.includes(segment))
+        .length,
+      distance: levenshtein(name, candidate),
+    }))
+    .filter(({ sharedSegments }) => sharedSegments > 0)
+    .sort(
+      (a, b) =>
+        b.sharedSegments - a.sharedSegments ||
+        a.distance - b.distance ||
+        (a.candidate < b.candidate ? -1 : a.candidate > b.candidate ? 1 : 0)
+    )
+    .slice(0, 3)
+    .map(({ candidate }) => candidate);
+}
+
+function unknownOperationMessage(registry: OperationRegistry, name: string): string {
+  const suggestions = suggestOperationNames(registry, name);
+  return suggestions.length === 0
+    ? `Unknown operation: ${name}`
+    : `Unknown operation: ${name}. Did you mean: ${suggestions.join(', ')}?`;
+}
+
 export function resolveOperation(
   registry: OperationRegistry,
   name: string
@@ -24,7 +69,7 @@ export function resolveOperation(
         reason: {
           kind: 'failed',
           code: 'unknown_operation',
-          message: `Unknown operation: ${name}`,
+          message: unknownOperationMessage(registry, name),
         },
       };
 }

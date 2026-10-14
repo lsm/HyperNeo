@@ -1,11 +1,11 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { PendingUserQuestion } from '@hyperneo/shared';
-import type { NeoConcernBoard } from './neo-concern-board.ts';
+import type { NeoProjectBoard } from './neo-project-board.ts';
 import type { NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
 import { requireNeoQuestionOrigin, requireNeoQuestionWork } from './work-question.ts';
 import { neoCardLabel } from './card-view.ts';
 
-type NeoBoardReceipt = NeoConcernBoard['receipts'][number];
+type NeoBoardReceipt = NeoProjectBoard['receipts'][number];
 type NeoWorkReceipt = Extract<NeoBoardReceipt, { kind: 'work' }>;
 type NeoConsultationReceipt = Extract<NeoBoardReceipt, { kind: 'consultation' }>;
 
@@ -52,7 +52,7 @@ const consultationScenes: Record<NeoConsultationReceipt['status'], SceneTruth> =
 };
 
 export function admitNeoSceneReceipts(
-  board: NeoConcernBoard | null
+  board: NeoProjectBoard | null
 ): { value: readonly NeoBoardReceipt[] } | { reason: null } {
   if (!board || !Array.isArray(board.receipts)) return { reason: null };
   return { value: board.receipts };
@@ -173,14 +173,14 @@ const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
   .pipe(promoteNeoUnavailableScenes, ['promoted', 'unavailableSessions'], 'observed')
   .pipe(groupNeoScenes, 'observed', 'scenes')
   .end('scenes') as (
-  board: NeoConcernBoard | null,
+  board: NeoProjectBoard | null,
   questions: NeoSceneQuestions,
   unavailableSessions: NeoSceneUnavailableSessions,
   cards: NeoSceneCards
 ) => NeoSceneGroups | null;
 
 export function projectNeoScenes(
-  board: NeoConcernBoard | null,
+  board: NeoProjectBoard | null,
   questions: NeoSceneQuestions = new Map(),
   unavailableSessions: NeoSceneUnavailableSessions = new Map(),
   cards: NeoSceneCards = new Map()

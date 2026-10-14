@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
-import { projectNeoConcernBoard } from '../neo-concern-board.ts';
+import { projectNeoProjectBoard } from '../neo-project-board.ts';
 import { projectNeoScenes } from '../neo-scenes.ts';
 import { withNeoViews } from './neo-test-views.ts';
 
@@ -32,7 +32,7 @@ const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
 const work: NeoWork = {
   id: 'fictional-work',
   requestKey: 'fictional-work',
-  concernId: null,
+  projectId: null,
   originSessionId: root,
   originMessageId: 'fictional-ask',
   title: 'Fictional work',
@@ -125,7 +125,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 function mount() {
-  const snapshot = { ok: true, sessionId: root, concerns: [], work: [work], consultations: [] };
+  const snapshot = { ok: true, sessionId: root, projects: [], work: [work], consultations: [] };
   const model = signal({
     sessionId: root,
     snapshot,
@@ -252,13 +252,13 @@ describe('NeoLive native question failure attention', () => {
   ] as const)(
     'promotes only queued current-owned failure: %s/%s',
     (status, owner, group, label) => {
-      const board = projectNeoConcernBoard(
+      const board = projectNeoProjectBoard(
         {
           ok: true,
           cards: [],
           askViews: [],
           sessionId: root,
-          concerns: [],
+          projects: [],
           work: [{ ...work, status }],
           consultations: [],
         },

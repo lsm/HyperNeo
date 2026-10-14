@@ -91,7 +91,7 @@ describe('AgentSession driveDeliveryTurn for Neo system notes', () => {
       new NeoRepository(db.getDatabase()).reserveBinding({
         sessionId,
         kind: 'neo',
-        concernId: null,
+        projectId: null,
       });
     for (const [uuid, kind] of notes)
       saveUserMessage(repo, sessionId, uuid, 'enqueued', `note ${uuid}`, kind);

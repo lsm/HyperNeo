@@ -14,13 +14,8 @@ export function setupWorkspaceHandlers(
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
   messageHub.onRequest('workspace.history', async (_data) => {
-    const rows = workspaceHistoryRepo.list(20);
     return {
-      entries: rows.map((r) => ({
-        path: r.path,
-        lastUsedAt: r.last_used_at,
-        useCount: r.use_count,
-      })),
+      entries: workspaceHistoryRepo.entries(),
     };
   });
 
@@ -30,7 +25,7 @@ export function setupWorkspaceHandlers(
       throw new Error('path is required');
     }
     const workspacePath = await validateWorkspaceDirectory(path);
-    const row = workspaceHistoryRepo.upsert(workspacePath);
+    workspaceHistoryRepo.upsert(workspacePath);
 
     if (mcpImportService) {
       try {
@@ -44,11 +39,7 @@ export function setupWorkspaceHandlers(
     }
 
     return {
-      entry: {
-        path: row.path,
-        lastUsedAt: row.last_used_at,
-        useCount: row.use_count,
-      },
+      entry: workspaceHistoryRepo.entries().find((entry) => entry.path === workspacePath)!,
     };
   });
 

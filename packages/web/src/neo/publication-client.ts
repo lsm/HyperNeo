@@ -75,7 +75,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
       !text(link.label, 120) ||
       !text(link.id, 160) ||
       typeof link.kind !== 'string' ||
-      !['concern', 'work', 'consultation'].includes(link.kind)
+      !['project', 'work', 'consultation'].includes(link.kind)
     )
       return null;
     links.push({

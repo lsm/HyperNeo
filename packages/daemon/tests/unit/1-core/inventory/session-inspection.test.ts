@@ -20,7 +20,7 @@ import type { SessionInspectionRecord } from '../../../../src/storage/repositori
 const input = { sessionId: 'existing:chat', limit: 5, includeArchived: false };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const neo: OperationCaller = { source: 'mcp', role: 'neo', sessionId: 'neo:root' };
-const binding: NeoBinding = { sessionId: neo.sessionId!, kind: 'neo', concernId: null };
+const binding: NeoBinding = { sessionId: neo.sessionId!, kind: 'neo', projectId: null };
 const row: SessionInspectionRecord = {
   id: input.sessionId,
   name: 'Project A',
@@ -77,8 +77,8 @@ describe('ordinary inspection pure gates', () => {
     null,
     { ...binding, sessionId: 'other' },
     { ...binding, kind: 'worker' as const },
-    { ...binding, concernId: 'a' },
-    { ...binding, kind: 'concern' as const },
+    { ...binding, projectId: 'a' },
+    { ...binding, kind: 'project' as const },
   ])('requires actual matching coordinator identity: %j', (candidate) => {
     expect(requireInspectionCaller(input, neo, candidate)).toEqual({
       reason: { accepted: false, reason: 'inspection_forbidden' },
@@ -86,7 +86,7 @@ describe('ordinary inspection pure gates', () => {
   });
   test('root and holder are inspect-capable, not execution workers', () => {
     expect(requireInspectionCaller(input, neo, binding)).toEqual({ value: input });
-    const holder = { ...binding, concernId: 'a', kind: 'concern' as const };
+    const holder = { ...binding, projectId: 'a', kind: 'project' as const };
     expect(requireInspectionCaller(input, neo, holder)).toEqual({ value: input });
     expect(requireInspectionCaller(input, human, null)).toEqual({ value: input });
   });

@@ -343,7 +343,7 @@ describe('QueryRunner', () => {
 
     it.each([
       'neo',
-      'concern',
+      'project',
       'worker',
       'ordinary',
       'neo-return',
@@ -357,16 +357,16 @@ describe('QueryRunner', () => {
           variant
         );
         const kind =
-          variant === 'concern' || variant === 'holder-request'
-            ? 'concern'
+          variant === 'project' || variant === 'holder-request'
+            ? 'project'
             : variant === 'worker'
               ? 'worker'
               : variant === 'ordinary'
                 ? 'ordinary'
                 : 'neo';
         const sessionId = kind === 'ordinary' ? 'ordinary' : `neo:${kind}`;
-        const isolated = kind === 'neo' || kind === 'concern';
-        const rootId = kind === 'concern' && delayed ? 'neo:root' : sessionId;
+        const isolated = kind === 'neo' || kind === 'project';
+        const rootId = kind === 'project' && delayed ? 'neo:root' : sessionId;
         const firstId = delayed ? 'ask-B' : 'ask-A';
         const nextId =
           variant === 'work-return'
@@ -374,27 +374,27 @@ describe('QueryRunner', () => {
             : variant === 'unknown-system'
               ? 'unknown-system'
               : delayed
-                ? `neo-consult:check-A:${kind === 'concern' ? 'request' : 'reply'}`
+                ? `neo-consult:check-A:${kind === 'project' ? 'request' : 'reply'}`
                 : 'ask-B';
         const askA = { sessionId: rootId, messageId: 'ask-A' };
         const repo = new NeoRepository(sqlite);
-        if (kind === 'concern')
-          repo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
+        if (kind === 'project')
+          repo.saveProject({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
         if (kind !== 'ordinary')
-          repo.reserveBinding({ sessionId, concernId: kind === 'concern' ? 'club' : null, kind });
-        if (kind === 'concern' && delayed)
-          repo.reserveBinding({ sessionId: rootId, concernId: null, kind: 'neo' });
+          repo.reserveBinding({ sessionId, projectId: kind === 'project' ? 'club' : null, kind });
+        if (kind === 'project' && delayed)
+          repo.reserveBinding({ sessionId: rootId, projectId: null, kind: 'neo' });
         if (variant === 'neo-return' || variant === 'holder-request') {
-          const holderId = kind === 'concern' ? sessionId : 'neo:holder';
+          const holderId = kind === 'project' ? sessionId : 'neo:holder';
           if (kind === 'neo') {
-            repo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
-            repo.reserveBinding({ sessionId: holderId, concernId: 'club', kind: 'concern' });
+            repo.saveProject({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
+            repo.reserveBinding({ sessionId: holderId, projectId: 'club', kind: 'project' });
           }
           const consultations = new NeoConsultationRepository(sqlite, () => {});
           consultations.reserve({
             id: 'check-A',
             requestKey: 'check-A',
-            concernId: 'club',
+            projectId: 'club',
             originSessionId: rootId,
             originMessageId: askA.messageId,
             sessionId: holderId,
@@ -406,7 +406,7 @@ describe('QueryRunner', () => {
           const work = repo.proposeWork({
             id: nextId,
             requestKey: 'work-A',
-            concernId: null,
+            projectId: null,
             originSessionId: rootId,
             originMessageId: askA.messageId,
             title: 'A',
@@ -3620,7 +3620,58 @@ describe('QueryRunner', () => {
       expect(mockLogger.error).toHaveBeenCalledWith('Streaming query error:', expect.anything());
     });
 
-    it('reports a terminal error when the redelivered prompt meets the same exit again', async () => {
+    it('redelivers a fresh prompt fed alongside one already redelivered', async () => {
+      let queryCalls = 0;
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(
+        ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+          queryCalls += 1;
+          const call = queryCalls;
+          return {
+            close: () => {},
+            interrupt: async () => {},
+            [Symbol.asyncIterator]: async function* () {
+              if (call > 2) return;
+              yield {
+                type: 'result',
+                subtype: 'success',
+                uuid: `result-${call}`,
+              } as unknown as SDKMessage;
+              const fed = prompt[Symbol.asyncIterator]();
+              await fed.next();
+              if (call === 2) await fed.next();
+              throw new Error('Claude Code process exited with code 1');
+            },
+          };
+        }
+      );
+      const note = (uuid: string) => ({
+        message: { type: 'user', uuid, message: { role: 'user', content: uuid } },
+        onSent: () => {},
+      });
+      let generatorCalls = 0;
+      const ctx = createContext({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: mock(async function* () {
+            generatorCalls += 1;
+            if (generatorCalls === 1) yield note('old');
+            if (generatorCalls === 2) {
+              yield note('old');
+              yield note('new');
+            }
+          }),
+        } as unknown as MessageQueue,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise;
+
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith('new', 'new', false, { prepend: true });
+      expect(queryCalls).toBe(3);
+    });
+
+    it('ends the turn quietly when the redelivered prompt meets the same exit again', async () => {
       async function* prompts() {
         yield { message: { uuid: 'next-prompt', message: { content: 'next' } }, onSent: () => {} };
       }
@@ -3650,8 +3701,77 @@ describe('QueryRunner', () => {
       await ctx.queryPromise;
 
       expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
-      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ['error_max_turns', true],
+      ['success', true],
+      ['error_max_turns', false],
+    ])(
+      'a process exit after a %s result and a trailing state message is not an error (fed note: %s)',
+      async (subtype, fedNote) => {
+        let queryCalls = 0;
+        (query as unknown as ReturnType<typeof mock>).mockImplementation(
+          ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+            queryCalls += 1;
+            const firstQuery = queryCalls === 1;
+            return {
+              close: () => {},
+              interrupt: async () => {},
+              [Symbol.asyncIterator]: async function* () {
+                if (!firstQuery) return;
+                yield { type: 'result', subtype, uuid: 'turn-result' } as unknown as SDKMessage;
+                yield {
+                  type: 'system',
+                  subtype: 'session_state_changed',
+                  state: 'idle',
+                  uuid: 'state-idle',
+                } as unknown as SDKMessage;
+                if (fedNote) await prompt[Symbol.asyncIterator]().next();
+                throw new Error('Claude Code process exited with code 1');
+              },
+            };
+          }
+        );
+        let generatorCalls = 0;
+        const ctx = createContext({
+          messageQueue: {
+            ...mockMessageQueue,
+            messageGenerator: mock(async function* () {
+              generatorCalls += 1;
+              if (generatorCalls > 1 || !fedNote) return;
+              yield {
+                message: {
+                  type: 'user',
+                  uuid: 'turn-limit-note',
+                  message: { role: 'user', content: 'turn limit note' },
+                },
+                onSent: () => {},
+              };
+            }),
+          } as unknown as MessageQueue,
+        });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise;
+
+        expect(handleErrorSpy).not.toHaveBeenCalled();
+        expect(mockLogger.error).not.toHaveBeenCalledWith(
+          'Streaming query error:',
+          expect.anything()
+        );
+        if (fedNote) {
+          expect(enqueueWithIdSpy).toHaveBeenCalledWith(
+            'turn-limit-note',
+            'turn limit note',
+            false,
+            { prepend: true }
+          );
+          expect(queryCalls).toBe(2);
+        }
+      }
+    );
 
     it('passes the assessed limit payload to the handoff callback', async () => {
       const resetAtMs = Date.now() + 60 * 60 * 1000;
