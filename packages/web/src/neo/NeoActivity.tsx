@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoScene } from './neo-scenes.ts';
+import { findNeoProject } from './project-redirects.ts';
 
 type Project = { readonly id: string; readonly title: string };
 type Activity = { readonly key: string; readonly text: string };
 
 export function neoActivityItems(
   scenes: readonly NeoScene[],
-  projects: readonly Project[]
+  projects: readonly Project[],
+  redirects?: NeoSnapshot['projectRedirects']
 ): Activity[] {
   return scenes
     .filter((scene) => scene.group === 'running')
@@ -16,7 +19,7 @@ export function neoActivityItems(
       const title =
         receipt.kind === 'work'
           ? receipt.title.trim() || 'Work'
-          : projects.find((project) => project.id === receipt.projectId)?.title.trim() ||
+          : findNeoProject(projects, redirects, receipt.projectId)?.title.trim() ||
             'Your context holder';
       return {
         key: JSON.stringify([scene.ref.kind, scene.ref.id]),
@@ -26,16 +29,22 @@ export function neoActivityItems(
 }
 
 const projectActivity = (superpipe({})('neo-activity') as PipelineAPI)
-  .input(['scenes', 'projects'])
-  .pipe(neoActivityItems, ['scenes', 'projects'], 'items')
-  .end('items') as (scenes: readonly NeoScene[], projects: readonly Project[]) => Activity[];
+  .input(['scenes', 'projects', 'redirects'])
+  .pipe(neoActivityItems, ['scenes', 'projects', 'redirects'], 'items')
+  .end('items') as (
+  scenes: readonly NeoScene[],
+  projects: readonly Project[],
+  redirects: NeoSnapshot['projectRedirects']
+) => Activity[];
 
 export function NeoActivity({
   scenes,
   projects,
   enabled,
   reply,
+  redirects,
 }: {
+  redirects?: NeoSnapshot['projectRedirects'];
   scenes: readonly NeoScene[];
   projects: readonly Project[];
   enabled: boolean;
@@ -44,7 +53,7 @@ export function NeoActivity({
   const items = reply
     ? [{ key: 'neo-reply', text: reply }]
     : enabled
-      ? projectActivity(scenes, projects)
+      ? projectActivity(scenes, projects, redirects)
       : [];
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const fingerprint = JSON.stringify(items);

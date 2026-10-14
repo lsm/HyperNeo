@@ -34,6 +34,7 @@ import {
 } from './neo-scenes.ts';
 import { neoAwaitingReply } from './processing-activity.ts';
 import { neoWorkSummaries, neoWorkSummary } from './public-conversation.ts';
+import { resolveNeoProjectId } from './project-redirects.ts';
 import { revealNeoAsk, revealNeoWork } from './reveal-work.ts';
 import { NeoAskSummaryLine, projectNeoAskSummary } from './NeoAskSummary.tsx';
 import { useNeo } from './useNeo.ts';
@@ -81,7 +82,7 @@ export function NeoLive() {
   const projectTitles = new Map(
     (view?.publicAuthorBindings ?? []).flatMap((binding) => {
       const title = binding.projectId
-        ? neoProjectPath(projects, binding.projectId)
+        ? neoProjectPath(projects, resolveNeoProjectId(view?.projectRedirects, binding.projectId))
             .map((project) => project.title)
             .join(' › ')
         : '';
@@ -737,6 +738,7 @@ export function NeoLive() {
           )}
           <NeoActivity
             key={sceneScope}
+            redirects={view?.projectRedirects}
             scenes={(scenes?.running ?? []).filter(
               (scene) => !askGroups.settledWork.has(scene.ref.id)
             )}
