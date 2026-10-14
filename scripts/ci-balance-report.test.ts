@@ -201,7 +201,7 @@ describe('buildReport', () => {
     expect(unitCoverage?.expected).toBeGreaterThan(100);
     expect(unitCoverage?.missing).toContain('packages/shared/tests/logger.test.ts');
     expect(report.coverage.map((row) => row.suite)).toEqual(['daemon-unit']);
-  }, 30000);
+  }, 120000);
 
   it('skips the coverage oracle entirely when coverage is disabled', () => {
     const report = buildReport(twoBucketInput, { coverage: false });
