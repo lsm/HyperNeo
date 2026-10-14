@@ -28,6 +28,7 @@ import type {
   WorkExchangeEntry,
   WorkInput,
   WorkRef,
+  WorkStarted,
   WorkStatus,
   WorkSummary,
 } from './types.ts';
@@ -55,6 +56,8 @@ const BUSY_TIMEOUT_MS = 2_000;
 const ROLLOUT_TAIL_BYTES = 4 * 1024 * 1024;
 const REPLY_LIMIT = 4_000;
 const QUEUE_TIMEOUT_MS = 30_000;
+const START_RECEIPT_TRIES = 10;
+const START_RECEIPT_WAIT_MS = 200;
 const TURN_MARKERS = new Set(['task_started', 'task_complete', 'turn_aborted']);
 const INJECTED_INPUT = /^<([a-z_]+)>[\s\S]*<\/\1>$/;
 const CODEX_ASK_TOOL = 'request_user_input_async';
@@ -586,6 +589,48 @@ export function codexQueueDelivery(
   };
 }
 
+export function codexStartReceipt(
+  lines: readonly string[],
+  message: string,
+  threadId: string
+): CodexReceipt | null {
+  const opening = message.trim().split('\n')[0].slice(0, 200);
+  const input = lines
+    .map((line) => codexUserInput(parseLine(line)))
+    .find((candidate) => !!candidate && candidate.text.includes(opening));
+  return input ? { executionId: threadId, inputId: input.id } : null;
+}
+
+function startedRolloutPath(started: unknown): string | null {
+  const path = (started as { thread?: { path?: unknown } } | null)?.thread?.path;
+  return typeof path === 'string' && path ? path : null;
+}
+
+function storedRolloutPath(statePath: string, threadId: string): string | null {
+  try {
+    return readCodexThread(statePath, threadId)?.thread.rolloutPath ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function readCodexStartReceipt(
+  reported: string | null,
+  message: string,
+  threadId: string,
+  statePath: string
+): Promise<CodexReceipt | null> {
+  for (let attempt = 1; attempt <= START_RECEIPT_TRIES; attempt++) {
+    const path = reported ?? storedRolloutPath(statePath, threadId);
+    if (!path) return null;
+    const lines = await readRolloutTail(path).catch(() => []);
+    const receipt = codexStartReceipt(lines, message, threadId);
+    if (receipt || attempt === START_RECEIPT_TRIES) return receipt;
+    await new Promise((resolve) => setTimeout(resolve, START_RECEIPT_WAIT_MS));
+  }
+  return null;
+}
+
 export function codexInputEvidence(
   lines: readonly string[],
   receipt: CodexReceipt,
@@ -796,7 +841,7 @@ export async function startCodexThread(
   folder: string,
   request: StartRequest,
   deps: CodexDesktopAdapterDeps
-): Promise<Result<WorkSummary>> {
+): Promise<Result<WorkStarted>> {
   return withCodexAppServer(deps, async (server) => {
     let threadId: string | null = null;
     let workFolder: CodexWorkFolder | null = null;
@@ -843,6 +888,12 @@ export async function startCodexThread(
         threadId,
         input: [{ type: 'text', text: request.message }],
       });
+      const receipt = await readCodexStartReceipt(
+        startedRolloutPath(started),
+        request.message,
+        threadId,
+        deps.statePath
+      );
       return {
         ok: true,
         value: {
@@ -854,6 +905,7 @@ export async function startCodexThread(
           link: `codex://threads/${threadId}`,
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
+          ...(receipt ? { receipt } : {}),
         },
       };
     } catch (error) {

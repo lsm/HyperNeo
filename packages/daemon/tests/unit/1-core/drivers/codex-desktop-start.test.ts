@@ -1,7 +1,11 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
 import {
+  codexStartReceipt,
   createCodexDesktopAdapter,
   startedThreadId,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
@@ -76,6 +80,67 @@ describe('startedThreadId', () => {
     expect(startedThreadId({ threadId: 'th2' })).toBe('th2');
     expect(startedThreadId({ thread: {} })).toBeNull();
     expect(startedThreadId(null)).toBeNull();
+  });
+});
+
+const brief = (id: string, text: string) =>
+  JSON.stringify({
+    type: 'response_item',
+    timestamp: '2026-10-05T12:00:01.000Z',
+    payload: { type: 'message', role: 'user', id, content: [{ type: 'input_text', text }] },
+  });
+
+describe('codexStartReceipt', () => {
+  test('receipts the brief by its user message id, skipping injected context', () => {
+    const lines = [
+      brief('msg_ctx', '<environment_context>cwd</environment_context>'),
+      brief('msg_1', `${request.message}\n[HyperNeo agent input]`),
+    ];
+    expect(codexStartReceipt(lines, request.message, 'th1')).toEqual({
+      executionId: 'th1',
+      inputId: 'msg_1',
+    });
+    expect(codexStartReceipt(lines.slice(0, 1), request.message, 'th1')).toBeNull();
+  });
+});
+
+describe('codex-desktop start receipt', () => {
+  let dir = '';
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = '';
+  });
+
+  test('a started thread returns the receipt of its brief read from the rollout it reports', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'codex-start-'));
+    const path = join(dir, 'rollout.jsonl');
+    writeFileSync(path, brief('msg_7', request.message));
+    const { instance } = adapter({
+      call: async (method) =>
+        method === 'model/list'
+          ? catalog
+          : method === 'thread/start'
+            ? { thread: { id: 'th1', path } }
+            : {},
+    });
+    expect(await instance.start?.(request, user)).toMatchObject({
+      ok: true,
+      value: { ref: { id: 'th1' }, receipt: { executionId: 'th1', inputId: 'msg_7' } },
+    });
+  });
+
+  test('a thread with no readable rollout starts without a receipt', async () => {
+    const { instance } = adapter({
+      call: async (method) =>
+        method === 'model/list'
+          ? catalog
+          : method === 'thread/start'
+            ? { thread: { id: 'th1' } }
+            : {},
+    });
+    const started = await instance.start?.(request, user);
+    expect(started).toMatchObject({ ok: true, value: { ref: { id: 'th1' } } });
+    expect(started?.ok && 'receipt' in started.value).toBe(false);
   });
 });
 
