@@ -59,6 +59,7 @@ describe('decideNeoHandoffBeforeRead', () => {
     });
     expect(decideNeoHandoffBeforeRead(facts('proposed'))).toEqual({ state: 'idle' });
     expect(decideNeoHandoffBeforeRead(facts('reported'))).toEqual({ state: 'idle' });
+    expect(decideNeoHandoffBeforeRead(facts('reported', { ref }))).toEqual({ state: 'idle' });
     expect(decideNeoHandoffBeforeRead({ ...facts('queued'), work: null })).toEqual({
       state: 'idle',
     });

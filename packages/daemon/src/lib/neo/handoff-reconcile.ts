@@ -36,9 +36,10 @@ export interface NeoHandoffDeps {
 
 export function decideNeoHandoffBeforeRead(facts: NeoHandoffFacts): NeoHandoffVerdict | null {
   const { work, card } = facts;
-  if (card?.ref) return null;
-  if (card?.startInterrupted) return { state: 'uncertain', reason: 'start_interrupted' };
+  if (!card?.ref && card?.startInterrupted)
+    return { state: 'uncertain', reason: 'start_interrupted' };
   if (!work || !['proposed', 'queued'].includes(work.status)) return { state: 'idle' };
+  if (card?.ref) return null;
   const claimedAt = card?.claimedAt ?? null;
   if (claimedAt !== null && claimedAt >= facts.bootedAt) return { state: 'in_flight' };
   if (work.status === 'queued') return { state: 'uncertain', reason: 'no_external_identifier' };
