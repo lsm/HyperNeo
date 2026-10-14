@@ -216,6 +216,7 @@ describe('neo.work.continue', () => {
   let duringSend: () => Promise<void>;
   let exchange: { at: number; role: 'user' | 'agent'; text: string }[] | undefined;
   let delivered: boolean;
+  let receipt: { executionId: string; inputId: string } | undefined;
   let unreachable: boolean;
   const human: OperationCaller = { source: 'rpc', principal: 'local' };
   const neo: OperationCaller = { source: 'mcp', sessionId: 'root', role: 'neo' };
@@ -229,6 +230,7 @@ describe('neo.work.continue', () => {
     exchange = undefined;
     duringSend = async () => {};
     delivered = true;
+    receipt = undefined;
     unreachable = false;
     const driverRegistry = createOperationRegistry([
       defineOperation({
@@ -259,7 +261,7 @@ describe('neo.work.continue', () => {
           await duringSend();
           return unreachable
             ? { ok: false, reason: 'unreachable', detail: 'down' }
-            : { ok: true, value: { delivered } };
+            : { ok: true, value: { delivered, receipt } };
         },
       }),
     ]);
@@ -324,6 +326,59 @@ describe('neo.work.continue', () => {
       caller
     );
   }
+
+  test.each([true, false])('replaces continue receipt with delivered=%s', async (sentNow) => {
+    const work = reportedWork();
+    const prior = {
+      inputBefore: 1,
+      opening: 'Previous input',
+      receipt: { executionId: 'old-session', inputId: 'old-input' },
+    };
+    service.driverTargets.recordSent(work.id, prior);
+    delivered = sentNow;
+    lastActivityAt = 10;
+    recentInputs = [{ at: 5, text: 'Earlier input' }];
+    receipt = { executionId: 'rebound-session', inputId: 'next-input' };
+    expect(await invoke({ id: work.id, message: 'Next step' })).toMatchObject({
+      value: { ok: true, work: { status: 'queued' } },
+    });
+    expect(service.driverTargets.readSent(work.id)).toEqual({
+      inputBefore: 5,
+      opening: 'Next step',
+      receipt,
+    });
+    expect(service.driverTargets.readStartedAt(work.id)).toBe(sentNow ? 10 : null);
+    receipt = undefined;
+    expect(await invoke({ id: work.id, message: 'Legacy next step' })).toMatchObject({
+      value: { ok: true },
+    });
+    expect(service.driverTargets.readSent(work.id)).toEqual({
+      inputBefore: 5,
+      opening: 'Legacy next step',
+    });
+  });
+
+  test.each(['unreachable', 'invalid receipt'])(
+    'preserves continue anchor on %s',
+    async (failure) => {
+      const work = reportedWork();
+      const prior = {
+        inputBefore: 1,
+        opening: 'Previous input',
+        receipt: { executionId: 'old-session', inputId: 'old-input' },
+      };
+      service.driverTargets.recordSent(work.id, prior);
+      const startedAt = service.driverTargets.readStartedAt(work.id);
+      unreachable = failure === 'unreachable';
+      receipt = { executionId: 'new-session', inputId: '' };
+      expect(await invoke({ id: work.id, message: 'Next step' })).toMatchObject({
+        value: { ok: false },
+      });
+      expect(service.driverTargets.readSent(work.id)).toEqual(prior);
+      expect(service.driverTargets.readStartedAt(work.id)).toBe(startedAt);
+      expect(service.repo.getWork(work.id)?.status).toBe('reported');
+    }
+  );
 
   test('sends the next step with the goal to the same session and reopens the card', async () => {
     const work = reportedWork();

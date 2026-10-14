@@ -120,7 +120,7 @@ describe('Recorded handoff disclosure', () => {
     expect(details.textContent).toContain('Receipt: neo-work:work-A:review');
     expect(details.textContent).toContain('Input: root / not recorded');
     expect(item.querySelector('script')).toBeNull();
-    expect(screen.getAllByText('Response ready')).toHaveLength(2);
+    expect(screen.getAllByText('Reply received')).toHaveLength(2);
     expect(screen.queryByText('Completed')).toBeNull();
   });
 

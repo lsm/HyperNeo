@@ -104,6 +104,7 @@ export interface NeoAskItem {
   check: string | null;
   metBy: 'neo' | 'daemon' | 'human' | null;
   removed: boolean;
+  removedReason?: string;
   addedAt: number | null;
   options?: string[];
   decision?: true;

@@ -61,7 +61,7 @@ const shortApps: Record<string, string> = {
 const workLabels: Record<NeoWork['status'], string> = {
   proposed: 'Your call',
   queued: 'Handed to HyperNeo',
-  reported: 'Response ready',
+  reported: 'Reply received',
   failed: 'Failed',
   cancelled: 'Stopped',
 };
@@ -196,8 +196,8 @@ export function neoCardTone(
   driver: NeoWorkDriverReceipt | undefined
 ): NeoCardTone {
   if (phase === 'abandoned') return driver?.status === 'needs_you' ? 'warning' : 'accent';
-  if (phase === 'pr_open' || phase === 'pr_setback' || phase === 'merged' || phase === 'reported')
-    return pr?.inProgress ? 'accent' : pr?.setback ? 'warning' : 'success';
+  if (phase === 'merged') return pr?.setback ? 'warning' : 'success';
+  if (phase === 'pr_setback') return 'warning';
   return phase === 'needs_you' || phase === 'stopped' || phase === 'failed' || phase === 'cancelled'
     ? 'warning'
     : 'accent';

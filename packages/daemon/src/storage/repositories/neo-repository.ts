@@ -1,3 +1,4 @@
+import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { Database } from '../sqlite-compat.ts';
@@ -29,10 +30,13 @@ export interface NeoWorkTarget {
 export type NeoWorkState = Pick<NeoWork, 'status' | 'sessionId' | 'report'>;
 
 export class NeoRepository {
+  readonly projectMerges: NeoProjectMergeRepository;
   constructor(
     private readonly db: Database,
     private readonly notify: () => void = () => {}
-  ) {}
+  ) {
+    this.projectMerges = new NeoProjectMergeRepository(db, notify);
+  }
 
   listProjects(): NeoProject[] {
     return this.db

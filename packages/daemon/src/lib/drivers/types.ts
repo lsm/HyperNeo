@@ -100,14 +100,37 @@ export const WorkExchangeEntrySchema = z.object({
   text: z.string(),
 });
 
+export const WorkInputReceiptSchema = z.object({
+  executionId: z.string().min(1),
+  inputId: z.string().min(1),
+});
+
 export const WorkDeliverySchema = z.object({
   delivered: z.boolean(),
-  receipt: z.object({ executionId: z.string().min(1), inputId: z.string().min(1) }).optional(),
+  receipt: WorkInputReceiptSchema.optional(),
 });
 
 export type WorkDelivery = z.infer<typeof WorkDeliverySchema>;
 
+export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
+  z
+    .object({
+      receipt: WorkInputReceiptSchema,
+      state: z.enum(['unavailable', 'pending']),
+    })
+    .strict(),
+  z
+    .object({
+      receipt: WorkInputReceiptSchema,
+      state: z.literal('observed'),
+      exchange: z.array(WorkExchangeEntrySchema).max(40),
+      exchangeCut: z.boolean(),
+    })
+    .strict(),
+]);
+
 export const WorkDetailSchema = WorkSummarySchema.extend({
+  inputEvidence: WorkInputEvidenceSchema.optional(),
   execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   lastReply: z.string().optional(),
   lastReplyAt: z.number().optional(),
@@ -171,7 +194,11 @@ export interface WorkAdapter {
     message: string,
     context: WorkCallContext
   ) => Promise<Result<WorkDelivery>>;
-  readonly status?: (ref: WorkRef, since?: number) => Promise<Result<WorkDetail>>;
+  readonly status?: (
+    ref: WorkRef,
+    since?: number,
+    receipt?: WorkDelivery['receipt']
+  ) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
   readonly archive?: (
     ref: WorkRef,

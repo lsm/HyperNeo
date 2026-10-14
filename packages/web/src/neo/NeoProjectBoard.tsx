@@ -14,7 +14,7 @@ const statusLabels = {
   proposed: 'Your call',
   queued: 'Handed to HyperNeo',
   pending: 'Checking context',
-  reported: 'Response ready',
+  reported: 'Reply received',
   failed: 'Needs attention',
   cancelled: 'Stopped',
 };

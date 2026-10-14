@@ -225,6 +225,7 @@ import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { buildNeoCheckRegistry } from './packs/check-registry.ts';
+import { admitNeoWork, neoOutcomeEligibility } from './work-admission.ts';
 import {
   neoEnabledPacks,
   neoSettingsPackBriefs,
@@ -501,6 +502,7 @@ export class NeoService {
   private triggerTimer?: ReturnType<typeof setTimeout>;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
+  private readonly bootedAt = Date.now();
   private readonly deliveries = new Map<string, Promise<void>>();
   private readonly processingStatus = new Map<string, string>();
   private readonly interruptedSessions = new Set<string>();
@@ -529,6 +531,7 @@ export class NeoService {
           outcome: await this.invokeAsCard(work, 'work.status', {
             ref,
             since: card.sent?.inputBefore ?? card.since,
+            ...(card.sent?.receipt ? { receipt: card.sent.receipt } : {}),
           }),
         };
       },
@@ -1416,6 +1419,10 @@ export class NeoService {
   }
 
   async start(id: string): Promise<void> {
+    return this.startPending(id);
+  }
+
+  private startPending(id: string): Promise<void> {
     const current = this.workPending.get(id);
     if (current) return current;
     const operation = this.startReservedWork(id)
@@ -1467,6 +1474,22 @@ export class NeoService {
       work,
       'Neo did not choose where this work runs. Ask Neo again and say which project, Space or chat it belongs to.'
     );
+  }
+
+  admitWork(id: string, human: boolean, now = Date.now()) {
+    const eligible = neoOutcomeEligibility(this.checkRegistry());
+    return admitNeoWork(id, human, now, {
+      bootedAt: this.bootedAt,
+      readWork: (workId: string) => this.repo.getWork(workId),
+      readAsk: (workId: string) => this.askRecords.forWork(workId),
+      readCard: (workId: string) => this.driverTargets.readCard(workId),
+      readBlockers: (workId: string) => this.dependencies.blockers(workId, eligible),
+      claim: (workId: string, admitted: () => boolean) =>
+        this.driverTargets.claimAdmission(workId, now, admitted),
+      handOff: (work: NeoWork) => this.startPending(work.id),
+      release: (workId: string) => this.driverTargets.releaseAdmission(workId),
+      markUncertain: (workId: string) => this.driverTargets.recordStartInterrupted(workId),
+    });
   }
 
   async continueWork(
@@ -1632,7 +1655,11 @@ export class NeoService {
       const opening = messageOpening(String(call.input.message));
       this.driverTargets.recordSent(
         queued.id,
-        probe ? probe.sent : opening ? { inputBefore: 0, opening } : null
+        probe
+          ? probe.sent && { ...probe.sent, receipt: result.receipt }
+          : opening
+            ? { inputBefore: 0, opening }
+            : null
       );
       const current = this.repo.getWork(queued.id);
       if (current?.status !== 'queued') {
@@ -2510,8 +2537,12 @@ export class NeoService {
     isContinuing: (workId) =>
       !!this.workContinues.get(workId) ||
       ['send', 'adopt'].includes(this.driverTargets.get(workId)?.verb ?? ''),
-    readStatus: (work, ref, since) =>
-      this.invokeAsCard(work, 'work.status', { ref, ...(since !== null ? { since } : {}) }),
+    readStatus: (work, ref, since, receipt) =>
+      this.invokeAsCard(work, 'work.status', {
+        ref,
+        ...(since !== null ? { since } : {}),
+        ...(receipt ? { receipt } : {}),
+      }),
     recordStartedAt: (workId, at) => this.driverTargets.recordStartedAt(workId, at),
     recordLive: (workId, status, live) =>
       this.driverTargets.recordLive(workId, status, live.link, live.remoteLink),

@@ -7,6 +7,7 @@ import {
   neoCardOpenLabel,
   neoCardPrimaryAction,
   neoCardTone,
+  neoContinuedLabel,
 } from '../card-view.ts';
 import { describeNeoAskFromView, groupNeoAsks, neoAskOpenTarget } from '../neo-asks.ts';
 import type { NeoProjectBoard } from '../neo-project-board.ts';
@@ -95,6 +96,16 @@ describe('neoCardLabel', () => {
     expect(neoCardLabel(card('w', { phase: 'stopped', uncheckedSince: at }))).toBe(
       'Running in Codex Desktop'
     );
+  });
+});
+
+describe('neoContinuedLabel', () => {
+  it('says once for one continue and counts times after', () => {
+    expect([1, 2, 5].map(neoContinuedLabel)).toEqual([
+      'Neo continued it once',
+      'Neo continued it 2 times',
+      'Neo continued it 5 times',
+    ]);
   });
 });
 

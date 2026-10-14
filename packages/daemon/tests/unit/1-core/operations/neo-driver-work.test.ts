@@ -3660,6 +3660,30 @@ describe('Neo work with a drivers target', () => {
     ).toBe('needs_you');
   });
 
+  test.each([true, false])('captures initial send receipt with delivered=%s', async (delivered) => {
+    const receipt = { executionId: 'node-session', inputId: 'input-1' };
+    const { db, service } = await setup(
+      { ok: true, value: { delivered, receipt } },
+      undefined,
+      () => ({ ok: true, value: { status: 'done', lastActivityAt: 1, recentInputs: [] } }),
+      sendTarget
+    );
+    try {
+      await service.start('work-1');
+      expect(service.driverTargets.readSent('work-1')).toEqual({
+        inputBefore: 0,
+        opening: work.instruction,
+        receipt,
+      });
+      expect(service.driverTargets.readStartedAt('work-1')).toBe(delivered ? 1 : null);
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      service.dispose();
+      db.close();
+    }
+  });
+
   test('records the live status and link of sent work without settling it', async () => {
     const reply = {
       ok: true,

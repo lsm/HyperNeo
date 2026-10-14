@@ -288,6 +288,155 @@ describe('space adapter send', () => {
     caller: { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const },
   };
 
+  describe('receipt-bound task evidence', () => {
+    const receipt = { executionId: 's-code', inputId: 'own-input' };
+    const write = (
+      id: string,
+      type: string,
+      seq: number | null,
+      text: string,
+      session = 's-code',
+      task = 't1'
+    ) => {
+      db.prepare(`INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, ?, NULL, 'consumed', ?, 1)`).run(
+        session,
+        task,
+        id,
+        type,
+        JSON.stringify(
+          type === 'user'
+            ? { type, message: { content: text }, inputKind: 'task' }
+            : { type, result: text }
+        ),
+        new Date(1000).toISOString(),
+        seq
+      );
+    };
+    const read = async (id = 't1', input = receipt) => {
+      const result = await adapter().status!(ref(id), undefined, input);
+      if (!result.ok) throw new Error(result.detail);
+      return result.value;
+    };
+    beforeEach(() => {
+      db.exec(`CREATE TABLE sdk_messages (session_id TEXT, task_id TEXT, sdk_uuid TEXT,
+        message_type TEXT, sdk_message TEXT, timestamp TEXT, parent_tool_use_id TEXT,
+        send_status TEXT, consumed_seq INTEGER, is_terminal INTEGER)`);
+      write('own-input', 'user', 10, 'Own task input');
+      write('own-result', 'result', 11, 'Own task reply');
+      write('event', 'user', 12, 'Unrelated PR event');
+      write('event-result', 'result', 13, 'Other reply');
+    });
+
+    test('uses consumed order despite equal timestamps and preserves the task aggregate separately', async () => {
+      db.exec("UPDATE space_tasks SET result = 'Aggregate from multiple nodes' WHERE id = 't1'");
+      expect(await read()).toMatchObject({
+        lastReply: 'Aggregate from multiple nodes',
+        inputEvidence: {
+          receipt,
+          state: 'observed',
+          exchangeCut: false,
+          exchange: [
+            { at: 1000, role: 'user', text: 'Own task input' },
+            { at: 1000, role: 'agent', text: 'Own task reply' },
+          ],
+        },
+      });
+      expect((await read()).exchange).toBeUndefined();
+    });
+
+    test('keeps persisted ownership after node/session/run replacement and completion', async () => {
+      const original = (await read()).inputEvidence;
+      db.exec(
+        "UPDATE node_executions SET agent_session_id = 's-replacement', status = 'cancelled'"
+      );
+      db.exec(
+        "UPDATE space_tasks SET workflow_run_id = 'new-run', status = 'done', completed_at = 2000 WHERE id = 't1'"
+      );
+      write('replacement-input', 'user', 14, 'Replacement input', 's-replacement');
+      write('replacement-result', 'result', 15, 'Replacement reply', 's-replacement');
+      expect((await read()).inputEvidence).toEqual(original);
+      db.exec('DELETE FROM node_executions');
+      expect((await read()).inputEvidence).toEqual(original);
+    });
+
+    test('rejects task, execution and message mismatches', async () => {
+      expect((await read('t2')).inputEvidence).toEqual({ receipt, state: 'unavailable' });
+      for (const wrong of [
+        { ...receipt, executionId: 'foreign' },
+        { ...receipt, inputId: 'missing' },
+      ])
+        expect((await read('t1', wrong)).inputEvidence).toEqual({
+          receipt: wrong,
+          state: 'unavailable',
+        });
+    });
+
+    test.each(['deferred', 'enqueued', 'submitted'])(
+      'reports %s input as pending without borrowing the latest result',
+      async (status) => {
+        db.prepare(
+          "UPDATE sdk_messages SET send_status = ?, consumed_seq = NULL WHERE sdk_uuid = 'own-input'"
+        ).run(status);
+        expect((await read()).inputEvidence).toEqual({ receipt, state: 'pending' });
+      }
+    );
+
+    test.each([
+      "UPDATE sdk_messages SET consumed_seq = NULL WHERE sdk_uuid = 'own-input'",
+      "UPDATE sdk_messages SET send_status = 'failed' WHERE sdk_uuid = 'own-input'",
+      "UPDATE sdk_messages SET consumed_seq = 10 WHERE sdk_uuid = 'event'",
+      "UPDATE sdk_messages SET consumed_seq = NULL WHERE sdk_uuid = 'event'",
+      "UPDATE sdk_messages SET sdk_message = 'broken' WHERE sdk_uuid = 'own-input'",
+      "UPDATE sdk_messages SET sdk_message = 'broken' WHERE sdk_uuid = 'own-result'",
+      "UPDATE sdk_messages SET task_id = NULL WHERE sdk_uuid = 'own-input'",
+      "INSERT INTO sdk_messages SELECT * FROM sdk_messages WHERE sdk_uuid = 'own-input'",
+      "UPDATE sdk_messages SET parent_tool_use_id = 'tool' WHERE sdk_uuid = 'own-input'",
+    ])('fails closed for ambiguous or missing evidence: %s', async (sql) => {
+      db.exec(sql);
+      expect((await read()).inputEvidence).toEqual({ receipt, state: 'unavailable' });
+    });
+
+    test('includes same-turn terminal evidence but excludes nested, compaction and intercepted results', async () => {
+      db.exec("UPDATE sdk_messages SET consumed_seq = 10 WHERE sdk_uuid = 'own-result'");
+      for (const [id, field] of [
+        ['nested', 'nested'],
+        ['compact', 'internal_compaction_turn'],
+        ['recovery', 'recovery_intercepted'],
+      ]) {
+        write(id, 'result', 11, 'Must not appear');
+        if (field === 'nested')
+          db.prepare('UPDATE sdk_messages SET parent_tool_use_id = ? WHERE sdk_uuid = ?').run(
+            'tool',
+            id
+          );
+        else
+          db.prepare('UPDATE sdk_messages SET sdk_message = ? WHERE sdk_uuid = ?').run(
+            JSON.stringify({ result: 'Must not appear', [field]: true }),
+            id
+          );
+      }
+      const evidence = (await read()).inputEvidence;
+      expect(evidence?.state).toBe('observed');
+      if (evidence?.state !== 'observed') throw new Error('Missing observed evidence');
+      expect(evidence.exchange.map((entry) => entry.text)).toEqual([
+        'Own task input',
+        'Own task reply',
+      ]);
+    });
+
+    test('bounds replies while retaining the exact input anchor', async () => {
+      db.exec("DELETE FROM sdk_messages WHERE sdk_uuid <> 'own-input'");
+      for (let n = 0; n < 45; n++) write(`result-${n}`, 'result', 11 + n, 'x'.repeat(5000));
+      const evidence = (await read()).inputEvidence;
+      expect(evidence?.state).toBe('observed');
+      if (evidence?.state !== 'observed') throw new Error('Missing observed evidence');
+      expect(evidence.exchangeCut).toBe(true);
+      expect(evidence.exchange).toHaveLength(40);
+      expect(evidence.exchange[0].text).toBe('Own task input');
+      expect(evidence.exchange[1].text).toHaveLength(4000);
+    });
+  });
+
   test('task aggregate never borrows a node exchange across replacement or completion', async () => {
     db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
       timestamp TEXT, send_status TEXT, parent_tool_use_id TEXT)`);
