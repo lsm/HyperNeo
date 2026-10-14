@@ -460,36 +460,23 @@ export async function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise
   if (!text.trim()) return { choice: null };
   const holders = await deps.holders();
   const facts = (await deps.facts?.(text)) ?? [];
-  const owners = neoFactOwners(facts);
-  if (facts.length && (!owners || owners.length !== 1 || owners[0] === null)) {
-    const gate = requireNeoFactRoute(facts, holders);
-    return 'reason' in gate ? gate.reason : { choice: null };
-  }
   let chosen: NeoRouted = { choice: null };
+  if (facts.length) {
+    const gate = requireNeoFactRoute(facts, holders);
+    if ('reason' in gate) {
+      if (!gate.reason.choice || facts.some((fact) => !fact.projectOnly)) return gate.reason;
+      chosen = gate.reason;
+    }
+  }
   const visited = new Set<string>();
   while (true) {
     const parentId = chosen.choice?.projectId ?? null;
     const level = neoRouteLevel(holders, parentId);
     if (parentId && !level.some((holder) => holder.projectId !== parentId)) return chosen;
-    const ancestry = parentId
-      ? neoProjectPath(
-          holders.map((holder) => ({ ...holder, id: holder.projectId })),
-          parentId
-        )
-      : [];
-    const scopedFacts = facts.filter(
-      (fact) => !fact.projectOnly || !ancestry.some((node) => node.id === fact.projectId)
-    );
-    const mapped = scopedFacts.map((fact) => ({
-      ...fact,
-      projectId: fact.projectId
-        ? neoLevelFactOwner(holders, fact.projectId, parentId)
-        : fact.projectId,
-    }));
     const next = await runNeoRoute(text, {
       ...deps,
       holders: () => level,
-      facts: () => mapped,
+      facts: () => [],
       recentTurns: () => neoLevelTurns(deps.recentTurns(), holders, parentId),
       projectTurns: () => neoLevelTurns(deps.projectTurns(), holders, parentId),
       ...(parentId ? { inbox: undefined, newProject: undefined } : {}),

@@ -12,10 +12,14 @@ import {
 } from '../../../../src/lib/neo/project-tree-operations.ts';
 import {
   chooseNeoRoute,
+  runnableNeoHolders,
   type NeoHolder,
   type NeoRouterDeps,
 } from '../../../../src/lib/neo/router.ts';
-import { readNeoSectionFacts } from '../../../../src/lib/neo/section-route-facts.ts';
+import {
+  createNeoSectionRefReader,
+  readNeoSectionFacts,
+} from '../../../../src/lib/neo/section-route-facts.ts';
 import type { NeoRefState } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 
 const local = { source: 'rpc' as const, principal: 'local' as const };
@@ -325,6 +329,95 @@ describe('hierarchical Neo routing', () => {
         ],
       })
     ).toEqual({ choice: null, fallback: 'facts:cross_project' });
+  });
+
+  test('exact fact owners remain authoritative when an ancestor provider is unavailable', async () => {
+    const tree = [holder('root'), holder('middle', 'root'), holder('owner', 'middle')];
+    const classify = mock(async () => 'main' as const);
+    for (const unavailable of ['root', 'middle']) {
+      const holders = runnableNeoHolders(
+        tree.map((item) => ({
+          ...item,
+          provider: item.projectId === unavailable ? 'offline' : 'anthropic',
+        })),
+        new Map([['offline', false]])
+      );
+      expect(
+        await chooseNeoRoute('existing ask', {
+          ...routeDeps(holders),
+          classify,
+          facts: () => [{ reference: 'ask', projectId: 'owner' }],
+        })
+      ).toEqual({
+        choice: { projectId: 'owner', sessionId: 'session:owner', signal: 'facts', confidence: 1 },
+      });
+    }
+    expect(classify).not.toHaveBeenCalled();
+    expect(
+      await chooseNeoRoute('unavailable owner', {
+        ...routeDeps([tree[0], tree[1]]),
+        facts: () => [{ reference: 'ask', projectId: 'owner' }],
+      })
+    ).toEqual({ choice: null, fallback: 'facts:root' });
+  });
+
+  test('workspace facts still descend within their owner when its ancestor is unavailable', async () => {
+    const holders = [holder('repo', 'unavailable'), holder('section', 'repo')];
+    expect(
+      (
+        await chooseNeoRoute('folder section work', {
+          ...routeDeps(holders),
+          facts: () => [{ reference: '/repo', projectId: 'repo', projectOnly: true }],
+          classify: async () => holders[1],
+        })
+      ).choice?.projectId
+    ).toBe('section');
+  });
+
+  test('section lookups reuse concurrent issue reads and refresh changed ancestry after the TTL', async () => {
+    save('root');
+    workspace('root');
+    const section = repo.createSection('root', epicUrl, 'Neo');
+    if (!section.ok) throw new Error(section.reason);
+    const text = 'https://github.com/lsm/hyperneo/issues/6761';
+    const facts = [{ reference: text, projectId: 'root', projectOnly: true as const }];
+    let now = 0;
+    let parent: NeoRefState['parent'] = { url: epicUrl, at: 1 };
+    const source = mock(async () => [{ ...epic, url: text, parent }]);
+    const read = createNeoSectionRefReader(source, () => now);
+    const lookup = () => readNeoSectionFacts(text, facts, repo.listProjects(), read);
+    expect(await Promise.all([lookup(), lookup()])).toEqual([
+      [{ reference: text, projectId: section.projectId }],
+      [{ reference: text, projectId: section.projectId }],
+    ]);
+    parent = null;
+    now = 29_999;
+    expect(await lookup()).toEqual([{ reference: text, projectId: section.projectId }]);
+    expect(source).toHaveBeenCalledTimes(1);
+    now = 30_000;
+    expect(await lookup()).toEqual(facts);
+    expect(source).toHaveBeenCalledTimes(2);
+  });
+
+  test('link-heavy messages bound section reference lookups and preserve unexamined facts', async () => {
+    save('root');
+    workspace('root');
+    const section = repo.createSection('root', epicUrl, 'Neo');
+    if (!section.ok) throw new Error(section.reason);
+    const urls = Array.from(
+      { length: 25 },
+      (_, i) => `https://github.com/lsm/hyperneo/issues/${7000 + i}`
+    );
+    const facts = urls.map((reference) => ({
+      reference,
+      projectId: 'root',
+      projectOnly: true as const,
+    }));
+    const read = mock(async () => [epic]);
+    expect(await readNeoSectionFacts(urls.join(' '), facts, repo.listProjects(), read)).toEqual(
+      facts
+    );
+    expect(read).toHaveBeenCalledTimes(10);
   });
 
   test('issue ancestry refines repository facts without stealing another owner’s objects', async () => {
