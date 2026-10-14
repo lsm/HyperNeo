@@ -19,12 +19,15 @@ import type {
   StartRequest,
   WorkAdapter,
   WorkCallContext,
+  WorkDelivery,
   WorkDetail,
   WorkInput,
   WorkRef,
+  WorkStarted,
   WorkStatus,
   WorkSummary,
 } from './types.ts';
+import { readSessionInputEvidence } from './space-input-evidence.ts';
 import {
   boundExchange,
   exchangeEntry,
@@ -87,7 +90,12 @@ export interface HyperneoAdapterDeps {
   db: () => BunDatabase;
   machine: string;
   searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
-  handoff: (sessionId: string, message: string, from: string) => Promise<MailboxHandoffOutcome>;
+  handoff: (
+    sessionId: string,
+    message: string,
+    from: string,
+    messageUuid: string
+  ) => Promise<MailboxHandoffOutcome>;
   sessions: HyperneoSessionControl;
   neoFolder: () => string;
   folderExists: (folder: string) => boolean;
@@ -470,10 +478,17 @@ export async function deliverToHyperneo(
   message: string,
   context: WorkCallContext,
   deps: HyperneoAdapterDeps
-): Promise<Result<{ delivered: boolean }>> {
-  const outcome = await deps.handoff(row.id, message, context.from);
+): Promise<Result<WorkDelivery>> {
+  const inputId = crypto.randomUUID();
+  const outcome = await deps.handoff(row.id, message, context.from, inputId);
   if (outcome.kind === 'rejected') return reject('not_delivered', outcome.reason);
-  return { ok: true, value: { delivered: !hyperneoSessionBusy(row) } };
+  return {
+    ok: true,
+    value: {
+      delivered: !hyperneoSessionBusy(row),
+      receipt: { executionId: row.id, inputId },
+    },
+  };
 }
 
 export function selectStartFolder(request: StartRequest, deps: HyperneoAdapterDeps): Gate<string> {
@@ -550,9 +565,10 @@ export async function openHyperneoWork(
   request: StartRequest,
   context: WorkCallContext,
   deps: HyperneoAdapterDeps
-): Promise<Result<WorkSummary>> {
+): Promise<Result<WorkStarted>> {
   const { sessionId, model } = confirmed;
-  const outcome = await deps.handoff(sessionId, request.message, context.from);
+  const inputId = crypto.randomUUID();
+  const outcome = await deps.handoff(sessionId, request.message, context.from, inputId);
   if (outcome.kind === 'rejected') {
     return reject(
       'not_delivered',
@@ -568,6 +584,7 @@ export async function openHyperneoWork(
       ...work,
       ...(work.status === 'done' ? { status: 'queued' as const } : {}),
       ...(model ? { model } : {}),
+      receipt: { executionId: sessionId, inputId },
     },
   };
 }
@@ -594,7 +611,7 @@ const runHyperneoStart = (superpipe({})('hyperneo-start-work') as PipelineAPI)
   request: StartRequest,
   context: WorkCallContext,
   deps: HyperneoAdapterDeps
-) => Promise<Result<WorkSummary>>;
+) => Promise<Result<WorkStarted>>;
 
 const runHyperneoStop = (superpipe({})('hyperneo-stop-work') as PipelineAPI)
   .input(['ref', 'deps'])
@@ -602,14 +619,34 @@ const runHyperneoStop = (superpipe({})('hyperneo-stop-work') as PipelineAPI)
   .pipe(stopHyperneoWork, ['outcome', 'deps'], 'outcome')
   .end('outcome') as (ref: WorkRef, deps: HyperneoAdapterDeps) => Result<{ stopped: boolean }>;
 
+export function withHyperneoInputEvidence(
+  outcome: Result<WorkDetail>,
+  row: HyperneoSessionRow,
+  deps: HyperneoAdapterDeps,
+  receipt: WorkDelivery['receipt']
+): Result<WorkDetail> {
+  return outcome.ok && receipt
+    ? {
+        ok: true,
+        value: {
+          ...outcome.value,
+          inputEvidence: readSessionInputEvidence(deps.db(), row.id, receipt),
+        },
+      }
+    : outcome;
+}
+
 const runHyperneoStatus = (superpipe({})('hyperneo-work-status') as PipelineAPI)
-  .input(['ref', 'deps', 'since'])
+  .input(['ref', 'deps', 'since', 'receipt'])
   .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
-  .pipe(describeHyperneoWork, ['outcome', 'deps', 'since'], 'outcome')
+  .pipe((row: HyperneoSessionRow) => row, 'outcome', 'row')
+  .pipe(describeHyperneoWork, ['row', 'deps', 'since'], 'outcome')
+  .pipe(withHyperneoInputEvidence, ['outcome', 'row', 'deps', 'receipt'], 'outcome')
   .end('outcome') as (
   ref: WorkRef,
   deps: HyperneoAdapterDeps,
-  since?: number
+  since?: number,
+  receipt?: WorkDelivery['receipt']
 ) => Result<WorkDetail>;
 
 const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
@@ -622,7 +659,7 @@ const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
   message: string,
   context: WorkCallContext,
   deps: HyperneoAdapterDeps
-) => Promise<Result<{ delivered: boolean }>>;
+) => Promise<Result<WorkDelivery>>;
 
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
@@ -644,7 +681,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       ),
     start: (request, context) => runHyperneoStart(request, context, deps),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
-    status: async (ref, since) => runHyperneoStatus(ref, deps, since),
+    status: async (ref, since, receipt) => runHyperneoStatus(ref, deps, since, receipt),
     stop: async (ref) => runHyperneoStop(ref, deps),
     archive: async (ref, admit) => {
       const check = () => {

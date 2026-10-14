@@ -409,7 +409,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       db,
       machine,
       searchChats: ownChats,
-      handoff: (sessionId, message, from) =>
+      handoff: (sessionId, message, from, messageUuid) =>
         handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
           message: {
@@ -418,6 +418,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
             parent_tool_use_id: null,
           },
           origin: from,
+          messageUuid,
           jobQueue: context.deps.jobQueue,
         }),
       sessions: hyperneoSessionControl(context),

@@ -12,6 +12,7 @@ import {
   taskOperationRejection,
 } from '../../../../src/lib/drivers/space-adapter';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { readSessionInputEvidence } from '../../../../src/lib/drivers/space-input-evidence';
 
 describe('taskOperationRejection', () => {
   test('reads a task or an accepted job as success and anything else as a reason', () => {
@@ -325,6 +326,29 @@ describe('space adapter send', () => {
       write('own-result', 'result', 11, 'Own task reply');
       write('event', 'user', 12, 'Unrelated PR event');
       write('event-result', 'result', 13, 'Other reply');
+    });
+
+    describe('readSessionInputEvidence', () => {
+      test('reads a plain session input by its receipt, and only for that session', () => {
+        const plain = { executionId: 's-plain', inputId: 'plain-input' };
+        write('plain-input', 'user', 20, 'Raise the font', 's-plain', null as unknown as string);
+        write('plain-result', 'result', 21, 'Raised it', 's-plain', null as unknown as string);
+        expect(readSessionInputEvidence(db, 's-plain', plain)).toMatchObject({
+          state: 'observed',
+          exchange: [
+            { role: 'user', text: 'Raise the font' },
+            { role: 'agent', text: 'Raised it' },
+          ],
+        });
+        expect(readSessionInputEvidence(db, 's-other', plain)).toEqual({
+          receipt: plain,
+          state: 'unavailable',
+        });
+        expect(readSessionInputEvidence(db, 's-code', receipt)).toEqual({
+          receipt,
+          state: 'unavailable',
+        });
+      });
     });
 
     test('uses consumed order despite equal timestamps and preserves the task aggregate separately', async () => {

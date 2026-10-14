@@ -55,7 +55,7 @@ function control(db: Database, events: string[]) {
 
 describe('hyperneo adapter send and status', () => {
   let db: Database;
-  let handed: Array<{ sessionId: string; message: string; from: string }>;
+  let handed: Array<{ sessionId: string; message: string; from: string; messageUuid: string }>;
   let outcome: MailboxHandoffOutcome;
   let events: string[];
 
@@ -114,8 +114,8 @@ describe('hyperneo adapter send and status', () => {
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
-      handoff: async (sessionId, message, from) => {
-        handed.push({ sessionId, message, from });
+      handoff: async (sessionId, message, from, messageUuid) => {
+        handed.push({ sessionId, message, from, messageUuid });
         return outcome;
       },
       ...control(db, events),
@@ -409,18 +409,31 @@ describe('hyperneo adapter send and status', () => {
   });
 
   test('send hands the message to the mailbox with the caller as origin', async () => {
-    expect(await adapter().send?.(ref('idle'), 'go on', from)).toEqual({
-      ok: true,
-      value: { delivered: true },
-    });
-    expect(await adapter().send?.(ref('busy'), 'next', from)).toEqual({
-      ok: true,
-      value: { delivered: false },
-    });
+    const idle = await adapter().send?.(ref('idle'), 'go on', from);
+    const busy = await adapter().send?.(ref('busy'), 'next', from);
     expect(handed).toEqual([
-      { sessionId: 'idle', message: 'go on', from: 'session:neo:root' },
-      { sessionId: 'busy', message: 'next', from: 'session:neo:root' },
+      {
+        sessionId: 'idle',
+        message: 'go on',
+        from: 'session:neo:root',
+        messageUuid: expect.any(String),
+      },
+      {
+        sessionId: 'busy',
+        message: 'next',
+        from: 'session:neo:root',
+        messageUuid: expect.any(String),
+      },
     ]);
+    expect(handed[0].messageUuid).not.toBe(handed[1].messageUuid);
+    expect(idle).toEqual({
+      ok: true,
+      value: { delivered: true, receipt: { executionId: 'idle', inputId: handed[0].messageUuid } },
+    });
+    expect(busy).toEqual({
+      ok: true,
+      value: { delivered: false, receipt: { executionId: 'busy', inputId: handed[1].messageUuid } },
+    });
   });
 
   test('send rejects archived sessions and reports a refused handoff', async () => {
@@ -442,10 +455,12 @@ describe('hyperneo adapter start and stop', () => {
   let db: Database;
   let events: string[];
   let handed: string[];
+  let uuids: string[];
 
   beforeEach(() => {
     events = [];
     handed = [];
+    uuids = [];
     db = new Database(':memory:');
     db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT,
       status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT)`);
@@ -462,8 +477,9 @@ describe('hyperneo adapter start and stop', () => {
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
-      handoff: async (sessionId, message) => {
+      handoff: async (sessionId, message, _from, messageUuid) => {
         handed.push(`${sessionId}: ${message}`);
+        uuids.push(messageUuid);
         return { kind: 'enqueued', id: 'mb1' };
       },
       ...controls,
@@ -494,6 +510,9 @@ describe('hyperneo adapter start and stop', () => {
     });
     expect(events).toEqual(['create /focus/repo', 'worktree new', 'announce new']);
     expect(handed).toEqual(['new: make it larger']);
+    expect(result).toMatchObject({
+      value: { receipt: { executionId: 'new', inputId: uuids[0] } },
+    });
   });
 
   test('start opens the session on the model Neo picked', async () => {
