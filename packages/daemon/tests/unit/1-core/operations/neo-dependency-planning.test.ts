@@ -73,6 +73,18 @@ describe('dependency planning fixtures', () => {
       new InternalEventBus<DaemonInternalEventMap>()
     );
     Object.assign(service, { returnReport: async () => {}, deliver: mock(async () => {}) });
+    service.readRefStates = async (refs) =>
+      refs.map((ref) => ({
+        url: issue(ref.number),
+        kind: 'issue' as const,
+        state: 'CLOSED' as const,
+        at: 1,
+        done: true,
+        closedBy: `https://github.com/lsm/HyperNeo/pull/${ref.number + 1}`,
+        merges: [{ url: `https://github.com/lsm/HyperNeo/pull/${ref.number + 1}`, base: 'dev' }],
+        defaultBase: 'dev',
+      }));
+    service.readMergeCommit = async () => 'c'.repeat(40);
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
     db.getSDKMessageRepo().saveSDKMessage('neo:root', {
       type: 'user',

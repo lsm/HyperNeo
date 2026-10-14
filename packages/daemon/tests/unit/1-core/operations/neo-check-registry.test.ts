@@ -19,6 +19,7 @@ describe('buildNeoCheckRegistry', () => {
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [],
       cardReports: () => [],
+      readMergeCommit: async () => null,
       readPrs: async () => [],
       readRefStates: async () => [],
       readDeploys: async () => ({ prs: [], daemons: [] }),

@@ -236,6 +236,7 @@ import {
 } from './work-admission.ts';
 import type { NeoCardWait } from './card-views.ts';
 import { reconcileNeoHandoff } from './handoff-reconcile.ts';
+import { readMergeCommit } from './packs/coding/deploy-checks.ts';
 import {
   neoEnabledPacks,
   neoSettingsPackBriefs,
@@ -427,6 +428,8 @@ type NeoDoneCheckRead = NeoDoneCheckFound & { read: NeoEvidenceRead | null; stal
 type NeoReminderTurnInput = { sessionId: string; messageId: string };
 type NeoRemindersDue = { key: string; asks: ReturnType<typeof planNeoWaitingReminders> };
 
+const NEO_PREREQUISITE_BASE_RETRY_MS = 5 * 60_000;
+
 export class NeoService {
   readonly outcomeCheckPolicy = neoOutcomeCheckPolicy;
   readonly prQuestionWithdrawalPolicy = neoPrQuestionWithdrawalPolicy;
@@ -494,6 +497,7 @@ export class NeoService {
   readCheckoutPrs = (cwd: string): Promise<string[]> => readGithubBranchPrs({ cwd });
   readWorkRepo: NeoWorkRepoReader = readGithubWorkRepo;
   readRefStates: NeoRefStateReader = readGithubRefStates;
+  readMergeCommit = (url: string): Promise<string | null> => readMergeCommit(url);
   readDeploys: NeoDeployReader = (urls) =>
     readGithubDeploys(urls, () =>
       readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
@@ -832,6 +836,7 @@ export class NeoService {
         cardReports: (workIds) => workIds.flatMap((id) => this.repo.getWork(id)?.report ?? []),
         readRefStates: (refs) => this.readRefStates(refs),
         readDeploys: (urls) => this.readDeploys(urls),
+        readMergeCommit: (url) => this.readMergeCommit(url),
         cardBase: (workId) => codingCardBase(this.driverTargets.get(workId)),
       }),
       createLifeAdminPack(),
@@ -1542,6 +1547,27 @@ export class NeoService {
     return verdict.state !== 'idle' || work.status === 'queued';
   }
 
+  private async prerequisiteParameters(
+    workId: string,
+    target: NeoDriverTarget
+  ): Promise<
+    { ok: true; value: Record<string, string[]> } | { ok: false; reason: string; retry: boolean }
+  > {
+    const pack = this.pack(this.askRecords.forWork(workId)?.pack ?? '');
+    if (target.verb !== 'start' || !pack?.prepareExecution) return { ok: true, value: {} };
+    const items = this.dependencies
+      .edges()
+      .filter((edge) => edge.workId === workId)
+      .flatMap((edge) =>
+        (this.askRecords.forWork(edge.prerequisiteId)?.doneItems ?? []).filter(
+          (item) => item.deliveredBy === edge.prerequisiteId
+        )
+      );
+    return items.length && pack.prerequisiteParameters
+      ? pack.prerequisiteParameters(items)
+      : { ok: true, value: {} };
+  }
+
   reconcileHandoff(id: string) {
     return reconcileNeoHandoff(id, {
       bootedAt: this.bootedAt,
@@ -1760,6 +1786,20 @@ export class NeoService {
       if (verdict.state === 'uncertain') await this.holdUncertainHandoff(work, target);
       return;
     }
+    const base = await this.prerequisiteParameters(work.id, target);
+    if (!base.ok && base.retry && this.db.getGlobalSettings?.().neo?.autoDispatch === true) {
+      this.log.warn(`Neo card ${work.id} waits for its prerequisite base: ${base.reason}`);
+      scheduleNeoAdmissionWake(
+        this.db.getJobQueueRepo(),
+        work.id,
+        Date.now() + NEO_PREREQUISITE_BASE_RETRY_MS
+      );
+      return;
+    }
+    if (!base.ok) {
+      await this.failWork(work, `prerequisite_base: ${base.reason}`);
+      return;
+    }
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
     if (!queued || queued.status !== 'queued') return;
     if (target.verb === 'adopt') return this.adoptDriverWork(queued, target.ref);
@@ -1776,7 +1816,10 @@ export class NeoService {
       return;
     }
     if (target.verb === 'start' && pack?.prepareExecution)
-      call.input.preparation = { pack: pack.id, parameters: target.preparationParameters ?? {} };
+      call.input.preparation = {
+        pack: pack.id,
+        parameters: { ...(target.preparationParameters ?? {}), ...base.value },
+      };
     const probe =
       target.verb === 'send'
         ? await this.readSendBaseline(target.ref, queued, String(call.input.message))

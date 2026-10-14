@@ -1,5 +1,6 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import { prepareCodingExecution } from './prepare-execution.ts';
+import { readCodingPrerequisiteBase } from './prerequisite-base.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { ExternalEvent } from '../../../external-events/types.ts';
@@ -242,12 +243,19 @@ export function createCodingPack(
     cardReports: (workIds: readonly string[]) => string[];
     readRefStates: NeoRefStateReader;
     readDeploys: NeoDeployReader;
+    readMergeCommit: (url: string) => Promise<string | null>;
     cardBase: (workId: string) => string | null;
   }
 ): NeoPack {
   return {
     ...CODING_PACK_BRIEF,
     prepareExecution: prepareCodingExecution,
+    prerequisiteParameters: (items) =>
+      readCodingPrerequisiteBase(items, {
+        readRefStates: deps.readRefStates,
+        readMergeCommit: deps.readMergeCommit,
+        cardBase: deps.cardBase,
+      }),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     checks: { [CODING_CHECK_PR_MERGED]: codingPrMergedCheck },
     checkEvidence: { [CODING_CHECK_PR_MERGED]: { independent: true } },

@@ -525,6 +525,7 @@ describe('neoPackAskCardEvidence', () => {
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [],
       cardReports: () => [],
+      readMergeCommit: async () => null,
       readRefStates: async () => [],
       workPrs: {
         get: () => null,
