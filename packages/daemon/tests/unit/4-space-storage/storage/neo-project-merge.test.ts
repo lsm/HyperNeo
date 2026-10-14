@@ -1,3 +1,4 @@
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -167,6 +168,31 @@ const askRow = (status = 'open') =>
     .run(status);
 
 describe('Neo project merge storage', () => {
+  test('the upgrade runner applies project merges independently of input receipt migration 369', () => {
+    const upgrade = new Database(':memory:');
+    try {
+      createTables(upgrade);
+      runMigrations(upgrade, () => {});
+      upgrade.exec(
+        "DROP TABLE neo_project_merges; DELETE FROM migration_markers WHERE key = 'migration_370'"
+      );
+      runMigrations(upgrade, () => {});
+      expect(
+        upgrade
+          .prepare(
+            "SELECT key FROM migration_markers WHERE key IN ('migration_369', 'migration_370') ORDER BY key"
+          )
+          .all()
+      ).toEqual([{ key: 'migration_369' }, { key: 'migration_370' }]);
+      expect(
+        upgrade.prepare("SELECT name FROM sqlite_master WHERE name = 'neo_project_merges'").get()
+      ).toEqual({ name: 'neo_project_merges' });
+      runMigrations(upgrade, () => {});
+      expect(upgrade.prepare('SELECT * FROM neo_project_merges').all()).toEqual([]);
+    } finally {
+      upgrade.close();
+    }
+  });
   test('atomically preserves context, workspaces, asks, cards, sections and old publications', () => {
     askRow();
     db.exec(`INSERT INTO neo_work(id, request_key, concern_id, origin_session_id, title, instruction, status, created_at, updated_at)

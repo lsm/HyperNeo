@@ -182,7 +182,12 @@ export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as P
       target: NeoContinueTarget,
       probe: { baseline: number | null; sent: DriverSent | null },
       delivered: Delivered
-    ) => deps.recordSent(target.work.id, 'queued' in delivered ? null : probe.baseline, probe.sent),
+    ) =>
+      deps.recordSent(
+        target.work.id,
+        'queued' in delivered ? null : probe.baseline,
+        probe.sent && { ...probe.sent, receipt: delivered.receipt }
+      ),
     ['deps', 'target', 'probe', 'continued']
   )
   .pipe(

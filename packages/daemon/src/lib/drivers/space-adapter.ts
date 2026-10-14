@@ -19,6 +19,7 @@ import type {
   WorkAdapter,
   WorkCallContext,
   WorkDetail,
+  WorkDelivery,
   WorkRef,
   WorkStatus,
   WorkSummary,
@@ -90,7 +91,7 @@ export interface SpaceTaskControl {
     node: SpaceTaskNode,
     message: string,
     fromHuman: boolean
-  ): Promise<{ delivered: boolean } | { reason: string }>;
+  ): Promise<WorkDelivery | { reason: string }>;
   messageAgent(
     agent: Pick<SpaceAgentRow, 'id' | 'spaceId'>,
     message: string,
@@ -470,7 +471,7 @@ export async function messageSpaceTask(
   message: string,
   context: WorkCallContext,
   deps: SpaceAdapterDeps
-): Promise<Result<{ delivered: boolean }>> {
+): Promise<Result<WorkDelivery>> {
   const node = readActiveNode(deps.db(), task.id);
   if (!node) {
     return reject(
@@ -479,9 +480,7 @@ export async function messageSpaceTask(
     );
   }
   const sent = await deps.tasks.message(task.id, node, message, context.from === 'chat');
-  return 'reason' in sent
-    ? reject('not_delivered', sent.reason)
-    : { ok: true, value: { delivered: sent.delivered } };
+  return 'reason' in sent ? reject('not_delivered', sent.reason) : { ok: true, value: sent };
 }
 
 const runSpaceSend = (superpipe({})('space-send-work') as PipelineAPI)
@@ -494,7 +493,7 @@ const runSpaceSend = (superpipe({})('space-send-work') as PipelineAPI)
   message: string,
   context: WorkCallContext,
   deps: SpaceAdapterDeps
-) => Promise<Result<{ delivered: boolean }>>;
+) => Promise<Result<WorkDelivery>>;
 
 export function reportSpaceAgent(ref: WorkRef, deps: SpaceAdapterDeps): Result<WorkDetail> | null {
   if (!ref.id.startsWith(AGENT_REF)) return null;
