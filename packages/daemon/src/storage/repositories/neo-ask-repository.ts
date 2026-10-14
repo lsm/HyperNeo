@@ -32,7 +32,7 @@ export type NeoAskInput = Omit<
   | 'updatedAt'
   | 'settledAt'
 >;
-export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch'>;
+export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'deliveredBy'>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
   'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind' | 'question' | 'watch'
@@ -60,6 +60,8 @@ export interface NeoAskOwner {
   originMessageId: string;
 }
 
+export class NeoAskBindingError extends Error {}
+
 export class NeoAskRepository {
   readonly revisionPolicy = neoAskRevisionPolicy;
   readonly bindingPolicy = neoOutcomeBindingPolicy;
@@ -79,6 +81,23 @@ export class NeoAskRepository {
         items.forEach((item, index) =>
           insert.run(input.id, `i${index + 1}`, index, item.text, item.check, watchJson(item), now)
         );
+      }
+      if (opened) {
+        const bindings = items.flatMap((item, index) =>
+          item.deliveredBy ? [{ itemId: `i${index + 1}`, deliveredBy: item.deliveredBy }] : []
+        );
+        for (const id of new Set(bindings.map((binding) => binding.deliveredBy))) {
+          const owned = this.db
+            .prepare(`SELECT w.id FROM neo_work w
+            LEFT JOIN neo_ask_work a ON a.work_id = w.id
+            WHERE w.id = ? AND w.origin_session_id = ? AND w.concern_id IS ? AND a.ask_id IS NULL`)
+            .get(id, input.originSessionId, input.projectId);
+          if (!owned) throw new NeoAskBindingError('binding_card_not_owned');
+          this.db
+            .prepare('INSERT INTO neo_ask_work(work_id, ask_id) VALUES (?, ?)')
+            .run(id, input.id);
+        }
+        if (bindings.length) this.bindOrThrow(input.id, bindings, 0, now);
       }
       return opened;
     })();
@@ -231,6 +250,7 @@ export class NeoAskRepository {
     edit: {
       add: (NeoAskItemInput & { id: string; position: number })[];
       remove: string[];
+      bind?: { itemId: string; deliveredBy: string | null }[];
       track?: { itemId: string; check: NeoAskItem['check']; watch?: string[] }[];
     },
     at: number,
@@ -254,6 +274,13 @@ export class NeoAskRepository {
         .prepare(`UPDATE neo_ask_items SET removed = 1, updated_at = ?
           WHERE ask_id = ? AND id IN (SELECT value FROM json_each(?))`)
         .run(at, askId, JSON.stringify(edit.remove));
+      const bindings = [
+        ...(edit.bind ?? []),
+        ...edit.add.flatMap((item) =>
+          item.deliveredBy === undefined ? [] : [{ itemId: item.id, deliveredBy: item.deliveredBy }]
+        ),
+      ];
+      if (bindings.length) this.bindOrThrow(askId, bindings, before.revision ?? 0, at);
       const after = this.get(askId)!;
       const outcomes = (ask: NeoAsk) => (ask.doneItems ?? []).filter((item) => !item.decision);
       const plan = this.revisionPolicy.planRevision(
@@ -261,6 +288,17 @@ export class NeoAskRepository {
         { items: outcomes(before), cards: [] },
         { items: outcomes(after), cards: [] }
       );
+      const changedBindings = (before.doneItems ?? [])
+        .filter((item) => item.deliveredBy && plan.invalidateItemIds.includes(item.id))
+        .map((item) => ({ itemId: item.id, deliveredBy: null }));
+      if (changedBindings.length) {
+        const writable = this.bindingPolicy.requireBindings(
+          before,
+          changedBindings,
+          this.bindingCards(askId)
+        );
+        if ('reason' in writable) throw new NeoAskBindingError(writable.reason.reason);
+      }
       if (plan.invalidateApproval) {
         this.db
           .prepare(`UPDATE neo_asks SET revision = ?, approved_at = NULL,
@@ -279,11 +317,35 @@ export class NeoAskRepository {
     return changed;
   }
 
+  private bindingCards(askId: string) {
+    return this.db
+      .prepare(`SELECT w.id,
+      (w.status != 'proposed' OR d.started_at IS NOT NULL) AS dispatched
+      FROM neo_work w JOIN neo_ask_work a ON a.work_id = w.id
+      LEFT JOIN neo_work_driver_targets d ON d.work_id = w.id WHERE a.ask_id = ?`)
+      .all(askId)
+      .map((row) => {
+        const card = row as { id: string; dispatched: number };
+        return { id: card.id, dispatched: !!card.dispatched };
+      });
+  }
+
+  private bindOrThrow(
+    askId: string,
+    bindings: readonly { itemId: string; deliveredBy: string | null }[],
+    revision: number,
+    at: number
+  ) {
+    const result = this.bindItems(askId, bindings, revision, at, false);
+    if (!result.ok) throw new NeoAskBindingError(result.reason);
+  }
+
   bindItems(
     askId: string,
     bindings: readonly { itemId: string; deliveredBy: string | null }[],
     expectedRevision: number,
-    at: number
+    at: number,
+    notify = true
   ): { ok: boolean; reason?: string } {
     const bind = (superpipe({})('neo-ask-bindings') as PipelineAPI)
       .input(['askId'])
@@ -296,21 +358,7 @@ export class NeoAskRepository {
         'ask',
         'result:binding'
       )
-      .pipe(
-        (ask: NeoAsk) =>
-          this.db
-            .prepare(`SELECT w.id,
-        (w.status != 'proposed' OR d.started_at IS NOT NULL) AS dispatched
-        FROM neo_work w JOIN neo_ask_work a ON a.work_id = w.id
-        LEFT JOIN neo_work_driver_targets d ON d.work_id = w.id WHERE a.ask_id = ?`)
-            .all(ask.id)
-            .map((row) => {
-              const card = row as { id: string; dispatched: number };
-              return { id: card.id, dispatched: !!card.dispatched };
-            }),
-        'binding',
-        'cards'
-      )
+      .pipe((ask: NeoAsk) => this.bindingCards(ask.id), 'binding', 'cards')
       .pipe(
         (ask: NeoAsk, cards: { id: string; dispatched: boolean }[]) =>
           this.bindingPolicy.requireBindings(ask, bindings, cards),
@@ -338,7 +386,7 @@ export class NeoAskRepository {
       )
       .end('binding') as (id: string) => { ok: boolean; reason?: string };
     const result = this.db.transaction(() => bind(askId))();
-    if (result.ok) this.notify();
+    if (result.ok && notify) this.notify();
     return result;
   }
 
