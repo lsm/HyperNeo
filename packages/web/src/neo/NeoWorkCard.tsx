@@ -9,6 +9,10 @@ import {
   neoCardOpenLabel,
   neoCardPrimaryAction,
   neoCardTone,
+  neoCardAutoStarts,
+  neoCardWaitLine,
+  neoCardWaits,
+  NEO_CARD_UNCERTAIN,
   neoContinuedLabel,
 } from './card-view.ts';
 import {
@@ -55,6 +59,7 @@ export function NeoWorkCard({
   disabled,
   onAction,
   onOpen,
+  onOpenWork,
   presentation = 'detail',
   questionSlot,
   waiting = false,
@@ -66,6 +71,7 @@ export function NeoWorkCard({
   disabled: boolean;
   onAction: (id: string, action: NeoWorkAction) => void;
   onOpen?: (id: string) => void;
+  onOpenWork?: (id: string) => void;
   presentation?: 'detail' | 'summary';
   questionSlot?: (id: string, node: HTMLElement | null, previous: HTMLElement | null) => void;
   waiting?: boolean;
@@ -79,6 +85,8 @@ export function NeoWorkCard({
     };
   }, [work.id, questionSlot]);
   const label = neoCardLabel(card);
+  const waits = neoCardWaits(card);
+  const autoStart = neoCardAutoStarts(card);
   const tone = neoCardTone(card, work, waiting);
   const active = work.status === 'queued';
   const primary = neoCardPrimaryAction(card, work, { waiting, chat: !!onOpen });
@@ -95,6 +103,39 @@ export function NeoWorkCard({
     work.status === 'proposed'
       ? work.instruction
       : summary || (work.status === 'failed' ? work.report : null);
+  const dependency = (
+    <>
+      {card.uncertain && (
+        <p data-neo-uncertain class="mt-2 text-sm text-warning">
+          {NEO_CARD_UNCERTAIN}
+        </p>
+      )}
+      {waits.length > 0 && (
+        <div data-neo-waits class="mt-2 text-sm">
+          <p class="text-xs font-medium text-fg-faint">
+            {autoStart ? 'Starts by itself once these are done' : 'Waits for'}
+          </p>
+          <ul class="mt-1 space-y-1">
+            {waits.map((wait) => (
+              <li key={wait.workId}>
+                {onOpenWork ? (
+                  <button
+                    type="button"
+                    class="break-words text-left text-fg-muted hover:text-accent"
+                    onClick={() => onOpenWork(wait.workId)}
+                  >
+                    {neoCardWaitLine(wait)}
+                  </button>
+                ) : (
+                  <span class="break-words text-fg-muted">{neoCardWaitLine(wait)}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </>
+  );
   const chip = (
     <NeoStatusChip
       tone={tone}
@@ -135,6 +176,7 @@ export function NeoWorkCard({
           <span class="line-clamp-3 break-words text-[15px] font-semibold leading-snug">
             {work.title}
           </span>
+          {dependency}
           {card.talk && (
             <span class="text-sm text-fg-muted">{card.talk} Open it and tell it yourself.</span>
           )}
@@ -219,19 +261,23 @@ export function NeoWorkCard({
           onClick={() => onAction(work.id, 'cancel')}
           class={`${neoPlainClass} hover:!bg-danger/10 hover:!text-danger`}
         >
-          {busy ? 'Declining…' : 'Decline'}
+          {busy ? (autoStart ? 'Cancelling…' : 'Declining…') : autoStart ? 'Cancel' : 'Decline'}
         </button>
         <span class="flex-1" />
         {chatButton}
-        <button
-          type="button"
-          disabled={disabled || busy}
-          onClick={() => onAction(work.id, 'start')}
-          class={neoPrimaryClass}
-        >
-          <NeoIcon name="arrow" class="!h-3.5 !w-3.5" />
-          {busy ? 'Starting…' : primary.label}
-        </button>
+        {autoStart ? (
+          <span class="text-xs text-fg-muted">Starts by itself</span>
+        ) : (
+          <button
+            type="button"
+            disabled={disabled || busy}
+            onClick={() => onAction(work.id, 'start')}
+            class={neoPrimaryClass}
+          >
+            <NeoIcon name="arrow" class="!h-3.5 !w-3.5" />
+            {busy ? 'Starting…' : primary.label}
+          </button>
+        )}
       </div>
     ) : (
       (lead || meta) && (
@@ -300,6 +346,7 @@ export function NeoWorkCard({
       {configuration && (
         <p class="mt-1 break-words text-xs text-fg-muted">Started with {configuration}</p>
       )}
+      {dependency}
       {card.talk && (
         <p class="mt-2 text-sm text-fg-muted">{card.talk} Open it and tell it yourself.</p>
       )}

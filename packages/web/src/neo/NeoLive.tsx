@@ -217,6 +217,7 @@ export function NeoLive() {
         disabled={!connected || !!neo.busyWork}
         onAction={(id, action) => void neo.act(id, action)}
         onOpen={() => openScene(scene.ref)}
+        onOpenWork={(id) => openScene({ kind: 'work', id })}
         presentation={neoWorkPresentation(card, {
           compact: !!publicConversation,
           attention: groupKey === 'attention',
