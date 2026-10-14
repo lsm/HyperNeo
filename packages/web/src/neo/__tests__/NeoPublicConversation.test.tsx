@@ -238,6 +238,18 @@ describe('durable public conversation presentation', () => {
     );
   });
 
+  it('names a correction without a dead link when its original is not loaded', () => {
+    render(
+      <NeoPublicConversation
+        conversation={conversation(
+          [ask()],
+          [publication({ corrects: '20000000-0000-4000-8000-000000000009', links: [] })]
+        )}
+      />
+    );
+    expect(screen.getByText('Correction of an earlier reply').closest('a')).toBeNull();
+  });
+
   it('leaves references as text when the scene owner is absent instead of creating inert controls', () => {
     render(<NeoPublicConversation conversation={conversation()} />);
     const refs = screen.getByRole('list', { name: 'Related Neo scenes' });
