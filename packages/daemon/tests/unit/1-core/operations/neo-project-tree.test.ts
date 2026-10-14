@@ -195,6 +195,38 @@ describe('Neo project hierarchy', () => {
     ).toEqual({ ok: false, reason: 'invalid_epic_url' });
     expect(repo.listProjects()).toEqual(before);
   });
+
+  test('section creation normalizes HTTP epic URLs and reuses their HTTPS identity', async () => {
+    save('root');
+    workspace('root');
+    const read = mock(async () => [
+      { ...epic, url: 'https://github.com/lsm/HyperNeo/issues/6756' },
+    ]);
+    const [, section] = createNeoProjectTreeOperations(repo, read);
+    const result = await section.execute(
+      { parentId: 'root', epicUrl: 'http://github.com/LSM/HyperNeo/issues/6756/' },
+      local
+    );
+    if (!result.ok) throw new Error(result.reason);
+    expect(repo.getProject(result.projectId)?.epicUrl).toBe(epicUrl);
+    expect(read).toHaveBeenCalledWith([{ owner: 'lsm', repo: 'hyperneo', number: 6756 }]);
+    expect(await section.execute({ parentId: 'root', epicUrl }, local)).toEqual(result);
+    expect(repo.listProjects()).toHaveLength(2);
+  });
+
+  test('section creation rejects invalid parents before reading GitHub', async () => {
+    save('inbox');
+    const read = mock(async () => [epic]);
+    const [, section] = createNeoProjectTreeOperations(repo, read);
+    const before = repo.listProjects();
+    for (const parentId of ['missing', 'inbox'])
+      expect(await section.execute({ parentId, epicUrl }, local)).toEqual({
+        ok: false,
+        reason: 'unknown_parent',
+      });
+    expect(read).not.toHaveBeenCalled();
+    expect(repo.listProjects()).toEqual(before);
+  });
 });
 
 const holder = (id: string, parentId: string | null = null): NeoHolder => ({

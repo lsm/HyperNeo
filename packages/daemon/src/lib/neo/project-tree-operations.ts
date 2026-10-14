@@ -21,6 +21,19 @@ const Section = z.object({ parentId: z.string().min(1), epicUrl: z.string().url(
 type Failure = z.infer<typeof Failure>;
 type Gate<T> = { value: T } | { reason: Failure };
 
+function normalizeNeoEpicUrl(url: string): string {
+  return url
+    .toLowerCase()
+    .replace(/^http:/, 'https:')
+    .replace(/\/$/, '');
+}
+
+function requireNeoSectionParent(parent: NeoProject | null): Gate<true> {
+  return parent && parent.id !== 'inbox'
+    ? { value: true }
+    : { reason: { ok: false, reason: 'unknown_parent' } };
+}
+
 export function requireNeoTreeAuthor(
   caller: OperationCaller,
   binding: NeoBinding | null
@@ -74,14 +87,21 @@ export function createNeoProjectTreeOperations(
   const section = (superpipe({})('neo.project.section') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(authorize, 'caller', 'result:outcome')
+    .pipe((input: z.infer<typeof Section>) => repo.getProject(input.parentId), 'input', 'parent')
+    .pipe(requireNeoSectionParent, 'parent', 'result:outcome')
     .pipe(
-      (input: z.infer<typeof Section>) => {
-        const ref = parseGitHubRefUrl(input.epicUrl);
-        return ref && /\/issues\/\d+\/?$/i.test(input.epicUrl)
+      (input: z.infer<typeof Section>) => normalizeNeoEpicUrl(input.epicUrl),
+      'input',
+      'epicUrl'
+    )
+    .pipe(
+      (url: string) => {
+        const ref = parseGitHubRefUrl(url);
+        return ref && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+$/.test(url)
           ? { value: ref }
           : { reason: { ok: false, reason: 'invalid_epic_url' } };
       },
-      'input',
+      'epicUrl',
       'result:outcome'
     )
     .pipe(
@@ -89,12 +109,7 @@ export function createNeoProjectTreeOperations(
       'outcome',
       'states'
     )
-    .pipe(
-      (states: NeoRefState[], input: z.infer<typeof Section>) =>
-        requireNeoEpic(states, input.epicUrl.replace(/\/$/, '')),
-      ['states', 'input'],
-      'result:outcome'
-    )
+    .pipe(requireNeoEpic, ['states', 'epicUrl'], 'result:outcome')
     .pipe(
       (epic: { url: string; title: string }, input: z.infer<typeof Section>) =>
         repo.createSection(input.parentId, epic.url, epic.title),
