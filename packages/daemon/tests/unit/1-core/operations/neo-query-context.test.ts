@@ -13,14 +13,14 @@ function database(): Database {
 
 describe('neoQueryContext', () => {
   test('is empty without a database', () => {
-    expect(neoQueryContext({ sessionId: 'neo:a', concernId: null, kind: 'neo' }, undefined)).toBe(
+    expect(neoQueryContext({ sessionId: 'neo:a', projectId: null, kind: 'neo' }, undefined)).toBe(
       ''
     );
   });
 
   test('reads an empty context for both coordinator kinds when nothing was routed', () => {
     const db = database();
-    expect(neoQueryContext({ sessionId: 'neo:a', concernId: null, kind: 'neo' }, db)).toBe('');
-    expect(neoQueryContext({ sessionId: 'neo:b', concernId: 'c', kind: 'concern' }, db)).toBe('');
+    expect(neoQueryContext({ sessionId: 'neo:a', projectId: null, kind: 'neo' }, db)).toBe('');
+    expect(neoQueryContext({ sessionId: 'neo:b', projectId: 'c', kind: 'project' }, db)).toBe('');
   });
 });

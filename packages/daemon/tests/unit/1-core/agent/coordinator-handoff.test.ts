@@ -31,7 +31,7 @@ function deferred() {
 }
 
 describe('coordinator handoff admission', () => {
-  const binding: NeoBinding = { sessionId: 'neo:test', concernId: 'club', kind: 'concern' };
+  const binding: NeoBinding = { sessionId: 'neo:test', projectId: 'club', kind: 'project' };
   const ownership = {
     generation: 1,
     currentGeneration: 1,
@@ -48,7 +48,7 @@ describe('coordinator handoff admission', () => {
     waiting: false,
     recovering: false,
   };
-  it.each(['neo', 'concern', 'worker'] as const)('checks the %s binding', (kind) => {
+  it.each(['neo', 'project', 'worker'] as const)('checks the %s binding', (kind) => {
     const candidate = { ...binding, kind };
     expect(gateHandoffBinding(candidate)).toEqual(
       kind === 'worker' ? { reason: 'not_coordinator' } : { value: candidate }
@@ -100,7 +100,7 @@ describe('coordinator handoff admission', () => {
   });
 });
 
-describe.each(['neo', 'concern'] as const)('AgentSession %s coordinator handoff', (kind) => {
+describe.each(['neo', 'project'] as const)('AgentSession %s coordinator handoff', (kind) => {
   const providerId = 'custom:neo-handoff-unit';
   let db: Database;
   let agent: AgentSession;
@@ -120,11 +120,11 @@ describe.each(['neo', 'concern'] as const)('AgentSession %s coordinator handoff'
     session.config = { model: 'unit', provider: providerId };
     db.createSession(session);
     const neo = new NeoRepository(db.getDatabase());
-    if (kind === 'concern')
-      neo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
+    if (kind === 'project')
+      neo.saveProject({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
     neo.reserveBinding({
       sessionId: session.id,
-      concernId: kind === 'concern' ? 'club' : null,
+      projectId: kind === 'project' ? 'club' : null,
       kind,
     });
     initializeProviders().register({
@@ -228,7 +228,7 @@ describe.each(['neo', 'concern'] as const)('AgentSession %s coordinator handoff'
     await secondReady.promise;
     expect(received).toEqual(['ask-A', 'ask-B']);
     expect(peak).toBe(1);
-    expect(new NeoRepository(db.getDatabase()).listConcerns()).toHaveLength(kind === 'neo' ? 0 : 1);
+    expect(new NeoRepository(db.getDatabase()).listProjects()).toHaveLength(kind === 'neo' ? 0 : 1);
     expect(errors).not.toHaveBeenCalled();
     expect(agent.getQueryGeneration()).toBe(2);
     await expect(second).resolves.toEqual({ outcome: 'completed' });

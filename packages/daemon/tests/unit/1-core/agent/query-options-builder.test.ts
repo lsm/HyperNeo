@@ -1948,26 +1948,26 @@ describe('QueryOptionsBuilder', () => {
   describe('tools configuration', () => {
     it.each([
       ['neo', null, neoCoordinatorNativeTools(null)],
-      ['concern', 'saas', neoCoordinatorNativeTools('saas')],
+      ['project', 'saas', neoCoordinatorNativeTools('saas')],
       ['worker', 'saas', ['AskUserQuestion']],
     ] as const)(
       'uses the persisted %s binding for resumed prompts and native questions',
-      async (kind, concernId, tools) => {
+      async (kind, projectId, tools) => {
         const sqlite = new BunDatabase(':memory:');
         try {
           createNeoTables(sqlite);
-          if (concernId) {
+          if (projectId) {
             sqlite
               .prepare(
                 'INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?)'
               )
-              .run(concernId, 'SaaS', '', '', 1, 1, 1);
+              .run(projectId, 'SaaS', '', '', 1, 1, 1);
           }
           mockSession.id = `neo:${generateUUID()}`;
           mockSession.sdkSessionId = generateUUID();
           sqlite
             .prepare('INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES (?,?,?)')
-            .run(mockSession.id, concernId, kind);
+            .run(mockSession.id, projectId, kind);
           mockSession.config.sdkToolsPreset = ['AskUserQuestion'];
           mockSession.config.allowedTools = ['AskUserQuestion'];
           mockSession.config.permissionMode = 'acceptEdits';
@@ -1986,11 +1986,11 @@ describe('QueryOptionsBuilder', () => {
           expect(options.tools).toEqual([...tools]);
           expect(options.allowedTools?.includes('AskUserQuestion')).toBe(kind !== 'neo');
           if (kind !== 'worker') {
-            expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(concernId));
+            expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
             expect(options.permissionMode).toBe('dontAsk');
             expect(options.systemPrompt).toEqual({
               type: 'custom',
-              prompt: neoPrompt(concernId),
+              prompt: neoPrompt(projectId),
               snapshot: false,
             });
           } else {

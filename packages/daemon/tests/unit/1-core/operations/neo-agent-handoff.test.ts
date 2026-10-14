@@ -29,7 +29,7 @@ const agent = Object.freeze({
 });
 const input = Object.freeze({
   requestKey: 'native:ask-A',
-  concernId: null,
+  projectId: null,
   title: 'Read existing project evidence',
   instruction: 'Return a bounded draft. No external action.',
   doneWhen: '- draft returned',
@@ -41,7 +41,7 @@ const work: NeoWork = Object.freeze({
   id: 'work-A',
   requestKey: 'root:native:ask-A',
   ...origin,
-  concernId: null,
+  projectId: null,
   title: input.title,
   instruction: input.instruction,
   targetSessionId: agent.sessionId,
@@ -172,8 +172,8 @@ describe('Neo existing Space-agent handoff operation', () => {
         handle: id,
         instructions: 'Existing native responsibilities',
       });
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
-    service.repo.saveConcern(
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
+    service.repo.saveProject(
       {
         id: 'research',
         title: 'Research',
@@ -182,7 +182,7 @@ describe('Neo existing Space-agent handoff operation', () => {
       },
       0
     );
-    service.repo.reserveBinding({ sessionId: 'holder', kind: 'concern', concernId: 'research' });
+    service.repo.reserveBinding({ sessionId: 'holder', kind: 'project', projectId: 'research' });
     registry = createOperationRegistry(createNeoOperations(service));
   });
   afterEach(() => {
@@ -430,7 +430,7 @@ describe('Neo existing Space-agent handoff operation', () => {
       });
     expect(service.repo.listWork()).toEqual([]);
     const saved = await proposed(
-      { ...input, concernId: 'research' },
+      { ...input, projectId: 'research' },
       {
         ...caller,
         sessionId: 'holder',
@@ -445,7 +445,7 @@ describe('Neo existing Space-agent handoff operation', () => {
     expect(saved).toMatchObject({
       originSessionId: 'holder',
       originMessageId: 'neo-consult:one:request',
-      concernId: 'research',
+      projectId: 'research',
     });
   });
   test('an input closing during target reads is rejected immediately before atomic reservation', async () => {

@@ -31,7 +31,7 @@ describe('NeoConsultationRepository deadlines', () => {
       const input = {
         id: 'old',
         requestKey: 'old',
-        concernId: 'club',
+        projectId: 'club',
         originSessionId: 'root',
         originMessageId: 'ask-A',
         sessionId: 'holder',

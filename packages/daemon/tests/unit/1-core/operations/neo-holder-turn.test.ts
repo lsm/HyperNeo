@@ -52,12 +52,12 @@ describe('Neo isolated holder turns', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       new InternalEventBus()
     );
-    service.repo.saveConcern(concern, 0);
-    service.repo.reserveBinding({ sessionId: 'neo:holder', concernId: 'club', kind: 'concern' });
+    service.repo.saveProject(concern, 0);
+    service.repo.reserveBinding({ sessionId: 'neo:holder', projectId: 'club', kind: 'project' });
     service.consultations.reserve({
       id: 'a',
       requestKey: 'a',
-      concernId: 'club',
+      projectId: 'club',
       originSessionId: 'root',
       sessionId: 'neo:holder',
       question: 'Next?',
@@ -94,7 +94,7 @@ describe('Neo isolated holder turns', () => {
       () => ({ sessionId: 'neo:holder', role: 'neo', neoTurn: active.identity() })
     );
     return handler({
-      name: 'neo.concern.save',
+      name: 'neo.project.save',
       input: { ...concern, expectedRevision: 1, ...input },
       caller: { source: 'rpc', principal: 'local', neoTurn: { human: true } },
     });
@@ -190,7 +190,7 @@ describe('Neo isolated holder turns', () => {
     service.consultations.reserve({
       id: 'b',
       requestKey: 'b',
-      concernId: 'club',
+      projectId: 'club',
       originSessionId: 'root',
       sessionId: 'neo:holder',
       question: 'New question',
@@ -205,7 +205,7 @@ describe('Neo isolated holder turns', () => {
         })
       ).content
     ).toEqual([expect.objectContaining({ text: expect.stringContaining('"ok":false') })]);
-    expect(service.repo.getConcern('club')?.context).toBe('Eight people');
+    expect(service.repo.getProject('club')?.context).toBe('Eight people');
     const next = turn();
     next.bind('neo-consult:b:request');
     expect((await save(next, { expectedRevision: 2, context: 'New answer' })).content).toEqual([
@@ -231,7 +231,7 @@ describe('Neo isolated holder turns', () => {
     expect((await save(human, { expectedRevision: 2 })).content).toEqual([
       expect.objectContaining({ text: expect.stringContaining('"ok":false') }),
     ]);
-    expect(service.repo.getConcern('club')?.context).toBe('Direct correction');
+    expect(service.repo.getProject('club')?.context).toBe('Direct correction');
     const unknown = turn();
     unknown.bind('untrusted-input');
     expect((await save(unknown, { expectedRevision: 2 })).content).toEqual([

@@ -75,9 +75,9 @@ describe('neo.draft.recover', () => {
     );
     sessions.createSession(session(WORKER, { inputDraft: 'saved worker' }));
     repo = new NeoRepository(sqlite);
-    repo.reserveBinding({ sessionId: ROOT, kind: 'neo', concernId: null });
-    repo.reserveBinding({ sessionId: HOLDER, kind: 'concern', concernId: 'garden' });
-    repo.reserveBinding({ sessionId: WORKER, kind: 'worker', concernId: null });
+    repo.reserveBinding({ sessionId: ROOT, kind: 'neo', projectId: null });
+    repo.reserveBinding({ sessionId: HOLDER, kind: 'project', projectId: 'garden' });
+    repo.reserveBinding({ sessionId: WORKER, kind: 'worker', projectId: null });
     asks = new NeoConversationAskRepository(sqlite);
     unconditional = mock(() => {});
     publish = mock(async () => {});

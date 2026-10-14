@@ -47,6 +47,7 @@ export interface RemoteDaemons {
 export interface FindWorkDeps {
   adapters(): readonly WorkAdapter[];
   remote: RemoteDaemons;
+  mirrorProjects?(groups: readonly PlaceGroup[]): void;
 }
 
 function describe(error: unknown): string {
@@ -226,6 +227,14 @@ const runFindWork = (superpipe({})('find-work') as PipelineAPI)
   )
   .pipe(findRemotely, ['input', 'deps'], 'remote')
   .pipe(combineFindResults, ['local', 'remote', 'input', 'budget'], 'result')
+  .pipe(
+    (result: FindResult, deps: FindWorkDeps) => {
+      deps.mirrorProjects?.(result.places);
+      return result;
+    },
+    ['result', 'deps'],
+    'result'
+  )
   .endAsync('result') as (
   input: FindInput,
   deps: FindWorkDeps,

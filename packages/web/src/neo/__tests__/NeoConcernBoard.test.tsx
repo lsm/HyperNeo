@@ -3,8 +3,8 @@ import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import type { DaemonInventoryLink, DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
-import { NeoConcernBoardPanel, NeoConcernBoardView } from '../NeoConcernBoard.tsx';
-import { projectNeoConcernBoard } from '../neo-concern-board.ts';
+import { NeoProjectBoardPanel, NeoProjectBoardView } from '../NeoProjectBoard.tsx';
+import { projectNeoProjectBoard } from '../neo-project-board.ts';
 
 const request = vi.hoisted(() => vi.fn());
 const connected = signal('connected');
@@ -22,9 +22,9 @@ const snapshot: NeoSnapshot = {
   cards: [],
   askViews: [],
   sessionId: 'root',
-  concerns: ['a', 'b'].map((id) => ({
+  projects: ['a', 'b'].map((id) => ({
     id,
-    title: `Concern ${id}`,
+    title: `Project ${id}`,
     summary: '',
     context: '',
     revision: 1,
@@ -34,7 +34,7 @@ const snapshot: NeoSnapshot = {
   work: ['a', 'b'].map((id) => ({
     id: `work-${id}`,
     requestKey: id,
-    concernId: id,
+    projectId: id,
     originSessionId: 'root',
     originMessageId: `ask-${id}`,
     title: `Work ${id}`,
@@ -49,7 +49,7 @@ const snapshot: NeoSnapshot = {
     {
       id: 'check-a',
       requestKey: 'check',
-      concernId: 'a',
+      projectId: 'a',
       originSessionId: 'root',
       originMessageId: 'ask-a',
       sessionId: 'holder-a',
@@ -120,11 +120,11 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe('NeoConcernBoardView', () => {
+describe('NeoProjectBoardView', () => {
   it('names the app and live state of handed-off work', () => {
-    const board = projectNeoConcernBoard(snapshot, 'a', inventory())!;
+    const board = projectNeoProjectBoard(snapshot, 'a', inventory())!;
     render(
-      <NeoConcernBoardView
+      <NeoProjectBoardView
         board={board}
         cards={[
           {
@@ -158,9 +158,9 @@ describe('NeoConcernBoardView', () => {
   });
 
   it('renders actual scoped receipts, unknown references and outgoing relationships', () => {
-    const board = projectNeoConcernBoard(snapshot, 'a', inventory())!;
-    render(<NeoConcernBoardView board={board} />);
-    expect(screen.getByText(/For Concern a/)).toBeTruthy();
+    const board = projectNeoProjectBoard(snapshot, 'a', inventory())!;
+    render(<NeoProjectBoardView board={board} />);
+    expect(screen.getByText(/For Project a/)).toBeTruthy();
     expect(screen.getByText('Work a')).toBeTruthy();
     expect(screen.queryByText('Work b')).toBeNull();
     expect(screen.getByText('Handed to HyperNeo')).toBeTruthy();
@@ -191,7 +191,7 @@ describe('NeoConcernBoardView', () => {
         { ...snapshot.consultations![0], status: 'reported', answer: 'Awaiting your decision.' },
       ],
     };
-    render(<NeoConcernBoardView board={projectNeoConcernBoard(source, 'a', null)!} />);
+    render(<NeoProjectBoardView board={projectNeoProjectBoard(source, 'a', null)!} />);
     expect(screen.getAllByText('Response ready')).toHaveLength(2);
     expect(screen.getByText('Draft ready, not sent.')).toBeTruthy();
     expect(screen.getByText('Awaiting your decision.')).toBeTruthy();
@@ -205,9 +205,9 @@ describe('NeoConcernBoardView', () => {
     ['cancelled', 'Stopped'],
   ] as const)('shows the recorded %s status', (status, label) => {
     render(
-      <NeoConcernBoardView
+      <NeoProjectBoardView
         board={
-          projectNeoConcernBoard(
+          projectNeoProjectBoard(
             {
               ...snapshot,
               work: [{ ...snapshot.work[0], status, originMessageId: null }],
@@ -220,16 +220,16 @@ describe('NeoConcernBoardView', () => {
       />
     );
     expect(screen.getByText(label)).toBeTruthy();
-    expect(screen.getByText(/Across your concerns/)).toBeTruthy();
+    expect(screen.getByText(/Across your projects/)).toBeTruthy();
     expect(screen.getByText('Input: root / not recorded')).toBeTruthy();
   });
 });
 
-describe('NeoConcernBoardPanel', () => {
-  it('scopes same-concern handoffs to one human input and keeps stable scope across rerenders', async () => {
+describe('NeoProjectBoardPanel', () => {
+  it('scopes same-project handoffs to one human input and keeps stable scope across rerenders', async () => {
     const source: NeoSnapshot = {
       ...snapshot,
-      work: snapshot.work.map((row) => ({ ...row, concernId: 'a' })),
+      work: snapshot.work.map((row) => ({ ...row, projectId: 'a' })),
       askOrigins: [
         { kind: 'work', id: 'work-a', origin: { sessionId: 'root', messageId: 'ask-a' } },
         { kind: 'work', id: 'work-b', origin: { sessionId: 'root', messageId: 'ask-b' } },
@@ -238,10 +238,10 @@ describe('NeoConcernBoardPanel', () => {
     };
     const props = {
       snapshot: source,
-      concernId: null,
+      projectId: null,
       requestOrigin: { sessionId: 'root', messageId: 'ask-a' },
     };
-    const view = render(<NeoConcernBoardPanel {...props} />);
+    const view = render(<NeoProjectBoardPanel {...props} />);
     expect(request).not.toHaveBeenCalled();
     expand();
     await screen.findByText('Draft worker');
@@ -249,7 +249,7 @@ describe('NeoConcernBoardPanel', () => {
     expect(screen.getByText('Work a')).toBeTruthy();
     expect(screen.queryByText('Work b')).toBeNull();
     expect(screen.queryByText('Other worker')).toBeNull();
-    view.rerender(<NeoConcernBoardPanel {...props} requestOrigin={{ ...props.requestOrigin }} />);
+    view.rerender(<NeoProjectBoardPanel {...props} requestOrigin={{ ...props.requestOrigin }} />);
     await act(async () => {});
     expect(request).toHaveBeenCalledTimes(1);
     const updated = {
@@ -260,11 +260,11 @@ describe('NeoConcernBoardPanel', () => {
         status: 'reported' as const,
       })),
     };
-    view.rerender(<NeoConcernBoardPanel {...props} snapshot={updated} />);
+    view.rerender(<NeoProjectBoardPanel {...props} snapshot={updated} />);
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
     expect(screen.getByText('Actual return')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Close board' }));
-    await waitFor(() => expect(screen.queryByRole('region', { name: 'Concern board' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Project board' })).toBeNull());
   });
   it('invalidates a pending inventory read when the selected request changes', async () => {
     const first = pending();
@@ -278,18 +278,18 @@ describe('NeoConcernBoardPanel', () => {
       })),
     };
     const view = render(
-      <NeoConcernBoardPanel
+      <NeoProjectBoardPanel
         snapshot={source}
-        concernId={null}
+        projectId={null}
         requestOrigin={{ sessionId: 'root', messageId: 'ask-a' }}
       />
     );
     expand();
     await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
     view.rerender(
-      <NeoConcernBoardPanel
+      <NeoProjectBoardPanel
         snapshot={source}
-        concernId={null}
+        projectId={null}
         requestOrigin={{ sessionId: 'root', messageId: 'ask-b' }}
       />
     );
@@ -302,9 +302,9 @@ describe('NeoConcernBoardPanel', () => {
   });
   it('does not offer an unrelated global board when attribution is unknown', () => {
     render(
-      <NeoConcernBoardPanel
+      <NeoProjectBoardPanel
         snapshot={snapshot}
-        concernId={null}
+        projectId={null}
         requestOrigin={{ sessionId: 'root', messageId: 'ask-a' }}
       />
     );
@@ -312,9 +312,9 @@ describe('NeoConcernBoardPanel', () => {
     expect(request).not.toHaveBeenCalled();
   });
   it('does no reads until opened and closes from the bottom without a second transcript', async () => {
-    render(<NeoConcernBoardPanel snapshot={snapshot} concernId="a" />);
+    render(<NeoProjectBoardPanel snapshot={snapshot} projectId="a" />);
     expect(request).not.toHaveBeenCalled();
-    expect(screen.queryByRole('region', { name: 'Concern board' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Project board' })).toBeNull();
     expand();
     await screen.findByText('Draft worker');
     expect(request).toHaveBeenCalledExactlyOnceWith('operation.invoke', {
@@ -325,29 +325,29 @@ describe('NeoConcernBoardPanel', () => {
     expect(request).toHaveBeenCalledTimes(1);
     const summary = screen.getByText('How this is being handled');
     fireEvent.click(screen.getByRole('button', { name: 'Close board' }));
-    await waitFor(() => expect(screen.queryByRole('region', { name: 'Concern board' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Project board' })).toBeNull());
     expect(summary.closest('details')?.open).toBe(false);
     expect(document.activeElement).toBe(summary);
     expect(request).toHaveBeenCalledTimes(1);
   });
   it.each([null, 'missing'])('renders no misleading board for missing scope %s', async (scope) => {
-    render(<NeoConcernBoardPanel snapshot={scope ? snapshot : null} concernId={scope} />);
+    render(<NeoProjectBoardPanel snapshot={scope ? snapshot : null} projectId={scope} />);
     expect(screen.queryByText(/How /)).toBeNull();
     await act(async () => {});
     expect(request).not.toHaveBeenCalled();
   });
   it('refreshes receipt changes without a polling loop', async () => {
-    const view = render(<NeoConcernBoardPanel snapshot={snapshot} concernId="a" />);
+    const view = render(<NeoProjectBoardPanel snapshot={snapshot} projectId="a" />);
     expand();
     await screen.findByText('Draft worker');
     request.mockResolvedValue(inventory('Updated worker'));
     view.rerender(
-      <NeoConcernBoardPanel
+      <NeoProjectBoardPanel
         snapshot={{
           ...snapshot,
           work: [{ ...snapshot.work[0], status: 'reported', report: 'A returned claim.' }],
         }}
-        concernId="a"
+        projectId="a"
       />
     );
     await screen.findByText('Updated worker');
@@ -362,7 +362,7 @@ describe('NeoConcernBoardPanel', () => {
     async (outcome) => {
       const old = pending();
       request.mockImplementationOnce(() => old.promise);
-      render(<NeoConcernBoardPanel snapshot={snapshot} concernId="a" />);
+      render(<NeoProjectBoardPanel snapshot={snapshot} projectId="a" />);
       expand();
       await screen.findByText('Checking linked resources…');
       fireEvent.click(screen.getByRole('button', { name: 'Close board' }));
@@ -379,14 +379,14 @@ describe('NeoConcernBoardPanel', () => {
     }
   );
   it.each(['success', 'failure'])(
-    'does not apply an old %s to a different concern',
+    'does not apply an old %s to a different project',
     async (outcome) => {
       const old = pending();
       request.mockImplementationOnce(() => old.promise);
-      const view = render(<NeoConcernBoardPanel snapshot={snapshot} concernId="a" />);
+      const view = render(<NeoProjectBoardPanel snapshot={snapshot} projectId="a" />);
       expand();
       await screen.findByText('Checking linked resources…');
-      view.rerender(<NeoConcernBoardPanel snapshot={snapshot} concernId="b" />);
+      view.rerender(<NeoProjectBoardPanel snapshot={snapshot} projectId="b" />);
       await screen.findByText('Other worker');
       await act(async () => {
         if (outcome === 'success') old.resolve(inventory('Obsolete worker'));
@@ -401,7 +401,7 @@ describe('NeoConcernBoardPanel', () => {
   it('does not resurrect an unmounted board when a read fails', async () => {
     const old = pending();
     request.mockImplementationOnce(() => old.promise);
-    const view = render(<NeoConcernBoardPanel snapshot={snapshot} concernId="a" />);
+    const view = render(<NeoProjectBoardPanel snapshot={snapshot} projectId="a" />);
     expand();
     await screen.findByText('Checking linked resources…');
     view.unmount();
@@ -416,7 +416,7 @@ describe('NeoConcernBoardPanel', () => {
       if (fault === 'rejection')
         request.mockResolvedValueOnce({ accepted: false, reason: 'daemon_inventory_forbidden' });
       else request.mockRejectedValueOnce(new Error('Disconnected'));
-      render(<NeoConcernBoardPanel snapshot={snapshot} concernId="a" />);
+      render(<NeoProjectBoardPanel snapshot={snapshot} projectId="a" />);
       expand();
       await screen.findByRole('alert');
       expect(screen.getByText('Work a')).toBeTruthy();
@@ -429,7 +429,7 @@ describe('NeoConcernBoardPanel', () => {
   );
   it('refreshes only an open board after reconnection', async () => {
     connected.value = 'disconnected';
-    render(<NeoConcernBoardPanel snapshot={snapshot} concernId="a" />);
+    render(<NeoProjectBoardPanel snapshot={snapshot} projectId="a" />);
     expand();
     expect(screen.getByText('Work a')).toBeTruthy();
     expect(request).not.toHaveBeenCalled();
@@ -450,7 +450,7 @@ describe('NeoConcernBoardPanel', () => {
   it('invalidates in-flight metadata on disconnection without polling', async () => {
     const old = pending();
     request.mockImplementationOnce(() => old.promise);
-    render(<NeoConcernBoardPanel snapshot={snapshot} concernId="a" />);
+    render(<NeoProjectBoardPanel snapshot={snapshot} projectId="a" />);
     expand();
     await screen.findByText('Checking linked resources…');
     act(() => {

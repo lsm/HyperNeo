@@ -305,7 +305,7 @@ describe('QueryRunner startup gate', () => {
     createNeoTables(sql);
     runMigration279(sql);
     sql.exec(`INSERT INTO neo_concerns VALUES ('club','Club','','Six',1,1,1);
-      INSERT INTO neo_session_bindings VALUES ('neo:holder','club','concern')`);
+      INSERT INTO neo_session_bindings VALUES ('neo:holder','club','project')`);
     sql
       .prepare(`INSERT INTO neo_consultations
       (id,request_key,concern_id,origin_session_id,session_id,question,status,created_at)

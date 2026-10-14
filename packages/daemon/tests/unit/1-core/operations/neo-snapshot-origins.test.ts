@@ -10,7 +10,7 @@ const origin = { sessionId: 'root:opaque', messageId: 'ask:A:opaque' };
 const work: NeoWork = {
   id: 'same:opaque:id',
   requestKey: 'work-key',
-  concernId: 'research',
+  projectId: 'research',
   originSessionId: origin.sessionId,
   originMessageId: origin.messageId,
   title: 'Untrusted title mentions ask B',
@@ -24,7 +24,7 @@ const work: NeoWork = {
 const consultation: NeoConsultation = {
   id: work.id,
   requestKey: 'consultation-key',
-  concernId: 'research',
+  projectId: 'research',
   originSessionId: origin.sessionId,
   originMessageId: origin.messageId,
   sessionId: 'holder:research',

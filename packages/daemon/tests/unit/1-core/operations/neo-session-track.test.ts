@@ -224,7 +224,7 @@ describe('neo.session.track', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
   });
   afterEach(() => {
     service.dispose();
@@ -237,7 +237,7 @@ describe('neo.session.track', () => {
       {
         id: 'w-adopt',
         requestKey: 'root:adopt',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         title: 'Quiet-model research',
         instruction: 'Follow the research session.',
@@ -323,7 +323,7 @@ describe('neo.session.track', () => {
       {
         id: crypto.randomUUID(),
         requestKey: 'neo:root:research',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'turn-0',
         title: 'Research',

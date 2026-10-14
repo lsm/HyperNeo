@@ -99,7 +99,7 @@ function reads(first: unknown, rest: () => unknown) {
       : Promise.resolve({});
 }
 function snapshot(sessionId = root) {
-  return { ok: true, sessionId, concerns: [], work: [] };
+  return { ok: true, sessionId, projects: [], work: [] };
 }
 function reset() {
   fake.calls = [];

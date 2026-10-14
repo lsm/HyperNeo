@@ -53,17 +53,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const mount = (originMessageId: string | null, hasConcern = true, live = true) => {
+const mount = (originMessageId: string | null, hasProject = true, live = true) => {
   const snapshot: NeoSnapshot = {
     ok: true,
     cards: [],
     askViews: [],
     sessionId: 'root',
-    concerns: hasConcern
+    projects: hasProject
       ? [
           {
             id: 'a',
-            title: 'Concern A',
+            title: 'Project A',
             summary: 'Summary',
             context: 'Context',
             revision: 1,
@@ -77,7 +77,7 @@ const mount = (originMessageId: string | null, hasConcern = true, live = true) =
       {
         id: 'work',
         requestKey: 'work',
-        concernId: hasConcern ? 'a' : null,
+        projectId: hasProject ? 'a' : null,
         originSessionId: 'root',
         originMessageId,
         title: 'Draft the agenda',
@@ -157,10 +157,10 @@ describe('original work surface reconciled with the live scenes', () => {
     );
   });
 
-  it('keeps orphan decisions on their actionable scene, not an empty concerns panel', () => {
+  it('keeps orphan decisions on their actionable scene, not an empty projects panel', () => {
     const { act } = mount('ask', false);
-    expect(screen.queryByRole('button', { name: /Work in flight|Your concerns/ })).toBeNull();
-    expect(screen.queryByRole('complementary', { name: 'Your concerns' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Work in flight|Your projects/ })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Your projects' })).toBeNull();
     const attention = screen.getByRole('region', { name: 'Needs your attention' });
     expect(within(attention).getByRole('article', { name: 'Draft the agenda' })).toBeTruthy();
     fireEvent.click(within(attention).getByRole('button', { name: 'Decline' }));

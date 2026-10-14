@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 describe('migration 279 and consultation persistence', () => {
-  test('preserves existing concerns, survives reopening, and enforces one pending consultation', () => {
+  test('preserves existing projects, survives reopening, and enforces one pending consultation', () => {
     const dir = mkdtempSync(join(tmpdir(), 'neo-consultation-'));
     const path = join(dir, 'test.db');
     let db = new Database(path);
@@ -25,7 +25,7 @@ describe('migration 279 and consultation persistence', () => {
       const input = {
         id: 'one',
         requestKey: 'request',
-        concernId: 'club',
+        projectId: 'club',
         originSessionId: 'root',
         sessionId: 'holder',
         question: 'What is next?',

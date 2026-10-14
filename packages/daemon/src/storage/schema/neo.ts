@@ -18,12 +18,12 @@ export function createNeoContextTables(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS neo_session_bindings (
     session_id TEXT PRIMARY KEY,
     concern_id TEXT REFERENCES neo_concerns(id),
-    kind TEXT NOT NULL CHECK (kind IN ('neo', 'concern', 'worker')),
+    kind TEXT NOT NULL CHECK (kind IN ('neo', 'project', 'worker')),
     CHECK (kind = 'worker' OR (kind = 'neo' AND concern_id IS NULL)
-      OR (kind = 'concern' AND concern_id IS NOT NULL))
+      OR (kind = 'project' AND concern_id IS NOT NULL))
   )`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_neo_session_bindings_coordinator
-    ON neo_session_bindings(COALESCE(concern_id, '')) WHERE kind IN ('neo', 'concern')`);
+    ON neo_session_bindings(COALESCE(concern_id, '')) WHERE kind IN ('neo', 'project')`);
   db.exec(`CREATE TABLE IF NOT EXISTS neo_work (
     id TEXT PRIMARY KEY,
     request_key TEXT NOT NULL UNIQUE,

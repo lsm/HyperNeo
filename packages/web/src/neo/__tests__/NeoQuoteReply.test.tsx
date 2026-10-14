@@ -117,7 +117,7 @@ beforeEach(async () => {
     snapshot: {
       ok: true,
       sessionId: sessionId.value,
-      concerns: [],
+      projects: [],
       cards: [],
       askViews: [],
       work: [],

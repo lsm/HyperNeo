@@ -8,7 +8,7 @@ import {
   CONSULTATION_TIMEOUT_MS,
 } from '../../lib/neo/consultation-policy.ts';
 
-const columns = `id, request_key AS requestKey, concern_id AS concernId,
+const columns = `id, request_key AS requestKey, concern_id AS projectId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
   session_id AS sessionId, question, status,
   answer, created_at AS createdAt`;
@@ -66,12 +66,12 @@ export class NeoConsultationRepository {
       .get(originSessionId, requestKey) as NeoConsultation | null;
   }
 
-  list(concernId?: string): NeoConsultation[] {
+  list(projectId?: string): NeoConsultation[] {
     return this.db
       .prepare(`SELECT ${columns} FROM neo_consultations
-      ${concernId ? 'WHERE concern_id = ?' : ''}
+      ${projectId ? 'WHERE concern_id = ?' : ''}
       ORDER BY (status = 'pending') DESC, created_at DESC LIMIT 20`)
-      .all(...(concernId ? [concernId] : [])) as NeoConsultation[];
+      .all(...(projectId ? [projectId] : [])) as NeoConsultation[];
   }
 
   unsettled(): NeoConsultation[] {
@@ -94,7 +94,7 @@ export class NeoConsultationRepository {
       .run(
         input.id,
         input.requestKey,
-        input.concernId,
+        input.projectId,
         input.originSessionId,
         input.originMessageId ?? null,
         input.sessionId,

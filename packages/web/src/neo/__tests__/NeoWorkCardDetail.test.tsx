@@ -45,7 +45,7 @@ vi.mock('../../lib/session-store.ts', () => ({
 const work = (id: string, status: NeoWork['status'], extra: Partial<NeoWork> = {}): NeoWork => ({
   id,
   requestKey: id,
-  concernId: 'a',
+  projectId: 'a',
   originSessionId: 'root',
   originMessageId: `ask-${id}`,
   title: `Title ${id}`,

@@ -16,7 +16,7 @@ function fixture(): NeoSnapshot {
     cards: [],
     askViews: [],
     sessionId: 'root',
-    concerns: ['shared', 'other'].map((id) => ({
+    projects: ['shared', 'other'].map((id) => ({
       id,
       title: id,
       summary: '',
@@ -28,7 +28,7 @@ function fixture(): NeoSnapshot {
     work: ['a', 'b'].map((id) => ({
       id,
       requestKey: id,
-      concernId: 'shared',
+      projectId: 'shared',
       originSessionId: 'holder',
       originMessageId: 'internal-' + id,
       title: id,
@@ -43,7 +43,7 @@ function fixture(): NeoSnapshot {
       {
         id: 'a',
         requestKey: 'consult-a',
-        concernId: 'shared',
+        projectId: 'shared',
         originSessionId: 'root',
         originMessageId: 'ask-b',
         sessionId: 'holder',
@@ -106,7 +106,7 @@ describe('queued consultation request projection', () => {
     snapshot.consultationWaiters = ['queued-b', 'queued-other'].map((id) => ({
       id,
       requestKey: id,
-      concernId: id === 'queued-b' ? 'shared' : 'other',
+      projectId: id === 'queued-b' ? 'shared' : 'other',
       originSessionId: 'root',
       originMessageId: id === 'queued-b' ? 'ask-a' : 'ask-other',
       sessionId: id === 'queued-b' ? 'holder' : 'other-holder',
@@ -136,7 +136,7 @@ describe('queued consultation request projection', () => {
     expect(result.consultationWaiters).toEqual([snapshot.consultationWaiters![0]]);
     expect(result.consultations).toEqual([]);
     expect(result.work).toEqual([]);
-    expect(result.concerns.map((row) => row.id)).toEqual(['shared']);
+    expect(result.projects.map((row) => row.id)).toEqual(['shared']);
     expect(result.askOrigins).toEqual([{ kind: 'consultation', id: 'queued-b', origin }]);
     expect(neoRequestConsultationProgress(result)).toEqual([
       { id: 'queued-b', status: 'queued', label: 'Waiting for shared’s context…' },
@@ -201,9 +201,9 @@ describe('queued consultation request projection', () => {
     }
   );
 
-  it('uses a generic context label when the bounded snapshot has no concern detail', () => {
+  it('uses a generic context label when the bounded snapshot has no project detail', () => {
     const snapshot = source();
-    snapshot.concerns = [];
+    snapshot.projects = [];
     expect(neoRequestConsultationProgress(projectNeoRequestSnapshot(snapshot, origin))).toEqual([
       { id: 'queued-b', status: 'queued', label: 'Waiting for context…' },
     ]);
@@ -223,12 +223,12 @@ describe('request board projection', () => {
     const result = projectNeoRequestSnapshot(snapshot, origin)!;
     expect(result.work).toEqual([snapshot.work[0]]);
     expect(result.consultations).toEqual([]);
-    expect(result.concerns.map((row) => row.id)).toEqual(['shared']);
+    expect(result.projects.map((row) => row.id)).toEqual(['shared']);
     expect(result.askOrigins).toEqual([snapshot.askOrigins![0]]);
     expect(snapshot).toEqual(before);
     expect(result).not.toBe(snapshot);
   });
-  it('separates same-concern asks and overlapping IDs of different receipt kinds', () => {
+  it('separates same-project asks and overlapping IDs of different receipt kinds', () => {
     const result = projectNeoRequestSnapshot(fixture(), { ...origin, messageId: 'ask-b' })!;
     expect(result.work.map((row) => row.id)).toEqual(['b']);
     expect(result.consultations!.map((row) => row.id)).toEqual(['a']);

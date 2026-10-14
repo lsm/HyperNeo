@@ -3,7 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoConsultationRepository } from './neo-consultation-repository.ts';
 
-const columns = `id, request_key AS requestKey, concern_id AS concernId,
+const columns = `id, request_key AS requestKey, concern_id AS projectId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
   session_id AS sessionId, question, status, created_at AS createdAt`;
 
@@ -24,7 +24,7 @@ function requireMatchingConsultation(
     item?.status === 'pending' &&
     item.id === waiter.id &&
     item.requestKey === waiter.requestKey &&
-    item.concernId === waiter.concernId &&
+    item.projectId === waiter.projectId &&
     item.sessionId === waiter.sessionId &&
     item.originSessionId === waiter.originSessionId &&
     item.originMessageId === waiter.originMessageId &&
@@ -80,20 +80,20 @@ export class NeoConsultationWaiterRepository {
       .get(originSessionId, requestKey) as NeoConsultationWaiter | null;
   }
 
-  queued(concernId?: string): NeoConsultationWaiter[] {
+  queued(projectId?: string): NeoConsultationWaiter[] {
     return this.db
       .prepare(`SELECT ${columns} FROM neo_consultation_waiters WHERE status = 'queued'
-      ${concernId ? 'AND concern_id = ?' : ''} ORDER BY created_at, rowid LIMIT 20`)
-      .all(...(concernId ? [concernId] : [])) as NeoConsultationWaiter[];
+      ${projectId ? 'AND concern_id = ?' : ''} ORDER BY created_at, rowid LIMIT 20`)
+      .all(...(projectId ? [projectId] : [])) as NeoConsultationWaiter[];
   }
 
-  queuedConcerns(): string[] {
+  queuedProjects(): string[] {
     return (
       this.db
-        .prepare(`SELECT concern_id AS concernId FROM neo_consultation_waiters
+        .prepare(`SELECT concern_id AS projectId FROM neo_consultation_waiters
         WHERE status = 'queued' GROUP BY concern_id ORDER BY MIN(rowid)`)
-        .all() as { concernId: string }[]
-    ).map(({ concernId }) => concernId);
+        .all() as { projectId: string }[]
+    ).map(({ projectId }) => projectId);
   }
 
   enqueue(
@@ -107,7 +107,7 @@ export class NeoConsultationWaiterRepository {
       .run(
         input.id,
         input.requestKey,
-        input.concernId,
+        input.projectId,
         input.originSessionId,
         input.originMessageId,
         input.sessionId,
@@ -118,10 +118,10 @@ export class NeoConsultationWaiterRepository {
     return this.find(input.originSessionId, input.requestKey);
   }
 
-  admitNext(concernId: string): NeoConsultation | null {
+  admitNext(projectId: string): NeoConsultation | null {
     let changed = false;
     const admitted = this.db.transaction(() => {
-      let waiter = this.queued(concernId)[0];
+      let waiter = this.queued(projectId)[0];
       while (waiter) {
         const result = admitNeoConsultationWaiter(this.db, waiter);
         if (result !== 'conflict') return result;
@@ -132,7 +132,7 @@ export class NeoConsultationWaiterRepository {
         if (cancelled.changes !== 1)
           throw new Error('Consultation waiter changed during cancellation.');
         changed = true;
-        waiter = this.queued(concernId)[0];
+        waiter = this.queued(projectId)[0];
       }
       return null;
     })();

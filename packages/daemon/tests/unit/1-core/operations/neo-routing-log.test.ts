@@ -21,11 +21,11 @@ import { createTables } from '../../../../src/storage/schema/index.ts';
 import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
-const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', concernId: null };
+const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', projectId: null };
 const holder: NeoBinding = {
   sessionId: 'neo:holder:research',
-  kind: 'concern',
-  concernId: 'research',
+  kind: 'project',
+  projectId: 'research',
 };
 const human = { source: 'rpc', principal: 'local' } as const;
 const ask = (n: number) => `20000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -89,7 +89,7 @@ describe('neo.message.send routing log', () => {
     await send(holder.sessionId, ask(2), 'x'.repeat(400));
     const rows = logged();
     expect(
-      rows.map((row) => [row.messageId, row.destination, row.targetSessionId, row.concernId])
+      rows.map((row) => [row.messageId, row.destination, row.targetSessionId, row.projectId])
     ).toEqual([
       [ask(1), 'main', root.sessionId, null],
       [ask(2), 'holder', holder.sessionId, 'research'],

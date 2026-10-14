@@ -15,7 +15,7 @@ import {
 const identity = Object.freeze({
   id: 'context-A',
   requestKey: 'check-A',
-  concernId: 'research',
+  projectId: 'research',
   originSessionId: 'root',
   originMessageId: 'ask-A',
   sessionId: 'holder-A',
@@ -122,7 +122,7 @@ describe('presentNeoConsultationReply', () => {
     try {
       const service = { db } as NeoService;
       const schema = createNeoOperations(service).find(
-        (item) => item.name === 'neo.concern.consult'
+        (item) => item.name === 'neo.project.consult'
       )!.resultSchema;
       for (const status of ['pending', 'reported', 'failed'] as const) {
         const item = consultation(status);

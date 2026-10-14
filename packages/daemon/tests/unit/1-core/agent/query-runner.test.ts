@@ -343,7 +343,7 @@ describe('QueryRunner', () => {
 
     it.each([
       'neo',
-      'concern',
+      'project',
       'worker',
       'ordinary',
       'neo-return',
@@ -357,16 +357,16 @@ describe('QueryRunner', () => {
           variant
         );
         const kind =
-          variant === 'concern' || variant === 'holder-request'
-            ? 'concern'
+          variant === 'project' || variant === 'holder-request'
+            ? 'project'
             : variant === 'worker'
               ? 'worker'
               : variant === 'ordinary'
                 ? 'ordinary'
                 : 'neo';
         const sessionId = kind === 'ordinary' ? 'ordinary' : `neo:${kind}`;
-        const isolated = kind === 'neo' || kind === 'concern';
-        const rootId = kind === 'concern' && delayed ? 'neo:root' : sessionId;
+        const isolated = kind === 'neo' || kind === 'project';
+        const rootId = kind === 'project' && delayed ? 'neo:root' : sessionId;
         const firstId = delayed ? 'ask-B' : 'ask-A';
         const nextId =
           variant === 'work-return'
@@ -374,27 +374,27 @@ describe('QueryRunner', () => {
             : variant === 'unknown-system'
               ? 'unknown-system'
               : delayed
-                ? `neo-consult:check-A:${kind === 'concern' ? 'request' : 'reply'}`
+                ? `neo-consult:check-A:${kind === 'project' ? 'request' : 'reply'}`
                 : 'ask-B';
         const askA = { sessionId: rootId, messageId: 'ask-A' };
         const repo = new NeoRepository(sqlite);
-        if (kind === 'concern')
-          repo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
+        if (kind === 'project')
+          repo.saveProject({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
         if (kind !== 'ordinary')
-          repo.reserveBinding({ sessionId, concernId: kind === 'concern' ? 'club' : null, kind });
-        if (kind === 'concern' && delayed)
-          repo.reserveBinding({ sessionId: rootId, concernId: null, kind: 'neo' });
+          repo.reserveBinding({ sessionId, projectId: kind === 'project' ? 'club' : null, kind });
+        if (kind === 'project' && delayed)
+          repo.reserveBinding({ sessionId: rootId, projectId: null, kind: 'neo' });
         if (variant === 'neo-return' || variant === 'holder-request') {
-          const holderId = kind === 'concern' ? sessionId : 'neo:holder';
+          const holderId = kind === 'project' ? sessionId : 'neo:holder';
           if (kind === 'neo') {
-            repo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
-            repo.reserveBinding({ sessionId: holderId, concernId: 'club', kind: 'concern' });
+            repo.saveProject({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
+            repo.reserveBinding({ sessionId: holderId, projectId: 'club', kind: 'project' });
           }
           const consultations = new NeoConsultationRepository(sqlite, () => {});
           consultations.reserve({
             id: 'check-A',
             requestKey: 'check-A',
-            concernId: 'club',
+            projectId: 'club',
             originSessionId: rootId,
             originMessageId: askA.messageId,
             sessionId: holderId,
@@ -406,7 +406,7 @@ describe('QueryRunner', () => {
           const work = repo.proposeWork({
             id: nextId,
             requestKey: 'work-A',
-            concernId: null,
+            projectId: null,
             originSessionId: rootId,
             originMessageId: askA.messageId,
             title: 'A',

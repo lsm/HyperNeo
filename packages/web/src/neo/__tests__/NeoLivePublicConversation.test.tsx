@@ -63,7 +63,7 @@ const publication = (
   producerInput: { sessionId: producer, messageId: `internal-${id}` },
   shortText: `Saved reply **${id}**`,
   fullText: `Saved reply **${id}**\n\n## Full ${id}\n\n| Evidence | Result |\n| --- | --- |\n| Fictional | Reported |`,
-  links: [{ kind: 'concern', id: 'a', label: 'Source context' }],
+  links: [{ kind: 'project', id: 'a', label: 'Source context' }],
   sequence,
   createdAt: `2026-10-01T01:00:1${sequence}Z`,
 });
@@ -72,7 +72,7 @@ const snapshot = (): NeoSnapshot => ({
   cards: [],
   askViews: [],
   sessionId: root,
-  concerns: ['a', 'b'].map((id) => ({
+  projects: ['a', 'b'].map((id) => ({
     id,
     title: id === 'a' ? 'Fictional research' : 'Other context',
     summary: 'Summary',
@@ -82,8 +82,8 @@ const snapshot = (): NeoSnapshot => ({
     updatedAt: 1,
   })),
   publicAuthorBindings: [
-    { kind: 'concern', concernId: 'a', sessionId: holder },
-    { kind: 'concern', concernId: 'b', sessionId: otherHolder },
+    { kind: 'project', projectId: 'a', sessionId: holder },
+    { kind: 'project', projectId: 'b', sessionId: otherHolder },
   ],
   work: [],
   consultations: [],
@@ -559,7 +559,7 @@ describe('NeoLive durable conversation activation', () => {
       consultations: ['root-ask', 'holder-ask'].map((id) => ({
         id,
         requestKey: id,
-        concernId: 'a',
+        projectId: 'a',
         originSessionId: root,
         originMessageId: id,
         sessionId: holder,

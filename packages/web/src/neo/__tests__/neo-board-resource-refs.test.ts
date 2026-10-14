@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
-import { projectNeoConcernBoard } from '../neo-concern-board.ts';
+import { projectNeoProjectBoard } from '../neo-project-board.ts';
 import { projectNeoRequestSnapshot } from '../request-board.ts';
 
-const work = (id: string, concernId: string): NeoWork => ({
+const work = (id: string, projectId: string): NeoWork => ({
   id,
   requestKey: id,
-  concernId,
+  projectId,
   originSessionId: 'root',
   originMessageId: `ask-${id}`,
   title: id,
@@ -27,7 +27,7 @@ const source: NeoSnapshot = {
   consultations: [],
   askViews: [],
   sessionId: 'root',
-  concerns: ['A', 'B'].map((id) => ({
+  projects: ['A', 'B'].map((id) => ({
     id,
     title: id,
     summary: id,
@@ -68,14 +68,14 @@ const inventory: DaemonSnapshot = {
 };
 const participants = (
   snapshot: NeoSnapshot,
-  concernId: string | null = 'A',
+  projectId: string | null = 'A',
   world: DaemonSnapshot | null = inventory
-) => projectNeoConcernBoard(snapshot, concernId, world)?.participants ?? [];
+) => projectNeoProjectBoard(snapshot, projectId, world)?.participants ?? [];
 
 describe('exact work resource seeds on Neo boards', () => {
   it('keeps different receipts sharing one native manager separate without mutation', () => {
     const before = structuredClone(source);
-    const board = projectNeoConcernBoard(source, 'A', inventory);
+    const board = projectNeoProjectBoard(source, 'A', inventory);
     expect(board?.participants.map((row) => row.ref)).toContainEqual(taskA);
     expect(board?.participants.map((row) => row.ref)).not.toContainEqual(taskB);
     expect(board?.participants.find((row) => row.ref.id === taskA.id)?.metadata?.status).toBe(

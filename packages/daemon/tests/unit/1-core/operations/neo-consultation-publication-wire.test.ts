@@ -90,13 +90,13 @@ describe('runtime consultation publication commit', () => {
     getSessionAsync.mockReset();
     for (const id of [root, holder]) db.createSession(createTestSession(id));
     restart();
-    service.repo.saveConcern({ id: 'fictional', title: 'Sources', summary: '', context: '' }, 0);
-    service.repo.reserveBinding({ sessionId: root, concernId: null, kind: 'neo' });
-    service.repo.reserveBinding({ sessionId: holder, concernId: 'fictional', kind: 'concern' });
+    service.repo.saveProject({ id: 'fictional', title: 'Sources', summary: '', context: '' }, 0);
+    service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+    service.repo.reserveBinding({ sessionId: holder, projectId: 'fictional', kind: 'project' });
     service.consultations.reserve({
       id: 'check',
       requestKey: 'check',
-      concernId: 'fictional',
+      projectId: 'fictional',
       originSessionId: root,
       originMessageId: ask.messageId,
       sessionId: holder,

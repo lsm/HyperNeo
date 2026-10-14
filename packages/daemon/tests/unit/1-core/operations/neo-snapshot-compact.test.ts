@@ -9,7 +9,7 @@ import {
 const ask: NeoAsk = {
   id: 'a1',
   requestKey: 'k1',
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'm1',
   title: 'Fix login',
@@ -103,7 +103,7 @@ describe('fitNeoSnapshotBudget', () => {
   const work = (id: string) => ({
     id,
     requestKey: id,
-    concernId: null,
+    projectId: null,
     originSessionId: 'root',
     originMessageId: null,
     title: id,
@@ -141,7 +141,7 @@ describe('fitNeoSnapshotBudget', () => {
     return {
       ok: true,
       sessionId: 'neo:root',
-      concerns: [],
+      projects: [],
       consultations: [],
       work: ids.map(work),
       asks,
@@ -222,9 +222,9 @@ describe('fitNeoSnapshotBudget', () => {
         evidence: '证'.repeat(4000),
       })),
     }));
-    heavy.concerns = Array.from({ length: 40 }, (_, n) => ({
+    heavy.projects = Array.from({ length: 40 }, (_, n) => ({
       id: `c${n}`,
-      title: `Concern ${n}`,
+      title: `Project ${n}`,
       summary: '摘'.repeat(1000),
       context: '',
       revision: 1,
@@ -238,7 +238,7 @@ describe('fitNeoSnapshotBudget', () => {
       doneWhen: 'd'.repeat(2000),
       continuedMessage: 'c'.repeat(1000),
     }));
-    heavy.concerns = heavy.concerns.map((concern) => ({ ...concern, context: '境'.repeat(4000) }));
+    heavy.projects = heavy.projects.map((concern) => ({ ...concern, context: '境'.repeat(4000) }));
     const fitted = fitNeoSnapshotBudget(heavy, 40_000);
     expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(40_000);
     expect(fitted.asks?.[0].doneItems).toHaveLength(12);

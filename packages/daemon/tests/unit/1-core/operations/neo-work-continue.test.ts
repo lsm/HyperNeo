@@ -112,7 +112,7 @@ const continued: NeoWork = Object.freeze({
   requestKey: 'root:k',
   originSessionId: 'root',
   originMessageId: 'm1',
-  concernId: null,
+  projectId: null,
   title: 'Font',
   instruction: 'Raise the font.',
   targetSessionId: null,
@@ -261,7 +261,7 @@ describe('neo.work.continue', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
   });
   afterEach(() => {
     service.dispose();
@@ -274,7 +274,7 @@ describe('neo.work.continue', () => {
       {
         id: 'w-ios',
         requestKey: 'root:ios',
-        concernId: null,
+        projectId: null,
         originSessionId: 'root',
         title: 'Neo iOS app',
         instruction: 'Build the skeleton.',
@@ -302,7 +302,7 @@ describe('neo.work.continue', () => {
       ask: 'keep going',
       destination: 'main',
       targetSessionId: 'root',
-      concernId: null,
+      projectId: null,
       signal: 'test',
       confidence: null,
     });
@@ -341,7 +341,7 @@ describe('neo.work.continue', () => {
     const opened = service.askRecords.open({
       id: 'ask-ios',
       requestKey: 'root:ask-ios',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: null,
       title: 'Neo iOS app',
@@ -398,7 +398,7 @@ describe('neo.work.continue', () => {
       {
         id: 'w-sent',
         requestKey: 'root:sent',
-        concernId: null,
+        projectId: null,
         originSessionId: 'root',
         title: 'Neo iOS app',
         instruction: 'Make voice durable.',
@@ -491,7 +491,7 @@ describe('neo.work.continue', () => {
     const opened = service.askRecords.open({
       id: 'ask-stall',
       requestKey: 'root:ask-stall',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: null,
       title: 'Neo iOS app',
@@ -646,7 +646,7 @@ describe('neo.work.continue', () => {
     const work = reportedWork();
     const stranger: OperationCaller = { source: 'mcp', sessionId: 'other', role: 'neo' };
     db.createSession({ ...createTestSession('other'), status: 'active' });
-    service.repo.reserveBinding({ sessionId: 'other', kind: 'worker', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'other', kind: 'worker', projectId: null });
     expect(await invoke({ id: work.id, message: 'Go on.' }, stranger)).toMatchObject({
       value: { ok: false },
     });

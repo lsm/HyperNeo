@@ -7,7 +7,7 @@ import {
 import type { Database } from '../sqlite-compat.ts';
 import { neoAskRevisionPolicy } from '../../lib/neo/ask-revision-policy.ts';
 
-const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
+const askColumns = `id, request_key AS requestKey, concern_id AS projectId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
   title, ask, done_when AS doneWhen, done_source AS doneSource, pack, approved_at AS approvedAt,
   approved_continues AS approvedContinues, waiting_item AS waitingItem, status, outcome, evidence,
@@ -50,7 +50,7 @@ const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "
   met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch`;
 
 export interface NeoAskOwner {
-  concernId: string;
+  projectId: string;
   originSessionId: string;
   originMessageId: string;
 }
@@ -93,7 +93,7 @@ export class NeoAskRepository {
       .run(
         input.id,
         input.requestKey,
-        input.concernId,
+        input.projectId,
         input.originSessionId,
         input.originMessageId,
         input.title,
@@ -161,11 +161,11 @@ export class NeoAskRepository {
     return this.withWork(rows);
   }
 
-  list(concernId?: string | null): NeoAsk[] {
-    const condition = concernId === undefined ? '' : 'WHERE concern_id IS ?';
+  list(projectId?: string | null): NeoAsk[] {
+    const condition = projectId === undefined ? '' : 'WHERE concern_id IS ?';
     const rows = this.db
       .prepare(`SELECT ${askColumns} FROM neo_asks ${condition} ORDER BY updated_at DESC, id`)
-      .all(...(concernId === undefined ? [] : [concernId])) as NeoAskRow[];
+      .all(...(projectId === undefined ? [] : [projectId])) as NeoAskRow[];
     return this.withWork(rows);
   }
 
@@ -292,7 +292,7 @@ export class NeoAskRepository {
     const row = this.db
       .prepare(`UPDATE neo_asks SET concern_id = ?, origin_session_id = ?, origin_message_id = ?
         WHERE id = ? RETURNING ${askColumns}`)
-      .get(owner.concernId, owner.originSessionId, owner.originMessageId, id) as NeoAskRow | null;
+      .get(owner.projectId, owner.originSessionId, owner.originMessageId, id) as NeoAskRow | null;
     if (!row) return null;
     this.notify();
     return this.withWork([row])[0];

@@ -26,7 +26,7 @@ describe('migration 285 consultation waiters', () => {
       const active = consultations.reserve({
         id: 'active',
         requestKey: 'active',
-        concernId: 'club',
+        projectId: 'club',
         originSessionId: 'root',
         originMessageId: 'ask-A',
         sessionId: 'holder',
@@ -38,7 +38,7 @@ describe('migration 285 consultation waiters', () => {
       const queued = waiters.enqueue({
         id: 'correction',
         requestKey: 'correction',
-        concernId: 'club',
+        projectId: 'club',
         originSessionId: 'root',
         originMessageId: 'ask-B',
         sessionId: 'holder',

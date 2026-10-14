@@ -16,7 +16,7 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 const work = (status: NeoWork['status'] = 'queued'): NeoWork => ({
   id: 'fictional-work',
   requestKey: 'fictional-work',
-  concernId: null,
+  projectId: null,
   originSessionId: 'neo',
   originMessageId: 'ask',
   title: 'A bounded fictional task',

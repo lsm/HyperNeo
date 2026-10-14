@@ -364,7 +364,7 @@ describe('ModelSwitchHandler', () => {
 
       const cases = [
         { name: 'Neo', binding: 'neo', path: 'coordinator' },
-        { name: 'context holder', binding: 'concern', path: 'coordinator' },
+        { name: 'context holder', binding: 'project', path: 'coordinator' },
         { name: 'delegated worker', binding: 'worker', path: 'workspace' },
         { name: 'ordinary workspace', binding: null, path: 'workspace' },
         { name: 'ordinary worktree', binding: null, path: 'worktree' },
@@ -391,15 +391,15 @@ describe('ModelSwitchHandler', () => {
               };
             }
             if (scenario.binding) {
-              const concernId = scenario.binding === 'concern' ? 'project' : null;
-              if (concernId) {
+              const projectId = scenario.binding === 'project' ? 'project' : null;
+              if (projectId) {
                 sqlite
                   .prepare('INSERT INTO neo_concerns VALUES (?, ?, ?, ?, 1, 0, 0)')
-                  .run(concernId, 'Project', '', '');
+                  .run(projectId, 'Project', '', '');
               }
               sqlite
                 .prepare('INSERT INTO neo_session_bindings VALUES (?, ?, ?)')
-                .run(mockSession.id, concernId, scenario.binding);
+                .run(mockSession.id, projectId, scenario.binding);
             }
 
             const coordinatorPath = neoCoordinatorRuntimePath(mockSession.id);

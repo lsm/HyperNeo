@@ -13,13 +13,13 @@ import {
   projectNeoScenes,
   type NeoScene,
 } from '../neo-scenes.ts';
-import { projectNeoConcernBoard } from '../neo-concern-board.ts';
+import { projectNeoProjectBoard } from '../neo-project-board.ts';
 
-const concerns = [{ id: 'sources', title: 'Fictional sources' }];
+const projects = [{ id: 'sources', title: 'Fictional sources' }];
 const work = (id: string, status: NeoWork['status'] = 'queued'): NeoWork => ({
   id,
   requestKey: id,
-  concernId: 'sources',
+  projectId: 'sources',
   originSessionId: 'root',
   originMessageId: `ask-${id}`,
   title: `Compare ${id}`,
@@ -33,7 +33,7 @@ const work = (id: string, status: NeoWork['status'] = 'queued'): NeoWork => ({
 const check = (id: string, status: NeoConsultation['status'] = 'pending'): NeoConsultation => ({
   id,
   requestKey: id,
-  concernId: 'sources',
+  projectId: 'sources',
   originSessionId: 'root',
   originMessageId: `ask-${id}`,
   sessionId: 'holder',
@@ -46,7 +46,7 @@ const workScene = (id: string, status: NeoWork['status'] = 'queued') =>
   classifyNeoScene({ ...work(id, status), kind: 'work' });
 const checkScene = (id: string) => classifyNeoScene({ ...check(id), kind: 'consultation' });
 const mount = (scenes: readonly NeoScene[], enabled = true) =>
-  render(<NeoActivity scenes={scenes} concerns={concerns} enabled={enabled} />);
+  render(<NeoActivity scenes={scenes} projects={projects} enabled={enabled} />);
 const rotate = () =>
   act(() => {
     vi.advanceTimersByTime(6000);
@@ -66,7 +66,7 @@ describe('neoActivityItems', () => {
   it.each(['proposed', 'reported', 'failed', 'cancelled'] as const)(
     'does not invent activity for %s work',
     (status) => {
-      expect(neoActivityItems([workScene('one', status)], concerns)).toEqual([]);
+      expect(neoActivityItems([workScene('one', status)], projects)).toEqual([]);
     }
   );
   it('uses real receipt truth for work, context checks and queued checks', () => {
@@ -75,18 +75,18 @@ describe('neoActivityItems', () => {
       cards: [],
       askViews: [],
       sessionId: 'root',
-      concerns: [],
+      projects: [],
       work: [work('same-id')],
       consultations: [check('same-id')],
       consultationWaiters: [{ ...check('waiting'), originMessageId: 'original', status: 'queued' }],
     };
-    const board = projectNeoConcernBoard(snapshot, null, null)!;
+    const board = projectNeoProjectBoard(snapshot, null, null)!;
     expect(
-      neoActivityItems(projectNeoScenes(board)!.running, concerns).map((item) => item.text)
+      neoActivityItems(projectNeoScenes(board)!.running, projects).map((item) => item.text)
     ).toEqual(['Handed to HyperNeo · Compare same-id']);
     const items = neoActivityItems(
       groupNeoScenes(classifyNeoScenes(board.receipts)).running,
-      concerns
+      projects
     );
     expect(items).toHaveLength(3);
     expect(new Set(items.map((item) => item.key)).size).toBe(3);
@@ -110,7 +110,7 @@ describe('neoActivityItems', () => {
   it('preserves all receipts and input objects for long lists', () => {
     const scenes = Array.from({ length: 120 }, (_, index) => workScene(String(index)));
     const before = structuredClone(scenes);
-    expect(neoActivityItems(scenes, concerns)).toHaveLength(120);
+    expect(neoActivityItems(scenes, projects)).toHaveLength(120);
     expect(scenes).toEqual(before);
   });
 });
@@ -131,7 +131,7 @@ describe('NeoActivity', () => {
     const view = render(
       <NeoActivity
         scenes={[workScene('one')]}
-        concerns={concerns}
+        projects={projects}
         enabled={false}
         reply="Neo is working on a reply…"
       />
@@ -142,7 +142,7 @@ describe('NeoActivity', () => {
     view.rerender(
       <NeoActivity
         scenes={[workScene('one')]}
-        concerns={concerns}
+        projects={projects}
         enabled
         reply="Neo is working on a reply…"
       />
@@ -154,7 +154,7 @@ describe('NeoActivity', () => {
     const result = render(
       <>
         <textarea aria-label="Draft" defaultValue="Keep this draft" />
-        <NeoActivity scenes={[workScene('one'), checkScene('two')]} concerns={concerns} enabled />
+        <NeoActivity scenes={[workScene('one'), checkScene('two')]} projects={projects} enabled />
       </>
     );
     const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
@@ -183,7 +183,7 @@ describe('NeoActivity', () => {
     result.rerender(
       <NeoActivity
         scenes={[two, one]}
-        concerns={[{ id: 'sources', title: 'Corrected sources' }]}
+        projects={[{ id: 'sources', title: 'Corrected sources' }]}
         enabled
       />
     );
@@ -197,7 +197,7 @@ describe('NeoActivity', () => {
     result.rerender(
       <NeoActivity
         scenes={[workScene('one', 'reported'), workScene('remaining')]}
-        concerns={concerns}
+        projects={projects}
         enabled
       />
     );
@@ -210,7 +210,7 @@ describe('NeoActivity', () => {
       <NeoActivity
         key="root"
         scenes={[workScene('one'), checkScene('two')]}
-        concerns={concerns}
+        projects={projects}
         enabled
       />
     );
@@ -219,7 +219,7 @@ describe('NeoActivity', () => {
       <NeoActivity
         key="holder"
         scenes={[workScene('new-one'), workScene('new-two')]}
-        concerns={concerns}
+        projects={projects}
         enabled
       />
     );
@@ -232,7 +232,7 @@ describe('NeoActivity', () => {
     result.rerender(
       <NeoActivity
         scenes={[workScene('one'), checkScene('two')]}
-        concerns={concerns}
+        projects={projects}
         enabled={false}
       />
     );
@@ -240,7 +240,7 @@ describe('NeoActivity', () => {
     expect(result.container.querySelector('.neo-activity')?.hasAttribute('hidden')).toBe(true);
     expect(result.container.textContent).toBe('');
     expect(vi.getTimerCount()).toBe(0);
-    result.rerender(<NeoActivity scenes={[]} concerns={concerns} enabled />);
+    result.rerender(<NeoActivity scenes={[]} projects={projects} enabled />);
     expect(result.container.querySelector('.neo-activity')).not.toBeNull();
     expect(screen.queryByRole('note')).toBeNull();
   });

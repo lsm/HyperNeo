@@ -12,7 +12,7 @@ vi.mock('../../lib/state.ts', () => ({
 const work: NeoWork = {
   id: 'w1',
   requestKey: 'w1',
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'ask-1',
   title: 'Bigger font',

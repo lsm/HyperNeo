@@ -77,7 +77,7 @@ describe('sessionSdkPath', () => {
       getDatabase: () => ({
         prepare: () => ({
           get: (sessionId: string) =>
-            sessionId === 'neo:root' ? { sessionId, concernId: null, kind: 'neo' } : null,
+            sessionId === 'neo:root' ? { sessionId, projectId: null, kind: 'neo' } : null,
         }),
       }),
     } as unknown as Database;
