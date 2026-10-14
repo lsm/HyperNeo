@@ -135,6 +135,7 @@ export const WorkStartedSchema = WorkSummarySchema.extend({
 
 export const WorkDetailSchema = WorkSummarySchema.extend({
   inputEvidence: WorkInputEvidenceSchema.optional(),
+  startReceipt: WorkInputReceiptSchema.optional(),
   execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   lastReply: z.string().optional(),
   lastReplyAt: z.number().optional(),

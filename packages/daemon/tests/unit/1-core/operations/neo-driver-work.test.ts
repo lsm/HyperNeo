@@ -40,6 +40,7 @@ import {
   neoWorkProgress,
   driverDoneCheckNote,
   neoNoteCards,
+  planNeoStartReceiptAdoption,
 } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -4619,5 +4620,34 @@ describe('neo.work.propose with a drivers target', () => {
       service.dispose();
       db.close();
     }
+  });
+});
+
+describe('planNeoStartReceiptAdoption', () => {
+  const startReceipt = { executionId: 's-code', inputId: 'kickoff' };
+  const status = (extra: Record<string, unknown> = { startReceipt }) =>
+    ({
+      kind: 'completed',
+      value: { ok: true, value: { status: 'running', lastActivityAt: 1, ...extra } },
+    }) as never;
+  const sent = { inputBefore: 0, opening: 'raise it to 16px' };
+
+  test('a started card without a receipt adopts the start receipt status reports', () => {
+    expect(planNeoStartReceiptAdoption(status(), sent, 'start')).toEqual({
+      ...sent,
+      receipt: startReceipt,
+    });
+  });
+
+  test('a card that has a receipt, was sent or adopted, or got a malformed one keeps what it has', () => {
+    const own = { executionId: 's-code', inputId: 'brief' };
+    expect(planNeoStartReceiptAdoption(status(), { ...sent, receipt: own }, 'start')).toBeNull();
+    expect(planNeoStartReceiptAdoption(status(), sent, 'send')).toBeNull();
+    expect(planNeoStartReceiptAdoption(status(), sent, 'adopt')).toBeNull();
+    expect(planNeoStartReceiptAdoption(status(), null, 'start')).toBeNull();
+    expect(
+      planNeoStartReceiptAdoption(status({ startReceipt: { executionId: '' } }), sent, 'start')
+    ).toBeNull();
+    expect(planNeoStartReceiptAdoption(status({}), sent, 'start')).toBeNull();
   });
 });

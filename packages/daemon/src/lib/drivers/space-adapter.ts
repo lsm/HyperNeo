@@ -354,11 +354,35 @@ export function requireSpaceTask(ref: WorkRef, deps: SpaceAdapterDeps): Gate<Spa
   return task ? { value: task } : { reason: reject('not_found', `No Space task ${ref.id}.`) };
 }
 
+export function readSpaceStartReceipt(
+  db: BunDatabase,
+  taskId: string
+): NonNullable<WorkDelivery['receipt']> | null {
+  const row = db
+    .prepare(
+      `SELECT session_id AS executionId, sdk_uuid AS inputId FROM sdk_messages
+        WHERE task_id = ? AND message_type = 'user' AND parent_tool_use_id IS NULL
+          AND sdk_uuid IS NOT NULL AND session_id IS NOT NULL
+          AND CASE WHEN json_valid(sdk_message) THEN
+            COALESCE(json_extract(sdk_message, '$.isReplay'), 0) = 0
+            AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
+            AND COALESCE(json_extract(sdk_message, '$.message.content[0].type'), 'text') <> 'tool_result'
+          ELSE 0 END
+        ORDER BY timestamp ASC, rowid ASC LIMIT 1`
+    )
+    .get(taskId) as { executionId: string; inputId: string } | null | undefined;
+  return row?.executionId && row.inputId ? row : null;
+}
+
 export function reportSpaceTask(
   task: SpaceTaskDetailRow,
   deps: SpaceAdapterDeps
 ): Result<WorkDetail> {
-  return { ok: true, value: describeTask(task, deps.machine) };
+  const startReceipt = readSpaceStartReceipt(deps.db(), task.id);
+  return {
+    ok: true,
+    value: { ...describeTask(task, deps.machine), ...(startReceipt ? { startReceipt } : {}) },
+  };
 }
 
 function admitSpaceStartConfiguration(request: StartRequest): Gate<StartRequest> {
