@@ -223,7 +223,7 @@ describe('Neo authored publication state', () => {
     await waitFor(() => expect(stateText()).toContain('ready/'));
     const edited = page(0, 1);
     edited.items[0].shortText = 'Edited reply';
-    io.request.mockResolvedValue(edited);
+    io.request.mockResolvedValueOnce(page(1, 0)).mockResolvedValueOnce(edited);
     await act(async () => {
       for (const listener of io.edited) listener({ conversationId: other });
     });
@@ -232,7 +232,11 @@ describe('Neo authored publication state', () => {
       for (const listener of io.edited) listener({ conversationId: id });
     });
     await waitFor(() => expect(screen.getByTestId('items').textContent).toBe('Edited reply'));
-    expect(requests()[1][1].input).toMatchObject({ after: 0, before: Number.MAX_SAFE_INTEGER });
+    expect(requests().map((call) => call[1].input)).toMatchObject([
+      {},
+      { after: 1 },
+      { after: 0, before: Number.MAX_SAFE_INTEGER },
+    ]);
   });
 
   it('keeps an empty tail cursor and admitted history stable', async () => {

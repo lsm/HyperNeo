@@ -134,6 +134,7 @@ export function useNeoPublications(rootSessionId: string | null) {
     let disposed = false;
     let inFlight = false;
     let pending = false;
+    let edited = false;
     let value = empty(conversationId);
     let unsubscribe = () => {};
     let reconnect = () => {};
@@ -176,6 +177,16 @@ export function useNeoPublications(rootSessionId: string | null) {
           );
           if (!current()) return;
           publish((tail ? applyTail : applyPage)(before, result));
+          if (edited && !tail && value.status === 'ready' && value.items.length) {
+            edited = false;
+            const window = await readNeoPublications(
+              { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
+              async () => hub,
+              current
+            );
+            if (!current()) return;
+            publish(mergePublicationEdits(value, window));
+          }
           inFlight = false;
           if (pending && value.status === 'ready') void update();
         };
@@ -196,15 +207,6 @@ export function useNeoPublications(rootSessionId: string | null) {
             if (pending && value.status === 'ready') void update();
           });
         };
-        const reread = async () => {
-          if (!current() || value.status !== 'ready' || !value.items.length) return;
-          const window = await readNeoPublications(
-            { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
-            async () => hub,
-            current
-          );
-          if (current()) publish(mergePublicationEdits(value, window));
-        };
         refresh.current = () => {
           void update();
         };
@@ -212,7 +214,9 @@ export function useNeoPublications(rootSessionId: string | null) {
         const offEdited = hub.onEvent(
           'neo.publications.changed',
           (event: { conversationId?: unknown } | undefined) => {
-            if (event?.conversationId === conversationId) void reread();
+            if (event?.conversationId !== conversationId) return;
+            edited = true;
+            void update();
           }
         );
         unsubscribe = () => {
