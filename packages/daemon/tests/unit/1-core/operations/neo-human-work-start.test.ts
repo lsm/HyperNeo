@@ -1,5 +1,6 @@
 import { reconcileNeoWorkRefusal } from '../../../../src/lib/neo/work-refusal.ts';
 import { NeoWorkRefusalRepository } from '../../../../src/storage/repositories/neo-work-refusal-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/migrations.ts';
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -161,6 +162,11 @@ describe('Neo existing trusted human work input', () => {
   );
 
   test('records a refusal on an owned started card and exposes talk through the snapshot', async () => {
+    const sql = db.getDatabase();
+    sql.exec(
+      "DROP TABLE neo_work_refusals; DELETE FROM migration_markers WHERE key = 'migration_363'"
+    );
+    runMigrations(sql, () => {});
     storeInput();
     const owner = caller();
     const work = await propose(owner);
@@ -176,6 +182,7 @@ describe('Neo existing trusted human work input', () => {
       value: { ok: false },
     });
     expect(await invoke('neo.work.refused', input, owner)).toMatchObject({ value: { ok: true } });
+    runMigrations(sql, () => {});
     expect(new NeoWorkRefusalRepository(db.getDatabase()).list()).toMatchObject([
       { workId: work.id, what: input.what },
     ]);

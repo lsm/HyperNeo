@@ -388,7 +388,11 @@ it.each(['detail', 'summary'] as const)(
     const { rerender } = render(
       <NeoWorkCard
         work={item}
-        card={testCard(item, { talk: "daemon-code won't update the device." })}
+        card={testCard(item, {
+          talk: "daemon-code won't update the device.",
+          model: 'gpt-6.1-sol',
+          effort: 'medium',
+        })}
         busy={false}
         disabled={false}
         onAction={vi.fn()}
@@ -399,6 +403,7 @@ it.each(['detail', 'summary'] as const)(
     expect(
       screen.getAllByText("daemon-code won't update the device. Open it and tell it yourself.")
     ).toHaveLength(1);
+    expect(screen.getByText('Started with gpt-6.1-sol · medium effort')).toBeTruthy();
     fireEvent.click(
       screen.getByRole('button', {
         name: presentation === 'summary' ? 'Open chat for Title refused' : 'Open chat',
