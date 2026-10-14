@@ -10,6 +10,7 @@ import {
 import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
+import { workStartPreparation } from './start-preparation.ts';
 import {
   PlaceSchema,
   WorkDetailSchema,
@@ -25,7 +26,11 @@ import {
 type RoutedVerb = 'start' | 'send' | 'status' | 'stop' | 'archive';
 type Route<Verb extends RoutedVerb> =
   | { daemon: string }
-  | { local: NonNullable<WorkAdapter[Verb]>; supportsStartEffort?: boolean };
+  | {
+      local: NonNullable<WorkAdapter[Verb]>;
+      supportsStartEffort?: boolean;
+      supportsStartPreparation?: boolean;
+    };
 type Gate<Value> = { value: Value } | { reason: Rejected };
 
 export interface WorkVerbDeps {
@@ -46,6 +51,7 @@ export const StartWorkInputSchema = z.object({
   title: z.string().trim().min(1).max(200),
   message: MessageSchema,
   createFolder: z.boolean().optional(),
+  preparation: workStartPreparation.schema.optional(),
   model: z.string().trim().min(1).max(200).optional(),
   effort: workStartConfiguration.schema.shape.effort,
   from: ForwardedOriginSchema,
@@ -101,7 +107,13 @@ export function pickRoute<Verb extends RoutedVerb>(
   if (!local || !adapter.capabilities.includes(verb)) {
     return { reason: reject('unsupported', `The ${adapter.id} adapter cannot ${verb} work.`) };
   }
-  return { value: { local, supportsStartEffort: adapter.supportsStartEffort } };
+  return {
+    value: {
+      local,
+      supportsStartEffort: adapter.supportsStartEffort,
+      supportsStartPreparation: adapter.supportsStartPreparation,
+    },
+  };
 }
 
 function admitRemoteStartModel(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
@@ -279,6 +291,17 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(admitRemoteStartModel, ['outcome', 'input'], 'result:outcome')
   .pipe(admitStartEffort, ['outcome', 'input'], 'result:outcome')
+  .pipe(
+    (route: Route<'start'>, input: StartInput): Gate<Route<'start'>> => {
+      const admitted = workStartPreparation.admit(
+        input.preparation,
+        'local' in route && route.supportsStartPreparation === true
+      );
+      return 'reason' in admitted ? admitted : { value: route };
+    },
+    ['outcome', 'input'],
+    'result:outcome'
+  )
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(startWork, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
