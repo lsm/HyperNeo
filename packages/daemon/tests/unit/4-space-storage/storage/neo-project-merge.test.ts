@@ -8,7 +8,7 @@ import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consult
 import { runMigration285 } from '../../../../src/storage/schema/m285-neo-consultation-waiters.ts';
 import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts';
 import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
-import { runMigration369 } from '../../../../src/storage/schema/m369-neo-project-merges.ts';
+import { runMigration370 } from '../../../../src/storage/schema/m370-neo-project-merges.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import {
   createNeoProjectMergePipeline,
@@ -215,7 +215,7 @@ describe('Neo project merge storage', () => {
         targetId: 'next',
       }).ok
     ).toBe(true);
-    runMigration369(db);
+    runMigration370(db);
     expect(new NeoRepository(db).projectMerges.resolve('source')).toBe('next');
     expect(repo.projectMerges.resolve('missing')).toBeNull();
     db.exec("UPDATE neo_project_merges SET target_id = 'source' WHERE source_id = 'target'");
