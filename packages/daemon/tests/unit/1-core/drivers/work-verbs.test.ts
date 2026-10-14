@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   annotateUnreachable,
+  SendWorkResultSchema,
   createWorkVerbOperations,
 } from '../../../../src/lib/drivers/work-operations';
 import type { WorkAdapter, WorkSummary } from '../../../../src/lib/drivers/types';
@@ -98,6 +99,49 @@ describe('work verb operations', () => {
     expect(
       await call('work.start', { adapter: 'hyperneo', place, title: 'font size', message: 'go' })
     ).toMatchObject({ ok: true, value: { title: 'font size' } });
+  });
+
+  test.each([true, false])(
+    'preserves accepted input receipts locally and remotely: delivered=%s',
+    async (delivered) => {
+      const receipt = { executionId: 'opaque-execution', inputId: 'opaque-input' };
+      const result = { ok: true as const, value: { delivered, receipt } };
+      const adapter: WorkAdapter = { ...hyperneo, send: async () => result };
+      const ref = { adapter: adapter.id, id: 'work' };
+      expect(
+        await call('work.send', { ref, message: 'next' }, undefined, undefined, [adapter])
+      ).toEqual(result);
+      const forwarded: unknown[] = [];
+      expect(
+        await call(
+          'work.send',
+          { ref: { ...ref, daemon: 'laptop' }, message: 'next' },
+          async (daemon, name, input) => {
+            forwarded.push({ daemon, name, input });
+            return result;
+          }
+        )
+      ).toEqual(result);
+      expect(forwarded).toEqual([
+        {
+          daemon: 'laptop',
+          name: 'work.send',
+          input: { ref, message: 'next', from: 'chat' },
+        },
+      ]);
+    }
+  );
+
+  test.each([
+    { executionId: '', inputId: 'input' },
+    { executionId: 'execution', inputId: '' },
+    { executionId: 'execution' },
+    { inputId: 'input' },
+    null,
+  ])('rejects malformed receipt %j rather than stripping it', (receipt) => {
+    expect(
+      SendWorkResultSchema.safeParse({ ok: true, value: { delivered: true, receipt } }).success
+    ).toBe(false);
   });
 
   test('forwards preparation requirements with model and effort only to an opted-in adapter', async () => {

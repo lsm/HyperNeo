@@ -100,6 +100,13 @@ export const WorkExchangeEntrySchema = z.object({
   text: z.string(),
 });
 
+export const WorkDeliverySchema = z.object({
+  delivered: z.boolean(),
+  receipt: z.object({ executionId: z.string().min(1), inputId: z.string().min(1) }).optional(),
+});
+
+export type WorkDelivery = z.infer<typeof WorkDeliverySchema>;
+
 export const WorkDetailSchema = WorkSummarySchema.extend({
   execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   lastReply: z.string().optional(),
@@ -163,7 +170,7 @@ export interface WorkAdapter {
     ref: WorkRef,
     message: string,
     context: WorkCallContext
-  ) => Promise<Result<{ delivered: boolean }>>;
+  ) => Promise<Result<WorkDelivery>>;
   readonly status?: (ref: WorkRef, since?: number) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
   readonly archive?: (
