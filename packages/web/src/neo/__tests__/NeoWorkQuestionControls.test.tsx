@@ -17,7 +17,7 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 const work: NeoWork = {
   id: 'work',
   requestKey: 'work',
-  concernId: 'fictional',
+  projectId: 'fictional',
   originSessionId: 'neo',
   originMessageId: 'ask',
   title: 'Fictional work',

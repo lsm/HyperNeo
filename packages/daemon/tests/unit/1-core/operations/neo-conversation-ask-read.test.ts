@@ -22,7 +22,7 @@ import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbo
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const foreignId = '10000000-0000-4000-8000-000000000002';
-const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, concernId: null };
+const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const page = { conversationId, after: 0, limit: 50 };
 function ask(
@@ -69,7 +69,7 @@ describe('durable public ask reads', () => {
   ] as OperationCaller[])(
     'refuses non-human %o before binding or ledger access',
     async (caller) => {
-      const bindings = vi.spyOn(repo, 'getBindingForConcern');
+      const bindings = vi.spyOn(repo, 'getBindingForProject');
       const reads = vi.spyOn(ledger, 'list');
       expect(await invoke({ conversationId }, caller)).toEqual({
         kind: 'completed',
@@ -85,10 +85,10 @@ describe('durable public ask reads', () => {
     async (kind) => {
       if (kind === 'missing') mailbox.db.exec('DELETE FROM neo_session_bindings');
       if (kind === 'holder')
-        vi.spyOn(repo, 'getBindingForConcern').mockReturnValue({
+        vi.spyOn(repo, 'getBindingForProject').mockReturnValue({
           ...root,
-          concernId: 'research',
-          kind: 'concern',
+          projectId: 'research',
+          kind: 'project',
         });
       const reads = vi.spyOn(ledger, 'list');
       expect(

@@ -14,7 +14,7 @@ import { NeoAgentWorkTargetRepository } from '../../../../../src/storage/reposit
 const proposal = {
   id: 'work-A',
   requestKey: 'A',
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'ask-A',
   title: 'Approved later',

@@ -23,7 +23,7 @@ import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbo
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const foreignId = '10000000-0000-4000-8000-000000000002';
-const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, concernId: null };
+const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const page = { conversationId, after: 0, limit: 50 };
 function publication(index = 1, target = conversationId) {
@@ -34,7 +34,7 @@ function publication(index = 1, target = conversationId) {
     producerInput: { sessionId: 'holder:research', messageId: 'return-input' },
     shortText: 'Two differences are worth checking.',
     fullText: '**Fictional comparison**\n\nKeep this as a draft.',
-    links: [{ kind: 'concern' as const, id: 'research', label: '查看对照 ↗' }],
+    links: [{ kind: 'project' as const, id: 'research', label: '查看对照 ↗' }],
   };
 }
 
@@ -69,7 +69,7 @@ describe('authored publication reads', () => {
     for (const binding of [
       null,
       { ...root, sessionId: `neo:${foreignId}` },
-      { ...root, concernId: 'research' },
+      { ...root, projectId: 'research' },
     ]) {
       expect(requirePublicationConversation(page, binding)).toEqual({
         reason: { ok: false, reason: 'conversation_not_found' },
@@ -85,7 +85,7 @@ describe('authored publication reads', () => {
   ] as OperationCaller[])(
     'refuses non-human caller %o before any ledger or binding read',
     async (caller) => {
-      const bindings = vi.spyOn(repo, 'getBindingForConcern');
+      const bindings = vi.spyOn(repo, 'getBindingForProject');
       const reads = vi.spyOn(ledger, 'list');
       expect(await invoke({ conversationId }, caller)).toEqual({
         kind: 'completed',

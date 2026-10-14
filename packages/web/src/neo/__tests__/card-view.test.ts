@@ -9,15 +9,15 @@ import {
   neoCardTone,
 } from '../card-view.ts';
 import { describeNeoAskFromView, groupNeoAsks, neoAskOpenTarget } from '../neo-asks.ts';
-import type { NeoConcernBoard } from '../neo-concern-board.ts';
+import type { NeoProjectBoard } from '../neo-project-board.ts';
 import { classifyNeoScenes, describeNeoCardScenes, groupNeoScenes } from '../neo-scenes.ts';
 
-type Receipt = NeoConcernBoard['receipts'][number];
+type Receipt = NeoProjectBoard['receipts'][number];
 
 const work = (id: string, status: NeoWork['status'], sessionId: string | null = null): NeoWork => ({
   id,
   requestKey: id,
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'm',
   title: `Card ${id}`,
@@ -57,7 +57,7 @@ const card = (workId: string, extra: Partial<NeoCardView> = {}): NeoCardView => 
 const ask = (id: string, workIds: string[]): NeoAsk => ({
   id,
   requestKey: id,
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'm',
   title: `Ask ${id}`,

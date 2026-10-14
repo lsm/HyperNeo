@@ -143,7 +143,7 @@ describe('Neo preferences', () => {
   it('labels the menu as Neo-wide while ordinary chats keep the per-conversation hint', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
-    expect(screen.getByText('For Neo and all its topics')).toBeTruthy();
+    expect(screen.getByText('For Neo and all its projects')).toBeTruthy();
     expect(screen.queryByText('For this conversation')).toBeNull();
   });
 });

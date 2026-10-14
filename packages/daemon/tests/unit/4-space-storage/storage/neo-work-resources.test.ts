@@ -23,7 +23,7 @@ const workflow = { kind: 'workflows', id: 'workflow/β' };
 const proposal = {
   id: 'work-A',
   requestKey: 'request-A',
-  concernId: 'concern-A',
+  projectId: 'concern-A',
   originSessionId: 'holder-A',
   originMessageId: 'ask-A',
   title: 'Prepare a draft',
@@ -43,7 +43,7 @@ function initialize(db: Database) {
   runMigration287(db);
   const work = new NeoRepository(db);
   for (const id of ['concern-A', 'concern-B'])
-    work.saveConcern({ id, title: id, summary: id, context: id }, 0);
+    work.saveProject({ id, title: id, summary: id, context: id }, 0);
   const proposed = work.proposeWork(proposal);
   return {
     work,
@@ -157,8 +157,8 @@ describe('NeoWorkResourceRepository', () => {
     { originSessionId: 'holder-B' },
     { originMessageId: 'ask-B' },
     { originMessageId: null },
-    { concernId: 'concern-B' },
-    { concernId: null },
+    { projectId: 'concern-B' },
+    { projectId: null },
     { targetSessionId: 'different' },
     { targetSessionId: null },
     { report: 'stale prior report' },
@@ -195,7 +195,7 @@ describe('NeoWorkResourceRepository', () => {
       ...proposal,
       id: 'work-B',
       requestKey: 'request-B',
-      concernId: 'concern-B',
+      projectId: 'concern-B',
       originSessionId: 'holder-B',
       originMessageId: 'ask-B',
     });

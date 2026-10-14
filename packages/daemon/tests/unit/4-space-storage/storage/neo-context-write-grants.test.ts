@@ -15,7 +15,7 @@ const concern = { id: 'club', title: 'Club', summary: 'Sunday', context: 'Six pe
 const request = {
   id: 'check',
   requestKey: 'check',
-  concernId: 'club',
+  projectId: 'club',
   originSessionId: 'root',
   sessionId: 'holder',
   question: 'Next?',
@@ -39,8 +39,8 @@ describe('Neo request-bound context storage', () => {
       notices++;
     });
     consultations = new NeoConsultationRepository(db, () => {});
-    repo.saveConcern(concern, 0);
-    repo.reserveBinding({ sessionId: 'holder', concernId: 'club', kind: 'concern' });
+    repo.saveProject(concern, 0);
+    repo.reserveBinding({ sessionId: 'holder', projectId: 'club', kind: 'project' });
     runMigration280(db);
     consultations.reserve(request);
     notices = 0;
@@ -66,13 +66,13 @@ describe('Neo request-bound context storage', () => {
   });
 
   test('a fresh revision read and duplicate reservation cannot revive a stale request', () => {
-    const corrected = repo.saveConcern({ ...concern, context: 'Eight people at my home' }, 1)!;
+    const corrected = repo.saveProject({ ...concern, context: 'Eight people at my home' }, 1)!;
     const attempt = { ...concern, context: 'Six people at a library' };
     expect(consultations.reserve({ ...request, id: 'retry' })?.id).toBe('check');
     for (const revision of [1, corrected.revision]) {
       expect(repo.saveConsultationContext(attempt, revision, 'check', 'holder')).toBeNull();
     }
-    expect(repo.getConcern('club')).toEqual(corrected);
+    expect(repo.getProject('club')).toEqual(corrected);
     expect(notices).toBe(1);
     consultations.finish('check', 'failed', 'Superseded');
     consultations.reserve({ ...request, id: 'new', requestKey: 'new' });
@@ -89,11 +89,11 @@ describe('Neo request-bound context storage', () => {
           Date.now() - CONSULTATION_TIMEOUT_MS
         );
       else consultations.finish('check', status as 'reported' | 'failed', 'Settled');
-      const before = repo.getConcern('club');
+      const before = repo.getProject('club');
       expect(
         repo.saveConsultationContext({ ...concern, context: 'Overwrite' }, 1, 'check', 'holder')
       ).toBeNull();
-      expect(repo.getConcern('club')).toEqual(before);
+      expect(repo.getProject('club')).toEqual(before);
       expect(notices).toBe(0);
       expect(db.prepare('SELECT context_revision FROM neo_context_write_grants').get()).toEqual({
         context_revision: 1,
@@ -101,8 +101,8 @@ describe('Neo request-bound context storage', () => {
     }
   );
 
-  test('rejects wrong holders, missing receipts, other concerns and worker bindings', () => {
-    repo.saveConcern({ ...concern, id: 'other' }, 0);
+  test('rejects wrong holders, missing receipts, other projects and worker bindings', () => {
+    repo.saveProject({ ...concern, id: 'other' }, 0);
     for (const [id, session] of [
       ['check', 'impostor'],
       ['missing', 'holder'],
@@ -114,17 +114,17 @@ describe('Neo request-bound context storage', () => {
     ).toBeNull();
     db.prepare("UPDATE neo_session_bindings SET kind = 'worker' WHERE session_id = 'holder'").run();
     expect(repo.saveConsultationContext(concern, 1, 'check', 'holder')).toBeNull();
-    expect(repo.getConcern('club')?.revision).toBe(1);
+    expect(repo.getProject('club')?.revision).toBe(1);
   });
 
   test('rolls back the context update if grant advancement fails and emits no notification', () => {
     db.exec(`CREATE TRIGGER reject_grant_update BEFORE UPDATE ON neo_context_write_grants
       BEGIN SELECT RAISE(ABORT, 'test grant failure'); END`);
-    const before = repo.getConcern('club');
+    const before = repo.getProject('club');
     expect(() =>
       repo.saveConsultationContext({ ...concern, context: 'Lost update' }, 1, 'check', 'holder')
     ).toThrow('test grant failure');
-    expect(repo.getConcern('club')).toEqual(before);
+    expect(repo.getProject('club')).toEqual(before);
     expect(notices).toBe(0);
     expect(db.prepare('SELECT context_revision FROM neo_context_write_grants').get()).toEqual({
       context_revision: 1,
@@ -139,18 +139,18 @@ describe('Neo request-bound context storage', () => {
       'test capture failure'
     );
     expect(consultations.get('new')).toBeNull();
-    expect(repo.getConcern('club')?.revision).toBe(1);
+    expect(repo.getProject('club')?.revision).toBe(1);
     expect(notices).toBe(0);
   });
 
   test('preserves the grant across reopening and does not recapture a newer human revision', () => {
-    repo.saveConcern({ ...concern, context: 'New human correction' }, 1);
+    repo.saveProject({ ...concern, context: 'New human correction' }, 1);
     db.close();
     db = new Database(join(dir, 'test.db'));
     repo = new NeoRepository(db);
     runMigration280(db);
     expect(repo.saveConsultationContext(concern, 2, 'check', 'holder')).toBeNull();
-    expect(repo.getConcern('club')?.context).toBe('New human correction');
+    expect(repo.getProject('club')?.context).toBe('New human correction');
   });
 
   test('migration leaves legacy pending requests ungranted without altering their state', () => {
@@ -162,6 +162,6 @@ describe('Neo request-bound context storage', () => {
     runMigration280(db);
     expect(consultations.get('legacy')).toEqual(before);
     expect(repo.saveConsultationContext(concern, 1, 'legacy', 'holder')).toBeNull();
-    expect(repo.getConcern('club')?.context).toBe(concern.context);
+    expect(repo.getProject('club')?.context).toBe(concern.context);
   });
 });

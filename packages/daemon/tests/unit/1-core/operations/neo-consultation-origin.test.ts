@@ -6,7 +6,7 @@ import {
   requireLiveNeoConsultationOrigin,
 } from '../../../../src/lib/neo/consultation-origin.ts';
 
-const root: NeoBinding = { sessionId: 'neo:root', concernId: null, kind: 'neo' };
+const root: NeoBinding = { sessionId: 'neo:root', projectId: null, kind: 'neo' };
 const turn = { messageId: 'ask-A', human: true, isLive: () => true };
 const caller: OperationCaller = { source: 'mcp', sessionId: root.sessionId, neoTurn: turn };
 const origin = { originSessionId: root.sessionId, originMessageId: turn.messageId };
@@ -22,7 +22,7 @@ describe('admitNeoConsultationOrigin', () => {
     [{ ...caller, source: 'internal' }, root],
     [caller, null],
     [caller, { ...root, kind: 'worker' }],
-    [caller, { ...root, kind: 'concern', concernId: 'club' }],
+    [caller, { ...root, kind: 'project', projectId: 'club' }],
     [{ ...caller, sessionId: 'other' }, root],
   ] as [OperationCaller, NeoBinding | null][])(
     'preserves root ownership before input admission: %j',

@@ -46,7 +46,7 @@ const consultation = (id: string, status: NeoConsultation['status']): NeoConsult
   id,
   status,
   requestKey: id,
-  concernId: 'a',
+  projectId: 'a',
   originSessionId: root,
   originMessageId: `ask-${id}`,
   sessionId: 'holder-a',
@@ -57,7 +57,7 @@ const consultation = (id: string, status: NeoConsultation['status']): NeoConsult
 const waiting = (): NeoConsultationWaiter => ({
   id: 'queued',
   requestKey: 'queued',
-  concernId: 'b',
+  projectId: 'b',
   originSessionId: root,
   originMessageId: 'ask-queued',
   sessionId: 'holder-b',
@@ -68,7 +68,7 @@ const waiting = (): NeoConsultationWaiter => ({
 const work: NeoWork = {
   id: 'pending',
   requestKey: 'work-pending',
-  concernId: null,
+  projectId: null,
   originSessionId: root,
   originMessageId: 'work-ask',
   title: 'Fictional execution proposal',
@@ -84,7 +84,7 @@ const work: NeoWork = {
 function mount(publicMode = true) {
   const snapshot = {
     sessionId: root,
-    concerns: ['a', 'b'].map((id) => ({
+    projects: ['a', 'b'].map((id) => ({
       id,
       title: `Fictional holder ${id}`,
       summary: 'Fictional context',

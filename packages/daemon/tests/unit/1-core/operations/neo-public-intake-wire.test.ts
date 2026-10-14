@@ -20,11 +20,11 @@ import { runMigration289 } from '../../../../src/storage/schema/m289-neo-convers
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
-const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', concernId: null };
+const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', projectId: null };
 const holder: NeoBinding = {
   sessionId: 'neo:holder:research',
-  kind: 'concern',
-  concernId: 'research',
+  kind: 'project',
+  projectId: 'research',
 };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const input = {
@@ -42,7 +42,7 @@ describe('current public intake binding', () => {
       [null, active()],
       [holder, active(holder.sessionId)],
       [{ ...root, kind: 'worker' }, active()],
-      [{ ...root, concernId: 'other' }, active()],
+      [{ ...root, projectId: 'other' }, active()],
       [{ ...root, sessionId: 'neo:root' }, active('neo:root')],
       [{ ...root, sessionId: conversationId }, active(conversationId)],
       [root, null],
@@ -136,7 +136,7 @@ describe('real human intake joint persistence', () => {
     'refuses claimed human %o before any target/root/storage access',
     async (caller) => {
       const targets = vi.spyOn(db, 'getSession');
-      const roots = vi.spyOn(repo, 'getBindingForConcern');
+      const roots = vi.spyOn(repo, 'getBindingForProject');
       const storage = vi.spyOn(db, 'getSDKMessageRepo');
       expect(await invoke({ ...input, human: true, inputKind: 'human' }, caller)).toMatchObject({
         value: { ok: false, reason: 'Only the human can submit a Neo ask.' },
@@ -155,9 +155,9 @@ describe('real human intake joint persistence', () => {
         mailbox.db.exec('DELETE FROM neo_session_bindings WHERE concern_id IS NULL');
       if (kind === 'archived') sessions.set(root.sessionId, { ...active(), status: 'archived' });
       if (kind === 'invalid')
-        vi.spyOn(repo, 'getBindingForConcern').mockReturnValue({ ...root, sessionId: 'neo:root' });
+        vi.spyOn(repo, 'getBindingForProject').mockReturnValue({ ...root, sessionId: 'neo:root' });
       if (kind === 'foreign-session') sessions.set(root.sessionId, active('foreign'));
-      if (kind === 'holder-root') vi.spyOn(repo, 'getBindingForConcern').mockReturnValue(holder);
+      if (kind === 'holder-root') vi.spyOn(repo, 'getBindingForProject').mockReturnValue(holder);
       expect(await invoke({ ...input, sessionId: holder.sessionId })).toMatchObject({
         value: { ok: false, reason: 'The public Neo conversation is no longer available.' },
       });
@@ -166,7 +166,7 @@ describe('real human intake joint persistence', () => {
   );
 
   test('target admission still precedes root and joint storage admission', async () => {
-    const roots = vi.spyOn(repo, 'getBindingForConcern');
+    const roots = vi.spyOn(repo, 'getBindingForProject');
     expect(await invoke({ ...input, sessionId: 'unbound' })).toMatchObject({
       value: { ok: false, reason: 'Open a Neo conversation before sending.' },
     });

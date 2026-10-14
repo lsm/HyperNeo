@@ -37,7 +37,7 @@ describe('published consultation request instructions', () => {
     );
     expect(guidance).toContain('do not supply or invent either');
     expect(guidance).toContain('Do not execute work');
-    expect(guidance).toContain('call neo.concern.respond for this published request');
+    expect(guidance).toContain('call neo.project.respond for this published request');
     expect(guidance).toContain('send the answer to root for another summary');
     expect(guidance).toContain('fresh UUID');
     expect(guidance).toContain('retry only the identical payload with the same id');
@@ -75,13 +75,13 @@ describe('published consultation coordinator prompt', () => {
   test('distinguishes published and queued legacy holder requests without contradictory defaults', () => {
     const holder = neoPrompt('fictional');
     expect(holder).toContain('follow the return format in that runtime request');
-    expect(holder).toContain('for an older legacy request, reply through neo.concern.respond');
-    expect(holder).toContain('An older legacy request still uses neo.concern.respond');
-    expect(holder).toContain('neo.concern.respond {id,answer} for older legacy requests only');
+    expect(holder).toContain('for an older legacy request, reply through neo.project.respond');
+    expect(holder).toContain('An older legacy request still uses neo.project.respond');
+    expect(holder).toContain('neo.project.respond {id,answer} for older legacy requests only');
     expect(holder).not.toContain(
-      'For every consultation request, return the answer with neo.concern.respond'
+      'For every consultation request, return the answer with neo.project.respond'
     );
-    expect(holder).toContain('do not also call neo.concern.respond');
+    expect(holder).toContain('do not also call neo.project.respond');
     expect(holder).toContain('Short reply, full detail and labelled scene references');
     expect(holder).toContain('no second root summary');
     expect(holder).toContain('immutable original ask and producer from the actual holder turn');
@@ -101,8 +101,8 @@ describe('published consultation coordinator prompt', () => {
   });
   test.each([null, 'fictional'])(
     'retains human-intent, publication and native permission boundaries for %j',
-    (concernId) => {
-      const prompt = neoPrompt(concernId);
+    (projectId) => {
+      const prompt = neoPrompt(projectId);
       for (const text of [
         'NEVER execute worker jobs directly',
         'Start work button is the approval to execute',
@@ -123,7 +123,7 @@ describe('published consultation coordinator prompt', () => {
       expect(prompt).not.toContain(
         'Do not publish internal compaction, tool chatter, system deliveries or any input that is not a direct human message'
       );
-      if (concernId === null)
+      if (projectId === null)
         expect(prompt).toContain('Native question cards are not available to root Neo');
     }
   );

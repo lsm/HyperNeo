@@ -43,7 +43,7 @@ export function neoCoordinatorBinding(
   const row = db
     .getDatabase()
     .prepare(
-      "SELECT session_id AS sessionId, concern_id AS concernId, kind FROM neo_session_bindings WHERE session_id = ? AND kind IN ('neo', 'concern')"
+      "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ? AND kind IN ('neo', 'project')"
     )
     .get(sessionId) as NeoBinding | null;
   return row ?? null;
@@ -71,17 +71,17 @@ export function neoCoordinatorDeniedReads(): string[] {
   return neoSecretReadRules();
 }
 
-export function neoCoordinatorNativeTools(concernId: string | null): string[] {
-  return concernId ? ['AskUserQuestion', ...NEO_TOOLS] : [...NEO_TOOLS];
+export function neoCoordinatorNativeTools(projectId: string | null): string[] {
+  return projectId ? ['AskUserQuestion', ...NEO_TOOLS] : [...NEO_TOOLS];
 }
 
-export function neoCoordinatorAllowedTools(concernId: string | null): string[] {
-  return [...neoCoordinatorNativeTools(concernId), `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`];
+export function neoCoordinatorAllowedTools(projectId: string | null): string[] {
+  return [...neoCoordinatorNativeTools(projectId), `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`];
 }
 
 export function restrictNeoQuery(
   options: Options,
-  concernId: string | null = null,
+  projectId: string | null = null,
   sessionId?: string,
   catchUp = '',
   packs: readonly NeoPackBrief[] = neoSettingsPackBriefs()
@@ -90,21 +90,21 @@ export function restrictNeoQuery(
     options.cwd = neoCoordinatorRuntimePath(sessionId);
     mkdirSync(options.cwd, { recursive: true });
   }
-  const prompt = neoPrompt(concernId, packs);
+  const prompt = neoPrompt(projectId, packs);
   options.systemPrompt = {
     type: 'custom',
     prompt: catchUp ? `${prompt}\n\n${catchUp}` : prompt,
     snapshot: false,
   };
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
-  options.tools = neoCoordinatorNativeTools(concernId);
+  options.tools = neoCoordinatorNativeTools(projectId);
   options.additionalDirectories = [homedir()];
   options.agents = {};
   delete options.agent;
   options.plugins = [];
   options.settingSources = [];
   options.mcpServers = operations ? { [OPERATIONS_MCP_SERVER_NAME]: operations } : {};
-  options.allowedTools = neoCoordinatorAllowedTools(concernId);
+  options.allowedTools = neoCoordinatorAllowedTools(projectId);
   options.disallowedTools = [...(options.disallowedTools ?? []), ...neoCoordinatorDeniedReads()];
   options.hooks = {
     ...options.hooks,

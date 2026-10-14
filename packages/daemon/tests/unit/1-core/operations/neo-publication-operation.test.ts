@@ -33,8 +33,8 @@ import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publica
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
-const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, concernId: null };
-const holder = { sessionId: 'holder:a', kind: 'concern' as const, concernId: 'a' };
+const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
+const holder = { sessionId: 'holder:a', kind: 'project' as const, projectId: 'a' };
 const ask = { sessionId: root.sessionId, messageId: 'ask-original' };
 const draft = {
   publicationId: '20000000-0000-4000-8000-000000000001',
@@ -73,13 +73,13 @@ describe('runtime-bound publication operation', () => {
   function consultation(
     id = 'consult:1',
     messageId = ask.messageId,
-    concernId = 'a',
+    projectId = 'a',
     sessionId = holder.sessionId
   ) {
     const item = consultations.reserve({
       id,
       requestKey: id,
-      concernId,
+      projectId,
       originSessionId: root.sessionId,
       originMessageId: messageId,
       sessionId,
@@ -91,11 +91,11 @@ describe('runtime-bound publication operation', () => {
     });
     return item;
   }
-  function work(id = 'work:1', messageId = ask.messageId, concernId = 'a') {
+  function work(id = 'work:1', messageId = ask.messageId, projectId = 'a') {
     return repo.proposeWork({
       id,
       requestKey: id,
-      concernId,
+      projectId,
       originSessionId: root.sessionId,
       originMessageId: messageId,
       title: 'Comparison',
@@ -121,12 +121,12 @@ describe('runtime-bound publication operation', () => {
     repo = new NeoRepository(mailbox.db);
     consultations = new NeoConsultationRepository(mailbox.db, () => {});
     ledger = new NeoPublicationRepository(mailbox.db);
-    for (const id of ['a', 'b']) repo.saveConcern({ id, title: id, summary: '', context: '' }, 0);
+    for (const id of ['a', 'b']) repo.saveProject({ id, title: id, summary: '', context: '' }, 0);
     for (const binding of [
       root,
       holder,
-      { sessionId: 'holder:b', kind: 'concern' as const, concernId: 'b' },
-      { sessionId: 'worker', kind: 'worker' as const, concernId: 'a' },
+      { sessionId: 'holder:b', kind: 'project' as const, projectId: 'b' },
+      { sessionId: 'worker', kind: 'worker' as const, projectId: 'a' },
     ]) {
       mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(binding.sessionId);
       repo.reserveBinding(binding);
@@ -141,8 +141,8 @@ describe('runtime-bound publication operation', () => {
     notify = vi.fn();
     runtime = {
       getBinding: (id) => repo.getBindingBySession(id),
-      getRootBinding: () => repo.getBindingForConcern(null),
-      hasConcern: (id) => !!repo.getConcern(id),
+      getRootBinding: () => repo.getBindingForProject(null),
+      hasProject: (id) => !!repo.getProject(id),
       getWork: (id) => repo.getWork(id),
       getConsultation: (id) => consultations.get(id),
       resolveAskOrigin: resolve,
@@ -338,7 +338,7 @@ describe('runtime-bound publication operation', () => {
     const links = [
       { label: '看看对比', kind: 'work', id: 'work:1' },
       { label: 'Context check', kind: 'consultation', id: 'consult:1' },
-      { label: 'More about A', kind: 'concern', id: 'a' },
+      { label: 'More about A', kind: 'project', id: 'a' },
     ];
     expect(await invoke({ ...draft, links })).toMatchObject({
       value: { accepted: true, publication: { links } },
@@ -346,7 +346,7 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)![0].links).toEqual(links);
   });
 
-  test.each(['unknown', 'foreign-ask', 'foreign-concern', 'unsafe-kind'])(
+  test.each(['unknown', 'foreign-ask', 'foreign-project', 'unsafe-kind'])(
     'rejects %s scene refs, without partial publication',
     async (kind) => {
       consultation();
@@ -355,7 +355,7 @@ describe('runtime-bound publication operation', () => {
       work(
         'work:1',
         kind === 'foreign-ask' ? 'other-ask' : ask.messageId,
-        kind === 'foreign-concern' ? 'b' : 'a'
+        kind === 'foreign-project' ? 'b' : 'a'
       );
       prompt(root.sessionId, 'other-ask');
       const link = {
@@ -366,10 +366,10 @@ describe('runtime-bound publication operation', () => {
       const result = await invoke({ ...draft, links: [link] }, caller(holder.sessionId, input));
       const detail = {
         unknown:
-          'work link "missing" does not exist; link only Neo concern, work or consultation ids, never work.find refs or session ids',
+          'work link "missing" does not exist; link only Neo project, work or consultation ids, never work.find refs or session ids',
         'foreign-ask':
           'work link "work:1" was not started for this ask; link only work or consultations this ask created',
-        'foreign-concern': 'work link "work:1" belongs to another concern',
+        'foreign-project': 'work link "work:1" belongs to another project',
       }[kind];
       expect(result).toMatchObject(
         kind === 'unsafe-kind'
@@ -381,17 +381,17 @@ describe('runtime-bound publication operation', () => {
     }
   );
 
-  test('holder cannot link another concern even when the concern exists', () => {
+  test('holder cannot link another project even when the project exists', () => {
     prompt(holder.sessionId, 'holder-human');
     expect(
       publish(
-        { ...draft, links: [{ label: 'Other', kind: 'concern', id: 'b' }] },
+        { ...draft, links: [{ label: 'Other', kind: 'project', id: 'b' }] },
         caller(holder.sessionId, 'holder-human')
       )
     ).toEqual({
       accepted: false,
       reason: 'invalid_scene_reference',
-      detail: 'concern link "b" belongs to another concern',
+      detail: 'project link "b" belongs to another project',
     });
   });
 
@@ -431,11 +431,11 @@ describe('runtime-bound publication operation', () => {
     const proof = { ...producer.value, ask };
     const link = { label: 'Open', kind: 'work' as const, id: 'work:1' };
     expect(
-      requirePublicationLinks(proof, [{ link, exists: true, concernId: 'a', origin: ask }])
+      requirePublicationLinks(proof, [{ link, exists: true, projectId: 'a', origin: ask }])
     ).toEqual({ value: proof });
     expect(
       requirePublicationLinks(proof, [
-        { link, exists: true, concernId: 'a', origin: { ...ask, messageId: 'foreign' } },
+        { link, exists: true, projectId: 'a', origin: { ...ask, messageId: 'foreign' } },
       ])
     ).toHaveProperty('reason.reason', 'invalid_scene_reference');
     expect(requirePublicationLifetime(proof, who, root, root)).toEqual({ value: proof });
@@ -460,7 +460,7 @@ describe('runtime-bound publication operation', () => {
     expect(
       admitPublicationDraft({
         ...draft,
-        links: Array.from({ length: 17 }, () => ({ label: 'Open', kind: 'concern', id: 'a' })),
+        links: Array.from({ length: 17 }, () => ({ label: 'Open', kind: 'project', id: 'a' })),
       })
     ).toHaveProperty('reason.reason', 'invalid_publication');
   });

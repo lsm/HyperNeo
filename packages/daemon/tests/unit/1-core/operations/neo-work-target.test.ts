@@ -27,7 +27,7 @@ const target: NeoWorkTarget = Object.freeze({
   targetSessionId: 'project:α/work?keep=1',
 });
 const session = Object.freeze({ id: target.targetSessionId!, status: 'active' });
-const worker: NeoBinding = { sessionId: session.id, kind: 'worker', concernId: 'research' };
+const worker: NeoBinding = { sessionId: session.id, kind: 'worker', projectId: 'research' };
 type TargetRejection = Extract<ReturnType<typeof presentNeoWorkTarget>, { accepted: false }>;
 const rejection = (reason: TargetRejection['reason']): { reason: TargetRejection } => ({
   reason: { accepted: false, reason },
@@ -95,8 +95,8 @@ describe('Neo work target pure gates', () => {
     }
   );
   test.each([
-    { ...worker, kind: 'neo' as const, concernId: null },
-    { ...worker, kind: 'concern' as const },
+    { ...worker, kind: 'neo' as const, projectId: null },
+    { ...worker, kind: 'project' as const },
   ])('holders/coordinators are context buffers, not execution targets: %j', (binding) => {
     expect(requireNeoWorkTargetBinding(target, binding)).toEqual(
       rejection('target_is_coordinator')
@@ -169,7 +169,7 @@ describe('Neo work target composition', () => {
   });
   test('coordinator binding stops selection without replacing the target', () => {
     const f = fixture();
-    f.deps.readBinding.mockReturnValue({ ...worker, kind: 'concern' });
+    f.deps.readBinding.mockReturnValue({ ...worker, kind: 'project' });
     expect(f.resolve(target.id)).toEqual({ accepted: false, reason: 'target_is_coordinator' });
     expect(f.deps.readTarget).toHaveBeenCalledTimes(1);
     expect(f.deps.readSession).toHaveBeenCalledTimes(1);
@@ -219,7 +219,7 @@ describe('NeoService work-target read facet', () => {
     );
     const sql = db.getDatabase();
     try {
-      service.repo.saveConcern(
+      service.repo.saveProject(
         { id: 'research', title: 'Research', summary: 'Learn', context: 'Private' },
         0
       );
@@ -237,10 +237,10 @@ describe('NeoService work-target read facet', () => {
         .prepare(`INSERT INTO space_long_horizon_agents(id, space_id, handle, display_name, session_id, instructions, created_at, updated_at)
         VALUES ('manager', 'space-a', 'manager', 'Manager', 'space-manager', 'Existing responsibilities', 1, 1)`)
         .run();
-      service.repo.reserveBinding({ sessionId: 'holder', kind: 'concern', concernId: 'research' });
+      service.repo.reserveBinding({ sessionId: 'holder', kind: 'project', projectId: 'research' });
       const base = {
         requestKey: 'unused',
-        concernId: 'research',
+        projectId: 'research',
         originSessionId: 'root',
         originMessageId: 'ask-A',
         title: 'Readiness',
@@ -327,7 +327,7 @@ describe('checkNeoWorkTarget', () => {
   const target = { id: 'w1', targetSessionId: 's1' };
   const reads = (status: string, kind: 'worker' | 'neo' = 'worker') => ({
     readSession: () => ({ id: 's1', status }),
-    readBinding: () => ({ sessionId: 's1', kind, concernId: null }),
+    readBinding: () => ({ sessionId: 's1', kind, projectId: null }),
   });
   test.each<[string, ReturnType<typeof reads>, string | null]>([
     ['an active worker session', reads('active'), null],

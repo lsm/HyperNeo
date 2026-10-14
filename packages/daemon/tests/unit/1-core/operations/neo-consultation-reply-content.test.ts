@@ -9,7 +9,7 @@ import {
 const item: NeoConsultation = Object.freeze({
   id: 'consult-A',
   requestKey: 'request-A',
-  concernId: 'research',
+  projectId: 'research',
   originSessionId: 'root-A',
   originMessageId: 'ask-A',
   sessionId: 'holder-A',
@@ -33,14 +33,14 @@ describe('Neo consultation reply content', () => {
     expect(payload).toMatchObject({
       consultationId: item.id,
       originMessageId: item.originMessageId,
-      concernId: item.concernId,
+      projectId: item.projectId,
       status: item.status,
       answer: item.answer,
     });
     expect(Object.keys(payload)).toEqual([
       'consultationId',
       'originMessageId',
-      'concernId',
+      'projectId',
       'status',
       'answer',
       'replyGuidance',
@@ -69,7 +69,7 @@ describe('Neo consultation reply content', () => {
       const { payload } = readReply(Object.freeze({ ...item, originMessageId }));
       expect(payload.originMessageId).toBe(originMessageId);
       expect(payload.consultationId).toBe(item.id);
-      expect(payload.concernId).toBe(item.concernId);
+      expect(payload.projectId).toBe(item.projectId);
     }
   );
 

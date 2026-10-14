@@ -30,7 +30,7 @@ describe('Neo holder sessions', () => {
       { event: vi.fn() } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    service.repo.saveConcern({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
+    service.repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
   });
   afterEach(() => {
     service.dispose();

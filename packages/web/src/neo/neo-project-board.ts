@@ -1,5 +1,5 @@
 import type {
-  NeoConcern,
+  NeoProject,
   NeoConsultation,
   NeoConsultationWaiter,
   NeoWork,
@@ -14,7 +14,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 
 type Selection = {
   snapshot: NeoSnapshot;
-  concern: NeoConcern | null;
+  project: NeoProject | null;
   work: NeoWork[];
   consultations: NeoConsultation[];
   consultationWaiters: NeoConsultationWaiter[];
@@ -27,8 +27,8 @@ type Receipt =
     });
 type Relation = { from: DaemonInventoryLink; to: DaemonInventoryLink };
 type Participant = { ref: DaemonInventoryLink; metadata: DaemonInventoryEntry | null };
-export type NeoConcernBoard = {
-  concern: NeoConcern | null;
+export type NeoProjectBoard = {
+  project: NeoProject | null;
   receipts: Receipt[];
   participants: Participant[];
   relations: Relation[];
@@ -44,25 +44,25 @@ const validRef = (ref: DaemonInventoryLink) =>
   typeof ref.id === 'string' &&
   !!ref.id.trim();
 
-export function selectNeoConcernBoard(
+export function selectNeoProjectBoard(
   snapshot: NeoSnapshot | null,
-  concernId: string | null
+  projectId: string | null
 ): { value: Selection } | { reason: null } {
   if (!snapshot) return { reason: null };
-  const concern = snapshot.concerns.find((item) => item.id === concernId) ?? null;
-  if (concernId !== null && !concern) return { reason: null };
+  const project = snapshot.projects.find((item) => item.id === projectId) ?? null;
+  if (projectId !== null && !project) return { reason: null };
   return {
     value: {
       snapshot,
-      concern,
-      work: snapshot.work.filter((item) => concernId === null || item.concernId === concernId),
+      project,
+      work: snapshot.work.filter((item) => projectId === null || item.projectId === projectId),
       consultations: (snapshot.consultations ?? []).filter(
-        (item) => concernId === null || item.concernId === concernId
+        (item) => projectId === null || item.projectId === projectId
       ),
       consultationWaiters: (snapshot.consultationWaiters ?? []).filter(
         (item) =>
           item.status === 'queued' &&
-          (concernId === null || item.concernId === concernId) &&
+          (projectId === null || item.projectId === projectId) &&
           !snapshot.consultations?.some((active) => active.id === item.id)
       ),
     },
@@ -149,14 +149,14 @@ export function observedNeoBoardResources(
   };
 }
 
-export function presentNeoConcernBoard(
+export function presentNeoProjectBoard(
   selection: Selection,
   receipts: Receipt[],
   resources: ReturnType<typeof observedNeoBoardResources>,
   inventory: DaemonSnapshot | null
-): NeoConcernBoard {
+): NeoProjectBoard {
   return {
-    concern: selection.concern,
+    project: selection.project,
     receipts,
     ...resources,
     inventoryCapturedAt: inventory?.capturedAt ?? null,
@@ -168,17 +168,17 @@ export function presentNeoConcernBoard(
   };
 }
 
-export const projectNeoConcernBoard = (superpipe({})('neo-concern-board') as PipelineAPI)
-  .input(['snapshot', 'concernId', 'inventory'])
-  .pipe(selectNeoConcernBoard, ['snapshot', 'concernId'], 'result:board')
+export const projectNeoProjectBoard = (superpipe({})('neo-project-board') as PipelineAPI)
+  .input(['snapshot', 'projectId', 'inventory'])
+  .pipe(selectNeoProjectBoard, ['snapshot', 'projectId'], 'result:board')
   .pipe(neoBoardReceipts, 'board', 'receipts')
   .pipe(neoBoardReferences, ['board', 'receipts'], 'references')
   .pipe(observedNeoBoardResources, ['references', 'inventory'], 'resources')
-  .pipe(presentNeoConcernBoard, ['board', 'receipts', 'resources', 'inventory'], 'board')
+  .pipe(presentNeoProjectBoard, ['board', 'receipts', 'resources', 'inventory'], 'board')
   .end('board') as (
   snapshot: NeoSnapshot | null,
-  concernId: string | null,
+  projectId: string | null,
   inventory: DaemonSnapshot | null
-) => NeoConcernBoard | null;
+) => NeoProjectBoard | null;
 
 export { projectNeoScenes } from './neo-scenes.ts';

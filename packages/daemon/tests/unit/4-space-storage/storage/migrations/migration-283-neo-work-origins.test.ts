@@ -25,7 +25,7 @@ describe('migration 283 and work origins', () => {
       const input = {
         id: 'new',
         requestKey: 'new',
-        concernId: null,
+        projectId: null,
         originSessionId: 'root',
         originMessageId: 'ask-A',
         title: 'New work',

@@ -1,5 +1,5 @@
 import type { DaemonInventoryLink } from './daemon-snapshot.ts';
-import type { NeoConcern, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
+import type { NeoProject, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
 import type { NeoModelPreference } from './settings.ts';
 
 export interface NeoWorkResourceReceipt {
@@ -10,6 +10,8 @@ export interface NeoWorkResourceReceipt {
 export interface NeoWorkDriverReceipt {
   workId: string;
   adapter: string;
+  model?: string;
+  effort?: string;
   daemon: string | null;
   status: 'queued' | 'running' | 'needs_you' | 'done' | 'failed' | 'stopped' | null;
   link: string | null;
@@ -115,7 +117,7 @@ export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';
 export interface NeoAsk {
   id: string;
   requestKey: string;
-  concernId: string | null;
+  projectId: string | null;
   originSessionId: string;
   originMessageId: string | null;
   title: string;
@@ -317,8 +319,8 @@ export interface NeoSnapshot {
   rev?: string;
   scopedTo?: string;
   sessionId: string | null;
-  concerns: NeoConcern[];
-  publicAuthorBindings?: { sessionId: string; concernId: string; kind: 'concern' }[];
+  projects: NeoProject[];
+  publicAuthorBindings?: { sessionId: string; projectId: string; kind: 'project' }[];
   askForwards?: NeoAskForwardView[];
   work: NeoWork[];
   consultations: NeoConsultation[];

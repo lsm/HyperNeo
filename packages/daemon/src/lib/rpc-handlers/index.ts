@@ -44,7 +44,7 @@ import {
 import { ensureNeoProject, fileNeoSessions } from '../neo/folder.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoOperations, neoReorganizeRuntime } from '../neo/operations.ts';
-import { createNeoTopicsReorganizer } from '../neo/reorganize-operation.ts';
+import { createNeoProjectsReorganizer } from '../neo/reorganize-operation.ts';
 import {
   NEO_REORGANIZE_IDLE_MS,
   NEO_TOPICS_REORGANIZE_NIGHTLY,
@@ -1682,7 +1682,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.jobProcessor.register(NEO_WORK_DELIVERY_RETRY, (job) =>
     runNeoDeliveryRetry(job, neoService)
   );
-  const reorganizeTopics = createNeoTopicsReorganizer(neoReorganizeRuntime(neoService));
+  const reorganizeTopics = createNeoProjectsReorganizer(neoReorganizeRuntime(neoService));
   const routingLog = new NeoRoutingLogRepository(deps.db.getDatabase());
   deps.jobProcessor.register(NEO_TOPICS_REORGANIZE_NIGHTLY, (job) =>
     runNeoNightlyReorganize(job, deps.jobQueue, {

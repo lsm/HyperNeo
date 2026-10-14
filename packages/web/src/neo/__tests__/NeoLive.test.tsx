@@ -44,7 +44,7 @@ function makeStore(): SessionStore {
 const work: NeoWork = {
   id: 'work',
   requestKey: 'request',
-  concernId: null,
+  projectId: null,
   originSessionId: 'neo',
   originMessageId: null,
   title: 'Draft the agenda',
@@ -192,7 +192,7 @@ describe('Neo MVP controls', () => {
     });
     expect(screen.getByRole('alert').textContent).toBe('Authentication required');
   });
-  it('sends through the supplied durable intake client without creating a concern', async () => {
+  it('sends through the supplied durable intake client without creating a project', async () => {
     const onDraft = vi.fn();
     render(
       <NeoComposer

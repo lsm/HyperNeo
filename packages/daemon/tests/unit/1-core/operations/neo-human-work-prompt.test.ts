@@ -7,12 +7,12 @@ import {
   restrictNeoQuery,
 } from '../../../../src/lib/neo/session-policy.ts';
 
-const turns: { concernId: string | null }[] = [{ concernId: null }, { concernId: 'garden' }];
+const turns: { projectId: string | null }[] = [{ projectId: null }, { projectId: 'garden' }];
 
 describe('current human work guidance', () => {
-  test.each(turns)('keeps explicit execution distinct in $concernId', (turn) => {
-    const prompt = neoPrompt(turn.concernId);
-    const delegation = prompt.split('You and the concern holders NEVER')[1]!.split('\n\n')[0]!;
+  test.each(turns)('keeps explicit execution distinct in $projectId', (turn) => {
+    const prompt = neoPrompt(turn.projectId);
+    const delegation = prompt.split('You and the project holders NEVER')[1]!.split('\n\n')[0]!;
     expect(delegation).toContain('actual current human input');
     expect(delegation).toContain('explicitly asks you to execute clear, bounded work');
     expect(delegation).toContain(
@@ -23,9 +23,9 @@ describe('current human work guidance', () => {
     expect(delegation).toContain('A proposal has NOT started');
   });
 
-  test.each(turns)('routes later card approval to its native action in $concernId', (turn) => {
-    const delegation = neoPrompt(turn.concernId)
-      .split('You and the concern holders NEVER')[1]!
+  test.each(turns)('routes later card approval to its native action in $projectId', (turn) => {
+    const delegation = neoPrompt(turn.projectId)
+      .split('You and the project holders NEVER')[1]!
       .split('\n\n')[0]!;
     expect(delegation).toContain('only to a proposal created for the current human message');
     expect(delegation).toContain('later says “yes, run it” about an earlier work item');
@@ -35,8 +35,8 @@ describe('current human work guidance', () => {
     expect(delegation).toContain('to evade its original input binding');
   });
 
-  test.each(turns)('keeps the card-only request pending in $concernId', (turn) => {
-    const prompt = neoPrompt(turn.concernId);
+  test.each(turns)('keeps the card-only request pending in $projectId', (turn) => {
+    const prompt = neoPrompt(turn.projectId);
     const card = prompt.split('When the user asks only')[1]!.split('\n\n')[0]!;
     expect(card).toContain('to set up or show a work item without starting work');
     expect(card).toContain('call neo.work.propose in that turn without starting it');
@@ -58,8 +58,8 @@ describe('current human work guidance', () => {
     expect(exclusions).toContain(input);
   });
 
-  test.each(turns)('retains new decisions and runtime authority in $concernId', (turn) => {
-    const prompt = neoPrompt(turn.concernId);
+  test.each(turns)('retains new decisions and runtime authority in $projectId', (turn) => {
+    const prompt = neoPrompt(turn.projectId);
     expect(prompt).toContain('A new consequence, unclear scope or permission not already granted');
     expect(prompt).toContain('requires a compact choice or clarification before starting');
     expect(prompt).toContain('existing runtime admission decides authority from the actual input');
@@ -69,8 +69,8 @@ describe('current human work guidance', () => {
     expect(prompt).toContain('During a consultation, You may propose work but cannot start it');
   });
 
-  test.each(turns)('retains target and publication boundaries in $concernId', (turn) => {
-    const prompt = neoPrompt(turn.concernId);
+  test.each(turns)('retains target and publication boundaries in $projectId', (turn) => {
+    const prompt = neoPrompt(turn.projectId);
     expect(prompt).toContain('Every proposal must choose targetSessionId or work');
     expect(prompt).toContain('there is no standalone scratch session');
     expect(prompt).toContain('ask the human where the work belongs before proposing');
@@ -95,26 +95,26 @@ describe('current human work guidance', () => {
 
   test.each([null, 'garden'])(
     'delivers guidance through the existing policy for %s',
-    (concernId) => {
+    (projectId) => {
       const query: Options = {
         systemPrompt: 'Stored old prompt',
         model: 'fixture-model',
         maxTurns: 17,
         mcpServers: { 'hyperneo-operations': { type: 'stdio', command: 'fixture-operations' } },
       };
-      restrictNeoQuery(query, concernId);
+      restrictNeoQuery(query, projectId);
       expect(query.systemPrompt).toEqual({
         type: 'custom',
-        prompt: neoPrompt(concernId),
+        prompt: neoPrompt(projectId),
         snapshot: false,
       });
-      expect(query.tools).toEqual(neoCoordinatorNativeTools(concernId));
-      expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools(concernId));
+      expect(query.tools).toEqual(neoCoordinatorNativeTools(projectId));
+      expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
       expect(query.settingSources).toEqual([]);
       expect(query.model).toBe('fixture-model');
       expect(query.maxTurns).toBe(17);
-      expect(neoPrompt(concernId)).toContain(
-        concernId
+      expect(neoPrompt(projectId)).toContain(
+        projectId
           ? 'Do not call AskUserQuestion during a consultation'
           : 'Native question cards are not available to root Neo'
       );

@@ -155,7 +155,7 @@ describe('NeoService.refreshDriverWork', () => {
       {
         id: 'a-idle',
         requestKey: 'k-idle',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'm0',
         title: 'Login fix',
@@ -168,7 +168,7 @@ describe('NeoService.refreshDriverWork', () => {
     const work = service.repo.proposeWork({
       id: 'w-idle',
       requestKey: 'k-w-idle',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       title: 'Fix login',
       instruction: 'Fix login.',

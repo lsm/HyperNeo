@@ -6,7 +6,7 @@ import { readDaemonInventory } from '../lib/daemon-inventory.ts';
 import { connectionState } from '../lib/state.ts';
 import { neoBoardReceiptLabel } from './board-receipt-label.ts';
 import { NeoIcon } from './NeoIcon.tsx';
-import { type NeoConcernBoard, projectNeoConcernBoard } from './neo-concern-board.ts';
+import { type NeoProjectBoard, projectNeoProjectBoard } from './neo-project-board.ts';
 import { type NeoRequestOrigin, projectNeoRequestSnapshot } from './request-board.ts';
 import { neoCardLabel } from './card-view.ts';
 
@@ -20,16 +20,16 @@ const statusLabels = {
 };
 const refKey = (ref: DaemonInventoryLink) => JSON.stringify([ref.kind, ref.id]);
 
-export function NeoConcernBoardView({
+export function NeoProjectBoardView({
   board,
   requestScoped = false,
   cards = [],
 }: {
-  board: NeoConcernBoard;
+  board: NeoProjectBoard;
   requestScoped?: boolean;
   cards?: readonly NeoCardView[];
 }) {
-  const statusOf = (item: NeoConcernBoard['receipts'][number]) => {
+  const statusOf = (item: NeoProjectBoard['receipts'][number]) => {
     if (item.kind === 'consultation' && item.status === 'queued') return 'Waiting for context';
     const card =
       item.kind === 'work' ? cards.find((candidate) => candidate.workId === item.id) : undefined;
@@ -42,9 +42,9 @@ export function NeoConcernBoardView({
       <p class="mb-4 text-xs leading-relaxed text-fg-muted">
         {requestScoped
           ? 'For this request.'
-          : board.concern
-            ? `For ${board.concern.title}.`
-            : 'Across your concerns.'}{' '}
+          : board.project
+            ? `For ${board.project.title}.`
+            : 'Across your projects.'}{' '}
         These are recorded requests and links, not a second conversation. A response is not verified
         completion.
       </p>
@@ -145,13 +145,13 @@ export function NeoConcernBoardView({
   );
 }
 
-export function NeoConcernBoardPanel({
+export function NeoProjectBoardPanel({
   snapshot,
-  concernId,
+  projectId,
   requestOrigin,
 }: {
   snapshot: NeoSnapshot | null;
-  concernId: string | null;
+  projectId: string | null;
   requestOrigin?: NeoRequestOrigin;
 }) {
   const [open, setOpen] = useState(false);
@@ -166,7 +166,7 @@ export function NeoConcernBoardPanel({
       requestOrigin === undefined ? snapshot : projectNeoRequestSnapshot(snapshot, requestOrigin),
     [snapshot, requestOrigin?.sessionId, requestOrigin?.messageId, requestOrigin === undefined]
   );
-  const board = projectNeoConcernBoard(scopedSnapshot, concernId, inventory);
+  const board = projectNeoProjectBoard(scopedSnapshot, projectId, inventory);
 
   useLayoutEffect(() => {
     const ticket = ++generation.current;
@@ -192,7 +192,7 @@ export function NeoConcernBoardPanel({
       alive = false;
       ++generation.current;
     };
-  }, [open, connected, scopedSnapshot, concernId, refresh]);
+  }, [open, connected, scopedSnapshot, projectId, refresh]);
 
   if (!board) return null;
   return (
@@ -210,16 +210,16 @@ export function NeoConcernBoardPanel({
       <summary
         class={`cursor-pointer text-fg-muted hover:text-accent ${requestOrigin ? 'text-xs' : 'text-sm'}`}
       >
-        {requestOrigin || concernId !== null
+        {requestOrigin || projectId !== null
           ? 'How this is being handled'
           : 'How Neo is handling things'}
       </summary>
       {open && (
         <section
-          aria-label="Concern board"
+          aria-label="Project board"
           class={requestOrigin ? 'mt-3 rounded-xl border border-line bg-surface p-4' : 'mt-5'}
         >
-          <NeoConcernBoardView
+          <NeoProjectBoardView
             board={board}
             requestScoped={!!requestOrigin}
             cards={snapshot?.cards}

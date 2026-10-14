@@ -1,4 +1,4 @@
-export interface NeoConcern {
+export interface NeoProject {
   id: string;
   title: string;
   summary: string;
@@ -10,14 +10,14 @@ export interface NeoConcern {
 
 export interface NeoBinding {
   sessionId: string;
-  concernId: string | null;
-  kind: 'neo' | 'concern' | 'worker';
+  projectId: string | null;
+  kind: 'neo' | 'project' | 'worker';
 }
 
 export interface NeoConsultation {
   id: string;
   requestKey: string;
-  concernId: string;
+  projectId: string;
   originSessionId: string;
   originMessageId: string | null;
   sessionId: string;
@@ -30,7 +30,7 @@ export interface NeoConsultation {
 export interface NeoWork {
   id: string;
   requestKey: string;
-  concernId: string | null;
+  projectId: string | null;
   originSessionId: string;
   originMessageId: string | null;
   title: string;

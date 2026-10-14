@@ -14,7 +14,7 @@ const holder = 'fictional-context-holder';
 const snapshot = (fields: Partial<NeoSnapshot> = {}): NeoSnapshot => ({
   ok: true,
   sessionId: root,
-  concerns: [],
+  projects: [],
   work: [],
   cards: [],
   askViews: [],

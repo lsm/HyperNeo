@@ -7,7 +7,7 @@ import { createNeoIntakeClient, type NeoPendingAsk } from './neo-intake.ts';
 import { readNeoConversationAsks } from './conversation-ask-client.ts';
 import { useNeoConversationAsks } from './useNeoConversationAsks.ts';
 import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
-import { projectNeoConcernBoard } from './neo-concern-board.ts';
+import { projectNeoProjectBoard } from './neo-project-board.ts';
 import type { NeoWorkAction } from './NeoWorkCard.tsx';
 import type { NeoAskOutcome } from './neo-asks.ts';
 import { readNeoPublications } from './publication-client.ts';
@@ -259,7 +259,7 @@ export function useNeo() {
     store,
     snapshot,
     projectBoard: (inventory: DaemonSnapshot | null) =>
-      projectNeoConcernBoard(snapshot, null, inventory),
+      projectNeoProjectBoard(snapshot, null, inventory),
     sessionId,
     error,
     setError,

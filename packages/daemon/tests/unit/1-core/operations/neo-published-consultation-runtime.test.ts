@@ -65,7 +65,7 @@ describe('published consultation runtime activation', () => {
     service.consultations.reserve({
       id: 'check',
       requestKey: 'check',
-      concernId: 'fictional',
+      projectId: 'fictional',
       originSessionId: root,
       originMessageId: 'original-ask',
       sessionId: holder,
@@ -79,9 +79,9 @@ describe('published consultation runtime activation', () => {
     createSession.mockClear();
     for (const id of [root, holder]) db.createSession(createTestSession(id));
     startService();
-    service.repo.saveConcern({ id: 'fictional', title: 'Plans', summary: '', context: '' }, 0);
-    service.repo.reserveBinding({ sessionId: root, concernId: null, kind: 'neo' });
-    service.repo.reserveBinding({ sessionId: holder, concernId: 'fictional', kind: 'concern' });
+    service.repo.saveProject({ id: 'fictional', title: 'Plans', summary: '', context: '' }, 0);
+    service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+    service.repo.reserveBinding({ sessionId: holder, projectId: 'fictional', kind: 'project' });
     savePrompt(root, 'original-ask', 'Compare fictional plans.', true);
   });
   afterEach(async () => {
@@ -129,7 +129,7 @@ describe('published consultation runtime activation', () => {
     expect(turn.bind(requestId)).toBe(true);
     const answer = await invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
-      'neo.concern.respond',
+      'neo.project.respond',
       { id: item.id, answer: 'Legacy answer after restart.' },
       { source: 'mcp', sessionId: holder, role: 'neo', neoTurn: turn.identity() }
     );
@@ -184,26 +184,26 @@ describe('published consultation runtime activation', () => {
 
   test.each([null, 'fictional'])(
     'creates the %j coordinator with published guidance',
-    async (concernId) => {
+    async (projectId) => {
       db.getDatabase()
         .prepare('DELETE FROM neo_session_bindings WHERE session_id = ?')
-        .run(concernId ? holder : root);
-      const sessionId = await service.open(concernId);
+        .run(projectId ? holder : root);
+      const sessionId = await service.open(projectId);
       expect(createSession).toHaveBeenCalledTimes(1);
-      expect(db.getSession(sessionId)?.config.systemPrompt).toBe(neoPrompt(concernId));
+      expect(db.getSession(sessionId)?.config.systemPrompt).toBe(neoPrompt(projectId));
       expect(db.getSession(sessionId)?.config.allowedTools).toEqual(
-        neoCoordinatorAllowedTools(concernId)
+        neoCoordinatorAllowedTools(projectId)
       );
     }
   );
 
   test.each([
     ['neo', null],
-    ['concern', 'fictional'],
+    ['project', 'fictional'],
     ['worker', 'fictional'],
   ] as const)(
     'uses the actual AgentSession options builder for persisted %s sessions',
-    async (kind, concernId) => {
+    async (kind, projectId) => {
       const id = `neo:runtime-${kind}`;
       const session: Session = {
         ...createTestSession(id),
@@ -224,7 +224,7 @@ describe('published consultation runtime activation', () => {
         db.getDatabase()
           .prepare('DELETE FROM neo_session_bindings WHERE session_id = ?')
           .run(kind === 'neo' ? root : holder);
-      expect(service.repo.reserveBinding({ sessionId: id, concernId, kind })).toBe(true);
+      expect(service.repo.reserveBinding({ sessionId: id, projectId, kind })).toBe(true);
       const agent = new AgentSession(
         session,
         db,
@@ -254,19 +254,19 @@ describe('published consultation runtime activation', () => {
       } else {
         expect(options.systemPrompt).toEqual({
           type: 'custom',
-          prompt: neoPrompt(concernId),
+          prompt: neoPrompt(projectId),
           snapshot: false,
         });
         expect(options.permissionMode).toBe('dontAsk');
-        expect(options.tools).toEqual(neoCoordinatorNativeTools(concernId));
+        expect(options.tools).toEqual(neoCoordinatorNativeTools(projectId));
         expect(options.plugins).toEqual([]);
         expect(options.settingSources).toEqual([]);
         expect(options.agents).toEqual({});
-        expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(concernId));
+        expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
         const rebuilt = await new QueryOptionsBuilder(agent).build();
         expect(rebuilt.systemPrompt).toEqual({
           type: 'custom',
-          prompt: neoPrompt(concernId),
+          prompt: neoPrompt(projectId),
           snapshot: false,
         });
       }

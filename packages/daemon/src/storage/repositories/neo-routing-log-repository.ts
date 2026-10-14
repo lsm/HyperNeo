@@ -12,7 +12,7 @@ export interface NeoRoute {
   ask: string;
   destination: NeoRouteDestination;
   targetSessionId: string | null;
-  concernId: string | null;
+  projectId: string | null;
   signal: string;
   confidence: number | null;
   outcome: string | null;
@@ -33,7 +33,7 @@ export interface NeoTurnNotes {
 
 const columns = `id, message_id AS messageId, conversation_id AS conversationId,
   asked_at AS askedAt, ask, destination, target_session_id AS targetSessionId,
-  concern_id AS concernId, signal, confidence, outcome, outcome_at AS outcomeAt,
+  concern_id AS projectId, signal, confidence, outcome, outcome_at AS outcomeAt,
   ask_summary AS askSummary, awaiting`;
 
 export function neoExcerpt(text: string, max: number): string {
@@ -74,7 +74,7 @@ export class NeoRoutingLogRepository {
         clip(entry.ask),
         entry.destination,
         entry.targetSessionId,
-        entry.concernId,
+        entry.projectId,
         entry.signal,
         entry.confidence
       );
@@ -140,7 +140,7 @@ export class NeoRoutingLogRepository {
       .all(limit) as NeoRoute[];
   }
 
-  latestPerTopic(): NeoRoute[] {
+  latestPerProject(): NeoRoute[] {
     if (!this.ready()) return [];
     return this.db
       .prepare(
@@ -151,7 +151,7 @@ export class NeoRoutingLogRepository {
       .all() as NeoRoute[];
   }
 
-  recentAsks(concernId: string, limit: number): string[] {
+  recentAsks(projectId: string, limit: number): string[] {
     if (!this.ready()) return [];
     return (
       this.db
@@ -159,11 +159,11 @@ export class NeoRoutingLogRepository {
           `SELECT COALESCE(ask_summary, ask) AS ask FROM neo_routing_log
             WHERE concern_id = ? ORDER BY id DESC LIMIT ?`
         )
-        .all(concernId, limit) as Array<{ ask: string }>
+        .all(projectId, limit) as Array<{ ask: string }>
     ).map((row) => row.ask);
   }
 
-  correct(messageId: string, concernId: string, targetSessionId: string): void {
+  correct(messageId: string, projectId: string, targetSessionId: string): void {
     if (!this.ready()) return;
     this.db
       .prepare(
@@ -171,6 +171,6 @@ export class NeoRoutingLogRepository {
            target_session_id = ?, signal = 'corrected', confidence = 1
           WHERE message_id = ?`
       )
-      .run(concernId, targetSessionId, messageId);
+      .run(projectId, targetSessionId, messageId);
   }
 }

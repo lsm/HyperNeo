@@ -50,7 +50,7 @@ function withAsks() {
 const input = {
   id: 'a1',
   requestKey: 'root:fix',
-  concernId: null,
+  projectId: null,
   originSessionId: 'root',
   originMessageId: 'm1',
   title: 'Fix the login bug',

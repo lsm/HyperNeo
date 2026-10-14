@@ -23,7 +23,7 @@ type Skip = 'not_coordinator' | 'superseded' | 'unavailable' | 'no_successor';
 type Admission = { value: NeoBinding } | { reason: Skip };
 
 export function gateHandoffBinding(binding: NeoBinding | null): Admission {
-  return binding && (binding.kind === 'neo' || binding.kind === 'concern')
+  return binding && (binding.kind === 'neo' || binding.kind === 'project')
     ? { value: binding }
     : { reason: 'not_coordinator' };
 }

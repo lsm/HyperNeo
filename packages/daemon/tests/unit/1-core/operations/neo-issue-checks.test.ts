@@ -34,7 +34,7 @@ const item = (id: string, text: string, check: string | null): NeoAskItem => ({
 const ask = (items: NeoAskItem[]): NeoAsk => ({
   id: 'a1',
   requestKey: 'k1',
-  concernId: null,
+  projectId: null,
   originSessionId: 'neo:root',
   originMessageId: 'm0',
   title: 'Issue evidence',
@@ -215,7 +215,7 @@ describe('refreshDriverWork issue ticks', () => {
       {
         id: 'a-issue',
         requestKey: 'k-issue',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'm0',
         title: 'Issue evidence',

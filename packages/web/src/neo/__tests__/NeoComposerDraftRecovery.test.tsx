@@ -106,7 +106,7 @@ function mount() {
   const snapshot = {
     ok: true,
     sessionId: root,
-    concerns: [],
+    projects: [],
     work: [],
     consultations: [],
   };

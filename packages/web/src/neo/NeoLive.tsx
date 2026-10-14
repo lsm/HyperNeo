@@ -21,7 +21,7 @@ import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
 import { groupNeoAsks } from './neo-asks.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
-import { projectNeoConcernBoard } from './neo-concern-board.ts';
+import { projectNeoProjectBoard } from './neo-project-board.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import {
   NEO_QUICK_CHOICE_LABEL,
@@ -71,13 +71,13 @@ export function NeoLive() {
   const nearBottom = useRef(true);
   const lastScrollTop = useRef(0);
   const scrollProgress = useRef(1);
-  const concerns = neo.snapshot?.concerns ?? [];
+  const projects = neo.snapshot?.projects ?? [];
   const view = neo.snapshot;
   const relevant = view?.work ?? [];
   const cards = new Map((view?.cards ?? []).map((card) => [card.workId, card]));
-  const topics = new Map(
+  const projectTitles = new Map(
     (view?.publicAuthorBindings ?? []).flatMap((binding) => {
-      const title = concerns.find((concern) => concern.id === binding.concernId)?.title.trim();
+      const title = projects.find((project) => project.id === binding.projectId)?.title.trim();
       return title ? [[binding.sessionId, title] as const] : [];
     })
   );
@@ -89,7 +89,7 @@ export function NeoLive() {
             { sessionId: forward.askSessionId, messageId: forward.askMessageId },
             forward.toSessionId
           ),
-          topics.get(forward.fromSessionId) ?? 'Neo',
+          projectTitles.get(forward.fromSessionId) ?? 'Neo',
         ] as const
     )
   );
@@ -163,7 +163,7 @@ export function NeoLive() {
     [sceneScope]
   );
   const scenes = projectNeoScenes(
-    projectNeoConcernBoard(view, null, null),
+    projectNeoProjectBoard(view, null, null),
     publicConversation && questions.scope === sceneScope ? questions.values : undefined,
     publicConversation && unavailableSessions.scope === sceneScope
       ? unavailableSessions.values
@@ -533,7 +533,7 @@ export function NeoLive() {
               store={neo.store}
               sessionId={neo.sessionId}
               works={relevant}
-              topics={topics}
+              projects={projectTitles}
               forwarders={forwarders}
               publicConversation={publicConversation}
               onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
@@ -720,7 +720,7 @@ export function NeoLive() {
             scenes={(scenes?.running ?? []).filter(
               (scene) => !askGroups.settledWork.has(scene.ref.id)
             )}
-            concerns={concerns}
+            projects={projects}
             enabled={connected && conversationReady}
             reply={
               replyProgress ??

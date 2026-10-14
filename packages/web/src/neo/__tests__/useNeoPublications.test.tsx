@@ -341,7 +341,7 @@ it('wires the consumer to the global root without querying SDK transcripts for p
       : {
           ok: true,
           sessionId: `neo:${id}`,
-          concerns: [],
+          projects: [],
           work: [],
         }
   );

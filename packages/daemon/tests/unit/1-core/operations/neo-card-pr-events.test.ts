@@ -115,7 +115,7 @@ describe('Neo card pull request events', () => {
     service.watchExternalTopic = async (topic) => {
       watched.push(topic);
     };
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
     publisher = new ExternalEventService(new SessionExternalEventStore(db.getDatabase()), bus);
   });
   afterEach(() => {
@@ -129,7 +129,7 @@ describe('Neo card pull request events', () => {
       {
         id: 'w-desktop',
         requestKey: 'root:desktop',
-        concernId: null,
+        projectId: null,
         originSessionId: 'root',
         title: 'Fix the bug',
         instruction: 'Fix it and merge.',
@@ -171,6 +171,38 @@ describe('Neo card pull request events', () => {
     return db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'root' });
   }
 
+  test.each(['comment_created', 'review_comment_created', 'review_submitted', 'comment_polled'])(
+    '%s suppresses driver-signed replies while keeping the same account’s human input',
+    async (action) => {
+      attach(desktopCard());
+      const body = `${'Fixed the reported issue. '.repeat(30)}\n\n_🤖 Addressed by [Claude Code](https://claude.com/claude-code)_`;
+      await event(action, 'Own reply', { actor: 'lsm', body });
+      expect(sent).toEqual([]);
+      expect(subscriptions()).toHaveLength(1);
+      await event(action, 'Human reply', {
+        actor: 'lsm',
+        body: 'Please also cover the edge case.',
+      });
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message).toContain('Please also cover the edge case.');
+    }
+  );
+
+  test('a quoted footer or unrelated event does not suppress delivery', async () => {
+    attach(desktopCard());
+    await event('comment_created', 'Quoted', {
+      body: '> _🤖 Addressed by [Claude Code](https://claude.com/claude-code)_',
+    });
+    await event('check_failed', 'Failed', {
+      body: '_🤖 Addressed by [Codex](https://chatgpt.com/codex)_',
+    });
+    expect(sent).toHaveLength(2);
+    await event('review_comment_created', 'Own Codex reply', {
+      body: 'Fixed.\n\n_🤖 Addressed by [Codex](https://chatgpt.com/codex)_',
+    });
+    expect(sent).toHaveLength(2);
+  });
+
   test('an approval, a 👍 and a plain comment each reach a desktop card session, not Neo', async () => {
     const work = desktopCard();
     attach(work);
@@ -207,7 +239,7 @@ describe('Neo card pull request events', () => {
     const proposed = service.repo.proposeWork({
       id: 'w-native',
       requestKey: 'root:native',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'm1',
       title: 'Fix it',
@@ -254,7 +286,7 @@ describe('Neo card pull request events', () => {
       service.repo.proposeWork({
         id: 'w-live',
         requestKey: 'root:live',
-        concernId: null,
+        projectId: null,
         originSessionId: 'root',
         originMessageId: 'm2',
         title: 'Fix more',
@@ -291,7 +323,7 @@ describe('Neo card pull request events', () => {
     const proposed = service.repo.proposeWork({
       id: 'w-legacy',
       requestKey: 'root:legacy',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'm3',
       title: 'Fix it',
@@ -319,7 +351,7 @@ describe('Neo card pull request events', () => {
     const proposed = service.repo.proposeWork({
       id: 'w-done',
       requestKey: 'root:done',
-      concernId: null,
+      projectId: null,
       originSessionId: 'root',
       originMessageId: 'm4',
       title: 'Fix it',

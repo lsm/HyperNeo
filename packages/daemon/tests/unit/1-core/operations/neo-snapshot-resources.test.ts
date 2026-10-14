@@ -26,11 +26,11 @@ describe('Neo snapshot resource consumer', () => {
     );
     try {
       for (const id of ['A', 'B']) {
-        service.repo.saveConcern({ id, title: id, summary: id, context: id }, 0);
+        service.repo.saveProject({ id, title: id, summary: id, context: id }, 0);
         const proposed = service.repo.proposeWork({
           id,
           requestKey: id,
-          concernId: id,
+          projectId: id,
           originSessionId: 'root',
           originMessageId: `ask-${id}`,
           title: id,
@@ -51,7 +51,7 @@ describe('Neo snapshot resource consumer', () => {
       const operation = createNeoOperations(service).find((entry) => entry.name === 'neo.snapshot');
       if (!operation) throw new Error('Snapshot operation missing');
       const result = (await operation.execute(
-        { concernId: 'A' },
+        { projectId: 'A' },
         { source: 'rpc', principal: 'local' }
       )) as NeoSnapshot;
       expect(result.work.map((row) => row.id)).toEqual(['A']);
@@ -82,7 +82,7 @@ describe('Neo snapshot resource consumer', () => {
         const proposed = service.repo.proposeWork({
           id,
           requestKey: id,
-          concernId: null,
+          projectId: null,
           originSessionId: 'root',
           originMessageId: null,
           title: id,

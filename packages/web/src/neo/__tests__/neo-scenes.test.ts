@@ -5,7 +5,7 @@ import type {
 } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { describe, expect, it } from 'vitest';
-import { type NeoConcernBoard, projectNeoConcernBoard } from '../neo-concern-board.ts';
+import { type NeoProjectBoard, projectNeoProjectBoard } from '../neo-project-board.ts';
 import {
   admitNeoSceneReceipts,
   classifyNeoScene,
@@ -16,14 +16,14 @@ import {
   selectNeoScene,
 } from '../neo-scenes.ts';
 
-type NeoBoardReceipt = NeoConcernBoard['receipts'][number];
+type NeoBoardReceipt = NeoProjectBoard['receipts'][number];
 type Group = 'attention' | 'running' | 'outcomes';
 type SceneRow = readonly [NeoBoardReceipt['kind'], string, Group, string, NeoBoardReceipt];
 
 const check = (id: string, status: NeoConsultation['status'], at: number): NeoConsultation => ({
   id,
   requestKey: id,
-  concernId: 'a',
+  projectId: 'a',
   originSessionId: 'root',
   originMessageId: `ask-${id}`,
   sessionId: `${id}-holder`,
@@ -40,11 +40,11 @@ const work = (
   id: string,
   status: NeoWork['status'],
   createdAt: number,
-  concernId: string | null = 'a'
+  projectId: string | null = 'a'
 ): NeoWork => ({
   id,
   requestKey: id,
-  concernId,
+  projectId,
   originSessionId: 'root',
   originMessageId: `ask-${id}`,
   title: `Title ${id}`,
@@ -99,7 +99,7 @@ const fullSnapshot: NeoSnapshot = {
   cards: [],
   askViews: [],
   sessionId: 'root',
-  concerns: [
+  projects: [
     { id: 'a', title: 'A', summary: 'A', context: 'A', revision: 1, createdAt: 1, updatedAt: 2 },
     { id: 'b', title: 'B', summary: 'B', context: 'B', revision: 1, createdAt: 1, updatedAt: 2 },
   ],
@@ -110,10 +110,10 @@ const fullSnapshot: NeoSnapshot = {
 
 const boardFor = (
   snap: NeoSnapshot = fullSnapshot,
-  concernId: string | null = null
-): NeoConcernBoard => {
-  const board = projectNeoConcernBoard(snap, concernId, null);
-  if (!board) throw new Error(`Expected a board for ${concernId ?? 'overview'}`);
+  projectId: string | null = null
+): NeoProjectBoard => {
+  const board = projectNeoProjectBoard(snap, projectId, null);
+  if (!board) throw new Error(`Expected a board for ${projectId ?? 'overview'}`);
   return board;
 };
 const ids = (scenes: readonly { ref: NeoSceneRef }[]) => scenes.map((scene) => scene.ref.id);
@@ -192,7 +192,7 @@ describe('groupNeoScenes', () => {
 });
 
 describe('projectNeoScenes', () => {
-  it('is honest about a missing board, an empty overview and a concern holding no work', () => {
+  it('is honest about a missing board, an empty overview and a project holding no work', () => {
     const board = boardFor();
     const admitted = admitNeoSceneReceipts(board);
     if (!('value' in admitted)) throw new Error('Expected admitted receipts');
@@ -207,10 +207,10 @@ describe('projectNeoScenes', () => {
       { attention: 0, running: 0, outcomes: 0, total: 0 },
     ]);
     expect(projectNeoScenes(boardFor(fullSnapshot, 'b'))?.counts.total).toBe(0);
-    expect(projectNeoConcernBoard(fullSnapshot, 'missing', null)).toBeNull();
+    expect(projectNeoProjectBoard(fullSnapshot, 'missing', null)).toBeNull();
   });
 
-  it('projects only the receipts of the selected concern', () => {
+  it('projects only the receipts of the selected project', () => {
     const scoped: NeoSnapshot = {
       ...fullSnapshot,
       work: [work('a-work', 'queued', 10, 'a'), work('b-work', 'proposed', 20, 'b')],

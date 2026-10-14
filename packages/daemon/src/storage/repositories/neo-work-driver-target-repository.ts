@@ -71,8 +71,7 @@ export class NeoWorkDriverTargetRepository {
         repo.listWork().flatMap((other) => {
           if (other.id === work.id || !['proposed', 'queued'].includes(other.status)) return [];
           const target = this.get(other.id);
-          const ref =
-            this.readRef(other.id) ?? (target && target.verb !== 'start' ? target.ref : null);
+          const ref = this.readRef(other.id) ?? (target && 'ref' in target ? target.ref : null);
           const local = other.sessionId ?? other.targetSessionId;
           const agent = agents.get(other.id);
           return [
@@ -290,12 +289,27 @@ export class NeoWorkDriverTargetRepository {
       .run(since, workId);
   }
 
-  recordRef(workId: string, ref: WorkRef, startedAt?: number, link?: string): void {
+  recordRef(
+    workId: string,
+    ref: WorkRef,
+    startedAt?: number,
+    link?: string,
+    observed: Pick<NeoWorkDriverReceipt, 'model' | 'effort'> = {}
+  ): void {
     this.db
       .prepare(
-        'UPDATE neo_work_driver_targets SET ref = ?, started_at = ?, link = ? WHERE work_id = ?'
+        `UPDATE neo_work_driver_targets
+          SET ref = ?, started_at = ?, link = ?, actual_model = ?, actual_effort = ?
+          WHERE work_id = ?`
       )
-      .run(JSON.stringify(ref), startedAt ?? null, link ?? null, workId);
+      .run(
+        JSON.stringify(ref),
+        startedAt ?? null,
+        link ?? null,
+        observed.model ?? null,
+        observed.effort ?? null,
+        workId
+      );
   }
 
   recordLive(
@@ -320,6 +334,7 @@ export class NeoWorkDriverTargetRepository {
     const rows = this.db
       .prepare(
         `SELECT work_id AS workId, target, ref, live_status AS status, link,
+                actual_model AS model, actual_effort AS effort,
                 remote_link AS remoteLink, started_at AS startedAt, input_before AS inputBefore,
                 (SELECT status FROM neo_work WHERE id = work_id) AS workStatus,
                 (SELECT created_at FROM neo_work WHERE id = work_id) AS workCreatedAt,
@@ -328,6 +343,8 @@ export class NeoWorkDriverTargetRepository {
       )
       .all(JSON.stringify(workIds)) as Array<{
       workId: string;
+      model: string | null;
+      effort: string | null;
       target: string;
       ref: string | null;
       status: string | null;
@@ -341,7 +358,7 @@ export class NeoWorkDriverTargetRepository {
     }>;
     return rows.flatMap((row) => {
       const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
-      if (!target.success) return [];
+      if (!target.success || target.data.verb === 'read') return [];
       const ref = row.ref ? (JSON.parse(row.ref) as WorkRef) : null;
       const adapter =
         ref?.adapter ??
@@ -359,6 +376,8 @@ export class NeoWorkDriverTargetRepository {
           daemon,
           status: status.success ? status.data : null,
           link: row.link,
+          ...(row.model !== null ? { model: row.model } : {}),
+          ...(row.effort !== null ? { effort: row.effort } : {}),
           ...(row.remoteLink ? { remoteLink: row.remoteLink } : {}),
           ...(isNeoReceiptUnconfirmed(
             { ...row, ref: !!ref, status: status.success ? status.data : null },

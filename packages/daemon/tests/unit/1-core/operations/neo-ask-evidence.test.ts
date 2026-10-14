@@ -36,7 +36,7 @@ const url = (n: number, repo = 'lsm/HyperNeo') => `https://github.com/${repo}/pu
 const ask: NeoAsk = {
   id: 'a1',
   requestKey: 'k1',
-  concernId: null,
+  projectId: null,
   originSessionId: 'neo:root',
   originMessageId: 'm0',
   title: 'Voice composer decisions',
@@ -566,7 +566,7 @@ describe('refreshDriverWork', () => {
     const opened = service.askRecords.open({
       id: 'a2',
       requestKey: 'k2',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       originMessageId: 'm0',
       title: 'Split the packs',
@@ -579,7 +579,7 @@ describe('refreshDriverWork', () => {
       {
         id: 'w-split',
         requestKey: 'root:split',
-        concernId: null,
+        projectId: null,
         originSessionId: 'neo:root',
         originMessageId: 'm0',
         title: 'Split the packs',
@@ -617,7 +617,7 @@ describe('refreshDriverWork', () => {
     const opened = service.askRecords.open({
       id: 'a1',
       requestKey: 'k1',
-      concernId: null,
+      projectId: null,
       originSessionId: 'neo:root',
       originMessageId: 'm0',
       title: ask.title,

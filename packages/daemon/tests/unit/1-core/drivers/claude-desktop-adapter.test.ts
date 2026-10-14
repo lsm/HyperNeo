@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -131,6 +139,57 @@ describe('claude-desktop adapter against the app session records', () => {
       lastActivityAt: 30,
       link: 'claude://claude.ai/epitaxy/local_a1',
     });
+  });
+
+  test('archives only the selected session and preserves its full app record', async () => {
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    const before = { ...JSON.parse(readFileSync(path, 'utf8')), appMetadata: { keep: true } };
+    writeFileSync(path, JSON.stringify(before));
+    const driver = adapter([]);
+    const ref = { adapter: driver.id, id: 'local_a1' };
+    expect(await driver.archive!(ref, () => null)).toEqual({ ok: true, value: { archived: true } });
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ ...before, isArchived: true });
+    expect(await driver.archive!(ref, () => null)).toEqual({
+      ok: true,
+      value: { archived: false },
+    });
+    expect(
+      (await driver.find({ includeClosed: false, limit: 20 }))
+        .flatMap((group) => group.work)
+        .map((work) => work.ref.id)
+    ).not.toContain(ref.id);
+  });
+
+  test.each(['busy', 'waiting', 'unknown'])(
+    'refuses a %s Claude turn without touching its record',
+    async (status) => {
+      const path = join(dir, 'acct-a/scope-1/local_a1.json');
+      const before = readFileSync(path, 'utf8');
+      expect(
+        await adapter([{ sessionId: 'cli-a1', status }]).archive!(
+          { adapter: 'claude-desktop', id: 'local_a1' },
+          () => null
+        )
+      ).toMatchObject({ ok: false, reason: 'busy' });
+      expect(readFileSync(path, 'utf8')).toBe(before);
+    }
+  );
+
+  test('failed live reads and late admission refusal leave the record unchanged', async () => {
+    const ref = { adapter: 'claude-desktop', id: 'local_a1' };
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    const before = readFileSync(path, 'utf8');
+    await expect(adapter(new Error('offline')).archive!(ref, () => null)).rejects.toThrow(
+      'offline'
+    );
+    expect(
+      await adapter([]).archive!(ref, () => ({
+        ok: false,
+        reason: 'live_card',
+        detail: 'new card',
+      }))
+    ).toMatchObject({ ok: false, reason: 'live_card' });
+    expect(readFileSync(path, 'utf8')).toBe(before);
   });
 
   test('links a session Remote Control connected to its claude.ai page', async () => {

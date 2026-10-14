@@ -27,7 +27,7 @@ const publication = (id = 1): NeoPublicationInput => ({
   producerInput: { sessionId: holder, messageId: 'neo-consult:consult-1:request' },
   shortText: 'Checked. The third source differs.',
   fullText: '**Detail** behind the short answer.',
-  links: [{ label: 'View comparison', kind: 'concern', id: 'research' }],
+  links: [{ label: 'View comparison', kind: 'project', id: 'research' }],
 });
 const count = (db: Database, table: string) =>
   (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number }).c;
@@ -193,7 +193,7 @@ describe('atomic consultation publication settlement', () => {
     { name: 'a changed full detail', input: variant({ fullText: 'Reword.' }) },
     {
       name: 'a changed scene label',
-      input: variant({ links: [{ label: 'Relabelled', kind: 'concern', id: 'research' }] }),
+      input: variant({ links: [{ label: 'Relabelled', kind: 'project', id: 'research' }] }),
     },
     {
       name: 'a changed original ask',
