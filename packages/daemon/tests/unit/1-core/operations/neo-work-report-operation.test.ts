@@ -418,7 +418,7 @@ describe('Neo recipient report owning operation', () => {
     });
     expect(consultation?.question).toContain(JSON.stringify(work.originMessageId));
     expect(consultation?.question).toContain(JSON.stringify(input.report));
-    expect(consultation?.question).toContain('shortText is one or two short sentences');
+    expect(consultation?.question).toContain('goes to them as neo.ask.question');
     expect(consultation?.question).not.toContain('2 to 4 plain lines');
     expect(jobs(work.id)).toEqual([]);
     expect(jobs(`neo-consult:${id}:request`)).toHaveLength(1);

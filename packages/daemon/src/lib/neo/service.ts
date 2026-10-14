@@ -338,6 +338,7 @@ import {
   coverNeoAskTriggers,
   isNeoAskAnsweredByReply,
   neoReplyOriginKey,
+  neoConsultationTrigger,
   neoInputTrigger,
   NEO_TRIGGER_ACHIEVED_WINDOW_MS,
   NEO_TRIGGER_RETRY_MS,
@@ -389,6 +390,7 @@ const dispatchNeoConsultationWaiter = (
   .endAsync('admission');
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
+const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
 const NEO_WORK_REPORT_LIMIT = 12_000;
 
 type NeoWorkPrCard = {
@@ -3067,17 +3069,20 @@ export class NeoService {
       if (failure || messages.hasTerminalResultAfter(item.sessionId, requestId)) {
         item = this.consultations.finish(
           id,
-          'failed',
+          failure || !neoReviewWorkId(id) ? 'failed' : 'reported',
           failure
             ? `The context holder stopped: ${failure}.`
-            : 'The context holder ended without returning an answer.'
+            : neoReviewWorkId(id)
+              ? NEO_WORK_REVIEWED
+              : 'The context holder ended without returning an answer.'
         );
       } else {
         await this.open(item.projectId);
         const content = neoConsultationRequestContent(
           item,
           !!this.crossProjects.forReceipt(item.id),
-          this.crossProjects.forReceipt(item.id)?.askMessageId
+          this.crossProjects.forReceipt(item.id)?.askMessageId,
+          neoConsultationTrigger(item, (input) => this.isHumanInput(input)) !== null
         );
         await this.deliver(
           item.sessionId,
@@ -3112,7 +3117,7 @@ export class NeoService {
     if (route === 'inconsistent')
       throw new Error('Consultation publication return is inconsistent');
     if (route === 'pending') return;
-    if (route === 'legacy') {
+    if (route === 'legacy' && !(item.status === 'reported' && item.answer === NEO_WORK_REVIEWED)) {
       const content = neoConsultationReplyContent(item);
       if (content === null) return;
       await this.deliver(
