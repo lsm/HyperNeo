@@ -28,14 +28,14 @@ describe('requireNeoWorkSupersedable', () => {
     expect(requireNeoWorkSupersedable({ projectId: null }, null, 'ok')).toEqual({ value: 'ok' });
   });
 
-  test('passes failed or cancelled work in the same concern', () => {
+  test('passes failed or cancelled work in the same project', () => {
     for (const status of ['failed', 'cancelled'] as const)
       expect(
         requireNeoWorkSupersedable({ supersedes: 'w1', projectId: null }, { ...old, status }, 'ok')
       ).toEqual({ value: 'ok' });
   });
 
-  test('refuses missing, still-live or another concern’s work', () => {
+  test('refuses missing, still-live or another project’s work', () => {
     const input = { supersedes: 'w1', projectId: null };
     expect(requireNeoWorkSupersedable(input, null, 'ok')).toEqual({
       reason: { ok: false, reason: 'The work this supersedes was not found.' },
@@ -47,7 +47,7 @@ describe('requireNeoWorkSupersedable', () => {
       },
     });
     expect(requireNeoWorkSupersedable(input, { ...old, projectId: 'other' }, 'ok')).toEqual({
-      reason: { ok: false, reason: 'The work this supersedes belongs to another concern.' },
+      reason: { ok: false, reason: 'The work this supersedes belongs to another project.' },
     });
   });
 });
@@ -62,7 +62,7 @@ describe('neoWorkSupersedeCandidates', () => {
     updatedAt: now - 1_000,
     ...overrides,
   });
-  test('lists recent failed or cancelled work in the concern that nothing replaced yet', () => {
+  test('lists recent failed or cancelled work in the project that nothing replaced yet', () => {
     expect(
       neoWorkSupersedeCandidates(
         [
@@ -91,7 +91,7 @@ describe('requireNeoWorkSupersedeDecision', () => {
       reason: {
         ok: false,
         reason:
-          'This concern has failed or cancelled work from the last three days: a ("Card a"). Pass supersedes with the id this work replaces, or supersedes: null if it replaces none.',
+          'This project has failed or cancelled work from the last three days: a ("Card a"). Pass supersedes with the id this work replaces, or supersedes: null if it replaces none.',
       },
     });
   });

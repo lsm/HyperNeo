@@ -11,9 +11,9 @@ import {
   neoMovedAskNote,
   type NeoReorganizeRuntime,
   requireNeoAskMovable,
-  requireNeoAskTopic,
+  requireNeoAskProject,
   requireNeoAskUnchanged,
-  requireNeoTopicIdle,
+  requireNeoProjectIdle,
   requireNeoSourceIdle,
   selectNeoReorganizableAsks,
 } from '../../../../src/lib/neo/reorganize-operation.ts';
@@ -58,7 +58,7 @@ const routed = (projectId: string | null): NeoRouted => ({
 const neoCaller: OperationCaller = { source: 'mcp', sessionId: root, role: 'neo' };
 
 describe('admitNeoReorganizer', () => {
-  test('lets main Neo and the human run it, not a topic avatar', () => {
+  test('lets main Neo and the human run it, not a project avatar', () => {
     const main = { sessionId: root, kind: 'neo', projectId: null } as NeoBinding;
     const holder = { sessionId: 'h', kind: 'project', projectId: 'c' } as NeoBinding;
     expect(admitNeoReorganizer(neoCaller, main)).toEqual({ value: true });
@@ -72,7 +72,7 @@ describe('admitNeoReorganizer', () => {
 });
 
 describe('selectNeoReorganizableAsks', () => {
-  test('takes main’s asks and every topic’s asks, not asks another conversation opened', () => {
+  test('takes main’s asks and every project’s asks, not asks another conversation opened', () => {
     const asks = [ask('a'), ask('b', { projectId: 'c' }), ask('c', { originSessionId: 'h' })];
     expect(selectNeoReorganizableAsks(asks, root).map((item) => item.id)).toEqual(['a', 'b']);
   });
@@ -81,7 +81,7 @@ describe('selectNeoReorganizableAsks', () => {
 describe('requireNeoSourceIdle', () => {
   test('leaves an ask whose own avatar is mid-turn', () => {
     expect(requireNeoSourceIdle(ask('a'), 'processing')).toEqual({
-      reason: { askId: 'a', reason: 'topic_busy' },
+      reason: { askId: 'a', reason: 'project_busy' },
     });
     expect(requireNeoSourceIdle(ask('a'), null)).toMatchObject({ value: { id: 'a' } });
   });
@@ -113,39 +113,39 @@ describe('requireNeoAskUnchanged', () => {
   });
 });
 
-describe('requireNeoAskTopic', () => {
-  test('moves to a topic, but keeps main and inbox choices with main', () => {
-    expect(requireNeoAskTopic(ask('a'), routed('drivers'))).toEqual({
+describe('requireNeoAskProject', () => {
+  test('moves to a project, but keeps main and inbox choices with main', () => {
+    expect(requireNeoAskProject(ask('a'), routed('drivers'))).toEqual({
       value: { projectId: 'drivers', sessionId: 'holder:drivers' },
     });
-    expect(requireNeoAskTopic(ask('a'), routed(null))).toEqual({
+    expect(requireNeoAskProject(ask('a'), routed(null))).toEqual({
       reason: { askId: 'a', reason: 'stays_main' },
     });
-    expect(requireNeoAskTopic(ask('a'), routed('inbox'))).toEqual({
+    expect(requireNeoAskProject(ask('a'), routed('inbox'))).toEqual({
       reason: { askId: 'a', reason: 'one_off' },
     });
   });
 
-  test('moves a topic’s ask only to a different topic', () => {
+  test('moves a project’s ask only to a different project', () => {
     const held = ask('a', { projectId: 'web' });
-    expect(requireNeoAskTopic(held, routed('drivers'))).toEqual({
+    expect(requireNeoAskProject(held, routed('drivers'))).toEqual({
       value: { projectId: 'drivers', sessionId: 'holder:drivers' },
     });
     for (const choice of ['web', 'inbox', null])
-      expect(requireNeoAskTopic(held, routed(choice))).toEqual({
+      expect(requireNeoAskProject(held, routed(choice))).toEqual({
         reason: { askId: 'a', reason: 'in_place' },
       });
   });
 });
 
-describe('requireNeoTopicIdle', () => {
-  test('skips a topic whose avatar is mid-turn', () => {
-    const topic = { projectId: 'c', sessionId: 'h' };
-    expect(requireNeoTopicIdle(ask('a'), topic, 'processing')).toEqual({
-      reason: { askId: 'a', reason: 'topic_busy' },
+describe('requireNeoProjectIdle', () => {
+  test('skips a project whose avatar is mid-turn', () => {
+    const project = { projectId: 'c', sessionId: 'h' };
+    expect(requireNeoProjectIdle(ask('a'), project, 'processing')).toEqual({
+      reason: { askId: 'a', reason: 'project_busy' },
     });
-    expect(requireNeoTopicIdle(ask('a'), topic, 'idle')).toEqual({ value: topic });
-    expect(requireNeoTopicIdle(ask('a'), topic, null)).toEqual({ value: topic });
+    expect(requireNeoProjectIdle(ask('a'), project, 'idle')).toEqual({ value: project });
+    expect(requireNeoProjectIdle(ask('a'), project, null)).toEqual({ value: project });
   });
 });
 
@@ -228,7 +228,7 @@ describe('neo.projects.reorganize', () => {
       caller
     ).then((outcome) => (outcome as { value?: unknown }).value);
 
-  test('moves each main ask to its topic and reports what stayed and why', async () => {
+  test('moves each main ask to its project and reports what stayed and why', async () => {
     const { deps, delivered, moves } = runtime(
       [ask('a'), ask('b', { status: 'waiting' }), ask('c'), ask('d'), ask('e')],
       { a: 'drivers', c: null, d: 'inbox', e: 'busy' },
@@ -241,7 +241,7 @@ describe('neo.projects.reorganize', () => {
         { askId: 'b', reason: 'waiting_on_human' },
         { askId: 'c', reason: 'stays_main' },
         { askId: 'd', reason: 'one_off' },
-        { askId: 'e', reason: 'topic_busy' },
+        { askId: 'e', reason: 'project_busy' },
       ],
     });
     expect(delivered).toEqual([
@@ -256,7 +256,7 @@ describe('neo.projects.reorganize', () => {
     ]);
   });
 
-  test('moves an off-topic ask between topics unless either avatar is mid-turn', async () => {
+  test('moves an off-project ask between projects unless either avatar is mid-turn', async () => {
     const moved = ask('a', {
       projectId: 'web',
       originSessionId: 'holder:web',
@@ -270,7 +270,7 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps)).toEqual({
       ok: true,
       moved: [{ askId: 'a', projectId: 'drivers' }],
-      stayed: [{ askId: 'b', reason: 'topic_busy' }],
+      stayed: [{ askId: 'b', reason: 'project_busy' }],
     });
     expect(delivered).toEqual([
       {
@@ -337,7 +337,7 @@ describe('NeoService.moveAsk', () => {
     db.close();
   });
 
-  test('gives the ask and its cards to the topic avatar in one step', () => {
+  test('gives the ask and its cards to the project avatar in one step', () => {
     service.repo.saveProject({ id: 'drivers', title: 'Drivers', summary: '', context: '' }, 0);
     const opened = service.askRecords.open({
       id: 'a1',

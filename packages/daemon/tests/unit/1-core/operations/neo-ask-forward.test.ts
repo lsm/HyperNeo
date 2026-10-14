@@ -56,7 +56,7 @@ describe('staleNeoForwardHops', () => {
 });
 
 describe('requireForwardingHolder', () => {
-  test('admits only a topic holder in a live turn', () => {
+  test('admits only a project holder in a live turn', () => {
     expect(requireForwardingHolder(caller(garden.sessionId, 'ask-1'), garden)).toEqual({
       value: { sessionId: garden.sessionId, projectId: 'garden', input: ask },
     });
@@ -67,7 +67,7 @@ describe('requireForwardingHolder', () => {
       [{ source: 'rpc', principal: 'local' }, garden],
     ] as const)
       expect(requireForwardingHolder(who as OperationCaller, binding as NeoBinding)).toEqual({
-        reason: { ok: false, reason: 'topic_holder_only' },
+        reason: { ok: false, reason: 'project_holder_only' },
       });
   });
 });
@@ -80,7 +80,7 @@ describe('planNeoAskForward', () => {
     input: { sessionId: pond.sessionId, messageId: 'neo-forward:ask-1:0' },
   };
 
-  test('the routed holder forwards once, to another topic or main, never to itself', () => {
+  test('the routed holder forwards once, to another project or main, never to itself', () => {
     expect(planNeoAskForward({ to: 'pond' }, holder, ask, [])).toEqual({
       value: { hop: 0, to: 'pond' },
     });
@@ -88,7 +88,7 @@ describe('planNeoAskForward', () => {
       value: { hop: 0, to: 'main' },
     });
     expect(planNeoAskForward({ to: 'garden' }, holder, ask, [])).toEqual({
-      reason: { ok: false, reason: 'same_topic' },
+      reason: { ok: false, reason: 'same_project' },
     });
     expect(planNeoAskForward({ to: 'garden' }, second, ask, [])).toEqual({
       reason: { ok: false, reason: 'not_your_ask' },
@@ -164,7 +164,7 @@ describe('neoForwardedText', () => {
 });
 
 describe('neoForwardContent', () => {
-  test('tells a topic receiver it may still forward to main, and main or the last one nothing', () => {
+  test('tells a project receiver it may still forward to main, and main or the last one nothing', () => {
     expect(neoForwardContent('Garden', true, 'Fix the pond pump')).toContain('forward it to main');
     expect(neoForwardContent('Pond', false, 'Fix the pond pump')).toContain(
       'neo.publication.publish'
@@ -293,13 +293,13 @@ describe('neo.ask.forward', () => {
     expect(content).not.toContain('forward it to main');
   });
 
-  test('refuses a topic that does not exist', async () => {
+  test('refuses a project that does not exist', async () => {
     const { invoke, delivered } = runtime();
     expect(await invoke(caller(garden.sessionId, 'ask-1'), 'nowhere')).toMatchObject({
       value: {
         ok: false,
-        reason: 'unknown_topic',
-        topics: [
+        reason: 'unknown_project',
+        projects: [
           { id: 'garden', title: 'Garden' },
           { id: 'pond', title: 'Pond' },
         ],
@@ -310,7 +310,7 @@ describe('neo.ask.forward', () => {
 });
 
 describe('neo.snapshot askForwards', () => {
-  test('shows the human recent forwards, so a reply can say which topic forwarded it', async () => {
+  test('shows the human recent forwards, so a reply can say which project forwarded it', async () => {
     const db = await createTestDb();
     const service = new NeoService(
       db,

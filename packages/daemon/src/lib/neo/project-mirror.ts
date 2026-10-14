@@ -64,7 +64,9 @@ export function persistNeoWorkspaceProjects(
       }
       for (const alias of project.aliases)
         db.prepare(
-          'INSERT OR IGNORE INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
+          `INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)
+          ON CONFLICT(alias) DO UPDATE SET project_id = excluded.project_id
+          WHERE excluded.alias LIKE 'folder:%'`
         ).run(alias, id);
     }
     return changed;

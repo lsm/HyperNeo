@@ -1203,14 +1203,14 @@ export function createNeoOperations(service: NeoService) {
     'neo.open',
     (input: z.infer<typeof Scope>) => input.projectId,
     async (input, caller) => {
+      if (input.projectId && !service.repo.getProject(input.projectId))
+        return { ok: false as const, reason: 'Project not found.' };
       await invokeOperation(
         service.sessions.getOperationRegistry(),
         'work.find',
         { limit: 50 },
         caller
       );
-      if (input.projectId && !service.repo.getProject(input.projectId))
-        return { ok: false as const, reason: 'Project not found.' };
       return { ...snapshot(caller), sessionId: await service.open(input.projectId ?? null) };
     }
   );

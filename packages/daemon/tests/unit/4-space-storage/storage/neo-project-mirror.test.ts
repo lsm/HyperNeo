@@ -1,3 +1,6 @@
+import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
@@ -30,6 +33,29 @@ describe('mirrorNeoWorkspaceProjects', () => {
   });
   afterEach(() => db.close());
 
+  test('discovery persists an avatar through the real work.find operation', async () => {
+    const registry = createOperationRegistry([
+      createFindWorkOperation({
+        adapters: () => [
+          { id: 'hyperneo', capabilities: ['find'], find: () => [workspace('/one')] },
+        ],
+        remote: {
+          list: () => [{ daemonId: 'desktop' }],
+          invoke: async () => ({ places: [workspace('/two', 'desktop')], unreachable: [] }),
+        },
+        mirrorProjects: (groups) => {
+          mirrorNeoWorkspaceProjects(db, groups);
+        },
+      }),
+    ]);
+    const caller = { source: 'rpc' as const, principal: 'local' as const };
+    expect((await invokeOperation(registry, 'work.find', {}, caller)).kind).toBe('completed');
+    expect(repo.listProjects()).toHaveLength(1);
+    expect(repo.listProjects()[0].title).toBe('HyperNeo');
+    expect((await invokeOperation(registry, 'work.find', {}, caller)).kind).toBe('completed');
+    expect(repo.listProjects()).toHaveLength(1);
+  });
+
   test('mirrors folders with shared history across machines once and preserves context', () => {
     mirrorNeoWorkspaceProjects(
       db,
@@ -58,6 +84,12 @@ describe('mirrorNeoWorkspaceProjects', () => {
     mirrorNeoWorkspaceProjects(db, mergePlaceGroups([workspace('/one')], 50));
     mirrorNeoWorkspaceProjects(db, mergePlaceGroups([workspace('/one', 'laptop', 'root:456')], 50));
     expect(repo.listProjects()).toHaveLength(2);
+    const owner = db
+      .prepare("SELECT project_id FROM neo_project_workspaces WHERE alias = 'root:456'")
+      .get();
+    expect(
+      db.prepare("SELECT project_id FROM neo_project_workspaces WHERE alias LIKE 'folder:%'").get()
+    ).toEqual(owner);
   });
 
   test('keeps unrelated identities separate and preserves projects without workspaces', () => {

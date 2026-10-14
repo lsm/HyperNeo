@@ -48,7 +48,7 @@ describe('buildNeoRoutePrompt', () => {
     expect(prompt).toContain('answers_waiting: it answers a WAITING ON YOU question');
     expect(prompt.indexOf('- answers_waiting:')).toBeLessThan(prompt.indexOf('- continues_turn:'));
     expect(prompt).toContain("Choose main only when it replies to main's last message.");
-    expect(prompt).toContain('cross_topic: it asks about work across projects');
+    expect(prompt).toContain('cross_project: it asks about work across projects');
     expect(prompt).toContain('basis is the name of the rule below, exactly as written');
   });
 
@@ -160,10 +160,10 @@ describe('readNeoRouteDecision', () => {
     ).toEqual({ decision: 'main', confidence: 1, basis: null });
   });
 
-  test('reads a cross-topic question as main', () => {
+  test('reads a cross-project question as main', () => {
     expect(
-      readNeoRouteDecision('{"choice":"main","confidence":0.7,"basis":"cross_topic"}', [youtube])
-    ).toEqual({ decision: 'main', confidence: 0.7, basis: 'cross_topic' });
+      readNeoRouteDecision('{"choice":"main","confidence":0.7,"basis":"cross_project"}', [youtube])
+    ).toEqual({ decision: 'main', confidence: 0.7, basis: 'cross_project' });
   });
 
   test('keeps the rule when the model explains its basis after it', () => {
@@ -223,7 +223,7 @@ describe('chooseNeoRoute with a classifier', () => {
     classify,
   });
 
-  test('routes a next-day "yes" to the topic waiting on the user', async () => {
+  test('routes a next-day "yes" to the project waiting on the user', async () => {
     const seen: string[] = [];
     const route = await chooseNeoRoute(
       'yes',
@@ -273,17 +273,17 @@ describe('chooseNeoRoute with a classifier', () => {
 });
 
 describe('chooseNeoRoute with a new subject', () => {
-  const base = (newTopic?: NeoRouterDeps['newTopic']): NeoRouterDeps => ({
+  const base = (newProject?: NeoRouterDeps['newProject']): NeoRouterDeps => ({
     holders: () => [drivers, youtube],
     recentTurns: () => [turn({})],
     projectTurns: () => [turn({})],
     recentAsks: () => [],
     embed: async () => null,
     classify: async () => ({ decision: 'main', confidence: 0.8, basis: 'new_subject' }),
-    newTopic,
+    newProject,
   });
 
-  test('opens a topic for a new subject and routes the message to its holder', async () => {
+  test('opens a project for a new subject and routes the message to its holder', async () => {
     const asked: string[] = [];
     const route = await chooseNeoRoute(
       'Plan the garden for spring',
@@ -303,19 +303,19 @@ describe('chooseNeoRoute with a new subject', () => {
     });
   });
 
-  test('opens a topic when the classifier matches a topic but names no holder', async () => {
+  test('opens a project when the classifier matches a project but names no holder', async () => {
     const route = await chooseNeoRoute('fix HyperNeo #5554', {
       ...base(async () => ({ projectId: 't4', sessionId: 'neo:t4', title: 'fix', summary: '' })),
-      classify: async () => ({ decision: 'main', confidence: 0.7, basis: 'matches_topic' }),
+      classify: async () => ({ decision: 'main', confidence: 0.7, basis: 'matches_project' }),
     });
     expect(route.choice).toMatchObject({
       projectId: 't4',
-      signal: 'classifier:matches_topic',
+      signal: 'classifier:matches_project',
       confidence: 0.7,
     });
   });
 
-  test('stays with main Neo when no topic can be opened', async () => {
+  test('stays with main Neo when no project can be opened', async () => {
     expect(
       await chooseNeoRoute(
         'Plan the garden',
@@ -331,35 +331,35 @@ describe('chooseNeoRoute with a new subject', () => {
     });
   });
 
-  const topicDb = () => {
+  const projectDb = () => {
     const db = new Sqlite(':memory:');
     createTables(db);
     return { db, repo: new NeoRepository(db) };
   };
 
-  test('saves the topic once and reopens the same holder on a retry', async () => {
-    const { db, repo } = topicDb();
+  test('saves the project once and reopens the same holder on a retry', async () => {
+    const { db, repo } = projectDb();
     const opened: string[] = [];
     const open = async (id: string) => {
       opened.push(id);
       return `neo:${id}`;
     };
-    const topic = neoNewProject('Plan the garden', 'request-1');
+    const project = neoNewProject('Plan the garden', 'request-1');
     const holder = {
       projectId: 'request-1',
       sessionId: 'neo:request-1',
       title: 'Plan the garden',
       summary: 'Plan the garden',
     };
-    expect(await openNeoNewProject(repo, open, topic)).toEqual(holder);
-    expect(await openNeoNewProject(repo, open, { ...topic, title: 'Other' })).toEqual(holder);
-    expect(repo.listProjects().map((concern) => concern.id)).toEqual(['request-1']);
+    expect(await openNeoNewProject(repo, open, project)).toEqual(holder);
+    expect(await openNeoNewProject(repo, open, { ...project, title: 'Other' })).toEqual(holder);
+    expect(repo.listProjects().map((project) => project.id)).toEqual(['request-1']);
     expect(opened).toEqual(['request-1', 'request-1']);
     db.close();
   });
 
-  test('drops a topic whose holder cannot be opened, so the message stays with main Neo', async () => {
-    const { db, repo } = topicDb();
+  test('drops a project whose holder cannot be opened, so the message stays with main Neo', async () => {
+    const { db, repo } = projectDb();
     expect(
       await openNeoNewProject(
         repo,
@@ -385,7 +385,7 @@ describe('chooseNeoRoute with a new subject', () => {
     db.close();
   });
 
-  test('names the topic after the first line of the message', () => {
+  test('names the project after the first line of the message', () => {
     expect(neoNewProject('  Plan the garden\nwith tomatoes  ', 'id-1')).toEqual({
       id: 'id-1',
       title: 'Plan the garden',

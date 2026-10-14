@@ -84,7 +84,7 @@ const opening = {
 };
 
 describe('isNeoTurnAskReadable', () => {
-  test('root reads any turn ask, a holder only its own concern, anyone else none', () => {
+  test('root reads any turn ask, a holder only its own project, anyone else none', () => {
     expect(isNeoTurnAskReadable({ kind: 'neo', projectId: null }, { projectId: 'club' })).toBe(
       true
     );
@@ -534,7 +534,7 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test("an ask-scoped read shows the cards' reports but not the concern's private context", async () => {
+  test("an ask-scoped read shows the cards' reports but not the project's private context", async () => {
     service.repo.saveProject({ id: 'c1', title: 'C1', summary: 'S', context: 'Private' }, 0);
     const askId = (
       await invoke('neo.ask.open', { ...opening, requestKey: 'scoped', projectId: 'c1' })
@@ -545,7 +545,7 @@ describe('neo.ask operations', () => {
     expect(scoped.value?.projects).toEqual([expect.objectContaining({ id: 'c1', context: '' })]);
   });
 
-  test("a context holder cannot read another concern's ask, whatever concern it names", async () => {
+  test("a context holder cannot read another project's ask, whatever project it names", async () => {
     const askId = await openAsk();
     service.repo.saveProject({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
     db.createSession(createTestSession('holder'));
@@ -553,7 +553,7 @@ describe('neo.ask operations', () => {
     const holder: OperationCaller = { source: 'mcp', sessionId: 'holder', role: 'neo' };
     for (const input of [{ askId }, { projectId: 'c1', askId }])
       expect(await invoke('neo.snapshot', input, holder)).toMatchObject({
-        value: { ok: false, reason: 'This context holder cannot access another concern.' },
+        value: { ok: false, reason: 'This context holder cannot access another project.' },
       });
     expect(await invoke('neo.snapshot', { askId: 'missing' }, holder)).toMatchObject({
       value: { ok: false, reason: 'Ask not found.' },
@@ -2231,7 +2231,7 @@ describe('requireNeoAskReceipt', () => {
       'This request key already belongs to another ask.',
     ],
     [
-      'another concern',
+      'another project',
       { ...ask, projectId: 'c1' },
       'This request key already belongs to another ask.',
     ],
@@ -2247,11 +2247,11 @@ describe('requireNeoAskReceipt', () => {
 });
 
 describe('requireNeoAskProject', () => {
-  test('refuses a missing concern and passes the value otherwise', () => {
-    expect(requireNeoAskProject({ projectId: 'c1' }, { concern: null }, 'v')).toEqual({
+  test('refuses a missing project and passes the value otherwise', () => {
+    expect(requireNeoAskProject({ projectId: 'c1' }, { project: null }, 'v')).toEqual({
       reason: { ok: false, reason: 'Project not found.' },
     });
-    expect(requireNeoAskProject({ projectId: null }, { concern: null }, 'v')).toEqual({
+    expect(requireNeoAskProject({ projectId: null }, { project: null }, 'v')).toEqual({
       value: 'v',
     });
   });
@@ -2259,16 +2259,16 @@ describe('requireNeoAskProject', () => {
 
 describe('requireNeoWorkAsk', () => {
   const input = { askId: 'a1', projectId: null };
-  test('refuses work filed under an ask from another concern', () => {
+  test('refuses work filed under an ask from another project', () => {
     expect(requireNeoWorkAsk({ ...ask, projectId: 'c1' }, input, neo)).toEqual({
       reason: {
         ok: false,
-        reason: 'This ask belongs to another concern; propose under its projectId.',
+        reason: 'This ask belongs to another project; propose under its projectId.',
       },
     });
   });
 
-  test('passes work with no ask, a missing ask, or an ask in its concern', () => {
+  test('passes work with no ask, a missing ask, or an ask in its project', () => {
     expect(requireNeoWorkAsk(null, { projectId: null }, neo)).toEqual({ value: neo });
     expect(requireNeoWorkAsk(null, input, neo)).toEqual({ value: neo });
     expect(requireNeoWorkAsk(ask, input, neo)).toEqual({ value: neo });
@@ -2903,7 +2903,7 @@ describe('neoPrompt place resolution', () => {
 });
 
 describe('neoAskScope', () => {
-  test("admits an ask-scoped read by the ask's own concern, and a missing ask by none", () => {
+  test("admits an ask-scoped read by the ask's own project, and a missing ask by none", () => {
     expect(neoAskScope({ projectId: 'c1' })).toBe('c1');
     expect(neoAskScope({ projectId: null })).toBe(null);
     expect(neoAskScope(null)).toBe(undefined);

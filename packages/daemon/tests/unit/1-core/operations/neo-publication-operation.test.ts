@@ -346,7 +346,7 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)![0].links).toEqual(links);
   });
 
-  test.each(['unknown', 'foreign-ask', 'foreign-concern', 'unsafe-kind'])(
+  test.each(['unknown', 'foreign-ask', 'foreign-project', 'unsafe-kind'])(
     'rejects %s scene refs, without partial publication',
     async (kind) => {
       consultation();
@@ -355,7 +355,7 @@ describe('runtime-bound publication operation', () => {
       work(
         'work:1',
         kind === 'foreign-ask' ? 'other-ask' : ask.messageId,
-        kind === 'foreign-concern' ? 'b' : 'a'
+        kind === 'foreign-project' ? 'b' : 'a'
       );
       prompt(root.sessionId, 'other-ask');
       const link = {
@@ -366,10 +366,10 @@ describe('runtime-bound publication operation', () => {
       const result = await invoke({ ...draft, links: [link] }, caller(holder.sessionId, input));
       const detail = {
         unknown:
-          'work link "missing" does not exist; link only Neo concern, work or consultation ids, never work.find refs or session ids',
+          'work link "missing" does not exist; link only Neo project, work or consultation ids, never work.find refs or session ids',
         'foreign-ask':
           'work link "work:1" was not started for this ask; link only work or consultations this ask created',
-        'foreign-concern': 'work link "work:1" belongs to another concern',
+        'foreign-project': 'work link "work:1" belongs to another project',
       }[kind];
       expect(result).toMatchObject(
         kind === 'unsafe-kind'
@@ -381,7 +381,7 @@ describe('runtime-bound publication operation', () => {
     }
   );
 
-  test('holder cannot link another concern even when the concern exists', () => {
+  test('holder cannot link another project even when the project exists', () => {
     prompt(holder.sessionId, 'holder-human');
     expect(
       publish(
@@ -391,7 +391,7 @@ describe('runtime-bound publication operation', () => {
     ).toEqual({
       accepted: false,
       reason: 'invalid_scene_reference',
-      detail: 'concern link "b" belongs to another concern',
+      detail: 'project link "b" belongs to another project',
     });
   });
 

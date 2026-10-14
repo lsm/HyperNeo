@@ -79,7 +79,7 @@ describe('neo.route.correct', () => {
     });
     expect(await correct({ messageId: 'ask-1', projectId: 'garden' })).toEqual({
       ok: false,
-      reason: 'unknown_topic',
+      reason: 'unknown_project',
     });
   });
 });

@@ -120,13 +120,13 @@ describe('Neo world briefing delivery', () => {
       expect(prompt.endsWith(NEO_RESPONSE_FOCUS_BRIEFING)).toBe(true);
       expect(prompt.split(NEO_RESPONSE_FOCUS_BRIEFING)).toHaveLength(2);
       for (const text of [
-        'Never add another concern’s progress as an aside to an unrelated answer',
+        'Never add another project’s progress as an aside to an unrelated answer',
         'Do not announce that all the user’s questions are settled from one return',
         'summary-only snapshot can be intentionally redacted',
         'do not describe hidden fields as empty facts to the human',
         'give one short acknowledgement and end the input turn',
         'Do not give a preliminary substantive answer from the summary',
-        'correction to that same concern',
+        'correction to that same project',
         'one or two conversational sentences',
         'Expand when the user asks for detail',
       ]) {
@@ -182,7 +182,7 @@ describe('Neo world briefing delivery', () => {
     }
   );
 
-  test.each([null, 'saas'])('briefs the local world for concern %s', (projectId) => {
+  test.each([null, 'saas'])('briefs the local world for project %s', (projectId) => {
     const prompt = neoPrompt(projectId);
     expect(prompt).toContain(NEO_CAPABILITIES_BRIEFING);
     for (const text of [
@@ -267,7 +267,7 @@ describe('Neo world briefing delivery', () => {
     const holder = neoPrompt('saas');
     expect(root).toContain('Detailed context belongs to the holder');
     expect(root).toContain('consult its holder before giving the substantive answer');
-    expect(holder).toContain('context holder for concern "saas"');
+    expect(holder).toContain('context holder for project "saas"');
     expect(holder).toContain('Use the consultationId from that request, not a work id');
     expect(holder).toContain('complete its requested return operation before ending your turn');
     expect(holder).toContain('If a save is rejected as superseded, do not reread and retry it');

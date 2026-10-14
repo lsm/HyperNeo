@@ -12,7 +12,7 @@ const turns: { projectId: string | null }[] = [{ projectId: null }, { projectId:
 describe('current human work guidance', () => {
   test.each(turns)('keeps explicit execution distinct in $projectId', (turn) => {
     const prompt = neoPrompt(turn.projectId);
-    const delegation = prompt.split('You and the concern holders NEVER')[1]!.split('\n\n')[0]!;
+    const delegation = prompt.split('You and the project holders NEVER')[1]!.split('\n\n')[0]!;
     expect(delegation).toContain('actual current human input');
     expect(delegation).toContain('explicitly asks you to execute clear, bounded work');
     expect(delegation).toContain(
@@ -25,7 +25,7 @@ describe('current human work guidance', () => {
 
   test.each(turns)('routes later card approval to its native action in $projectId', (turn) => {
     const delegation = neoPrompt(turn.projectId)
-      .split('You and the concern holders NEVER')[1]!
+      .split('You and the project holders NEVER')[1]!
       .split('\n\n')[0]!;
     expect(delegation).toContain('only to a proposal created for the current human message');
     expect(delegation).toContain('later says “yes, run it” about an earlier work item');
