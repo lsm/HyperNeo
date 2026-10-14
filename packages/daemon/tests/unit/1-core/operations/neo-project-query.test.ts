@@ -120,6 +120,17 @@ describe('Neo project query snapshot', () => {
     expect(await read()).toBe(await read());
   });
 
+  test('the snapshot operation receives the Neo caller identity', async () => {
+    const snapshot = createNeoOperations(service).find((entry) => entry.name === 'neo.snapshot')!;
+    const execute = mock(snapshot.execute);
+    const context = await readNeoProjectSnapshot(
+      createOperationRegistry([{ ...snapshot, execute }]),
+      sessionId
+    );
+    expect(execute).toHaveBeenCalledWith({}, { source: 'mcp', sessionId, role: 'neo' });
+    expect(parse(context).projects.map((project) => project.id)).toEqual(['own']);
+  });
+
   test('the initial snapshot retains the existing size limit', async () => {
     service.repo.saveProject(
       { id: 'own', title: 'own', summary: '', context: 'Long durable context '.repeat(5000) },

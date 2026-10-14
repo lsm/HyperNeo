@@ -79,7 +79,7 @@ export const readNeoProjectSnapshot = (superpipe({})('neo-project-query-snapshot
   .input(['registry', 'sessionId'])
   .pipe(
     (registry: OperationRegistry, sessionId: string) =>
-      invokeOperation(registry, 'neo.snapshot', {}, { source: 'mcp', sessionId }),
+      invokeOperation(registry, 'neo.snapshot', {}, { source: 'mcp', sessionId, role: 'neo' }),
     ['registry', 'sessionId'],
     'snapshot'
   )
