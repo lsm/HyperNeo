@@ -35,10 +35,19 @@ export type NeoAskInput = Omit<
 export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'deliveredBy'>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
-  'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind' | 'question' | 'watch'
+  | 'removed'
+  | 'removedReason'
+  | 'options'
+  | 'decision'
+  | 'action'
+  | 'waitCard'
+  | 'kind'
+  | 'question'
+  | 'watch'
 > & {
   askId: string;
   removed: number;
+  removedReason: string | null;
   options: string | null;
   decision: number;
   action: string | null;
@@ -52,7 +61,7 @@ const watchJson = (item: Pick<NeoAskItem, 'watch'>) =>
   item.watch?.length ? JSON.stringify(item.watch) : null;
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  delivered_by AS deliveredBy, verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch`;
+  delivered_by AS deliveredBy, verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, removed_reason AS removedReason, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch`;
 
 export interface NeoAskOwner {
   projectId: string;
@@ -250,6 +259,7 @@ export class NeoAskRepository {
     edit: {
       add: (NeoAskItemInput & { id: string; position: number })[];
       remove: string[];
+      removedReason?: string | null;
       bind?: { itemId: string; deliveredBy: string | null }[];
       track?: { itemId: string; check: NeoAskItem['check']; watch?: string[] }[];
     },
@@ -271,9 +281,9 @@ export class NeoAskRepository {
       for (const item of edit.add)
         insert.run(askId, item.id, item.position, item.text, item.check, watchJson(item), at, at);
       this.db
-        .prepare(`UPDATE neo_ask_items SET removed = 1, updated_at = ?
+        .prepare(`UPDATE neo_ask_items SET removed = 1, removed_reason = ?, updated_at = ?
           WHERE ask_id = ? AND id IN (SELECT value FROM json_each(?))`)
-        .run(at, askId, JSON.stringify(edit.remove));
+        .run(edit.removedReason ?? null, at, askId, JSON.stringify(edit.remove));
       const bindings = [
         ...(edit.bind ?? []),
         ...edit.add.flatMap((item) =>
@@ -664,6 +674,7 @@ export class NeoAskRepository {
           ({
             askId: _askId,
             removed,
+            removedReason,
             options,
             decision,
             action,
@@ -675,6 +686,7 @@ export class NeoAskRepository {
           }) => ({
             ...item,
             removed: removed === 1,
+            ...(removedReason ? { removedReason } : {}),
             ...(options ? { options: JSON.parse(options) as string[] } : {}),
             ...(decision === 1 ? { decision: true as const } : {}),
             ...(action ? { action } : {}),
