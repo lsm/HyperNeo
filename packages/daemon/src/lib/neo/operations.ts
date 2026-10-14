@@ -18,6 +18,7 @@ import {
   NEO_WORK_PROPOSE_DESCRIPTION,
 } from '@hyperneo/prompts';
 import { planNeoSnapshotRead, rememberNeoSnapshotRead } from './snapshot-read.ts';
+import { neoAdmissionRefusal } from './work-admission.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { THINKING_LEVELS } from '@hyperneo/shared';
 import { z } from 'zod';
@@ -419,7 +420,6 @@ const WorkReportResult = z.union([
   }),
 ]);
 type Rejection = { ok: false; reason: string };
-const NEO_WORK_START_SETTLED = ['card_not_active', 'already_started', 'already_claimed'];
 type NeoWorkRetryFound = {
   work: NeoWork | null;
   target: ReturnType<NeoService['driverTargets']['get']>;
@@ -1696,10 +1696,10 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       async (work: NeoWork, authority: { approved: boolean }) => {
-        const admitted = await service.admitWork(work.id, !authority.approved);
-        return admitted.ok || NEO_WORK_START_SETTLED.includes(admitted.reason)
-          ? { value: { ok: true as const, work: service.repo.getWork(work.id)! } }
-          : { reason: admitted };
+        const refused = neoAdmissionRefusal(await service.admitWork(work.id, !authority.approved));
+        return refused
+          ? { reason: refused }
+          : { value: { ok: true as const, work: service.repo.getWork(work.id)! } };
       },
       ['start', 'authority'],
       'result:start'

@@ -163,6 +163,7 @@ describe('neo.work.start', () => {
         kind: 'completed',
         value: { ok: false, reason: 'handoff_uncertain' },
       });
+      service.repo.transitionWork('b', service.repo.getWork('b')!, { status: 'queued' });
       db.getDatabase()
         .prepare("UPDATE neo_work_driver_targets SET claimed_at = 1 WHERE work_id = 'b'")
         .run();

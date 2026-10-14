@@ -226,7 +226,7 @@ import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { buildNeoCheckRegistry } from './packs/check-registry.ts';
-import { admitNeoWork, neoOutcomeEligibility } from './work-admission.ts';
+import { admitNeoWork, neoAdmissionRefusal, neoOutcomeEligibility } from './work-admission.ts';
 import {
   neoEnabledPacks,
   neoSettingsPackBriefs,
@@ -1312,16 +1312,19 @@ export class NeoService {
     );
   }
 
-  admitWork(id: string, human: boolean, now = Date.now()) {
-    const eligible = neoOutcomeEligibility(this.checkRegistry());
-    return admitNeoWork(id, human, now, {
+  private dependencyBlockers(id: string) {
+    return this.dependencies.blockers(id, neoOutcomeEligibility(this.checkRegistry()));
+  }
+
+  admitWork(id: string, authorized: boolean, now = Date.now()) {
+    return admitNeoWork(id, authorized, now, {
       bootedAt: this.bootedAt,
       readWork: (workId: string) => this.repo.getWork(workId),
       readAsk: (workId: string) => this.askRecords.forWork(workId),
       readCard: (workId: string) => this.driverTargets.readCard(workId),
-      readBlockers: (workId: string) => this.dependencies.blockers(workId, eligible),
+      readBlockers: (workId: string) => this.dependencyBlockers(workId),
       claim: (workId: string, admitted: () => boolean) =>
-        this.driverTargets.claimAdmission(workId, now, admitted),
+        this.driverTargets.claimAdmission(workId, now, admitted, this.bootedAt),
       handOff: (work: NeoWork) => this.startPending(work.id),
       release: (workId: string) => this.driverTargets.releaseAdmission(workId),
       markUncertain: (workId: string) => this.driverTargets.recordStartInterrupted(workId),
@@ -1590,6 +1593,8 @@ export class NeoService {
     work: NeoWork
   ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
     const id = work.id;
+    if (this.dependencyBlockers(id).some((blocker) => blocker.workId !== id))
+      return { ok: false, reason: 'prerequisites_unmet' };
     const proposed = this.repo.transitionWork(id, work, {
       status: 'proposed',
       report: awaitingNeoWorker(work) ? work.report : null,
@@ -1597,8 +1602,12 @@ export class NeoService {
     if (!proposed) return { ok: false, reason: 'This work changed meanwhile; read it again.' };
     await this.workPending.get(id)?.catch(() => undefined);
     this.driverTargets.recordRetry(id);
-    await this.start(id);
-    return { ok: true, work: this.repo.getWork(id)! };
+    const refused = neoAdmissionRefusal(await this.admitWork(id, true));
+    if (!refused) return { ok: true, work: this.repo.getWork(id)! };
+    const current = this.repo.getWork(id);
+    if (current?.status === 'proposed' && !this.driverTargets.readRef(id))
+      this.repo.transitionWork(id, current, { status: work.status, report: work.report });
+    return { ok: false, reason: refused.reason };
   }
 
   private async stopDriverWork(ref: WorkRef, work: NeoWork): Promise<void> {
@@ -1634,12 +1643,12 @@ export class NeoService {
     );
     for (const work of this.repo.listWork()) {
       try {
-        if (
-          work.status === 'queued' ||
+        if (work.status === 'queued') await this.start(work.id);
+        else if (
           awaitingNeoWorker(work) ||
           (work.status === 'proposed' && this.driverTargets.get(work.id)?.verb === 'read')
         )
-          await this.start(work.id);
+          await this.admitWork(work.id, true);
         await this.reconcile(work.id);
       } catch (error) {
         this.log.warn('Neo recovery pending', error);
