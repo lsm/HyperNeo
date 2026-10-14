@@ -39,9 +39,11 @@ export function planNeoWorkspaceProjects(
   plumbing: (place: Place) => boolean = () => false
 ): NeoWorkspaceProject[] {
   return groups
-    .filter((group) => (group.place.folder || group.place.toolProject) && !plumbing(group.place))
-    .map((group) => {
-      const workspaces = group.workspaces ?? [group.place];
+    .filter((group) => group.place.folder || group.place.toolProject)
+    .flatMap((group) => {
+      const workspaces = (group.workspaces ?? [group.place]).filter((place) => !plumbing(place));
+      if (!workspaces.length) return [];
+      const primary = plumbing(group.place) ? workspaces[0] : group.place;
       return {
         aliases: [
           ...new Set([
@@ -63,7 +65,7 @@ export function planNeoWorkspaceProjects(
             ]),
           ]),
         ],
-        title: workspaces.find((place) => place.toolProject)?.toolProject?.name ?? group.place.name,
+        title: workspaces.find((place) => place.toolProject)?.toolProject?.name ?? primary.name,
       };
     });
 }

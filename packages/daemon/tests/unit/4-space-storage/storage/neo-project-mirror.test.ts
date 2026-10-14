@@ -1,3 +1,4 @@
+import { hostname } from 'node:os';
 import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -15,7 +16,9 @@ import { mergePlaceGroups } from '../../../../src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
 import { isTempCwd } from '../../../../src/lib/drivers/claude-feed.ts';
 
-function workspace(folder: string, machine = 'laptop', identity = 'root:123'): PlaceGroup {
+const elsewhere = `not-${hostname()}`;
+
+function workspace(folder: string, machine = elsewhere, identity = 'root:123'): PlaceGroup {
   return {
     place: { folder, machine, name: 'HyperNeo', codeIdentity: identity },
     lastActivityAt: 0,
@@ -87,7 +90,10 @@ describe('mirrorNeoWorkspaceProjects', () => {
 
   test('does not let a reused folder collapse unrelated repository histories', () => {
     mirrorNeoWorkspaceProjects(db, mergePlaceGroups([workspace('/one')], 50));
-    mirrorNeoWorkspaceProjects(db, mergePlaceGroups([workspace('/one', 'laptop', 'root:456')], 50));
+    mirrorNeoWorkspaceProjects(
+      db,
+      mergePlaceGroups([workspace('/one', elsewhere, 'root:456')], 50)
+    );
     expect(repo.listProjects()).toHaveLength(2);
     const owner = db
       .prepare("SELECT project_id FROM neo_project_workspaces WHERE alias = 'root:456'")
@@ -101,7 +107,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
     repo.saveProject({ id: 'travel', title: 'Travel', summary: '', context: 'Passport' }, 0);
     mirrorNeoWorkspaceProjects(
       db,
-      mergePlaceGroups([workspace('/one'), workspace('/other', 'laptop', 'root:456')], 50)
+      mergePlaceGroups([workspace('/one'), workspace('/other', elsewhere, 'root:456')], 50)
     );
     mirrorNeoWorkspaceProjects(db, []);
     expect(repo.listProjects()).toHaveLength(3);
@@ -109,7 +115,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
   });
 
   test('mirrors several folders in a named tool project with different histories once', () => {
-    const groups = [workspace('/one'), workspace('/other', 'laptop', 'root:456')].map((group) => ({
+    const groups = [workspace('/one'), workspace('/other', elsewhere, 'root:456')].map((group) => ({
       ...group,
       place: { ...group.place, toolProject: { id: 'product', name: 'Product' } },
     }));
@@ -204,6 +210,20 @@ describe('planNeoWorkspaceProjects', () => {
     );
     expect(
       plan.map((project) => project.aliases.find((alias) => alias.startsWith('folder:')))
-    ).toEqual(['folder:laptop\u0000/repo']);
+    ).toEqual([`folder:${elsewhere}\u0000/repo`]);
+  });
+});
+
+describe('planNeoWorkspaceProjects with a gone primary', () => {
+  test('keeps the live workspaces of a group whose primary folder is gone', () => {
+    const group = workspace('/gone');
+    const [plan] = planNeoWorkspaceProjects(
+      [{ ...group, workspaces: [group.place, { ...group.place, folder: '/live', name: 'live' }] }],
+      (place) => place.folder === '/gone'
+    );
+    expect(plan.title).toBe('live');
+    expect(plan.aliases.filter((alias) => alias.startsWith('folder:'))).toEqual([
+      `folder:${elsewhere}\u0000/live`,
+    ]);
   });
 });
