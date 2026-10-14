@@ -235,6 +235,7 @@ import {
   neoOutcomeEligibility,
 } from './work-admission.ts';
 import type { NeoCardWait } from './card-views.ts';
+import { reconcileNeoHandoff } from './handoff-reconcile.ts';
 import {
   neoEnabledPacks,
   neoSettingsPackBriefs,
@@ -1519,6 +1520,17 @@ export class NeoService {
 
   private dependencyBlockers(id: string) {
     return this.dependencies.blockers(id, neoOutcomeEligibility(this.checkRegistry()));
+  }
+
+  reconcileHandoff(id: string) {
+    return reconcileNeoHandoff(id, {
+      bootedAt: this.bootedAt,
+      readWork: (workId: string) => this.repo.getWork(workId),
+      readCard: (workId: string) => this.driverTargets.readCard(workId),
+      readSent: (workId: string) => this.driverTargets.readSent(workId),
+      readStatus: (work: NeoWork, ref: WorkRef, receipt: DriverSent['receipt']) =>
+        this.invokeAsCard(work, 'work.status', { ref, ...(receipt ? { receipt } : {}) }),
+    });
   }
 
   async admitWork(id: string, authorized: boolean, now = Date.now()) {
