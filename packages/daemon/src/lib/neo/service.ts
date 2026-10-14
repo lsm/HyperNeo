@@ -1,3 +1,4 @@
+import { runNeoReadWork } from './read-work.ts';
 import { neoOutcomeCheckPolicy } from './outcome-check-policy.ts';
 import { neoPrQuestionWithdrawalPolicy } from './packs/coding/question-withdrawal-policy.ts';
 import {
@@ -1327,6 +1328,17 @@ export class NeoService {
     target: NeoDriverTarget,
     tried = new Set<string>()
   ): Promise<void> {
+    if (target.verb === 'read') {
+      const failure = await runNeoReadWork(
+        this.repo,
+        this.sessions.getOperationRegistry(),
+        work,
+        target,
+        (reported) => this.returnReport(reported)
+      );
+      if (failure && !failure.ok) await this.failWork(work, failure.reason);
+      return;
+    }
     if (
       target.verb === 'send' &&
       awaitingNeoWorker(work) &&
@@ -1509,7 +1521,12 @@ export class NeoService {
     );
     for (const work of this.repo.listWork()) {
       try {
-        if (work.status === 'queued' || awaitingNeoWorker(work)) await this.start(work.id);
+        if (
+          work.status === 'queued' ||
+          awaitingNeoWorker(work) ||
+          (work.status === 'proposed' && this.driverTargets.get(work.id)?.verb === 'read')
+        )
+          await this.start(work.id);
         await this.reconcile(work.id);
       } catch (error) {
         this.log.warn('Neo recovery pending', error);

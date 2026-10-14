@@ -56,8 +56,10 @@ import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { awaitingNeoWorker } from './work-reroute.ts';
 import { workStartConfiguration } from '../drivers/start-configuration.ts';
+import { NeoReadWorkTarget } from './read-work.ts';
 
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
+  NeoReadWorkTarget,
   z.object({
     verb: z.literal('start'),
     adapter: z.string().min(1).max(80),
@@ -73,7 +75,11 @@ export type NeoDriverTarget = z.infer<typeof NeoDriverTargetSchema>;
 type NeoDriverAdapter = { id: string; capabilities: readonly string[] };
 
 export function driverTargetDaemon(target: NeoDriverTarget): string | undefined {
-  return target.verb === 'start' ? target.place.daemon : target.ref.daemon;
+  return target.verb === 'read'
+    ? undefined
+    : target.verb === 'start'
+      ? target.place.daemon
+      : target.ref.daemon;
 }
 
 export async function readNeoDriverAdapters(
@@ -122,7 +128,7 @@ export function requireNeoDriverVerb<T>(
   adapters: readonly NeoDriverAdapter[] | null,
   value: T
 ): { value: T } | { reason: { ok: false; reason: string } } {
-  if (!target || !adapters) return { value };
+  if (!target || target.verb === 'read' || !adapters) return { value };
   const id = target.verb === 'start' ? target.adapter : target.ref.adapter;
   const verb = target.verb === 'adopt' ? 'status' : target.verb;
   if (adapters.some((item) => item.id === id && item.capabilities.includes(verb))) return { value };
@@ -220,7 +226,7 @@ export function withWorkGoal(
 }
 
 export function driverWorkCall(
-  target: NeoDriverTarget,
+  target: Exclude<NeoDriverTarget, { verb: 'read' }>,
   work: Pick<NeoWork, 'title' | 'instruction'>,
   goal: NeoWorkGoal | null = null,
   eventsDelivered = true

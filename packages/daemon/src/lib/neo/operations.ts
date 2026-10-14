@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { requireNeoReadOperation } from './read-work.ts';
 import {
   hasNeoWorkRequest,
   neoTargetSessionId,
@@ -10,6 +11,7 @@ import {
   NEO_CONSULTATION_RECEIPT_CLOSED,
   NEO_CONSULTATION_RECEIPT_PENDING,
   NEO_CONSULTATION_RECEIPT_RETURNED,
+  NEO_WORK_PROPOSE_DESCRIPTION,
 } from '@hyperneo/prompts';
 import { planNeoSnapshotRead, rememberNeoSnapshotRead } from './snapshot-read.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -1271,6 +1273,18 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(requireNeoExecutionChoice, ['input', 'admission'], 'result:admission')
     .pipe(
+      (input: z.infer<typeof Propose>, caller: OperationCaller) => {
+        if (input.work?.verb !== 'read') return { value: caller };
+        const checked = requireNeoReadOperation(
+          input.work,
+          service.sessions.getOperationRegistry()
+        );
+        return 'reason' in checked ? checked : { value: caller };
+      },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (input: z.infer<typeof Propose>) => {
         const sessionId = ownedLookupSessionId(input);
         return {
@@ -1302,7 +1316,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       ({ work }: z.infer<typeof Propose>, caller: OperationCaller) =>
-        work
+        work && work.verb !== 'read'
           ? readNeoDriverAdapters(() =>
               invokeOperation(
                 service.sessions.getOperationRegistry(),
@@ -1547,6 +1561,11 @@ export function createNeoOperations(service: NeoService) {
         ask: { askId?: string },
         receipt: { work: NeoWork }
       ) => {
+        if (input.work?.verb === 'read') {
+          await service.start(receipt.work.id);
+          receipt.work = service.repo.getWork(receipt.work.id)!;
+          return;
+        }
         if (input.work?.verb !== 'adopt') {
           const owned = ask.askId ? service.askRecords.get(ask.askId) : null;
           const targets = new Map(
@@ -1890,8 +1909,7 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.work.propose',
-      description:
-        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?, effort?} to start new work in a place from work.find (set model and effort when the human requests them; work.start validates the settings, with catalog model resolution for Codex and effort currently supported only for local Codex starts) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found, or {verb:"adopt", ref} to follow a session the human names in chat or tapped Track on, without sending it anything (that card starts on its own); starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. For PR-merge or daemon-deploy outcomes, first call neo.ask.open with doneItems carrying check coding.pr_merged or coding.deployed, then pass its askId here; unchecked doneWhen cannot create a new ask. Existing requestKey retries retain their stored ask. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the project has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. A proposal to a session that already holds live cards is refused with its load and the idle sessions in the same place; split independent items across idle sessions, and pass allowBusyTarget:true only to queue behind the work of that session on purpose. This does not start execution.',
+      description: NEO_WORK_PROPOSE_DESCRIPTION,
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

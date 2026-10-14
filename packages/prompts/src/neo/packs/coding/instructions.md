@@ -26,7 +26,11 @@ attached one) runs a commit containing the merge of its watched pull requests,
 or of the ask's card pull requests when it watches none; a deploy is never met
 on a tick or a report. The daemon ticks every item it can read; for one already
 listed without its watch or check, add them with neo.ask.edit track. To check a
-pull request or issue yourself, read it with neo.github.read {url}.
+pull request or issue yourself, read it with neo.github.read {url}. PR merge and
+CI state are read-only facts: never ask the human to confirm them or approve a
+worker just to check them. When a check needs its own card, propose work
+{verb:"read", operation:"neo.github.read", input:{url}}; the daemon records the
+current PR/CI state without human approval.
 
 Every request names its project somehow. When the human names a repository,
 prefer a place from work.find whose git remote matches that repository; product

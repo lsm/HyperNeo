@@ -71,8 +71,7 @@ export class NeoWorkDriverTargetRepository {
         repo.listWork().flatMap((other) => {
           if (other.id === work.id || !['proposed', 'queued'].includes(other.status)) return [];
           const target = this.get(other.id);
-          const ref =
-            this.readRef(other.id) ?? (target && target.verb !== 'start' ? target.ref : null);
+          const ref = this.readRef(other.id) ?? (target && 'ref' in target ? target.ref : null);
           const local = other.sessionId ?? other.targetSessionId;
           const agent = agents.get(other.id);
           return [
@@ -359,7 +358,7 @@ export class NeoWorkDriverTargetRepository {
     }>;
     return rows.flatMap((row) => {
       const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
-      if (!target.success) return [];
+      if (!target.success || target.data.verb === 'read') return [];
       const ref = row.ref ? (JSON.parse(row.ref) as WorkRef) : null;
       const adapter =
         ref?.adapter ??
