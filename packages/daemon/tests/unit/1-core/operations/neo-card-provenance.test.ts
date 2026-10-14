@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke';
-import { readDriverCardExchange, readDriverSettlement } from '../../../../src/lib/neo/driver-work';
+import {
+  NEO_WORK_UNVERIFIED_REPLY_NOTE,
+  readDriverFollowUp,
+  readDriverCardExchange,
+  readDriverSettlement,
+} from '../../../../src/lib/neo/driver-work';
 import { planNeoWorkFollow } from '../../../../src/lib/neo/work-follow';
 import {
   keepNeoCardPrReads,
@@ -70,7 +75,7 @@ describe('card input provenance', () => {
     const missing = outcome(undefined, { exchange: undefined });
     expect(readDriverSettlement(card, missing, 50, 11, true, sent.opening)).toEqual({
       status: 'reported',
-      report: 'Other PR merged',
+      report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nOther PR merged`,
     });
     expect(readDriverSettlement(card, outcome([]), 50, 11, true, sent.opening)).toBeNull();
     expect(readDriverSettlement(card, missing, 50, null, true, sent.opening)).toBeNull();
@@ -95,6 +100,41 @@ describe('card input provenance', () => {
     expect(planNeoWorkFollow(card, { outcome: missing }, { since: 21, sent })).toMatchObject({
       value: expect.stringContaining('Other PR merged'),
     });
+  });
+  test.each(['done', 'failed', 'stopped'])(
+    'labels exchange-less %s replies without preventing settlement',
+    (status) => {
+      const reply = outcome(undefined, {
+        status,
+        exchange: undefined,
+        lastReplyAt: 40,
+        recentInputs: [{ at: 11, text: sent.opening }],
+      });
+      const report = `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nOther PR merged`;
+      expect(readDriverSettlement(card, reply, 50, 11, true, sent.opening)).toEqual({
+        status: status === 'done' ? 'reported' : 'failed',
+        report: status === 'done' ? report : `It ${status}. ${report}`,
+      });
+      expect(readDriverFollowUp(reply, 21, sent)).toBe(report);
+      expect(readDriverFollowUp(reply, 40, sent)).toBeNull();
+      expect(
+        readDriverFollowUp(
+          outcome(undefined, {
+            exchange: undefined,
+            recentInputs: [{ at: 30, text: 'unrelated input' }],
+          }),
+          21,
+          sent
+        )
+      ).toBeNull();
+    }
+  );
+  test('anchored follow-up remains verified and truncated missing anchors never use latest reply', () => {
+    const anchored = outcome([user(11, sent.opening), agent(40, 'Own reply')]);
+    expect(readDriverFollowUp(anchored, 21, sent)).toBe('Agent: Own reply');
+    const truncated = outcome([agent(40, 'Unknown reply')], { exchangeCut: true });
+    expect(readDriverFollowUp(truncated, 21, sent)).toBeNull();
+    expect(readDriverSettlement(card, truncated, 50, 11, true, sent.opening)).toBeNull();
   });
   test('a continued or amended input establishes its own report boundary', () => {
     const continued = { inputBefore: 40, opening: 'Also fix spacing' };

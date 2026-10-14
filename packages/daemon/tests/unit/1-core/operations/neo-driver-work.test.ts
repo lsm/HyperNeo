@@ -28,6 +28,7 @@ import {
   NEO_WORK_STUCK_STEPS_MS,
   decideStuckReminder,
   NEO_WORK_UNANCHORED_NOTE,
+  NEO_WORK_UNVERIFIED_REPLY_NOTE,
   NEO_WORK_UNANCHORED_SETTLE_MS,
   decideCardLiveStatus,
   requireNeoWorkRetryable,
@@ -3792,7 +3793,9 @@ describe('Neo work with a drivers target', () => {
         await service.refreshDriverWork();
         expect(service.repo.getWork('work-1')).toMatchObject({
           status: 'reported',
-          report: history ? 'Agent: Task result' : 'Task result',
+          report: history
+            ? 'Agent: Task result'
+            : `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nTask result`,
         });
         update('needs_you');
         await service.refreshDriverWork();
@@ -3840,7 +3843,7 @@ describe('Neo work with a drivers target', () => {
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')).toMatchObject({
         status: 'reported',
-        report: 'Voice is durable.',
+        report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nVoice is durable.`,
       });
       expect(returned).toEqual(['work-1']);
       expect(calls.map((call) => call.name)).toEqual([
@@ -4368,7 +4371,7 @@ describe('readDriverSettlement', () => {
       readDriverSettlement(work, outcome, now);
     expect(settle(status({ status: 'done', lastReply: 'Shipped.' }))).toEqual({
       status: 'reported',
-      report: 'Shipped.',
+      report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nShipped.`,
     });
     expect(settle(status({ status: 'done' }))).toEqual({
       status: 'reported',
@@ -4376,7 +4379,7 @@ describe('readDriverSettlement', () => {
     });
     expect(settle(status({ status: 'failed', lastReply: 'Tests broke.' }))).toEqual({
       status: 'failed',
-      report: 'It failed. Tests broke.',
+      report: `It failed. ${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nTests broke.`,
     });
     expect(settle(status({ status: 'stopped' }))).toEqual({
       status: 'failed',
