@@ -809,9 +809,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
           .parse(await server.call('thread/read', { threadId: ref.id }));
         if (
           read.thread.status.type === 'active' ||
-          activeCodexTurn(
-            await readRolloutTail(found.value.thread.rolloutPath, Number.MAX_SAFE_INTEGER)
-          )
+          (await readActiveCodexTurn(found.value.thread.rolloutPath))
         )
           return reject('busy', 'The Codex thread still has a live turn.');
         if (!['idle', 'notLoaded'].includes(read.thread.status.type))

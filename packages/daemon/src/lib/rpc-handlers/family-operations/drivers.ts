@@ -124,7 +124,9 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       if (session.worktree) {
         const manager = sessionManager.getWorktreeManager();
         const commits = await manager.getCommitsAhead(session.worktree);
-        const git = await simpleGit(session.workspacePath!).status();
+        const git = await simpleGit(
+          session.worktree.worktreePath ?? session.workspacePath!
+        ).status();
         if (commits.hasCommitsAhead || !git.isClean())
           return reject(
             'unsupported',

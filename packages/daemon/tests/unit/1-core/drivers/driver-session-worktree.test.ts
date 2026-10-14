@@ -42,12 +42,29 @@ describe('hyperneoSessionControl archive', () => {
     }
   );
 
-  test('a dirty worktree is never removed', async () => {
+  test.each(['worktree', 'base', 'fallback'])('checks the session checkout (%s)', async (dirty) => {
     const dir = mkdtempSync(join(tmpdir(), 'archive-worktree-'));
+    const repo = join(dir, 'repo');
+    const worktree = join(dir, 'worktree');
+    mkdirSync(repo);
     const { simpleGit } = await import('simple-git');
     try {
-      await simpleGit(dir).init();
-      writeFileSync(join(dir, 'keep.txt'), 'unsaved work');
+      const git = simpleGit(repo);
+      await git.init();
+      await git.raw([
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '--allow-empty',
+        '--no-gpg-sign',
+        '-m',
+        'base',
+      ]);
+      await git.raw(['worktree', 'add', '-b', 'work', worktree]);
+      const dirtyPath = dirty === 'base' ? repo : worktree;
+      writeFileSync(join(dirtyPath, 'keep.txt'), 'unsaved work');
       const archived: string[] = [];
       const controls = hyperneoSessionControl({
         deps: {
@@ -56,23 +73,30 @@ describe('hyperneoSessionControl archive', () => {
             getSessionFromDB: () => ({
               id: 'session',
               status: 'active',
-              workspacePath: dir,
-              worktree: { branch: 'work' },
+              workspacePath: dirty === 'fallback' ? worktree : repo,
+              worktree: {
+                branch: 'work',
+                worktreePath: dirty === 'fallback' ? undefined : worktree,
+              },
             }),
             getWorktreeManager: () => ({
               getCommitsAhead: async () => ({ hasCommitsAhead: false }),
             }),
+            getCachedSession: () => undefined,
             archiveSessionResources: async (id: string) => {
               archived.push(id);
             },
           },
         },
       } as never);
-      expect(
-        await controls.archive!({ adapter: 'hyperneo', id: 'session' }, () => null)
-      ).toMatchObject({ ok: false, reason: 'unsupported' });
-      expect(archived).toEqual([]);
-      expect(await simpleGit(dir).status()).toMatchObject({ not_added: ['keep.txt'] });
+      const result = await controls.archive!({ adapter: 'hyperneo', id: 'session' }, () => null);
+      expect(result).toMatchObject(
+        dirty === 'base'
+          ? { ok: true, value: { archived: true } }
+          : { ok: false, reason: 'unsupported' }
+      );
+      expect(archived).toEqual(dirty === 'base' ? ['session'] : []);
+      expect(await simpleGit(dirtyPath).status()).toMatchObject({ not_added: ['keep.txt'] });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

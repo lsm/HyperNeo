@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
@@ -217,9 +217,15 @@ describe('codex-desktop adapter status and send', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  test.each(['idle', 'active', 'systemError', 'notLoaded'])(
-    'archives only an idle Codex thread (%s)',
-    async (status) => {
+  test.each(
+    ['idle', 'active', 'systemError', 'notLoaded'].flatMap((status) =>
+      ['present', 'missing', 'unreadable'].map((rollout) => ({ status, rollout }))
+    )
+  )(
+    'archives only an idle Codex thread ($status, $rollout rollout)',
+    async ({ status, rollout }) => {
+      if (rollout !== 'present') rmSync(join(dir, 'finished.jsonl'));
+      if (rollout === 'unreadable') mkdirSync(join(dir, 'finished.jsonl'));
       const calls: string[] = [];
       let closed = false;
       const driver = adapter(0, '', async () => ({
@@ -242,6 +248,7 @@ describe('codex-desktop adapter status and send', () => {
   );
 
   test('a running rollout, late refusal and an already archived thread never call thread/archive', async () => {
+    appendFileSync(join(dir, 'running.jsonl'), `\n${said('x'.repeat(5 * 1024 * 1024))}`);
     const calls: string[] = [];
     const driver = adapter(0, '', async () => ({
       call: async (method, params) => {
