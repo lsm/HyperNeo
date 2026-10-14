@@ -45,6 +45,7 @@ import {
   WorkRefSchema,
   WorkStatusSchema,
   type WorkExchangeEntry,
+  type WorkDelivery,
   type WorkInput,
   type WorkRef,
   type WorkStatus,
@@ -467,6 +468,7 @@ export function readDriverSendBaseline(
 export interface DriverSent {
   inputBefore: number;
   opening: string;
+  receipt?: WorkDelivery['receipt'];
 }
 
 export function messageOpening(message: string): string {
@@ -814,6 +816,13 @@ export const NEO_WORK_UNANCHORED_SETTLE_MS = 3 * 60 * 60 * 1000;
 export const NEO_WORK_UNANCHORED_NOTE =
   "Neo's message was never found in that session, so this is the session's latest reply, not a confirmed answer to the work item. Check it against the work item before telling the human.";
 
+export const NEO_WORK_UNVERIFIED_REPLY_NOTE =
+  'Reply attribution is unverified: matching input/reply history was unavailable. Check this latest reply against the work item before treating it as its answer.';
+
+function unverifiedDriverReply(reply: string | undefined): string | null {
+  return reply ? `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\n${reply}` : null;
+}
+
 function readUnanchoredSettlement(
   work: Pick<NeoWork, 'updatedAt'>,
   value: { status: string; lastActivityAt: number; lastReplyAt?: number; lastReply?: string },
@@ -837,7 +846,7 @@ export function readDriverFollowUp(
   if (!value || value.status === 'running' || value.status === 'queued') return null;
   if (value.exchange === undefined)
     return (value.lastReplyAt ?? value.lastActivityAt) > since && isDriverCardCurrent(outcome, sent)
-      ? (value.lastReply ?? null)
+      ? unverifiedDriverReply(value.lastReply)
       : null;
   const own = readDriverCardExchange(outcome, sent);
   const replies = own?.replies.filter((entry) => entry.at > since);
@@ -875,7 +884,7 @@ export function readDriverSettlement(
     })
   )
     return null;
-  const said = report ?? reply.value.lastReply;
+  const said = report ?? unverifiedDriverReply(reply.value.lastReply);
   if (status === 'done') {
     const staleReply =
       requireFresh && startedAt !== null && lastReplyAt !== undefined && lastReplyAt <= startedAt;

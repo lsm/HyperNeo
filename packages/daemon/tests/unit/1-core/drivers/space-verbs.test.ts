@@ -1,4 +1,10 @@
-import { readDriverFollowUp, readDriverSettlement } from '../../../../src/lib/neo/driver-work';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { spaceTaskControl } from '../../../../src/lib/rpc-handlers/family-operations/drivers';
+import {
+  NEO_WORK_UNVERIFIED_REPLY_NOTE,
+  readDriverFollowUp,
+  readDriverSettlement,
+} from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   createSpaceAdapter,
@@ -158,15 +164,20 @@ describe('space adapter start, status and stop', () => {
     expect(readDriverFollowUp(outcome, 30)).toBeNull();
     expect(
       readDriverSettlement({ updatedAt: 10 }, outcome, 50, 10, true, 'original ask')
-    ).toMatchObject({ status: 'reported', report: 'Merged in #5600' });
+    ).toMatchObject({
+      status: 'reported',
+      report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nMerged in #5600`,
+    });
     db.exec(
       "UPDATE space_tasks SET completed_at = 60, updated_at = 60, result = 'New completion' WHERE id = 't2'"
     );
     const next = { kind: 'completed' as const, value: await adapter().status!(ref('t2')) };
-    expect(readDriverFollowUp(next, 40)).toBe('New completion');
+    expect(readDriverFollowUp(next, 40)).toBe(
+      `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nNew completion`
+    );
     expect(readDriverSettlement({ updatedAt: 40 }, next, 70, 40, true, 'new ask')).toMatchObject({
       status: 'reported',
-      report: 'New completion',
+      report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nNew completion`,
     });
   });
 
@@ -277,6 +288,65 @@ describe('space adapter send', () => {
     caller: { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const },
   };
 
+  test('task aggregate never borrows a node exchange across replacement or completion', async () => {
+    db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
+      timestamp TEXT, send_status TEXT, parent_tool_use_id TEXT)`);
+    const at = Date.parse('2026-10-14T10:00:00.000Z');
+    const insert = db.prepare('INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, NULL)');
+    for (const session of ['s-code', 's-review', 's-next']) {
+      insert.run(
+        session,
+        'user',
+        JSON.stringify({
+          inputKind: 'human',
+          message: { content: 'Build the report' },
+        }),
+        new Date(at + 1).toISOString(),
+        'consumed'
+      );
+      insert.run(
+        session,
+        'result',
+        JSON.stringify({ result: `Worker reply from ${session}` }),
+        new Date(at + 2).toISOString(),
+        null
+      );
+    }
+    db.prepare(`UPDATE space_tasks SET status = 'done', result = 'Task artifact summary',
+      completed_at = ?, updated_at = ? WHERE id = 't1'`).run(at + 10, at + 20);
+    const assertTaskResult = async (hasCurrentNode: boolean) => {
+      const result = await adapter().status!(ref('t1'), at);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.reason);
+      expect(result.value.lastReply).toBe('Task artifact summary');
+      expect(result.value.lastReplyAt).toBe(at + 10);
+      expect(result.value.exchange).toBeUndefined();
+      expect(result.value.recentInputs?.map((input) => input.text)).toEqual(
+        hasCurrentNode ? ['Build the report'] : []
+      );
+      const outcome = { kind: 'completed' as const, value: result };
+      expect(
+        readDriverSettlement({ updatedAt: at }, outcome, at + 30, at + 1, true, 'Build the report')
+      ).toEqual({
+        status: 'reported',
+        report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nTask artifact summary`,
+      });
+      expect(readDriverFollowUp(outcome, at + 15)).toBeNull();
+    };
+    await assertTaskResult(true);
+    db.exec("UPDATE node_executions SET status = 'cancelled' WHERE id = 'n2'");
+    db.exec("UPDATE node_executions SET status = 'in_progress' WHERE id = 'n1'");
+    await assertTaskResult(true);
+    db.exec("UPDATE node_executions SET status = 'idle' WHERE id = 'n1'");
+    await assertTaskResult(true);
+    db.exec("UPDATE node_executions SET status = 'cancelled' WHERE id = 'n1'");
+    await assertTaskResult(false);
+    db.exec(`INSERT INTO node_executions VALUES
+      ('n5', 'run-next', 'coder', 'node-code', 's-next', 'in_progress', 80, 80)`);
+    db.exec("UPDATE space_tasks SET workflow_run_id = 'run-next' WHERE id = 't1'");
+    await assertTaskResult(true);
+  });
+
   test('status exposes typed human input for the Space agent after the refusal time', async () => {
     db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
       timestamp TEXT, send_status TEXT, parent_tool_use_id TEXT)`);
@@ -305,6 +375,67 @@ describe('space adapter send', () => {
       value: { recentInputs: [{ human: false }, { human: true }] },
     });
   });
+
+  test.each(['consumed', 'deferred', 'missing', 'wrong-session', 'failed'])(
+    'task send returns only persisted input receipts after session rebinding: %s',
+    async (state) => {
+      db.exec(`CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, message_type TEXT,
+        sdk_message TEXT, timestamp TEXT, send_status TEXT)`);
+      const repository = new SDKMessageRepository(db);
+      const injections: unknown[] = [];
+      const control = spaceTaskControl({
+        deps: { db: { getSDKMessageRepo: () => repository } },
+        spaceRuntimeService: {
+          ensureToolTargetSession: async () => ({ kind: 'resolved', sessionId: 's-rebound' }),
+        },
+        taskAgentManager: {
+          injectSubSessionMessage: async (
+            sessionId: string,
+            message: string,
+            internal: boolean
+          ) => {
+            injections.push({ sessionId, message, internal });
+            if (state === 'failed') throw new Error('injection refused');
+            if (state !== 'missing')
+              db.prepare('INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, ?)').run(
+                state === 'wrong-session' ? 's-code' : sessionId,
+                'input-123',
+                'user',
+                JSON.stringify({ message: { content: message } }),
+                new Date(100).toISOString(),
+                state === 'deferred' ? 'deferred' : 'consumed'
+              );
+            return 'input-123';
+          },
+        },
+      } as never);
+      const actual = createSpaceAdapter({
+        db: () => db,
+        machine: 'imac',
+        searchChats: async () => [],
+        tasks: control,
+      });
+      const result = await actual.send!(ref('t1'), 'Follow up', neo);
+      expect(injections).toEqual([
+        { sessionId: 's-rebound', message: 'Follow up', internal: true },
+      ]);
+      if (state === 'failed') {
+        expect(result).toEqual({ ok: false, reason: 'not_delivered', detail: 'injection refused' });
+      } else {
+        expect(result).toEqual({
+          ok: true,
+          value: {
+            delivered: state !== 'deferred',
+            ...(['consumed', 'deferred'].includes(state)
+              ? {
+                  receipt: { executionId: 's-rebound', inputId: 'input-123' },
+                }
+              : {}),
+          },
+        });
+      }
+    }
+  );
 
   test('sends to the workflow agent that is working on the task', async () => {
     expect(await adapter().send?.(ref('t1'), 'use 16px', neo)).toEqual({
