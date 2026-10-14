@@ -220,10 +220,14 @@ describe('hyperneo adapter send and status', () => {
     );
     const user = (content: unknown, inputKind?: string) =>
       JSON.stringify({ type: 'user', ...(inputKind && { inputKind }), message: { content } });
-    input.run(user('Fix the parser'), '2026-10-04T10:01:00.000Z', 'consumed');
+    input.run(user('Fix the parser', 'task'), '2026-10-04T10:01:00.000Z', 'consumed');
     input.run(user([{ type: 'tool_result', content: 'ok' }]), '2026-10-04T10:02:00.000Z', null);
     input.run(user('Done check for w1', 'system'), '2026-10-04T10:03:00.000Z', 'consumed');
-    input.run(user([{ type: 'text', text: 'Also add tests' }]), '2026-10-04T10:04:00.000Z', null);
+    input.run(
+      user([{ type: 'text', text: 'Also add tests', human: true }], 'human'),
+      '2026-10-04T10:04:00.000Z',
+      null
+    );
     input.run(user('Still queued'), '2026-10-04T10:05:00.000Z', 'enqueued');
     db.prepare(
       `INSERT INTO sdk_messages (session_id, message_type, sdk_message, timestamp, parent_tool_use_id)
@@ -234,13 +238,15 @@ describe('hyperneo adapter send and status', () => {
     expect(await adapter().status?.(ref('busy'))).toMatchObject({
       value: {
         recentInputs: [
-          { at: at('2026-10-04T10:01:00.000Z'), text: 'Fix the parser' },
-          { at: at('2026-10-04T10:04:00.000Z'), text: 'Also add tests' },
+          { at: at('2026-10-04T10:01:00.000Z'), text: 'Fix the parser', human: false },
+          { at: at('2026-10-04T10:04:00.000Z'), text: 'Also add tests', human: true },
         ],
       },
     });
     expect(await adapter().status?.(ref('busy'), at('2026-10-04T10:02:00.000Z'))).toMatchObject({
-      value: { recentInputs: [{ at: at('2026-10-04T10:04:00.000Z'), text: 'Also add tests' }] },
+      value: {
+        recentInputs: [{ at: at('2026-10-04T10:04:00.000Z'), text: 'Also add tests', human: true }],
+      },
     });
   });
 

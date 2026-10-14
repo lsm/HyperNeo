@@ -349,6 +349,7 @@ const Propose = z.object({
   supersedes: z.string().min(1).max(160).nullable().optional(),
   allowBusyTarget: z.boolean().optional(),
 });
+const Refused = z.object({ workId: z.string().min(1), what: z.string().trim().min(1).max(500) });
 const WorkId = z.object({ id: z.string().min(1) });
 const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
 const SessionMuteResult = z.union([
@@ -486,7 +487,7 @@ export function requireNeoExecutionChoice(
         reason: {
           ok: false,
           reason:
-            'Choose where the work runs: targetSessionId for an existing chat, or work {verb:"start", adapter, place} or {verb:"send", ref} from work.find, or {verb:"adopt", ref} for a session the human names in chat or tapped Track on. There is no standalone scratch session. If no project, Space or chat clearly fits, ask the human where the work belongs instead of proposing.',
+            'Choose where the work runs: targetSessionId for an existing chat, or work {verb:"start", adapter, place} or {verb:"send", ref} from work.find, or {verb:"adopt", ref} for a session the human named in chat. There is no standalone scratch session. If no project, Space or chat clearly fits, ask the human where the work belongs instead of proposing.',
         },
       };
 }
@@ -568,7 +569,7 @@ function requireNeoWorkCancellation(
 function requireNeoWorkProposer(
   work: NeoWork,
   caller: OperationCaller,
-  verb: 'continue' | 'retry',
+  verb: 'continue' | 'retry' | 'record a refusal on',
   humanTurn: boolean
 ): { value: NeoWork } | { reason: Rejection } {
   if (caller.source === 'mcp' && caller.sessionId !== work.originSessionId && !humanTurn)
@@ -823,6 +824,7 @@ export function createNeoOperations(service: NeoService) {
       continues: service.workContinues.list(workIds),
       supersessions: service.workSupersessions.list(workIds),
       asks,
+      refusals: service.workRefusals.list(),
     });
     return { workPrs, cards };
   }
@@ -1340,14 +1342,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
-        requireNeoTrackedAdoption(
-          input.work,
-          service.trackedSessions,
-          service.followedCardRefs(Date.now()),
-          Date.now(),
-          isNeoHumanTurn(service, caller),
-          caller
-        ),
+        requireNeoTrackedAdoption(input.work, service.followedCardRefs(Date.now()), caller),
       ['input', 'admission'],
       'result:admission'
     )
@@ -1723,6 +1718,62 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof WorkId>,
     caller: OperationCaller
   ) => Promise<Awaited<ReturnType<NeoService['retryWork']>> | Rejection>;
+  const refused = (superpipe({})('neo.work.refused') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => admitNeoCaller(service, caller, 'neo.work.refused', undefined),
+      'caller',
+      'result:refused'
+    )
+    .pipe(
+      ({ workId }: z.infer<typeof Refused>) => {
+        const work = service.repo.getWork(workId);
+        return work ? { value: work } : { reason: { ok: false, reason: 'work_not_found' } };
+      },
+      'input',
+      'result:refused'
+    )
+    .pipe(
+      (work: NeoWork, caller: OperationCaller) =>
+        requireNeoWorkProposer(work, caller, 'record a refusal on', false),
+      ['refused', 'caller'],
+      'result:refused'
+    )
+    .pipe(
+      (work: NeoWork) => ({
+        ref:
+          service.driverTargets.readCard(work.id)?.ref ??
+          (work.sessionId ? { adapter: 'hyperneo', id: work.sessionId } : null),
+      }),
+      'refused',
+      'target'
+    )
+    .pipe(
+      (work: NeoWork, { ref }: { ref: WorkRef | null }) =>
+        ref && work.status !== 'cancelled' && work.status !== 'proposed'
+          ? { value: work }
+          : { reason: { ok: false, reason: 'Only a started card can report a session refusal.' } },
+      ['refused', 'target'],
+      'result:refused'
+    )
+    .pipe(
+      (work: NeoWork, { what }: z.infer<typeof Refused>, { ref }: { ref: WorkRef }) => {
+        service.workRefusals.record({
+          workId: work.id,
+          ref,
+          what: what.replace(/\s+/g, ' '),
+          at: Date.now(),
+        });
+        service.notifyChanged();
+        return { value: { ok: true, work } };
+      },
+      ['refused', 'input', 'target'],
+      'result:refused'
+    )
+    .endAsync('refused') as (
+    input: z.infer<typeof Refused>,
+    caller: OperationCaller
+  ) => Promise<z.infer<typeof WorkResult>>;
   const close = path(
     'neo.work.close',
     (_input: z.infer<typeof Close>) => undefined,
@@ -1961,6 +2012,15 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => withAskView(await retry(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.work.refused',
+      description:
+        'Record that this card’s session refused the request or needs the human to tell it directly. what is one plain line naming the session and what it refused. The card points at its Open button; the daemon clears the line on that session’s next human input. Do not relay, repeat or argue with it. Only the card’s owning Neo or the user records this.',
+      inputSchema: Refused,
+      resultSchema: WorkResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => withAskView(await refused(input, caller)),
     }),
     defineOperation({
       name: 'neo.work.close',

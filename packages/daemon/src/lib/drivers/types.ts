@@ -89,7 +89,11 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
   ]);
 }
 
-export const WorkInputSchema = z.object({ at: z.number(), text: z.string() });
+export const WorkInputSchema = z.object({
+  at: z.number(),
+  text: z.string(),
+  human: z.boolean().optional(),
+});
 export const WorkExchangeEntrySchema = z.object({
   at: z.number(),
   role: z.enum(['user', 'agent']),

@@ -116,6 +116,7 @@ export function neoAskItemAction(item: NeoAskItem): NeoAskHumanAction | null {
 }
 
 export function neoCardHumanAction(card: NeoCardView): NeoAskHumanAction | null {
+  if (card.talk) return { kind: 'talk', workId: card.workId, what: card.talk };
   if (card.phase === 'proposed') return { kind: 'start', workId: card.workId };
   if (card.primary.kind === 'retry') return { kind: 'retry', workId: card.workId };
   if (card.primary.kind === 'close') return { kind: 'close', workId: card.workId };
@@ -155,7 +156,7 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
   const sessions = settled ? [] : [...(index.sessions.get(ask.id) ?? [])];
   const needsYou =
     !settled &&
-    (live.some((card) => card.group === 'attention') ||
+    (live.some((card) => card.talk || card.group === 'attention') ||
       sessions.some((session) => session.kind !== null));
   const doneWorkIds = live
     .filter((card) => (card.phase === 'reported' || card.phase === 'merged') && !card.pr?.setback)

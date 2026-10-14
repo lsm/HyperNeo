@@ -15,7 +15,7 @@ Codex and effort currently supported only for local Codex starts) (for a new pro
 does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the
 folder must be under the home folder with an existing parent; never ask another session to
 create a folder), or {verb:"send", ref} to continue work it found, or {verb:"adopt", ref} to
-follow a session the human names in chat or tapped Track on, without sending it anything (that
+follow a session the human named in chat, without sending it anything (that
 card starts on its own); starting the proposal then runs work.start or work.send as Neo. Managed
 targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space
 task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound

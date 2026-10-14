@@ -31,6 +31,7 @@ import type {
 } from './types.ts';
 import {
   boundExchange,
+  WORK_AGENT_INPUT,
   exchangeEntry,
   recentWorkInputs,
   type WorkExchange,
@@ -410,7 +411,13 @@ export function codexRecentInputs(lines: readonly string[], since?: number): Wor
       if (entry?.type !== 'response_item') return [];
       const text = messageText(entry.payload ?? {}, 'user');
       if (!text || INJECTED_INPUT.test(text)) return [];
-      const input = workInput(workEntryTime(entry.timestamp), text);
+      const input = workInput(
+        workEntryTime(entry.timestamp),
+        text,
+        !text.includes(WORK_AGENT_INPUT) &&
+          !text.includes('Neo routed this to you:') &&
+          !text.startsWith('# AGENTS.md instructions')
+      );
       return input ? [input] : [];
     }),
     since
@@ -808,7 +815,12 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
       ),
     start: (request) => runCodexStart(request, deps),
-    send: (ref, message) => runCodexSend(ref, message, deps),
+    send: (ref, message, context) =>
+      runCodexSend(
+        ref,
+        context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
+        deps
+      ),
     status: (ref, since) => runCodexStatus(ref, deps, since),
     stop: (ref) => runCodexStop(ref, deps),
     archive: async (ref, admit) => {

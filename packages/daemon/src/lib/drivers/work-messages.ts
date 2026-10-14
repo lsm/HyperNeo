@@ -11,9 +11,13 @@ export function workEntryTime(timestamp: unknown): number | undefined {
   return Number.isFinite(at) ? at : undefined;
 }
 
-export function workInput(at: number | undefined, text: string): WorkInput | null {
+export const WORK_AGENT_INPUT = '[HyperNeo agent input]';
+
+export function workInput(at: number | undefined, text: string, human?: boolean): WorkInput | null {
   const plain = text.replace(/\s+/g, ' ').trim();
-  return at !== undefined && plain ? { at, text: plain.slice(0, INPUT_TEXT_LIMIT) } : null;
+  return at !== undefined && plain
+    ? { at, text: plain.slice(0, INPUT_TEXT_LIMIT), ...(human === undefined ? {} : { human }) }
+    : null;
 }
 
 export function recentWorkInputs(inputs: readonly WorkInput[], since?: number): WorkInput[] {

@@ -413,7 +413,17 @@ export function claudeTranscriptState(
       replyAt = at;
     }
     const text = claudeInputText(entry);
-    const input = text === null ? null : workInput(at, text);
+    const input =
+      text === null
+        ? null
+        : workInput(
+            at,
+            text,
+            entry.type === 'user' &&
+              !entry.isMeta &&
+              !entry.origin &&
+              (!entry.turnOrigin || entry.turnOrigin === 'human' || entry.turnOrigin === 'user')
+          );
     if (input) inputs.push(input);
     const next =
       since === undefined
