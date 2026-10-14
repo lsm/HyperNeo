@@ -18,6 +18,7 @@ import { runMigration352 } from '../../../../src/storage/schema/m352-neo-ask-ite
 import { runMigration358 } from '../../../../src/storage/schema/m358-neo-ask-revisions';
 import { runMigration364 } from '../../../../src/storage/schema/m364-neo-outcome-bindings';
 import { runMigration372 } from '../../../../src/storage/schema/m372-neo-ask-item-removed-reason';
+import { runMigration373 } from '../../../../src/storage/schema/m373-neo-ask-item-decides';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -48,6 +49,7 @@ function withAsks() {
     runMigration358,
     runMigration364,
     runMigration372,
+    runMigration373,
   ])
     migrate(db);
   return db;

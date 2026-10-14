@@ -112,6 +112,7 @@ export interface NeoAskItem {
   waitCard?: string;
   kind?: NeoAskItemKind;
   question?: string;
+  decides?: string;
   watch?: string[];
 }
 
