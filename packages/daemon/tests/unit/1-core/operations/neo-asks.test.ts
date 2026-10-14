@@ -2738,6 +2738,12 @@ describe('neo.ask operations', () => {
         options: ['On dev', 'Skip'],
       })
     ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(askId)).toMatchObject({
+      status: 'waiting',
+      waitingItem: 'i3',
+      outcome: 'Where should the slice 6 check run now?',
+      evidence: 'Where should the slice 6 check run now?',
+    });
     await ask({ question: 'Ship tonight?', decides: 'release date', options: ['Yes', 'No'] });
     await ask({ question: 'Ship tonight?', decides: 'release date', options: ['Yes', 'No'] });
     const asked = service.askRecords.get(askId)!.doneItems!.filter((item) => item.decision);
@@ -3683,9 +3689,16 @@ describe('planNeoAskRestate', () => {
       question: 'Run it on dev?',
       kind: 'decision',
       options: ['Yes', 'No'],
+      decides: 'slice 6 target',
     });
     expect(
       planNeoAskRestate({ ...asked, decides: undefined }, { question: 'x', options: ['a', 'b'] })
     ).toBe(null);
+    expect(
+      planNeoAskRestate(
+        { ...asked, decides: undefined },
+        { question: 'Retarget?', options: ['Yes', 'No'], decides: 'slice 6 target' }
+      )
+    ).toMatchObject({ id: 'i3', text: 'Retarget?', decides: 'slice 6 target' });
   });
 });

@@ -685,11 +685,25 @@ export function findNeoAskOpenQuestion(
 
 export function planNeoAskRestate(
   asked: NeoAskItem | null,
-  input: { question?: string; options?: readonly string[]; kind?: NeoAskItemKind }
-): { id: string; text: string; question: string; kind: NeoAskItemKind; options: string[] } | null {
-  if (!asked?.decides || !input.question || !input.options) return null;
+  input: {
+    question?: string;
+    options?: readonly string[];
+    kind?: NeoAskItemKind;
+    decides?: string;
+  }
+): {
+  id: string;
+  text: string;
+  question: string;
+  kind: NeoAskItemKind;
+  options: string[];
+  decides: string;
+} | null {
+  const decides = asked?.decides ?? input.decides;
+  if (!asked || !decides || !input.question || !input.options) return null;
   const kind = input.kind ?? asked.kind ?? 'decision';
   const same =
+    asked.decides === decides &&
     asked.text === input.question &&
     asked.kind === kind &&
     JSON.stringify(asked.options ?? []) === JSON.stringify(input.options);
@@ -701,6 +715,7 @@ export function planNeoAskRestate(
         question: input.question,
         kind,
         options: [...input.options],
+        decides,
       };
 }
 

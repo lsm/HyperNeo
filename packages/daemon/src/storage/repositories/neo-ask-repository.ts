@@ -264,26 +264,32 @@ export class NeoAskRepository {
       question: string;
       kind: NeoAskItem['kind'];
       options: string[];
+      decides: string;
     },
     at: number
   ): boolean {
-    const changed =
-      this.db
-        .prepare(`UPDATE neo_ask_items SET text = ?, question = ?, kind = ?, options = ?, updated_at = ?
-          WHERE ask_id = ? AND id = ? AND removed = 0 AND state = 'needs_you'`)
+    const changed = this.db.transaction(() => {
+      const restated = this.db
+        .prepare(`UPDATE neo_ask_items SET text = ?, question = ?, kind = ?, options = ?, decides = ?,
+          updated_at = ? WHERE ask_id = ? AND id = ? AND removed = 0 AND state = 'needs_you'`)
         .run(
           item.text,
           item.question,
           item.kind ?? 'decision',
           JSON.stringify(item.options),
+          item.decides,
           at,
           askId,
           item.id
-        ).changes > 0;
-    if (changed) {
-      this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
-      this.notify();
-    }
+        ).changes;
+      if (!restated) return false;
+      this.db
+        .prepare(`UPDATE neo_asks SET outcome = CASE WHEN waiting_item = ? THEN ? ELSE outcome END,
+          evidence = CASE WHEN waiting_item = ? THEN ? ELSE evidence END, updated_at = ? WHERE id = ?`)
+        .run(item.id, item.text, item.id, item.text, at, askId);
+      return true;
+    })();
+    if (changed) this.notify();
     return changed;
   }
 
