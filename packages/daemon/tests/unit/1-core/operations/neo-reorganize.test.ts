@@ -195,10 +195,12 @@ describe('neo.projects.reorganize', () => {
     asks: NeoAsk[],
     routes: Record<string, string | null>,
     busy: string[] = [],
-    current: Record<string, NeoAsk | null> = {}
+    current: Record<string, NeoAsk | null> = {},
+    merged: { sourceId: string; targetId: string }[] = []
   ) {
     const delivered: { sessionId: string; messageId: string; parent: unknown }[] = [];
     const moves: { askId: string; projectId: string; messageId: string }[] = [];
+    const logged: string[] = [];
     const deps: NeoReorganizeRuntime = {
       getBinding: (sessionId) =>
         sessionId === root
@@ -216,9 +218,12 @@ describe('neo.projects.reorganize', () => {
       },
       move: (item, _cards, owner) =>
         moves.push({ askId: item.id, projectId: owner.projectId, messageId: owner.messageId }),
-      log: () => {},
+      mergeProjects: async () => merged,
+      log: (line) => {
+        logged.push(line);
+      },
     };
-    return { deps, delivered, moves };
+    return { deps, delivered, moves, logged };
   }
   const invoke = (deps: NeoReorganizeRuntime, caller: OperationCaller = neoCaller) =>
     invokeOperation(
@@ -236,6 +241,7 @@ describe('neo.projects.reorganize', () => {
     );
     expect(await invoke(deps)).toEqual({
       ok: true,
+      merged: [],
       moved: [{ askId: 'a', projectId: 'drivers' }],
       stayed: [
         { askId: 'b', reason: 'waiting_on_human' },
@@ -256,6 +262,17 @@ describe('neo.projects.reorganize', () => {
     ]);
   });
 
+  test('merges matching projects first and logs each merge', async () => {
+    const { deps, logged } = runtime([], {}, [], {}, [{ sourceId: 'web-2', targetId: 'web' }]);
+    expect(await invoke(deps)).toEqual({
+      ok: true,
+      merged: [{ sourceId: 'web-2', targetId: 'web' }],
+      moved: [],
+      stayed: [],
+    });
+    expect(logged).toEqual(['neo reorganize: merged project web-2 into web']);
+  });
+
   test('moves an off-project ask between projects unless either avatar is mid-turn', async () => {
     const moved = ask('a', {
       projectId: 'web',
@@ -269,6 +286,7 @@ describe('neo.projects.reorganize', () => {
     );
     expect(await invoke(deps)).toEqual({
       ok: true,
+      merged: [],
       moved: [{ askId: 'a', projectId: 'drivers' }],
       stayed: [{ askId: 'b', reason: 'project_busy' }],
     });
@@ -294,6 +312,7 @@ describe('neo.projects.reorganize', () => {
     );
     expect(await invoke(deps)).toEqual({
       ok: true,
+      merged: [],
       moved: [],
       stayed: [
         { askId: 'a', reason: 'changed' },
@@ -312,6 +331,7 @@ describe('neo.projects.reorganize', () => {
     };
     expect(await invoke(deps)).toEqual({
       ok: true,
+      merged: [],
       moved: [],
       stayed: [{ askId: 'a', reason: 'handoff_failed' }],
     });

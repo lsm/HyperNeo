@@ -382,6 +382,7 @@ function admitNeoIntakeTarget(
 const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   .input(['input', 'caller', 'db', 'repo', 'notify', 'router'])
   .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
+  .pipe(redirectNeoIntakeInput, ['input', 'repo'], 'input')
   .pipe(admitNeoIntakeTarget, ['input', 'db', 'repo'], 'result:receipt')
   .pipe(
     (
@@ -428,6 +429,12 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   notify: NeoIntakeNotifier,
   router: NeoRouter | null
 ) => Promise<IntakeResult>;
+
+export function redirectNeoIntakeInput(input: IntakeInput, repo: NeoRepository): IntakeInput {
+  if (repo.getBindingBySession(input.sessionId)) return input;
+  const sessionId = repo.projectMerges.redirectSession(input.sessionId);
+  return sessionId ? { ...input, sessionId } : input;
+}
 
 export function createNeoIntakeOperation(
   db: Database,

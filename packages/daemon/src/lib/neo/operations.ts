@@ -1,3 +1,4 @@
+import { hostname } from 'node:os';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { readNeoProjectFacts } from './project-route-facts.ts';
 import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
@@ -60,6 +61,8 @@ import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
 import { createNeoAskForwardOperation, neoForwardedText } from './ask-forward-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
+import { mergeNeoDuplicateProjects, readNeoProjectIdentities } from './project-merge.ts';
+import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './direct-reply-fallback.ts';
 import { createNeoRouter, type NeoRouter, reopenNeoHolder } from './router.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
@@ -228,6 +231,7 @@ const SnapshotOk = z.object({
   ok: z.literal(true),
   sessionId: z.string().nullable(),
   projects: z.array(Project),
+  projectRedirects: z.array(z.object({ sourceId: z.string(), targetId: z.string() })).optional(),
   projectFacts: z
     .array(z.object({ reference: z.string(), projectId: z.string().nullable().optional() }))
     .optional(),
@@ -782,6 +786,18 @@ export function neoReorganizeRuntime(
     deliver: (sessionId, messageId, content, from, parent) =>
       service.deliverForward(sessionId, messageId, content, from, parent),
     move: (ask, cards, owner) => service.moveAsk(ask, cards, owner),
+    mergeProjects: async () => {
+      const merges = service.repo.projectMerges;
+      const fresh = await readNeoProjectIdentities(
+        merges.localFolders(hostname()),
+        readWorkspaceIdentity
+      );
+      return mergeNeoDuplicateProjects(
+        () => merges.plan(fresh),
+        (input) => merges.merge(input),
+        (line) => service.logReorganize(line)
+      );
+    },
     log: (line) => service.logReorganize(line),
   };
 }
@@ -872,7 +888,7 @@ export function createNeoOperations(service: NeoService) {
         ? binding.projectId
         : focus
           ? (focus.projectId ?? undefined)
-          : requested;
+          : requested && (service.repo.projectMerges.resolve(requested) ?? requested);
     const detailed = caller.source === 'rpc' || binding?.kind === 'project';
     const cardDetail = detailed || !!focus;
     const compact = caller.source !== 'rpc' && !focus;
@@ -918,6 +934,9 @@ export function createNeoOperations(service: NeoService) {
             )
           : undefined,
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
+      ...(caller.source === 'rpc'
+        ? { projectRedirects: service.repo.projectMerges.redirects() }
+        : {}),
       publicAuthorBindings:
         caller.source === 'rpc' ? service.repo.listProjectBindings(scope ?? undefined) : [],
       askForwards:
@@ -1238,7 +1257,10 @@ export function createNeoOperations(service: NeoService) {
     'neo.open',
     (input: z.infer<typeof Scope>) => input.projectId,
     async (input, caller) => {
-      if (input.projectId && !service.repo.getProject(input.projectId))
+      const projectId = input.projectId
+        ? (service.repo.projectMerges.resolve(input.projectId) ?? input.projectId)
+        : null;
+      if (projectId && !service.repo.getProject(projectId))
         return { ok: false as const, reason: 'Project not found.' };
       await invokeOperation(
         service.sessions.getOperationRegistry(),
@@ -1246,7 +1268,7 @@ export function createNeoOperations(service: NeoService) {
         { limit: 50 },
         caller
       );
-      return { ...snapshot(caller), sessionId: await service.open(input.projectId ?? null) };
+      return { ...snapshot(caller), sessionId: await service.open(projectId) };
     }
   );
   const cancelConsultation = path(
