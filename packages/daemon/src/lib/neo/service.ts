@@ -506,6 +506,7 @@ export class NeoService {
           outcome: await this.invokeAsCard(work, 'work.status', {
             ref,
             since: card.sent?.inputBefore ?? card.since,
+            ...(card.sent?.receipt ? { receipt: card.sent.receipt } : {}),
           }),
         };
       },
@@ -2341,8 +2342,12 @@ export class NeoService {
     isContinuing: (workId) =>
       !!this.workContinues.get(workId) ||
       ['send', 'adopt'].includes(this.driverTargets.get(workId)?.verb ?? ''),
-    readStatus: (work, ref, since) =>
-      this.invokeAsCard(work, 'work.status', { ref, ...(since !== null ? { since } : {}) }),
+    readStatus: (work, ref, since, receipt) =>
+      this.invokeAsCard(work, 'work.status', {
+        ref,
+        ...(since !== null ? { since } : {}),
+        ...(receipt ? { receipt } : {}),
+      }),
     recordStartedAt: (workId, at) => this.driverTargets.recordStartedAt(workId, at),
     recordLive: (workId, status, live) =>
       this.driverTargets.recordLive(workId, status, live.link, live.remoteLink),

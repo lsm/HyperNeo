@@ -36,7 +36,12 @@ export interface NeoDriverSettleDeps {
   readSent(workId: string): DriverSent | null;
   readLiveStatus(workId: string): WorkStatus | null;
   isContinuing(workId: string): boolean;
-  readStatus(work: NeoWork, ref: WorkRef, since: number | null): Promise<OperationOutcome>;
+  readStatus(
+    work: NeoWork,
+    ref: WorkRef,
+    since: number | null,
+    receipt?: DriverSent['receipt']
+  ): Promise<OperationOutcome>;
   recordStartedAt(workId: string, at: number): void;
   recordLive(workId: string, status: WorkStatus, live: DriverLive): boolean;
   recordCheck(workId: string, read: boolean, now: number): boolean;
@@ -72,7 +77,8 @@ export function planNeoDriverSettlement(
             evidence.now,
             startedAt,
             evidence.continuing,
-            sent?.opening ?? (messageOpening(work.instruction) || null)
+            sent?.opening ?? (messageOpening(work.instruction) || null),
+            sent?.receipt
           )
         : null,
   };
@@ -91,7 +97,7 @@ async function readNeoDriverSettleEvidence(
 ): Promise<NeoDriverSettleEvidence> {
   const startedAt = deps.readStartedAt(work.id);
   const sent = deps.readSent(work.id);
-  const outcome = await deps.readStatus(work, ref, sent?.inputBefore ?? startedAt);
+  const outcome = await deps.readStatus(work, ref, sent?.inputBefore ?? startedAt, sent?.receipt);
   return {
     startedAt,
     sent,
