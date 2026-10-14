@@ -140,6 +140,11 @@ export function neoActionTriggerKey(
       );
     case 'confirm':
       return key(`confirm:${action.itemId}`, `step to confirm: ${action.step}`);
+    case 'talk':
+      return key(
+        `talk:${action.workId}:${action.what}`,
+        `${titled(work(action.workId), action.workId)} needs the human to tell it directly: ${action.what}`
+      );
   }
 }
 

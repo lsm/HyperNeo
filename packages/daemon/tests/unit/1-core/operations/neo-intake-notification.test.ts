@@ -23,6 +23,9 @@ import type { Database } from '../../../../src/storage/database.ts';
 import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
+import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
+import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs.ts';
+import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', projectId: null };
@@ -55,6 +58,9 @@ describe('accepted public ask notification', () => {
     writer = new Sqlite(join(directory, 'fictional.db'));
     reader = new Sqlite(join(directory, 'fictional.db'));
     createTables(writer);
+    runMigration279(writer);
+    runMigration313(writer);
+    runMigration314(writer);
     runMigration340(writer);
     sessions = new SessionRepository(writer);
     sdk = new SDKMessageRepository(writer as never);

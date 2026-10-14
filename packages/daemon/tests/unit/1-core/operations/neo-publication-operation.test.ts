@@ -272,6 +272,19 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
+  test('a cross-project return answers the human message that started it, once', () => {
+    const reply = 'neo-cross-project:group-1:reply';
+    prompt(root.sessionId, reply, 'system');
+    stamps.set(`${root.sessionId}\0${reply}`, ask);
+    expect(publish(draft, caller(root.sessionId, reply, false))).toMatchObject({
+      accepted: true,
+      publication: { triggerId: `human:${ask.messageId}` },
+    });
+    expect(
+      publish({ ...draft, publicationId: '20000000-0000-4000-8000-000000000002' }, caller())
+    ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
+  });
+
   test('refuses a triggerId that is not this turn’s trigger', () => {
     expect(publish({ ...draft, triggerId: 'outcome:other:1' }, caller())).toMatchObject({
       accepted: false,

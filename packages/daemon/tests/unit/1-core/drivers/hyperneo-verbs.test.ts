@@ -1,12 +1,22 @@
+import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { createHyperneoAdapter } from '../../../../src/lib/drivers/hyperneo-adapter';
+import {
+  createHyperneoAdapter,
+  type HyperneoSessionControl,
+} from '../../../../src/lib/drivers/hyperneo-adapter';
+import { ModelUnavailableError } from '../../../../src/lib/session/session-lifecycle';
+import type { ArchiveAdmission } from '../../../../src/lib/drivers/types';
 import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function control(db: Database, events: string[]) {
+  let selectedModel = 'gpt-6-luna';
   return {
     sessions: {
+      resolveModel: async (model: string) =>
+        model === 'GLM 5.3' ? 'glm-5.3' : ['glm-5.3', 'gpt-6-luna'].includes(model) ? model : null,
       create: async (workspacePath: string, title: string, model?: string) => {
+        selectedModel = model ?? selectedModel;
         const status = workspacePath === '/focus/repo' ? 'pending_worktree_choice' : 'active';
         db.prepare(
           `INSERT INTO sessions (id, title, workspace_path, status, last_active_at, type)
@@ -15,7 +25,7 @@ function control(db: Database, events: string[]) {
         events.push(`create ${workspacePath}${model ? ` on ${model}` : ''}`);
         return 'new';
       },
-      model: (sessionId: string) => (sessionId === 'new' ? 'gpt-6-luna' : null),
+      model: (sessionId: string) => (sessionId === 'new' ? selectedModel : null),
       chooseWorktree: async (sessionId: string) => {
         db.exec(`UPDATE sessions SET status = 'active' WHERE id = '${sessionId}'`);
         events.push(`worktree ${sessionId}`);
@@ -26,6 +36,13 @@ function control(db: Database, events: string[]) {
       interrupt: (sessionId: string) => {
         events.push(`interrupt ${sessionId}`);
         return true;
+      },
+      archive: async (ref: { id: string }, admit: ArchiveAdmission) => {
+        const refused = admit();
+        if (refused) return refused;
+        db.prepare("UPDATE sessions SET status = 'archived' WHERE id = ?").run(ref.id);
+        events.push(`archive ${ref.id}`);
+        return { ok: true as const, value: { archived: true } };
       },
     },
     neoFolder: () => '/data/Neo',
@@ -90,8 +107,9 @@ describe('hyperneo adapter send and status', () => {
 
   afterEach(() => db.close());
 
-  function adapter() {
+  function adapter(prepareExecution?: WorkExecutionPreparer) {
     return createHyperneoAdapter({
+      prepareExecution,
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -104,6 +122,78 @@ describe('hyperneo adapter send and status', () => {
   }
 
   const ref = (id: string) => ({ adapter: 'hyperneo', id });
+
+  test('creates the native session in the prepared directory without another worktree choice', async () => {
+    const driver = adapter(async () => ({
+      ok: true,
+      value: {
+        directory: '/fresh/remote-base',
+        release: async () => {
+          throw new Error('Live resource released');
+        },
+      },
+    }));
+    expect(
+      await driver.start!(
+        {
+          place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+          title: 't',
+          message: 'm',
+          preparation: { pack: 'coding', parameters: {} },
+        },
+        { from: 'user', caller: { source: 'rpc' } }
+      )
+    ).toMatchObject({ ok: true });
+    expect(events).toEqual(['create /fresh/remote-base', 'announce new']);
+    expect(handed).toHaveLength(1);
+  });
+
+  test('failed preparation creates no native session or handoff', async () => {
+    const driver = adapter(async () => ({
+      ok: false,
+      reason: 'preparation_failed',
+      detail: 'fetch failed',
+    }));
+    expect(
+      await driver.start!(
+        {
+          place: { machine: 'imac', folder: '/focus/repo', name: 'repo' },
+          title: 't',
+          message: 'm',
+          preparation: { pack: 'coding', parameters: {} },
+        },
+        { from: 'user', caller: { source: 'rpc' } }
+      )
+    ).toMatchObject({ ok: false, reason: 'preparation_failed' });
+    expect(events).toEqual([]);
+    expect(handed).toEqual([]);
+  });
+
+  test('archives an idle session but rejects live turns and owned Space sessions', async () => {
+    const driver = adapter();
+    expect(await driver.archive!(ref('idle'), () => null)).toMatchObject({ ok: true });
+    expect(await driver.status!(ref('idle'))).toMatchObject({ value: { status: 'stopped' } });
+    expect(await driver.archive!(ref('busy'), () => null)).toMatchObject({
+      ok: false,
+      reason: 'busy',
+    });
+    expect(await driver.archive!(ref('space'), () => null)).toMatchObject({
+      ok: false,
+      reason: 'not_found',
+    });
+    expect(events).toEqual(['archive idle']);
+  });
+
+  test('checks admission again immediately before the lifecycle effect', async () => {
+    let admitted = 0;
+    expect(
+      await adapter().archive!(ref('idle'), () =>
+        ++admitted === 1 ? null : { ok: false, reason: 'live_card', detail: 'new' }
+      )
+    ).toMatchObject({ ok: false, reason: 'live_card' });
+    expect(events).toEqual([]);
+    expect(await adapter().status!(ref('idle'))).toMatchObject({ value: { status: 'done' } });
+  });
   const from = { from: 'session:neo:root', caller: { source: 'rpc' as const } };
 
   test('status returns the session with its last top-level reply and when it came', async () => {
@@ -130,10 +220,14 @@ describe('hyperneo adapter send and status', () => {
     );
     const user = (content: unknown, inputKind?: string) =>
       JSON.stringify({ type: 'user', ...(inputKind && { inputKind }), message: { content } });
-    input.run(user('Fix the parser'), '2026-10-04T10:01:00.000Z', 'consumed');
+    input.run(user('Fix the parser', 'task'), '2026-10-04T10:01:00.000Z', 'consumed');
     input.run(user([{ type: 'tool_result', content: 'ok' }]), '2026-10-04T10:02:00.000Z', null);
     input.run(user('Done check for w1', 'system'), '2026-10-04T10:03:00.000Z', 'consumed');
-    input.run(user([{ type: 'text', text: 'Also add tests' }]), '2026-10-04T10:04:00.000Z', null);
+    input.run(
+      user([{ type: 'text', text: 'Also add tests', human: true }], 'human'),
+      '2026-10-04T10:04:00.000Z',
+      null
+    );
     input.run(user('Still queued'), '2026-10-04T10:05:00.000Z', 'enqueued');
     db.prepare(
       `INSERT INTO sdk_messages (session_id, message_type, sdk_message, timestamp, parent_tool_use_id)
@@ -144,13 +238,15 @@ describe('hyperneo adapter send and status', () => {
     expect(await adapter().status?.(ref('busy'))).toMatchObject({
       value: {
         recentInputs: [
-          { at: at('2026-10-04T10:01:00.000Z'), text: 'Fix the parser' },
-          { at: at('2026-10-04T10:04:00.000Z'), text: 'Also add tests' },
+          { at: at('2026-10-04T10:01:00.000Z'), text: 'Fix the parser', human: false },
+          { at: at('2026-10-04T10:04:00.000Z'), text: 'Also add tests', human: true },
         ],
       },
     });
     expect(await adapter().status?.(ref('busy'), at('2026-10-04T10:02:00.000Z'))).toMatchObject({
-      value: { recentInputs: [{ at: at('2026-10-04T10:04:00.000Z'), text: 'Also add tests' }] },
+      value: {
+        recentInputs: [{ at: at('2026-10-04T10:04:00.000Z'), text: 'Also add tests', human: true }],
+      },
     });
   });
 
@@ -240,7 +336,8 @@ describe('hyperneo adapter start and stop', () => {
 
   afterEach(() => db.close());
 
-  function adapter() {
+  function adapter(overrides: Partial<HyperneoSessionControl> = {}) {
+    const controls = control(db, events);
     return createHyperneoAdapter({
       db: () => db,
       machine: 'imac',
@@ -249,7 +346,8 @@ describe('hyperneo adapter start and stop', () => {
         handed.push(`${sessionId}: ${message}`);
         return { kind: 'enqueued', id: 'mb1' };
       },
-      ...control(db, events),
+      ...controls,
+      sessions: { ...controls.sessions, ...overrides },
     });
   }
 
@@ -279,11 +377,56 @@ describe('hyperneo adapter start and stop', () => {
   });
 
   test('start opens the session on the model Neo picked', async () => {
-    await adapter().start?.(
-      { place: place('/focus/notes'), title: 'essay', message: 'write it', model: 'glm-5.3' },
+    const result = await adapter().start?.(
+      { place: place('/focus/notes'), title: 'essay', message: 'write it', model: 'GLM 5.3' },
       from
     );
     expect(events[0]).toBe('create /focus/notes on glm-5.3');
+    expect(result).toMatchObject({ ok: true, value: { model: 'glm-5.3' } });
+    expect(handed).toEqual(['new: write it']);
+  });
+
+  test.each([{ model: 'unavailable' }, { effort: 'medium' }])(
+    'refuses unsupported configuration before creating a session: %j',
+    async (configuration) => {
+      expect(
+        await adapter().start!(
+          { place: place('/focus/notes'), title: 'essay', message: 'write it', ...configuration },
+          from
+        )
+      ).toMatchObject({
+        ok: false,
+        reason: 'model' in configuration ? 'unsupported_model' : 'unsupported_effort',
+      });
+      expect(events).toEqual([]);
+      expect(handed).toEqual([]);
+    }
+  );
+
+  test.each(['gpt-6-luna', null])(
+    'keeps the first message unsent for observed model %s',
+    async (model) => {
+      const result = await adapter({ model: () => model }).start!(
+        { place: place('/focus/notes'), title: 'essay', message: 'write it', model: 'glm-5.3' },
+        from
+      );
+      expect(result).toMatchObject({ ok: false, reason: 'not_delivered' });
+      expect(handed).toEqual([]);
+      expect(events).toContain('create /focus/notes on glm-5.3');
+    }
+  );
+
+  test('reports a model that becomes unavailable during creation as a typed refusal', async () => {
+    const result = await adapter({
+      create: async () => {
+        throw new ModelUnavailableError('Model became unavailable.');
+      },
+    }).start!(
+      { place: place('/focus/notes'), title: 'essay', message: 'write it', model: 'glm-5.3' },
+      from
+    );
+    expect(result).toMatchObject({ ok: false, reason: 'unsupported_model' });
+    expect(handed).toEqual([]);
   });
 
   test('start refuses work with no folder instead of using the Neo folder', async () => {

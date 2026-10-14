@@ -1,3 +1,4 @@
+import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { describe, expect, test } from 'bun:test';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
 import {
@@ -21,13 +22,19 @@ const catalog = { data: [model], nextCursor: null };
 function adapter(
   server: Partial<CodexAppServer> | Error,
   folders = ['/focus/dolmen'],
-  git: { root?: string; exit?: number; linked?: boolean } = {}
+  git: {
+    root?: string;
+    exit?: number;
+    linked?: boolean;
+    prepareExecution?: WorkExecutionPreparer;
+  } = {}
 ) {
   const calls: Array<[string, Record<string, unknown>]> = [];
   const spawned: Array<{ args: string[]; cwd?: string }> = [];
   let closed = false;
   const instance = createCodexDesktopAdapter({
     statePath: '/codex/state.sqlite',
+    prepareExecution: git.prepareExecution,
     worktreesDir: '/codex/worktrees',
     machine: 'laptop',
     now: () => NOW,
@@ -73,6 +80,79 @@ describe('startedThreadId', () => {
 });
 
 describe('codex-desktop start', () => {
+  test('starts in the prepared location instead of another HEAD worktree and keeps its resource', async () => {
+    const prepared: unknown[] = [];
+    let released = false;
+    const { instance, calls, spawned } = adapter(
+      { call: async () => ({ thread: { id: 'fresh' } }) },
+      undefined,
+      {
+        root: '/focus/dolmen',
+        linked: true,
+        prepareExecution: async (input, location) => {
+          prepared.push({ input, location });
+          return {
+            ok: true,
+            value: {
+              directory: '/fresh/remote-base',
+              release: async () => {
+                released = true;
+              },
+            },
+          };
+        },
+      }
+    );
+    const preparation = { pack: 'coding', parameters: { target: 'dev' } };
+    expect(await instance.start!({ ...request, preparation }, user)).toMatchObject({ ok: true });
+    expect(prepared).toEqual([
+      {
+        input: preparation,
+        location: { directory: '/focus/dolmen', destination: '/codex/worktrees/abcd1234/dolmen' },
+      },
+    ]);
+    expect(calls[0]).toEqual(['thread/start', { cwd: '/fresh/remote-base' }]);
+    expect(spawned).toEqual([]);
+    expect(released).toBe(false);
+  });
+
+  test('failed preparation creates no thread and a failed thread start releases the prepared directory', async () => {
+    let released = false;
+    for (const failedPreparation of [true, false]) {
+      const { instance, calls, spawned } = adapter(
+        {
+          call: async () => {
+            throw new Error('start failed');
+          },
+        },
+        undefined,
+        {
+          prepareExecution: async () =>
+            failedPreparation
+              ? { ok: false, reason: 'preparation_failed', detail: 'fetch failed' }
+              : {
+                  ok: true,
+                  value: {
+                    directory: '/fresh',
+                    release: async () => {
+                      released = true;
+                    },
+                  },
+                },
+        }
+      );
+      expect(
+        await instance.start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user)
+      ).toMatchObject({
+        ok: false,
+        reason: failedPreparation ? 'preparation_failed' : 'not_delivered',
+      });
+      expect(calls).toHaveLength(failedPreparation ? 0 : 1);
+      expect(spawned).toEqual([]);
+    }
+    expect(released).toBe(true);
+  });
+
   test('resolves an alias and returns the model confirmed by thread/start', async () => {
     const { instance, calls, closed } = adapter({
       call: async (method) =>

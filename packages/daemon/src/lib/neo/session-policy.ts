@@ -2,6 +2,9 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../storage/database.ts';
 import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
+import type { OperationRegistry } from '../operations/registry.ts';
 import { getDataDir } from '../data-dir.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
@@ -54,6 +57,34 @@ export function neoQueryContext(binding: NeoBinding, db: Database | undefined): 
   if (!neoDb) return '';
   return binding.kind === 'neo' ? readNeoCatchUp(neoDb) : readNeoHolderView(neoDb);
 }
+
+export function isNeoProjectSession(db: Database | undefined, sessionId: string): boolean {
+  return neoCoordinatorBinding(db, sessionId)?.kind === 'project';
+}
+
+function renderNeoProjectSnapshot(outcome: OperationOutcome): string {
+  if (
+    outcome.kind !== 'completed' ||
+    !outcome.value ||
+    typeof outcome.value !== 'object' ||
+    !('ok' in outcome.value) ||
+    outcome.value.ok !== true ||
+    'unchanged' in outcome.value
+  )
+    throw new Error('Could not read the fresh Neo project snapshot.');
+  return `Current project snapshot from the daemon (authoritative for this fresh turn):\n${JSON.stringify(outcome.value)}`;
+}
+
+export const readNeoProjectSnapshot = (superpipe({})('neo-project-query-snapshot') as PipelineAPI)
+  .input(['registry', 'sessionId'])
+  .pipe(
+    (registry: OperationRegistry, sessionId: string) =>
+      invokeOperation(registry, 'neo.snapshot', {}, { source: 'mcp', sessionId, role: 'neo' }),
+    ['registry', 'sessionId'],
+    'snapshot'
+  )
+  .pipe(renderNeoProjectSnapshot, 'snapshot', 'context')
+  .endAsync('context') as (registry: OperationRegistry, sessionId: string) => Promise<string>;
 
 const NEO_TOOLS = [
   'Read',

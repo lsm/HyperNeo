@@ -81,24 +81,12 @@ export function reserveNeoAdoption(
 
 export function requireNeoTrackedAdoption<T>(
   target: NeoDriverTarget | undefined,
-  tracked: ReadonlyMap<string, number>,
   followed: readonly WorkRef[],
-  now: number,
-  humanTurn: boolean,
   value: T
 ): { value: T } | { reason: Rejection } {
   if (target?.verb !== 'adopt') return { value };
   const key = neoSessionKey(target.ref);
   if (followed.some((item) => neoSessionKey(item) === key))
     return { reason: { ok: false, reason: 'A Neo card already follows this session.' } };
-  const at = tracked.get(key);
-  return humanTurn || (at !== undefined && now - at < NEO_SESSION_TRACK_MS)
-    ? { value }
-    : {
-        reason: {
-          ok: false,
-          reason:
-            'Neo adopts a session while answering the human’s own chat message that asks for it, or within an hour of the human tapping Track on its notice.',
-        },
-      };
+  return { value };
 }

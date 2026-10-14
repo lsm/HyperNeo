@@ -13,6 +13,7 @@ import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { requirePublicationNews } from './publication-news.ts';
 import {
+  NEO_HUMAN_TRIGGER_PREFIX,
   neoConsultationTrigger,
   neoInputTrigger,
   requirePublicationTrigger,
@@ -61,10 +62,13 @@ export function neoPublicationTrigger(
   consultation: NeoConsultation | null,
   isHumanInput: (input: NeoAskOrigin) => boolean
 ): string | null {
-  return proof.turn.consultationId
-    ? neoConsultationTrigger(consultation, isHumanInput)
-    : neoInputTrigger(proof.input.messageId, proof.turn.human);
+  if (proof.turn.consultationId) return neoConsultationTrigger(consultation, isHumanInput);
+  if (CROSS_PROJECT_REPLY.test(proof.input.messageId))
+    return `${NEO_HUMAN_TRIGGER_PREFIX}${proof.ask.messageId}`;
+  return neoInputTrigger(proof.input.messageId, proof.turn.human);
 }
+
+const CROSS_PROJECT_REPLY = /^neo-cross-project:.+:reply$/;
 
 export function reusePublicationReceipt(
   draft: Draft,

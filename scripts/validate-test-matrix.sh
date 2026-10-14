@@ -737,7 +737,7 @@ runner_shell_override() {
 # 1. DAEMON UNIT TESTS  (source of truth: scripts/test-daemon.sh)
 # ===========================================================================
 # test-daemon.sh returns early when sourced (source-guard near its bottom),
-# exposing SHARDS, shard_paths, migration_shard_paths, TEST_ROOT, REPO_ROOT.
+# exposing SHARDS, shard_paths, TEST_ROOT and REPO_ROOT.
 # shellcheck source=test-daemon.sh
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/test-daemon.sh"

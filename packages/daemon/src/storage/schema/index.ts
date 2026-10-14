@@ -1,5 +1,7 @@
+import { runMigration365 } from './m365-neo-cross-project-dispatch.ts';
 import { runMigration361 } from './m361-neo-project-avatars.ts';
 import { runMigration260 } from './m260-direct-start-requests.ts';
+import { runMigration363 } from './m363-neo-work-refusals.ts';
 import { runMigration360 } from './m360-workspace-projects.ts';
 import { runMigration258 } from './m258-direct-process-ownership.ts';
 import { runMigration257 } from './m257-direct-outcome-job.ts';
@@ -860,6 +862,7 @@ export function createTables(db: BunDatabase): void {
       )
 	    `);
   runMigration360(db);
+  runMigration363(db);
 
   db.exec(`
 	      CREATE TABLE IF NOT EXISTS tool_continuation_recovery (
@@ -1154,4 +1157,5 @@ function createIndexes(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
 		 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
   );
+  runMigration365(db);
 }

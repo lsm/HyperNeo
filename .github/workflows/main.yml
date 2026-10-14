@@ -1,10 +1,10 @@
 # CI - Build, test, and quality checks
 #
-# Free-tier shape (task #1399): one PR run occupies at most 21 parallel jobs
-# (1 check + 1 path-filter + 6 unit legs + 11 online legs + 1 web leg + 1
-# Deno boot smoke — the balance report runs after the tests, inside the same
-# budget) so a solo run never queues behind the repo's 20 shared concurrent
-# runners (the short Deno smoke leg may briefly wait for a free slot).
+# A full automatic run schedules 9 unit legs (shared + 8 balanced daemon),
+# 11 online legs and 1 web leg, plus quality checks, path filtering and Deno
+# boot smoke. The balance report follows the tests. This can exceed the
+# repo's 20 shared concurrent runners; jobs may queue, especially when PRs
+# overlap. Smaller unit buckets shorten the longest leg, not the queue.
 # Coverage instrumentation is REMOVED from CI entirely (owner directive
 # 2026-08-23):
 # no per-job --coverage, no lcov artifacts, no coverage gate, baseline, or
@@ -17,7 +17,7 @@
 #
 # | Trigger                               | Tests Run                                       |
 # |---------------------------------------|-------------------------------------------------|
-# | PR to dev (mixed code changes)        | check + 6 unit shards + 11 online shards + web  |
+# | PR to dev (mixed code changes)        | check + 9 unit shards + 11 online shards + web  |
 # | PR to dev (daemon-only, per changes)  | check + unit + online (web skipped)             |
 # | PR to dev (web-only, per changes)     | check + web (unit + online skipped)             |
 # | PR to dev (docs-only, per changes)    | check only                                      |
@@ -400,12 +400,9 @@ jobs:
   # ============================================
   # DAEMON + SHARED UNIT TESTS
   # Run on: PR to dev (daemon paths), push to dev
-  # 6 legs (task #1399 rebalance): shared · 1-core (whole tree + migration
-  # bucket 0) · handlers-migrations · storage-migrations · 5-space-a/b
-  # (duration-weighted 2-way over the whole 5-space tree; the 117s migration
-  # chain is dealt 3-way across the three directory legs). Shard definitions
-  # live in scripts/test-daemon.sh (source of truth); validate-test-matrix.sh
-  # guards that every unit test file is owned by exactly one shard.
+  # Shared plus eight duration-balanced daemon buckets. Definitions and
+  # generated timing weights live in scripts/test-daemon.sh; the matrix guard
+  # verifies that every unit-test file belongs to exactly one bucket.
   # ============================================
 
   test-daemon-shared-unit:
@@ -417,7 +414,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [shared, 1-core, handlers-migrations, storage-migrations, 5-space-a, 5-space-b]
+        shard: [shared, daemon-a, daemon-b, daemon-c, daemon-d, daemon-e, daemon-f, daemon-g, daemon-h]
 
     steps:
       - uses: actions/checkout@v6

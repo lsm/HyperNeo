@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { workStartConfiguration } from './start-configuration.ts';
+import { workStartPreparation } from './start-preparation.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 
 export const WorkStatusSchema = z.enum([
@@ -67,6 +68,7 @@ export const PlaceGroupSchema = z.object({
 
 export const WorkRejectionSchema = z.enum([
   ...workStartConfiguration.refusalSchema.options,
+  ...workStartPreparation.refusalSchema.options,
   'unknown_adapter',
   'unsupported',
   'not_found',
@@ -75,6 +77,9 @@ export const WorkRejectionSchema = z.enum([
   'claude_cli_login_expired',
   'unreachable',
   'invalid_place',
+  'busy',
+  'human_only',
+  'live_card',
 ]);
 
 export function workResultSchema<Value extends z.ZodType>(value: Value) {
@@ -84,7 +89,11 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
   ]);
 }
 
-export const WorkInputSchema = z.object({ at: z.number(), text: z.string() });
+export const WorkInputSchema = z.object({
+  at: z.number(),
+  text: z.string(),
+  human: z.boolean().optional(),
+});
 export const WorkExchangeEntrySchema = z.object({
   at: z.number(),
   role: z.enum(['user', 'agent']),
@@ -112,7 +121,9 @@ export type WorkExchangeEntry = z.infer<typeof WorkExchangeEntrySchema>;
 export type Rejected = { ok: false; reason: WorkRejection; detail: string };
 export type Result<T> = { ok: true; value: T } | Rejected;
 
-export type WorkVerb = 'find' | 'start' | 'send' | 'status' | 'stop';
+export type WorkVerb = 'find' | 'start' | 'send' | 'status' | 'stop' | 'archive';
+
+export type ArchiveAdmission = () => Rejected | null;
 
 export interface FindQuery {
   text?: string;
@@ -127,6 +138,7 @@ export interface StartRequest {
   title: string;
   message: string;
   createFolder?: boolean;
+  preparation?: z.infer<typeof workStartPreparation.schema>;
   model?: string;
   effort?: string;
 }
@@ -140,6 +152,7 @@ export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
   readonly supportsStartEffort?: boolean;
+  readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
   readonly start?: (
     request: StartRequest,
@@ -152,4 +165,8 @@ export interface WorkAdapter {
   ) => Promise<Result<{ delivered: boolean }>>;
   readonly status?: (ref: WorkRef, since?: number) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
+  readonly archive?: (
+    ref: WorkRef,
+    admit: ArchiveAdmission
+  ) => Promise<Result<{ archived: boolean }>>;
 }

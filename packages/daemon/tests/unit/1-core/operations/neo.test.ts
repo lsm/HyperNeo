@@ -424,6 +424,7 @@ describe('Neo MVP', () => {
         (item) => item.name
       )
     ).toEqual([
+      'neo.projects.dispatch',
       'neo.message.send',
       'neo.projects.reorganize',
       'neo.publication.publish',
@@ -458,6 +459,7 @@ describe('Neo MVP', () => {
       'neo.work.start',
       'neo.work.continue',
       'neo.work.retry',
+      'neo.work.refused',
       'neo.work.close',
       'neo.work.cancel',
     ]);

@@ -100,6 +100,78 @@ describe('work verb operations', () => {
     ).toMatchObject({ ok: true, value: { title: 'font size' } });
   });
 
+  test('forwards preparation requirements with model and effort only to an opted-in adapter', async () => {
+    const received: unknown[] = [];
+    const capable: WorkAdapter = {
+      ...hyperneo,
+      supportsStartPreparation: true,
+      supportsStartEffort: true,
+      start: async (request) => {
+        received.push(request);
+        return { ok: true, value: summary('hyperneo', 's1') };
+      },
+    };
+    const preparation = {
+      pack: 'coding',
+      parameters: { target: 'dev', prerequisiteCommits: ['a'.repeat(40)] },
+    };
+    const result = await call(
+      'work.start',
+      {
+        adapter: capable.id,
+        place,
+        title: 't',
+        message: 'm',
+        preparation,
+        model: 'sol 6.1',
+        effort: 'medium',
+      },
+      undefined,
+      undefined,
+      [capable]
+    );
+    expect(result).toMatchObject({ ok: true });
+    expect(received).toEqual([
+      expect.objectContaining({ preparation, model: 'sol 6.1', effort: 'medium' }),
+    ]);
+  });
+
+  test.each([false, undefined, 'remote'] as const)(
+    'refuses unsupported preparation on route %s before any dispatch',
+    async (support) => {
+      let starts = 0;
+      let forwards = 0;
+      const adapter: WorkAdapter = {
+        ...hyperneo,
+        supportsStartPreparation: support === 'remote' ? true : support,
+        start: async () => {
+          starts++;
+          return { ok: true, value: summary('hyperneo', 's1') };
+        },
+      };
+      expect(
+        await call(
+          'work.start',
+          {
+            adapter: adapter.id,
+            place: support === 'remote' ? { ...place, daemon: 'laptop' } : place,
+            title: 't',
+            message: 'm',
+            preparation: { pack: 'coding', parameters: { target: 'dev' } },
+          },
+          async () => {
+            forwards++;
+            return { ok: true, value: summary('hyperneo', 's1') };
+          },
+          undefined,
+          [adapter]
+        )
+      ).toMatchObject({ ok: false, reason: 'unsupported_preparation' });
+      expect(starts).toBe(0);
+      expect(forwards).toBe(0);
+    }
+  );
+
   test('passes explicit effort only to an opted-in local adapter and retains its receipt', async () => {
     const received: unknown[] = [];
     const capable: WorkAdapter = {

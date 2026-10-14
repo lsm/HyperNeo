@@ -15,6 +15,8 @@ import { runMigration348 } from '../../../../src/storage/schema/m348-neo-ask-ite
 import { runMigration350 } from '../../../../src/storage/schema/m350-neo-ask-item-kind';
 import { runMigration351 } from '../../../../src/storage/schema/m351-neo-ask-item-question';
 import { runMigration352 } from '../../../../src/storage/schema/m352-neo-ask-item-watch';
+import { runMigration358 } from '../../../../src/storage/schema/m358-neo-ask-revisions';
+import { runMigration364 } from '../../../../src/storage/schema/m364-neo-outcome-bindings';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -42,6 +44,8 @@ function withAsks() {
     runMigration350,
     runMigration351,
     runMigration352,
+    runMigration358,
+    runMigration364,
   ])
     migrate(db);
   return db;
@@ -141,5 +145,227 @@ describe('NeoAskRepository', () => {
     expect(() =>
       db.prepare("UPDATE neo_ask_items SET state = 'done' WHERE id = 'i1'").run()
     ).toThrow();
+  });
+});
+
+describe('NeoAskRepository outcome bindings', () => {
+  function fixture() {
+    const db = withAsks();
+    db.exec("ALTER TABLE neo_work ADD COLUMN status TEXT NOT NULL DEFAULT 'proposed'");
+    db.exec('CREATE TABLE neo_work_driver_targets (work_id TEXT, started_at INTEGER)');
+    db.exec('CREATE TABLE neo_work_continues (work_id TEXT, stalled INTEGER, progress TEXT)');
+    const asks = new NeoAskRepository(db);
+    asks.open(input, [{ text: 'Deliver outcome', check: null, watch: ['record:1'] }]);
+    asks.open({ ...input, id: 'a2', requestKey: 'target' }, [{ text: 'Other', check: null }]);
+    asks.link('a1', 'w1');
+    asks.link('a2', 'w2');
+    const bindings = [{ itemId: 'i1', deliveredBy: 'w1' }];
+    const verify = () => {
+      const item = asks.get('a1')!.doneItems![0];
+      asks.tickItem(
+        'a1',
+        { ...item, state: 'met', evidence: 'Independent proof', metBy: 'daemon' },
+        10,
+        item,
+        true
+      );
+    };
+    return { db, asks, bindings, verify };
+  }
+
+  test('persists binding, invalidates evidence and approval once, and rejects stale writes', () => {
+    const { db, asks, bindings, verify } = fixture();
+    try {
+      verify();
+      asks.approve('a1', 10, 0);
+      expect(asks.bindItems('a1', bindings, 0, 11)).toEqual({ ok: true });
+      expect(asks.get('a1')).toMatchObject({
+        revision: 1,
+        approvedAt: null,
+        approvedRevision: null,
+        doneItems: [
+          {
+            deliveredBy: 'w1',
+            state: 'pending',
+            evidence: null,
+            metBy: null,
+            verifiedDefinitionHash: null,
+          },
+        ],
+      });
+      verify();
+      asks.approve('a1', 12, 1);
+      const before = asks.get('a1');
+      expect(asks.bindItems('a1', bindings, 1, 13)).toEqual({ ok: true });
+      expect(asks.get('a1')).toEqual(before);
+      expect(asks.bindItems('a1', [{ itemId: 'i1', deliveredBy: null }], 0, 14)).toEqual({
+        ok: false,
+        reason: 'stale_ask_revision',
+      });
+      expect(asks.get('a1')).toEqual(before);
+      expect(asks.bindItems('a1', [{ itemId: 'i1', deliveredBy: null }], 1, 15)).toEqual({
+        ok: true,
+      });
+      expect(asks.get('a1')).toMatchObject({
+        revision: 2,
+        doneItems: [{ deliveredBy: null, state: 'pending', evidence: null }],
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('an in-flight verification cannot certify a newly changed binding', () => {
+    const { db, asks, bindings } = fixture();
+    try {
+      const stale = asks.get('a1')!.doneItems![0];
+      asks.bindItems('a1', bindings, 0, 11);
+      expect(
+        asks.tickItem(
+          'a1',
+          { ...stale, state: 'met', evidence: 'old proof', metBy: 'daemon' },
+          12,
+          stale,
+          true
+        )
+      ).toBe(false);
+      expect(asks.get('a1')!.doneItems![0]).toMatchObject({
+        state: 'pending',
+        verifiedDefinitionHash: null,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('rejects missing and foreign cards, non-outcomes and duplicate items atomically', () => {
+    const { db, asks, bindings } = fixture();
+    try {
+      const before = asks.get('a1');
+      for (const deliveredBy of ['absent', 'w2']) {
+        expect(asks.bindItems('a1', [{ itemId: 'i1', deliveredBy }], 0, 11)).toEqual({
+          ok: false,
+          reason: 'binding_card_not_owned',
+        });
+      }
+      for (const inputBindings of [
+        [...bindings, ...bindings],
+        [...bindings, { itemId: 'missing', deliveredBy: 'w1' }],
+      ]) {
+        expect(asks.bindItems('a1', inputBindings, 0, 11)).toEqual({
+          ok: false,
+          reason: 'invalid_outcome_binding',
+        });
+      }
+      expect(asks.get('a1')).toEqual(before);
+      for (const column of ['decision = 1', 'removed = 1', "kind = 'wait'"]) {
+        db.exec(
+          `UPDATE neo_ask_items SET decision = 0, removed = 0, kind = NULL WHERE ask_id = 'a1'`
+        );
+        db.exec(`UPDATE neo_ask_items SET ${column} WHERE ask_id = 'a1'`);
+        expect(asks.bindItems('a1', bindings, 0, 11)).toEqual({
+          ok: false,
+          reason: 'invalid_outcome_binding',
+        });
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  test('refuses material bindings once either card is dispatched but allows exact retry', () => {
+    const { db, asks, bindings } = fixture();
+    try {
+      db.exec("INSERT INTO neo_work_driver_targets VALUES ('w1', 4)");
+      expect(asks.bindItems('a1', bindings, 0, 11)).toEqual({
+        ok: false,
+        reason: 'binding_already_dispatched',
+      });
+      db.exec('DELETE FROM neo_work_driver_targets');
+      expect(asks.bindItems('a1', bindings, 0, 12)).toEqual({ ok: true });
+      db.exec("UPDATE neo_work SET status = 'queued' WHERE id = 'w1'");
+      expect(asks.bindItems('a1', bindings, 1, 13)).toEqual({ ok: true });
+      expect(asks.bindItems('a1', [{ itemId: 'i1', deliveredBy: null }], 1, 14)).toEqual({
+        ok: false,
+        reason: 'binding_already_dispatched',
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('opt-in fold remaps item IDs, preserves card identity and verified evidence, invalidates target approval', () => {
+    const { db, asks, bindings, verify } = fixture();
+    try {
+      asks.bindItems('a1', bindings, 0, 11);
+      verify();
+      asks.approve('a1', 12, 1);
+      asks.approve('a2', 12, 0);
+      const original = asks.get('a1')!.doneItems![0];
+      const kept = asks.get('a2')!.doneItems![0];
+      expect(
+        asks.fold(
+          asks.get('a1')!,
+          asks.get('a2')!,
+          [{ from: 'i1', id: 'i2', position: 1 }],
+          'folded',
+          13,
+          true
+        )
+      ).toBe(true);
+      expect(asks.get('a2')).toMatchObject({
+        revision: 1,
+        approvedAt: null,
+        approvedRevision: null,
+        approvedContinues: 0,
+        workIds: ['w1', 'w2'],
+      });
+      expect(asks.get('a2')!.doneItems![0]).toEqual(kept);
+      expect(asks.get('a2')!.doneItems![1]).toMatchObject({ ...original, id: 'i2', addedAt: 13 });
+      expect(asks.forWork('w1')!.id).toBe('a2');
+      expect(asks.get('a1')!.status).toBe('abandoned');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('fold clears legacy bound evidence and rolls back invalid item mappings', () => {
+    const { db, asks, bindings } = fixture();
+    try {
+      asks.bindItems('a1', bindings, 0, 11);
+      db.exec(
+        "UPDATE neo_ask_items SET state = 'met', evidence = 'legacy', met_by = 'daemon' WHERE ask_id = 'a1'"
+      );
+      for (const moves of [
+        [],
+        [{ from: 'i1', id: 'i1', position: 1 }],
+        [{ from: 'missing', id: 'i2', position: 1 }],
+      ]) {
+        expect(() =>
+          asks.fold(asks.get('a1')!, asks.get('a2')!, moves, 'folded', 13, true)
+        ).toThrow('invalid_fold_items');
+        expect(asks.get('a1')!.status).toBe('open');
+        expect(asks.forWork('w1')!.id).toBe('a1');
+      }
+      expect(
+        asks.fold(
+          asks.get('a1')!,
+          asks.get('a2')!,
+          [{ from: 'i1', id: 'i2', position: 1 }],
+          'folded',
+          14,
+          true
+        )
+      ).toBe(true);
+      expect(asks.get('a2')!.doneItems![1]).toMatchObject({
+        deliveredBy: 'w1',
+        state: 'pending',
+        evidence: null,
+        metBy: null,
+        verifiedDefinitionHash: null,
+      });
+    } finally {
+      db.close();
+    }
   });
 });

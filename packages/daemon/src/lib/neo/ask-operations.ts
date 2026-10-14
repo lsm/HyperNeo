@@ -1,3 +1,4 @@
+import { NeoAskBindingError } from '../../storage/repositories/neo-ask-repository.ts';
 import type { NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
@@ -19,15 +20,8 @@ import type {
 import type { NeoService } from './service.ts';
 import { isNeoAskSettled } from './done-check.ts';
 import { requireNeoAskPack } from './packs/index.ts';
-import { CODING_CHECK_PR_MERGED } from './packs/coding/pack.ts';
-import {
-  CODING_CHECK_ISSUE_CLOSED,
-  CODING_CHECK_ISSUE_FILED,
-  CODING_CHECK_ISSUE_SUB_ISSUE,
-} from './packs/coding/issue-checks.ts';
-import { LIFE_ADMIN_CHECK_CONFIRMED } from './packs/life-admin/pack.ts';
+import type { buildNeoCheckRegistry } from './packs/check-registry.ts';
 import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
-import { CODING_CHECK_DEPLOYED } from './packs/coding/deploy-checks.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 import {
   neoDaemonReadsClaim,
@@ -48,17 +42,17 @@ type NeoAdmit = (
 type AskReceipt = { ok: true; ask: NeoAsk };
 type AskOpened = AskReceipt & { packBriefing?: string };
 
-const NEO_ASK_CHECK_KINDS = [
-  CODING_CHECK_PR_MERGED,
-  CODING_CHECK_ISSUE_FILED,
-  CODING_CHECK_ISSUE_SUB_ISSUE,
-  CODING_CHECK_ISSUE_CLOSED,
-  CODING_CHECK_DEPLOYED,
-  LIFE_ADMIN_CHECK_CONFIRMED,
-] as const;
+const CheckKind = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .describe('A check kind registered by a loaded pack.');
 const NEO_ASK_ITEM_KINDS = ['decision', 'action', 'approval', 'wait'] as const;
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const NeoAskSchema = z.object({
+  revision: z.number().int().nonnegative().optional(),
+  approvedRevision: z.number().int().nonnegative().nullable().optional(),
   id: z.string(),
   requestKey: z.string(),
   projectId: z.string().nullable(),
@@ -88,6 +82,8 @@ export const NeoAskSchema = z.object({
         state: z.enum(['pending', 'met', 'needs_you', 'reported']),
         evidence: z.string().nullable(),
         check: z.string().min(1).nullable(),
+        verifiedDefinitionHash: z.string().nullable().optional(),
+        deliveredBy: z.string().nullable().optional(),
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
         removed: z.boolean(),
         addedAt: z.number().nullable(),
@@ -122,9 +118,13 @@ const WatchUrl = z
     new RegExp(`^https://${GITHUB_REF_PATH.source}$`),
     'Pass a GitHub pull request or issue URL.'
   );
+const DeliveredBy = z.string().trim().min(1).nullable().optional();
 const Item = z.object({
+  deliveredBy: DeliveredBy.describe(
+    'Stable card ID delivering this outcome. On open only an unlinked card from the same owner/project can be claimed; on edit use a card already on this ask.'
+  ),
   text: z.string().trim().min(1).max(300),
-  check: z.enum(NEO_ASK_CHECK_KINDS).nullable().default(null),
+  check: CheckKind.nullable().default(null),
   watch: z.array(WatchUrl).min(1).max(10).optional(),
 });
 const Open = z
@@ -170,7 +170,14 @@ const Settle = z.preprocess(
     )
 );
 
+const ExpectedRevision = z
+  .number()
+  .int()
+  .nonnegative()
+  .default(0)
+  .describe('The revision from the current ask view; refresh after stale_revision.');
 const Tick = z.object({
+  expectedRevision: ExpectedRevision,
   askId: z.string().min(1),
   itemId: z.string().min(1),
   state: z.enum(['pending', 'met', 'needs_you', 'reported']),
@@ -185,26 +192,31 @@ const Question = z.object({
 });
 
 const Answer = z.object({
+  expectedRevision: ExpectedRevision,
   askId: z.string().min(1),
   itemId: z.string().min(1),
   choice: z.string().trim().min(1).max(1000),
 });
 
-const Approve = z.object({ askId: z.string().min(1) });
+const Approve = z.object({ askId: z.string().min(1), expectedRevision: ExpectedRevision });
 const Fold = z
   .object({ askId: z.string().min(1), intoAskId: z.string().min(1) })
   .refine((input) => input.askId !== input.intoAskId, 'Fold an ask into another ask.');
 const Edit = z
   .object({
+    expectedRevision: ExpectedRevision,
     askId: z.string().min(1),
     add: z.array(Item).default([]),
     remove: z.array(z.string().min(1)).default([]),
+    bind: z
+      .array(z.object({ itemId: z.string().min(1), deliveredBy: DeliveredBy.unwrap() }))
+      .default([]),
     track: z
       .array(
         z
           .object({
             itemId: z.string().min(1),
-            check: z.enum(NEO_ASK_CHECK_KINDS).nullable().default(null),
+            check: CheckKind.nullable().default(null),
             watch: z.array(WatchUrl).min(1).max(10).optional(),
           })
           .refine((item) => item.check || item.watch, 'Pass check or watch.')
@@ -212,11 +224,29 @@ const Edit = z
       .default([]),
   })
   .refine(
-    (input) => input.add.length || input.remove.length || input.track.length,
-    'Pass items to add, remove or track.'
+    (input) => input.add.length || input.remove.length || input.track.length || input.bind.length,
+    'Pass items to add, remove, track or bind.'
   );
 
 const fail = (reason: string): Rejection => ({ ok: false, reason });
+const requireAskRevision = (input: { expectedRevision: number }, ask: NeoAsk): Gate<NeoAsk> =>
+  input.expectedRevision === (ask.revision ?? 0)
+    ? { value: ask }
+    : { reason: fail('stale_revision: refresh the ask before changing or approving it.') };
+
+function requireRegisteredChecks<T>(
+  items: readonly { check?: string | null }[],
+  registry: ReturnType<typeof buildNeoCheckRegistry>,
+  value: T
+): Gate<T> {
+  if (!registry.ok) return { reason: registry };
+  for (const item of items) {
+    if (!item.check) continue;
+    const check = registry.resolve(item.check);
+    if (!check.ok) return { reason: check };
+  }
+  return { value };
+}
 
 function neoPromptText(message: SDKMessage): string {
   const content = (message as { message?: { content?: unknown } }).message?.content;
@@ -639,9 +669,11 @@ export function planNeoAskQuestion(
 ): NeoAskQuestionItem {
   const [slot] = planNeoAskEdit(ask, {
     askId: ask.id,
+    expectedRevision: ask.revision ?? 0,
     add: [{ text: input.question, check: null }],
     remove: [],
     track: [],
+    bind: [],
   }).add;
   return {
     ...slot,
@@ -658,7 +690,14 @@ export function requireNeoAskQuestionRoom<T>(
 ): Gate<T> {
   if (!item) return { value };
   const room = requireNeoAskEdit(
-    { askId: ask.id, add: [{ text: item.text, check: null }], remove: [], track: [] },
+    {
+      askId: ask.id,
+      expectedRevision: ask.revision ?? 0,
+      add: [{ text: item.text, check: null }],
+      remove: [],
+      track: [],
+      bind: [],
+    },
     ask
   );
   return 'reason' in room ? room : { value };
@@ -839,6 +878,7 @@ export function planNeoAskEdit(
   add: (NeoAskItemInput & { id: string; position: number })[];
   remove: string[];
   track: z.infer<typeof Edit>['track'];
+  bind: z.infer<typeof Edit>['bind'];
 } {
   const items = ask.doneItems ?? [];
   const next = Math.max(0, ...items.map((item) => Number(item.id.slice(1)) || 0));
@@ -850,6 +890,7 @@ export function planNeoAskEdit(
     })),
     remove: [...new Set(input.remove)],
     track: input.track,
+    bind: input.bind,
   };
 }
 
@@ -924,7 +965,20 @@ export function createNeoAskOperations(
   view: (ask: NeoAsk) => z.infer<typeof NeoAskStateViewSchema> | null
 ) {
   const withView = <T extends AskReceipt | Rejection>(result: T) =>
-    result.ok ? { ...result, view: view(result.ask) } : result;
+    result.ok
+      ? service.db.getDatabase().transaction(() => {
+          const ask = service.askRecords.get(result.ask.id) ?? result.ask;
+          return { ...result, ask, view: view(ask) };
+        })()
+      : result;
+  const withBindingView = async (run: () => AskReceipt | Rejection) => {
+    try {
+      return withView(run());
+    } catch (error) {
+      if (error instanceof NeoAskBindingError) return fail(error.message);
+      throw error;
+    }
+  };
   const humanText = (sessionId: string, messageId: string) =>
     service.db
       .getSDKMessageRepo()
@@ -1034,6 +1088,18 @@ export function createNeoAskOperations(
         checklist: ReturnType<typeof planNeoAskItems>,
         origin: NeoWorkOrigin,
         input: z.infer<typeof Open>
+      ) =>
+        service.askRecords.forRequest(`${origin.originSessionId}:${input.requestKey}`)
+          ? { value: origin }
+          : requireRegisteredChecks(checklist.items, service.checkRegistry(), origin),
+      ['checklist', 'admission', 'input'],
+      'result:admission'
+    )
+    .pipe(
+      (
+        checklist: ReturnType<typeof planNeoAskItems>,
+        origin: NeoWorkOrigin,
+        input: z.infer<typeof Open>
       ) => {
         if (service.askRecords.forRequest(`${origin.originSessionId}:${input.requestKey}`))
           return { value: origin };
@@ -1072,7 +1138,9 @@ export function createNeoAskOperations(
         isNeoAskHandedOver(caller) && receipt.ask.approvedAt == null
           ? {
               ...receipt,
-              ask: service.askRecords.approve(receipt.ask.id, Date.now()) ?? receipt.ask,
+              ask:
+                service.askRecords.approve(receipt.ask.id, Date.now(), receipt.ask.revision ?? 0) ??
+                receipt.ask,
             }
           : receipt,
       ['admission', 'caller'],
@@ -1197,7 +1265,14 @@ export function createNeoAskOperations(
       ['input', 'caller'],
       'result:admission'
     )
+    .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskTick, ['input', 'admission', 'caller'], 'result:admission')
+    .pipe(
+      (target: { ask: NeoAsk; item: NeoAskItem }) =>
+        requireRegisteredChecks([target.item], service.checkRegistry(), target),
+      'admission',
+      'result:admission'
+    )
     .pipe(
       (input: z.infer<typeof Tick>, caller: OperationCaller, target: { item: NeoAskItem }) =>
         neoHumanTickWakes(input.state, caller.source, target.item),
@@ -1230,7 +1305,7 @@ export function createNeoAskOperations(
     )
     .pipe(
       (input: z.infer<typeof Tick>, target: { ask: NeoAsk }, caller: OperationCaller) => {
-        service.askRecords.tickItem(
+        const written = service.askRecords.tickItem(
           target.ask.id,
           {
             id: input.itemId,
@@ -1238,9 +1313,10 @@ export function createNeoAskOperations(
             evidence: input.evidence ?? null,
             metBy: input.state === 'met' ? (caller.source === 'mcp' ? 'neo' : 'human') : null,
           },
-          Date.now()
+          Date.now(),
+          target.ask.doneItems?.find((item) => item.id === input.itemId)
         );
-        return { ask: service.askRecords.get(target.ask.id) };
+        return { ask: written ? service.askRecords.get(target.ask.id) : null };
       },
       ['input', 'admission', 'caller'],
       'ticked'
@@ -1267,6 +1343,7 @@ export function createNeoAskOperations(
       ['input', 'caller'],
       'result:admission'
     )
+    .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskQuestion, ['input', 'admission'], 'result:admission')
     .pipe(readNeoAskReply, ['input', 'admission'], 'reply')
     .pipe(
@@ -1284,7 +1361,8 @@ export function createNeoAskOperations(
         target: { ask: NeoAsk },
         reply: { choice: string; met: boolean }
       ) => {
-        if (reply.met)
+        const written =
+          !reply.met ||
           service.askRecords.tickItem(
             target.ask.id,
             {
@@ -1293,9 +1371,11 @@ export function createNeoAskOperations(
               evidence: `The human answered: ${reply.choice}`,
               metBy: 'human',
             },
-            Date.now()
+            Date.now(),
+            target.ask.doneItems?.find((item) => item.id === input.itemId),
+            true
           );
-        return { ask: service.askRecords.get(target.ask.id) };
+        return { ask: written ? service.askRecords.get(target.ask.id) : null };
       },
       ['input', 'admission', 'reply'],
       'answered'
@@ -1361,9 +1441,10 @@ export function createNeoAskOperations(
       ['input', 'caller'],
       'result:admission'
     )
+    .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(
       (ask: NeoAsk) => {
-        const approved = service.askRecords.approve(ask.id, Date.now());
+        const approved = service.askRecords.approve(ask.id, Date.now(), ask.revision ?? 0);
         if (approved) service.resetCardStalls(approved.workIds);
         return { ask: approved };
       },
@@ -1396,7 +1477,24 @@ export function createNeoAskOperations(
       ['input', 'caller'],
       'result:admission'
     )
+    .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskEdit, ['input', 'admission'], 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Edit>, ask: NeoAsk) =>
+        requireRegisteredChecks(
+          [
+            ...input.add,
+            ...input.track.map((change) => ({
+              check:
+                change.check ?? ask.doneItems?.find((item) => item.id === change.itemId)?.check,
+            })),
+          ],
+          service.checkRegistry(),
+          ask
+        ),
+      ['input', 'admission'],
+      'result:admission'
+    )
     .pipe(
       (input: z.infer<typeof Edit>, ask: NeoAsk) => {
         const tracked = new Map<string, NeoAskItem>();
@@ -1424,8 +1522,8 @@ export function createNeoAskOperations(
     .pipe(planNeoAskEdit, ['admission', 'input'], 'plan')
     .pipe(
       (ask: NeoAsk, plan: ReturnType<typeof planNeoAskEdit>) => {
-        service.askRecords.editItems(ask.id, plan, Date.now());
-        return { ask: service.askRecords.get(ask.id) };
+        const written = service.askRecords.editItems(ask.id, plan, Date.now(), ask.revision ?? 0);
+        return { ask: written ? service.askRecords.get(ask.id) : null };
       },
       ['admission', 'plan'],
       'edited'
@@ -1459,7 +1557,8 @@ export function createNeoAskOperations(
           pair.target,
           planNeoAskFold(pair.source, pair.target),
           `Superseded: folded into ask ${pair.target.id}.`,
-          Date.now()
+          Date.now(),
+          true
         ),
         ask: service.askRecords.get(pair.target.id),
       }),
@@ -1482,11 +1581,11 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.fold',
       description:
-        "Fold one open ask into another when they are the same request, such as a duplicate opened by mistake: the folded ask's checklist items and cards move to intoAskId, and the folded ask closes as superseded. Both asks must be open and yours. Every item moves as it is.",
+        "Fold one open ask into another when they are the same request, such as a duplicate opened by mistake: the folded ask's checklist items and cards move to intoAskId, and the folded ask closes as superseded. Both asks must be open and yours. Card IDs and valid outcome evidence survive the fold; the kept ask requires approval for its new revision.",
       inputSchema: Fold,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => withView(await fold(input, caller)),
+      execute: async (input, caller) => withBindingView(() => fold(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.open',
@@ -1495,7 +1594,7 @@ export function createNeoAskOperations(
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => withView(await open(input, caller)),
+      execute: async (input, caller) => withBindingView(() => open(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.tick',
@@ -1536,11 +1635,11 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.edit',
       description:
-        "Change an open ask's done checklist when what done means changes: add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply, or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. New outcomes and changed tracking require the matching coding.pr_merged/coding.deployed check for PR merge or deploy outcomes; untouched legacy items stay unchanged. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
+        "Change an open ask's done checklist when what done means changes: bind [{itemId, deliveredBy}] links an outcome to a card on this ask (null removes it), invalidating its evidence and approval; material changes are refused after dispatch. add items (each can pass watch, GitHub pull request or issue URLs the daemon ticks it met on, and check, as in neo.ask.open), remove ones that no longer apply, or track open items: track [{itemId, watch, check}] sets what the daemon reads for an item already listed, so the daemon ticks it instead of you. New outcomes and changed tracking require the matching coding.pr_merged/coding.deployed check for PR merge or deploy outcomes; untouched legacy items stay unchanged. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
       inputSchema: Edit,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => withView(await edit(input, caller)),
+      execute: async (input, caller) => withBindingView(() => edit(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.settle',

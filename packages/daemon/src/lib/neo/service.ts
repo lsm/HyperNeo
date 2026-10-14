@@ -1,3 +1,15 @@
+import { NeoDependencyRepository } from '../../storage/repositories/neo-dependency-repository.ts';
+import { runNeoReadWork } from './read-work.ts';
+import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
+import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-refusal-repository.ts';
+import { reconcileNeoWorkRefusal } from './work-refusal.ts';
+import {
+  NeoCrossProjectRepository,
+  neoCrossProjectReplyId,
+  type NeoCrossProjectGroup,
+  type NeoCrossProjectMember,
+} from '../../storage/repositories/neo-cross-project-repository.ts';
+import { neoForwardedText } from './ask-forward-operation.ts';
 import { neoOutcomeCheckPolicy } from './outcome-check-policy.ts';
 import { neoPrQuestionWithdrawalPolicy } from './packs/coding/question-withdrawal-policy.ts';
 import {
@@ -406,12 +418,14 @@ export class NeoService {
   readonly workWakes: NeoWorkWakeRepository;
   readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
+  readonly dependencies: NeoDependencyRepository;
   readonly workPrs: NeoWorkPrRepository;
   readonly cardEvents: NeoCardEventSubscriptionRepository;
   private readonly sessionEvents: SessionExternalEventStore;
   private readonly sessionSubscriptions: SessionEventSubscriptionRepository;
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
   readonly workPrClaims: NeoWorkPrClaimRepository;
+  readonly workRefusals: NeoWorkRefusalRepository;
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
@@ -461,6 +475,7 @@ export class NeoService {
       readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
     );
   private readonly watchedAskTopics = new Set<string>();
+  readonly crossProjects: NeoCrossProjectRepository;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
@@ -732,6 +747,7 @@ export class NeoService {
       sessionBranchPrs: (ref) => this.sessionBranchPrs(ref),
       notifyChanged: () => this.notifyChanged(),
     });
+    this.workRefusals = new NeoWorkRefusalRepository(db.getDatabase());
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
@@ -742,6 +758,11 @@ export class NeoService {
     this.workWakes = new NeoWorkWakeRepository(db.getDatabase());
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged);
+    this.dependencies = new NeoDependencyRepository(
+      db.getDatabase(),
+      this.askRecords,
+      this.notifyChanged
+    );
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
     this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
@@ -760,6 +781,7 @@ export class NeoService {
       }),
       createLifeAdminPack(),
     ];
+    this.crossProjects = new NeoCrossProjectRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), this.notifyChanged);
     this.consultationWaiters = new NeoConsultationWaiterRepository(
       db.getDatabase(),
@@ -835,6 +857,8 @@ export class NeoService {
         return { accepted: true, created: false, publication };
       },
       append: (input, consultationId) => {
+        const problem = this.crossProjects.publicationProblem(input, consultationId);
+        if (problem) return { accepted: false, reason: problem };
         if (!consultationId) return this.appendPublication(input);
         const receipt = publicationSettlements.settleWithPublication({
           consultationId,
@@ -879,6 +903,30 @@ export class NeoService {
       newId: () => crypto.randomUUID(),
     };
     this.directReplies = directReplies;
+    const offHumanInput = events.subscribe(
+      'message.persisted',
+      ({ sessionId, messageId }) => {
+        const human = db
+          .getSDKMessageRepo()
+          .getStoredPromptsByUuid(sessionId, messageId)
+          .some((message) => 'inputKind' in message && message.inputKind === 'human');
+        if (!human) return;
+        const at =
+          db.getSDKMessageRepo().getUserMessageByUuid(sessionId, messageId)?.timestamp ?? 0;
+        for (const row of this.workRefusals.list()) {
+          if (
+            at > row.at &&
+            !row.ref.daemon &&
+            ((row.ref.adapter === 'hyperneo' && row.ref.id === sessionId) ||
+              (row.ref.adapter === 'space' &&
+                row.ref.id === spaceWorkRefForSession(db.getDatabase(), sessionId)?.id)) &&
+            this.workRefusals.clear(row)
+          )
+            this.notifyChanged();
+        }
+      },
+      { subscriberName: 'neo-work-refusal-human-input' }
+    );
     const offUpdated = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState }) => {
@@ -953,6 +1001,7 @@ export class NeoService {
       { subscriberName: 'neo-card-events', namespaceId: SESSION_EVENT_SCOPE }
     );
     this.unsubscribe = () => {
+      offHumanInput();
       offUpdated();
       offStatus();
       offDeleted();
@@ -1100,7 +1149,9 @@ export class NeoService {
       standingRules: neoStandingRules(this.db.getGlobalSettings?.().neo),
       stored: !!this.publications.get(input.conversationId, input.publicationId),
     });
-    const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
+    const receipt = this.crossProjects.append(input, undefined, () =>
+      this.publications.append(withNeoSavedRules(input, plan.rules))
+    );
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
     if (receipt.accepted && receipt.created && !input.interim)
       this.spendWaitingReminders(input.producerInput);
@@ -1474,6 +1525,17 @@ export class NeoService {
     target: NeoDriverTarget,
     tried = new Set<string>()
   ): Promise<void> {
+    if (target.verb === 'read') {
+      const failure = await runNeoReadWork(
+        this.repo,
+        this.sessions.getOperationRegistry(),
+        work,
+        target,
+        (reported) => this.returnReport(reported)
+      );
+      if (failure && !failure.ok) await this.failWork(work, failure.reason);
+      return;
+    }
     if (
       target.verb === 'send' &&
       awaitingNeoWorker(work) &&
@@ -1501,6 +1563,14 @@ export class NeoService {
       this.workDoneGoal(queued.id),
       this.cardEventsDelivered()
     );
+    const packId = this.askRecords.forWork(queued.id)?.pack;
+    const pack = this.pack(packId ?? '');
+    if (target.verb === 'start' && packId && !pack) {
+      await this.failWork(queued, `unsupported_preparation: pack ${packId} is not installed.`);
+      return;
+    }
+    if (target.verb === 'start' && pack?.prepareExecution)
+      call.input.preparation = { pack: pack.id, parameters: target.preparationParameters ?? {} };
     const probe =
       target.verb === 'send'
         ? await this.readSendBaseline(target.ref, queued, String(call.input.message))
@@ -1513,7 +1583,8 @@ export class NeoService {
         queued.id,
         result.ref,
         result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
-        result.link
+        result.link,
+        { model: result.model, effort: result.effort }
       );
       const opening = messageOpening(String(call.input.message));
       this.driverTargets.recordSent(
@@ -1657,7 +1728,12 @@ export class NeoService {
     );
     for (const work of this.repo.listWork()) {
       try {
-        if (work.status === 'queued' || awaitingNeoWorker(work)) await this.start(work.id);
+        if (
+          work.status === 'queued' ||
+          awaitingNeoWorker(work) ||
+          (work.status === 'proposed' && this.driverTargets.get(work.id)?.verb === 'read')
+        )
+          await this.start(work.id);
         await this.reconcile(work.id);
       } catch (error) {
         this.log.warn('Neo recovery pending', error);
@@ -1701,6 +1777,16 @@ export class NeoService {
   }
 
   async refreshDriverWork(): Promise<void> {
+    for (const refusal of this.workRefusals.list()) {
+      const work = this.repo.getWork(refusal.workId);
+      if (!work) continue;
+      await reconcileNeoWorkRefusal(refusal, {
+        read: () => this.invokeAsCard(work, 'work.status', { ref: refusal.ref, since: refusal.at }),
+        clear: () => {
+          if (this.workRefusals.clear(refusal)) this.notifyChanged();
+        },
+      }).catch((error) => this.log.warn('Card refusal refresh pending', error));
+    }
     const cards = this.driverTargets
       .cardRefs(Date.now() - NEO_WORK_FOLLOW_MAX_AGE_MS)
       .flatMap((card) => {
@@ -2315,7 +2401,7 @@ export class NeoService {
           const ticks = await readNeoAskEventTicks(this.packs(), ask, event, (id, error) =>
             this.log.warn(`Neo pack ${id} event ticks pending`, error)
           );
-          if (ticks.length) this.writeAskTicks(this.askRecords.get(ask.id) ?? ask, ticks);
+          if (ticks.length) this.writeAskTicks(ask, ticks);
         }
       },
       'event',
@@ -2540,7 +2626,8 @@ export class NeoService {
           this.askRecords.tickItem(
             plan.resume.ask.id,
             { id, state: 'pending', evidence: null, metBy: null },
-            Date.now()
+            Date.now(),
+            plan.resume.ask.doneItems?.find((item) => item.id === id)
           );
         if (plan.resume.reopen) this.askRecords.reopen(plan.resume.ask);
         if (plan.resume.items.length && this.db.getSession(plan.resume.ask.originSessionId))
@@ -2665,7 +2752,8 @@ export class NeoService {
           evidence: withdrawQuestions ? entry.why : null,
           metBy: withdrawQuestions ? 'daemon' : null,
         },
-        now
+        now,
+        ask.doneItems?.find((item) => item.id === entry.id)
       );
     if (withdrawQuestions) {
       const remove = cleared
@@ -2687,12 +2775,48 @@ export class NeoService {
     );
   }
 
+  humanAskText(ask: NeoAskOrigin): string | null {
+    const root = this.repo.getBindingForProject(null)?.sessionId;
+    return root ? neoForwardedText(this.asks.find(root.slice(4), ask.messageId), ask) : null;
+  }
+
+  private readonly returnCrossProjectGroup = (
+    superpipe({})('neo-cross-project-return') as PipelineAPI
+  )
+    .input(['group'])
+    .pipe((group: NeoCrossProjectGroup) => this.crossProjects.members(group), 'group', 'members')
+    .pipe(
+      (group: NeoCrossProjectGroup, members: NeoCrossProjectMember[]) =>
+        members.length === (JSON.parse(group.partsJson) as unknown[]).length &&
+        members.every((member) => ['reported', 'failed', 'cancelled'].includes(member.status))
+          ? { value: group }
+          : { reason: null },
+      ['group', 'members'],
+      'result:return'
+    )
+    .pipe(
+      (group: NeoCrossProjectGroup, members: NeoCrossProjectMember[]) =>
+        this.deliver(
+          group.rootSessionId,
+          neoCrossProjectReplyId(group),
+          `All assigned cross-project owners have returned. Publish one combined answer for this original human ask, covering every reported, failed or cancelled part honestly. Do not consult or dispatch the parts again.\n${JSON.stringify({ humanMessageId: group.askMessageId, parts: JSON.parse(group.partsJson), results: members })}`,
+          group.rootSessionId,
+          { sessionId: group.askSessionId, messageId: group.askMessageId }
+        ),
+      ['return', 'members']
+    )
+    .endAsync() as (group: NeoCrossProjectGroup) => Promise<unknown>;
+
   async recoverConsultations(): Promise<void> {
     for (const item of this.consultations.unsettled()) {
       await this.syncConsultation(item.id).catch((error) =>
         this.log.warn('Consultation recovery pending', error)
       );
     }
+    for (const group of this.crossProjects.pending())
+      await this.returnCrossProjectGroup(group).catch((error) =>
+        this.log.warn('Cross-project return recovery pending', error)
+      );
     for (const projectId of this.consultationWaiters.queuedProjects())
       await this.dispatchConsultationWaiter(projectId).catch((error) =>
         this.log.warn('Consultation admission pending', error)
@@ -2724,6 +2848,8 @@ export class NeoService {
         await this.open(item.projectId);
         const content = neoConsultationRequestContent(
           item,
+          !!this.crossProjects.forReceipt(item.id),
+          this.crossProjects.forReceipt(item.id)?.askMessageId,
           neoConsultationTrigger(item, (input) => this.isHumanInput(input)) !== null
         );
         await this.deliver(
@@ -2737,6 +2863,13 @@ export class NeoService {
       }
     }
     if (!item) return;
+    const group = this.crossProjects.forReceipt(id);
+    if (group) {
+      await this.returnCrossProjectGroup(group);
+      this.consultations.returned(id);
+      await this.dispatchConsultationWaiter(item.projectId);
+      return;
+    }
     const association = this.consultations.getPublication(id);
     const captured = this.consultations.getPublicationInput(id);
     const publication = association
@@ -2916,12 +3049,19 @@ export class NeoService {
   }
 
   private writeAskTicks(ask: NeoAsk, ticks: readonly { id: string; evidence: string }[]): NeoAsk {
-    for (const tick of ticks)
+    const registry = this.checkRegistry();
+    if (!registry.ok) return this.askRecords.get(ask.id) ?? ask;
+    for (const tick of ticks) {
+      const item = ask.doneItems?.find((item) => item.id === tick.id);
+      if (!item || (item.check && !registry.resolve(item.check).ok)) continue;
       this.askRecords.tickItem(
         ask.id,
         { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
-        Date.now()
+        Date.now(),
+        item,
+        true
       );
+    }
     const ticked = ticks.length ? this.askRecords.get(ask.id) : null;
     return ticked
       ? (writeNeoAskTickStatus(this.askRecords, ticked, planNeoAskTickStatus(ticked)) ?? ticked)
@@ -2946,7 +3086,7 @@ export class NeoService {
     )
     .pipe(
       (ask: NeoAsk, plan: { ticks: { id: string; evidence: string }[] }) => ({
-        value: this.writeAskTicks(this.askRecords.get(ask.id) ?? ask, plan.ticks),
+        value: this.writeAskTicks(ask, plan.ticks),
       }),
       ['ticks', 'plan'],
       'result:ticks'

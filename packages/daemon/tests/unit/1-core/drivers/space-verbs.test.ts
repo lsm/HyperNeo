@@ -243,6 +243,35 @@ describe('space adapter send', () => {
     caller: { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const },
   };
 
+  test('status exposes typed human input for the Space agent after the refusal time', async () => {
+    db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
+      timestamp TEXT, send_status TEXT, parent_tool_use_id TEXT)`);
+    const insert = db.prepare('INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, NULL)');
+    for (const [kind, timestamp] of [
+      ['task', '2026-10-13T10:00:00.000Z'],
+      ['human', '2026-10-13T10:01:00.000Z'],
+    ]) {
+      insert.run(
+        's1',
+        'user',
+        JSON.stringify({
+          inputKind: kind,
+          message: { content: [{ type: 'text', text: 'Continue' }] },
+        }),
+        timestamp,
+        'consumed'
+      );
+    }
+    const result = await adapter().status?.(
+      ref('agent:a1'),
+      Date.parse('2026-10-13T09:00:00.000Z')
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: { recentInputs: [{ human: false }, { human: true }] },
+    });
+  });
+
   test('sends to the workflow agent that is working on the task', async () => {
     expect(await adapter().send?.(ref('t1'), 'use 16px', neo)).toEqual({
       ok: true,

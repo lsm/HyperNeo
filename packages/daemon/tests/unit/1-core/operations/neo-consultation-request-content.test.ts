@@ -86,7 +86,7 @@ describe('NeoService extracted consultation request delivery', () => {
 
 describe('neoConsultationRequestContent', () => {
   test('a consultation from a daemon note answers Neo with neo.project.respond, never a publication', () => {
-    const internal = neoConsultationRequestContent(item, false);
+    const internal = neoConsultationRequestContent(item, false, undefined, false);
     expect(internal).toContain('Answer with neo.project.respond {id, answer}');
     expect(internal).toContain('Do not publish');
     expect(neoConsultationRequestContent(item)).toContain('call neo.publication.publish');

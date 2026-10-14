@@ -279,7 +279,12 @@ describe('chooseNeoRoute with a new subject', () => {
     projectTurns: () => [turn({})],
     recentAsks: () => [],
     embed: async () => null,
-    classify: async () => ({ decision: 'main', confidence: 0.8, basis: 'new_subject' }),
+    classify: async () => ({
+      decision: 'main',
+      confidence: 0.8,
+      basis: 'new_subject',
+      projectTitle: 'Spring garden',
+    }),
     newProject,
   });
 
@@ -292,7 +297,7 @@ describe('chooseNeoRoute with a new subject', () => {
         return { projectId: 't1', sessionId: 'neo:t1', title: text, summary: '' };
       })
     );
-    expect(asked).toEqual(['Plan the garden for spring']);
+    expect(asked).toEqual(['Spring garden']);
     expect(route).toEqual({
       choice: {
         projectId: 't1',
@@ -306,13 +311,58 @@ describe('chooseNeoRoute with a new subject', () => {
   test('opens a project when the classifier matches a project but names no holder', async () => {
     const route = await chooseNeoRoute('fix HyperNeo #5554', {
       ...base(async () => ({ projectId: 't4', sessionId: 'neo:t4', title: 'fix', summary: '' })),
-      classify: async () => ({ decision: 'main', confidence: 0.7, basis: 'matches_project' }),
+      classify: async () => ({
+        decision: 'main',
+        confidence: 0.7,
+        basis: 'matches_project',
+        projectTitle: 'HyperNeo',
+      }),
     });
     expect(route.choice).toMatchObject({
       projectId: 't4',
       signal: 'classifier:matches_project',
       confidence: 0.7,
     });
+  });
+
+  test('does not create a project when the classifier cannot name its target', async () => {
+    let opened = 0;
+    const route = await chooseNeoRoute('Fix a spinner in the app', {
+      ...base(async () => {
+        opened++;
+        return null;
+      }),
+      classify: async () => ({ decision: 'main', confidence: 0.8, basis: 'new_subject' }),
+    });
+    expect(opened).toBe(0);
+    expect(route.choice).toBeNull();
+  });
+
+  test('deduplicates against holders omitted from the capped classifier candidates', async () => {
+    let opened = 0;
+    const holders = Array.from({ length: 20 }, (_, i) => ({
+      ...drivers,
+      projectId: `project-${i}`,
+      title: i === 19 ? 'Spring garden' : `Target ${i}`,
+    }));
+    const route = await chooseNeoRoute('Help with spring planting', {
+      ...base(async () => {
+        opened++;
+        return null;
+      }),
+      holders: () => holders,
+      classify: async (_text, options) => {
+        expect(options.some((holder) => holder.projectId === 'project-19')).toBe(false);
+        return {
+          decision: 'main',
+          confidence: 0.8,
+          basis: 'new_subject',
+          projectTitle: 'Spring garden',
+        };
+      },
+    });
+    expect(opened).toBe(0);
+    expect(route.choice?.projectId).toBe('project-19');
   });
 
   test('stays with main Neo when no project can be opened', async () => {
@@ -385,11 +435,11 @@ describe('chooseNeoRoute with a new subject', () => {
     db.close();
   });
 
-  test('names the project after the first line of the message', () => {
-    expect(neoNewProject('  Plan the garden\nwith tomatoes  ', 'id-1')).toEqual({
+  test('names the project after its supplied target', () => {
+    expect(neoNewProject('  Japan trip  ', 'id-1')).toEqual({
       id: 'id-1',
-      title: 'Plan the garden',
-      summary: 'Plan the garden with tomatoes',
+      title: 'Japan trip',
+      summary: 'Japan trip',
     });
     expect(neoNewProject('x'.repeat(80), 'id-2').title).toBe(`${'x'.repeat(59)}…`);
   });

@@ -165,7 +165,15 @@ export function readNeoRouteDecision(
   const basis =
     NEO_ROUTE_BASES.find((name) => stated === name || new RegExp(`^${name}\\b`).test(stated)) ??
     null;
-  return { decision, confidence, basis: basis as NeoRouteBasis | null };
+  const projectTitle = typeof object?.projectTitle === 'string' ? object.projectTitle.trim() : '';
+  return {
+    decision,
+    confidence,
+    basis: basis as NeoRouteBasis | null,
+    ...(projectTitle && projectTitle.length <= 60 && !/[\r\n]/.test(projectTitle)
+      ? { projectTitle }
+      : {}),
+  };
 }
 
 async function askNeoRouteModel(

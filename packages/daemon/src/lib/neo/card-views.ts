@@ -20,6 +20,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoCardGroup, neoCardPhase, neoCardPrInProgress, neoHeadlinePr } from './card-phase.ts';
 
 export type NeoCardViewParts = {
+  refusals?: readonly { workId: string; what: string }[];
   work: readonly NeoWork[];
   drivers: readonly NeoWorkDriverReceipt[];
   prs: readonly NeoWorkPrReceipt[];
@@ -30,6 +31,7 @@ export type NeoCardViewParts = {
 };
 
 type CardIndex = {
+  refusals: Map<string, string>;
   drivers: Map<string, NeoWorkDriverReceipt>;
   prs: Map<string, NeoWorkPr[]>;
   goals: Map<string, NeoWorkGoal>;
@@ -115,10 +117,15 @@ export function neoCardPrSummary(prs: readonly NeoWorkPr[]): NeoCardPrSummary | 
 
 export function neoCardPrimary(
   work: NeoWork,
-  driver: NeoWorkDriverReceipt | undefined
+  driver: NeoWorkDriverReceipt | undefined,
+  talk = false
 ): NeoCardPrimary {
   if (work.status === 'proposed') return { kind: 'start', label: 'Start work', link: null };
   const link = work.sessionId ? null : neoCardSessionLink(driver);
+  if (talk)
+    return work.sessionId
+      ? { kind: 'chat', label: 'Open chat', link: null }
+      : { kind: 'open', label: 'Open session', link };
   if (driver?.retryable) return { kind: 'retry', label: 'Retry', link: null };
   if (
     work.status === 'queued' &&
@@ -198,6 +205,7 @@ export function neoCardTone(
 
 export function indexNeoCardParts(parts: NeoCardViewParts): CardIndex {
   return {
+    refusals: new Map(parts.refusals?.map((row) => [row.workId, row.what]) ?? []),
     drivers: new Map(parts.drivers.map((driver) => [driver.workId, driver])),
     prs: new Map(parts.prs.map((receipt) => [receipt.workId, receipt.prs])),
     goals: new Map(parts.goals.map((goal) => [goal.workId, goal])),
@@ -214,19 +222,23 @@ export function describeNeoCard(work: NeoWork, index: CardIndex): NeoCardView {
   const pr = neoCardPrSummary(prs);
   const goal = index.goals.get(work.id);
   const retryable = !!driver?.retryable;
+  const talk = work.status === 'cancelled' ? undefined : index.refusals.get(work.id);
   return {
+    ...(talk ? { talk } : {}),
     workId: work.id,
     phase,
-    group: neoCardGroup(phase),
+    group: talk ? 'attention' : neoCardGroup(phase),
     tone: neoCardTone(phase, pr, driver),
     label:
       work.status === 'queued' && driver
         ? neoCardDriverLabel(driver)
         : (work.status === 'reported' && pr?.label) || workLabels[work.status],
     hidden: work.status === 'cancelled' && !work.sessionId,
-    primary: neoCardPrimary(work, driver),
+    primary: neoCardPrimary(work, driver, !!talk),
     actions: neoCardActions(work, retryable),
     adapter: driver?.adapter ?? null,
+    ...(driver?.model ? { model: driver.model } : {}),
+    ...(driver?.effort ? { effort: driver.effort } : {}),
     open: neoCardOpenTarget(work, driver),
     pr,
     goal: goal?.goal ?? null,

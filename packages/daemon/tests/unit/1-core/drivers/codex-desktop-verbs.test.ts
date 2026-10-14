@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
@@ -100,7 +100,18 @@ describe('codexRecentInputs and reply time', () => {
         heard('no time'),
         '{"truncated',
       ])
-    ).toEqual([{ at: Date.parse('2026-10-08T17:46:10.074Z'), text: 'Continue the work' }]);
+    ).toEqual([
+      { at: Date.parse('2026-10-08T17:46:10.074Z'), text: 'Continue the work', human: true },
+    ]);
+  });
+
+  test('keeps agent inputs visible for delivery but never labels them human', () => {
+    const entries = codexRecentInputs([
+      at('2026-10-08T17:46:10.074Z', heard('Do it\n[HyperNeo agent input]')),
+      at('2026-10-08T17:46:11.074Z', heard('Neo routed this to you: do it here.')),
+      at('2026-10-08T17:46:12.074Z', heard('Please do it myself.')),
+    ]);
+    expect(entries.map((entry) => entry.human)).toEqual([false, false, true]);
   });
 
   test('times the reply by the line it came from', () => {
@@ -216,6 +227,64 @@ describe('codex-desktop adapter status and send', () => {
   });
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  test.each(
+    ['idle', 'active', 'systemError', 'notLoaded'].flatMap((status) =>
+      ['present', 'missing', 'unreadable'].map((rollout) => ({ status, rollout }))
+    )
+  )(
+    'archives only an idle Codex thread ($status, $rollout rollout)',
+    async ({ status, rollout }) => {
+      if (rollout !== 'present') rmSync(join(dir, 'finished.jsonl'));
+      if (rollout === 'unreadable') mkdirSync(join(dir, 'finished.jsonl'));
+      const calls: string[] = [];
+      let closed = false;
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          calls.push(method);
+          expect(params.threadId).toBe('idle');
+          return method === 'thread/read'
+            ? { thread: { id: 'idle', status: { type: status } } }
+            : {};
+        },
+        close: () => {
+          closed = true;
+        },
+      }));
+      const result = await driver.archive!({ adapter: driver.id, id: 'idle' }, () => null);
+      expect(result.ok).toBe(status === 'idle' || status === 'notLoaded');
+      expect(calls).toEqual(result.ok ? ['thread/read', 'thread/archive'] : ['thread/read']);
+      expect(closed).toBe(true);
+    }
+  );
+
+  test('a running rollout, late refusal and an already archived thread never call thread/archive', async () => {
+    appendFileSync(join(dir, 'running.jsonl'), `\n${said('x'.repeat(5 * 1024 * 1024))}`);
+    const calls: string[] = [];
+    const driver = adapter(0, '', async () => ({
+      call: async (method, params) => {
+        calls.push(method);
+        return { thread: { id: params.threadId, status: { type: 'idle' } } };
+      },
+      close: () => {},
+    }));
+    expect(await driver.archive!({ adapter: driver.id, id: 'busy' }, () => null)).toMatchObject({
+      ok: false,
+      reason: 'busy',
+    });
+    expect(
+      await driver.archive!({ adapter: driver.id, id: 'idle' }, () => ({
+        ok: false,
+        reason: 'live_card',
+        detail: 'new',
+      }))
+    ).toMatchObject({ ok: false, reason: 'live_card' });
+    expect(await driver.archive!({ adapter: driver.id, id: 'old' }, () => null)).toEqual({
+      ok: true,
+      value: { archived: false },
+    });
+    expect(calls).toEqual(['thread/read', 'thread/read']);
+  });
 
   function adapter(
     exitCode = 0,
@@ -358,7 +427,28 @@ describe('codex-desktop adapter status and send', () => {
     });
   });
 
-  const user = { from: 'user', caller: { source: 'rpc' as const } };
+  const user = { from: 'chat', caller: { source: 'rpc' as const, principal: 'local' } };
+
+  test('marks agent sends without confusing their delivery with a previous marked message', async () => {
+    appendFileSync(
+      join(dir, 'finished.jsonl'),
+      `\n${heard('old request\n[HyperNeo agent input]')}`
+    );
+    const agent = {
+      from: 'session:neo',
+      caller: { source: 'internal' as const, role: 'neo' as const },
+    };
+    expect(await adapter().send?.(ref('idle'), 'new request', agent)).toEqual({
+      ok: true,
+      value: { delivered: false },
+    });
+    expect(spawned.at(-1)).toEqual([
+      'codex',
+      'queue',
+      '--thread=idle',
+      '--message=new request\n[HyperNeo agent input]',
+    ]);
+  });
 
   test('send queues the message and reports it delivered once the rollout shows it', async () => {
     expect(await adapter().send?.(ref('busy'), '-v after this', user)).toEqual({

@@ -1,3 +1,5 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { neoOutcomeBindingPolicy } from '../../lib/neo/outcome-binding-policy.ts';
 import {
   NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
@@ -9,6 +11,7 @@ import { neoAskRevisionPolicy } from '../../lib/neo/ask-revision-policy.ts';
 
 const askColumns = `id, request_key AS requestKey, concern_id AS projectId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
+  revision, approved_revision AS approvedRevision,
   title, ask, done_when AS doneWhen, done_source AS doneSource, pack, approved_at AS approvedAt,
   approved_continues AS approvedContinues, waiting_item AS waitingItem, status, outcome, evidence,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt`;
@@ -18,6 +21,8 @@ const REOPENABLE = "status IN ('waiting', 'blocked')";
 type NeoAskRow = Omit<NeoAsk, 'workIds' | 'doneItems'>;
 export type NeoAskInput = Omit<
   NeoAsk,
+  | 'revision'
+  | 'approvedRevision'
   | 'workIds'
   | 'doneItems'
   | 'status'
@@ -27,7 +32,7 @@ export type NeoAskInput = Omit<
   | 'updatedAt'
   | 'settledAt'
 >;
-export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch'>;
+export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'deliveredBy'>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
   'removed' | 'options' | 'decision' | 'action' | 'waitCard' | 'kind' | 'question' | 'watch'
@@ -47,7 +52,7 @@ const watchJson = (item: Pick<NeoAskItem, 'watch'>) =>
   item.watch?.length ? JSON.stringify(item.watch) : null;
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch`;
+  delivered_by AS deliveredBy, verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, watch`;
 
 export interface NeoAskOwner {
   projectId: string;
@@ -55,8 +60,11 @@ export interface NeoAskOwner {
   originMessageId: string;
 }
 
+export class NeoAskBindingError extends Error {}
+
 export class NeoAskRepository {
   readonly revisionPolicy = neoAskRevisionPolicy;
+  readonly bindingPolicy = neoOutcomeBindingPolicy;
   constructor(
     private readonly db: Database,
     private readonly notify: () => void = () => {}
@@ -73,6 +81,23 @@ export class NeoAskRepository {
         items.forEach((item, index) =>
           insert.run(input.id, `i${index + 1}`, index, item.text, item.check, watchJson(item), now)
         );
+      }
+      if (opened) {
+        const bindings = items.flatMap((item, index) =>
+          item.deliveredBy ? [{ itemId: `i${index + 1}`, deliveredBy: item.deliveredBy }] : []
+        );
+        for (const id of new Set(bindings.map((binding) => binding.deliveredBy))) {
+          const owned = this.db
+            .prepare(`SELECT w.id FROM neo_work w
+            LEFT JOIN neo_ask_work a ON a.work_id = w.id
+            WHERE w.id = ? AND w.origin_session_id = ? AND w.concern_id IS ? AND a.ask_id IS NULL`)
+            .get(id, input.originSessionId, input.projectId);
+          if (!owned) throw new NeoAskBindingError('binding_card_not_owned');
+          this.db
+            .prepare('INSERT INTO neo_ask_work(work_id, ask_id) VALUES (?, ?)')
+            .run(id, input.id);
+        }
+        if (bindings.length) this.bindOrThrow(input.id, bindings, 0, now);
       }
       return opened;
     })();
@@ -193,12 +218,21 @@ export class NeoAskRepository {
       | 'kind'
       | 'question'
     >,
-    at: number
+    at: number,
+    expected?: Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'deliveredBy'>,
+    verify = false
   ): boolean {
     const changed = this.db.transaction(() => {
+      const current = this.get(askId)?.doneItems?.find((entry) => entry.id === item.id);
+      const hash = expected ? this.revisionPolicy.definitionHash(expected) : null;
+      if (!current || (hash && hash !== this.revisionPolicy.definitionHash(current))) return false;
+      if (expected && (expected.deliveredBy ?? null) !== (current.deliveredBy ?? null))
+        return false;
+      const verified =
+        verify && item.state === 'met' && ['daemon', 'human'].includes(item.metBy ?? '');
       const ticked = this.db
         .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, action = ?, wait_card = ?, kind = ?, question = ?,
-          updated_at = ?
+          verified_definition_hash = ?, updated_at = ?
           WHERE ask_id = ? AND id = ? AND removed = 0`)
         .run(
           item.state,
@@ -209,6 +243,7 @@ export class NeoAskRepository {
           item.waitCard ?? null,
           item.kind ?? null,
           item.question ?? null,
+          verified ? hash : null,
           at,
           askId,
           item.id
@@ -225,14 +260,19 @@ export class NeoAskRepository {
     edit: {
       add: (NeoAskItemInput & { id: string; position: number })[];
       remove: string[];
+      bind?: { itemId: string; deliveredBy: string | null }[];
       track?: { itemId: string; check: NeoAskItem['check']; watch?: string[] }[];
     },
-    at: number
+    at: number,
+    expectedRevision?: number
   ): boolean {
-    this.db.transaction(() => {
+    const changed = this.db.transaction(() => {
+      const before = this.get(askId);
+      if (!before || (expectedRevision !== undefined && before.revision !== expectedRevision))
+        return false;
       const track = this.db.prepare(`UPDATE neo_ask_items
         SET check_kind = COALESCE(?, check_kind), watch = COALESCE(?, watch), updated_at = ?
-        WHERE ask_id = ? AND id = ? AND removed = 0 AND state != 'met'`);
+        WHERE ask_id = ? AND id = ? AND removed = 0`);
       for (const item of edit.track ?? [])
         track.run(item.check, watchJson(item), at, askId, item.itemId);
       const insert = this.db.prepare(`INSERT INTO neo_ask_items
@@ -244,10 +284,120 @@ export class NeoAskRepository {
         .prepare(`UPDATE neo_ask_items SET removed = 1, updated_at = ?
           WHERE ask_id = ? AND id IN (SELECT value FROM json_each(?))`)
         .run(at, askId, JSON.stringify(edit.remove));
+      const bindings = [
+        ...(edit.bind ?? []),
+        ...edit.add.flatMap((item) =>
+          item.deliveredBy === undefined ? [] : [{ itemId: item.id, deliveredBy: item.deliveredBy }]
+        ),
+      ];
+      if (bindings.length) this.bindOrThrow(askId, bindings, before.revision ?? 0, at);
+      const after = this.get(askId)!;
+      const outcomes = (ask: NeoAsk) => (ask.doneItems ?? []).filter((item) => !item.decision);
+      const plan = this.revisionPolicy.planRevision(
+        before.revision ?? 0,
+        { items: outcomes(before), cards: [] },
+        { items: outcomes(after), cards: [] }
+      );
+      const changedBindings = (before.doneItems ?? [])
+        .filter((item) => item.deliveredBy && plan.invalidateItemIds.includes(item.id))
+        .map((item) => ({ itemId: item.id, deliveredBy: null }));
+      if (changedBindings.length) {
+        const writable = this.bindingPolicy.requireBindings(
+          before,
+          changedBindings,
+          this.bindingCards(askId)
+        );
+        if ('reason' in writable) throw new NeoAskBindingError(writable.reason.reason);
+      }
+      if (plan.invalidateApproval) {
+        this.db
+          .prepare(`UPDATE neo_asks SET revision = ?, approved_at = NULL,
+          approved_revision = NULL, updated_at = ? WHERE id = ?`)
+          .run(plan.revision, at, askId);
+        this.db
+          .prepare(`UPDATE neo_ask_items SET state = 'pending', evidence = NULL,
+          met_by = NULL, verified_definition_hash = NULL
+          WHERE ask_id = ? AND id IN (SELECT value FROM json_each(?))`)
+          .run(askId, JSON.stringify(plan.invalidateItemIds));
+      }
       this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
+      return true;
     })();
-    this.notify();
-    return true;
+    if (changed) this.notify();
+    return changed;
+  }
+
+  private bindingCards(askId: string) {
+    return this.db
+      .prepare(`SELECT w.id,
+      (w.status != 'proposed' OR d.started_at IS NOT NULL) AS dispatched
+      FROM neo_work w JOIN neo_ask_work a ON a.work_id = w.id
+      LEFT JOIN neo_work_driver_targets d ON d.work_id = w.id WHERE a.ask_id = ?`)
+      .all(askId)
+      .map((row) => {
+        const card = row as { id: string; dispatched: number };
+        return { id: card.id, dispatched: !!card.dispatched };
+      });
+  }
+
+  private bindOrThrow(
+    askId: string,
+    bindings: readonly { itemId: string; deliveredBy: string | null }[],
+    revision: number,
+    at: number
+  ) {
+    const result = this.bindItems(askId, bindings, revision, at, false);
+    if (!result.ok) throw new NeoAskBindingError(result.reason);
+  }
+
+  bindItems(
+    askId: string,
+    bindings: readonly { itemId: string; deliveredBy: string | null }[],
+    expectedRevision: number,
+    at: number,
+    notify = true
+  ): { ok: boolean; reason?: string } {
+    const bind = (superpipe({})('neo-ask-bindings') as PipelineAPI)
+      .input(['askId'])
+      .pipe((id: string) => this.get(id), 'askId', 'ask')
+      .pipe(
+        (ask: NeoAsk | null) =>
+          ask?.revision === expectedRevision
+            ? { value: ask }
+            : { reason: { ok: false, reason: 'stale_ask_revision' } },
+        'ask',
+        'result:binding'
+      )
+      .pipe((ask: NeoAsk) => this.bindingCards(ask.id), 'binding', 'cards')
+      .pipe(
+        (ask: NeoAsk, cards: { id: string; dispatched: boolean }[]) =>
+          this.bindingPolicy.requireBindings(ask, bindings, cards),
+        ['binding', 'cards'],
+        'result:binding'
+      )
+      .pipe(
+        (plan: { invalidateApproval: boolean; revision: number; invalidateItemIds: string[] }) => {
+          if (!plan.invalidateApproval) return { ok: true };
+          const write =
+            this.db.prepare(`UPDATE neo_ask_items SET delivered_by = ?, state = 'pending',
+          evidence = NULL, met_by = NULL, verified_definition_hash = NULL, updated_at = ?
+          WHERE ask_id = ? AND id = ?`);
+          for (const binding of bindings)
+            if (plan.invalidateItemIds.includes(binding.itemId))
+              write.run(binding.deliveredBy, at, askId, binding.itemId);
+          this.db
+            .prepare(`UPDATE neo_asks SET revision = ?, approved_at = NULL,
+          approved_revision = NULL, updated_at = ? WHERE id = ?`)
+            .run(plan.revision, at, askId);
+          return { ok: true };
+        },
+        'binding',
+        'binding'
+      )
+      .end('binding') as (id: string) => { ok: boolean; reason?: string };
+    const result = this.db.transaction(() => bind(askId))();
+    if (result.ok && notify) this.notify();
+    return result;
   }
 
   fold(
@@ -255,9 +405,15 @@ export class NeoAskRepository {
     target: Pick<NeoAsk, 'id' | 'status'>,
     moves: readonly { from: string; id: string; position: number }[],
     outcome: string,
-    at: number
+    at: number,
+    bindOutcomes = false
   ): boolean {
     const folded = this.db.transaction(() => {
+      if (source.id === target.id || !this.get(source.id) || !this.get(target.id))
+        throw new Error('neo-ask-fold-lost');
+      const bindingPlan = bindOutcomes
+        ? this.bindingPolicy.planFold(this.get(source.id)!, this.get(target.id)!, moves)
+        : null;
       const closed = this.db
         .prepare(`UPDATE neo_asks SET status = 'abandoned', outcome = ?, evidence = ?,
           settled_at = ?, updated_at = ?, waiting_item = NULL WHERE id = ? AND status = ?`)
@@ -277,6 +433,27 @@ export class NeoAskRepository {
       this.db
         .prepare('UPDATE neo_ask_work SET ask_id = ? WHERE ask_id = ?')
         .run(target.id, source.id);
+      if (bindingPlan) {
+        const update = this.db.prepare(`UPDATE neo_ask_items SET delivered_by = ?, watch = ?,
+          question = ?, state = ?, evidence = ?, met_by = ?, verified_definition_hash = ?
+          WHERE ask_id = ? AND id = ?`);
+        for (const item of bindingPlan.items)
+          update.run(
+            item.deliveredBy ?? null,
+            watchJson(item),
+            item.question ?? null,
+            item.state,
+            item.evidence,
+            item.metBy,
+            item.verifiedDefinitionHash ?? null,
+            target.id,
+            item.id
+          );
+        this.db
+          .prepare(`UPDATE neo_asks SET revision = ?, approved_at = NULL,
+          approved_revision = NULL, approved_continues = 0 WHERE id = ?`)
+          .run(bindingPlan.revision, target.id);
+      }
     });
     try {
       folded();
@@ -336,12 +513,12 @@ export class NeoAskRepository {
     return owner?.askId ?? null;
   }
 
-  approve(id: string, at: number): NeoAsk | null {
+  approve(id: string, at: number, expectedRevision = 0): NeoAsk | null {
     const row = this.db.transaction(() => {
       const approved = this.db
-        .prepare(`UPDATE neo_asks SET approved_at = ?, approved_continues = 0, updated_at = ?
-          WHERE id = ? AND status NOT IN ('achieved', 'abandoned') RETURNING ${askColumns}`)
-        .get(at, at, id) as NeoAskRow | null;
+        .prepare(`UPDATE neo_asks SET approved_at = ?, approved_revision = revision, approved_continues = 0, updated_at = ?
+          WHERE id = ? AND revision = ? AND status NOT IN ('achieved', 'abandoned') RETURNING ${askColumns}`)
+        .get(at, at, id, expectedRevision) as NeoAskRow | null;
       if (approved)
         this.db
           .prepare(`UPDATE neo_work_continues SET stalled = 0, progress = NULL

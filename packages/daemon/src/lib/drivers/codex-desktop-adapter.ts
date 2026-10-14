@@ -1,4 +1,6 @@
+import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { basename, join } from 'node:path';
+import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
 import { gitWorktreeProject } from './acp-agent-adapter.ts';
@@ -29,6 +31,7 @@ import type {
 } from './types.ts';
 import {
   boundExchange,
+  WORK_AGENT_INPUT,
   exchangeEntry,
   recentWorkInputs,
   type WorkExchange,
@@ -83,6 +86,7 @@ export interface CodexSnapshot {
 }
 
 export interface CodexDesktopAdapterDeps {
+  prepareExecution?: WorkExecutionPreparer;
   statePath: string;
   worktreesDir: string;
   machine: string;
@@ -407,7 +411,13 @@ export function codexRecentInputs(lines: readonly string[], since?: number): Wor
       if (entry?.type !== 'response_item') return [];
       const text = messageText(entry.payload ?? {}, 'user');
       if (!text || INJECTED_INPUT.test(text)) return [];
-      const input = workInput(workEntryTime(entry.timestamp), text);
+      const input = workInput(
+        workEntryTime(entry.timestamp),
+        text,
+        !text.includes(WORK_AGENT_INPUT) &&
+          !text.includes('Neo routed this to you:') &&
+          !text.startsWith('# AGENTS.md instructions')
+      );
       return input ? [input] : [];
     }),
     since
@@ -600,6 +610,8 @@ export function selectCodexStartFolder(
   request: StartRequest,
   deps: CodexDesktopAdapterDeps
 ): Gate<string> {
+  const admitted = workStartPreparation.admit(request.preparation, !!deps.prepareExecution);
+  if ('reason' in admitted) return admitted;
   return selectLocalStartFolder(request, deps, 'A Codex thread needs a folder to work in.');
 }
 
@@ -684,9 +696,18 @@ export async function startCodexThread(
         server
       );
       if (!configuration.ok) return configuration;
-      const prepared = await prepareCodexWorkFolder(folder, deps);
-      if (!prepared.ok) return prepared;
-      workFolder = prepared.value;
+      if (request.preparation) {
+        const prepared = await deps.prepareExecution!(request.preparation, {
+          directory: folder,
+          destination: join(deps.worktreesDir, deps.newId().slice(0, 8), basename(folder)),
+        });
+        if (!prepared.ok) return prepared;
+        workFolder = { cwd: prepared.value.directory, release: prepared.value.release };
+      } else {
+        const prepared = await prepareCodexWorkFolder(folder, deps);
+        if (!prepared.ok) return prepared;
+        workFolder = prepared.value;
+      }
       const started = await server.call('thread/start', {
         cwd: workFolder.cwd,
         ...(configuration.value.model ? { model: configuration.value.model } : {}),
@@ -784,8 +805,9 @@ const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   return {
     id: 'codex-desktop',
+    supportsStartPreparation: !!deps.prepareExecution,
     supportsStartEffort: true,
-    capabilities: ['find', 'start', 'send', 'status', 'stop'],
+    capabilities: ['find', 'start', 'send', 'status', 'stop', 'archive'],
     find: async (query) =>
       runCodexFind(
         query,
@@ -793,8 +815,36 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
       ),
     start: (request) => runCodexStart(request, deps),
-    send: (ref, message) => runCodexSend(ref, message, deps),
+    send: (ref, message, context) =>
+      runCodexSend(
+        ref,
+        context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
+        deps
+      ),
     status: (ref, since) => runCodexStatus(ref, deps, since),
     stop: (ref) => runCodexStop(ref, deps),
+    archive: async (ref, admit) => {
+      const found = requireCodexThread(ref, deps);
+      if ('reason' in found) return found.reason;
+      if (found.value.thread.archived) return admit() ?? { ok: true, value: { archived: false } };
+      return withCodexAppServer(deps, async (server) => {
+        const read = z
+          .object({
+            thread: z.object({ id: z.literal(ref.id), status: z.object({ type: z.string() }) }),
+          })
+          .parse(await server.call('thread/read', { threadId: ref.id }));
+        if (
+          read.thread.status.type === 'active' ||
+          (await readActiveCodexTurn(found.value.thread.rolloutPath))
+        )
+          return reject('busy', 'The Codex thread still has a live turn.');
+        if (!['idle', 'notLoaded'].includes(read.thread.status.type))
+          return reject('unreachable', 'Codex cannot confirm an idle thread.');
+        const refused = admit();
+        if (refused) return refused;
+        await server.call('thread/archive', { threadId: ref.id });
+        return { ok: true, value: { archived: true } };
+      });
+    },
   };
 }

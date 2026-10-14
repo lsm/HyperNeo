@@ -10,6 +10,7 @@ import {
 import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
+import { workStartPreparation } from './start-preparation.ts';
 import {
   PlaceSchema,
   WorkDetailSchema,
@@ -22,10 +23,14 @@ import {
   type WorkRejection,
 } from './types.ts';
 
-type RoutedVerb = 'start' | 'send' | 'status' | 'stop';
+type RoutedVerb = 'start' | 'send' | 'status' | 'stop' | 'archive';
 type Route<Verb extends RoutedVerb> =
   | { daemon: string }
-  | { local: NonNullable<WorkAdapter[Verb]>; supportsStartEffort?: boolean };
+  | {
+      local: NonNullable<WorkAdapter[Verb]>;
+      supportsStartEffort?: boolean;
+      supportsStartPreparation?: boolean;
+    };
 type Gate<Value> = { value: Value } | { reason: Rejected };
 
 export interface WorkVerbDeps {
@@ -46,6 +51,7 @@ export const StartWorkInputSchema = z.object({
   title: z.string().trim().min(1).max(200),
   message: MessageSchema,
   createFolder: z.boolean().optional(),
+  preparation: workStartPreparation.schema.optional(),
   model: z.string().trim().min(1).max(200).optional(),
   effort: workStartConfiguration.schema.shape.effort,
   from: ForwardedOriginSchema,
@@ -69,7 +75,7 @@ export const WorkAdaptersResultSchema = workResultSchema(
   z.array(
     z.object({
       id: z.string(),
-      capabilities: z.array(z.enum(['find', 'start', 'send', 'status', 'stop'])),
+      capabilities: z.array(z.enum(['find', 'start', 'send', 'status', 'stop', 'archive'])),
     })
   )
 );
@@ -101,7 +107,13 @@ export function pickRoute<Verb extends RoutedVerb>(
   if (!local || !adapter.capabilities.includes(verb)) {
     return { reason: reject('unsupported', `The ${adapter.id} adapter cannot ${verb} work.`) };
   }
-  return { value: { local, supportsStartEffort: adapter.supportsStartEffort } };
+  return {
+    value: {
+      local,
+      supportsStartEffort: adapter.supportsStartEffort,
+      supportsStartPreparation: adapter.supportsStartPreparation,
+    },
+  };
 }
 
 function admitRemoteStartModel(route: Route<'start'>, input: StartInput): Gate<Route<'start'>> {
@@ -279,6 +291,17 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(admitRemoteStartModel, ['outcome', 'input'], 'result:outcome')
   .pipe(admitStartEffort, ['outcome', 'input'], 'result:outcome')
+  .pipe(
+    (route: Route<'start'>, input: StartInput): Gate<Route<'start'>> => {
+      const admitted = workStartPreparation.admit(
+        input.preparation,
+        'local' in route && route.supportsStartPreparation === true
+      );
+      return 'reason' in admitted ? admitted : { value: route };
+    },
+    ['outcome', 'input'],
+    'result:outcome'
+  )
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(startWork, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
@@ -333,7 +356,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.adapters',
       description:
-        'List the work adapters on this daemon, or on the attached daemon named by daemon, with the verbs each can do: find, start, send, status, stop. Start new work only with an adapter that can start, and send only through one that can send.',
+        'List the work adapters on this daemon, or on the attached daemon named by daemon, with the verbs each can do: find, start, send, status, stop, archive. Archive uses neo.session.archive and requires a human request in a live turn. Start new work only with an adapter that can start, and send only through one that can send.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
@@ -342,7 +365,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.start',
       description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For a new project, give the folder to create in place.folder and set createFolder true: it must be inside the home folder, outside hidden folders, Library and Applications, with an existing parent. model picks the model of a new HyperNeo session or Codex thread; Codex resolves catalog aliases and refuses unsupported models. Other adapters run on the model their app uses. Optional effort is currently supported by local Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. Without model, a HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the new work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
+        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Remote routes reject explicit model with unsupported_model until configuration support can be verified; use a local adapter to request a model. Only Neo or the user can change work on another daemon; other agents get unsupported. For a new project, give the folder to create in place.folder and set createFolder true: it must be inside the home folder, outside hidden folders, Library and Applications, with an existing parent. model picks the model of a new HyperNeo session or Codex thread; Codex resolves catalog aliases and refuses unsupported models. Claude desktop refuses explicit model overrides with unsupported_model; omit model to use its app configuration. Optional effort is currently supported by local Codex: it resolves against the selected model catalog and confirms the applied effort before sending the first turn. Unsupported local adapters and unverified remote routes return unsupported_effort before starting work. Without model, a HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the new work with its ref, link and, for HyperNeo or Codex, the model it runs on plus confirmed effort when available, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },

@@ -10,6 +10,8 @@ export interface NeoWorkResourceReceipt {
 export interface NeoWorkDriverReceipt {
   workId: string;
   adapter: string;
+  model?: string;
+  effort?: string;
   daemon: string | null;
   status: 'queued' | 'running' | 'needs_you' | 'done' | 'failed' | 'stopped' | null;
   link: string | null;
@@ -93,6 +95,8 @@ export function neoAskApprovalSpent(
 }
 
 export interface NeoAskItem {
+  deliveredBy?: string | null;
+  verifiedDefinitionHash?: string | null;
   id: string;
   text: string;
   state: 'pending' | 'met' | 'needs_you' | 'reported';
@@ -113,6 +117,8 @@ export interface NeoAskItem {
 export type NeoAskItemKind = 'decision' | 'action' | 'approval' | 'wait';
 
 export interface NeoAsk {
+  revision?: number;
+  approvedRevision?: number | null;
   id: string;
   requestKey: string;
   projectId: string | null;
@@ -213,6 +219,9 @@ export interface NeoCardOpenTarget {
 }
 
 export interface NeoCardView {
+  model?: string;
+  effort?: string;
+  talk?: string;
   workId: string;
   phase: NeoCardPhase;
   group: NeoCardGroup;
@@ -273,7 +282,8 @@ export type NeoAskHumanAction =
     }
   | { kind: 'confirm'; itemId: string; step: string }
   | { kind: 'retry'; workId: string }
-  | { kind: 'close'; workId: string };
+  | { kind: 'close'; workId: string }
+  | { kind: 'talk'; workId: string; what: string };
 
 export interface NeoAskAnswer {
   itemId: string;
@@ -318,6 +328,7 @@ export interface NeoSnapshot {
   scopedTo?: string;
   sessionId: string | null;
   projects: NeoProject[];
+  projectFacts?: { reference: string; projectId?: string | null }[];
   publicAuthorBindings?: { sessionId: string; projectId: string; kind: 'project' }[];
   askForwards?: NeoAskForwardView[];
   work: NeoWork[];

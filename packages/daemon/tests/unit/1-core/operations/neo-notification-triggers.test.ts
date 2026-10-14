@@ -101,6 +101,7 @@ describe('trigger keys of an ask', () => {
             question: 'Ship it?',
             options: ['Yes', 'No'],
           },
+          { kind: 'talk', workId: 'w1', what: 'update the iMac' },
         ],
       }),
       cards: [card()],
@@ -108,6 +109,7 @@ describe('trigger keys of an ask', () => {
     expect(keys(ask, read)).toEqual([
       ['action', 'start:w1'],
       ['action', 'answer:i3'],
+      ['action', 'talk:w1:update the iMac'],
     ]);
   });
 

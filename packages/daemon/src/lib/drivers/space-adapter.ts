@@ -2,7 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import { hyperneoWorkStatus } from './hyperneo-adapter.ts';
+import { hyperneoWorkStatus, readHyperneoInputs } from './hyperneo-adapter.ts';
 import { withChatEvidence } from './places.ts';
 import type {
   FindQuery,
@@ -557,7 +557,20 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
       ref.id.startsWith(AGENT_REF)
         ? runSpaceAgentSend(ref, message, context, deps)
         : runSpaceSend(ref, message, context, deps),
-    status: async (ref) => reportSpaceAgent(ref, deps) ?? runSpaceStatus(ref, deps),
+    status: async (ref, since) => {
+      const result = reportSpaceAgent(ref, deps) ?? runSpaceStatus(ref, deps);
+      if (!result.ok || since === undefined) return result;
+      const sessionId = ref.id.startsWith(AGENT_REF)
+        ? readSpaceAgents(deps.db(), true, ref.id.slice(AGENT_REF.length))[0]?.sessionId
+        : readActiveNode(deps.db(), ref.id)?.agentSessionId;
+      return {
+        ...result,
+        value: {
+          ...result.value,
+          recentInputs: sessionId ? readHyperneoInputs(deps.db(), sessionId, since) : [],
+        },
+      };
+    },
     stop: (ref, context) => runSpaceStop(ref, context, deps),
   };
 }

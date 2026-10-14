@@ -118,38 +118,14 @@ describe('keepNeoTrackedSessions', () => {
 });
 
 describe('requireNeoTrackedAdoption', () => {
-  test('says a card already follows the session instead of suggesting a send', () => {
-    const adopt = { verb: 'adopt' as const, ref };
-    expect(requireNeoTrackedAdoption(adopt, new Map(), [ref], 1_000, true, 'ok')).toEqual({
+  test('follows a named session from any Neo turn without a Track timer', () => {
+    expect(requireNeoTrackedAdoption({ verb: 'adopt', ref }, [], 'ok')).toEqual({ value: 'ok' });
+    expect(requireNeoTrackedAdoption({ verb: 'send', ref }, [ref], 'ok')).toEqual({ value: 'ok' });
+  });
+  test('keeps the duplicate-follow guard', () => {
+    expect(requireNeoTrackedAdoption({ verb: 'adopt', ref }, [ref], 'ok')).toEqual({
       reason: { ok: false, reason: 'A Neo card already follows this session.' },
     });
-  });
-
-  test('passes other verbs and adopts only a session tapped within the window', () => {
-    const tracked = new Map([[key, 1_000]]);
-    const send = { verb: 'send' as const, ref };
-    const adopt = { verb: 'adopt' as const, ref };
-    expect(requireNeoTrackedAdoption(send, new Map(), [], 1_000, false, 'ok')).toEqual({
-      value: 'ok',
-    });
-    expect(requireNeoTrackedAdoption(adopt, tracked, [], 2_000, false, 'ok')).toEqual({
-      value: 'ok',
-    });
-    expect(
-      requireNeoTrackedAdoption(adopt, tracked, [], 1_000 + NEO_SESSION_TRACK_MS, false, 'ok')
-    ).toMatchObject({ reason: { ok: false } });
-    expect(requireNeoTrackedAdoption(adopt, new Map(), [], 1_000, false, 'ok')).toMatchObject({
-      reason: { ok: false },
-    });
-  });
-
-  test('adopts an untracked session while answering the human who asked for it', () => {
-    const adopt = { verb: 'adopt' as const, ref };
-    expect(requireNeoTrackedAdoption(adopt, new Map(), [], 1_000, true, 'ok')).toEqual({
-      value: 'ok',
-    });
-    const refused = requireNeoTrackedAdoption(adopt, new Map(), [], 1_000, false, 'ok');
-    expect(JSON.stringify(refused)).not.toContain('ask the human');
   });
 });
 
@@ -262,7 +238,7 @@ describe('neo.session.track', () => {
       neoTurn: { messageId: 'turn-2', human: true, isLive: () => true },
     };
     const registry = createOperationRegistry(createNeoOperations(service));
-    service.trackedSessions = new Map([[key, Date.now()]]);
+    expect(service.trackedSessions.size).toBe(0);
     const adopted = await invokeOperation(
       registry,
       'neo.work.propose',
@@ -310,15 +286,15 @@ describe('neo.session.track', () => {
     expect((await propose('after-close', ref))?.approvedAt ?? null).toBeNull();
   });
 
-  test('a tap starts the card but never approves an existing ask Neo names', async () => {
+  test('Neo follows without a Track tap in a system turn but never approves the existing ask', async () => {
     const neo = {
       source: 'mcp' as const,
       sessionId: 'neo:root',
       role: 'neo' as const,
-      neoTurn: { messageId: 'turn-1', human: true, isLive: () => true },
+      neoTurn: { messageId: 'turn-1', human: false, isLive: () => true },
     };
     const registry = createOperationRegistry(createNeoOperations(service));
-    service.trackedSessions = new Map([[key, Date.now()]]);
+    expect(service.trackedSessions.size).toBe(0);
     const askId = service.askRecords.open(
       {
         id: crypto.randomUUID(),

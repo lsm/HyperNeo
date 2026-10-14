@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
+import { NEO_PACK_CODING_INSTRUCTIONS, NEO_SYSTEM_PROMPT } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
@@ -126,7 +126,10 @@ describe('coding pack instructions', () => {
     expect(coding.instructions(null)).toBe(NEO_PACK_CODING_INSTRUCTIONS);
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('merged to the');
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('git remote');
-    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('own worktree');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('freshly fetched remote target');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('work.preparationParameters.target');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('operation:"neo.github.read"');
+    expect(NEO_SYSTEM_PROMPT).not.toContain('neo.github.read');
   });
 });
 
@@ -279,14 +282,20 @@ describe('codingPrMergedCheck', () => {
 });
 
 describe('neoPackChecks', () => {
-  test('takes each kind from the first pack that defines it', () => {
+  test('refuses colliding or foreign registrations instead of selecting the first definition', () => {
     const first = () => ({ value: 'first' });
     const second = () => ({ value: 'second' });
     const checks = neoPackChecks([
       { ...pack('coding'), checks: { 'coding.pr_merged': first } },
       { ...pack('other'), checks: { 'coding.pr_merged': second, 'other.filed': second } },
     ]);
-    expect(checks).toEqual({ 'coding.pr_merged': first, 'other.filed': second });
+    expect(checks).toEqual({});
+    expect(
+      neoPackChecks([
+        { ...pack('coding'), checks: { 'coding.pr_merged': first } },
+        { ...pack('other'), checks: { 'other.filed': second } },
+      ])
+    ).toEqual({ 'coding.pr_merged': first, 'other.filed': second });
   });
 });
 
