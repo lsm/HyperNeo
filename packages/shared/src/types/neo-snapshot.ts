@@ -215,6 +215,8 @@ export interface NeoCardOpenTarget {
 }
 
 export interface NeoCardView {
+  model?: string;
+  effort?: string;
   workId: string;
   phase: NeoCardPhase;
   group: NeoCardGroup;

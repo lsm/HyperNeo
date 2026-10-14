@@ -227,6 +227,8 @@ export function describeNeoCard(work: NeoWork, index: CardIndex): NeoCardView {
     primary: neoCardPrimary(work, driver),
     actions: neoCardActions(work, retryable),
     adapter: driver?.adapter ?? null,
+    ...(driver?.model ? { model: driver.model } : {}),
+    ...(driver?.effort ? { effort: driver.effort } : {}),
     open: neoCardOpenTarget(work, driver),
     pr,
     goal: goal?.goal ?? null,

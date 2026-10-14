@@ -83,6 +83,9 @@ export function NeoWorkCard({
   const primary = neoCardPrimaryAction(card, work, { waiting, chat: !!onOpen });
   const answering = primary.kind === 'answer' && !primary.link;
   const meta = neoCardMeta(card, work);
+  const configuration = [card.model, card.effort && `${card.effort} effort`]
+    .filter(Boolean)
+    .join(' · ');
   const logo = neoAppLogo(card.adapter);
   const goalText = card.goal;
   const doneWhen = card.doneWhen;
@@ -132,6 +135,9 @@ export function NeoWorkCard({
             {work.title}
           </span>
           {note && <span class="line-clamp-2 break-words text-sm text-fg-muted">{note}</span>}
+          {configuration && (
+            <span class="break-words text-xs text-fg-muted">Started with {configuration}</span>
+          )}
           {!link && (work.sessionId || meta) && (
             <span class="mt-1 flex items-center gap-2 border-t border-line pt-3">
               {work.sessionId && (
@@ -287,6 +293,9 @@ export function NeoWorkCard({
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {work.title}
       </h3>
+      {configuration && (
+        <p class="mt-1 break-words text-xs text-fg-muted">Started with {configuration}</p>
+      )}
       {note && (
         <p
           class={`mt-1.5 line-clamp-2 break-words text-sm text-fg-muted${

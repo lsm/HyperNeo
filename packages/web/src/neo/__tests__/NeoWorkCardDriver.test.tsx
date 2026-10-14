@@ -46,6 +46,19 @@ const renderCard = (card: NeoCardView, props: Partial<Parameters<typeof NeoWorkC
 afterEach(cleanup);
 
 describe('NeoWorkCard with drivers work', () => {
+  it.each(['detail', 'summary'] as const)(
+    'shows confirmed start configuration in %s',
+    (presentation) => {
+      renderCard(codex({ model: 'gpt-6.1-sol', effort: 'medium' }), { presentation });
+      expect(screen.getByText('Started with gpt-6.1-sol · medium effort')).toBeTruthy();
+    }
+  );
+
+  it('leaves unknown model and effort absent', () => {
+    renderCard(codex({}));
+    expect(screen.queryByText(/Started with/)).toBeNull();
+  });
+
   it('shows where the work went and opens it there', () => {
     renderCard(
       codex({

@@ -144,6 +144,10 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
     },
     create: (workspacePath, title, model) =>
       createDriverSession(sessionManager, workspacePath, title, model),
+    resolveModel: async (model) => {
+      const { findInModels } = await import('../../model-service.ts');
+      return findInModels(usableModels(await readAvailableModels()), model)?.id ?? null;
+    },
     model: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.model ?? null,
     chooseWorktree: async (sessionId) => {
       await sessionManager.getSessionLifecycle().completeWorktreeChoice(sessionId, 'worktree');
