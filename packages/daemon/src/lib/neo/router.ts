@@ -1,3 +1,5 @@
+import { neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
+import { readNeoSectionFacts } from './section-route-facts.ts';
 import { neoFactOwners, readNeoProjectFacts, type NeoProjectFact } from './project-route-facts.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
@@ -71,6 +73,8 @@ export async function openNeoNewProject(
 }
 
 export interface NeoHolder {
+  parentId?: string | null;
+  ancestorIds?: readonly string[];
   projectId: string;
   sessionId: string;
   title: string;
@@ -192,7 +196,22 @@ export function runnableNeoHolders(
   holders: readonly NeoHolder[],
   available: ReadonlyMap<string, boolean>
 ): NeoHolder[] {
-  return holders.filter((holder) => available.get(holder.provider ?? 'anthropic') !== false);
+  const runnable = holders.filter(
+    (holder) => available.get(holder.provider ?? 'anthropic') !== false
+  );
+  const ids = new Set(runnable.map((holder) => holder.projectId));
+  const tree = holders.map((holder) => ({ ...holder, id: holder.projectId }));
+  return runnable.map((holder) => {
+    if (!holder.parentId) return holder;
+    const ancestorIds = neoProjectPath(tree, holder.projectId)
+      .slice(0, -1)
+      .map((node) => node.id);
+    return {
+      ...holder,
+      ancestorIds,
+      parentId: [...ancestorIds].reverse().find((id) => ids.has(id)) ?? null,
+    };
+  });
 }
 
 function projectOf(route: NeoRoute): string {
@@ -420,8 +439,97 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
   .pipe(classifyNeoAsk, ['text', 'verdict', 'scores', 'deps', 'holders'], 'route')
   .endAsync('route') as (text: string, deps: NeoRouterDeps) => Promise<Routed>;
 
-export function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRouted> {
-  return runNeoRoute(text, deps);
+export function neoRouteLevel(holders: readonly NeoHolder[], parentId: string | null): NeoHolder[] {
+  return holders.filter(
+    (holder) => (holder.parentId ?? null) === parentId || holder.projectId === parentId
+  );
+}
+
+export function neoLevelFactOwner(
+  holders: readonly NeoHolder[],
+  owner: string,
+  parentId: string | null
+): string | null {
+  const path = neoProjectPath(
+    holders.map((holder) => ({ ...holder, id: holder.projectId })),
+    owner
+  );
+  if (parentId === owner) return owner;
+  const index = parentId === null ? -1 : path.findIndex((holder) => holder.id === parentId);
+  if (parentId !== null && index < 0) return null;
+  return path[index + 1]?.id ?? null;
+}
+
+export function neoLevelTurns(
+  turns: readonly NeoRoute[],
+  holders: readonly NeoHolder[],
+  parentId: string | null
+): NeoRoute[] {
+  return turns.flatMap((turn) => {
+    if (!turn.projectId) return parentId === null ? [turn] : [];
+    const projectId = neoLevelFactOwner(holders, turn.projectId, parentId);
+    return projectId ? [{ ...turn, projectId }] : parentId === null ? [turn] : [];
+  });
+}
+
+function neoUnavailableWorkspaceHolders(
+  facts: readonly NeoProjectFact[],
+  holders: readonly NeoHolder[]
+): NeoHolder[] | null {
+  const owners = neoFactOwners(facts);
+  if (!owners || owners.length !== 1 || !owners[0] || facts.some((fact) => !fact.projectOnly))
+    return null;
+  const descendants = holders.filter((holder) => holder.ancestorIds?.includes(owners[0]!));
+  const ids = new Set(descendants.map((holder) => holder.projectId));
+  return descendants.length
+    ? descendants.map((holder) => ({
+        ...holder,
+        parentId: holder.parentId && ids.has(holder.parentId) ? holder.parentId : null,
+      }))
+    : null;
+}
+
+export async function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRouted> {
+  if (!text.trim()) return { choice: null };
+  let holders = await deps.holders();
+  const facts = (await deps.facts?.(text)) ?? [];
+  let chosen: NeoRouted = { choice: null };
+  let scopedWorkspace = false;
+  if (facts.length) {
+    const gate = requireNeoFactRoute(facts, holders);
+    if ('reason' in gate) {
+      if (gate.reason.choice) {
+        if (facts.some((fact) => !fact.projectOnly)) return gate.reason;
+        chosen = gate.reason;
+      } else {
+        const descendants = neoUnavailableWorkspaceHolders(facts, holders);
+        if (!descendants) return gate.reason;
+        holders = descendants;
+        scopedWorkspace = true;
+      }
+    }
+  }
+  const visited = new Set<string>();
+  while (true) {
+    const parentId = chosen.choice?.projectId ?? null;
+    const level = neoRouteLevel(holders, parentId);
+    if (parentId && !level.some((holder) => holder.projectId !== parentId)) return chosen;
+    const next = await runNeoRoute(text, {
+      ...deps,
+      holders: () => level,
+      facts: () => [],
+      recentTurns: () => neoLevelTurns(deps.recentTurns(), holders, parentId),
+      projectTurns: () => neoLevelTurns(deps.projectTurns(), holders, parentId),
+      ...(parentId || scopedWorkspace ? { inbox: undefined, newProject: undefined } : {}),
+    });
+    if (!next.choice) return parentId ? chosen : next;
+    if (next.choice.projectId === parentId) return next;
+    if (visited.has(next.choice.projectId))
+      return { choice: null, fallback: 'invalid-project-tree' };
+    visited.add(next.choice.projectId);
+    chosen = next;
+    if (!holders.some((holder) => holder.projectId === next.choice!.projectId)) return chosen;
+  }
 }
 
 export type NeoRouter = (text: string, requestId?: string) => Promise<NeoRouted>;
@@ -465,9 +573,13 @@ export function createNeoRouter(
       const facts = readNeoProjectFacts(db.getDatabase(), text);
       if (facts.some((fact) => fact.projectId === undefined) && refreshFacts) {
         await refreshFacts(text);
-        return readNeoProjectFacts(db.getDatabase(), text);
+        return readNeoSectionFacts(
+          text,
+          readNeoProjectFacts(db.getDatabase(), text),
+          repo.listProjects()
+        );
       }
-      return facts;
+      return readNeoSectionFacts(text, facts, repo.listProjects());
     },
     holders: async () => {
       if (openHolder) {
@@ -482,6 +594,7 @@ export function createNeoRouter(
           ? [
               {
                 projectId: project.id,
+                parentId: project.parentId,
                 sessionId: binding.sessionId,
                 title: project.title,
                 summary: project.summary,

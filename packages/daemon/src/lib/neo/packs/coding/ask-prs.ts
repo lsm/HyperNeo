@@ -12,6 +12,7 @@ import type { NeoEvidence } from '../../evidence.ts';
 
 export type NeoRef = { owner: string; repo: string; number: number };
 export type NeoRefState = {
+  title?: string;
   url: string;
   kind: 'pr' | 'issue';
   state: 'OPEN' | 'MERGED' | 'CLOSED';
@@ -29,7 +30,7 @@ const REF_NAME = /(?<![\w./-])([\w.-]+)\/([\w.-]+)#(\d+)\b/g;
 const REF_BARE = /(?<![\w./#-])#(\d+)\b/g;
 const NEO_ASK_REF_MAX = 10;
 const NOT_A_REF = /could not resolve to (an issue or pull request|a repository)/i;
-const REF_QUERY = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt} ...on Issue{url state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:5,includeClosedPrs:true){nodes{url merged}}}}}}`;
+const REF_QUERY = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:5,includeClosedPrs:true){nodes{url merged}}}}}}`;
 const GhRefSchema = z.object({
   data: z.object({
     repository: z.object({
@@ -43,6 +44,7 @@ const GhRefSchema = z.object({
         }),
         z.object({
           __typename: z.literal('Issue'),
+          title: z.string().optional(),
           url: z.string(),
           state: z.enum(['OPEN', 'CLOSED']),
           stateReason: z.string().nullish(),
@@ -241,6 +243,7 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
       : {
           url: found.url,
           kind: 'issue',
+          ...(found.title ? { title: found.title } : {}),
           state: found.state,
           at: closed ? Date.parse(found.closedAt ?? '') || null : null,
           done: closed && found.stateReason !== 'NOT_PLANNED' && found.stateReason !== 'DUPLICATE',

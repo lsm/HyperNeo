@@ -11,7 +11,9 @@ describe('migration 282 and consultation origins', () => {
     try {
       createNeoTables(db);
       runMigration279(db);
-      db.exec("INSERT INTO neo_concerns VALUES ('club', 'Club', '', '', 1, 1, 1)");
+      db.exec(
+        "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('club', 'Club', '', '', 1, 1, 1)"
+      );
       db.exec(`INSERT INTO neo_consultations
         (id, request_key, concern_id, origin_session_id, session_id, question, status, answer, created_at)
         VALUES ('legacy', 'legacy', 'club', 'root', 'holder', 'Next?', 'reported', 'Old answer', 1)`);

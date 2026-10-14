@@ -304,7 +304,7 @@ describe('QueryRunner startup gate', () => {
     const sql = new SQLite(':memory:');
     createNeoTables(sql);
     runMigration279(sql);
-    sql.exec(`INSERT INTO neo_concerns VALUES ('club','Club','','Six',1,1,1);
+    sql.exec(`INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('club','Club','','Six',1,1,1);
       INSERT INTO neo_session_bindings VALUES ('neo:holder','club','project')`);
     sql
       .prepare(`INSERT INTO neo_consultations

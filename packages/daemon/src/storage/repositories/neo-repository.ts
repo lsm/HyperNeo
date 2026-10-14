@@ -1,8 +1,9 @@
+import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { Database } from '../sqlite-compat.ts';
 import { CONSULTATION_TIMEOUT_MS } from '../../lib/neo/consultation-policy.ts';
 
-const concernColumns = `id, title, summary, context, revision,
+const concernColumns = `id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl,
   created_at AS createdAt, updated_at AS updatedAt`;
 const bindingColumns = 'session_id AS sessionId, concern_id AS projectId, kind';
 const workColumns = `id, request_key AS requestKey, concern_id AS projectId,
@@ -71,6 +72,98 @@ export class NeoRepository {
     return row as NeoProject | null;
   }
 
+  workspaceAliases(id: string, projects = this.listProjects()): string[] {
+    for (const project of neoProjectPath(projects, id).reverse()) {
+      const rows = this.db
+        .prepare('SELECT alias FROM neo_project_workspaces WHERE project_id = ?')
+        .all(project.id) as { alias: string }[];
+      if (rows.length) return rows.map((row) => row.alias);
+    }
+    return [];
+  }
+
+  private sectionWorkspaceMatches(
+    epicUrl: string,
+    parentId: string,
+    projects = this.listProjects()
+  ): boolean {
+    const repository = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/issues\/\d+$/i
+      .exec(epicUrl)?.[1]
+      .toLowerCase();
+    return (
+      !!repository &&
+      this.workspaceAliases(parentId, projects).some((alias) =>
+        alias.startsWith(`repo:${repository}\u0000`)
+      )
+    );
+  }
+
+  moveProject(
+    id: string,
+    parentId: string | null,
+    expectedRevision: number
+  ): { ok: true } | { ok: false; reason: string } {
+    const result = this.db.transaction(() => {
+      const project = this.getProject(id);
+      if (!project || project.revision !== expectedRevision)
+        return { ok: false as const, reason: 'superseded' };
+      const reason = neoProjectMoveReason(this.listProjects(), id, parentId);
+      if (reason) return { ok: false as const, reason };
+      if (project.epicUrl && parentId === null)
+        return { ok: false as const, reason: 'section_needs_parent' };
+      const moved = this.listProjects().map((item) =>
+        item.id === id ? { ...item, parentId } : item
+      );
+      for (const section of moved.filter(
+        (item) => item.epicUrl && neoProjectPath(moved, item.id).some((node) => node.id === id)
+      )) {
+        if (
+          !section.parentId ||
+          !this.sectionWorkspaceMatches(section.epicUrl!, section.parentId, moved)
+        )
+          return { ok: false as const, reason: 'section_workspace_mismatch' };
+      }
+      if ((project.parentId ?? null) === parentId) return { ok: true as const };
+      this.db
+        .prepare(`UPDATE neo_concerns SET parent_id = ?, revision = revision + 1,
+        updated_at = ? WHERE id = ? AND revision = ?`)
+        .run(parentId, Date.now(), id, expectedRevision);
+      return { ok: true as const };
+    })();
+    if (result.ok) this.notify();
+    return result;
+  }
+
+  createSection(
+    parentId: string,
+    epicUrl: string,
+    title: string
+  ): { ok: true; projectId: string } | { ok: false; reason: string } {
+    const result = this.db.transaction(() => {
+      if (parentId === 'inbox' || !this.getProject(parentId))
+        return { ok: false as const, reason: 'unknown_parent' };
+      if (!this.sectionWorkspaceMatches(epicUrl, parentId))
+        return { ok: false as const, reason: 'section_workspace_mismatch' };
+      const existing = this.db
+        .prepare('SELECT id, parent_id AS parentId FROM neo_concerns WHERE epic_url = ?')
+        .get(epicUrl) as { id: string; parentId: string } | null;
+      if (existing)
+        return existing.parentId === parentId
+          ? { ok: true as const, projectId: existing.id }
+          : { ok: false as const, reason: 'epic_already_has_section' };
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      this.db
+        .prepare(`INSERT INTO neo_concerns
+        (id, title, summary, context, revision, created_at, updated_at, parent_id, epic_url)
+        VALUES (?, ?, ?, '', 1, ?, ?, ?, ?)`)
+        .run(id, title, `Section for ${epicUrl}`, now, now, parentId, epicUrl);
+      return { ok: true as const, projectId: id };
+    })();
+    if (result.ok) this.notify();
+    return result;
+  }
+
   retireArchivedBinding(projectId: string, sessionId: string): boolean {
     const result = this.db
       .prepare(`DELETE FROM neo_session_bindings
@@ -88,8 +181,9 @@ export class NeoRepository {
         .run(id);
       return this.db
         .prepare(`DELETE FROM neo_concerns WHERE id = ?
-          AND NOT EXISTS (SELECT 1 FROM neo_session_bindings WHERE concern_id = ?)`)
-        .run(id, id).changes;
+          AND NOT EXISTS (SELECT 1 FROM neo_session_bindings WHERE concern_id = ?)
+          AND NOT EXISTS (SELECT 1 FROM neo_concerns WHERE parent_id = ?)`)
+        .run(id, id, id).changes;
     })();
     if (removed > 0) this.notify();
     return removed > 0;
