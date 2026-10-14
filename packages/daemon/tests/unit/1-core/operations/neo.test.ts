@@ -424,6 +424,8 @@ describe('Neo MVP', () => {
         (item) => item.name
       )
     ).toEqual([
+      'neo.project.move',
+      'neo.project.section',
       'neo.projects.dispatch',
       'neo.message.send',
       'neo.projects.reorganize',
