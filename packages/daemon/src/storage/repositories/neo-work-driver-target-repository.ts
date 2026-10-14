@@ -2,7 +2,12 @@ import {
   NEO_WORK_CLOSED_DONE_PREFIX,
   type NeoWorkDriverReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
-import { WorkStatusSchema, type WorkRef, type WorkStatus } from '../../lib/drivers/types.ts';
+import {
+  WorkStatusSchema,
+  WorkDeliverySchema,
+  type WorkRef,
+  type WorkStatus,
+} from '../../lib/drivers/types.ts';
 import {
   NeoDriverTargetSchema,
   type DriverSent,
@@ -19,6 +24,17 @@ import {
   neoWorkerRefKey,
 } from '../../lib/neo/work-reroute.ts';
 import { NeoAgentWorkTargetRepository } from './neo-agent-work-target-repository.ts';
+
+function storedInputReceipt(raw: string | null, ref: string | null): DriverSent['receipt'] {
+  if (!raw || !ref) return undefined;
+  try {
+    const stored = JSON.parse(raw) as { ref?: unknown; receipt?: unknown } | null;
+    const receipt = WorkDeliverySchema.shape.receipt.safeParse(stored?.receipt);
+    return stored?.ref === ref && receipt.success ? receipt.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type NeoDriverTargetCard = {
   target: NeoDriverTarget | null;
@@ -209,12 +225,21 @@ export class NeoWorkDriverTargetRepository {
   readSent(workId: string): DriverSent | null {
     const row = this.db
       .prepare(
-        `SELECT input_before AS inputBefore, sent_opening AS opening
+        `SELECT input_before AS inputBefore, sent_opening AS opening, sent_receipt AS receipt, ref
            FROM neo_work_driver_targets WHERE work_id = ?`
       )
-      .get(workId) as { inputBefore: number | null; opening: string | null } | null | undefined;
+      .get(workId) as
+      | {
+          inputBefore: number | null;
+          opening: string | null;
+          receipt: string | null;
+          ref: string | null;
+        }
+      | null
+      | undefined;
+    const receipt = row ? storedInputReceipt(row.receipt, row.ref) : undefined;
     return row && row.inputBefore !== null && row.opening
-      ? { inputBefore: row.inputBefore, opening: row.opening }
+      ? { inputBefore: row.inputBefore, opening: row.opening, ...(receipt ? { receipt } : {}) }
       : null;
   }
 
@@ -278,9 +303,16 @@ export class NeoWorkDriverTargetRepository {
   recordSent(workId: string, sent: DriverSent | null): void {
     this.db
       .prepare(
-        'UPDATE neo_work_driver_targets SET input_before = ?, sent_opening = ? WHERE work_id = ?'
+        `UPDATE neo_work_driver_targets SET input_before = ?1, sent_opening = ?2,
+          sent_receipt = CASE WHEN ?3 IS NULL THEN NULL
+            ELSE json_object('ref', ref, 'receipt', json(?3)) END WHERE work_id = ?4`
       )
-      .run(sent?.inputBefore ?? null, sent?.opening ?? null, workId);
+      .run(
+        sent?.inputBefore ?? null,
+        sent?.opening ?? null,
+        sent?.receipt ? JSON.stringify(sent.receipt) : null,
+        workId
+      );
   }
 
   recordNeedsYouSince(workId: string, since: number | null): void {
@@ -299,8 +331,9 @@ export class NeoWorkDriverTargetRepository {
     this.db
       .prepare(
         `UPDATE neo_work_driver_targets
-          SET ref = ?, started_at = ?, link = ?, actual_model = ?, actual_effort = ?
-          WHERE work_id = ?`
+          SET ref = ?1, started_at = ?2, link = ?3, actual_model = ?4, actual_effort = ?5,
+            sent_receipt = CASE WHEN ref IS ?1 THEN sent_receipt ELSE NULL END
+          WHERE work_id = ?6`
       )
       .run(
         JSON.stringify(ref),
