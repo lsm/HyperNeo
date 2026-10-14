@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   admitPublicationUpdate,
   appendPublicationWindow,
+  mergePublicationEdits,
   publicationConversationId,
   useNeoPublications,
   type NeoPublicationState,
@@ -360,4 +361,31 @@ it('wires the consumer to the global root without querying SDK transcripts for p
   );
   expect(screen.getByText(`ready/${id}/1`)).toBeTruthy();
   expect(requests()).toHaveLength(1);
+});
+
+describe('mergePublicationEdits', () => {
+  it('swaps in an edited or corrected copy of a loaded reply and leaves the rest alone', () => {
+    const first = row(1) as NeoPublicationState['items'][number];
+    const second = row(2) as NeoPublicationState['items'][number];
+    const state: NeoPublicationState = {
+      conversationId: id,
+      status: 'ready',
+      items: [first, second],
+      nextAfter: 2,
+      hasMore: false,
+      hasEarlier: false,
+    };
+    const edited = { ...first, shortText: 'Fixed wording.', editedAt: '2026-09-30T09:00:00.000Z' };
+    const merged = mergePublicationEdits(state, {
+      state: 'ready',
+      items: [edited, second, { ...row(3), sequence: 3 } as typeof first],
+      nextAfter: 3,
+    });
+    expect(merged.items).toEqual([edited, second]);
+    expect(merged.nextAfter).toBe(2);
+    expect(
+      mergePublicationEdits(state, { state: 'ready', items: [first, second], nextAfter: 2 })
+    ).toBe(state);
+    expect(mergePublicationEdits(state, { state: 'stale' })).toBe(state);
+  });
 });

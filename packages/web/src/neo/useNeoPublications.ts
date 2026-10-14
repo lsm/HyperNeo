@@ -89,6 +89,23 @@ export function prependPublicationWindow(
   };
 }
 
+export function mergePublicationEdits(
+  state: NeoPublicationState,
+  response: PublicationRead
+): NeoPublicationState {
+  if (response.state !== 'ready') return state;
+  const changed = new Map(response.items.map((item) => [item.publicationId, item]));
+  let touched = false;
+  const items = state.items.map((item) => {
+    const next = changed.get(item.publicationId);
+    if (!next || next.sequence !== item.sequence || JSON.stringify(next) === JSON.stringify(item))
+      return item;
+    touched = true;
+    return next;
+  });
+  return touched ? { ...state, items } : state;
+}
+
 const placePublications = (name: string, place: typeof appendPublicationWindow) =>
   (superpipe({})(name) as PipelineAPI)
     .input(['state', 'response'])
@@ -159,6 +176,21 @@ export function useNeoPublications(rootSessionId: string | null) {
           );
           if (!current()) return;
           publish((tail ? applyTail : applyPage)(before, result));
+          if (
+            !tail &&
+            result.state === 'ready' &&
+            result.items.length === 0 &&
+            value.status === 'ready' &&
+            value.items.length
+          ) {
+            const window = await readNeoPublications(
+              { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
+              async () => hub,
+              current
+            );
+            if (!current()) return;
+            publish(mergePublicationEdits(value, window));
+          }
           inFlight = false;
           if (pending && value.status === 'ready') void update();
         };
