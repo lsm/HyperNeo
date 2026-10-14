@@ -83,13 +83,8 @@ export class NeoWorkDriverTargetRepository {
     const agents = new NeoAgentWorkTargetRepository(this.db);
     return new Set(
       repo.listWork().flatMap((other) => {
-        if (
-          other.id === exceptId ||
-          waiting.has(other.id) ||
-          !['proposed', 'queued'].includes(other.status)
-        )
-          return [];
-        const target = this.get(other.id);
+        if (other.id === exceptId || !['proposed', 'queued'].includes(other.status)) return [];
+        const target = waiting.has(other.id) ? null : this.get(other.id);
         const ref = this.readRef(other.id) ?? (target && 'ref' in target ? target.ref : null);
         const local = other.sessionId ?? other.targetSessionId;
         const agent = agents.get(other.id);
