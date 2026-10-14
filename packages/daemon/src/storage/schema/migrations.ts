@@ -126,6 +126,7 @@ import { runMigration352 } from './m352-neo-ask-item-watch.ts';
 import { runMigration353 } from './m353-neo-work-wakes.ts';
 import { runMigration354 } from './m354-neo-ask-needs-you-questions.ts';
 import { runMigration355 } from './m355-neo-card-event-subscriptions.ts';
+import { runMigration356 } from './m356-neo-notification-triggers.ts';
 import { runMigration357 } from './m357-neo-ask-item-deploy-check.ts';
 import { runMigration358 } from './m358-neo-ask-revisions.ts';
 import { runMigration359 } from './m359-neo-pack-check-registry.ts';
@@ -805,6 +806,7 @@ export function runMigrations(
   run(migrationMarkerKey(353), () => runMigration353(db));
   run(migrationMarkerKey(354), () => runMigration354(db));
   run(migrationMarkerKey(355), () => runMigration355(db));
+  run(migrationMarkerKey(356), () => runMigration356(db));
   run(migrationMarkerKey(357), () => runMigration357(db));
   run(migrationMarkerKey(358), () => runMigration358(db));
   rewrite(migrationMarkerKey(359), () => runMigration359(db));

@@ -11,11 +11,13 @@ export interface NeoWorkRefusal {
 export class NeoWorkRefusalRepository {
   constructor(private readonly db: Database) {}
 
-  list(): NeoWorkRefusal[] {
+  list(workIds?: readonly string[]): NeoWorkRefusal[] {
+    if (workIds && !workIds.length) return [];
+    const filter = workIds ? ` WHERE work_id IN (${workIds.map(() => '?').join(', ')})` : '';
     return (
       this.db
-        .prepare('SELECT work_id AS workId, ref, what, at FROM neo_work_refusals')
-        .all() as (Omit<NeoWorkRefusal, 'ref'> & { ref: string })[]
+        .prepare(`SELECT work_id AS workId, ref, what, at FROM neo_work_refusals${filter}`)
+        .all(...(workIds ?? [])) as (Omit<NeoWorkRefusal, 'ref'> & { ref: string })[]
     ).map((row) => ({ ...row, ref: JSON.parse(row.ref) as WorkRef }));
   }
 

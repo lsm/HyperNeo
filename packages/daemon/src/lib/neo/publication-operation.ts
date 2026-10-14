@@ -17,6 +17,12 @@ import {
   recordNeoTurnReply,
   requirePublicationNews,
 } from './publication-news.ts';
+import {
+  neoConsultationTrigger,
+  neoInputTrigger,
+  requireUnpublishedTrigger,
+  stampNeoDaemonTrigger,
+} from './notification-triggers.ts';
 
 const Draft = NeoPublicationSchema.omit({
   conversationId: true,
@@ -32,7 +38,7 @@ type Producer = {
   input: NeoAskOrigin;
   turn: NonNullable<OperationCaller['neoTurn']>;
 };
-type Proof = Producer & { ask: NeoAskOrigin };
+type Proof = Producer & { ask: NeoAskOrigin; triggerId?: string };
 type LinkEvidence = {
   link: NeoPublicationLink;
   exists: boolean;
@@ -49,7 +55,19 @@ interface NeoPublicationRuntime {
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   append(input: NeoPublicationInput, consultationId?: string): Receipt;
   replay?(input: Draft, caller: OperationCaller): Receipt | null;
+  isHumanInput(input: NeoAskOrigin): boolean;
+  isTriggerPublished(conversationId: string, triggerId: string, publicationId: string): boolean;
   notify(): void;
+}
+
+export function neoPublicationTrigger(
+  proof: Proof,
+  consultation: NeoConsultation | null,
+  isHumanInput: (input: NeoAskOrigin) => boolean
+): string | null {
+  return proof.turn.consultationId
+    ? neoConsultationTrigger(consultation, isHumanInput)
+    : neoInputTrigger(proof.input.messageId, proof.turn.human);
 }
 
 export function reusePublicationReceipt(
@@ -215,6 +233,33 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'result:publication'
     )
     .pipe(
+      (proof: Proof) =>
+        neoPublicationTrigger(
+          proof,
+          proof.turn.consultationId ? runtime.getConsultation(proof.turn.consultationId) : null,
+          (input) => runtime.isHumanInput(input)
+        ),
+      'publication',
+      'trigger'
+    )
+    .pipe(stampNeoDaemonTrigger, ['publication', 'draft', 'trigger'], 'result:publication')
+    .pipe(
+      (proof: Proof, draft: Draft) =>
+        proof.triggerId
+          ? requireUnpublishedTrigger(
+              proof,
+              proof.triggerId,
+              runtime.isTriggerPublished(
+                proof.root.sessionId.slice(4),
+                proof.triggerId,
+                draft.publicationId
+              )
+            )
+          : { value: proof },
+      ['publication', 'draft'],
+      'result:publication'
+    )
+    .pipe(
       (proof: Proof, draft: Draft) =>
         requirePublicationNews(
           proof,
@@ -228,6 +273,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       (draft: Draft, proof: Proof) => {
         const input = {
           ...draft,
+          ...(proof.triggerId ? { triggerId: proof.triggerId } : {}),
           conversationId: proof.root.sessionId.slice(4),
           askOrigin: proof.ask,
           producerInput: proof.input,
@@ -259,7 +305,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Publish an explicitly authored short reply, full details and labelled Neo scene references from this live avatar input. Runtime supplies original human ask and producer attribution. Reuse publicationId only for identical retries; do not publish internal compaction or tool chatter. A bare acknowledgement ("收到", "got it"), a repeat of an earlier reply to the same ask in this turn, or more than 3 replies to one ask in a turn is refused; when refused, end the turn. Set interim:true on a message sent before the answer while you are still working on it; the answer itself omits interim. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
+      'Publish an explicitly authored short reply, full details and labelled Neo scene references from this live avatar input. Runtime supplies original human ask and producer attribution. Reuse publicationId only for identical retries; do not publish internal compaction or tool chatter. A bare acknowledgement ("收到", "got it"), a repeat of an earlier reply to the same ask in this turn, or more than 3 replies to one ask in a turn is refused; when refused, end the turn. Set interim:true on a message sent before the answer while you are still working on it; the answer itself omits interim. When a daemon trigger note wakes you, publish once for it (pass its triggerId, or omit it): the runtime records that trigger, and a second publication for it is refused. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: z.union([
