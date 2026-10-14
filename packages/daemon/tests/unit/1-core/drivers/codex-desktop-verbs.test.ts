@@ -5,8 +5,11 @@ import { join } from 'node:path';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
 import {
   codexExchange,
+  codexInputEvidence,
+  codexQueueDelivery,
   codexRecentInputs,
   codexTurnState,
+  codexUserInputIds,
   createCodexDesktopAdapter,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
 import { WorkDetailSchema } from '../../../../src/lib/drivers/types';
@@ -24,6 +27,77 @@ const said = (text: string) =>
     role: 'assistant',
     content: [{ type: 'output_text', text }],
   });
+
+const heardAs = (id: string, text: string, at = '2026-10-04T11:00:00.000Z') =>
+  JSON.stringify({
+    type: 'response_item',
+    timestamp: at,
+    payload: { type: 'message', role: 'user', id, content: [{ type: 'input_text', text }] },
+  });
+const saidAt = (text: string, at = '2026-10-04T11:00:05.000Z') =>
+  JSON.stringify({
+    type: 'response_item',
+    timestamp: at,
+    payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
+  });
+
+describe('codexQueueDelivery', () => {
+  test('a queued message is receipted by the user message id it appended, not an older copy', () => {
+    const before = [heardAs('msg_old', 'next step')];
+    const after = [...before, saidAt('ok'), heardAs('msg_new', 'next step\nwith detail')];
+    expect(codexQueueDelivery(after, 'next step', 't1', codexUserInputIds(before))).toEqual({
+      delivered: true,
+      receipt: { executionId: 't1', inputId: 'msg_new' },
+    });
+    expect(codexQueueDelivery(before, 'next step', 't1', codexUserInputIds(before))).toEqual({
+      delivered: true,
+    });
+    expect(codexQueueDelivery([heard('next step')], 'next step', 't1', new Set())).toEqual({
+      delivered: true,
+    });
+  });
+});
+
+describe('codexInputEvidence', () => {
+  const receipt = { executionId: 't1', inputId: 'msg_1' };
+  const rollout = [
+    heardAs('msg_0', 'earlier ask'),
+    saidAt('earlier answer'),
+    heardAs('msg_1', 'fix the loader'),
+    heard('<environment_context>cwd</environment_context>'),
+    saidAt('looking'),
+    JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-10-04T11:00:09.000Z',
+      payload: { type: 'task_complete', last_agent_message: 'Fixed in #12.' },
+    }),
+    heardAs('msg_2', 'and the parser?'),
+    saidAt('next turn'),
+  ];
+
+  test('returns the input and its own turn, stopping at the next human input', () => {
+    expect(codexInputEvidence(rollout, receipt, 't1')).toEqual({
+      receipt,
+      state: 'observed',
+      exchange: [
+        { at: Date.parse('2026-10-04T11:00:00.000Z'), role: 'user', text: 'fix the loader' },
+        { at: Date.parse('2026-10-04T11:00:05.000Z'), role: 'agent', text: 'looking' },
+        { at: Date.parse('2026-10-04T11:00:09.000Z'), role: 'agent', text: 'Fixed in #12.' },
+      ],
+      exchangeCut: false,
+    });
+  });
+
+  test('is unavailable for another thread, an id outside the tail, or a malformed line', () => {
+    expect(codexInputEvidence(rollout, receipt, 't2').state).toBe('unavailable');
+    expect(codexInputEvidence(rollout, { ...receipt, inputId: 'msg_9' }, 't1').state).toBe(
+      'unavailable'
+    );
+    expect(codexInputEvidence([heardAs('msg_1', 'fix'), '{"cut'], receipt, 't1').state).toBe(
+      'unavailable'
+    );
+  });
+});
 
 describe('codexTurnState', () => {
   test('reads a finished turn and prefers its final message', () => {
@@ -408,6 +482,19 @@ describe('codex-desktop adapter status and send', () => {
       value: { status: 'done', lastReply: 'Done.' },
     });
     expect(await adapter().status?.(ref('nope'))).toMatchObject({ ok: false, reason: 'not_found' });
+    appendFileSync(
+      join(dir, 'finished.jsonl'),
+      `\n${heardAs('msg_9', 'ship it')}\n${saidAt('shipped')}`
+    );
+    const receipt = { executionId: 'idle', inputId: 'msg_9' };
+    expect(await adapter().status?.(ref('idle'), undefined, receipt)).toMatchObject({
+      ok: true,
+      value: { inputEvidence: { receipt, state: 'observed', exchangeCut: false } },
+    });
+    expect(await adapter().status?.(ref('busy'), undefined, receipt)).toMatchObject({
+      ok: true,
+      value: { inputEvidence: { receipt, state: 'unavailable' } },
+    });
   });
 
   test('status preserves execution cwd separately from the folded project location', async () => {
