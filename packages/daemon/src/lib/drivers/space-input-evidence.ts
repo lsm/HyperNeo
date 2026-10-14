@@ -22,13 +22,13 @@ const CONSUMED_INPUT = `message_type = 'user' AND parent_tool_use_id IS NULL
     AND COALESCE(json_extract(sdk_message, '$.message.content[0].type'), 'text') <> 'tool_result'
   ELSE 1 END`;
 
-function readInput(db: Database, ref: WorkRef, receipt: Receipt) {
+function readInput(db: Database, taskId: string | null, receipt: Receipt) {
   const rows = db
     .prepare(`SELECT sdk_message AS message, timestamp, send_status AS sendStatus,
     consumed_seq AS seq FROM sdk_messages
-    WHERE session_id = ? AND sdk_uuid = ? AND task_id = ? AND message_type = 'user'
+    WHERE session_id = ? AND sdk_uuid = ? AND task_id IS ? AND message_type = 'user'
       AND parent_tool_use_id IS NULL LIMIT 2`)
-    .all(receipt.executionId, receipt.inputId, ref.id) as InputRow[];
+    .all(receipt.executionId, receipt.inputId, taskId) as InputRow[];
   return { rows };
 }
 
@@ -114,10 +114,24 @@ function projectEvidence(
   }
 }
 
-export const readSpaceInputEvidence = (superpipe({})('space-input-evidence') as PipelineAPI)
-  .input(['db', 'ref', 'receipt'])
-  .pipe(readInput, ['db', 'ref', 'receipt'], 'source')
+const readInputEvidence = (superpipe({})('session-input-evidence') as PipelineAPI)
+  .input(['db', 'taskId', 'receipt'])
+  .pipe(readInput, ['db', 'taskId', 'receipt'], 'source')
   .pipe(requireInput, ['source', 'receipt'], 'result:evidence')
   .pipe(readReplies, ['db', 'receipt', 'evidence'], 'replies')
   .pipe(projectEvidence, ['receipt', 'evidence', 'replies'], 'evidence')
-  .end('evidence') as (db: Database, ref: WorkRef, receipt: Receipt) => Evidence;
+  .end('evidence') as (db: Database, taskId: string | null, receipt: Receipt) => Evidence;
+
+export function readSpaceInputEvidence(db: Database, ref: WorkRef, receipt: Receipt): Evidence {
+  return readInputEvidence(db, ref.id, receipt);
+}
+
+export function readSessionInputEvidence(
+  db: Database,
+  sessionId: string,
+  receipt: Receipt
+): Evidence {
+  return receipt.executionId === sessionId
+    ? readInputEvidence(db, null, receipt)
+    : { receipt, state: 'unavailable' };
+}
