@@ -40,6 +40,7 @@ import {
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
   PlaceSchema,
+  WorkDeliverySchema,
   WorkExchangeEntrySchema,
   WorkInputSchema,
   WorkRefSchema,
@@ -149,10 +150,7 @@ export function requireNeoDriverVerb<T>(
 const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
-    value: z.union([
-      z.object({ ref: WorkRefSchema }).passthrough(),
-      z.object({ delivered: z.boolean() }),
-    ]),
+    value: z.union([z.object({ ref: WorkRefSchema }).passthrough(), WorkDeliverySchema]),
   }),
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
@@ -279,6 +277,7 @@ export function readDriverOutcome(
       effort?: string;
       startedAt?: number;
       queued?: true;
+      receipt?: WorkDelivery['receipt'];
     }
   | { failure: string; reason?: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
@@ -303,8 +302,12 @@ export function readDriverOutcome(
     };
   }
   if (target.verb !== 'send') return { failure: 'work.start returned no reference.' };
-  const { delivered } = reply.data.value as { delivered?: unknown };
-  return delivered === false ? { ref: target.ref, queued: true } : { ref: target.ref };
+  const { delivered, receipt } = reply.data.value;
+  return {
+    ref: target.ref,
+    ...(delivered === false ? { queued: true as const } : {}),
+    ...(receipt ? { receipt } : {}),
+  };
 }
 
 const SETTLE_GRACE_MS = 10 * 60_000;
