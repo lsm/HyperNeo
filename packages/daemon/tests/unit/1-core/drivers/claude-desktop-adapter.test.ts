@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type ClaudeRecordCache,
+  claudeInputEvidence,
   claudeTranscriptState,
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
@@ -567,6 +568,123 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(spawned).toEqual([]);
   });
 
+  test('a delivered send returns the receipt of the input it put in the transcript', async () => {
+    const relayDir = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
+    const resumeDir = join(dir, 'projects', '-focus-ops');
+    mkdirSync(relayDir, { recursive: true });
+    mkdirSync(resumeDir, { recursive: true });
+    const relayLog = join(relayDir, 'cli-a1.jsonl');
+    const resumeLog = join(resumeDir, 'cli-b2.jsonl');
+    writeFileSync(relayLog, '');
+    writeFileSync(
+      resumeLog,
+      `${JSON.stringify({ type: 'user', uuid: 'old', message: { content: 'next' } })}\n`
+    );
+    const relayed = JSON.stringify({
+      type: 'user',
+      uuid: 'u-relay',
+      message: {
+        content: '<cross-session-message from="x">\nload orders\n</cross-session-message>',
+      },
+    });
+    const relay = adapter(undefined, 0, () => appendFileSync(relayLog, `${relayed}\n`));
+    expect(
+      await relay.send?.({ adapter: 'claude-desktop', id: 'local_a1' }, 'load orders', user)
+    ).toEqual({
+      ok: true,
+      value: { delivered: true, receipt: { executionId: 'cli-a1', inputId: 'u-relay' } },
+    });
+    const resumed = JSON.stringify({
+      type: 'user',
+      uuid: 'u-resume',
+      message: { content: 'next step, then report' },
+    });
+    const resume = adapter([], 0, () => appendFileSync(resumeLog, `${resumed}\n`));
+    expect(
+      await resume.send?.(
+        { adapter: 'claude-desktop', id: 'local_b2' },
+        'next step, then report',
+        user
+      )
+    ).toEqual({
+      ok: true,
+      value: { delivered: true, receipt: { executionId: 'cli-b2', inputId: 'u-resume' } },
+    });
+    expect(
+      await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user)
+    ).toEqual({ ok: true, value: { delivered: true } });
+  });
+
+  test('status reads the exchange that answered a receipt, and only its own reply', async () => {
+    const transcripts = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
+    mkdirSync(transcripts, { recursive: true });
+    const at = (second: number) => `2026-10-14T10:00:0${second}.000Z`;
+    const said = (uuid: string, text: string, second: number) =>
+      JSON.stringify({
+        type: 'assistant',
+        uuid,
+        timestamp: at(second),
+        message: { content: [{ type: 'text', text }] },
+      });
+    writeFileSync(
+      join(transcripts, 'cli-a1.jsonl'),
+      `${[
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u0',
+          timestamp: at(0),
+          message: { content: 'earlier' },
+        }),
+        said('a0', 'earlier reply', 1),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u1',
+          timestamp: at(2),
+          message: { content: 'load orders' },
+        }),
+        said('a1', 'loading', 3),
+        said('a2', 'loaded 12 orders', 4),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u2',
+          timestamp: at(5),
+          message: { content: 'any news?' },
+        }),
+        said('a3', 'nothing new', 6),
+      ].join('\n')}\n`
+    );
+    const ref = { adapter: 'claude-desktop', id: 'local_a1' };
+    const status = await adapter().status?.(ref, undefined, {
+      executionId: 'cli-a1',
+      inputId: 'u1',
+    });
+    expect(status).toMatchObject({
+      ok: true,
+      value: {
+        inputEvidence: {
+          state: 'observed',
+          exchangeCut: false,
+          exchange: [
+            { role: 'user', text: 'load orders' },
+            { role: 'agent', text: 'loading' },
+            { role: 'agent', text: 'loaded 12 orders' },
+          ],
+        },
+      },
+    });
+    expect(WorkDetailSchema.safeParse(status?.ok ? status.value : null).success).toBe(true);
+    for (const receipt of [
+      { executionId: 'cli-other', inputId: 'u1' },
+      { executionId: 'cli-a1', inputId: 'missing' },
+    ])
+      expect(await adapter().status?.(ref, undefined, receipt)).toMatchObject({
+        ok: true,
+        value: { inputEvidence: { receipt, state: 'unavailable' } },
+      });
+    const plain = await adapter().status?.(ref);
+    expect(plain?.ok && 'inputEvidence' in plain.value).toBe(false);
+  });
+
   test('answers a Space search without reading records or asking the CLI', async () => {
     let asked = false;
     const groups = await createClaudeDesktopAdapter({
@@ -766,5 +884,38 @@ describe('claudeTranscriptState', () => {
       cut: false,
     });
     expect(claudeTranscriptState(lines).exchange).toBeUndefined();
+  });
+});
+
+describe('claudeInputEvidence', () => {
+  const receipt = { executionId: 'cli-a1', inputId: 'u1' };
+  const input = JSON.stringify({
+    type: 'user',
+    uuid: 'u1',
+    timestamp: '2026-10-14T10:00:00.000Z',
+    message: { content: 'go' },
+  });
+  const reply = (n: number) =>
+    JSON.stringify({
+      type: 'assistant',
+      timestamp: new Date(Date.parse('2026-10-14T10:00:01.000Z') + n).toISOString(),
+      message: { content: [{ type: 'text', text: `step ${n}` }] },
+    });
+
+  test('cuts the exchange at forty entries and says so', () => {
+    const evidence = claudeInputEvidence(
+      [input, ...Array.from({ length: 45 }, (_, n) => reply(n))],
+      receipt,
+      'cli-a1'
+    );
+    expect(evidence).toMatchObject({ state: 'observed', exchangeCut: true });
+    expect(evidence.state === 'observed' && evidence.exchange).toHaveLength(40);
+  });
+
+  test('is unavailable when a line in its window is malformed', () => {
+    expect(claudeInputEvidence([input, '{broken', reply(1)], receipt, 'cli-a1')).toEqual({
+      receipt,
+      state: 'unavailable',
+    });
   });
 });
