@@ -7,6 +7,7 @@ import { CODING_PACK_BRIEF } from './coding/pack.ts';
 import { requireNeoWorkPrRefresh } from './coding/work-prs.ts';
 import { LIFE_ADMIN_PACK_BRIEF } from './life-admin/pack.ts';
 import type { NeoPack, NeoPackBrief, NeoPackCheck, NeoPackFragment } from './types.ts';
+import { buildNeoCheckRegistry } from './check-registry.ts';
 
 export const NEO_DEFAULT_PACKS = ['coding'];
 
@@ -159,7 +160,15 @@ export function neoPackEvidenceOrNone(
 }
 
 export function neoPackChecks(packs: readonly NeoPack[]): Record<string, NeoPackCheck> {
-  return Object.assign({}, ...[...packs].reverse().map((pack) => pack.checks ?? {}));
+  const registry = buildNeoCheckRegistry(packs);
+  return registry.ok
+    ? Object.fromEntries(
+        registry.kinds.flatMap((kind) => {
+          const entry = registry.resolve(kind);
+          return entry.ok && entry.value.mode === 'evidence' ? [[kind, entry.value.check]] : [];
+        })
+      )
+    : {};
 }
 
 export function requireNeoPackTickable(read: {
@@ -187,17 +196,58 @@ export function planNeoPackTicks(
   });
 }
 
+function registeredTicks(
+  ask: NeoAsk,
+  registry: Extract<ReturnType<typeof buildNeoCheckRegistry>, { ok: true }>,
+  packId: string,
+  ticks: { id: string; evidence: string }[],
+  route: 'check' | 'watch' | 'event'
+): { id: string; evidence: string }[] {
+  return ticks.filter((tick) => {
+    const item = ask.doneItems?.find((item) => item.id === tick.id && !item.removed);
+    if (!item) return false;
+    const entry = item.check ? registry.resolve(item.check) : null;
+    if (entry && !entry.ok) return false;
+    if (route !== 'check' && item.watch?.length) return true;
+    return (
+      route !== 'watch' &&
+      entry?.ok &&
+      entry.value.packId === packId &&
+      (route === 'event' || entry.value.mode === 'ask-ticks')
+    );
+  });
+}
+
 export async function readNeoAskPackTicks(
   packs: readonly NeoPack[],
   ask: NeoAsk,
   works: readonly NeoWork[],
   warn: (id: string, error: unknown) => void
 ): Promise<{ id: string; evidence: string }[]> {
+  const registry = buildNeoCheckRegistry(packs);
+  if (!registry.ok) {
+    warn('registry', registry.reason);
+    return [];
+  }
+  const readers = new Map(
+    registry.kinds.flatMap((kind) => {
+      const entry = registry.resolve(kind);
+      return entry.ok && entry.value.mode === 'ask-ticks'
+        ? [[entry.value.packId, entry.value.readAskTicks] as const]
+        : [];
+    })
+  );
   const reads = await Promise.all(
     packs.flatMap((pack) =>
       [
-        !ask.pack || pack.id === ask.pack ? pack.readAskTicks?.(ask, works) : undefined,
-        pack.readAskWatchTicks?.(ask),
+        !ask.pack || pack.id === ask.pack
+          ? readers
+              .get(pack.id)?.(ask, works)
+              .then((ticks) => registeredTicks(ask, registry, pack.id, ticks, 'check'))
+          : undefined,
+        pack
+          .readAskWatchTicks?.(ask)
+          .then((ticks) => registeredTicks(ask, registry, pack.id, ticks, 'watch')),
       ].map((read) =>
         read?.catch((error: unknown) => {
           warn(pack.id, error);
@@ -216,12 +266,20 @@ export async function readNeoAskEventTicks(
   event: ExternalEvent,
   warn: (id: string, error: unknown) => void
 ): Promise<{ id: string; evidence: string }[]> {
+  const registry = buildNeoCheckRegistry(packs);
+  if (!registry.ok) {
+    warn('registry', registry.reason);
+    return [];
+  }
   const reads = await Promise.all(
     packs.map((pack) =>
-      pack.readAskEventTicks?.(ask, event).catch((error: unknown) => {
-        warn(pack.id, error);
-        return [];
-      })
+      pack
+        .readAskEventTicks?.(ask, event)
+        .then((ticks) => registeredTicks(ask, registry, pack.id, ticks, 'event'))
+        .catch((error: unknown) => {
+          warn(pack.id, error);
+          return [];
+        })
     )
   );
   const ticks = reads.flatMap((read) => read ?? []);

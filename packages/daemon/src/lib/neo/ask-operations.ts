@@ -19,15 +19,8 @@ import type {
 import type { NeoService } from './service.ts';
 import { isNeoAskSettled } from './done-check.ts';
 import { requireNeoAskPack } from './packs/index.ts';
-import { CODING_CHECK_PR_MERGED } from './packs/coding/pack.ts';
-import {
-  CODING_CHECK_ISSUE_CLOSED,
-  CODING_CHECK_ISSUE_FILED,
-  CODING_CHECK_ISSUE_SUB_ISSUE,
-} from './packs/coding/issue-checks.ts';
-import { LIFE_ADMIN_CHECK_CONFIRMED } from './packs/life-admin/pack.ts';
+import type { buildNeoCheckRegistry } from './packs/check-registry.ts';
 import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
-import { CODING_CHECK_DEPLOYED } from './packs/coding/deploy-checks.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 import {
   neoDaemonReadsClaim,
@@ -48,14 +41,12 @@ type NeoAdmit = (
 type AskReceipt = { ok: true; ask: NeoAsk };
 type AskOpened = AskReceipt & { packBriefing?: string };
 
-const NEO_ASK_CHECK_KINDS = [
-  CODING_CHECK_PR_MERGED,
-  CODING_CHECK_ISSUE_FILED,
-  CODING_CHECK_ISSUE_SUB_ISSUE,
-  CODING_CHECK_ISSUE_CLOSED,
-  CODING_CHECK_DEPLOYED,
-  LIFE_ADMIN_CHECK_CONFIRMED,
-] as const;
+const CheckKind = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .describe('A check kind registered by a loaded pack.');
 const NEO_ASK_ITEM_KINDS = ['decision', 'action', 'approval', 'wait'] as const;
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const NeoAskSchema = z.object({
@@ -127,7 +118,7 @@ const WatchUrl = z
   );
 const Item = z.object({
   text: z.string().trim().min(1).max(300),
-  check: z.enum(NEO_ASK_CHECK_KINDS).nullable().default(null),
+  check: CheckKind.nullable().default(null),
   watch: z.array(WatchUrl).min(1).max(10).optional(),
 });
 const Open = z
@@ -216,7 +207,7 @@ const Edit = z
         z
           .object({
             itemId: z.string().min(1),
-            check: z.enum(NEO_ASK_CHECK_KINDS).nullable().default(null),
+            check: CheckKind.nullable().default(null),
             watch: z.array(WatchUrl).min(1).max(10).optional(),
           })
           .refine((item) => item.check || item.watch, 'Pass check or watch.')
@@ -233,6 +224,20 @@ const requireAskRevision = (input: { expectedRevision: number }, ask: NeoAsk): G
   input.expectedRevision === (ask.revision ?? 0)
     ? { value: ask }
     : { reason: fail('stale_revision: refresh the ask before changing or approving it.') };
+
+function requireRegisteredChecks<T>(
+  items: readonly { check?: string | null }[],
+  registry: ReturnType<typeof buildNeoCheckRegistry>,
+  value: T
+): Gate<T> {
+  if (!registry.ok) return { reason: registry };
+  for (const item of items) {
+    if (!item.check) continue;
+    const check = registry.resolve(item.check);
+    if (!check.ok) return { reason: check };
+  }
+  return { value };
+}
 
 function neoPromptText(message: SDKMessage): string {
   const content = (message as { message?: { content?: unknown } }).message?.content;
@@ -1062,6 +1067,18 @@ export function createNeoAskOperations(
         checklist: ReturnType<typeof planNeoAskItems>,
         origin: NeoWorkOrigin,
         input: z.infer<typeof Open>
+      ) =>
+        service.askRecords.forRequest(`${origin.originSessionId}:${input.requestKey}`)
+          ? { value: origin }
+          : requireRegisteredChecks(checklist.items, service.checkRegistry(), origin),
+      ['checklist', 'admission', 'input'],
+      'result:admission'
+    )
+    .pipe(
+      (
+        checklist: ReturnType<typeof planNeoAskItems>,
+        origin: NeoWorkOrigin,
+        input: z.infer<typeof Open>
       ) => {
         if (service.askRecords.forRequest(`${origin.originSessionId}:${input.requestKey}`))
           return { value: origin };
@@ -1229,6 +1246,12 @@ export function createNeoAskOperations(
     )
     .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskTick, ['input', 'admission', 'caller'], 'result:admission')
+    .pipe(
+      (target: { ask: NeoAsk; item: NeoAskItem }) =>
+        requireRegisteredChecks([target.item], service.checkRegistry(), target),
+      'admission',
+      'result:admission'
+    )
     .pipe(
       (input: z.infer<typeof Tick>, caller: OperationCaller, target: { item: NeoAskItem }) =>
         neoHumanTickWakes(input.state, caller.source, target.item),
@@ -1435,6 +1458,22 @@ export function createNeoAskOperations(
     )
     .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskEdit, ['input', 'admission'], 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Edit>, ask: NeoAsk) =>
+        requireRegisteredChecks(
+          [
+            ...input.add,
+            ...input.track.map((change) => ({
+              check:
+                change.check ?? ask.doneItems?.find((item) => item.id === change.itemId)?.check,
+            })),
+          ],
+          service.checkRegistry(),
+          ask
+        ),
+      ['input', 'admission'],
+      'result:admission'
+    )
     .pipe(
       (input: z.infer<typeof Edit>, ask: NeoAsk) => {
         const tracked = new Map<string, NeoAskItem>();

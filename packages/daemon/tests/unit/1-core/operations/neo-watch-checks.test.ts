@@ -5,7 +5,7 @@ import type { NeoAsk, NeoAskItem, NeoWorkPr } from '@hyperneo/shared/types/neo-s
 import type { NeoRefState } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 import { keepNeoCardPrReads } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
 import { readNeoGithubRef } from '../../../../src/lib/neo/packs/coding/github-read.ts';
-import { readNeoAskPackTicks } from '../../../../src/lib/neo/packs/index.ts';
+import { readNeoAskPackTicks, readNeoAskEventTicks } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import {
   judgeNeoWatchTicks,
@@ -142,26 +142,95 @@ describe('readNeoAskPackTicks', () => {
     const pack = (id: string, extra: Partial<NeoPack>): NeoPack =>
       ({ id, describe: id, instructions: () => null, ...extra }) as NeoPack;
     const coding = pack('coding', {
+      askTickChecks: ['coding.issue_filed'],
       readAskTicks: async () => [{ id: 'i1', evidence: 'issue' }],
       readAskWatchTicks: async () => [
         { id: 'i1', evidence: 'watched' },
         { id: 'i2', evidence: 'watched' },
       ],
     });
-    const life = pack('life-admin', { readAskTicks: async () => [{ id: 'i3', evidence: 'life' }] });
+    const life = pack('life-admin', {
+      askTickChecks: ['life-admin.confirmed'],
+      readAskTicks: async () => [{ id: 'i3', evidence: 'life' }],
+    });
+    const current = ask([
+      item('i1', [pull(1)], { check: 'coding.issue_filed' }),
+      item('i2', [pull(2)]),
+      item('i3', [], { check: 'life-admin.confirmed' }),
+    ]);
     const warn = vi.fn();
     expect(
-      await readNeoAskPackTicks([coding, life], { ...ask([]), pack: 'life-admin' }, [], warn)
+      await readNeoAskPackTicks([coding, life], { ...current, pack: 'life-admin' }, [], warn)
     ).toEqual([
       { id: 'i1', evidence: 'watched' },
       { id: 'i2', evidence: 'watched' },
       { id: 'i3', evidence: 'life' },
     ]);
-    expect(await readNeoAskPackTicks([coding], ask([]), [], warn)).toEqual([
+    expect(await readNeoAskPackTicks([coding], current, [], warn)).toEqual([
       { id: 'i1', evidence: 'issue' },
       { id: 'i2', evidence: 'watched' },
     ]);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  test('dispatches only declared readers and filters unsupported and foreign ticks', async () => {
+    const ticks = ['i1', 'i2', 'i3'].map((id) => ({ id, evidence: id }));
+    const read = vi.fn(async () => ticks);
+    const loaded: NeoPack = {
+      id: 'legal',
+      describe: 'Legal',
+      instructions: () => null,
+      askTickChecks: ['legal.filed'],
+      readAskTicks: read,
+      readAskWatchTicks: async () => ticks,
+    };
+    const current = ask([
+      item('i1', [], { check: 'legal.filed' }),
+      item('i2', [pull(2)], { check: 'unloaded.filed' }),
+      item('i3', [], { check: 'other.filed' }),
+    ]);
+    const other: NeoPack = {
+      id: 'other',
+      describe: 'Other',
+      instructions: () => null,
+      checks: { 'other.filed': () => ({ value: 'other' }) },
+    };
+    expect(await readNeoAskPackTicks([loaded, other], current, [], vi.fn())).toEqual([ticks[0]]);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(
+      await readNeoAskPackTicks([{ ...loaded, askTickChecks: [] }, other], current, [], vi.fn())
+    ).toEqual([]);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('readNeoAskEventTicks', () => {
+  test('an event cannot tick a kind whose registration was unloaded, even with a watch', async () => {
+    const loaded: NeoPack = {
+      id: 'legal',
+      describe: 'Legal',
+      instructions: () => null,
+      checks: { 'legal.filed': () => ({ value: 'filed' }) },
+      readAskEventTicks: async () => [{ id: 'i1', evidence: 'filed' }],
+    };
+    const current = ask([item('i1', [pull(1)], { check: 'legal.filed' })]);
+    const event = {
+      id: 'e1',
+      spaceId: '',
+      topic: 'legal.filed',
+      occurredAt: 1,
+      ingestedAt: 1,
+      source: 'legal',
+      summary: 'Filed',
+      payload: {},
+      dedupeKey: 'e1',
+    };
+    expect(await readNeoAskEventTicks([loaded], current, event, vi.fn())).toEqual([
+      { id: 'i1', evidence: 'filed' },
+    ]);
+    expect(
+      await readNeoAskEventTicks([{ ...loaded, checks: {} }], current, event, vi.fn())
+    ).toEqual([]);
   });
 });
 

@@ -281,14 +281,20 @@ describe('codingPrMergedCheck', () => {
 });
 
 describe('neoPackChecks', () => {
-  test('takes each kind from the first pack that defines it', () => {
+  test('refuses colliding or foreign registrations instead of selecting the first definition', () => {
     const first = () => ({ value: 'first' });
     const second = () => ({ value: 'second' });
     const checks = neoPackChecks([
       { ...pack('coding'), checks: { 'coding.pr_merged': first } },
       { ...pack('other'), checks: { 'coding.pr_merged': second, 'other.filed': second } },
     ]);
-    expect(checks).toEqual({ 'coding.pr_merged': first, 'other.filed': second });
+    expect(checks).toEqual({});
+    expect(
+      neoPackChecks([
+        { ...pack('coding'), checks: { 'coding.pr_merged': first } },
+        { ...pack('other'), checks: { 'other.filed': second } },
+      ])
+    ).toEqual({ 'coding.pr_merged': first, 'other.filed': second });
   });
 });
 
