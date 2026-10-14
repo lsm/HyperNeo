@@ -46,6 +46,7 @@ import {
   WorkInputSchema,
   WorkRefSchema,
   WorkStatusSchema,
+  WorkInputReceiptSchema,
   type WorkExchangeEntry,
   type WorkDelivery,
   type WorkInput,
@@ -287,19 +288,22 @@ export function readDriverOutcome(
   if (!reply.data.ok)
     return { failure: `${reply.data.reason}: ${reply.data.detail}`, reason: reply.data.reason };
   if ('ref' in reply.data.value) {
-    const { ref, link, model, effort, lastActivityAt } = reply.data.value as {
+    const { ref, link, model, effort, lastActivityAt, receipt } = reply.data.value as {
       ref: WorkRef;
       link?: unknown;
       model?: unknown;
       effort?: unknown;
       lastActivityAt?: unknown;
+      receipt?: unknown;
     };
+    const started = WorkInputReceiptSchema.safeParse(receipt);
     return {
       ref,
       ...(typeof link === 'string' ? { link } : {}),
       ...(typeof model === 'string' ? { model } : {}),
       ...(typeof effort === 'string' ? { effort } : {}),
       ...(typeof lastActivityAt === 'number' ? { startedAt: lastActivityAt } : {}),
+      ...(started.success ? { receipt: started.data } : {}),
     };
   }
   if (target.verb !== 'send') return { failure: 'work.start returned no reference.' };

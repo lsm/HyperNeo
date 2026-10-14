@@ -129,6 +129,10 @@ export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
     .strict(),
 ]);
 
+export const WorkStartedSchema = WorkSummarySchema.extend({
+  receipt: WorkInputReceiptSchema.optional(),
+});
+
 export const WorkDetailSchema = WorkSummarySchema.extend({
   inputEvidence: WorkInputEvidenceSchema.optional(),
   execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
@@ -144,6 +148,7 @@ export type WorkStatus = z.infer<typeof WorkStatusSchema>;
 export type Place = z.infer<typeof PlaceSchema>;
 export type WorkRef = z.infer<typeof WorkRefSchema>;
 export type WorkSummary = z.infer<typeof WorkSummarySchema>;
+export type WorkStarted = z.infer<typeof WorkStartedSchema>;
 export type PlaceGroup = z.infer<typeof PlaceGroupSchema>;
 export type WorkRejection = z.infer<typeof WorkRejectionSchema>;
 export type WorkDetail = z.infer<typeof WorkDetailSchema>;
@@ -188,7 +193,7 @@ export interface WorkAdapter {
   readonly start?: (
     request: StartRequest,
     context: WorkCallContext
-  ) => Promise<Result<WorkSummary>>;
+  ) => Promise<Result<WorkStarted>>;
   readonly send?: (
     ref: WorkRef,
     message: string,
