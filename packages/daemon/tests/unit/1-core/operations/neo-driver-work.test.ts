@@ -758,29 +758,7 @@ describe('Neo work with a drivers target', () => {
         execute: async (input, caller) => {
           calls.push({ name, input, caller });
           if (name === 'work.start') await during?.(service);
-          if (name === 'work.status') {
-            const result = status(input) as { ok?: boolean; value?: Record<string, unknown> };
-            const value = result.value;
-            if (!value || value.exchange !== undefined || typeof value.lastReply !== 'string')
-              return result;
-            const sent = service.driverTargets.readSent('work-1');
-            if (!sent) return result;
-            const at = Number(value.lastReplyAt ?? value.lastActivityAt);
-            return {
-              ...result,
-              value: {
-                ...value,
-                exchange: [
-                  {
-                    at: Math.min(at - 0.1, sent.inputBefore + 0.1),
-                    role: 'user',
-                    text: sent.opening,
-                  },
-                  { at, role: 'agent', text: value.lastReply },
-                ],
-              },
-            };
-          }
+          if (name === 'work.status') return status(input);
           if (name === 'work.find') return find(input);
           return name === 'work.stop'
             ? { ok: true, value: { stopped: true } }
@@ -2321,9 +2299,17 @@ describe('Neo work with a drivers target', () => {
   test("tracks the pull request a card's session opened on its branch without naming it", async () => {
     const ref = { adapter: 'hyperneo', id: 'card-session' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6301';
+    const at = Date.now() + 10_000;
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
       ok: true,
-      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Fixed it.' },
+      value: {
+        status: 'done',
+        lastActivityAt: at + 2,
+        exchange: [
+          { at, role: 'user', text: work.instruction },
+          { at: at + 2, role: 'agent', text: 'Fixed it.' },
+        ],
+      },
     }));
     db.createSession(createTestSession('neo:root'));
     service.workGoals.record('work-1', 'Fix the font', '- merged to dev');
@@ -2342,7 +2328,7 @@ describe('Neo work with a drivers target', () => {
     service.readPrs = async (urls) =>
       urls.map((item) => ({
         url: item,
-        createdAt: Date.now(),
+        createdAt: at + 1,
         state: 'OPEN',
         checks: 'pending',
         review: 'none',
@@ -3524,6 +3510,86 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test.each(['hyperneo', 'space', 'codex-desktop'])(
+    'adopts %s input without sending its brief, settles and reopens',
+    async (adapter) => {
+      const ref = { adapter, id: 'adopted' };
+      const at = Date.now() - 1_000;
+      const input = { at, text: 'Human started this task' };
+      const history = adapter === 'codex-desktop';
+      let reply: unknown = {
+        ok: true,
+        value: { status: 'running', lastActivityAt: at, recentInputs: [input] },
+      };
+      const { db, service, calls } = await setup(null, undefined, () => reply, {
+        verb: 'adopt',
+        ref,
+      });
+      let now = Date.now();
+      const clock = spyOn(Date, 'now').mockImplementation(() => now);
+      Object.assign(service, {
+        returnReport: async () => {},
+        checkDone: async () => {},
+        deliver: async () => {},
+      });
+      service.workGoals.record('work-1', 'Finish', '- checked');
+      fileUnderAsk(service);
+      const update = (status: string, other = false) => {
+        now += 180_000;
+        const inputs = other ? [input, { at: now - 1, text: 'Another card PR event' }] : [input];
+        reply = {
+          ok: true,
+          value: {
+            status,
+            lastActivityAt: now,
+            lastReplyAt: now,
+            lastReply: 'Task result',
+            recentInputs: inputs,
+            ...(history
+              ? {
+                  exchange: [
+                    ...inputs.map((item) => ({ ...item, role: 'user' })),
+                    { at: now, role: 'agent', text: 'Task result' },
+                  ],
+                }
+              : {}),
+          },
+        };
+      };
+      try {
+        await service.start('work-1');
+        expect(calls.map((call) => call.name)).toEqual(['work.status']);
+        expect(service.driverTargets.readSent('work-1')).toEqual({
+          inputBefore: at - 1,
+          opening: input.text,
+        });
+        await service.refreshDriverWork();
+        expect(service.repo.getWork('work-1')?.status).toBe('queued');
+        update('done');
+        await service.refreshDriverWork();
+        expect(service.repo.getWork('work-1')).toMatchObject({
+          status: 'reported',
+          report: history ? 'Agent: Task result' : 'Task result',
+        });
+        update('needs_you');
+        await service.refreshDriverWork();
+        expect(service.repo.getWork('work-1')?.status).toBe('queued');
+        update('done');
+        await service.refreshDriverWork();
+        const report = service.repo.getWork('work-1')?.report;
+        update('needs_you', true);
+        await service.refreshDriverWork();
+        expect(service.repo.getWork('work-1')).toMatchObject({ status: 'reported', report });
+        update('done', true);
+        await service.refreshDriverWork();
+        expect(service.repo.getWork('work-1')?.report).toBe(report);
+      } finally {
+        clock.mockRestore();
+        db.close();
+      }
+    }
+  );
+
   test('settles sent work once the session acts after the send, on its own clock', async () => {
     let reply: unknown = { ok: true, value: { status: 'done', lastActivityAt: 1 } };
     const { db, service, calls } = await setup(
@@ -3551,7 +3617,7 @@ describe('Neo work with a drivers target', () => {
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')).toMatchObject({
         status: 'reported',
-        report: 'Agent: Voice is durable.',
+        report: 'Voice is durable.',
       });
       expect(returned).toEqual(['work-1']);
       expect(calls.map((call) => call.name)).toEqual([

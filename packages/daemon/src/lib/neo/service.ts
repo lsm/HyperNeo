@@ -128,6 +128,8 @@ import {
   readDriverLive,
   readDriverOpenedPrs,
   readDriverCardExchange,
+  isDriverCardCurrent,
+  readDriverAdoptedSent,
   readDriverSendBaseline,
   neoCardSent,
   readDriverSent,
@@ -524,7 +526,7 @@ export class NeoService {
       ) => {
         if (
           live?.status !== 'needs_you' ||
-          !readDriverCardExchange(read.outcome, this.driverTargets.readSent(work.id))?.current
+          !isDriverCardCurrent(read.outcome, this.driverTargets.readSent(work.id))
         )
           return;
         const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
@@ -1498,13 +1500,14 @@ export class NeoService {
   }
 
   private async adoptDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
-    const live = readDriverLive(await this.invokeAsCard(work, 'work.status', { ref }));
+    const outcome = await this.invokeAsCard(work, 'work.status', { ref });
+    const live = readDriverLive(outcome);
     if (!live) {
       await this.failWork(work, `Could not track the session: ${ref.adapter} did not find it.`);
       return;
     }
     this.driverTargets.recordRef(work.id, ref, Date.now(), live.link);
-    this.driverTargets.recordSent(work.id, null);
+    this.driverTargets.recordSent(work.id, readDriverAdoptedSent(outcome));
     this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink);
     const current = this.repo.getWork(work.id);
     if (current?.status === 'queued')

@@ -477,6 +477,15 @@ export function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null 
   return parseDriverStatus(outcome)?.recentInputs ?? null;
 }
 
+export function readDriverAdoptedSent(outcome: OperationOutcome): DriverSent | null {
+  const value = parseDriverStatus(outcome);
+  const input = (
+    value?.recentInputs ?? value?.exchange?.filter((entry) => entry.role === 'user')
+  )?.at(-1);
+  const opening = input ? messageOpening(input.text) : '';
+  return input && opening ? { inputBefore: input.at - 1, opening } : null;
+}
+
 export function readDriverOpenedPrs(outcome: OperationOutcome): string[] {
   return parseDriverStatus(outcome)?.openedPrs ?? [];
 }
@@ -755,6 +764,19 @@ export function readDriverCardExchange(outcome: OperationOutcome, sent: DriverSe
   };
 }
 
+export function isDriverCardCurrent(outcome: OperationOutcome, sent: DriverSent | null): boolean {
+  const value = parseDriverStatus(outcome);
+  if (!value) return false;
+  if (value.exchange !== undefined) return readDriverCardExchange(outcome, sent)?.current ?? false;
+  return (
+    !sent ||
+    !(value.recentInputs ?? []).some(
+      (input) =>
+        input.at > sent.inputBefore && !input.text.replace(/\s+/g, ' ').includes(sent.opening)
+    )
+  );
+}
+
 const EXCHANGE_REPORT_LIMIT = 12_000;
 
 export function driverExchangeReport(
@@ -813,6 +835,10 @@ export function readDriverFollowUp(
 ): string | null {
   const value = parseDriverStatus(outcome);
   if (!value || value.status === 'running' || value.status === 'queued') return null;
+  if (value.exchange === undefined)
+    return (value.lastReplyAt ?? value.lastActivityAt) > since && isDriverCardCurrent(outcome, sent)
+      ? (value.lastReply ?? null)
+      : null;
   const own = readDriverCardExchange(outcome, sent);
   const replies = own?.replies.filter((entry) => entry.at > since);
   return replies?.length ? driverExchangeReport(replies, false, null) : null;
@@ -839,7 +865,16 @@ export function readDriverSettlement(
   const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
   if (!fresh && (requireFresh || now - work.updatedAt < SETTLE_GRACE_MS)) return null;
   const report = driverExchangeReport(exchange, exchangeCut ?? false, opening);
-  if (opening && !report) return null;
+  if (opening && !report && exchange !== undefined) return null;
+  if (
+    exchange === undefined &&
+    opening &&
+    !isDriverCardCurrent(outcome, {
+      opening,
+      inputBefore: (startedAt ?? work.updatedAt) - 1,
+    })
+  )
+    return null;
   const said = report ?? reply.value.lastReply;
   if (status === 'done') {
     const staleReply =

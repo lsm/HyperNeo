@@ -66,6 +66,36 @@ describe('card input provenance', () => {
     expect(readDriverSettlement(card, outcome(entries), 50, 11, true, sent.opening)).toBeNull();
     expect(readDriverCardExchange(outcome(entries), sent)).toBeNull();
   });
+  test('absent history preserves adapter compatibility but present empty history fails closed', () => {
+    const missing = outcome(undefined, { exchange: undefined });
+    expect(readDriverSettlement(card, missing, 50, 11, true, sent.opening)).toEqual({
+      status: 'reported',
+      report: 'Other PR merged',
+    });
+    expect(readDriverSettlement(card, outcome([]), 50, 11, true, sent.opening)).toBeNull();
+    expect(readDriverSettlement(card, missing, 50, null, true, sent.opening)).toBeNull();
+    expect(
+      readDriverSettlement(
+        card,
+        outcome(undefined, { exchange: undefined, lastReplyAt: 10 }),
+        50,
+        11,
+        true,
+        sent.opening
+      )
+    ).toBeNull();
+    const other = outcome(undefined, {
+      exchange: undefined,
+      recentInputs: [{ at: 30, text: 'PR event' }],
+    });
+    expect(readDriverSettlement(card, other, 50, 11, true, sent.opening)).toBeNull();
+    expect(planNeoWorkFollow(card, { outcome: other }, { since: 21, sent })).toEqual({
+      reason: null,
+    });
+    expect(planNeoWorkFollow(card, { outcome: missing }, { since: 21, sent })).toMatchObject({
+      value: expect.stringContaining('Other PR merged'),
+    });
+  });
   test('a continued or amended input establishes its own report boundary', () => {
     const continued = { inputBefore: 40, opening: 'Also fix spacing' };
     const reply = outcome([

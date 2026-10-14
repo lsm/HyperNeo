@@ -228,6 +228,11 @@ describe('neo.session.track', () => {
     });
     expect(service.driverTargets.cardRefs(0)).toEqual([{ workId: card.id, ref }]);
     expect(sent).not.toHaveBeenCalled();
+    expect(service.driverTargets.readSent(card.id)).toBeNull();
+    Object.assign(service, { returnReport: async () => {} });
+    status = { status: 'done', lastActivityAt: Date.now() + 10_000 };
+    await service.refreshDriverWork();
+    expect(service.repo.getWork(card.id)?.status).toBe('reported');
   });
 
   test('a follow-up card on a tracked session is approved, so Neo starts it without a Start click', async () => {
