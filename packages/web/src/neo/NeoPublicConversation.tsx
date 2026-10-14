@@ -13,6 +13,11 @@ import { NeoIcon } from './NeoIcon.tsx';
 import { messageTime } from './NeoMessage.tsx';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 import { neoMessageAnchor } from './reply-context.ts';
+import {
+  NEO_MESSAGE_STATUS_LABELS,
+  NEO_MESSAGE_STATUS_TITLES,
+  type NeoMessageStatus,
+} from './message-status.ts';
 import { neoAppLabel, neoSessionLink } from './work-driver.ts';
 import type { NeoPendingAsk, NeoQuote } from './neo-intake.ts';
 import type {
@@ -277,8 +282,10 @@ function PublicEntry({
   projects,
   forwarders,
   onQuote,
+  status,
 }: {
   entry: NeoPublicEntry;
+  status?: NeoMessageStatus;
   projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
   onQuote?: (quote: NeoQuote) => void;
@@ -341,6 +348,23 @@ function PublicEntry({
             class="inline-flex self-center text-fg-faint"
           >
             <NeoIcon name="received" class="!h-3.5 !w-3.5" />
+          </span>
+        )}
+        {ask && status && (
+          <span
+            data-message-status={status}
+            title={NEO_MESSAGE_STATUS_TITLES[status]}
+            class={`text-[11px] ${
+              status === 'failed'
+                ? 'text-danger'
+                : status === 'disconnected' || status === 'stale'
+                  ? 'text-warning'
+                  : status === 'working'
+                    ? 'text-accent'
+                    : 'text-fg-faint'
+            }`}
+          >
+            {NEO_MESSAGE_STATUS_LABELS[status]}
           </span>
         )}
         {undelivered && (
@@ -577,6 +601,7 @@ export function PendingAsk({
 
 export function NeoPublicConversation({
   conversation,
+  statuses,
   onOpenScene,
   canOpenScene,
   onRetry,
@@ -588,6 +613,7 @@ export function NeoPublicConversation({
   onQuote,
 }: {
   conversation: Conversation;
+  statuses?: ReadonlyMap<string, NeoMessageStatus>;
   onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
   projects?: ReadonlyMap<string, string>;
@@ -640,6 +666,7 @@ export function NeoPublicConversation({
             projects={projects}
             forwarders={forwarders}
             onQuote={onQuote}
+            status={entry.kind === 'ask' ? statuses?.get(entry.ask.requestId) : undefined}
           />
         )
       )}

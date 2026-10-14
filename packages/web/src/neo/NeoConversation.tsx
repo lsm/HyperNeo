@@ -7,6 +7,7 @@ import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { connectionState } from '../lib/state.ts';
 import type { NeoPendingAsk, NeoQuote } from './neo-intake.ts';
+import { projectNeoMessageStatuses } from './message-status.ts';
 import { projectNeoProcessingActivity } from './processing-activity.ts';
 import {
   type NeoEditUndelivered,
@@ -131,6 +132,14 @@ export function NeoConversation({
     store.isRecovering?.value ?? true,
     visible
   );
+  const statuses = publicConversation
+    ? projectNeoMessageStatuses(
+        publicConversation.entries,
+        progress,
+        store.sessionState?.value?.agentState ?? state,
+        { connected: connectionState.value === 'connected', status: publicConversation.status }
+      )
+    : undefined;
   const progressLabel =
     progress !== 'inactive' && (publicConversation || !progress.messageId) ? progress.label : null;
   useEffect(() => {
@@ -153,6 +162,7 @@ export function NeoConversation({
         {publicConversation && (
           <NeoPublicConversation
             conversation={publicConversation}
+            statuses={statuses}
             projects={projects}
             forwarders={forwarders}
             canOpenScene={(ref) =>
