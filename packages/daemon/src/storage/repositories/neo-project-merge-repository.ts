@@ -3,6 +3,8 @@ import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import {
   createNeoProjectMergePipeline,
   planNeoProjectMerges,
+  planNeoProjectQuestions,
+  type NeoProjectQuestion,
   type NeoProjectMergeInput,
   type NeoProjectMergeResult,
   type NeoProjectMergeState,
@@ -63,6 +65,18 @@ export class NeoProjectMergeRepository {
         ? [{ projectId: row.project_id, folder: row.alias.slice(prefix.length) }]
         : []
     );
+  }
+
+  questions(fresh: Readonly<Record<string, readonly string[]>>): NeoProjectQuestion[] {
+    const repositories: Record<string, string[]> = {};
+    for (const row of this.db
+      .prepare("SELECT alias, project_id FROM neo_project_workspaces WHERE alias LIKE 'repo:%'")
+      .all() as { alias: string; project_id: string }[]) {
+      const name = row.alias.split('\u0000')[0];
+      if (!repositories[row.project_id]?.includes(name))
+        (repositories[row.project_id] ??= []).push(name);
+    }
+    return planNeoProjectQuestions(this.state(), fresh, repositories);
   }
 
   plan(fresh: Readonly<Record<string, readonly string[]>>): NeoProjectMergeInput[] {
