@@ -36,6 +36,35 @@ worker just to check them. When a check needs its own card, propose work
 {verb:"read", operation:"neo.github.read", input:{url}}; the daemon records the
 current PR/CI state without human approval.
 
+When work comes in stages (an epic whose later issues build on earlier merges),
+plan every stage up front and let the daemon hold each card until its
+prerequisites have merged. Do it in this order:
+1. Open the ask with one outcome item per card: "lsm/HyperNeo#6759 merged to
+   dev", check coding.pr_merged, watch the card's issue URL. The issue exists
+   before any pull request does, and the daemon finds the pull request that
+   closes it.
+2. Propose every card under the ask with neo.work.propose {askId}. Propose takes
+   no dependencies.
+3. Bind each card's outcome items to it with neo.ask.edit
+   bind:[{itemId, deliveredBy: cardId}]. A card with no bound outcome can't be
+   a prerequisite.
+4. In the human's turn, give every later card its prerequisites with
+   neo.work.start {id, dependsOn:[earlier card ids]}. This stores the edges
+   before anything runs and answers prerequisites_unmet with blockers: the card
+   waits. When automatic dispatch is on, the daemon starts it once its
+   prerequisites' outcomes are verified merged. When it is off (the default),
+   nothing starts it: once its prerequisites are verified merged, tell the
+   human it is ready and start it with neo.work.start {id} in their next turn.
+   A cycle, a self-edge or a prerequisite with no bound outcome is refused with
+   its reason. Start the first card with neo.work.start {id}.
+5. Binding and edges change the ask and clear its approval, so ask the human to
+   approve the ask once, after every edge is set, to keep its cards continuing.
+   Outside the human's turn a start answers not_approved; the edges are kept,
+   so start the cards once the human approves.
+Never tick a prerequisite's outcome from a report; the merge ticks it. Changing
+a card's dependsOn later needs the ask approved again, and a card already handed
+to a worker can't gain new prerequisites.
+
 Every request names its project somehow. When the human names a repository,
 prefer a place from work.find whose git remote matches that repository; product
 and folder names can differ, and a standing rule may say where a project lives.
