@@ -29,7 +29,6 @@ const neo: OperationCaller = {
   role: 'neo',
   neoTurn: { messageId: 'epic-1', human: true, isLive: () => true },
 };
-const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const place = { machine: 'laptop', folder: tmpdir(), name: 'app' };
 const stages = [6757, 6759, 6761];
 const issue = (n: number) => `https://github.com/lsm/HyperNeo/issues/${n}`;
