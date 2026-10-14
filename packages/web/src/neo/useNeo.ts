@@ -52,7 +52,7 @@ export function useNeo() {
 
   async function open() {
     const ticket = ++generation.current;
-    ++refreshGeneration.current;
+    const opened = ++refreshGeneration.current;
     setSessionId(null);
     setError('');
     try {
@@ -60,10 +60,10 @@ export function useNeo() {
       const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.open', {});
       if (!result.ok) throw new Error(result.reason);
       if (!alive.current || ticket !== generation.current) return;
+      if (opened === refreshGeneration.current) setSnapshot(result);
       await store.select(result.sessionId);
       if (!alive.current || ticket !== generation.current) return;
       setSessionId(result.sessionId);
-      await refresh();
     } catch (cause) {
       if (alive.current && ticket === generation.current)
         setError(cause instanceof Error ? cause.message : 'Could not open Neo.');
