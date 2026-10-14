@@ -1,4 +1,5 @@
-import { writeFileSync, writeSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, writeFileSync, writeSync } from 'node:fs';
 import { parentPort, workerData } from 'node:worker_threads';
 
 interface EventLoopWatchdogWorkerData {
@@ -8,6 +9,7 @@ interface EventLoopWatchdogWorkerData {
   checkIntervalMs: number;
   killMode: 'sigkill' | 'observe';
   markerPath?: string;
+  stackPath?: string;
 }
 
 type WatchdogCommand =
@@ -20,8 +22,9 @@ type WatchdogNotice =
   | { type: 'stall-recovered'; stalledForMs: number }
   | { type: 'fuse-expired'; overdueMs: number };
 
-const { pid, stallMs, checkIntervalMs, killMode, deferStallDetection, markerPath } =
+const { pid, stallMs, checkIntervalMs, killMode, deferStallDetection, markerPath, stackPath } =
   workerData as EventLoopWatchdogWorkerData;
+const SAMPLER = '/usr/bin/sample';
 
 const SUSPENSION_GAP_MS = Math.max(checkIntervalMs * 4, 1000);
 
@@ -78,19 +81,34 @@ setInterval(() => {
   }
 }, checkIntervalMs);
 
-function writeMarker(reason: string, action: 'killed' | 'observed'): void {
+function sampleStalledThread(wait: boolean): string | null {
+  if (!stackPath || process.platform !== 'darwin' || !existsSync(SAMPLER)) return null;
+  const args = [String(pid), '1', '-file', stackPath];
+  try {
+    if (wait) spawnSync(SAMPLER, args, { stdio: 'ignore', timeout: 10_000 });
+    else spawn(SAMPLER, args, { stdio: 'ignore' }).on('error', () => {});
+    writeSync(2, `[EventLoopWatchdog] sampled the stalled daemon's stacks into ${stackPath}\n`);
+    return stackPath;
+  } catch {
+    return null;
+  }
+}
+
+function writeMarker(reason: string, action: 'killed' | 'observed', stack: string | null): void {
   if (!markerPath) return;
   try {
     writeFileSync(
       markerPath,
-      `${JSON.stringify({ pid, detectedAt: Date.now(), stallMs, action, reason })}\n`
+      `${JSON.stringify({ pid, detectedAt: Date.now(), stallMs, action, reason, ...(stack ? { stack } : {}) })}\n`
     );
   } catch {}
 }
 
 function report(reason: string, notice: WatchdogNotice): void {
   const action = killMode === 'sigkill' ? 'killed' : 'observed';
-  writeMarker(reason, action);
+  const stack =
+    notice.type === 'stall-detected' ? sampleStalledThread(killMode === 'sigkill') : null;
+  writeMarker(reason, action, stack);
   if (killMode === 'sigkill') {
     writeSync(2, `[EventLoopWatchdog] killing daemon pid=${pid}: ${reason}\n`);
     process.kill(pid, 'SIGKILL');

@@ -4,6 +4,7 @@ const watchdog = await startEventLoopWatchdog({
   stallMs: 250,
   heartbeatMs: 25,
   ...(process.env.WATCHDOG_MARKER_PATH ? { markerPath: process.env.WATCHDOG_MARKER_PATH } : {}),
+  ...(process.env.WATCHDOG_STACK_PATH ? { stackPath: process.env.WATCHDOG_STACK_PATH } : {}),
 });
 if (!watchdog) {
   process.stderr.write('fixture: watchdog failed to start\n');

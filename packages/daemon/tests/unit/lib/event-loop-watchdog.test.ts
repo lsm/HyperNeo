@@ -1,6 +1,6 @@
 import { describe, expect, test, afterEach } from 'bun:test';
 import { spawn } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -227,20 +227,30 @@ describe('event-loop-watchdog', () => {
 
   test('a spinning process is left alive by default and still leaves a marker', async () => {
     const markerPath = join(tmpdir(), `watchdog-observe-${process.pid}-${Date.now()}.json`);
+    const stackPath = join(tmpdir(), `watchdog-observe-${process.pid}-${Date.now()}-stack.txt`);
     const { child, stderrText } = spawnBunFixture('event-loop-watchdog-observe-fixture.ts', {
       WATCHDOG_MARKER_PATH: markerPath,
+      WATCHDOG_STACK_PATH: stackPath,
     });
+    const sampled = process.platform === 'darwin' && existsSync('/usr/bin/sample');
     try {
       await new Promise((resolve) => setTimeout(resolve, 2500));
       expect(child.kill(0)).toBe(true);
       expect(stderrText()).toContain('[EventLoopWatchdog] daemon pid=');
       expect(stderrText()).not.toContain('killing daemon');
-      expect(readAndClearEventLoopStallMarker(markerPath)).toMatchObject({ action: 'observed' });
+      expect(readAndClearEventLoopStallMarker(markerPath)).toMatchObject(
+        sampled ? { action: 'observed', stack: stackPath } : { action: 'observed' }
+      );
+      for (let waited = 0; sampled && !existsSync(stackPath) && waited < 8000; waited += 250)
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(existsSync(stackPath)).toBe(sampled);
+      if (sampled) expect(readFileSync(stackPath, 'utf8')).toContain('Call graph');
     } finally {
       child.kill('SIGKILL');
       rmSync(markerPath, { force: true });
+      rmSync(stackPath, { force: true });
     }
-  }, 12_000);
+  }, 20_000);
 
   test('survives whole-process suspension longer than the stall threshold', async () => {
     if (process.platform === 'win32') return;
