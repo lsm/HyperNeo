@@ -671,7 +671,6 @@ describe('Neo MVP', () => {
       const request = {
         name: 'neo.work.propose',
         input: {
-          requestKey: 'first',
           projectId: scope,
           targetSessionId: 'ordinary',
           title: 'Draft an agenda',
@@ -704,12 +703,12 @@ describe('Neo MVP', () => {
         });
         expect(JSON.parse((await handler(next)(request)).content[0].text)).toMatchObject({
           ok: false,
-          reason: 'This request key belongs to another input.',
+          reason: expect.stringContaining('already holds 1 live card'),
         });
         expect(service.repo.listWork()).toEqual([receipt.work]);
         const independent = {
           ...request,
-          input: { ...request.input, requestKey: 'second', allowBusyTarget: true },
+          input: { ...request.input, allowBusyTarget: true },
         };
         expect(JSON.parse((await handler(next)(independent)).content[0].text)).toMatchObject({
           ok: true,
@@ -1431,20 +1430,25 @@ describe('Neo MVP', () => {
     });
   });
 
-  test('a request key cannot borrow another input’s consultation receipt', async () => {
+  test('the same question from another input asks again instead of borrowing the earlier receipt', async () => {
     const { item, caller, holder, input } = await consultation();
     await invoke('neo.project.respond', { id: item.id, answer: 'A result' }, holder);
     const unrelated: OperationCaller = {
       ...caller,
       neoTurn: { messageId: 'ask-B', human: true, isLive: () => true },
     };
-    expect(await invoke('neo.project.consult', input, unrelated)).toMatchObject({
-      value: { ok: false },
+    const again = await invoke('neo.project.consult', input, unrelated);
+    expect(again).toMatchObject({
+      value: { ok: true, consultation: { originMessageId: 'ask-B', answer: null } },
     });
-    expect(service.consultations.list()).toEqual([
-      { ...item, status: 'reported', answer: 'A result' },
-    ]);
-    expect(jobs).toHaveLength(2);
+    expect((again as { value: { consultation: { id: string } } }).value.consultation.id).not.toBe(
+      item.id
+    );
+    expect(service.consultations.get(item.id)).toEqual({
+      ...item,
+      status: 'reported',
+      answer: 'A result',
+    });
   });
 
   test('MCP consultations use the isolated runtime input despite forged provenance', async () => {
@@ -1662,18 +1666,17 @@ describe('Neo MVP', () => {
     });
   });
 
-  test('rejects conflicting keys while retaining a separate queued question', async () => {
+  test('queues a changed question separately and refuses an unknown project', async () => {
     const { item, caller, input } = await consultation();
-    for (const change of [{ question: 'Changed question' }, { projectId: 'missing' }]) {
-      expect(await invoke('neo.project.consult', { ...input, ...change }, caller)).toMatchObject({
-        value: { ok: false },
-      });
-    }
+    expect(
+      await invoke('neo.project.consult', { ...input, projectId: 'missing' }, caller)
+    ).toMatchObject({ value: { ok: false } });
     expect(service.consultations.list()).toEqual([item]);
     expect(jobs).toHaveLength(1);
-    expect(
-      await invoke('neo.project.consult', { ...input, requestKey: 'second-question' }, caller)
-    ).toMatchObject({ value: { ok: true, waiter: { status: 'queued' } } });
+    const changed = { ...input, question: 'Changed question' };
+    const queued = await invoke('neo.project.consult', changed, caller);
+    expect(queued).toMatchObject({ value: { ok: true, waiter: { status: 'queued' } } });
+    expect(await invoke('neo.project.consult', changed, caller)).toEqual(queued);
     expect(service.consultations.list()).toEqual([item]);
     expect(jobs).toHaveLength(1);
   });
@@ -1794,7 +1797,7 @@ describe('Neo MVP', () => {
     });
   });
 
-  test('expires a stuck consultation during recovery and allows a new request with a new key', async () => {
+  test('expires a stuck consultation during recovery and lets a reworded question ask again', async () => {
     const { item, caller, input } = await consultation();
     sqlite
       .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
@@ -1812,7 +1815,11 @@ describe('Neo MVP', () => {
       value: { consultation: { id: item.id, status: 'failed' } },
     });
     expect(
-      await invoke('neo.project.consult', { ...input, requestKey: 'new-attempt' }, caller)
+      await invoke(
+        'neo.project.consult',
+        { ...input, question: `${input.question} Again.` },
+        caller
+      )
     ).toMatchObject({
       value: { ok: true, consultation: { status: 'pending' } },
     });

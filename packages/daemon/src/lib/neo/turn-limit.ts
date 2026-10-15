@@ -22,21 +22,17 @@ export function planNeoTurnLimitNote(
 }
 
 export function neoTurnLimitNote(
-  asks: readonly Pick<NeoAsk, 'id' | 'title' | 'requestKey' | 'status'>[],
-  works: readonly Pick<NeoWork, 'id' | 'title' | 'requestKey' | 'status'>[]
+  asks: readonly Pick<NeoAsk, 'id' | 'title' | 'status'>[],
+  works: readonly Pick<NeoWork, 'id' | 'title' | 'status'>[]
 ): string {
   const done = [
-    ...asks.map(
-      (ask) => `- ask ${ask.id} "${ask.title}" (${ask.status}, requestKey ${ask.requestKey})`
-    ),
-    ...works.map(
-      (work) => `- card ${work.id} "${work.title}" (${work.status}, requestKey ${work.requestKey})`
-    ),
+    ...asks.map((ask) => `- ask ${ask.id} "${ask.title}" (${ask.status})`),
+    ...works.map((work) => `- card ${work.id} "${work.title}" (${work.status})`),
   ];
   return [
     'Your last turn hit its turn limit before it finished.',
     done.length
-      ? `It already created these, and they stay as they are:\n${done.join('\n')}\nContinue them: edit or start them, and never open or propose them again under a new requestKey.`
+      ? `It already created these, and they stay as they are:\n${done.join('\n')}\nContinue them: edit or start them, and never open or propose them again.`
       : 'It created no asks or cards.',
     'Read neo.snapshot and finish only what is left of that turn.',
   ].join('\n');

@@ -6,6 +6,7 @@ import { createReactiveDatabase } from '../../../../src/storage/reactive-databas
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { neoTurnRequestKey } from '../../../../src/lib/neo/request-key.ts';
 import {
   requireNeoProposal,
   requireNeoProposalReceipt,
@@ -336,34 +337,35 @@ describe('Neo existing Space-agent handoff operation', () => {
       jobs(saved.id).filter((job) => (job.payload.to as { sessionId: string }).sessionId === 'root')
     ).toHaveLength(1);
   });
-  test('a reused key cannot change source input or execution recipient', async () => {
+  test('another input or recipient proposes a separate card and leaves the first unchanged', async () => {
     const saved = await proposed();
     expect(
       await invoke(input, { ...caller, neoTurn: { ...caller.neoTurn!, messageId: 'ask-B' } })
     ).toMatchObject({
       kind: 'completed',
-      value: { ok: false, reason: 'This request key belongs to another input.' },
+      value: { ok: false, reason: expect.stringContaining('already holds 1 live card') },
     });
-    expect(
-      await invoke({
-        ...input,
-        targetSessionId: 'manager-B-session',
-        targetAgent: { ...agent, agentId: 'manager-B', sessionId: 'manager-B-session' },
-      })
-    ).toMatchObject({
-      kind: 'completed',
-      value: { ok: false, reason: 'This request key belongs to another execution target.' },
+    const other = await proposed({
+      ...input,
+      targetSessionId: 'manager-B-session',
+      targetAgent: { ...agent, agentId: 'manager-B', sessionId: 'manager-B-session' },
     });
+    expect(other.id).not.toBe(saved.id);
     expect(service.repo.getWork(saved.id)).toEqual(saved);
     expect(service.agentTargets.get(saved.id)).toEqual(agent);
-    expect(service.repo.listWork()).toHaveLength(1);
+    expect(service.repo.listWork()).toHaveLength(2);
   });
   test('an old unbound reservation cannot become a native binding on retry', async () => {
     const legacy = service.repo.proposeWork({
       ...input,
       ...origin,
       id: 'legacy',
-      requestKey: 'root:' + input.requestKey,
+      requestKey: `root:${neoTurnRequestKey(
+        (turn) => service.inputTrigger(turn),
+        caller,
+        'neo.work.propose',
+        registry.get('neo.work.propose')!.inputSchema.parse(input)
+      )}`,
     });
     expect(await invoke()).toMatchObject({
       kind: 'completed',
