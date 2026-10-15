@@ -122,7 +122,7 @@ describe('useNeo root conversation', () => {
       expect(request.mock.calls.filter(([, call]) => call.name === 'neo.open')).toHaveLength(2)
     );
     expect(screen.getByText('Board work: refreshed')).toBeTruthy();
-    for (const [, call] of request.mock.calls) expect(call.input).toEqual({});
+    for (const [, call] of request.mock.calls) expect(call.input).toEqual({ summaries: true });
     expect(screen.queryByRole('alert')).toBeNull();
   });
   it('shows the opened snapshot while the conversation is still loading', async () => {
