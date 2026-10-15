@@ -474,6 +474,46 @@ describe('NeoService notification triggers', () => {
     expect(mailbox()[1].messageUuid).toBe(`${first}#2`);
   });
 
+  test('a note an older release sent to the project holder is retried to the opener', async () => {
+    const holder = 'neo:holder:labs';
+    db.createSession(createTestSession(holder));
+    service.repo.saveProject({ id: 'labs', title: 'Labs', summary: '', context: '' }, 0);
+    service.repo.reserveBinding({ sessionId: holder, kind: 'project', projectId: 'labs' });
+    const opened = service.askRecords.open(
+      {
+        id: 'a2',
+        requestKey: 'k2',
+        projectId: 'labs',
+        originSessionId: root,
+        originMessageId: m0,
+        title: 'Fix the composer',
+        ask: 'Fix the composer',
+        doneWhen: '- composer fixed',
+        doneSource: 'human',
+      },
+      [{ text: 'composer fixed', check: null }]
+    )!;
+    seed();
+    const sent = vi
+      .spyOn(service as unknown as { deliver(...args: unknown[]): Promise<void> }, 'deliver')
+      .mockResolvedValueOnce(undefined);
+    tickMet(opened);
+    await sweep();
+    const legacy = sent.mock.calls[0][1] as string;
+    db.getSDKMessageRepo().saveSDKMessage(holder, {
+      type: 'user',
+      uuid: legacy,
+      session_id: holder,
+      parent_tool_use_id: null,
+      inputKind: 'system',
+      message: { role: 'user', content: 'note' },
+    } as unknown as SDKUserMessage);
+    sent.mockRestore();
+    await sweep();
+    await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
+    expect(JSON.stringify(mailbox()[0])).toContain(encodeURIComponent(root));
+  });
+
   test('a session that refused the card wakes Neo with a talk trigger', async () => {
     const opened = open();
     const work = service.repo.proposeWork({

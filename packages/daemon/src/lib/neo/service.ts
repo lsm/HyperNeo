@@ -1226,7 +1226,9 @@ export class NeoService {
       if (!shouldRetryNeoTrigger(ask, triggerId.split(':')[0], this.heardOutcome(ask))) continue;
       const plan = planNeoTriggerRetry(
         this.publications.hasTrigger(conversationId, triggerId, ''),
-        this.triggers.noteStatuses(target, neoTriggerMessageIds(triggerId))
+        [
+          ...new Set([target, this.repo.getBindingForProject(ask.projectId)?.sessionId ?? target]),
+        ].flatMap((session) => this.triggers.noteStatuses(session, neoTriggerMessageIds(triggerId)))
       );
       if (plan === 'retry') this.triggers.forget(askId, triggerId);
     }
