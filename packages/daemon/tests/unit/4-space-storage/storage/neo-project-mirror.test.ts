@@ -10,6 +10,8 @@ import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import {
   backfillNeoRepositoryIdentities,
+  canNeoMirrorCreateProject,
+  isNeoOngoingPlace,
   isNeoPlumbingFolder,
   neoProjectMergeAllowed,
   neoRepositoryIdentity,
@@ -26,9 +28,22 @@ import { NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE } from '../../../../src/lib/neo/
 
 const elsewhere = `not-${hostname()}`;
 
-function workspace(folder: string, machine = elsewhere, identity = 'root:123'): PlaceGroup {
+const HYPERNEO = 'git@github.com:lsm/HyperNeo.git';
+
+function workspace(
+  folder: string,
+  machine = elsewhere,
+  identity = 'root:123',
+  remote?: string
+): PlaceGroup {
   return {
-    place: { folder, machine, name: 'HyperNeo', codeIdentity: identity },
+    place: {
+      folder,
+      machine,
+      name: 'HyperNeo',
+      codeIdentity: identity,
+      ...(remote ? { remotes: [remote] } : {}),
+    },
     lastActivityAt: 0,
     openCount: 0,
     archivedCount: 0,
@@ -54,11 +69,18 @@ describe('mirrorNeoWorkspaceProjects', () => {
     const registry = createOperationRegistry([
       createFindWorkOperation({
         adapters: () => [
-          { id: 'hyperneo', capabilities: ['find'], find: () => [workspace('/one')] },
+          {
+            id: 'hyperneo',
+            capabilities: ['find'],
+            find: () => [workspace('/one', elsewhere, 'root:123', HYPERNEO)],
+          },
         ],
         remote: {
           list: () => [{ daemonId: 'desktop' }],
-          invoke: async () => ({ places: [workspace('/two', 'desktop')], unreachable: [] }),
+          invoke: async () => ({
+            places: [workspace('/two', 'desktop', 'root:123', HYPERNEO)],
+            unreachable: [],
+          }),
         },
         mirrorProjects: (groups) => {
           mirrorNeoWorkspaceProjects(db, groups);
@@ -73,10 +95,75 @@ describe('mirrorNeoWorkspaceProjects', () => {
     expect(repo.listProjects()).toHaveLength(1);
   });
 
+  test('a folder some tool worked in becomes a project only when it has a repository', () => {
+    const scratch = workspace('/tmp/bg-test-repo-2448f54b', elsewhere, `git:${'c'.repeat(40)}`);
+    const tool = {
+      ...workspace('/Users/me/Claude Code', 'tts', 'none'),
+      place: {
+        folder: '/Users/me/Claude Code',
+        machine: 'tts',
+        name: 'Claude Code',
+        toolProject: { id: 'claude', name: 'Claude Code' },
+      },
+    };
+    expect(mirrorNeoWorkspaceProjects(db, [scratch, tool])).toBe(false);
+    expect(repo.listProjects()).toEqual([]);
+    expect(canNeoMirrorCreateProject({ aliases: ['folder:x', 'git:abc'] })).toBe(false);
+    expect(canNeoMirrorCreateProject({ aliases: ['repository:github.com/lsm/neokai'] })).toBe(true);
+  });
+
+  test('a folder without a repository becomes a project once work happened there on two days', () => {
+    const day = 24 * 60 * 60 * 1000;
+    const session = (id: string, at: number) => ({
+      ref: { adapter: 'claude-desktop', id },
+      title: id,
+      place: { folder: '/Users/me/notes', machine: elsewhere, name: 'notes' },
+      status: 'done' as const,
+      lastActivityAt: at,
+    });
+    const notes = (work: ReturnType<typeof session>[]) => ({
+      ...workspace('/Users/me/notes', elsewhere, 'none'),
+      place: { folder: '/Users/me/notes', machine: elsewhere, name: 'notes' },
+      work,
+    });
+    mirrorNeoWorkspaceProjects(db, [
+      notes([session('a', 10 * day), session('b', 10 * day + 60_000)]),
+    ]);
+    expect(repo.listProjects()).toEqual([]);
+    mirrorNeoWorkspaceProjects(db, [notes([session('a', 10 * day), session('c', 12 * day)])]);
+    expect(repo.listProjects().map((project) => project.title)).toEqual(['notes']);
+  });
+
+  test('ignores places reported by attached daemons', () => {
+    const remote = workspace('/repo', 'imac', 'root:123', HYPERNEO);
+    expect(
+      mirrorNeoWorkspaceProjects(db, [{ ...remote, place: { ...remote.place, daemon: 'tts' } }])
+    ).toBe(false);
+    expect(repo.listProjects()).toEqual([]);
+  });
+
+  test('a folder without a repository still joins the project that already holds its identity', () => {
+    mirrorNeoWorkspaceProjects(db, [workspace('/repo', elsewhere, 'root:123', HYPERNEO)]);
+    const [project] = repo.listProjects();
+    mirrorNeoWorkspaceProjects(db, [workspace('/worktree', 'laptop')]);
+    expect(repo.listProjects()).toHaveLength(1);
+    expect(
+      db
+        .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')
+        .get('folder:laptop\u0000/worktree')
+    ).toEqual({ project_id: project.id });
+  });
+
   test('mirrors folders with shared history across machines once and preserves context', () => {
     mirrorNeoWorkspaceProjects(
       db,
-      mergePlaceGroups([workspace('/one'), workspace('/two', 'desktop')], 50)
+      mergePlaceGroups(
+        [
+          workspace('/one', elsewhere, 'root:123', HYPERNEO),
+          workspace('/two', 'desktop', 'root:123', HYPERNEO),
+        ],
+        50
+      )
     );
     const [project] = repo.listProjects();
     expect(repo.listProjects()).toHaveLength(1);
@@ -85,7 +172,10 @@ describe('mirrorNeoWorkspaceProjects', () => {
       { ...project, context: 'Human decisions', title: 'My project' },
       project.revision
     );
-    mirrorNeoWorkspaceProjects(db, mergePlaceGroups([workspace('/three', 'cloud')], 50));
+    mirrorNeoWorkspaceProjects(
+      db,
+      mergePlaceGroups([workspace('/three', 'cloud', 'root:123', HYPERNEO)], 50)
+    );
     expect(repo.listProjects()).toHaveLength(1);
     expect(repo.getProject(project.id)).toMatchObject({
       context: 'Human decisions',
@@ -93,7 +183,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
       revision: 2,
     });
     expect(db.prepare('SELECT COUNT(*) AS n FROM neo_project_workspaces').get()).toMatchObject({
-      n: 4,
+      n: 6,
     });
   });
 
@@ -103,14 +193,20 @@ describe('mirrorNeoWorkspaceProjects', () => {
     const repo = new NeoRepository(db);
     const neokai = `git:${'a'.repeat(40)}`;
     const other = `git:${'b'.repeat(40)}`;
-    const group = (folder: string, machine: string, identity?: string) => {
-      const found = workspace(folder, machine);
-      return [{ ...found, place: { ...found.place, codeIdentity: identity } }];
+    const legacy = (id: string, folder: string, identity?: string) => {
+      repo.saveProject({ id, title: id, summary: `Project: ${id}`, context: '' }, 0);
+      for (const alias of [`folder:laptop\u0000${folder}`, ...(identity ? [identity] : [])])
+        db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run(
+          alias,
+          id
+        );
     };
-    mirrorNeoWorkspaceProjects(db, group('/w1', 'laptop'));
-    mirrorNeoWorkspaceProjects(db, group('/w2', 'laptop'));
-    mirrorNeoWorkspaceProjects(db, group('/w3', 'laptop', other));
-    mirrorNeoWorkspaceProjects(db, group('/repo', 'imac', neokai));
+    legacy('project:w1', '/w1');
+    legacy('project:w2', '/w2');
+    legacy('project:w3', '/w3', other);
+    mirrorNeoWorkspaceProjects(db, [
+      workspace('/repo', 'imac', neokai, 'git@github.com:lsm/neokai.git'),
+    ]);
     expect(repo.listProjects()).toHaveLength(4);
     const owner = db
       .prepare('SELECT project_id AS id FROM neo_project_workspaces WHERE alias = ?')
@@ -147,6 +243,8 @@ describe('mirrorNeoWorkspaceProjects', () => {
       return [{ ...found, place: { ...found.place, name: uuid, remotes } }];
     };
     mirrorNeoWorkspaceProjects(db, tree());
+    expect(repo.listProjects()).toEqual([]);
+    mirrorNeoWorkspaceProjects(db, tree(['git@github.com:lsm/neokai.git']));
     expect(repo.listProjects().map((project) => project.title)).toEqual(['neokai']);
     const [first] = repo.listProjects();
     repo.saveProject({ ...first, title: uuid, summary: `Project: ${uuid}` }, first.revision);
@@ -159,10 +257,13 @@ describe('mirrorNeoWorkspaceProjects', () => {
   });
 
   test('does not let a reused folder collapse unrelated repository histories', () => {
-    mirrorNeoWorkspaceProjects(db, mergePlaceGroups([workspace('/one')], 50));
     mirrorNeoWorkspaceProjects(
       db,
-      mergePlaceGroups([workspace('/one', elsewhere, 'root:456')], 50)
+      mergePlaceGroups([workspace('/one', elsewhere, 'root:123', 'git@github.com:lsm/one.git')], 50)
+    );
+    mirrorNeoWorkspaceProjects(
+      db,
+      mergePlaceGroups([workspace('/one', elsewhere, 'root:456', 'git@github.com:lsm/two.git')], 50)
     );
     expect(repo.listProjects()).toHaveLength(2);
     const owner = db
@@ -177,7 +278,13 @@ describe('mirrorNeoWorkspaceProjects', () => {
     repo.saveProject({ id: 'travel', title: 'Travel', summary: '', context: 'Passport' }, 0);
     mirrorNeoWorkspaceProjects(
       db,
-      mergePlaceGroups([workspace('/one'), workspace('/other', elsewhere, 'root:456')], 50)
+      mergePlaceGroups(
+        [
+          workspace('/one', elsewhere, 'root:123', 'git@github.com:lsm/one.git'),
+          workspace('/other', elsewhere, 'root:456', 'git@github.com:lsm/two.git'),
+        ],
+        50
+      )
     );
     mirrorNeoWorkspaceProjects(db, []);
     expect(repo.listProjects()).toHaveLength(3);
@@ -189,9 +296,10 @@ describe('mirrorNeoWorkspaceProjects', () => {
       ...group,
       place: { ...group.place, toolProject: { id: 'product', name: 'Product' } },
     }));
+    const plan = planNeoWorkspaceProjects(mergePlaceGroups(groups, 50));
+    expect(plan.map((project) => project.title)).toEqual(['Product']);
     mirrorNeoWorkspaceProjects(db, mergePlaceGroups(groups, 50));
-    expect(repo.listProjects()).toHaveLength(1);
-    expect(repo.listProjects()[0].title).toBe('Product');
+    expect(repo.listProjects()).toEqual([]);
   });
 });
 
@@ -385,7 +493,7 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
       const found = workspace('/w/app', 'laptop', `git:${root.repeat(40)}`);
       return [{ ...found, place: { ...found.place, remotes: remote ? [remote] : undefined } }];
     };
-    mirrorNeoWorkspaceProjects(raw, at('a'));
+    mirrorNeoWorkspaceProjects(raw, at('a', 'git@github.com:lsm/old.git'));
     const old = store.listProjects()[0]!.id;
     const other = workspace('/w/other', 'laptop', `git:${'b'.repeat(40)}`);
     mirrorNeoWorkspaceProjects(raw, [
@@ -512,5 +620,16 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     mirrorNeoWorkspaceProjects(raw, place('/new', 'b'));
     expect(store.listProjects()).toHaveLength(1);
     full.close();
+  });
+});
+
+describe('isNeoOngoingPlace', () => {
+  test('counts work on more than one day as ongoing, and one day of work as a one-off', () => {
+    const day = 24 * 60 * 60 * 1000;
+    expect(isNeoOngoingPlace([])).toBe(false);
+    expect(isNeoOngoingPlace([{ lastActivityAt: day + 1 }, { lastActivityAt: day + 5_000 }])).toBe(
+      false
+    );
+    expect(isNeoOngoingPlace([{ lastActivityAt: day }, { lastActivityAt: 3 * day }])).toBe(true);
   });
 });
