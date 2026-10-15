@@ -254,7 +254,7 @@ describe('NeoService direct consultation return', () => {
   test('the human’s own turn may still start work after a consulted holder answered', async () => {
     await holderPublish('check');
     expect(service.triggerWorkProblem(rootCaller())).toBeNull();
-    const continued = 'neo-turn-limit:result-1';
+    const continued = 'neo-turn-limit:human:result-1';
     prompt(root, continued, 'system');
     service.inputOrigins.record(
       { sessionId: root, messageId: continued },
@@ -263,6 +263,17 @@ describe('NeoService direct consultation return', () => {
       `human:${ask.messageId}`
     );
     expect(service.triggerWorkProblem(rootCaller(continued, false))).toBeNull();
+    const nudgeContinued = 'neo-turn-limit:result-2';
+    prompt(root, nudgeContinued, 'system');
+    service.inputOrigins.record(
+      { sessionId: root, messageId: nudgeContinued },
+      ask,
+      0,
+      `human:${ask.messageId}`
+    );
+    expect(service.triggerWorkProblem(rootCaller(nudgeContinued, false))).toMatchObject({
+      ok: false,
+    });
     prompt(root, 'neo-nudge:later', 'system');
     service.inputOrigins.record(
       { sessionId: root, messageId: 'neo-nudge:later' },

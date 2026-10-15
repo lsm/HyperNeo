@@ -8,7 +8,7 @@ import type {
 import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
-import { NEO_TURN_LIMIT_PREFIX } from './turn-limit.ts';
+import { NEO_HUMAN_TURN_LIMIT_PREFIX } from './turn-limit.ts';
 import { isNeoCardInPlay } from './ask-views.ts';
 import { isNeoAskAnswerReady } from './answer-outcome.ts';
 
@@ -346,7 +346,8 @@ export function shouldPreemptNeoTurn(
 export function isNeoHumanOwnTurn(messageId: string, trigger: string | null): boolean {
   return (
     neoHumanTriggerMessageId(trigger ?? undefined) === messageId ||
-    (!!trigger?.startsWith(NEO_HUMAN_TRIGGER_PREFIX) && messageId.startsWith(NEO_TURN_LIMIT_PREFIX))
+    (!!trigger?.startsWith(NEO_HUMAN_TRIGGER_PREFIX) &&
+      messageId.startsWith(NEO_HUMAN_TURN_LIMIT_PREFIX))
   );
 }
 
