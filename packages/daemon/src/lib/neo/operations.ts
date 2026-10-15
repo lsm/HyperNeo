@@ -280,7 +280,7 @@ const SnapshotOk = z.object({
     Work.extend({ summarized: z.literal(true).optional(), askId: z.string().optional() })
   ),
   standingRules: z.array(z.string()).optional(),
-  consultations: z.array(Consultation),
+  consultations: z.array(Consultation.extend({ summarized: z.literal(true).optional() })),
   consultationWaiters: z.array(ConsultationWaiter).optional(),
   workResources: z
     .array(
@@ -392,6 +392,15 @@ const Propose = z.object({
 });
 const Refused = z.object({ workId: z.string().min(1), what: z.string().trim().min(1).max(500) });
 const WorkId = z.object({ id: z.string().min(1) });
+const ReceiptRead = z.union([
+  z.object({ workId: z.string().min(1) }),
+  z.object({ consultationId: z.string().min(1) }),
+]);
+const ReceiptResult = z.union([
+  Failure,
+  z.object({ ok: z.literal(true), work: Work }),
+  z.object({ ok: z.literal(true), consultation: Consultation }),
+]);
 const StartWork = WorkId.extend({
   dependsOn: z
     .array(z.string().min(1))
@@ -1380,6 +1389,18 @@ export function createNeoOperations(service: NeoService) {
       return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
     }
   );
+  const readReceipt = path(
+    'neo.receipt.read',
+    (_input: z.infer<typeof ReceiptRead>) => undefined,
+    (input) => {
+      const work = 'workId' in input ? service.repo.getWork(input.workId) : null;
+      const consultation =
+        'consultationId' in input ? service.consultations.get(input.consultationId) : null;
+      if (work) return { ok: true as const, work };
+      if (consultation) return { ok: true as const, consultation };
+      return { ok: false as const, reason: 'Receipt not found.' };
+    }
+  );
   const cancelConsultation = path(
     'neo.project.cancel',
     (_input: z.infer<typeof WorkId>) => undefined,
@@ -2095,6 +2116,15 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: Snapshot,
       policy: { safetyClass: 'human_only' },
       execute: open,
+    }),
+    defineOperation({
+      name: 'neo.receipt.read',
+      description:
+        'Read one work item or consultation in full, by workId or consultationId, for a row the snapshot sent summarized.',
+      inputSchema: ReceiptRead,
+      resultSchema: ReceiptResult,
+      policy: { safetyClass: 'human_only' },
+      execute: readReceipt,
     }),
     defineOperation({
       name: 'neo.rule.save',
