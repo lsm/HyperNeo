@@ -1,3 +1,7 @@
+import {
+  neoConsultationDelivery,
+  neoDeliveryTrigger,
+} from '../../../../src/lib/neo/notification-triggers.ts';
 import { neoConsultationParent, neoReviewWorkId } from '../../../../src/lib/neo/ask-origin.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
@@ -113,7 +117,10 @@ describe('NeoService direct consultation return', () => {
       service.inputOrigins.record(
         { sessionId: holder, messageId: `neo-consult:${id}:request` },
         origin,
-        0
+        0,
+        neoDeliveryTrigger(neoConsultationDelivery(item), () =>
+          parent ? service.inputTrigger(parent) : null
+        )
       );
   };
   const publish = async (id = 'check') => {

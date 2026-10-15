@@ -339,6 +339,7 @@ import {
   coverNeoAskTriggers,
   isNeoAskAnsweredByReply,
   neoReplyOriginKey,
+  neoConsultationDelivery,
   neoDeliveryTrigger,
   neoHumanTrigger,
   type NeoDeliveryTrigger,
@@ -3152,7 +3153,8 @@ export class NeoService {
           item,
           !!this.crossProjects.forReceipt(item.id),
           this.crossProjects.forReceipt(item.id)?.askMessageId,
-          this.parentTrigger(this.consultationParent(item)) !== null
+          item.originMessageId !== null &&
+            this.parentTrigger(this.consultationParent(item)) !== null
         );
         await this.deliver(
           item.sessionId,
@@ -3160,7 +3162,7 @@ export class NeoService {
           content,
           item.originSessionId,
           this.consultationParent(item),
-          'continues'
+          neoConsultationDelivery(item)
         );
         return;
       }
@@ -3197,7 +3199,7 @@ export class NeoService {
         content,
         item.sessionId,
         this.consultationParent(item),
-        'continues'
+        neoConsultationDelivery(item)
       );
     }
     this.consultations.returned(id);

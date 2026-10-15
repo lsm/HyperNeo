@@ -1,4 +1,4 @@
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoAsk,
   NeoAskHumanAction,
@@ -74,6 +74,12 @@ export function neoHumanTrigger(messageId: string): string {
 }
 
 export type NeoDeliveryTrigger = 'continues' | { readonly id: string } | null;
+
+export function neoConsultationDelivery(
+  item: Pick<NeoConsultation, 'originMessageId'>
+): NeoDeliveryTrigger {
+  return item.originMessageId ? 'continues' : null;
+}
 
 export function neoDeliveryTrigger(
   trigger: NeoDeliveryTrigger,

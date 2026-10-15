@@ -294,7 +294,8 @@ describe('Neo reply after a rule save', () => {
     service.inputOrigins.record(
       { sessionId: root, messageId: 'neo-nudge:ask-1' },
       { sessionId: root, messageId: 'ask-1' },
-      0
+      0,
+      'human:ask-1'
     );
     const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
     expect(
