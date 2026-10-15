@@ -22,6 +22,7 @@ export function runMigration377(db: Database): void {
   if (!consultations.some((column) => column.name === 'origin_message_id')) return;
   db.exec(`UPDATE neo_input_origins SET trigger_id = (
       SELECT CASE
+        WHEN parent.trigger_id IS NOT NULL THEN parent.trigger_id
         WHEN c.origin_message_id = neo_input_origins.origin_message_id
           THEN 'human:' || c.origin_message_id
         WHEN c.origin_message_id LIKE 'neo-trigger:%' AND instr(substr(c.origin_message_id, 13), '#') > 0
@@ -29,6 +30,8 @@ export function runMigration377(db: Database): void {
         WHEN c.origin_message_id LIKE 'neo-trigger:%' THEN substr(c.origin_message_id, 13)
       END
       FROM neo_consultations c
+      LEFT JOIN neo_input_origins parent
+        ON parent.session_id = c.origin_session_id AND parent.message_id = c.origin_message_id
       WHERE neo_input_origins.message_id IN ('neo-consult:' || c.id || ':request', 'neo-consult:' || c.id || ':reply'))
     WHERE message_id LIKE 'neo-consult:%'`);
 }

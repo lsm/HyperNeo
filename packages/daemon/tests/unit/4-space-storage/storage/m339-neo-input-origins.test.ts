@@ -39,13 +39,14 @@ describe('runMigration377', () => {
   test('backfills the trigger of inputs stamped before the column existed', () => {
     const db = new Database(':memory:');
     runMigration339(db);
-    db.exec(`CREATE TABLE neo_consultations (id TEXT PRIMARY KEY, origin_message_id TEXT)`);
-    db.prepare('INSERT INTO neo_consultations VALUES (?, ?)').run('c1', 'human-1');
-    db.prepare('INSERT INTO neo_consultations VALUES (?, ?)').run(
-      'c2',
-      'neo-trigger:outcome:a:x#2'
+    db.exec(
+      `CREATE TABLE neo_consultations (id TEXT PRIMARY KEY, origin_session_id TEXT, origin_message_id TEXT)`
     );
-    db.prepare('INSERT INTO neo_consultations VALUES (?, ?)').run('review', null);
+    const consult = db.prepare('INSERT INTO neo_consultations VALUES (?, ?, ?)');
+    consult.run('c1', 'neo:root', 'human-1');
+    consult.run('c2', 'neo:root', 'neo-trigger:outcome:a:x#2');
+    consult.run('c3', 'neo:root', 'neo-nudge:human-1');
+    consult.run('review', 'neo:root', null);
     const stamp = db.prepare(
       'INSERT INTO neo_input_origins(session_id, message_id, origin_session_id, origin_message_id, stamped_at) VALUES (?, ?, ?, ?, 0)'
     );
@@ -58,6 +59,7 @@ describe('runMigration377', () => {
       ['neo-consult:c1:request', 'human-1', 'human:human-1'],
       ['neo-consult:c1:reply', 'human-1', 'human:human-1'],
       ['neo-consult:c2:reply', 'human-1', 'outcome:a:x'],
+      ['neo-consult:c3:request', 'human-1', 'human:human-1'],
       ['neo-consult:review:request', 'human-1', null],
       ['work-1:done-check:0', 'human-1', null],
     ];
