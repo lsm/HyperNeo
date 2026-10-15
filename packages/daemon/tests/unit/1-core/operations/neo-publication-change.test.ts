@@ -463,6 +463,19 @@ describe('requireNeoEditable', () => {
       'edit_needs_trigger'
     );
   });
+  test('a continuation carrying the human trigger edits a message once, not again', () => {
+    const turn = 'neo-turn-limit:r2';
+    const editedOnce = owned(turn, {
+      editedAt: '2026-10-14T11:00:00.000Z',
+      answerInput: { sessionId: root.sessionId, messageId: turn },
+    });
+    expect(reason(requireNeoEditable(owned(turn), { shortText: 'First.' }, 'human:m-9'))).toBe(
+      'ok'
+    );
+    expect(reason(requireNeoEditable(editedOnce, { shortText: 'Second.' }, 'human:m-9'))).toBe(
+      'already_edited'
+    );
+  });
   test('an unchanged edit is refused', () => {
     expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'Done.' }, 'human:m-9'))).toBe(
       'edit_unchanged'

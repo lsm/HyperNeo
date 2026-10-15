@@ -104,8 +104,7 @@ export function requireNeoEditable(
     (text.fullText ?? publication.fullText) === publication.fullText
   )
     return { reason: { accepted: false, reason: 'edit_unchanged' } };
-  if (trigger?.startsWith('human:')) return { value: owned };
-  if (!trigger || trigger !== publication.triggerId)
+  if (!trigger?.startsWith('human:') && (!trigger || trigger !== publication.triggerId))
     return { reason: { accepted: false, reason: 'edit_needs_trigger' } };
   const last = publication.answerInput ?? publication.producerInput;
   return last.sessionId === producer.input.sessionId &&
@@ -300,7 +299,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.edit',
       description:
-        "Fix the wording of a Neo reply in this conversation in place, by its publicationId, whichever Neo session produced it: to the human they are all Neo's. Use it only for wording: the meaning, facts and anything the human should do must stay the same. Only when the human asked for it (this turn answers a human message), or once for the message this turn's own trigger produced; otherwise edit_needs_trigger or already_edited, and an edit that changes nothing is edit_unchanged. The message is marked edited, records you as editedBy, and drops its awaiting question. Links, the ask it answers and its trigger never change. Only Neo publications in this conversation can change, never session messages (not_found). A project holder's reply to a consultation cannot change until Neo has received it (consultation_return); after that it is a Neo reply like any other.",
+        "Fix the wording of a Neo reply in this conversation in place, by its publicationId, whichever Neo session produced it: to the human they are all Neo's. Use it only for wording: the meaning, facts and anything the human should do must stay the same. Only when the human asked for it (this turn answers a human message) or for the message this turn's own trigger produced, and once per message per turn; otherwise edit_needs_trigger or already_edited, and an edit that changes nothing is edit_unchanged. The message is marked edited, records you as editedBy, and drops its awaiting question. Links, the ask it answers and its trigger never change. Only Neo publications in this conversation can change, never session messages (not_found). A project holder's reply to a consultation cannot change until Neo has received it (consultation_return); after that it is a Neo reply like any other.",
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: Result,
