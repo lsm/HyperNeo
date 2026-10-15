@@ -3991,7 +3991,10 @@ describe('neoPrompt place resolution', () => {
   test('tells Neo to find the place with work.find and never guess a folder', () => {
     for (const prompt of [neoPrompt(null), neoPrompt('book-club')]) {
       expect(prompt).toContain('call work.find with the project words from the request');
-      expect(prompt).toContain('Never build or guess a folder path yourself.');
+      expect(prompt).toContain(
+        'When the human names a folder, call work.find with folder set to it'
+      );
+      expect(prompt).toContain('Otherwise never build or guess a folder path yourself.');
       expect(prompt).toContain('using an adapter that can start work');
     }
   });
