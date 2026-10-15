@@ -41,6 +41,7 @@ export interface NeoTriggerSweepDeps {
   work(id: string): Card | null;
   deliveryRetryPending(workId: string): boolean;
   told(askId: string): Set<string>;
+  heard(ask: NeoAsk): boolean;
   record(askId: string, keys: readonly string[], triggerId: string | null): void;
   wake(ask: NeoAsk, trigger: NeoAskTrigger): Promise<boolean>;
 }
@@ -273,6 +274,45 @@ export function requireNeoTriggerRead(
   return read ? { value: read } : { reason: null };
 }
 
+export function requireNeoTriggerUnheard(
+  ask: NeoAsk,
+  trigger: NeoAskTrigger,
+  deps: Pick<NeoTriggerSweepDeps, 'heard' | 'record'>
+): { value: NeoAskTrigger } | { reason: null } {
+  if (trigger.kind !== 'outcome' || !deps.heard(ask)) return { value: trigger };
+  deps.record(ask.id, trigger.keys, null);
+  return { reason: null };
+}
+
+export function neoTriggerWorkProblem(
+  input: { sessionId: string; messageId: string },
+  trigger: string | null,
+  answeredBy: { sessionId: string; messageId: string } | null,
+  consulted: boolean
+): string | null {
+  if (!trigger) return null;
+  if (
+    answeredBy &&
+    (answeredBy.sessionId !== input.sessionId || answeredBy.messageId !== input.messageId)
+  )
+    return 'trigger_answered: the human already has the answer for this message. Start no new work for it; only a new human message can.';
+  return consulted
+    ? 'already_consulted: this holder already returned for this message. Use its answer instead of asking again.'
+    : null;
+}
+
+export const NEO_CONSULTATION_PENDING_DETAIL =
+  'A holder you consulted for this message has not returned yet. Its published answer is the reply to the human, so publish nothing now and end the turn.';
+
+export function shouldRetryNeoTrigger(
+  ask: Pick<NeoAsk, 'status'>,
+  kind: string,
+  heard: boolean
+): boolean {
+  if (kind === 'outcome') return !heard;
+  return ask.status !== 'achieved' && ask.status !== 'abandoned';
+}
+
 const readKeys = (ask: NeoAsk, read: NeoAskTriggerRead, deps: NeoTriggerSweepDeps) =>
   neoAskTriggerKeys(
     ask,
@@ -292,6 +332,7 @@ export const noteNeoAskTrigger = (superpipe({})('neo-ask-trigger') as PipelineAP
     ['ask', 'keys', 'deps'],
     'result:trigger'
   )
+  .pipe(requireNeoTriggerUnheard, ['ask', 'trigger', 'deps'], 'result:trigger')
   .pipe(
     async (ask: NeoAsk, trigger: NeoAskTrigger, deps: NeoTriggerSweepDeps) => {
       if (!(await deps.wake(ask, trigger))) return null;

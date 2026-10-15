@@ -352,6 +352,9 @@ import {
   neoTriggerMessageId,
   neoTriggerMessageIds,
   planNeoTriggerRetry,
+  shouldRetryNeoTrigger,
+  neoTriggerWorkProblem,
+  NEO_CONSULTATION_PENDING_DETAIL,
   neoTriggerNote,
   noteNeoAskTrigger,
   type NeoTriggerSweepDeps,
@@ -764,6 +767,7 @@ export class NeoService {
       work: (id) => this.repo.getWork(id),
       deliveryRetryPending: (id) => isNeoDeliveryRetryPending(this.db.getJobQueueRepo(), id),
       told: (askId) => this.triggers.told(askId),
+      heard: (ask) => this.heardOutcome(ask),
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
       wake: (ask, trigger) =>
         this.open(ask.projectId)
@@ -912,9 +916,9 @@ export class NeoService {
         );
         if (!publication) throw new Error('Committed consultation publication is missing');
         if (
-          (publication.answerInput ?? publication.producerInput).sessionId !== caller.sessionId ||
-          (publication.answerInput ?? publication.producerInput).messageId !== turn.messageId ||
-          (!publication.answerInput && publication.publicationId !== input.publicationId) ||
+          publication.producerInput.sessionId !== caller.sessionId ||
+          publication.producerInput.messageId !== turn.messageId ||
+          publication.publicationId !== input.publicationId ||
           publication.shortText !== input.shortText ||
           publication.fullText !== input.fullText ||
           publication.askSummary !== input.askSummary ||
@@ -932,7 +936,21 @@ export class NeoService {
       commit: (input, consultationId) => {
         const problem = this.crossProjects.publicationProblem(input, consultationId);
         if (problem) return { accepted: false, reason: problem };
+        if (!consultationId && input.triggerId && this.consultationOpenFor(input.triggerId))
+          return {
+            accepted: false,
+            reason: 'consultation_pending',
+            detail: NEO_CONSULTATION_PENDING_DETAIL,
+          };
         if (!consultationId) return this.appendPublication(input);
+        const answered = input.triggerId
+          ? this.publications.byTrigger(input.conversationId, input.triggerId)
+          : null;
+        if (answered && answered.publicationId !== input.publicationId) {
+          this.consultations.finish(consultationId, 'reported', input.fullText);
+          this.consultations.returned(consultationId);
+          return { accepted: true, created: false, publication: answered };
+        }
         const receipt = publicationSettlements.settleWithPublication({
           consultationId,
           answer: input.fullText,
@@ -946,10 +964,7 @@ export class NeoService {
         if (!publication) throw new Error('Committed consultation publication is missing');
         return { accepted: true, created: receipt.created, publication };
       },
-      published: (input, publication) => {
-        this.noteHumanReply(input);
-        if (publication.answerInput) this.notifyPublicationsChanged(publication.conversationId);
-      },
+      published: (input) => this.noteHumanReply(input),
     });
     this.resolveWorkTarget = createNeoWorkTargetResolver({
       readTarget: (id) => {
@@ -1204,12 +1219,27 @@ export class NeoService {
       const ask = this.askRecords.get(askId);
       const target = ask ? this.repo.getBindingForProject(ask.projectId)?.sessionId : null;
       if (!ask || !target || this.isTriggerOwnerBusy(ask)) continue;
+      if (!shouldRetryNeoTrigger(ask, triggerId.split(':')[0], this.heardOutcome(ask))) continue;
       const plan = planNeoTriggerRetry(
         this.publications.hasTrigger(conversationId, triggerId, ''),
         this.triggers.noteStatuses(target, neoTriggerMessageIds(triggerId))
       );
       if (plan === 'retry') this.triggers.forget(askId, triggerId);
     }
+  }
+
+  private heardOutcome(ask: NeoAsk): boolean {
+    const root = this.repo.getBindingForProject(null);
+    return (
+      !!ask.settledAt &&
+      !!ask.originMessageId &&
+      !!root?.sessionId.startsWith('neo:') &&
+      this.publications.toldSince(
+        root.sessionId.slice(4),
+        { sessionId: ask.originSessionId, messageId: ask.originMessageId },
+        new Date(ask.settledAt).toISOString()
+      )
+    );
   }
 
   private isTriggerOwnerBusy(ask: NeoAsk): boolean {
@@ -2952,6 +2982,8 @@ export class NeoService {
     );
     if (!plan) return;
     const interrupted = messages.firstUserUuidBetween(sessionId, plan.sinceAt, plan.untilAt);
+    const parent = interrupted ? { sessionId, messageId: interrupted } : null;
+    if (this.triggerAnswered(parent)) return;
     await this.deliverToOrigin(
       sessionId,
       `${NEO_TURN_LIMIT_PREFIX}${plan.resultUuid}`,
@@ -2959,7 +2991,7 @@ export class NeoService {
         this.askRecords.openedBy(sessionId, plan.since, plan.until),
         this.repo.proposedBy(sessionId, plan.since, plan.until)
       ),
-      interrupted ? { sessionId, messageId: interrupted } : null,
+      parent,
       'continues'
     );
   }
@@ -3680,6 +3712,57 @@ export class NeoService {
     return (
       this.inputOrigins.trigger(input.sessionId, input.messageId) ??
       (this.isHumanInput(input) ? neoHumanTrigger(input.messageId) : null)
+    );
+  }
+
+  private consultationOpenFor(trigger: string): boolean {
+    return [
+      ...this.consultations.unsettled().filter((item) => item.status === 'pending'),
+      ...this.consultationWaiters.queued(),
+    ].some(
+      (item) =>
+        !!item.originMessageId &&
+        this.inputTrigger({ sessionId: item.originSessionId, messageId: item.originMessageId }) ===
+          trigger
+    );
+  }
+
+  triggerWorkProblem(
+    caller: OperationCaller,
+    projectId?: string
+  ): { ok: false; reason: string } | null {
+    if (!caller.sessionId || !caller.neoTurn) return null;
+    const input = { sessionId: caller.sessionId, messageId: caller.neoTurn.messageId };
+    const trigger = this.inputTrigger(input);
+    const root = this.repo.getBindingForProject(null);
+    const answered =
+      trigger && root ? this.publications.byTrigger(root.sessionId.slice(4), trigger) : null;
+    const consulted =
+      !!trigger &&
+      !!projectId &&
+      this.consultations.list(projectId).some(
+        (item) =>
+          item.status === 'reported' &&
+          !!item.originMessageId &&
+          this.inputTrigger({
+            sessionId: item.originSessionId,
+            messageId: item.originMessageId,
+          }) === trigger
+      );
+    const reason = neoTriggerWorkProblem(
+      input,
+      trigger,
+      answered?.producerInput ?? null,
+      consulted
+    );
+    return reason ? { ok: false, reason } : null;
+  }
+
+  private triggerAnswered(parent: NeoAskOrigin | null): boolean {
+    const trigger = this.parentTrigger(parent);
+    const root = this.repo.getBindingForProject(null);
+    return (
+      !!trigger && !!root && this.publications.hasTrigger(root.sessionId.slice(4), trigger, '')
     );
   }
 

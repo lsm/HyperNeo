@@ -47,9 +47,12 @@ export function requireConsultationPublication(
     publication.publicationId === association.publicationId &&
     createdAt === association.createdAt &&
     publication.fullText === association.answer &&
-    (publication.answerInput ?? publication.producerInput).sessionId === item.sessionId &&
-    (publication.answerInput ?? publication.producerInput).messageId ===
-      `neo-consult:${item.id}:request`
+    [publication.producerInput, publication.answerInput].some(
+      (input) =>
+        !!input &&
+        input.sessionId === item.sessionId &&
+        input.messageId === `neo-consult:${item.id}:request`
+    )
     ? { value: publication }
     : { reason: 'inconsistent' };
 }
@@ -70,7 +73,7 @@ export function requireConsultationPayload(
   captured: NeoPublicationInput | null | undefined
 ): Gate<NeoPublication> {
   const landed =
-    publication.answerInput && captured
+    captured && publication.answerInput?.messageId === captured.producerInput.messageId
       ? {
           ...publication,
           publicationId: captured.publicationId,
