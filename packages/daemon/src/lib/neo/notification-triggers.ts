@@ -438,27 +438,9 @@ export const coverNeoAskTriggers = (superpipe({})('neo-ask-trigger-cover') as Pi
 
 export function requirePublicationTrigger<T>(
   value: T,
-  draft: { triggerId?: string; interim?: true },
+  draft: { triggerId?: string },
   trigger: string | null
-): { value: T & { triggerId: string } } | { reason: Rejection } {
-  if (draft.interim)
-    return {
-      reason: {
-        accepted: false,
-        reason: 'interim_refused',
-        detail:
-          'Interim status posts are not published. Publish once, when you have the reply itself, or end the turn.',
-      },
-    };
-  if (!trigger)
-    return {
-      reason: {
-        accepted: false,
-        reason: 'no_trigger',
-        detail:
-          'Nothing in this turn calls for a message to the human: only a human message, an ask outcome, or something the human must do or that broke does. The daemon wakes you with a note naming the trigger when one happens. End the turn.',
-      },
-    };
+): { value: T & { triggerId?: string } } | { reason: Rejection } {
   if (draft.triggerId && draft.triggerId !== trigger)
     return {
       reason: {
@@ -467,5 +449,5 @@ export function requirePublicationTrigger<T>(
         detail: `This turn's trigger is ${trigger}, not ${draft.triggerId}. Publish with triggerId ${trigger}, or omit it.`,
       },
     };
-  return { value: { ...value, triggerId: trigger } };
+  return { value: { ...value, triggerId: trigger ?? undefined } };
 }

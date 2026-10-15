@@ -64,10 +64,10 @@ describe('direct human publication prompt', () => {
     }
   });
   test.each([null, 'research'])(
-    'tells %s to publish only for a notification trigger, never an interim post',
+    'tells %s to publish only a new fact, never an interim post',
     (projectId) => {
       const prompt = delivered(projectId);
-      expect(prompt).toContain('You publish to the human only for a notification trigger');
+      expect(prompt).toContain('You publish to the human when you have something new for them');
       expect(prompt).toContain(
         'There are no interim or status posts, and never repeat yourself: publish the answer, then only a new fact'
       );
