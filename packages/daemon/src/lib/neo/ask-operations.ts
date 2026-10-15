@@ -27,12 +27,7 @@ import { requireNeoAskPack } from './packs/index.ts';
 import type { buildNeoCheckRegistry } from './packs/check-registry.ts';
 import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
-import {
-  neoDaemonReadsClaim,
-  neoDaemonTickPath,
-  neoHumanTickWakes,
-  type NeoDaemonTickPath,
-} from './needs-you.ts';
+import { neoDaemonTickPath, neoHumanTickWakes, type NeoDaemonTickPath } from './needs-you.ts';
 import { isNeoAskOutcomeItem } from './ask-views.ts';
 import { NeoAskStateViewSchema } from './card-view-schema.ts';
 import { isNeoAnswerItem } from './answer-outcome.ts';
@@ -138,7 +133,11 @@ const Item = z.object({
     'Stable card ID delivering this outcome. On open only an unlinked card from the same owner/project can be claimed; on edit use a card already on this ask.'
   ),
   text: z.string().trim().min(1).max(300),
-  check: CheckKind.nullable().default(null),
+  check: CheckKind.nullable()
+    .optional()
+    .describe(
+      'A registered check kind the daemon ticks this item from, or null when you tick it yourself. Required.'
+    ),
   watch: z.array(WatchUrl).min(1).max(10).optional(),
   outcomeKind: z
     .enum(NEO_ASK_ITEM_OUTCOME_KINDS)
@@ -275,7 +274,9 @@ const requireAskRevision = (input: { expectedRevision: number }, ask: NeoAsk): G
     : { reason: fail('stale_revision: refresh the ask before changing or approving it.') };
 
 export function requireNeoAnswerItemsUnchecked<T>(
-  items: readonly Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'outcomeKind'>[],
+  items: readonly (Pick<NeoAskItem, 'text' | 'watch' | 'outcomeKind'> & {
+    check?: string | null;
+  })[],
   value: T
 ): Gate<T> {
   const checked = items.find(
@@ -497,12 +498,12 @@ export function requireNeoAskProject<T>(
 
 export function planNeoAskItems(input: {
   doneWhen?: string;
-  doneItems?: readonly NeoAskItemInput[];
+  doneItems?: readonly (Omit<NeoAskItemInput, 'check'> & { check?: string | null })[];
 }): { doneWhen: string; items: NeoAskItemInput[] } {
   if (input.doneItems?.length)
     return {
       doneWhen: input.doneWhen ?? input.doneItems.map((item) => `- ${item.text}`).join('\n'),
-      items: [...input.doneItems],
+      items: input.doneItems.map((item) => ({ ...item, check: item.check ?? null })),
     };
   const doneWhen = input.doneWhen ?? '';
   const bullets = doneWhen
@@ -659,16 +660,11 @@ function requireNeoAskChecklistMet(
     : { value: ask };
 }
 
-const NEO_TRACK_HOW =
-  'Keep it pending; neo.ask.edit {askId, track: [{itemId, ...}]} tells the daemon what to read.';
-
 const NEO_DAEMON_TICK_REFUSALS: Record<NeoDaemonTickPath, string> = {
   check:
     'daemon_ticks_check: the daemon ticks this item itself from what it reads (GitHub, and for coding.deployed the commit each daemon runs). Keep it pending; an agent’s word or your tick never makes it met.',
   watch:
     'daemon_ticks_watched: the daemon ticks this item itself once every watched pull request has merged and every watched issue has closed. Keep it pending.',
-  needs_deploy_check: `daemon_reads_deploy: the daemon reads which commit each daemon runs, so a deploy is never met on a tick or an agent's report. Give the item check coding.deployed (and watch: [the pull request URLs] when they are not this ask's card PRs); the daemon ticks it once every daemon runs a commit containing them. ${NEO_TRACK_HOW}`,
-  needs_watch: `daemon_reads_github: the daemon reads this pull request or issue itself. Give the item watch: [its URL]; the daemon ticks it once it merges or closes. ${NEO_TRACK_HOW}`,
 };
 
 const NEO_AGENT_WORD =
@@ -772,21 +768,7 @@ const NEO_HUMAN_TASK_REFUSALS = {
   approval:
     "approval_on_ask: re-approving continued work is the ask's Approve, not a question. The daemon shows Approve itself when the approval expires or a card stalls; approving it wakes you.",
   wait: 'not_the_human: a wait on a PR, merge, CI, deploy, card or anything else the daemon reads is not the human’s step. Keep the item pending; the daemon wakes you when cards report, and you tick it met once you read it.',
-  fact: 'daemon_readable: the daemon reads this itself (a PR, merge, CI, a deploy, a card, standing rules). For a pull request or issue, give the item watch: [url] with neo.ask.edit track and the daemon ticks it when they merge or close; otherwise keep it pending. reported is for claims you cannot read, such as a device.',
 } as const;
-
-export function requireNeoReportedReadable<T>(
-  caller: OperationCaller,
-  state: NeoAskItem['state'],
-  claim: { text: string; context?: string },
-  value: T
-): Gate<T> {
-  return caller.source === 'mcp' &&
-    state === 'reported' &&
-    neoDaemonReadsClaim(claim.text, claim.context)
-    ? { reason: fail(NEO_HUMAN_TASK_REFUSALS.fact) }
-    : { value };
-}
 
 export function requireNeoAskItemKind<T>(kind: NeoAskItemKind | undefined, value: T): Gate<T> {
   return kind === 'wait' || kind === 'approval'
@@ -1290,6 +1272,7 @@ export function planNeoAskEdit(
   return {
     add: input.add.map((item, index) => ({
       ...item,
+      check: item.check ?? null,
       id: `i${next + index + 1}`,
       position: items.length + index,
     })),
@@ -1511,7 +1494,10 @@ export function createNeoAskOperations(
       ) => {
         if (service.askRecords.forRequest(`${origin.originSessionId}:${input.requestKey}`))
           return { value: origin };
-        const checked = service.outcomeCheckPolicy.requireChecks(checklist.items);
+        const checked = service.outcomeCheckPolicy.requireChecks(
+          input.doneItems ?? [{ text: checklist.doneWhen }],
+          service.checkRegistry()
+        );
         return 'reason' in checked ? checked : { value: origin };
       },
       ['checklist', 'admission', 'input'],
@@ -1716,23 +1702,6 @@ export function createNeoAskOperations(
         neoHumanTickWakes(input.state, caller.source, target.item),
       ['input', 'caller', 'admission'],
       'wakes'
-    )
-    .pipe(
-      (
-        input: z.infer<typeof Tick>,
-        target: { ask: NeoAsk; item: NeoAskItem },
-        caller: OperationCaller
-      ) =>
-        isNeoAnswerItem(target.item)
-          ? { value: target }
-          : requireNeoReportedReadable(
-              caller,
-              input.state,
-              { text: target.item.text, context: input.evidence },
-              target
-            ),
-      ['input', 'admission', 'caller'],
-      'result:admission'
     )
     .pipe(
       (
@@ -2002,10 +1971,10 @@ export function createNeoAskOperations(
             ask.doneItems?.find((entry) => entry.id === change.itemId);
           if (item) tracked.set(item.id, { ...item, check: change.check ?? item.check });
         }
-        const checked = service.outcomeCheckPolicy.requireChecks([
-          ...input.add,
-          ...tracked.values(),
-        ]);
+        const checked = service.outcomeCheckPolicy.requireChecks(
+          [...input.add, ...tracked.values()],
+          service.checkRegistry()
+        );
         return 'reason' in checked ? checked : { value: ask };
       },
       ['input', 'admission'],
@@ -2104,7 +2073,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; new merge/deploy outcomes require the matching coding.pr_merged/coding.deployed check in doneItems; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; every doneItem declares check: a registered check kind the daemon ticks it from, or null when you tick it yourself (doneWhen alone is refused, because its lines declare no check); doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -2122,7 +2091,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.tick',
       description:
-        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, only for an item the daemon cannot read (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but nobody can read it (a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), or back to pending. met and reported are refused for what the daemon reads: an item with watch or a GitHub or deploy check is ticked by the daemon, and an item naming a pull request, issue or deploy needs watch or check coding.deployed first (neo.ask.edit track). needs_you is refused: a decision or a check only the human can make is its own item, asked with neo.ask.question. reported is also refused for anything else the daemon reads itself (CI, a card, standing rules). met is refused for an item a card delivers (deliveredBy) until that card has reported. Only the Neo session that opened the ask or the user can tick it.",
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, only for an item the daemon cannot read (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but nobody can read it (a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), or back to pending. met and reported are refused for an item with a check or watch: the daemon ticks it, and only its check decides that, never its words. needs_you is refused: a decision or a check only the human can make is its own item, asked with neo.ask.question. met is refused for an item a card delivers (deliveredBy) until that card has reported. Only the Neo session that opened the ask or the user can tick it.",
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

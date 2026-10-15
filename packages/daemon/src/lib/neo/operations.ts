@@ -1844,26 +1844,6 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: ProposeRequest, origin: NeoWorkOrigin, caller: OperationCaller) => {
-        const planned = planNeoCardAsk(input, origin);
-        const stored = service.repo.workForRequest(`${origin.originSessionId}:${input.requestKey}`);
-        if (stored && service.askRecords.forWork(stored.id)) return { value: caller };
-        const checked = service.outcomeCheckPolicy.requireChecks(
-          planned ? planNeoAskItems(planned).items : []
-        );
-        return 'reason' in checked
-          ? {
-              reason: {
-                ...checked.reason,
-                reason: `${checked.reason.reason} Open a checked ask with neo.ask.open, then pass its askId.`,
-              },
-            }
-          : { value: caller };
-      },
-      ['input', 'origin', 'caller'],
-      'result:admission'
-    )
-    .pipe(
       (input: ProposeRequest, origin: NeoWorkOrigin, target: NeoWorkTarget): NeoProposal => {
         const proposal = {
           ...input,
