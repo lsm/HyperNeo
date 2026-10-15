@@ -14,6 +14,7 @@ import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
 import { projectNeoPublicConversation } from './public-conversation.ts';
 import { projectNeoPublicHolderConversation } from './public-holder-conversation.ts';
+import { mergeNeoAskDetails, neoAskDetailKey } from './neo-ask-detail.ts';
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
@@ -22,7 +23,14 @@ export function useNeo() {
     () => createNeoIntakeClient(() => connectionManager.getHub(), setPendingAsks),
     []
   );
-  const [snapshot, setSnapshot] = useState<NeoSnapshot | null>(null);
+  const [received, setSnapshot] = useState<NeoSnapshot | null>(null);
+  const [askDetails, setAskDetails] = useState<ReadonlyMap<string, NeoSnapshot>>(new Map());
+  const askDetailReads = useRef(new Map<string, string>());
+  const [askDetailFailures, setAskDetailFailures] = useState<ReadonlySet<string>>(new Set());
+  const [askDetailEpoch, setAskDetailEpoch] = useState(0);
+  const latest = useRef(received);
+  latest.current = received;
+  const snapshot = useMemo(() => mergeNeoAskDetails(received, askDetails), [received, askDetails]);
   const publications = useNeoPublications(snapshot?.sessionId ?? null);
   const asks = useNeoConversationAsks(snapshot?.sessionId ?? null);
   useEffect(() => {
@@ -41,7 +49,9 @@ export function useNeo() {
     const current = () => alive.current && ticket === refreshGeneration.current;
     try {
       const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', {});
+      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', {
+        summaries: true,
+      });
       if (!current()) return;
       if (!result.ok) throw new Error(result.reason);
       setSnapshot(result);
@@ -55,9 +65,15 @@ export function useNeo() {
     const opened = ++refreshGeneration.current;
     setSessionId(null);
     setError('');
+    askDetailReads.current = new Map();
+    setAskDetailFailures(new Set());
+    setAskDetailEpoch((epoch) => epoch + 1);
+    setAskDetails(new Map());
     try {
       const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.open', {});
+      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.open', {
+        summaries: true,
+      });
       if (!result.ok) throw new Error(result.reason);
       if (!alive.current || ticket !== generation.current) return;
       if (opened === refreshGeneration.current) setSnapshot(result);
@@ -114,6 +130,31 @@ export function useNeo() {
     },
     [store]
   );
+
+  async function loadAskDetail(askId: string) {
+    const key = neoAskDetailKey(latest.current, askId);
+    const reads = askDetailReads.current;
+    if (reads.get(askId) === key) return;
+    reads.set(askId, key);
+    setAskDetailFailures((failed) => {
+      if (!failed.has(askId)) return failed;
+      const next = new Set(failed);
+      next.delete(askId);
+      return next;
+    });
+    const current = () =>
+      alive.current && reads === askDetailReads.current && reads.get(askId) === key;
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', { askId });
+      if (!result.ok) throw new Error(result.reason);
+      if (current()) setAskDetails((details) => new Map(details).set(askId, result));
+    } catch {
+      if (!current()) return;
+      reads.delete(askId);
+      setAskDetailFailures((failed) => new Set(failed).add(askId));
+    }
+  }
 
   async function act(id: string, action: NeoWorkAction) {
     if (busyWork) return;
@@ -269,6 +310,9 @@ export function useNeo() {
     busyWork,
     open,
     refresh,
+    loadAskDetail,
+    askDetailFailed: (askId: string) => askDetailFailures.has(askId),
+    askDetailEpoch,
     act,
     settleAsk,
     approveAsk,

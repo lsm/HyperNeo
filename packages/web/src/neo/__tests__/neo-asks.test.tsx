@@ -235,6 +235,69 @@ describe('NeoAskCard', () => {
     expect(openSession).toHaveBeenCalledExactlyOnceWith('s1', 'Review the docs');
   });
 
+  it('asks for the full ask when a summarized one is expanded, and shows it once it arrives', () => {
+    const full = ask('a', 'achieved', []);
+    const summarized = { ...full, doneWhen: '', summarized: true as const };
+    const onExpand = vi.fn();
+    const card = render(
+      <NeoAskCard view={describeAsk(summarized, [], { settled: true })} onExpand={onExpand} />
+    );
+    const toggle = card.getByRole('button', { name: 'Details' });
+    fireEvent.click(toggle);
+    expect(onExpand).toHaveBeenCalledTimes(1);
+    expect(card.getByRole('status').textContent).toBe('Loading details…');
+    fireEvent.click(toggle);
+    expect(onExpand).toHaveBeenCalledTimes(1);
+    fireEvent.click(toggle);
+    expect(onExpand).toHaveBeenCalledTimes(2);
+    card.rerender(
+      <NeoAskCard view={describeAsk(full, [], { settled: true })} onExpand={onExpand} />
+    );
+    expect(card.queryByRole('status')).toBeNull();
+    expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
+  });
+
+  it('asks for the detail of an ask that becomes summarized while open, and retries a failed read', () => {
+    const full = ask('a', 'achieved', []);
+    const summarized = { ...full, doneWhen: '', summarized: true as const };
+    const onExpand = vi.fn();
+    const card = render(
+      <NeoAskCard view={describeAsk(full, [], { settled: true })} onExpand={onExpand} />
+    );
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    expect(onExpand).not.toHaveBeenCalled();
+    card.rerender(
+      <NeoAskCard view={describeAsk(summarized, [], { settled: true })} onExpand={onExpand} />
+    );
+    expect(onExpand).toHaveBeenCalledTimes(1);
+    card.rerender(
+      <NeoAskCard
+        view={describeAsk(summarized, [], { settled: true })}
+        onExpand={onExpand}
+        detailFailed
+      />
+    );
+    expect(card.getByRole('status').textContent).toContain('Couldn’t load details.');
+    fireEvent.click(card.getByRole('button', { name: 'Retry' }));
+    expect(onExpand).toHaveBeenCalledTimes(2);
+    card.rerender(
+      <NeoAskCard
+        view={describeAsk(summarized, [], { settled: true })}
+        onExpand={onExpand}
+        detailEpoch={1}
+      />
+    );
+    expect(onExpand).toHaveBeenCalledTimes(3);
+    card.rerender(
+      <NeoAskCard
+        view={describeAsk({ ...summarized, revision: 9 }, [], { settled: true })}
+        onExpand={onExpand}
+        detailEpoch={1}
+      />
+    );
+    expect(onExpand).toHaveBeenCalledTimes(4);
+  });
+
   it('shows no session rows when the ask has none', () => {
     const card = render(<NeoAskCard view={describeAsk(ask('a', 'open', []), [])} />);
     expect(card.container.querySelector('[data-ask-session]')).toBeNull();
