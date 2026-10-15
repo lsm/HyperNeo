@@ -8,8 +8,6 @@ import type {
 import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
-import { neoForwardedAskMessageId } from './ask-forward-operation.ts';
-import { nudgedMessageId } from './ask-origin.ts';
 
 export const NEO_TRIGGER_PREFIX = 'neo-trigger:';
 export const NEO_HUMAN_TRIGGER_PREFIX = 'human:';
@@ -71,26 +69,24 @@ export function planNeoTriggerRetry(
 
 const TURN_OVER: ReadonlySet<string> = new Set(['consumed', 'failed']);
 
-export function neoInputTrigger(messageId: string, human: boolean): string | null {
-  if (messageId.startsWith(NEO_TRIGGER_PREFIX))
-    return messageId.slice(NEO_TRIGGER_PREFIX.length).replace(/#\d+$/, '') || null;
-  const nudged = nudgedMessageId(messageId);
-  if (nudged) return neoInputTrigger(nudged, true);
-  const forwarded = neoForwardedAskMessageId(messageId);
-  if (forwarded) return `${NEO_HUMAN_TRIGGER_PREFIX}${forwarded}`;
-  return human ? `${NEO_HUMAN_TRIGGER_PREFIX}${messageId}` : null;
+export function neoHumanTrigger(messageId: string): string {
+  return `${NEO_HUMAN_TRIGGER_PREFIX}${messageId}`;
 }
 
-export function neoConsultationTrigger(
-  consultation: Pick<NeoConsultation, 'originSessionId' | 'originMessageId'> | null,
-  isHumanInput: (input: { sessionId: string; messageId: string }) => boolean
+export type NeoDeliveryTrigger = 'continues' | { readonly id: string } | null;
+
+export function neoConsultationDelivery(
+  item: Pick<NeoConsultation, 'originMessageId'>
+): NeoDeliveryTrigger {
+  return item.originMessageId ? 'continues' : null;
+}
+
+export function neoDeliveryTrigger(
+  trigger: NeoDeliveryTrigger,
+  parentTrigger: () => string | null
 ): string | null {
-  if (!consultation?.originMessageId) return null;
-  const origin = {
-    sessionId: consultation.originSessionId,
-    messageId: consultation.originMessageId,
-  };
-  return neoInputTrigger(origin.messageId, isHumanInput(origin));
+  if (trigger === 'continues') return parentTrigger();
+  return trigger?.id ?? null;
 }
 
 export function neoReplyOriginKey(origin: { sessionId: string; messageId: string }): string {

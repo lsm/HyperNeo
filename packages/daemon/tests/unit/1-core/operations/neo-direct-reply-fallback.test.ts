@@ -113,6 +113,21 @@ describe('Neo direct reply fallback', () => {
     ]);
   });
 
+  test('a forwarded ask answers under the original human message’s trigger', () => {
+    const forwarded = {
+      ...ask(`neo-forward:${askA}:0`, holder),
+      askOrigin: { sessionId: root, messageId: askA },
+    };
+    expect(
+      publishNeoDirectReplyFallback(holder, runtime({ recentAsks: () => [forwarded] }))
+    ).toMatchObject([
+      {
+        producerInput: { sessionId: holder, messageId: `neo-forward:${askA}:0` },
+        triggerId: `human:${askA}`,
+      },
+    ]);
+  });
+
   test('bounds long replies to the publication limits', () => {
     const [result] = publishNeoDirectReplyFallback(
       root,

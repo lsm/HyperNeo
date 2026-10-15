@@ -14,6 +14,8 @@ describe('planNeoTurnLimitNote', () => {
       resultUuid: 'r2',
       since: Date.parse('2026-10-12T14:56:50.000Z'),
       until: Date.parse('2026-10-12T15:02:06.000Z'),
+      sinceAt: '2026-10-12T14:56:50.000Z',
+      untilAt: '2026-10-12T15:02:06.000Z',
     });
   });
 

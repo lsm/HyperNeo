@@ -8,7 +8,7 @@ export type NeoTurnResult = { uuid: string | null; subtype: string | null; times
 export function planNeoTurnLimitNote(
   results: readonly NeoTurnResult[],
   notedSince: (since: string) => boolean
-): { resultUuid: string; since: number; until: number } | null {
+): { resultUuid: string; since: number; until: number; sinceAt: string; untilAt: string } | null {
   const [latest, previous] = results;
   if (latest?.subtype !== 'error_max_turns' || !latest.uuid) return null;
   if (!previous || notedSince(previous.timestamp)) return null;
@@ -16,6 +16,8 @@ export function planNeoTurnLimitNote(
     resultUuid: latest.uuid,
     since: Date.parse(previous.timestamp),
     until: Date.parse(latest.timestamp),
+    sinceAt: previous.timestamp,
+    untilAt: latest.timestamp,
   };
 }
 

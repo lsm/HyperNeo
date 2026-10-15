@@ -1,4 +1,3 @@
-import { NeoProjectTree } from './NeoProjectTree.tsx';
 import { neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -16,6 +15,7 @@ import { NeoActivity } from './NeoActivity.tsx';
 import { NeoAskCard } from './NeoAskCard.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
+import { NeoDrawer } from './NeoDrawer.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { publicAskText } from './NeoPublicConversation.tsx';
 import { NeoSessionPane } from './NeoSessionPane.tsx';
@@ -387,6 +387,9 @@ export function NeoLive() {
     element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
   }
 
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+
   function open() {
     nearBottom.current = true;
     lastScrollTop.current = 0;
@@ -459,12 +462,23 @@ export function NeoLive() {
           </div>
         </div>
       )}
+      <NeoDrawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        connection={connectionState.value}
+        onReconnect={() => void connectionManager.reconnect()}
+        onRefresh={open}
+        projects={projects}
+        refreshProjects={neo.refresh}
+      />
       <header class="neo-float-dock">
         <button
           type="button"
-          onClick={() => open()}
-          aria-label="Back to Neo"
-          class="neo-float-link"
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Settings and connection"
+          aria-expanded={drawerOpen}
+          aria-haspopup="dialog"
+          class="neo-glass-button"
         >
           <svg
             viewBox="0 0 102 176"
@@ -477,14 +491,13 @@ export function NeoLive() {
             <rect x="60" y="97" width="42" height="79" rx="6" />
           </svg>
         </button>
-        <NeoProjectTree projects={projects} refresh={neo.refresh} />
         {sheet && workCount > 0 && (
           <button
             type="button"
             aria-label={`Your work${attentionCount ? `, ${attentionCount} need your attention` : ''}`}
             aria-expanded={scenesOpen}
             onClick={() => setScenesOpen(true)}
-            class="neo-float-link relative"
+            class="neo-glass-button relative"
           >
             <NeoIcon name="context" />
             {attentionCount > 0 && (

@@ -1944,6 +1944,40 @@ export class SDKMessageRepository {
     return messages;
   }
 
+  getHumanPrompt(sessionId: string, uuid: string): { at: number; text: string } | null {
+    const rows = this.db
+      .prepare(
+        `SELECT sdk_message, timestamp FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+          ORDER BY timestamp ASC, rowid ASC`
+      )
+      .all(sessionId, uuid) as Array<{ sdk_message: string; timestamp: string | number }>;
+    for (const row of rows) {
+      let message: { inputKind?: unknown; message?: { content?: unknown } };
+      try {
+        message = JSON.parse(row.sdk_message);
+      } catch {
+        continue;
+      }
+      if (message.inputKind !== 'human') continue;
+      const at = typeof row.timestamp === 'number' ? row.timestamp : Date.parse(row.timestamp);
+      if (!Number.isFinite(at)) return null;
+      const content = message.message?.content;
+      const text =
+        typeof content === 'string'
+          ? content
+          : Array.isArray(content)
+            ? content
+                .flatMap((block: { type?: unknown; text?: unknown }) =>
+                  block?.type === 'text' && typeof block.text === 'string' ? [block.text] : []
+                )
+                .join('\n')
+            : '';
+      return { at, text };
+    }
+    return null;
+  }
+
   getUserMessageContentByUuid(sessionId: string, uuid: string): string | MessageContent[] | null {
     const row = this.db
       .prepare(
@@ -2188,6 +2222,20 @@ export class SDKMessageRepository {
       subtype: string | null;
       timestamp: string;
     }[];
+  }
+
+  firstUserUuidBetween(sessionId: string, after: string, until: string): string | null {
+    return (
+      (
+        this.db
+          .prepare(
+            `SELECT sdk_uuid AS uuid FROM sdk_messages
+               WHERE session_id = ? AND message_type = 'user' AND timestamp > ? AND timestamp <= ?
+               ORDER BY timestamp LIMIT 1`
+          )
+          .get(sessionId, after, until) as { uuid: string | null } | undefined
+      )?.uuid ?? null
+    );
   }
 
   hasUserUuidPrefixSince(sessionId: string, prefix: string, since: string): boolean {

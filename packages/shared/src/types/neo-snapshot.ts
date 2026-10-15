@@ -360,6 +360,8 @@ export interface NeoSnapshotConsultation extends NeoConsultation {
 export interface NeoSnapshotWork extends NeoWork {
   summarized?: true;
   askId?: string;
+  phase?: NeoCardPhase;
+  label?: string;
 }
 
 export interface NeoSnapshot {
@@ -383,6 +385,7 @@ export interface NeoSnapshot {
   standingRules?: string[];
   asks?: NeoAsk[];
   moreSettled?: boolean;
+  omitted?: { work?: number; asks?: number };
   cards: NeoCardView[];
   sessionLoad?: NeoSessionLoad[];
   askViews: NeoAskView[];

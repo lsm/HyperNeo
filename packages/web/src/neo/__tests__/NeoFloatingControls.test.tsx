@@ -128,11 +128,43 @@ describe('Neo floating controls', () => {
     expect(screen.queryByRole('button', { name: /Your projects/ })).toBeNull();
   });
 
-  it('keeps the root logo actionable as the actual Back to Neo control', () => {
+  it('opens the settings drawer from the logo, with connection and projects, and leaves projects out of the header', () => {
     const { open } = renderLive();
-    const logo = within(banner()).getByRole('button', { name: 'Back to Neo' });
+    expect(within(banner()).queryByRole('button', { name: 'Projects' })).toBeNull();
+    const logo = within(banner()).getByRole('button', { name: 'Settings and connection' });
     fireEvent.click(logo);
+    const drawer = screen.getByRole('dialog', { name: 'Settings and connection' });
+    expect(within(drawer).getByText('Connected')).toBeTruthy();
+    expect(within(drawer).getByLabelText('Path for Project a').textContent).toBe('Project a');
+    expect(logo.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Refresh Neo' }));
     expect(open).toHaveBeenCalledWith();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('closes the drawer on Escape, a backdrop click and a drag to the left, returning focus to the mark', async () => {
+    renderLive();
+    const logo = within(banner()).getByRole('button', { name: 'Settings and connection' });
+    logo.focus();
+    fireEvent.click(logo);
+    expect(document.activeElement).toBe(
+      screen.getByRole('dialog', { name: 'Settings and connection' })
+    );
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(logo));
+    fireEvent.click(logo);
+    fireEvent.click(screen.getByTestId('neo-drawer-backdrop'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(logo);
+    const drawer = screen.getByRole('dialog', { name: 'Settings and connection' });
+    fireEvent.pointerDown(drawer, { clientX: 300 });
+    fireEvent.pointerMove(drawer, { clientX: 260 });
+    fireEvent.pointerUp(drawer, { clientX: 290 });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.pointerDown(drawer, { clientX: 300 });
+    fireEvent.pointerUp(drawer, { clientX: 200 });
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('keeps draft and the work card intact while the controls are used', () => {
@@ -164,5 +196,21 @@ describe('Neo floating controls', () => {
     expect(css).toContain('outline: 2px solid var(--focus-ring)');
     expect(css).toMatch(/\.neo-float-link\s*\{[^}]*min-height: 44px;\s*min-width: 44px;/);
     expect(css).toContain('padding-top: 68px');
+  });
+
+  it('draws the logo and work buttons as 44px round glass with a press state in both themes', () => {
+    renderLive();
+    const logo = within(banner()).getByRole('button', { name: 'Settings and connection' });
+    expect(logo.className).toContain('neo-glass-button');
+    const css = readFileSync('src/neo/neo.css', 'utf8');
+    const glass = css.match(/\.neo-glass-button\s*\{([^}]*)\}/)?.[1] ?? '';
+    expect(glass).toContain('width: 44px');
+    expect(glass).toContain('border-radius: 9999px');
+    expect(glass).toContain('backdrop-filter: blur(20px) saturate(180%)');
+    expect(glass).toMatch(/--neo-glass-fill: light-dark\(/);
+    expect(css).toMatch(/\.neo-glass-button:active\s*\{[^}]*transform: scale\(0\.94\)/);
+    expect(css).toMatch(
+      /@supports not \(backdrop-filter: blur\(1px\)\)\s*\{[^}]*\.neo-glass-button/
+    );
   });
 });

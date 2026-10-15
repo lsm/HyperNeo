@@ -2,6 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
+import { readNeoAskAnswerChoice } from './ask-answer-evidence.ts';
 
 export interface NeoProjectMergeInput {
   sourceId: string;
@@ -112,6 +113,19 @@ export async function readNeoProjectIdentities(
     if (codeIdentity) fresh[projectId] = [...new Set([...(fresh[projectId] ?? []), codeIdentity])];
   }
   return fresh;
+}
+
+export async function readNeoProjectNames(
+  folders: readonly { projectId: string; folder: string }[],
+  read: (folder: string) => Promise<{ repoName?: string }>
+): Promise<Record<string, string>> {
+  const names: Record<string, string> = {};
+  for (const { projectId, folder } of folders) {
+    if (names[projectId]) continue;
+    const { repoName } = await read(folder);
+    if (repoName) names[projectId] = repoName;
+  }
+  return names;
 }
 
 export function planNeoProjectMerges(
@@ -232,7 +246,7 @@ export function readNeoProjectDecision(
     if (!ask) return { ask: index + 1 };
     const item = ask.doneItems?.find((entry) => entry.decides === key && !entry.removed);
     if (item?.state === 'met') {
-      const choice = item.evidence?.replace(/^The human answered: /, '');
+      const choice = readNeoAskAnswerChoice(item.evidence);
       if (choice === NEO_PROJECT_SAME) return { decision: 'same' };
       if (choice === NEO_PROJECT_SEPARATE) return { decision: 'separate' };
     } else if (item && ask.status !== 'abandoned' && ask.status !== 'achieved') {
