@@ -333,7 +333,6 @@ describe('QueryRunner startup gate', () => {
         getDatabase: () => sql,
         getSDKMessageRepo: () => ({
           getStoredPromptsByUuid: () => [{ type: 'user', inputKind: 'human' }],
-          latestHumanPrompt: () => null,
         }),
       } as unknown as Database,
       createNeoTurnMcpServer: (getTurn) => {
