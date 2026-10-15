@@ -39,7 +39,7 @@ export interface NeoPack extends NeoPackBrief {
     { ok: true; value: Record<string, string[]> } | { ok: false; reason: string; retry: boolean }
   >;
   instructions(ask: NeoAsk | null): string | null;
-  readEvidence?(work: NeoWork): Promise<NeoEvidenceRead | null>;
+  readEvidence?(work: NeoWork, changedAt?: number | null): Promise<NeoEvidenceRead | null>;
   reportEvidence?(work: NeoWork): NeoEvidence[];
   askCardEvidence?(ask: NeoAsk, works: readonly NeoWork[]): NeoEvidence[];
   readAskEvidence?(ask: NeoAsk): Promise<NeoEvidence[]>;

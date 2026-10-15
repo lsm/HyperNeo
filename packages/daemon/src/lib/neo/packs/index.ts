@@ -139,12 +139,13 @@ export function neoPacks(input: {
 export async function readNeoPackEvidence(
   packs: readonly NeoPack[],
   work: NeoWork,
-  warn: (id: string, error: unknown) => void
+  warn: (id: string, error: unknown) => void,
+  changedAt: number | null = null
 ): Promise<NeoEvidenceRead | null> {
   return combineNeoEvidenceReads(
     await Promise.all(
       packs.map((pack) =>
-        pack.readEvidence?.(work).catch((error: unknown) => {
+        pack.readEvidence?.(work, changedAt).catch((error: unknown) => {
           warn(pack.id, error);
           return null;
         })

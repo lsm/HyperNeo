@@ -12,7 +12,11 @@ import {
   readNeoCardPrs,
 } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { createLifeAdminPack } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
-import { planNeoCardPrCandidates } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
+import {
+  type NeoPrClaimRow,
+  planNeoCardPrCandidates,
+} from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
+import { githubUrlKey } from '../../../../src/lib/github/parse-pr-url.ts';
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import { neoWorkPrEvidence } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import {
@@ -170,7 +174,11 @@ describe('readEvidence', () => {
     readOkAt,
   });
   const work = (report: string | null) => ({ id: 'w1', report }) as NeoWork;
-  const setup = (stored: NeoWorkPrRow | null, read: NeoWorkPr[] | null) => {
+  const setup = (
+    stored: NeoWorkPrRow | null,
+    read: NeoWorkPr[] | null,
+    claimed: NeoPrClaimRow[] = []
+  ) => {
     const failed: number[] = [];
     const recorded: NeoWorkPr[][] = [];
     const coding = createCodingPack({
@@ -181,7 +189,7 @@ describe('readEvidence', () => {
           branch: [],
           stored: stored?.prs ?? [],
         }),
-      claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
+      claims: { forUrls: () => claimed, replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [],
       cardReports: () => [],
       readPrs: async () => read,
@@ -210,6 +218,29 @@ describe('readEvidence', () => {
       read: { ok: false, okAt: 10 },
     });
     expect(failed).toHaveLength(1);
+  });
+
+  test('a card event newer than the last read bypasses a fresh cached row', async () => {
+    const now = Date.now();
+    const merged = { ...pr, state: 'MERGED' as const };
+    const { coding, recorded } = setup(
+      row([pr], now),
+      [merged],
+      [
+        {
+          workId: 'w1',
+          urlKey: githubUrlKey(pr.url),
+          claim: 'named',
+          claimedAt: 0,
+          cardCreatedAt: 0,
+          score: null,
+        },
+      ]
+    );
+    await coding.readEvidence?.(work(null));
+    expect(recorded).toEqual([]);
+    await coding.readEvidence?.(work(null), now + 1);
+    expect(recorded).toEqual([[merged]]);
   });
 
   test('has no evidence for a card with no pull requests', async () => {

@@ -443,6 +443,7 @@ type NeoWorkPrCard = {
   packEvidence: boolean;
   toldAt: number | null;
   doneWhenMet: boolean;
+  changedAt: number | null;
 };
 type NeoWorkPrRefreshed = { read: NeoEvidenceRead | null; failed: boolean };
 type NeoNeedsYouCard = {
@@ -2530,7 +2531,8 @@ export class NeoService {
           (id, error) => {
             failed = true;
             this.log.warn(`Neo pack ${id} evidence read failed`, error);
-          }
+          },
+          card.changedAt
         );
         return { read, failed };
       },
