@@ -7,7 +7,7 @@ import { hostname } from 'node:os';
 import { isTempCwd } from '../drivers/claude-feed.ts';
 import { sep } from 'node:path';
 import type { Place, PlaceGroup } from '../drivers/types.ts';
-import { placeKey } from '../drivers/places.ts';
+import { isRepositoryPlace, placeKey } from '../drivers/places.ts';
 import { neoFolderPath } from './folder.ts';
 import { repoNameFromRemote } from '../drivers/code-identity.ts';
 import {
@@ -186,7 +186,7 @@ export function planNeoWorkspaceProjects(
               }),
               ...(place.codeIdentity ? [place.codeIdentity] : []),
               ...[neoRepositoryIdentity(place.remotes?.[0])].flatMap((identity) => identity ?? []),
-              ...(place.toolProject
+              ...(place.toolProject && !isRepositoryPlace(place)
                 ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`]
                 : []),
             ]),

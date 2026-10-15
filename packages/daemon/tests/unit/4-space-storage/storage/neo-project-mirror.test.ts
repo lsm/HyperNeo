@@ -291,15 +291,21 @@ describe('mirrorNeoWorkspaceProjects', () => {
     expect(repo.getProject('travel')?.context).toBe('Passport');
   });
 
-  test('mirrors several folders in a named tool project with different histories once', () => {
-    const groups = [workspace('/one'), workspace('/other', elsewhere, 'root:456')].map((group) => ({
+  test('keeps folders with different histories separate inside one named tool project', () => {
+    const groups = [
+      workspace('/one', elsewhere, 'root:123', 'git@github.com:lsm/one.git'),
+      workspace('/other', elsewhere, 'root:456', 'git@github.com:lsm/two.git'),
+    ].map((group) => ({
       ...group,
       place: { ...group.place, toolProject: { id: 'product', name: 'Product' } },
     }));
-    const plan = planNeoWorkspaceProjects(mergePlaceGroups(groups, 50));
-    expect(plan.map((project) => project.title)).toEqual(['Product']);
     mirrorNeoWorkspaceProjects(db, mergePlaceGroups(groups, 50));
-    expect(repo.listProjects()).toEqual([]);
+    expect(
+      repo
+        .listProjects()
+        .map((project) => project.title)
+        .sort()
+    ).toEqual(['one', 'two']);
   });
 });
 

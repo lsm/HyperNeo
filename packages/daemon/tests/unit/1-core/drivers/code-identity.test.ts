@@ -159,7 +159,7 @@ describe('git history workspace discovery', () => {
 });
 
 describe('mergePlaceGroups identity links', () => {
-  test('a multi-folder tool project joins history groups transitively in any input order', () => {
+  test('a tool project spanning two repositories keeps one group per repository in any input order', () => {
     const toolProject = { id: 'codex:one', name: 'Product' };
     const places = [
       group({ machine: 'a', folder: '/one', name: 'one', codeIdentity: 'git:one' }),
@@ -190,13 +190,55 @@ describe('mergePlaceGroups identity links', () => {
       [...places].reverse(),
       [places[2], places[0], places[3], places[1]],
     ]) {
-      const [merged, extra] = mergePlaceGroups(input, 20);
-      expect(extra).toBeUndefined();
-      expect(merged.projectId).toBe('git:one');
-      expect(merged.workspaces).toHaveLength(4);
-      expect(merged.work).toHaveLength(4);
-      expect(merged.openCount).toBe(4);
+      const merged = mergePlaceGroups(input, 20);
+      expect(merged.map((group) => group.projectId).sort()).toEqual(['git:one', 'git:two']);
+      expect(merged.map((group) => group.workspaces?.length)).toEqual([2, 2]);
+      expect(merged.map((group) => group.work.length)).toEqual([2, 2]);
     }
+  });
+
+  test('a tool project does not join shallow checkouts of different repositories', () => {
+    const toolProject = { id: 'codex:shallow', name: 'Shallow' };
+    const merged = mergePlaceGroups(
+      ['one', 'two'].map((name) =>
+        group(
+          {
+            machine: 'c',
+            folder: `/shallow/${name}`,
+            name,
+            remotes: [`git@github.com:lsm/${name}.git`],
+            toolProject,
+          },
+          'codex-desktop'
+        )
+      ),
+      20
+    );
+    expect(merged).toHaveLength(2);
+  });
+
+  test('shallow checkouts of one remote share a group', () => {
+    const merged = mergePlaceGroups(
+      ['/a', '/b'].map((folder) =>
+        group({ machine: 'c', folder, name: 'repo', remotes: ['file:///srv/repo.git'] })
+      ),
+      20
+    );
+    expect(merged).toHaveLength(1);
+    expect(merged[0].projectId).toBe('remote:file:///srv/repo.git');
+  });
+
+  test('a tool project joins its folders that have no repository', () => {
+    const toolProject = { id: 'codex:notes', name: 'Notes' };
+    const [merged, extra] = mergePlaceGroups(
+      ['/notes/a', '/notes/b'].map((folder) =>
+        group({ machine: 'c', folder, name: 'Notes', toolProject }, 'codex-desktop')
+      ),
+      20
+    );
+    expect(extra).toBeUndefined();
+    expect(merged.projectId).toBe('tool:c:codex:notes');
+    expect(merged.workspaces).toHaveLength(2);
   });
 
   test('remote re-aggregation preserves empty workspaces and stamps their daemon', () => {
