@@ -1,3 +1,4 @@
+import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { isOperationName } from '@hyperneo/shared/types/operation-names';
@@ -401,7 +402,9 @@ describe('Neo recipient report owning operation', () => {
       caller: { sessionId: recipient.sessionId, role: 'neo' },
     });
     expect(result.isError).toBeUndefined();
-    expect(JSON.parse(result.content[0].text)).toEqual(rejected('recipient_mismatch').value);
+    expect(JSON.parse(result.content[0].text)).toEqual(
+      explainNeoRefusal(rejected('recipient_mismatch').value)
+    );
     expect(service.repo.getWork(input.id)).toEqual(work);
     expect(jobs(input.id)).toEqual([]);
   });

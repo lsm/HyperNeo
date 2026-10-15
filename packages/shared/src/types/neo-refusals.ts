@@ -155,6 +155,7 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   unknown_parent:
     'The parent project does not exist, or is the Inbox. Use a project id from neo.snapshot.',
   unknown_project: 'No project has that id. Use one of the listed projects, or main.',
+  unreachable: 'The daemon that holds that session could not be reached. Try again later.',
   unsafe_tree: 'Only sibling projects under the same parent can merge. Move one first, then merge.',
   work_not_found: 'No card has that id. Use a card id from neo.snapshot.',
   work_not_pending: 'The card is not waiting for a report. Read its status with neo.snapshot.',

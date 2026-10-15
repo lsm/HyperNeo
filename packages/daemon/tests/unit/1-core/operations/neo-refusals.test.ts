@@ -12,7 +12,7 @@ import {
 const NEO_SOURCE = join(import.meta.dirname, '../../../../src/lib/neo');
 const REFUSAL_CODES = [
   /\b(?:ok|accepted):\s*false(?:\s+as\s+const)?,\s*reason:\s*'([a-z][a-z0-9_]*)'(?!,\s*detail:)/g,
-  /\b(?:fail|refuse|reject)\('([a-z][a-z0-9_]*)'(?:\)|,\s*[a-zA-Z]+\))/g,
+  /\b(?:fail|refuse|reject)\('([a-z][a-z0-9_]*)'(?!,\s*['`])/g,
 ];
 
 function neoRefusalCodes(): Set<string> {
