@@ -449,8 +449,13 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     namedFolder: {
       machine,
       homeDir: homedir(),
-      isDirectory: (folder: string) =>
-        statSync(folder, { throwIfNoEntry: false })?.isDirectory() === true,
+      isDirectory: (folder: string) => {
+        try {
+          return statSync(folder).isDirectory();
+        } catch {
+          return false;
+        }
+      },
     },
     mirrorProjects: (groups: readonly PlaceGroup[]) => {
       if (mirrorNeoWorkspaceProjects(db(), groups))
