@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   type NeoProjectFacts,
+  neoCleanupFolders,
   neoMirroredAliases,
   planNeoProjectCleanup,
 } from '../../../../src/lib/neo/project-cleanup.ts';
@@ -188,14 +189,32 @@ describe('neoMirroredAliases', () => {
       })),
     });
     const aliases = [
-      ...neoMirroredAliases([
-        group('/repo', ['https://github.com/lsm/app.git']),
-        group('/ongoing', undefined, [1, 3]),
-        group('/once', undefined, [1, 1]),
-      ] as never),
+      ...neoMirroredAliases(
+        [
+          group('/repo', ['https://github.com/lsm/app.git']),
+          group('/ongoing', undefined, [1, 3]),
+          group('/once', undefined, [1, 1]),
+        ] as never,
+        () => false
+      ),
     ];
     expect(aliases).toContain('repository:github.com/lsm/app');
     expect(aliases.some((alias) => alias.includes('/ongoing'))).toBe(true);
     expect(aliases.some((alias) => alias.includes('/once'))).toBe(false);
+  });
+});
+
+describe('neoCleanupFolders', () => {
+  test('lists the local folders of empty projects with no repository, the ones the keep test must read', () => {
+    expect(
+      neoCleanupFolders(
+        [
+          project('empty', { aliases: ['folder:here\u0000/a', 'folder:tts\u0000/b'] }),
+          project('full', { asks: 1, aliases: ['folder:here\u0000/c'] }),
+          project('repo', { aliases: [repo, 'folder:here\u0000/d'] }),
+        ],
+        'here'
+      )
+    ).toEqual(['/a']);
   });
 });

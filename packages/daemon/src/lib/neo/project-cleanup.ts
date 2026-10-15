@@ -1,4 +1,4 @@
-import type { PlaceGroup } from '../drivers/types.ts';
+import type { Place, PlaceGroup } from '../drivers/types.ts';
 import {
   canNeoMirrorCreateProject,
   isNeoOngoingPlace,
@@ -32,9 +32,12 @@ const isEmpty = (project: NeoProjectFacts) =>
   project.asks + project.work.length + project.routed + project.context + project.holderMessages ===
   0;
 
-export function neoMirroredAliases(places: readonly PlaceGroup[]): Set<string> {
+export function neoMirroredAliases(
+  places: readonly PlaceGroup[],
+  plumbing: (place: Place) => boolean
+): Set<string> {
   return new Set(
-    planNeoWorkspaceProjects(places)
+    planNeoWorkspaceProjects(places, plumbing)
       .filter(canNeoMirrorCreateProject)
       .flatMap((project) => project.aliases)
   );
@@ -44,6 +47,14 @@ const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork
 
 const isOneOff = (project: NeoProjectFacts) =>
   project.routed === 0 && project.work.length > 0 && !isNeoOngoingPlace(project.work);
+
+export function neoCleanupFolders(projects: readonly NeoProjectFacts[], machine: string): string[] {
+  const local = `folder:${machine}\u0000`;
+  return projects
+    .filter((project) => !repositories(project).length && isEmpty(project))
+    .flatMap((project) => project.aliases.filter((alias) => alias.startsWith(local)))
+    .map((alias) => alias.slice(local.length));
+}
 
 const isElsewhere = (project: NeoProjectFacts, machine: string) => {
   const folders = project.aliases.filter((alias) => alias.startsWith('folder:'));

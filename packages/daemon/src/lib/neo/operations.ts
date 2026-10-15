@@ -1,7 +1,13 @@
 import { neoTurnRequestKey } from './request-key.ts';
 import { NeoWorkBlockerSchema } from './work-blocker.ts';
 import { hostname } from 'node:os';
-import { backfillNeoRepositoryIdentities, planNeoProjectRetitles } from './project-mirror.ts';
+import {
+  backfillNeoRepositoryIdentities,
+  isNeoPlumbingFolder,
+  planNeoProjectRetitles,
+} from './project-mirror.ts';
+import { neoFolderPath } from './folder.ts';
+import { isTempCwd } from '../drivers/claude-feed.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { neoMirroredAliases } from './project-cleanup.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
@@ -1031,22 +1037,38 @@ export function neoReorganizeRuntime(
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
     machine: () => hostname(),
-    mirroredAliases: async () => {
-      const outcome = await invokeOperation(
-        service.sessions.getOperationRegistry(),
-        'work.find',
-        { localOnly: true, limit: 50 },
-        {
-          source: 'internal',
-          sessionId: service.repo.getBindingForProject(null)?.sessionId,
-          role: 'neo',
-        }
-      );
-      const value =
-        outcome.kind === 'completed'
-          ? (outcome.value as { places?: PlaceGroup[]; unreachable?: unknown[] } | null)
-          : null;
-      return value?.places && !value.unreachable?.length ? neoMirroredAliases(value.places) : null;
+    mirroredAliases: async (folders) => {
+      const caller = {
+        source: 'internal' as const,
+        sessionId: service.repo.getBindingForProject(null)?.sessionId,
+        role: 'neo' as const,
+      };
+      const places: PlaceGroup[] = [];
+      for (const folder of folders) {
+        const outcome = await invokeOperation(
+          service.sessions.getOperationRegistry(),
+          'work.find',
+          { folder, includeClosed: true, localOnly: true, limit: 50 },
+          caller
+        );
+        const value =
+          outcome.kind === 'completed'
+            ? (outcome.value as {
+                places?: PlaceGroup[];
+                unreachable?: unknown[];
+                more?: boolean;
+              } | null)
+            : null;
+        if (!value?.places || value.unreachable?.length || value.more) return null;
+        places.push(...value.places);
+      }
+      const local = {
+        machine: hostname(),
+        neoFolder: neoFolderPath(),
+        isTemp: isTempCwd,
+        exists: existsSync,
+      };
+      return neoMirroredAliases(places, (place) => isNeoPlumbingFolder(place, local));
     },
     log: (line) => service.logReorganize(line),
   };

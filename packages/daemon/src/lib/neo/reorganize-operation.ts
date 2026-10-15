@@ -9,6 +9,7 @@ import type { NeoAskOrigin } from './ask-origin.ts';
 import {
   type NeoProjectCleanup,
   type NeoProjectFacts,
+  neoCleanupFolders,
   planNeoProjectCleanup,
 } from './project-cleanup.ts';
 import { NEO_INBOX_ID, type NeoRouted } from './router.ts';
@@ -70,7 +71,7 @@ export interface NeoReorganizeRuntime {
   mergeProjects(): Promise<{ merged: Merged[]; asked: Merged[] }>;
   projectFacts(): NeoProjectFacts[];
   machine(): string;
-  mirroredAliases(): Promise<ReadonlySet<string> | null>;
+  mirroredAliases(folders: readonly string[]): Promise<ReadonlySet<string> | null>;
   log(line: string): void;
 }
 
@@ -218,6 +219,9 @@ export function createNeoProjectsReorganizer(
     const moved: Moved[] = [];
     const stayed: Stay[] = [];
     if (!root) return { merged: [], asked: [], moved, stayed, cleanupPlanned: [] };
+    const mirrored = await runtime.mirroredAliases(
+      neoCleanupFolders(runtime.projectFacts(), runtime.machine())
+    );
     const { merged, asked } = await runtime.mergeProjects();
     for (const merge of merged)
       runtime.log(`neo reorganize: merged project ${merge.sourceId} into ${merge.targetId}`);
@@ -231,7 +235,6 @@ export function createNeoProjectsReorganizer(
       if ('reason' in result) stayed.push(result);
       else moved.push(result);
     }
-    const mirrored = await runtime.mirroredAliases();
     if (!mirrored) runtime.log('neo reorganize: no project cleanup, the places could not be read');
     const cleanupPlanned = mirrored
       ? planNeoProjectCleanup(runtime.projectFacts(), {
