@@ -136,9 +136,9 @@ describe('direct human publication prompt', () => {
   test.each([null, 'research'])('excludes internal and non-human inputs for %s', (projectId) => {
     const prompt = delivered(projectId);
     expect(prompt).toContain(
-      'Never publish internal compaction, tool chatter, other system deliveries or returned results as answers'
+      'Never publish internal compaction, tool chatter, or a returned result as it stands'
     );
-    expect(prompt).toContain('or the sentence a trigger note asks for');
+    expect(prompt).toContain('or a new fact a note or returned result brings for the human');
     expect(prompt).toContain('not a consultation request from Neo');
     expect(prompt).toContain('not a returned work or consultation result');
   });
