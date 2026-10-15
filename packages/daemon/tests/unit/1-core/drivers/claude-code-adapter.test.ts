@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -200,6 +208,27 @@ describe('createClaudeCodeAdapter', () => {
     } finally {
       chmodSync(path, 0o644);
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('follows a symlinked project folder', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    const real = mkdtempSync(join(tmpdir(), 'claude-real-'));
+    try {
+      writeFileSync(join(real, 'linked.jsonl'), `${JSON.stringify({ cwd: '/linked/project' })}\n`);
+      symlinkSync(real, join(dir, 'encoded'));
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+      });
+      expect(
+        (await adapter.find({ includeClosed: false, limit: 20 })).map((group) => group.place.folder)
+      ).toEqual(['/linked/project']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(real, { recursive: true, force: true });
     }
   });
 

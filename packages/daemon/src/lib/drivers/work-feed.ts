@@ -74,10 +74,10 @@ export async function listFeedFilesAsync(
     const found = await Promise.all(
       entries.map(async (entry): Promise<FeedFile[]> => {
         const path = join(dir, entry.name);
-        if (entry.isDirectory()) return level < depth ? walk(path, level + 1) : [];
-        if (!entry.name.endsWith('.jsonl')) return [];
+        if (entry.isFile() && !entry.name.endsWith('.jsonl')) return [];
         const info = await stat(path).catch(() => null);
-        return info && info.mtimeMs >= since
+        if (info?.isDirectory()) return level < depth ? walk(path, level + 1) : [];
+        return info?.isFile() && entry.name.endsWith('.jsonl') && info.mtimeMs >= since
           ? [{ path, size: info.size, mtime: Math.floor(info.mtimeMs) }]
           : [];
       })
