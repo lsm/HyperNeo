@@ -128,11 +128,43 @@ describe('Neo floating controls', () => {
     expect(screen.queryByRole('button', { name: /Your projects/ })).toBeNull();
   });
 
-  it('keeps the root logo actionable as the actual Back to Neo control', () => {
+  it('opens the settings drawer from the logo, with connection and projects, and leaves projects out of the header', () => {
     const { open } = renderLive();
-    const logo = within(banner()).getByRole('button', { name: 'Back to Neo' });
+    expect(within(banner()).queryByRole('button', { name: 'Projects' })).toBeNull();
+    const logo = within(banner()).getByRole('button', { name: 'Settings and connection' });
     fireEvent.click(logo);
+    const drawer = screen.getByRole('dialog', { name: 'Settings and connection' });
+    expect(within(drawer).getByText('Connected')).toBeTruthy();
+    expect(within(drawer).getByLabelText('Path for Project a').textContent).toBe('Project a');
+    expect(logo.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Refresh Neo' }));
     expect(open).toHaveBeenCalledWith();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('closes the drawer on Escape, a backdrop click and a drag to the left, returning focus to the mark', async () => {
+    renderLive();
+    const logo = within(banner()).getByRole('button', { name: 'Settings and connection' });
+    logo.focus();
+    fireEvent.click(logo);
+    expect(document.activeElement).toBe(
+      screen.getByRole('dialog', { name: 'Settings and connection' })
+    );
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(logo));
+    fireEvent.click(logo);
+    fireEvent.click(screen.getByTestId('neo-drawer-backdrop'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(logo);
+    const drawer = screen.getByRole('dialog', { name: 'Settings and connection' });
+    fireEvent.pointerDown(drawer, { clientX: 300 });
+    fireEvent.pointerMove(drawer, { clientX: 260 });
+    fireEvent.pointerUp(drawer, { clientX: 290 });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.pointerDown(drawer, { clientX: 300 });
+    fireEvent.pointerUp(drawer, { clientX: 200 });
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('keeps draft and the work card intact while the controls are used', () => {
