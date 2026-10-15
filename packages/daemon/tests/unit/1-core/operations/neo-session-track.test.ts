@@ -385,6 +385,8 @@ describe('neo.session.track', () => {
       expect(
         service.askRecords.list().filter((ask) => ask.originMessageId?.startsWith('neo-track:'))
       ).toEqual([expect.objectContaining({ id: trackAsk!.id })]);
+      const tappedAt = clock;
+      clock += 1_000;
 
       const proposed = await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
@@ -408,7 +410,10 @@ describe('neo.session.track', () => {
       expect(proposed).toMatchObject({ value: { ok: true } });
       const card = (proposed as { value: { work: { id: string } } }).value.work;
       expect(service.trackedSessions.has(key)).toBe(false);
-      expect(service.askRecords.forWork(card.id)?.approvedAt).toBe(clock);
+      expect(service.askRecords.forWork(card.id)).toMatchObject({
+        approvedAt: tappedAt,
+        approvedRevision: service.askRecords.forWork(card.id)?.revision,
+      });
       expect(sent).not.toHaveBeenCalled();
       expect(service.repo.getWork(card.id)).toMatchObject({
         status: 'queued',
