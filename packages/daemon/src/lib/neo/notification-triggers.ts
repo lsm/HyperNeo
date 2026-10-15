@@ -16,7 +16,7 @@ export const NEO_TRIGGER_SWEEP_MS = 1_000;
 export const NEO_TRIGGER_RETRY_MS = 60_000;
 export const NEO_TRIGGER_ACHIEVED_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-export type NeoTriggerKind = 'outcome' | 'failed' | 'action';
+export type NeoTriggerKind = 'outcome' | 'failed' | 'idle' | 'action';
 export interface NeoTriggerKey {
   key: string;
   kind: NeoTriggerKind;
@@ -115,6 +115,10 @@ export function neoHumanTriggerMessageId(triggerId: string | undefined): string 
 const TRIGGER_WORDS: Record<NeoTriggerKind, { what: string; sentence: string }> = {
   outcome: { what: 'the ask reached its outcome', sentence: 'name the outcome.' },
   failed: { what: 'a card failed with no retry left', sentence: 'say what broke.' },
+  idle: {
+    what: 'nothing is running for the ask and its outcome is not met',
+    sentence: 'first propose new work for it or settle it, then say which you did.',
+  },
   action: { what: 'the ask needs the human', sentence: 'say what is needed from them.' },
 };
 const LAST_HUMAN_LIMIT = 300;
@@ -224,8 +228,8 @@ export function neoAskTriggerKeys(
     ? [
         {
           key: `idle:${Math.max(ask.createdAt, ...ask.workIds.map((id) => work(id)?.updatedAt ?? 0))}`,
-          kind: 'failed',
-          line: 'nothing is running for this ask and its outcome is not met: propose new work or settle it',
+          kind: 'idle',
+          line: 'nothing is running for this ask and its outcome is not met',
         },
       ]
     : [];
@@ -238,7 +242,7 @@ export function neoAskTriggerKeys(
   ];
 }
 
-const KIND_ORDER: readonly NeoTriggerKind[] = ['outcome', 'failed', 'action'];
+const KIND_ORDER: readonly NeoTriggerKind[] = ['outcome', 'failed', 'idle', 'action'];
 
 export function planNeoAskTrigger(
   ask: Pick<NeoAsk, 'id'>,

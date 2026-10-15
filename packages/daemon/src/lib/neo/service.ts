@@ -1181,7 +1181,7 @@ export class NeoService {
   private seedTriggers(): void {
     if (this.triggers.isSeeded()) return;
     for (const ask of this.triggerAsks())
-      coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'failed', 'action']);
+      coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'failed', 'idle', 'action']);
     this.triggers.markSeeded(Date.now());
   }
 
