@@ -427,7 +427,7 @@ describe('Neo existing trusted human work input', () => {
     expect(jobs(work.id)).toEqual([]);
   });
 
-  test('the human’s answer note acts for their message: it may start work and drop what they named', async () => {
+  test('the human’s answer note acts for their message: it may start work and drop what their answer named, not what Neo wrote around it', async () => {
     storeInput();
     const opened = service.askRecords.open(
       {
@@ -462,7 +462,11 @@ describe('Neo existing trusted human work input', () => {
       uuid: noteId,
       session_id: root,
       parent_tool_use_id: null,
-      message: { role: 'user', content: 'Their answer: Drop the go vet result check' },
+      message: {
+        role: 'user',
+        content:
+          'The human answered a decision on ask ask-answered, item i9: "Keep go vet passes?".\nTheir answer: Drop the go vet result check',
+      },
       inputKind: 'system',
     } as SDKMessage);
     expect(service.inputTrigger({ sessionId: root, messageId: noteId })).toBe(`human:${ask}`);
@@ -471,6 +475,18 @@ describe('Neo existing trusted human work input', () => {
     expect(await invoke('neo.work.start', { id: work.id }, answering)).toMatchObject({
       value: { ok: true },
     });
+    expect(
+      await invoke(
+        'neo.ask.edit',
+        {
+          askId: opened.id,
+          expectedRevision: service.askRecords.get(opened.id)!.revision,
+          remove: ['i2'],
+          humanSaid: 'Keep go vet passes',
+        },
+        answering
+      )
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('scope_kept') } });
     expect(
       await invoke(
         'neo.ask.edit',

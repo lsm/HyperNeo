@@ -5,6 +5,13 @@ import {
 } from '@hyperneo/shared/types/neo-snapshot';
 import { isNeoAskSettled } from './done-check.ts';
 
+const NEO_ASK_ANSWER_LINE = 'Their answer: ';
+
+export function neoAskAnswerChoice(note: string): string | null {
+  const line = note.split('\n').find((text) => text.startsWith(NEO_ASK_ANSWER_LINE));
+  return line ? line.slice(NEO_ASK_ANSWER_LINE.length) : null;
+}
+
 export function neoAskAnswerNote(
   ask: Pick<NeoAsk, 'id' | 'title'>,
   item: Pick<NeoAskItem, 'id' | 'text'>,
@@ -13,7 +20,7 @@ export function neoAskAnswerNote(
 ): string {
   return [
     `The human answered ${met ? 'a decision' : 'how a step went'} on ask ${ask.id} ("${ask.title}"), item ${item.id}: "${item.text}".`,
-    `Their answer: ${choice}`,
+    `${NEO_ASK_ANSWER_LINE}${choice}`,
     met
       ? 'The daemon ticked that item met with their answer. Act on it now: continue or propose the work it calls for under this ask, or settle the ask if nothing is left. Tell the human only what they need to know.'
       : 'The item stays open: it did not work, or the result is not what they wanted. Find out why and fix it under this ask. Tell the human only what they need to know.',
