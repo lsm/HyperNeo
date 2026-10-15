@@ -99,7 +99,14 @@ import {
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './direct-reply-fallback.ts';
-import { createNeoRouter, type NeoRouter, reopenNeoHolder } from './router.ts';
+import {
+  createNeoRouter,
+  type NeoRouter,
+  neoNewProject,
+  openNeoNewProject,
+  reopenNeoHolder,
+} from './router.ts';
+import { createNeoInboxPromoteOperation } from './inbox-promote-operation.ts';
 import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
@@ -2296,6 +2303,15 @@ export function createNeoOperations(service: NeoService) {
     }),
     createNeoRouteCorrectOperation(service.db, service.repo),
     createNeoRouteFailureOperation(service.db),
+    createNeoInboxPromoteOperation({
+      ...neoReorganizeRuntime(service, router),
+      createProject: (title) =>
+        openNeoNewProject(
+          service.repo,
+          (projectId) => service.open(projectId),
+          neoNewProject(title, crypto.randomUUID())
+        ),
+    }),
     createNeoAskForwardOperation({
       getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
