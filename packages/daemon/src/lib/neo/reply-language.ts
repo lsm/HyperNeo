@@ -16,6 +16,9 @@ const count = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 
 const ENGLISH_WORD =
   /\b(?:the|a|an|is|are|was|be|it|to|of|in|on|for|and|or|not|this|that|what|which|who|how|why|when|where|any|all|can|could|please|do|does|did|you|your|we|i|me|my|make|fix|show|check|there|still|now|with)\b/gi;
 
+const ENGLISH_FRAME =
+  /\b(?:the|this|that|these|those|what|which|how|why|does|is|are|mean|means|translate)\b/gi;
+
 export function detectNeoReplyLanguage(text: string): NeoReplyLanguage | null {
   const prose = text
     .slice(0, DETECT_LIMIT)
@@ -27,8 +30,10 @@ export function detectNeoReplyLanguage(text: string): NeoReplyLanguage | null {
   const hangul = count(prose, /[\uac00-\ud7af]/g);
   const cjk = kana + hangul + count(prose, /[\u4e00-\u9fff]/g);
   const words = count(prose, /[A-Za-z]{2,}/g);
-  if (cjk >= 2 && cjk >= 2 * words)
+  if (cjk >= 2 && cjk >= 2 * words) {
+    if (count(prose, ENGLISH_FRAME)) return null;
     return kana >= 2 ? 'Japanese' : hangul >= 2 ? 'Korean' : 'Chinese';
+  }
   if (cjk >= 2 && words < 2 * cjk) return null;
   const english = count(prose, ENGLISH_WORD);
   if (english >= 2 && english * 4 >= words) return 'English';
@@ -58,24 +63,28 @@ export function neoReplyLanguageNote(language: NeoReplyLanguage): string {
   return `Reply language for this turn: ${language}, the language of the human message it answers. Write everything for the human in ${language} unless that message asks for another language.`;
 }
 
-export function readNeoTurnLanguage(
-  input: NeoAskOrigin,
-  reads: {
-    resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
-    getPrompts(sessionId: string, messageId: string): SDKMessage[];
-    latestHumanPrompt(sessionId: string): SDKMessage | null;
-  }
-): NeoReplyLanguage | null {
+type NeoTurnReads = {
+  resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
+  getPrompts(sessionId: string, messageId: string): SDKMessage[];
+  latestHumanPrompt(sessionId: string): SDKMessage | null;
+};
+
+export function readNeoTurnText(input: NeoAskOrigin, reads: NeoTurnReads): string | null {
   const own = reads.getPrompts(input.sessionId, input.messageId);
   if (own.some((message) => (message as { inputKind?: unknown }).inputKind === 'human'))
-    return detectNeoReplyLanguage(neoPromptText(own));
+    return neoPromptText(own);
   const origin = reads.resolveAskOrigin(input);
-  if (origin)
-    return detectNeoReplyLanguage(
-      neoPromptText(reads.getPrompts(origin.sessionId, origin.messageId))
-    );
+  if (origin) return neoPromptText(reads.getPrompts(origin.sessionId, origin.messageId));
   const latest = reads.latestHumanPrompt(input.sessionId);
-  return latest ? detectNeoReplyLanguage(neoPromptText([latest])) : null;
+  return latest ? neoPromptText([latest]) : null;
+}
+
+export function readNeoTurnLanguage(
+  input: NeoAskOrigin,
+  reads: NeoTurnReads
+): NeoReplyLanguage | null {
+  const text = readNeoTurnText(input, reads);
+  return text === null ? null : detectNeoReplyLanguage(text);
 }
 
 export function withNeoReplyLanguage<T extends { message?: { content?: unknown } }>(

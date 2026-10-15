@@ -334,6 +334,7 @@ import {
 } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
+import { readNeoTurnText } from './reply-language.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
 import { NEO_TURN_LIMIT_PREFIX, neoTurnLimitNote, planNeoTurnLimitNote } from './turn-limit.ts';
 import {
@@ -978,6 +979,13 @@ export class NeoService {
         this.noteHumanReply(input);
         this.notePublishedAnswer(publication);
       },
+      turnText: (input) =>
+        readNeoTurnText(input.producerInput, {
+          resolveAskOrigin: this.resolveAskOrigin,
+          getPrompts: (sessionId, messageId) =>
+            db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, messageId),
+          latestHumanPrompt: (sessionId) => db.getSDKMessageRepo().latestHumanPrompt(sessionId),
+        }),
     });
     this.resolveWorkTarget = createNeoWorkTargetResolver({
       readTarget: (id) => {
@@ -1008,7 +1016,7 @@ export class NeoService {
           { sessionId: id, messageId: nudgedMessageId(nudgeId) ?? nudgeId },
           'continues'
         ).catch((error) => this.log.warn('Publish nudge failed', error)),
-      append: (input) => this.commitPublication(input),
+      append: (input) => this.commitPublication(input, undefined, true),
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),
     };
