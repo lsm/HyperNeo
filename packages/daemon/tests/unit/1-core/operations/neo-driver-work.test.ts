@@ -1,7 +1,7 @@
 import { hostname } from 'node:os';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { describe, expect, mock, spyOn, test } from 'bun:test';
-import { NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
+import { NEO_WORK_BLOCKER, NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import { NEO_CARD_UNCHECKED_MS } from '../../../../src/lib/neo/card-check.ts';
 import { z } from 'zod';
@@ -350,7 +350,7 @@ describe('driverWorkCall', () => {
         adapter: 'codex-desktop',
         place,
         title: 'Bigger font',
-        message: 'Raise the body font to 16px.',
+        message: `Raise the body font to 16px.\n\n${NEO_WORK_BLOCKER}`,
       },
     });
     expect(driverWorkCall({ ...startTarget, createFolder: true }, work)).toEqual({
@@ -359,13 +359,16 @@ describe('driverWorkCall', () => {
         adapter: 'codex-desktop',
         place,
         title: 'Bigger font',
-        message: 'Raise the body font to 16px.',
+        message: `Raise the body font to 16px.\n\n${NEO_WORK_BLOCKER}`,
         createFolder: true,
       },
     });
     expect(driverWorkCall(sendTarget, work)).toEqual({
       name: 'work.send',
-      input: { ref: { adapter: 'hyperneo', id: 's1' }, message: 'Raise the body font to 16px.' },
+      input: {
+        ref: { adapter: 'hyperneo', id: 's1' },
+        message: `Raise the body font to 16px.\n\n${NEO_WORK_BLOCKER}`,
+      },
     });
     expect(
       driverWorkCall({ ...startTarget, adapter: 'hyperneo', model: 'glm-5.3' }, work).input
@@ -428,12 +431,14 @@ describe('requireNeoStartFolder', () => {
 });
 
 describe('withWorkGoal', () => {
-  test('appends the goal and checklist, and leaves a bare instruction alone', () => {
+  test('appends the goal and checklist, and gives every brief the blocker line', () => {
     const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: '- runs in the simulator' };
     expect(withWorkGoal('Build the chat screen.', goal)).toBe(
-      `Build the chat screen.\n\nNeo routed this to you: do it here, not by handing it to another session or chat.\nWhat the human asked: A full iOS app\nDone when:\n- runs in the simulator\n${NEO_WORK_GOAL_REMAINING}`
+      `Build the chat screen.\n\nNeo routed this to you: do it here, not by handing it to another session or chat.\nWhat the human asked: A full iOS app\nDone when:\n- runs in the simulator\n${NEO_WORK_GOAL_REMAINING}\n${NEO_WORK_BLOCKER}`
     );
-    expect(withWorkGoal('Build the chat screen.', null)).toBe('Build the chat screen.');
+    expect(withWorkGoal('Build the chat screen.', null)).toBe(
+      `Build the chat screen.\n\n${NEO_WORK_BLOCKER}`
+    );
     const longest = withWorkGoal('i'.repeat(16000), {
       workId: 'w1',
       goal: 'g'.repeat(1000),
@@ -447,9 +452,9 @@ describe('withWorkGoal', () => {
     });
     expect(merging.length).toBeLessThanOrEqual(20000);
     expect(merging).toContain('mergeStateStatus,mergeable');
-    expect(merging.endsWith(NEO_WORK_GOAL_REMAINING)).toBe(true);
+    expect(merging.endsWith(`${NEO_WORK_GOAL_REMAINING}\n${NEO_WORK_BLOCKER}`)).toBe(true);
     expect(withWorkGoal('Build it.', { workId: 'w1', goal: null, doneWhen: null })).toBe(
-      'Build it.'
+      `Build it.\n\n${NEO_WORK_BLOCKER}`
     );
   });
 

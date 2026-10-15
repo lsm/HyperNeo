@@ -1,6 +1,7 @@
 import {
   fillPrompt,
   NEO_WORK_DONE_CHECK,
+  NEO_WORK_BLOCKER,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
   NEO_WORK_DONE_CHECK_ASK_NEXT,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
@@ -213,8 +214,8 @@ export function withWorkGoal(
   goal: NeoWorkGoal | null,
   eventsDelivered = true
 ): string {
-  if (!goal?.goal && !goal?.doneWhen) return instruction;
-  const tail = [
+  if (!goal?.goal && !goal?.doneWhen) return withTail(instruction, ['', NEO_WORK_BLOCKER]);
+  return withTail(instruction, [
     '',
     NEO_WORK_GOAL,
     ...(goal.goal ? [fillPrompt(NEO_WORK_GOAL_ASKED, { goal: goal.goal })] : []),
@@ -226,7 +227,12 @@ export function withWorkGoal(
         ]
       : []),
     NEO_WORK_GOAL_REMAINING,
-  ].join('\n');
+    NEO_WORK_BLOCKER,
+  ]);
+}
+
+function withTail(instruction: string, lines: readonly string[]): string {
+  const tail = lines.join('\n');
   return `${instruction.slice(0, Math.max(0, WORK_MESSAGE_MAX - tail.length - 1))}\n${tail}`;
 }
 

@@ -70,8 +70,11 @@ describe('neo.work.report blocker', () => {
 });
 
 describe('the brief asks the worker to declare a blocker', () => {
-  test('a goal brief names both blocker lines', () => {
-    const brief = withWorkGoal('Open a PR.', { goal: 'Open a PR', doneWhen: '- PR open' });
+  test.each([
+    ['a goal brief', { workId: 'w1', goal: 'Open a PR', doneWhen: '- PR open' }],
+    ['a brief with no goal or done-when', null],
+  ])('%s names both blocker lines', (_name, goal) => {
+    const brief = withWorkGoal('Open a PR.', goal);
     expect(brief).toContain('Blocked (environment):');
     expect(brief).toContain('Blocked (needs_human):');
   });
