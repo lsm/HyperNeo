@@ -183,7 +183,7 @@ describe('runtime-bound publication operation', () => {
       append: createNeoPublicationCommit({
         commit: (input) => ledger.append(input),
         published: () => {},
-        turnLanguage: () => null,
+        turnText: () => null,
       }),
       inputTrigger,
       notify,

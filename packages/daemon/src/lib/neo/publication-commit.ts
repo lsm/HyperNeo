@@ -11,7 +11,6 @@ import {
   requirePublicationLanguage,
 } from './publication-language.ts';
 import { requirePublicationNews } from './publication-news.ts';
-import type { NeoReplyLanguage } from './reply-language.ts';
 
 type Rejection = { accepted: false; reason: string; detail?: string };
 type Receipt = NeoPublicationAppendResult | Rejection;
@@ -19,7 +18,7 @@ type Receipt = NeoPublicationAppendResult | Rejection;
 export interface NeoPublicationCommitDeps {
   commit(input: NeoPublicationInput, consultationId: string | undefined): Receipt;
   published(input: NeoPublicationInput, publication: NeoPublication): void;
-  turnLanguage(input: NeoPublicationInput): NeoReplyLanguage | null;
+  turnText(input: NeoPublicationInput): string | null;
 }
 
 export function explainNeoPublicationRefusal(receipt: Receipt): Receipt {
@@ -43,7 +42,7 @@ export function createNeoPublicationCommit(deps: NeoPublicationCommitDeps) {
       'result:receipt'
     )
     .pipe(
-      (input: NeoPublicationInput) => planPublicationLanguage(input, deps.turnLanguage(input)),
+      (input: NeoPublicationInput) => planPublicationLanguage(input, deps.turnText(input)),
       'input',
       'language'
     )

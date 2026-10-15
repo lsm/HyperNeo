@@ -1,7 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import { createNeoPublicationCommit } from '../../../../src/lib/neo/publication-commit.ts';
-import { planPublicationLanguage } from '../../../../src/lib/neo/publication-language.ts';
+import {
+  neoNamesLanguage,
+  planPublicationLanguage,
+} from '../../../../src/lib/neo/publication-language.ts';
 
 const post = (shortText: string): NeoPublicationInput => ({
   conversationId: '10000000-0000-4000-8000-000000000001',
@@ -14,22 +17,49 @@ const post = (shortText: string): NeoPublicationInput => ({
 });
 
 describe('planPublicationLanguage', () => {
+  const english = 'Which cards are running right now?';
   test('flags only a confident mismatch between named languages', () => {
-    expect(planPublicationLanguage(post('现在有一张卡片在运行。'), 'English')).toEqual({
+    expect(planPublicationLanguage(post('现在有一张卡片在运行。'), english)).toEqual({
       expected: 'English',
       published: 'Chinese',
     });
-    expect(planPublicationLanguage(post('One card is running now.'), 'English')).toBeNull();
+    expect(planPublicationLanguage(post('One card is running now.'), english)).toBeNull();
+    expect(planPublicationLanguage(post('现在有一张卡片在运行。'), null)).toBeNull();
+    expect(
+      planPublicationLanguage(post('Une carte est en cours.'), 'Bonjour, quelles cartes tournent?')
+    ).toBeNull();
+  });
+
+  test.each([
+    ['English that asks for Chinese', 'Which cards are running? Answer in Chinese please.'],
+    ['English that names 中文', 'Which cards are running? Reply in 中文.'],
+  ])('honors requestedLanguage when the human’s message asks for it: %s', (_label, human) => {
     expect(
       planPublicationLanguage(
         { ...post('现在有一张卡片在运行。'), requestedLanguage: 'Chinese' },
-        'English'
+        human
       )
     ).toBeNull();
-    expect(planPublicationLanguage(post('现在有一张卡片在运行。'), null)).toBeNull();
+  });
+
+  test('refuses requestedLanguage the human never asked for', () => {
     expect(
-      planPublicationLanguage(post('Une carte est en cours.'), 'the language of "Bonjour"')
-    ).toBeNull();
+      planPublicationLanguage(
+        { ...post('现在有一张卡片在运行。'), requestedLanguage: 'Chinese' },
+        english
+      )
+    ).toEqual({ expected: 'English', published: 'Chinese', unrequested: true });
+  });
+});
+
+describe('neoNamesLanguage', () => {
+  test.each([
+    ['Answer in Chinese please.', 'Chinese', true],
+    ['用英文回答', 'English', true],
+    ['日本語で答えて', 'Japanese', true],
+    ['Which cards are running?', 'Chinese', false],
+  ] as const)('%s names %s: %s', (text, language, names) => {
+    expect(neoNamesLanguage(text, language)).toBe(names);
   });
 });
 
@@ -43,7 +73,7 @@ describe('the publication commit language gate', () => {
     const run = createNeoPublicationCommit({
       commit,
       published: () => {},
-      turnLanguage: () => 'English',
+      turnText: () => 'Which cards are running right now?',
     });
     return { commit, run };
   }
@@ -58,7 +88,12 @@ describe('the publication commit language gate', () => {
     expect(commit).not.toHaveBeenCalled();
     expect(
       run({ ...post('现在有一张卡片在运行，另一张已经完成。'), requestedLanguage: 'Chinese' })
-    ).toMatchObject({ accepted: true });
+    ).toMatchObject({
+      accepted: false,
+      reason: 'wrong_language',
+      detail: expect.stringContaining('does not ask for a reply in Chinese'),
+    });
+    expect(commit).not.toHaveBeenCalled();
   });
 
   test('posts the end-of-turn fallback anyway, flagged with the language it should have used', () => {

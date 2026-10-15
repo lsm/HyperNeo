@@ -334,7 +334,7 @@ import {
 } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
-import { readNeoTurnLanguage } from './reply-language.ts';
+import { readNeoTurnText } from './reply-language.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
 import { NEO_TURN_LIMIT_PREFIX, neoTurnLimitNote, planNeoTurnLimitNote } from './turn-limit.ts';
 import {
@@ -977,8 +977,8 @@ export class NeoService {
         this.noteHumanReply(input);
         this.notePublishedAnswer(publication);
       },
-      turnLanguage: (input) =>
-        readNeoTurnLanguage(input.producerInput, {
+      turnText: (input) =>
+        readNeoTurnText(input.producerInput, {
           resolveAskOrigin: this.resolveAskOrigin,
           getPrompts: (sessionId, messageId) =>
             db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, messageId),

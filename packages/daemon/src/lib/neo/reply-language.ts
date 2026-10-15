@@ -63,24 +63,28 @@ export function neoReplyLanguageNote(language: NeoReplyLanguage): string {
   return `Reply language for this turn: ${language}, the language of the human message it answers. Write everything for the human in ${language} unless that message asks for another language.`;
 }
 
-export function readNeoTurnLanguage(
-  input: NeoAskOrigin,
-  reads: {
-    resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
-    getPrompts(sessionId: string, messageId: string): SDKMessage[];
-    latestHumanPrompt(sessionId: string): SDKMessage | null;
-  }
-): NeoReplyLanguage | null {
+type NeoTurnReads = {
+  resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
+  getPrompts(sessionId: string, messageId: string): SDKMessage[];
+  latestHumanPrompt(sessionId: string): SDKMessage | null;
+};
+
+export function readNeoTurnText(input: NeoAskOrigin, reads: NeoTurnReads): string | null {
   const own = reads.getPrompts(input.sessionId, input.messageId);
   if (own.some((message) => (message as { inputKind?: unknown }).inputKind === 'human'))
-    return detectNeoReplyLanguage(neoPromptText(own));
+    return neoPromptText(own);
   const origin = reads.resolveAskOrigin(input);
-  if (origin)
-    return detectNeoReplyLanguage(
-      neoPromptText(reads.getPrompts(origin.sessionId, origin.messageId))
-    );
+  if (origin) return neoPromptText(reads.getPrompts(origin.sessionId, origin.messageId));
   const latest = reads.latestHumanPrompt(input.sessionId);
-  return latest ? detectNeoReplyLanguage(neoPromptText([latest])) : null;
+  return latest ? neoPromptText([latest]) : null;
+}
+
+export function readNeoTurnLanguage(
+  input: NeoAskOrigin,
+  reads: NeoTurnReads
+): NeoReplyLanguage | null {
+  const text = readNeoTurnText(input, reads);
+  return text === null ? null : detectNeoReplyLanguage(text);
 }
 
 export function withNeoReplyLanguage<T extends { message?: { content?: unknown } }>(
