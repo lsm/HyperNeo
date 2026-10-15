@@ -457,3 +457,28 @@ describe('daemon-qualified session addresses', () => {
     expect(parseAddress('daemon:b::session:session-on-b')).toBeNull();
   });
 });
+
+describe('remembering a failed connection', () => {
+  test('fails at once for a minute after a connect failure, then dials again', async () => {
+    const remote = await startRemoteDaemon('session-on-b');
+    const url = remote.url;
+    await remote.stop();
+    let now = 0;
+    const daemons = new RemoteDaemonRegistry({ connectTimeoutMs: 200, now: () => now });
+    daemons.attach('b', url);
+    const call = () => settled(daemons.invoke('b', 'message.send', { sessionId: 's', message }));
+
+    const first = (await call()) as Error;
+    expect(first).toBeInstanceOf(Error);
+    expect(first.message).not.toContain('not retried');
+
+    now = 59_000;
+    expect(((await call()) as Error).message).toBe(`${first.message} (not retried for 60s)`);
+
+    now = 60_000;
+    expect(((await call()) as Error).message).not.toContain('not retried');
+
+    daemons.attach('b', url);
+    expect(((await call()) as Error).message).not.toContain('not retried');
+  });
+});
