@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 const SRC = join(import.meta.dirname, '../../../../src');
-const WRITES = /publications\.append\(|settleWithPublication\(|appendPublication\(/g;
+const WRITES = /publications\.append\(|appendPublication\(/g;
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -27,7 +27,6 @@ describe('one Neo publication path', () => {
         'lib/neo/service.ts:appendPublication(',
         'lib/neo/service.ts:appendPublication(',
         'lib/neo/service.ts:publications.append(',
-        'lib/neo/service.ts:settleWithPublication(',
       ].sort()
     );
     const service = readFileSync(join(SRC, 'lib/neo/service.ts'), 'utf8');
@@ -36,7 +35,6 @@ describe('one Neo publication path', () => {
       service.indexOf('published: (input')
     );
     expect(commit).toContain('this.appendPublication(input)');
-    expect(commit).toContain('settleWithPublication(');
     expect(
       service.match(/append: \(input(, consultationId)?\) =>\s*this\.commitPublication\(/g)
     ).toHaveLength(2);

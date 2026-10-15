@@ -9,7 +9,6 @@ import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
 import { NeoPublicationSchema } from './publication.ts';
-import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { requirePublicationTrigger } from './notification-triggers.ts';
 
@@ -50,18 +49,10 @@ interface NeoPublicationRuntime {
   getWork(id: string): NeoWork | null;
   getConsultation(id: string): NeoConsultation | null;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
-  append(input: NeoPublicationInput, consultationId?: string): Receipt;
-  replay?(input: Draft, caller: OperationCaller): Receipt | null;
+  append(input: NeoPublicationInput): Receipt;
   inputTrigger(input: NeoAskOrigin): string | null;
   newId(): string;
   notify(): void;
-}
-
-export function reusePublicationReceipt(
-  draft: Draft,
-  receipt: Receipt | null
-): { value: Draft } | { reason: Receipt } {
-  return receipt ? { reason: receipt } : { value: draft };
 }
 
 export function admitPublicationDraft(input: unknown): { value: Draft } | { reason: Rejection } {
@@ -133,26 +124,31 @@ export function requirePublicationLinks(
     : { value: proof };
 }
 
+export function requirePublicationNotConsulted(
+  producer: Producer
+): { value: Producer } | { reason: Rejection } {
+  return producer.turn.consultationId
+    ? {
+        reason: {
+          accepted: false,
+          reason: 'consultation_answer',
+          detail:
+            'A consultation informs Neo; it never answers the human. Return your answer with neo.project.respond {id, answer}; Neo answers the human.',
+        },
+      }
+    : { value: producer };
+}
+
 export function requirePublicationLifetime(
   proof: Proof,
   caller: OperationCaller,
   binding: NeoBinding | null,
-  root: NeoBinding | null,
-  consultation: NeoConsultation | null = null,
-  now?: number
+  root: NeoBinding | null
 ): { value: Proof } | { reason: Rejection } {
   return caller.neoTurn === proof.turn &&
     caller.sessionId === proof.input.sessionId &&
     proof.turn.messageId === proof.input.messageId &&
     proof.turn.isLive() &&
-    (!proof.turn.consultationId ||
-      (consultation?.id === proof.turn.consultationId &&
-        consultation.status !== 'failed' &&
-        now !== undefined &&
-        now < consultation.createdAt + CONSULTATION_TIMEOUT_MS &&
-        consultation.sessionId === proof.input.sessionId &&
-        consultation.projectId === proof.binding.projectId &&
-        proof.input.messageId === `neo-consult:${consultation.id}:request`)) &&
     binding?.kind === proof.binding.kind &&
     binding.projectId === proof.binding.projectId &&
     binding.sessionId === proof.binding.sessionId &&
@@ -185,18 +181,13 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(admitPublicationDraft, 'input', 'result:publication')
     .pipe((draft: Draft) => draft, 'publication', 'draft')
     .pipe(
-      (draft: Draft, caller: OperationCaller) => runtime.replay?.(draft, caller) ?? null,
-      ['draft', 'caller'],
-      'receipt'
-    )
-    .pipe(reusePublicationReceipt, ['draft', 'receipt'], 'result:publication')
-    .pipe(
       (caller: OperationCaller) => runtime.getBinding(caller.sessionId ?? ''),
       'caller',
       'binding'
     )
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
     .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
+    .pipe(requirePublicationNotConsulted, 'publication', 'result:publication')
     .pipe((producer: Producer) => runtime.resolveAskOrigin(producer.input), 'publication', 'ask')
     .pipe(requirePublicationAsk, ['publication', 'ask'], 'result:publication')
     .pipe(
@@ -211,9 +202,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           proof,
           caller,
           runtime.getBinding(proof.input.sessionId),
-          runtime.getRootBinding(),
-          proof.turn.consultationId ? runtime.getConsultation(proof.turn.consultationId) : null,
-          Date.now()
+          runtime.getRootBinding()
         ),
       ['publication', 'caller'],
       'result:publication'
@@ -222,17 +211,14 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(requirePublicationTrigger, ['publication', 'draft', 'trigger'], 'result:publication')
     .pipe(
       (draft: Draft, proof: Triggered) =>
-        runtime.append(
-          {
-            ...draft,
-            publicationId: runtime.newId(),
-            triggerId: proof.triggerId,
-            conversationId: proof.root.sessionId.slice(4),
-            askOrigin: proof.ask,
-            producerInput: proof.input,
-          },
-          proof.turn.consultationId
-        ),
+        runtime.append({
+          ...draft,
+          publicationId: runtime.newId(),
+          triggerId: proof.triggerId,
+          conversationId: proof.root.sessionId.slice(4),
+          askOrigin: proof.ask,
+          producerInput: proof.input,
+        }),
       ['draft', 'publication'],
       'publication'
     )
@@ -254,7 +240,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Publish a message for a notification trigger: the reply to the human message this turn answers, a new fact for it, or the sentence a daemon trigger note asks for (an ask outcome, what the human must do, or what broke). Write it in the reply language this turn names. When the human asked for a reply in another language, pass requestedLanguage naming it. Pass the note\'s triggerId, or omit it; the runtime derives the trigger from this turn and supplies the human ask and producer. A new fact for a trigger can always be told, but never repeat yourself: a message identical to one already posted for the trigger returns that one instead of posting again. While a holder you consulted for it has not returned, posting is refused (consultation_pending), because its answer is the reply. Every other publication is refused with a reason: no trigger, an interim status post, or a bare acknowledgement ("收到", "got it"). When refused, end the turn. The daemon assigns the publication id and returns it; an identical retry posts nothing new. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
+      'Publish a message for a notification trigger: the reply to the human message this turn answers, a new fact for it, or the sentence a daemon trigger note asks for (an ask outcome, what the human must do, or what broke). Write it in the reply language this turn names. When the human asked for a reply in another language, pass requestedLanguage naming it. Pass the note\'s triggerId, or omit it; the runtime derives the trigger from this turn and supplies the human ask and producer. A new fact for a trigger can always be told, but never repeat yourself: a message identical to one already posted for the trigger returns that one instead of posting again. While a holder you consulted for it has not returned, posting is refused (consultation_pending): its answer comes back to you, and you answer the human from it. Every other publication is refused with a reason: no trigger, an interim status post, or a bare acknowledgement ("收到", "got it"). When refused, end the turn. The daemon assigns the publication id and returns it; an identical retry posts nothing new. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: z.union([

@@ -118,7 +118,6 @@ import {
 } from './ask-origin.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
-import { planNeoConsultationReturn } from './consultation-return-route.ts';
 import {
   NEO_PUBLISH_NUDGE,
   type NeoDirectReplyRuntime,
@@ -908,7 +907,6 @@ export class NeoService {
         this.db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, messageId),
       getStamp: (sessionId, messageId) => inputOrigins.get(sessionId, messageId),
     });
-    const publicationSettlements = new NeoConsultationRepository(db.getDatabase(), () => {});
     const notifyPublication = () => {
       try {
         void hub.event('neo.changed', {});
@@ -923,74 +921,20 @@ export class NeoService {
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
       inputTrigger: (input) => this.inputTrigger(input),
       newId: () => this.newPublicationId(),
-      replay: (input, caller) => {
-        const turn = caller.neoTurn;
-        const item = turn?.consultationId ? this.consultations.get(turn.consultationId) : null;
-        const binding = caller.sessionId ? this.repo.getBindingBySession(caller.sessionId) : null;
-        if (
-          caller.source !== 'mcp' ||
-          !item ||
-          binding?.kind !== 'project' ||
-          binding.sessionId !== item.sessionId ||
-          binding.projectId !== item.projectId ||
-          turn?.messageId !== `neo-consult:${item.id}:request`
-        )
-          return null;
-        const association = this.consultations.getPublication(item.id);
-        if (!association) return null;
-        const root = this.repo.getBindingForProject(null);
-        if (root?.kind !== 'neo' || root.sessionId !== `neo:${association.conversationId}`)
-          return { accepted: false, reason: 'publication_superseded' };
-        const publication = this.publications.get(
-          association.conversationId,
-          association.publicationId
-        );
-        if (!publication) throw new Error('Committed consultation publication is missing');
-        if (
-          publication.producerInput.sessionId !== caller.sessionId ||
-          publication.producerInput.messageId !== turn.messageId ||
-          publication.shortText !== input.shortText ||
-          publication.fullText !== input.fullText ||
-          publication.askSummary !== input.askSummary ||
-          publication.awaiting !== input.awaiting ||
-          JSON.stringify(publication.links) !== JSON.stringify(input.links)
-        )
-          return { accepted: false, reason: 'publication_conflict' };
-        notifyPublication();
-        return { accepted: true, created: false, publication };
-      },
-      append: (input, consultationId) => this.commitPublication(input, consultationId),
+      append: (input) => this.commitPublication(input),
       notify: notifyPublication,
     });
     this.commitPublication = createNeoPublicationCommit({
-      commit: (input, consultationId) => {
-        const problem = this.crossProjects.publicationProblem(input, consultationId);
+      commit: (input) => {
+        const problem = this.crossProjects.publicationProblem(input);
         if (problem) return { accepted: false, reason: problem };
-        if (!consultationId && input.triggerId && this.consultationOpenFor(input.triggerId))
+        if (input.triggerId && this.consultationOpenFor(input.triggerId))
           return {
             accepted: false,
             reason: 'consultation_pending',
             detail: NEO_CONSULTATION_PENDING_DETAIL,
           };
-        if (!consultationId) return this.appendPublication(input);
-        const repeat = this.publications.repeatOf(input);
-        if (repeat) {
-          this.consultations.finish(consultationId, 'reported', input.fullText);
-          this.consultations.returned(consultationId);
-          return { accepted: true, created: false, publication: repeat };
-        }
-        const receipt = publicationSettlements.settleWithPublication({
-          consultationId,
-          answer: input.fullText,
-          publication: input,
-        });
-        if (!receipt.accepted) return receipt;
-        const publication = this.publications.get(
-          receipt.association.conversationId,
-          receipt.association.publicationId
-        );
-        if (!publication) throw new Error('Committed consultation publication is missing');
-        return { accepted: true, created: receipt.created, publication };
+        return this.appendPublication(input);
       },
       published: (input, publication) => {
         this.noteHumanReply(input);
@@ -1026,7 +970,7 @@ export class NeoService {
           { sessionId: id, messageId: nudgedMessageId(nudgeId) ?? nudgeId },
           'continues'
         ).catch((error) => this.log.warn('Publish nudge failed', error)),
-      append: (input) => this.commitPublication(input, undefined),
+      append: (input) => this.commitPublication(input),
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),
     };
@@ -1384,7 +1328,7 @@ export class NeoService {
       standingRules: neoStandingRules(this.db.getGlobalSettings?.().neo),
       stored: !!this.publications.get(input.conversationId, input.publicationId),
     });
-    const receipt = this.crossProjects.append(input, undefined, () =>
+    const receipt = this.crossProjects.append(input, () =>
       this.publications.append(withNeoSavedRules(input, plan.rules))
     );
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
@@ -3263,21 +3207,6 @@ export class NeoService {
     await dispatchNeoConsultationWaiter(this, projectId);
   }
 
-  private planConsultationReturn(item: NeoConsultation) {
-    const association = this.consultations.getPublication(item.id);
-    const captured = this.consultations.getPublicationInput(item.id);
-    const publication = association
-      ? this.publications.get(association.conversationId, association.publicationId)
-      : this.publications.findByProducer(item.sessionId, `neo-consult:${item.id}:request`);
-    return planNeoConsultationReturn(
-      item,
-      association,
-      publication,
-      captured?.askOrigin ?? null,
-      captured
-    );
-  }
-
   async syncConsultation(id: string): Promise<void> {
     let item = this.consultations.expire(id);
     if (!item) return;
@@ -3300,9 +3229,7 @@ export class NeoService {
         const content = neoConsultationRequestContent(
           item,
           !!this.crossProjects.forReceipt(item.id),
-          this.crossProjects.forReceipt(item.id)?.askMessageId,
-          item.originMessageId !== null &&
-            this.parentTrigger(this.consultationParent(item)) !== null
+          this.crossProjects.forReceipt(item.id)?.askMessageId
         );
         await this.deliver(
           item.sessionId,
@@ -3323,13 +3250,11 @@ export class NeoService {
       await this.dispatchConsultationWaiter(item.projectId);
       return;
     }
-    const route = this.consultations.isReturned(id)
-      ? 'returned'
-      : this.planConsultationReturn(item);
-    if (route === 'inconsistent')
-      throw new Error('Consultation publication return is inconsistent');
-    if (route === 'pending') return;
-    if (route === 'legacy' && !(item.status === 'reported' && item.answer === NEO_WORK_REVIEWED)) {
+    if (item.status === 'pending') return;
+    if (
+      !this.consultations.isReturned(id) &&
+      !(item.status === 'reported' && item.answer === NEO_WORK_REVIEWED)
+    ) {
       const content = neoConsultationReplyContent(item);
       if (content === null) return;
       await this.deliver(

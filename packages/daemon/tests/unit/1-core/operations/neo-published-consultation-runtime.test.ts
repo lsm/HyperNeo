@@ -140,59 +140,6 @@ describe('published consultation runtime activation', () => {
     expect(JSON.stringify(mailbox(root)[0].payload)).toContain('Legacy answer after restart.');
   });
 
-  test('commits the same authored tuple and original ask without another root query', async () => {
-    const item = reserve();
-    await service.syncConsultation(item.id);
-    savePrompt(holder, requestId, neoConsultationRequestContent(item));
-    savePrompt(root, 'unrelated-newer-ask', 'An unrelated fictional question.', true);
-    const turn = new NeoHolderTurn(db, holder, { isLive: () => true }, () => {});
-    turns.push(turn);
-    expect(turn.bind(requestId)).toBe(true);
-    const registry = createOperationRegistry(createNeoOperations(service));
-    const caller = {
-      source: 'mcp' as const,
-      sessionId: holder,
-      role: 'neo' as const,
-      neoTurn: turn.identity(),
-    };
-    expect(
-      await invokeOperation(
-        registry,
-        'neo.publication.publish',
-        withMintedPublicationId(service, draft),
-        caller
-      )
-    ).toMatchObject({
-      kind: 'completed',
-      value: { accepted: true, created: true },
-    });
-    expect(
-      await invokeOperation(
-        registry,
-        'neo.publication.publish',
-        withMintedPublicationId(service, draft),
-        caller
-      )
-    ).toMatchObject({
-      kind: 'completed',
-      value: { accepted: true, created: false },
-    });
-    await service.syncConsultation(item.id);
-    expect(service.publications.get(conversationId, draft.publicationId)).toMatchObject({
-      ...draft,
-      askOrigin: { sessionId: root, messageId: 'original-ask' },
-      producerInput: { sessionId: holder, messageId: requestId },
-    });
-    expect(mailbox(root)).toEqual([]);
-    expect(
-      db.getDatabase().prepare('SELECT returned FROM neo_consultations WHERE id = ?').get(item.id)
-    ).toEqual({ returned: 1 });
-    startService();
-    await service.recoverConsultations();
-    expect(mailbox(root)).toEqual([]);
-    expect(db.getDatabase().prepare('SELECT * FROM neo_publications').all()).toHaveLength(1);
-  });
-
   test.each([null, 'fictional'])(
     'creates the %j coordinator with published guidance',
     async (projectId) => {

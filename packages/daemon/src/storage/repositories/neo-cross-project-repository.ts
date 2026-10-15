@@ -123,8 +123,7 @@ export class NeoCrossProjectRepository {
     );
   }
 
-  publicationProblem(input: NeoPublicationInput, consultationId?: string): string | null {
-    if (consultationId && this.forReceipt(consultationId)) return 'cross_project_reply_to_root';
+  publicationProblem(input: NeoPublicationInput): string | null {
     const group = this.forAsk(input.askOrigin);
     if (!group) return null;
     if (input.producerInput.sessionId !== group.rootSessionId) return 'cross_project_root_only';
@@ -138,11 +137,10 @@ export class NeoCrossProjectRepository {
 
   append(
     input: NeoPublicationInput,
-    consultationId: string | undefined,
     publish: () => NeoPublicationAppendResult
   ): NeoPublicationAppendResult {
     return this.db.transaction(() => {
-      const problem = this.publicationProblem(input, consultationId);
+      const problem = this.publicationProblem(input);
       if (problem) return { accepted: false as const, reason: 'invalid_publication' as const };
       const receipt = publish();
       if (receipt.accepted && !input.interim)

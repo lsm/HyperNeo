@@ -262,22 +262,18 @@ describe('runtime-bound publication operation', () => {
     });
   });
 
-  test('holder publication resolves the original ask, never a newer unrelated ask', async () => {
+  test('a consultation turn never publishes to the human: it answers Neo with neo.project.respond', async () => {
     const item = consultation();
-    const input = `neo-consult:${item.id}:request`;
-    prompt(holder.sessionId, input, 'system');
-    prompt(root.sessionId, 'newer-ask');
+    prompt(holder.sessionId, `neo-consult:${item.id}:request`, 'system');
     expect(await invoke(draft, consultCaller(item.id))).toMatchObject({
       value: {
-        accepted: true,
-        publication: {
-          askOrigin: ask,
-          producerInput: { sessionId: holder.sessionId, messageId: input },
-          triggerId: `human:${ask.messageId}`,
-        },
+        accepted: false,
+        reason: 'consultation_answer',
+        detail: expect.stringContaining('neo.project.respond'),
       },
     });
-    expect(ledger.list(conversationId)![0].askOrigin).toEqual(ask);
+    expect(ledger.list(conversationId)).toEqual([]);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   test('a returned-work note is not a trigger, so its publication is refused with a reason', async () => {
@@ -637,32 +633,6 @@ describe('runtime-bound publication operation', () => {
       detail: 'project link "b" belongs to another project',
     });
   });
-
-  test.each(['pending', 'reported', 'failed', 'expired'] as const)(
-    'pins %s runtime-bound holder consultation admission',
-    (status) => {
-      const item = consultation();
-      const input = `neo-consult:${item.id}:request`;
-      prompt(holder.sessionId, input, 'system');
-      const who = consultCaller(item.id);
-      const resolve = runtime.resolveAskOrigin;
-      runtime.resolveAskOrigin = (origin) => {
-        const answer = resolve(origin);
-        mailbox.db
-          .prepare('UPDATE neo_consultations SET status = ? WHERE id = ?')
-          .run(status === 'expired' ? 'pending' : status, item.id);
-        if (status === 'expired')
-          mailbox.db
-            .prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?')
-            .run(item.id);
-        return answer;
-      };
-      const result = publish(draft, who);
-      const accepted = status === 'pending' || status === 'reported';
-      expect(result.accepted).toBe(accepted);
-      expect(ledger.list(conversationId)).toHaveLength(accepted ? 1 : 0);
-    }
-  );
 
   test('pure link/lifetime gates refuse foreign evidence and superseded turns', () => {
     const who = caller();
