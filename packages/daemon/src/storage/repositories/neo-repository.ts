@@ -64,8 +64,10 @@ export class NeoRepository {
         WHERE c.id NOT IN (SELECT source_id FROM neo_project_merges)`)
       .all() as (Omit<NeoProjectFacts, 'section' | 'work' | 'aliases'> & { section: number })[];
     const work = this.db
-      .prepare('SELECT concern_id AS projectId, updated_at AS lastActivityAt FROM neo_work')
-      .all() as { projectId: string; lastActivityAt: number }[];
+      .prepare(`SELECT w.concern_id AS projectId, w.updated_at AS lastActivityAt,
+          json_extract(t.ref, '$.adapter') || char(0) || json_extract(t.ref, '$.id') AS ref
+        FROM neo_work w LEFT JOIN neo_work_driver_targets t ON t.work_id = w.id`)
+      .all() as { projectId: string; lastActivityAt: number; ref: string | null }[];
     const aliases = this.db
       .prepare('SELECT project_id AS projectId, alias FROM neo_project_workspaces')
       .all() as { projectId: string; alias: string }[];
@@ -74,7 +76,7 @@ export class NeoRepository {
       section: !!row.section,
       work: work
         .filter((entry) => entry.projectId === row.id)
-        .map((entry) => ({ lastActivityAt: entry.lastActivityAt })),
+        .map((entry) => ({ lastActivityAt: entry.lastActivityAt, ref: entry.ref })),
       aliases: aliases.filter((entry) => entry.projectId === row.id).map((entry) => entry.alias),
     }));
   }

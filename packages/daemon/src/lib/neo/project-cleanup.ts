@@ -6,7 +6,7 @@ export type NeoProjectFacts = {
   context: number;
   asks: number;
   liveAsks: number;
-  work: { lastActivityAt: number }[];
+  work: { lastActivityAt: number; ref: string | null }[];
   liveWork: number;
   routed: number;
   holderMessages: number;
@@ -43,6 +43,15 @@ const isElsewhere = (project: NeoProjectFacts, machine: string) => {
 
 const sameKey = (title: string) => title.trim().toLowerCase();
 
+const cards = (project: NeoProjectFacts, other: NeoProjectFacts) =>
+  project.work.filter(
+    (item) =>
+      item.ref &&
+      other.aliases.some(
+        (alias) => alias.startsWith('work:') && alias.endsWith(`\u0000${item.ref}`)
+      )
+  ).length;
+
 function belongsTo(project: NeoProjectFacts, other: NeoProjectFacts): boolean {
   const own = repositories(project);
   if (own.length) return repositories(other).some((alias) => own.includes(alias));
@@ -50,6 +59,20 @@ function belongsTo(project: NeoProjectFacts, other: NeoProjectFacts): boolean {
     sameKey(other.title) === sameKey(project.title) ||
     other.aliases.some((alias) => alias.startsWith('folder:') && project.aliases.includes(alias))
   );
+}
+
+function home(
+  project: NeoProjectFacts,
+  homes: readonly NeoProjectFacts[]
+): NeoProjectFacts | undefined {
+  const others = homes.filter((other) => other.id !== project.id);
+  if (repositories(project).length)
+    return others.find((other) => other.createdAt < project.createdAt && belongsTo(project, other));
+  const byCards = others
+    .map((other) => ({ other, count: cards(project, other) }))
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count)[0]?.other;
+  return byCards ?? others.find((other) => belongsTo(project, other));
 }
 
 export function planNeoProjectCleanup(
@@ -66,13 +89,8 @@ export function planNeoProjectCleanup(
       const repository = repositories(project).length > 0;
       if (!repository && (isElsewhere(project, scope.machine) || isLive(project))) return [];
       if (!repository && isEmpty(project)) return [{ action: 'delete', ...named }];
-      const home = homes.find(
-        (other) =>
-          other.id !== project.id &&
-          (!repository || other.createdAt < project.createdAt) &&
-          belongsTo(project, other)
-      );
-      if (home) return [{ action: 'merge', ...named, targetId: home.id }];
+      const target = home(project, homes);
+      if (target) return [{ action: 'merge', ...named, targetId: target.id }];
       return repository || isOngoing(project) ? [] : [{ action: 'archive', ...named }];
     });
 }

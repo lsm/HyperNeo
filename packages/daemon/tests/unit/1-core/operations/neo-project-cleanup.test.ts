@@ -25,7 +25,13 @@ const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProje
 const plan = (projects: NeoProjectFacts[], pinned: string[] = []) =>
   planNeoProjectCleanup(projects, { pinned: new Set(pinned), machine: 'here' });
 const repo = 'repository:github.com/lsm/app';
-const oneOff = { asks: 1, work: [{ lastActivityAt: DAY }, { lastActivityAt: DAY + 60_000 }] };
+const oneOff = {
+  asks: 1,
+  work: [
+    { lastActivityAt: DAY, ref: null },
+    { lastActivityAt: DAY + 60_000, ref: null },
+  ],
+};
 
 describe('project cleanup plan', () => {
   test('an empty project with a silent holder is deleted', () => {
@@ -62,11 +68,42 @@ describe('project cleanup plan', () => {
     ]);
   });
 
+  test('a project with no repository merges where most of its cards ran, before any title match', () => {
+    const card = (ref: string) => ({ lastActivityAt: DAY, ref });
+    const ios = project('ios', { createdAt: 2, aliases: [repo, 'work:here\u0000claude\u0000s1'] });
+    const web = project('web', {
+      title: 'Topic',
+      aliases: [
+        'repository:github.com/lsm/web',
+        'work:here\u0000claude\u0000s2',
+        'work:here\u0000claude\u0000s3',
+      ],
+    });
+    expect(
+      plan([
+        ios,
+        web,
+        project('topic', {
+          title: 'Topic',
+          asks: 1,
+          routed: 1,
+          work: [card('claude\u0000s1'), card('claude\u0000s1')],
+        }),
+      ])
+    ).toEqual([{ action: 'merge', projectId: 'topic', title: 'Topic', targetId: 'ios' }]);
+  });
+
   test('a one-off project with no repository and no home is archived; ongoing work is kept', () => {
     expect(plan([project('once', oneOff)])).toEqual([
       { action: 'archive', projectId: 'once', title: 'once' },
     ]);
-    const twoDays = { asks: 1, work: [{ lastActivityAt: DAY }, { lastActivityAt: 3 * DAY }] };
+    const twoDays = {
+      asks: 1,
+      work: [
+        { lastActivityAt: DAY, ref: null },
+        { lastActivityAt: 3 * DAY, ref: null },
+      ],
+    };
     expect(plan([project('days', twoDays), project('addressed', { asks: 1, routed: 1 })])).toEqual(
       []
     );
