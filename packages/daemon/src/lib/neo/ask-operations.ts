@@ -868,7 +868,9 @@ export function neoAskHasHumanAction(ask: NeoAsk, facts: NeoAskSettleFacts, now:
     facts.failed ||
     neoAskApprovalSpent(ask, now) !== null ||
     (ask.doneItems ?? []).some(
-      (item) => !item.removed && (item.state === 'needs_you' || item.state === 'reported')
+      (item) =>
+        !item.removed &&
+        (item.state === 'needs_you' || (item.state === 'reported' && !isNeoAnswerItem(item)))
     )
   );
 }
