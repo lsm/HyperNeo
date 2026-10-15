@@ -3,6 +3,7 @@ export interface NeoProject {
   parentId?: string | null;
   epicUrl?: string | null;
   workspaceAliases?: string[];
+  repository?: string;
   title: string;
   summary: string;
   context: string;
