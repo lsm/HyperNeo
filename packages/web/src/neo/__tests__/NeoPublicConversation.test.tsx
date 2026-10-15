@@ -735,4 +735,36 @@ describe('session notice rows', () => {
       [notices[1].key, false],
     ]);
   });
+
+  it('gives each session its own row with Mute first, Open last and the time only once', () => {
+    const notices = [
+      notice(1, 'finished', 'claude://resume?session=s1'),
+      notice(2, 'needs_you', 'claude://resume?session=s2'),
+    ];
+    const { container } = render(
+      <NeoPublicConversation
+        mute={{ muted: new Set(), onMute: vi.fn() }}
+        conversation={{
+          conversationId: 'c1',
+          status: 'ready',
+          hasEarlier: false,
+          hasMore: false,
+          entries: [
+            {
+              kind: 'notices',
+              key: 'notices:1',
+              group: { id: 'g1', at: notices[0].at, line: '', notices },
+            },
+          ],
+        }}
+      />
+    );
+    const rows = [...container.querySelectorAll('[data-notice]')];
+    expect(rows).toHaveLength(2);
+    for (const [index, row] of rows.entries()) {
+      const controls = [...row.querySelectorAll('a, button')];
+      expect(controls.map((control) => control.textContent)).toEqual(['Mute', 'Open']);
+      expect(row.querySelectorAll('time')).toHaveLength(index === 0 ? 1 : 0);
+    }
+  });
 });

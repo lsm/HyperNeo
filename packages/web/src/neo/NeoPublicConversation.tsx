@@ -220,57 +220,59 @@ function NoticeRow({
     <div
       role="note"
       data-public-entry={entryKey}
-      class="neo-arrive mx-auto max-w-[94%] px-1 text-center text-xs text-fg-muted"
+      class="neo-arrive mx-auto max-w-[94%] text-xs text-fg-muted"
     >
-      {time && (
-        <time dateTime={time.iso} title={time.full} class="mr-2 text-[11px] text-fg-faint">
-          {time.label}
-        </time>
-      )}
       {shown.map((notice, index) => {
         const link = neoSessionLink(notice.link, notice.ref.daemon);
         return (
-          <span key={notice.key + notice.at}>
-            {index > 0 && '; '}
-            {neoAppLabel(notice.ref.adapter)} · {notice.title}{' '}
-            <span class={notice.kind === 'needs_you' ? 'font-medium text-fg' : ''}>
-              {NOTICE_KINDS[notice.kind]}
+          <div
+            key={notice.key + notice.at}
+            data-notice={notice.key}
+            class="grid grid-cols-[4.5rem_minmax(0,1fr)_4.5rem] items-center"
+          >
+            {mute ? (
+              <button
+                type="button"
+                class="min-h-9 justify-self-start rounded-md px-3 text-left text-fg-faint hover:bg-fill-soft hover:text-fg"
+                aria-label={`${mute.muted.has(notice.key) ? 'Unmute' : 'Mute'} ${notice.title}`}
+                onClick={() => mute.onMute(notice.key, !mute.muted.has(notice.key))}
+              >
+                {mute.muted.has(notice.key) ? 'Unmute' : 'Mute'}
+              </button>
+            ) : (
+              <span />
+            )}
+            <span class="min-w-0 break-words px-1 py-1 text-center">
+              {index === 0 && time && (
+                <time dateTime={time.iso} title={time.full} class="mr-2 text-[11px] text-fg-faint">
+                  {time.label}
+                </time>
+              )}
+              {neoAppLabel(notice.ref.adapter)} · {notice.title}{' '}
+              <span class={notice.kind === 'needs_you' ? 'font-medium text-fg' : ''}>
+                {NOTICE_KINDS[notice.kind]}
+              </span>
             </span>
-            {link && (
-              <>
-                {' · '}
-                <a
-                  href={link}
-                  class="text-accent hover:underline"
-                  aria-label={`Open ${notice.title}`}
-                >
-                  Open
-                </a>
-              </>
+            {link ? (
+              <a
+                href={link}
+                class="flex min-h-9 items-center justify-self-end rounded-md px-3 text-accent hover:bg-fill-soft"
+                aria-label={`Open ${notice.title}`}
+              >
+                Open
+              </a>
+            ) : (
+              <span />
             )}
-            {mute && (
-              <>
-                {' · '}
-                <button
-                  type="button"
-                  class="text-fg-faint hover:text-fg hover:underline"
-                  aria-label={`${mute.muted.has(notice.key) ? 'Unmute' : 'Mute'} ${notice.title}`}
-                  onClick={() => mute.onMute(notice.key, !mute.muted.has(notice.key))}
-                >
-                  {mute.muted.has(notice.key) ? 'Unmute' : 'Mute'}
-                </button>
-              </>
-            )}
-          </span>
+          </div>
         );
       })}
       {more > 0 && (
-        <>
-          {'; '}
+        <p class="text-center">
           <button type="button" class="text-accent hover:underline" onClick={() => setAll(true)}>
             {more} more
           </button>
-        </>
+        </p>
       )}
     </div>
   );
