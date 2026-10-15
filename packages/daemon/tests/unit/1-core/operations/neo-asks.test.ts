@@ -2203,15 +2203,14 @@ describe('neo.ask operations', () => {
           ['pending', false],
           ['pending', false],
         ]);
+        const evidence = ask.doneItems?.[2]?.evidence;
         expect(ask.doneItems?.[2]).toMatchObject({
           state: 'pending',
           removed: true,
           metBy: 'daemon',
           evidence: expect.stringContaining(terminal.url),
         });
-        expect(ask.doneItems?.[2]?.evidence).toContain(
-          state === 'MERGED' ? 'merged' : 'closed unmerged'
-        );
+        expect(evidence).toContain(state === 'MERGED' ? 'merged' : 'closed unmerged');
         expect(service.readRefStates).toHaveBeenCalledTimes(1);
         expect(delivered).toHaveBeenCalledTimes(1);
         expect(delivered.mock.calls[0]?.[2]).toContain('withdrew questions');
