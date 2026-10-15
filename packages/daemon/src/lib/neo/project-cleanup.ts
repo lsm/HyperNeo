@@ -91,7 +91,10 @@ export function planNeoProjectCleanup(
   const homes = projects
     .filter(
       (project) =>
-        repositories(project).length && !project.archived && !isElsewhere(project, scope.machine)
+        repositories(project).length &&
+        !project.archived &&
+        !scope.archive?.has(project.id) &&
+        !isElsewhere(project, scope.machine)
     )
     .sort((a, b) => a.createdAt - b.createdAt);
   return projects

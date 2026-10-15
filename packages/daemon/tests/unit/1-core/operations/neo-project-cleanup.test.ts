@@ -118,7 +118,7 @@ describe('project cleanup plan', () => {
     ).toEqual([{ action: 'archive', projectId: 'kept', title: 'kept' }]);
   });
 
-  test('an archived project is no merge home, and a live project is not archived even when asked', () => {
+  test('an archived or to-be-archived project is no merge home, and a live project is not archived even when asked', () => {
     expect(
       plan([
         project('home', { title: 'App', aliases: [repo], archived: true }),
@@ -133,6 +133,15 @@ describe('project cleanup plan', () => {
         archive: new Set(['busy']),
       })
     ).toEqual([]);
+    expect(
+      planNeoProjectCleanup(
+        [
+          project('home', { title: 'App', aliases: [repo] }),
+          project('topic', { title: 'App', ...oneOff }),
+        ],
+        { pinned: new Set(), machine: 'here', mirrored: new Set(), archive: new Set(['home']) }
+      )
+    ).toEqual([{ action: 'archive', projectId: 'home', title: 'App' }]);
   });
 
   test('live, section, already archived, pinned and other-machine projects are left alone', () => {
