@@ -221,7 +221,7 @@ describe('NeoService direct consultation return', () => {
     expect(service.triggerWorkProblem(rootCaller('neo-nudge:later', false))).toBeNull();
   });
 
-  test('after the holder’s answer a later turn may post a new fact and edit, but not re-consult that holder', async () => {
+  test('after the holder’s answer a later turn may edit the reply, but not reply again or re-consult that holder', async () => {
     await respond();
     await invokeOperation(
       ops(),
@@ -244,7 +244,7 @@ describe('NeoService direct consultation return', () => {
         withMintedPublicationId(service, { ...interim, shortText: 'A later fact.' }),
         later
       )
-    ).toMatchObject({ value: { accepted: true, created: true } });
+    ).toMatchObject({ value: { accepted: false, reason: 'already_replied' } });
     expect(
       await invokeOperation(
         ops(),
@@ -263,7 +263,6 @@ describe('NeoService direct consultation return', () => {
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('already_consulted') } });
     expect(service.publications.list(conversationId)?.map((item) => item.shortText)).toEqual([
       'Reworded.',
-      'A later fact.',
     ]);
   });
 

@@ -208,6 +208,7 @@ import { NeoAskStateViewSchema, NeoAskViewSchema, NeoCardViewSchema } from './ca
 import { projectNeoAskViews } from './ask-views.ts';
 import { busyNeoAskSessions, unmutedNeoAskSessions } from './session-ask-links.ts';
 import { NEO_WORK_FOLLOW_MAX_AGE_MS } from './work-follow.ts';
+import { neoHumanTrigger } from './notification-triggers.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -2367,6 +2368,13 @@ export function createNeoOperations(service: NeoService) {
         return root?.startsWith('neo:')
           ? neoForwardedText(service.asks.find(root.slice(4), ask.messageId), ask)
           : null;
+      },
+      replied: (ask) => {
+        const root = service.repo.getBindingForProject(null)?.sessionId;
+        return (
+          !!root?.startsWith('neo:') &&
+          service.publications.hasTrigger(root.slice(4), neoHumanTrigger(ask.messageId), '')
+        );
       },
       open: (projectId) =>
         reopenNeoHolder(service.repo, service.db, (id) => service.open(id), projectId),

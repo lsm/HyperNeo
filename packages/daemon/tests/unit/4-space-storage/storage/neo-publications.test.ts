@@ -181,6 +181,24 @@ describe('Neo publication ledger', () => {
     expect(repo.list('bad-conversation')).toBeNull();
   });
 
+  test('a human message takes one reply; a retry returns it and another reply is refused', () => {
+    const reply = { ...input, triggerId: 'human:original-ask' };
+    const first = repo.append(reply);
+    expect(repo.append({ ...reply })).toMatchObject({
+      accepted: true,
+      created: false,
+      publication: first.accepted ? first.publication : {},
+    });
+    expect(repo.append({ ...next(6), triggerId: 'human:original-ask' })).toMatchObject({
+      accepted: false,
+      reason: 'already_replied',
+      detail: expect.stringContaining(input.publicationId),
+    });
+    expect(repo.append({ ...next(7), triggerId: 'outcome:ask-1:k' }).accepted).toBe(true);
+    expect(repo.append({ ...next(8), triggerId: 'human:other-ask' }).accepted).toBe(true);
+    expect(repo.list(input.conversationId)).toHaveLength(3);
+  });
+
   test('an interim message is a normal publication but never stands in for the answer', () => {
     const interim = { ...next(5), shortText: 'Checking that now.', interim: true as const };
     const accepted = repo.append(interim);

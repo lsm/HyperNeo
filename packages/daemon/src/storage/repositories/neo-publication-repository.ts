@@ -8,6 +8,7 @@ import type {
 } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { neoHumanTriggerMessageId } from '../../lib/neo/notification-triggers.ts';
 import { admitNeoPublication } from '../../lib/neo/publication.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoRoutingLogRepository } from './neo-routing-log-repository.ts';
@@ -70,6 +71,16 @@ function repeatOnTrigger(db: Database, input: NeoPublicationInput): NeoPublicati
   return findNeoRepeatedPublication(rows.map(decode), input);
 }
 
+function replyOnTrigger(db: Database, input: NeoPublicationInput): NeoPublication | null {
+  if (input.corrects || input.interim || !neoHumanTriggerMessageId(input.triggerId)) return null;
+  const row = db
+    .prepare(`SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
+      AND publication_id <> ? AND json_extract(payload_json, '$.triggerId') = ?
+      AND json_extract(payload_json, '$.interim') IS NULL ORDER BY sequence LIMIT 1`)
+    .get(input.conversationId, input.publicationId, input.triggerId) as Row | null;
+  return row ? decode(row) : null;
+}
+
 function appendImmutable(
   db: Database,
   input: NeoPublicationInput,
@@ -78,6 +89,13 @@ function appendImmutable(
   return db.transaction((): NeoPublicationAppendResult => {
     const repeat = repeatOnTrigger(db, input);
     if (repeat) return { accepted: true, created: false, publication: repeat };
+    const reply = replyOnTrigger(db, input);
+    if (reply)
+      return {
+        accepted: false,
+        reason: 'already_replied',
+        detail: `This human message already has its one reply (${reply.publicationId}). Fix its wording with neo.publication.edit, or publish a changed fact with neo.publication.correct; otherwise end the turn.`,
+      };
     const inserted = db
       .prepare(`INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at)
         VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id, publication_id) DO NOTHING

@@ -19,6 +19,7 @@ const Rejection = z.object({
     'main_only',
     'forward_limit',
     'unknown_project',
+    'already_replied',
   ]),
   projects: z
     .array(z.object({ id: z.string(), title: z.string() }))
@@ -47,6 +48,7 @@ export interface NeoAskForwardRuntime {
   listProjects(): Pick<NeoProject, 'id' | 'title'>[];
   rootSessionId(): string | null;
   askText(ask: NeoAskOrigin): string | null;
+  replied(ask: NeoAskOrigin): boolean;
   open(projectId: string): Promise<string>;
   record(ask: NeoAskOrigin, forward: NeoAskForward): boolean;
   unrecord(ask: NeoAskOrigin, hop: number): void;
@@ -144,6 +146,10 @@ export function requireForwardedAsk(ask: NeoAskOrigin | null): Gate<NeoAskOrigin
   return ask ? { value: ask } : refuse('unknown_ask');
 }
 
+export function requireNeoUnreplied(ask: NeoAskOrigin, replied: boolean): Gate<NeoAskOrigin> {
+  return replied ? refuse('already_replied') : { value: ask };
+}
+
 export function planNeoAskForward(
   input: Input,
   holder: Pick<Holder, 'sessionId' | 'projectId' | 'input'>,
@@ -214,6 +220,8 @@ function createForward(runtime: NeoAskForwardRuntime) {
     .pipe((holder: Holder) => runtime.resolveAskOrigin(holder.input), 'holder', 'resolved')
     .pipe(requireForwardedAsk, 'resolved', 'result:outcome')
     .pipe(take, 'outcome', 'ask')
+    .pipe((ask: NeoAskOrigin) => runtime.replied(ask), 'ask', 'replied')
+    .pipe(requireNeoUnreplied, ['ask', 'replied'], 'result:outcome')
     .pipe(
       (ask: NeoAskOrigin) => {
         const forwards = runtime.forwards(ask);
@@ -310,7 +318,7 @@ export function createNeoAskForwardOperation(runtime: NeoAskForwardRuntime) {
   return defineOperation({
     name: 'neo.ask.forward',
     description:
-      'Hand the human message you are answering to the project that owns it, when it is clearly not your subject; the receiver then owns the message, answers it and may start its work. to is that project id, or "main"; an unknown id is refused with the list of projects, so call again with the right one. Main may forward once, to a project, and that project cannot forward it on. The routed holder may forward once, to another project or main; a holder that received a forward from a holder may forward only to main. Nothing forwards back. End your turn without answering after forwarding.',
+      'Hand the human message you are answering to the project that owns it, when it is clearly not your subject; the receiver then owns the message, answers it and may start its work. to is that project id, or "main"; an unknown id is refused with the list of projects, so call again with the right one. Main may forward once, to a project, and that project cannot forward it on. The routed holder may forward once, to another project or main; a holder that received a forward from a holder may forward only to main. Nothing forwards back. A message gets one reply, so once it has one it cannot be forwarded (already_replied); forward before answering, and end your turn without answering after forwarding.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

@@ -202,7 +202,7 @@ describe('Cross-project runtime', () => {
       )
     ).toMatchObject({
       kind: 'completed',
-      value: { accepted: true, created: true },
+      value: { accepted: false, reason: 'already_replied' },
     });
   });
   test('reuses the same group on retry and refuses changed or incomplete parts', async () => {

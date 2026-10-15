@@ -253,7 +253,7 @@ describe('neoForwardContent', () => {
 });
 
 describe('neo.ask.forward', () => {
-  function runtime(origin = ask) {
+  function runtime(origin = ask, replied = false) {
     const bindings = new Map([garden, pond, root].map((binding) => [binding.sessionId, binding]));
     const forwards: NeoAskForward[] = [];
     let failDelivery = false;
@@ -269,6 +269,7 @@ describe('neo.ask.forward', () => {
       ],
       rootSessionId: () => root.sessionId,
       askText: () => 'Fix the pond pump',
+      replied: () => replied,
       open: async (id) => `neo:${id}`,
       record: (_ask, forward) => {
         if (forwards.some((item) => item.hop === forward.hop)) return false;
@@ -386,6 +387,15 @@ describe('neo.ask.forward', () => {
     const content = (delivered[0] as unknown[])[2] as string;
     expect(content).toContain('neo.publication.publish');
     expect(content).not.toContain('forward it to main');
+  });
+
+  test('a holder that already replied cannot forward the message', async () => {
+    const { invoke, forwards, delivered } = runtime(ask, true);
+    expect(await invoke(caller(garden.sessionId, 'ask-1'), 'pond')).toMatchObject({
+      value: { ok: false, reason: 'already_replied' },
+    });
+    expect(forwards).toEqual([]);
+    expect(delivered).toEqual([]);
   });
 
   test('refuses a project that does not exist', async () => {

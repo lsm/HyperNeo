@@ -345,7 +345,7 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)).toHaveLength(2);
   });
 
-  test('a cross-project return answers the human message that started it; a later fact also posts', () => {
+  test('a cross-project return answers the human message that started it, once', () => {
     const reply = 'neo-cross-project:group-1:reply';
     prompt(root.sessionId, reply, 'system');
     stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
@@ -358,8 +358,8 @@ describe('runtime-bound publication operation', () => {
         { ...draft, publicationId: '20000000-0000-4000-8000-000000000002', shortText: 'Final.' },
         caller(root.sessionId, reply, false)
       )
-    ).toMatchObject({ accepted: true, created: true });
-    expect(ledger.list(conversationId)).toHaveLength(2);
+    ).toMatchObject({ accepted: false, reason: 'already_replied' });
+    expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
   test('a returned consultation answers the human message that asked it; a note’s new fact posts without one', () => {
@@ -418,7 +418,7 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
-  test('a later input on an answered human trigger posts its new fact, never replacing the first', () => {
+  test('a later input on an answered human message cannot reply to it again', () => {
     expect(publish(draft, caller())).toMatchObject({ accepted: true, created: true });
     const reply = 'neo-consult:consult:9:reply';
     prompt(root.sessionId, reply, 'system');
@@ -432,11 +432,12 @@ describe('runtime-bound publication operation', () => {
         },
         caller(root.sessionId, reply, false)
       )
-    ).toMatchObject({ accepted: true, created: true });
-    expect(ledger.list(conversationId)!.map((item) => item.shortText)).toEqual([
-      draft.shortText,
-      'Overwrite.',
-    ]);
+    ).toMatchObject({
+      accepted: false,
+      reason: 'already_replied',
+      detail: expect.stringContaining(draft.publicationId),
+    });
+    expect(ledger.list(conversationId)!.map((item) => item.shortText)).toEqual([draft.shortText]);
   });
 
   test.each([
@@ -523,7 +524,7 @@ describe('runtime-bound publication operation', () => {
     expect(notify).toHaveBeenCalledTimes(2);
   });
 
-  test('a bare acknowledgement is refused, a repeat returns the first, a new fact posts', () => {
+  test('a bare acknowledgement is refused, a repeat returns the reply, a second reply is refused', () => {
     const id = (n: number) => `20000000-0000-4000-8000-00000000010${n}`;
     expect(
       publish({ ...draft, publicationId: id(1), shortText: '收到。', fullText: '收到。' }, caller())
@@ -531,15 +532,17 @@ describe('runtime-bound publication operation', () => {
     expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({ accepted: true });
     expect(
       publish({ ...draft, publicationId: id(3), shortText: 'One more thing.' }, caller())
-    ).toMatchObject({ accepted: true, created: true });
+    ).toMatchObject({ accepted: false, reason: 'already_replied' });
     expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({
       accepted: true,
       created: false,
     });
-    expect(
-      publish({ ...draft, publicationId: id(5), shortText: 'One more thing.' }, caller())
-    ).toMatchObject({ accepted: true, created: false, publication: { publicationId: id(3) } });
-    expect(ledger.list(conversationId)).toHaveLength(2);
+    expect(publish({ ...draft, publicationId: id(5) }, caller())).toMatchObject({
+      accepted: true,
+      created: false,
+      publication: { publicationId: id(2) },
+    });
+    expect(ledger.list(conversationId)).toHaveLength(1);
     expect(ledger.findByProducer(root.sessionId, ask.messageId)?.publicationId).toBe(id(2));
     prompt(root.sessionId, 'next-ask');
     expect(
