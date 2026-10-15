@@ -385,6 +385,7 @@ export interface RPCHandlerSetupResult {
   goalAutomationService: GoalAutomationService;
   spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService;
   cancelInactivityWatchdog: () => void;
+  stampNeoContinuation: NeoService['stampContinuation'];
 }
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
@@ -1739,5 +1740,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       inactivityAborted = true;
       inactivityRunNowCancelled = true;
     },
+    stampNeoContinuation: (input, parent) => neoService.stampContinuation(input, parent),
   };
 }

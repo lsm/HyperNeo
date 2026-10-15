@@ -867,10 +867,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         return true;
       },
       sendNote: async (sessionId, promptUuid) => {
+        const messageUuid = `${RESTART_RECOVERY_PREFIX}${promptUuid}`;
+        rpcHandlers.stampNeoContinuation(
+          { sessionId, messageId: messageUuid },
+          { sessionId, messageId: promptUuid }
+        );
         const outcome = await handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
           origin: 'recovery',
-          messageUuid: `${RESTART_RECOVERY_PREFIX}${promptUuid}`,
+          messageUuid,
           deliveryMode: 'immediate',
           message: {
             type: 'user',
@@ -887,25 +892,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         return false;
       },
     };
-    void recoverRestartCutTurns(cutOffSessionIds, restartRecoveryDeps)
-      .then((results) => {
-        const acted = results.filter((result) => result.resumed).length;
-        if (acted > 0) logInfo(`[Daemon] Resumed ${acted} session turn(s) cut off by the restart`);
-      })
-      .catch((error) => logError('[Daemon] Restart turn recovery failed:', error));
-    const cooldownResumeTimers = db.listRestartCooldownResumes().map(({ sessionId, resumeAt }) => {
-      const timer = setTimeout(
-        () => {
-          if (!db.takeRestartCooldownResume(sessionId)) return;
-          void recoverRestartCutTurns([sessionId], restartRecoveryDeps).catch((error) =>
-            logError(`[Daemon] Cooldown resume for session ${sessionId} failed:`, error)
-          );
-        },
-        Math.max(0, resumeAt - Date.now())
-      );
-      timer.unref?.();
-      return timer;
-    });
     const extensionConfigStore = new ExternalEventExtensionConfigStore(db.getDatabase());
     const sourceConfigTables: Record<string, string[]> = {
       github: ['space_github_watched_repos'],
@@ -1050,6 +1036,25 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       liveQueries,
       skillsManager,
       mcpImportService,
+    });
+    void recoverRestartCutTurns(cutOffSessionIds, restartRecoveryDeps)
+      .then((results) => {
+        const acted = results.filter((result) => result.resumed).length;
+        if (acted > 0) logInfo(`[Daemon] Resumed ${acted} session turn(s) cut off by the restart`);
+      })
+      .catch((error) => logError('[Daemon] Restart turn recovery failed:', error));
+    const cooldownResumeTimers = db.listRestartCooldownResumes().map(({ sessionId, resumeAt }) => {
+      const timer = setTimeout(
+        () => {
+          if (!db.takeRestartCooldownResume(sessionId)) return;
+          void recoverRestartCutTurns([sessionId], restartRecoveryDeps).catch((error) =>
+            logError(`[Daemon] Cooldown resume for session ${sessionId} failed:`, error)
+          );
+        },
+        Math.max(0, resumeAt - Date.now())
+      );
+      timer.unref?.();
+      return timer;
     });
     const {
       cleanup: rpcHandlerCleanup,
