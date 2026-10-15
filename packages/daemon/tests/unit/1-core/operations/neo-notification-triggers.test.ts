@@ -215,6 +215,7 @@ describe('noteNeoAskTrigger', () => {
       work,
       deliveryRetryPending: () => false,
       told: (askId) => new Set(told.get(askId)),
+      heard: () => false,
       record: (askId, keys) => told.set(askId, new Set([...(told.get(askId) ?? []), ...keys])),
       wake: async (_ask, trigger) => {
         wakes.push(trigger);
