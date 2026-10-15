@@ -1,4 +1,5 @@
 import { NeoAskBindingError } from '../../storage/repositories/neo-ask-repository.ts';
+import { neoAskAnswerEvidence } from './ask-answer-evidence.ts';
 import type { NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
@@ -1634,7 +1635,7 @@ export function createNeoAskOperations(
             {
               id: input.itemId,
               state: 'met',
-              evidence: `The human answered: ${reply.choice}${cited.id ? ` (their message ${cited.id})` : ''}`,
+              evidence: neoAskAnswerEvidence(reply.choice, cited.id),
               metBy: 'human',
             },
             Date.now(),
