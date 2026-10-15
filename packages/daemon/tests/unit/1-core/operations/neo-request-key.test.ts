@@ -9,7 +9,6 @@ const turn = (messageId: string): OperationCaller => ({
   role: 'neo',
   neoTurn: { messageId, human: true, isLive: () => true },
 });
-const noTrigger = () => null;
 
 describe('neoDerivedId', () => {
   test('derives the same version-8 UUID from the same seed', () => {
@@ -23,28 +22,17 @@ describe('neoDerivedId', () => {
 
 describe('neoTurnRequestKey', () => {
   test('a retry of the same request in the same turn gets the same key', () => {
-    const key = neoTurnRequestKey(noTrigger, turn('m1'), 'neo.work.propose', { title: 'A' });
-    expect(neoTurnRequestKey(noTrigger, turn('m1'), 'neo.work.propose', { title: 'A' })).toBe(key);
-    expect(neoTurnRequestKey(noTrigger, turn('m1'), 'neo.work.propose', { title: 'B' })).not.toBe(
-      key
-    );
-    expect(neoTurnRequestKey(noTrigger, turn('m2'), 'neo.work.propose', { title: 'A' })).not.toBe(
-      key
-    );
-    expect(neoTurnRequestKey(noTrigger, turn('m1'), 'neo.ask.open', { title: 'A' })).not.toBe(key);
-  });
-
-  test('inputs on one trigger chain share keys', () => {
-    const chain = () => 'trigger-1';
-    expect(neoTurnRequestKey(chain, turn('m1'), 'neo.ask.open', { title: 'A' })).toBe(
-      neoTurnRequestKey(chain, turn('m2'), 'neo.ask.open', { title: 'A' })
-    );
+    const key = neoTurnRequestKey(turn('m1'), 'neo.work.propose', { title: 'A' });
+    expect(neoTurnRequestKey(turn('m1'), 'neo.work.propose', { title: 'A' })).toBe(key);
+    expect(neoTurnRequestKey(turn('m1'), 'neo.work.propose', { title: 'B' })).not.toBe(key);
+    expect(neoTurnRequestKey(turn('m2'), 'neo.work.propose', { title: 'A' })).not.toBe(key);
+    expect(neoTurnRequestKey(turn('m1'), 'neo.ask.open', { title: 'A' })).not.toBe(key);
   });
 
   test('a caller without a turn gets a fresh key every time', () => {
     const human: OperationCaller = { source: 'rpc', principal: 'local' };
-    expect(neoTurnRequestKey(noTrigger, human, 'neo.work.propose', {})).not.toBe(
-      neoTurnRequestKey(noTrigger, human, 'neo.work.propose', {})
+    expect(neoTurnRequestKey(human, 'neo.work.propose', {})).not.toBe(
+      neoTurnRequestKey(human, 'neo.work.propose', {})
     );
   });
 });

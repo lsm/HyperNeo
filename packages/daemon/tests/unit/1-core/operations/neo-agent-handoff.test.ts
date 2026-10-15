@@ -361,7 +361,6 @@ describe('Neo existing Space-agent handoff operation', () => {
       ...origin,
       id: 'legacy',
       requestKey: `root:${neoTurnRequestKey(
-        (turn) => service.inputTrigger(turn),
         caller,
         'neo.work.propose',
         registry.get('neo.work.propose')!.inputSchema.parse(input)

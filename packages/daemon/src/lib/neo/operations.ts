@@ -2152,12 +2152,7 @@ export function createNeoOperations(service: NeoService) {
         consult(
           {
             ...input,
-            requestKey: neoTurnRequestKey(
-              (turn) => service.inputTrigger(turn),
-              caller,
-              'neo.project.consult',
-              input
-            ),
+            requestKey: neoTurnRequestKey(caller, 'neo.project.consult', input),
           },
           caller
         ),
@@ -2260,12 +2255,7 @@ export function createNeoOperations(service: NeoService) {
       execute: async (proposal, caller) => {
         const input = {
           ...proposal,
-          requestKey: neoTurnRequestKey(
-            (turn) => service.inputTrigger(turn),
-            caller,
-            'neo.work.propose',
-            proposal
-          ),
+          requestKey: neoTurnRequestKey(caller, 'neo.work.propose', proposal),
         };
         const reserved = reserveNeoAdoption(adopting, input.work);
         if ('reason' in reserved) return reserved.reason;

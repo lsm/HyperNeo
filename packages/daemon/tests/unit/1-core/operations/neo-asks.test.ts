@@ -163,12 +163,7 @@ describe('neo.ask operations', () => {
 
   function derivedKey(name: string, input: unknown, caller: OperationCaller = neo) {
     const operation = createNeoOperations(service).find((op) => op.name === name)!;
-    return neoTurnRequestKey(
-      (turn) => service.inputTrigger(turn),
-      caller,
-      name,
-      operation.inputSchema.parse(input)
-    );
+    return neoTurnRequestKey(caller, name, operation.inputSchema.parse(input));
   }
 
   async function openAsk(): Promise<string> {

@@ -1961,12 +1961,7 @@ export function createNeoAskOperations(
           open(
             {
               ...input,
-              requestKey: neoTurnRequestKey(
-                (turn) => service.inputTrigger(turn),
-                caller,
-                'neo.ask.open',
-                input
-              ),
+              requestKey: neoTurnRequestKey(caller, 'neo.ask.open', input),
             },
             caller
           )
