@@ -10,12 +10,22 @@ export type NeoWorkBlocker = z.infer<typeof NeoWorkBlockerSchema>;
 
 const BLOCKER_LINE = /^(?:Agent: )?Blocked \((environment|needs_human)\): *(\S.*)$/;
 
+export const NEO_WORK_REPORT_LIMIT = 12_000;
+
+export const NEO_WORK_EARLIER_REPORT = '\n\nEarlier report:\n';
+
 export function neoWorkBlockerLine(blocker: NeoWorkBlocker): string {
   return `Blocked (${blocker.kind}): ${blocker.what.replace(/\s+/g, ' ').trim()}`;
 }
 
+export function withNeoWorkBlocker(report: string, blocker: NeoWorkBlocker): string {
+  const line = `\n\n${neoWorkBlockerLine(blocker)}`;
+  return `${report.trimEnd().slice(0, Math.max(0, NEO_WORK_REPORT_LIMIT - line.length))}${line}`;
+}
+
 export function readNeoWorkBlocker(report: string | null | undefined): NeoWorkBlocker | null {
-  const last = (report ?? '').trimEnd().split('\n').at(-1)?.trim() ?? '';
+  const newest = (report ?? '').split(NEO_WORK_EARLIER_REPORT)[0];
+  const last = newest.trimEnd().split('\n').at(-1)?.trim() ?? '';
   const found = last.match(BLOCKER_LINE);
   return found ? { kind: found[1] as NeoWorkBlocker['kind'], what: found[2].trim() } : null;
 }

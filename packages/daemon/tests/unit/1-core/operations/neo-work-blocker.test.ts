@@ -4,6 +4,8 @@ import {
   neoWorkBlockerLine,
   planNeoEnvironmentMove,
   readNeoWorkBlocker,
+  NEO_WORK_EARLIER_REPORT,
+  NEO_WORK_REPORT_LIMIT,
 } from '../../../../src/lib/neo/work-blocker.ts';
 import { admitNeoWorkReportInput } from '../../../../src/lib/neo/work-report.ts';
 import { driverDoneCheckNote, withWorkGoal } from '../../../../src/lib/neo/driver-work.ts';
@@ -34,6 +36,11 @@ describe('readNeoWorkBlocker', () => {
         'Blocked (environment): no DNS\nRetried.\nBlocked (needs_human): pick a pricing rule\n'
       )
     ).toEqual({ kind: 'needs_human', what: 'pick a pricing rule' });
+    expect(
+      readNeoWorkBlocker(
+        `Agent: Blocked (needs_human): pick a rule${NEO_WORK_EARLIER_REPORT}Blocked (environment): no DNS`
+      )
+    ).toEqual({ kind: 'needs_human', what: 'pick a rule' });
     expect(readNeoWorkBlocker('Agent: Blocked (environment): no DNS')).toEqual({
       kind: 'environment',
       what: 'no DNS',
@@ -43,6 +50,7 @@ describe('readNeoWorkBlocker', () => {
   test.each([
     'The shell cannot resolve GitHub, but I pushed over SSH and opened the PR.',
     'Blocked (other): something',
+    `Agent: Recovered and opened the PR.${NEO_WORK_EARLIER_REPORT}Blocked (environment): no DNS`,
     'Blocked (environment): no DNS\n\nAgent: Recovered over SSH and opened the PR.',
     'Blocked (environment):',
     null,
@@ -56,6 +64,19 @@ describe('readNeoWorkBlocker', () => {
 });
 
 describe('neo.work.report blocker', () => {
+  test('a near-limit report with a blocker still fits the report limit and ends with the line', () => {
+    const admitted = admitNeoWorkReportInput({
+      id: 'w1',
+      status: 'failed',
+      report: 'x'.repeat(12000),
+      blocker: environment,
+    });
+    if (!('value' in admitted)) throw new Error('Expected admission');
+    expect(admitted.value.report.length).toBeLessThanOrEqual(NEO_WORK_REPORT_LIMIT);
+    expect(readNeoWorkBlocker(admitted.value.report)).toEqual(environment);
+    expect(admitNeoWorkReportInput(admitted.value)).toEqual(admitted);
+  });
+
   test('a reported blocker is written into the report as the declared line', () => {
     expect(
       admitNeoWorkReportInput({

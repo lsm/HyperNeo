@@ -3,7 +3,7 @@ import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { DaemonInventoryLink } from '@hyperneo/shared/types/daemon-snapshot';
 import type { OperationCaller } from '../operations/registry.ts';
 import { canonicalNeoWorkResourceRefs, selectNeoWorkResourceRefs } from './work-resource-refs.ts';
-import { neoWorkBlockerLine, type NeoWorkBlocker } from './work-blocker.ts';
+import { withNeoWorkBlocker, type NeoWorkBlocker } from './work-blocker.ts';
 
 export interface NeoWorkReportInput {
   id: string;
@@ -67,9 +67,7 @@ export function admitNeoWorkReportInput(input: NeoWorkReportInput): Gate<NeoWork
   const value = {
     id: input.id,
     status: input.status,
-    report: input.blocker
-      ? `${input.report.trimEnd()}\n\n${neoWorkBlockerLine(input.blocker)}`
-      : input.report,
+    report: input.blocker ? withNeoWorkBlocker(input.report, input.blocker) : input.report,
   };
   if (input.resourceRefs === undefined) return { value };
   const refs = selectNeoWorkResourceRefs(input.resourceRefs);
