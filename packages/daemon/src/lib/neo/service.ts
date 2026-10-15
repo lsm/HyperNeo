@@ -26,7 +26,7 @@ import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
-import { planNeoAnswerPublished } from './answer-outcome.ts';
+import { isNeoAskAnswerReady, planNeoAnswerPublished } from './answer-outcome.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import {
   isNeoWorkClosedDone,
@@ -1204,6 +1204,7 @@ export class NeoService {
     this.retryUnpublishedTriggers();
     for (const ask of this.triggerAsks()) {
       try {
+        this.reconcilePublishedAnswer(ask);
         await noteNeoAskTrigger(ask, this.triggerDeps);
       } catch (error) {
         this.log.warn(`Trigger check for ask ${ask.id} failed`, error);
@@ -1258,6 +1259,15 @@ export class NeoService {
       this.processingStatus.get(owner) ??
       neoSessionStatus(this.db.getSession(owner)?.processingState);
     return status !== null && status !== 'idle';
+  }
+
+  private reconcilePublishedAnswer(ask: NeoAsk): void {
+    const root = this.repo.getBindingForProject(null);
+    if (!isNeoAskAnswerReady(ask) || !root?.sessionId.startsWith('neo:')) return;
+    for (const triggerId of this.triggers.outcomeTriggerIds(ask.id)) {
+      const publication = this.publications.byTrigger(root.sessionId.slice(4), triggerId);
+      if (publication) this.notePublishedAnswer(publication);
+    }
   }
 
   private notePublishedAnswer(publication: NeoPublication): void {

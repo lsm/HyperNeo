@@ -393,6 +393,50 @@ describe('NeoService notification triggers', () => {
     db.close();
   });
 
+  test('a published answer the hook never saw is applied by the next sweep', async () => {
+    const opened = service.askRecords.open(
+      {
+        id: 'a1',
+        requestKey: 'k1',
+        projectId: null,
+        originSessionId: root,
+        originMessageId: m0,
+        title: 'Count the files',
+        ask: 'Count the files',
+        doneWhen: '- the count',
+        doneSource: 'human',
+      },
+      [{ text: 'the count', check: null, outcomeKind: 'answer' }]
+    )!;
+    seed();
+    service.askRecords.tickItem(
+      opened.id,
+      { id: 'i1', state: 'reported', evidence: '42 files', metBy: null },
+      Date.now()
+    );
+    sweep();
+    await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
+    const triggerId = mailbox()[0]
+      .messageUuid.replace(/^neo-trigger:/, '')
+      .replace(/#\d+$/, '');
+    service.publications.append({
+      conversationId,
+      publicationId: '40000000-0000-4000-8000-000000000001',
+      askOrigin: { sessionId: root, messageId: m0 },
+      producerInput: { sessionId: root, messageId: m0 },
+      shortText: '42 files.',
+      fullText: '42 files.',
+      links: [],
+      triggerId,
+    });
+    expect(service.askRecords.get('a1')?.status).toBe('open');
+    await sweep();
+    expect(service.askRecords.get('a1')).toMatchObject({
+      status: 'achieved',
+      doneItems: [{ state: 'met', metBy: 'daemon' }],
+    });
+  });
+
   test('every item met wakes Neo with a note naming the outcome trigger, once per transition', async () => {
     const opened = open();
     seed();
