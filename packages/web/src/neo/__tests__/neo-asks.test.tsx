@@ -647,6 +647,19 @@ describe('NeoAskCard', () => {
     expect(nothing.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
   });
 
+  it('puts Drop on the card face only when the daemon offers it for an idle ask', () => {
+    const settle = vi.fn();
+    const idle = describeAsk(ask('a', 'open', []), [], { humanActions: [{ kind: 'drop' }] });
+    const card = render(<NeoAskCard view={idle} onSettle={settle} />);
+    fireEvent.click(card.getByRole('button', { name: 'Drop' }));
+    expect(settle).toHaveBeenCalledExactlyOnceWith('abandoned');
+    cleanup();
+    const busy = render(
+      <NeoAskCard view={describeAsk(ask('a', 'open', []), [])} onSettle={settle} />
+    );
+    expect(busy.queryByRole('button', { name: 'Drop' })).toBeNull();
+  });
+
   it('puts Retry on the card face when the daemon offers it for a failed step', () => {
     const retry = vi.fn();
     const owned = scenes.running.slice(0, 1);
