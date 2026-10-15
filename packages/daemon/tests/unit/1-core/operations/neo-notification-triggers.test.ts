@@ -21,6 +21,7 @@ import {
   requireNeoTriggerUnheard,
   shouldRetryNeoTrigger,
   isNeoHumanOwnTurn,
+  neoHumanTurnOrigin,
   neoTriggerWatchSessions,
   NEO_TRIGGER_RETRY_MS,
   neoAskTriggerKeys,
@@ -215,6 +216,22 @@ describe('neoTriggerRetryStatuses', () => {
     expect(neoTriggerRetryStatuses([], ['consumed', 'consumed', 'consumed'])).toEqual(['consumed']);
     expect(neoTriggerRetryStatuses([], ['consumed', 'enqueued'])).toEqual(['pending']);
     expect(neoTriggerRetryStatuses([], [])).toEqual([]);
+  });
+});
+
+describe('neoHumanTurnOrigin', () => {
+  const human = (id: string) => id === 'm1';
+
+  test('a turn acts for the human message it answers, or the one its own continuation carries', () => {
+    expect(neoHumanTurnOrigin('m1', 'human:m1', human)).toBe('m1');
+    expect(neoHumanTurnOrigin('neo-turn-limit:human:r1', 'human:m1', human)).toBe('m1');
+  });
+
+  test('a nudge, a plain continuation or a note acts for no human message', () => {
+    expect(neoHumanTurnOrigin('neo-nudge:m1', 'human:m1', human)).toBeNull();
+    expect(neoHumanTurnOrigin('neo-turn-limit:r1', 'human:m1', human)).toBeNull();
+    expect(neoHumanTurnOrigin('neo-turn-limit:human:r1', 'idle:a1:x', human)).toBeNull();
+    expect(neoHumanTurnOrigin('neo-turn-limit:human:r1', 'human:m9', human)).toBeNull();
   });
 });
 

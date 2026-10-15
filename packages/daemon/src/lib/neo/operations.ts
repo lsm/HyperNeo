@@ -111,6 +111,7 @@ import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import {
   admitNeoWorkOrigin,
   hasNeoHumanWorkInput,
+  neoTurnOrigin,
   isNeoAskStartApproved,
   requireNeoHumanWorkOrigin,
   requireLiveNeoWorkOrigin,
@@ -813,7 +814,7 @@ function readNeoRuleSource(service: NeoService, caller: OperationCaller): string
   return neoPromptText(
     service.db
       .getSDKMessageRepo()
-      .getStoredPromptsByUuid(caller.sessionId, caller.neoTurn.messageId)
+      .getStoredPromptsByUuid(caller.sessionId, neoTurnOrigin(caller.neoTurn))
       .filter((message) => (message as { inputKind?: unknown }).inputKind === 'human')
   );
 }
@@ -826,7 +827,7 @@ function isNeoHumanTurn(service: NeoService, caller: OperationCaller): boolean {
     service.db.getSession(caller.sessionId)?.status === 'active' &&
     hasNeoHumanWorkInput(
       caller,
-      service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId, turn.messageId)
+      service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId, neoTurnOrigin(turn))
     )
   );
 }

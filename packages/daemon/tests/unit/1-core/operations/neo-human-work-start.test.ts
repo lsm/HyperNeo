@@ -427,6 +427,28 @@ describe('Neo existing trusted human work input', () => {
     expect(jobs(work.id)).toEqual([]);
   });
 
+  test('a continuation of the human’s own turn may start its work; a plain continuation may not', async () => {
+    storeInput();
+    const work = await propose(caller());
+    const continuation = (messageId: string) => {
+      storeInput(root, 'system', messageId);
+      service.inputOrigins.record(
+        { sessionId: root, messageId },
+        { sessionId: root, messageId: ask },
+        0,
+        `human:${ask}`
+      );
+      return caller(root, messageId);
+    };
+    expect(
+      await invoke('neo.work.start', { id: work.id }, continuation('neo-turn-limit:r1'))
+    ).toMatchObject({ value: { ok: false } });
+    expect(service.repo.getWork(work.id)?.status).toBe('proposed');
+    expect(
+      await invoke('neo.work.start', { id: work.id }, continuation('neo-turn-limit:human:r2'))
+    ).toMatchObject({ value: { ok: true, work: { status: 'queued' } } });
+  });
+
   test('rejects a new human ask trying to start a previous ask’s proposal', async () => {
     storeInput();
     const original = caller();
