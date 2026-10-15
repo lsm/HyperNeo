@@ -286,6 +286,22 @@ export function requireNeoTriggerUnheard(
   return { reason: null };
 }
 
+export function shouldPreemptNeoTurn(
+  processingState: string | undefined,
+  trigger: (messageId: string) => string | null,
+  answered: (trigger: string) => boolean
+): boolean {
+  let state: { status?: unknown; messageId?: unknown } | null = null;
+  try {
+    state = processingState ? JSON.parse(processingState) : null;
+  } catch {
+    return false;
+  }
+  if (state?.status !== 'processing' || typeof state.messageId !== 'string') return false;
+  const current = trigger(state.messageId);
+  return !!current && answered(current);
+}
+
 export function neoTriggerWorkProblem(
   input: { sessionId: string; messageId: string },
   trigger: string | null,

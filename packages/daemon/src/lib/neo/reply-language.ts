@@ -66,6 +66,9 @@ export function readNeoTurnLanguage(
     latestHumanPrompt(sessionId: string): SDKMessage | null;
   }
 ): NeoReplyLanguage | null {
+  const own = reads.getPrompts(input.sessionId, input.messageId);
+  if (own.some((message) => (message as { inputKind?: unknown }).inputKind === 'human'))
+    return detectNeoReplyLanguage(neoPromptText(own));
   const origin = reads.resolveAskOrigin(input);
   if (origin)
     return detectNeoReplyLanguage(

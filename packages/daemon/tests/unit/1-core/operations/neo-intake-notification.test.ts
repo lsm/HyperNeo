@@ -171,6 +171,7 @@ describe('accepted public ask notification', () => {
     expect(sessions.getSession(holder.sessionId)!.config).toMatchObject({ queryMode: 'manual' });
     expect(await receipt({ ...input, sessionId: holder.sessionId })).toMatchObject({ ok: true });
     expect(observed).toEqual([[1, 1, 1]]);
+    expect(notify).toHaveBeenCalledExactlyOnceWith(holder.sessionId);
     const row = writer
       .prepare('SELECT send_status FROM sdk_messages WHERE sdk_uuid = ?')
       .get(requestId) as { send_status: string };
