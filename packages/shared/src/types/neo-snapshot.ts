@@ -392,6 +392,7 @@ export interface NeoSnapshot {
   mutedSessions?: string[];
   standingRules?: string[];
   asks?: NeoAsk[];
+  told?: { publicationId: string; at: string; shortText: string; triggerId?: string }[];
   moreSettled?: boolean;
   omitted?: { work?: number; asks?: number };
   cards: NeoCardView[];

@@ -1,4 +1,5 @@
 import type { NeoInputOrigin } from '@hyperneo/shared/types/neo-message';
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import type {
   NeoPublication,
   NeoPublicationAppendResult,
@@ -226,6 +227,29 @@ export class NeoPublicationRepository {
 
   repeatOf(input: NeoPublicationInput): NeoPublication | null {
     return repeatOnTrigger(this.db, input);
+  }
+
+  toldForAsk(
+    conversationId: string,
+    ask: Pick<NeoAsk, 'id' | 'originSessionId' | 'originMessageId'>
+  ): NeoPublication[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
+            AND json_extract(payload_json, '$.interim') IS NULL
+            AND (json_extract(payload_json, '$.triggerId') LIKE ?
+              OR (json_extract(payload_json, '$.askOrigin.sessionId') = ?
+                AND json_extract(payload_json, '$.askOrigin.messageId') = ?))
+          ORDER BY sequence`
+        )
+        .all(
+          conversationId,
+          `%:${ask.id}:%`,
+          ask.originSessionId,
+          ask.originMessageId ?? ''
+        ) as Row[]
+    ).map(decode);
   }
 
   byTrigger(conversationId: string, triggerId: string): NeoPublication | null {

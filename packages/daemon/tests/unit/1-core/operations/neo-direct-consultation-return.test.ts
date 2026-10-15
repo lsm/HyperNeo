@@ -414,6 +414,56 @@ describe('NeoService direct consultation return', () => {
     expect(service.publications.list(conversationId)).toHaveLength(2);
   });
 
+  test('an ask read lists what the human was actually told for it, and nothing else', async () => {
+    const opened = service.askRecords.open(
+      {
+        id: 'ask-told',
+        requestKey: 'ask-told',
+        projectId: null,
+        originSessionId: root,
+        originMessageId: ask.messageId,
+        title: 'Compare sources',
+        ask: 'Compare sources',
+        doneWhen: '- compared',
+        doneSource: 'human',
+      },
+      [{ text: 'compared', check: null }]
+    )!;
+    const post = (publicationId: string, shortText: string, extra: object) =>
+      service.publications.append({
+        ...draft,
+        publicationId,
+        shortText,
+        fullText: shortText,
+        links: [],
+        conversationId,
+        askOrigin: ask,
+        producerInput: ask,
+        ...extra,
+      });
+    post('40000000-0000-4000-8000-000000000011', 'Reply to the ask.', {
+      triggerId: `human:${ask.messageId}`,
+    });
+    post('40000000-0000-4000-8000-000000000012', 'The outcome.', {
+      triggerId: `outcome:${opened.id}:x`,
+    });
+    post('40000000-0000-4000-8000-000000000013', 'Another ask.', {
+      askOrigin: { sessionId: root, messageId: 'other' },
+      producerInput: { sessionId: root, messageId: 'other' },
+      triggerId: 'outcome:another:y',
+    });
+    expect(
+      await invokeOperation(ops(), 'neo.snapshot', { askId: opened.id }, rootCaller())
+    ).toMatchObject({
+      value: {
+        told: [
+          { shortText: 'Reply to the ask.', triggerId: `human:${ask.messageId}` },
+          { shortText: 'The outcome.', triggerId: `outcome:${opened.id}:x` },
+        ],
+      },
+    });
+  });
+
   test('reload and recovery need only the immutable receipt, not removed SDK history or a recaptured ask', async () => {
     await publish();
     const before = receiptRows();
