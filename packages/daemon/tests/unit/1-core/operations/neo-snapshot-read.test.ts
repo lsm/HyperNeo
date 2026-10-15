@@ -21,7 +21,7 @@ describe('planNeoSnapshotRead', () => {
         ok: true,
         unchanged: true,
         rev: 'r1',
-        note: expect.stringContaining('end the turn'),
+        note: expect.stringMatching(/held until this turn ends.*end the turn now/),
         scopedTo: 'ask-1',
       },
       remember: null,
@@ -71,7 +71,10 @@ describe('neoSnapshotRevision', () => {
   test('a fresh check time alone keeps the rev, so a re-read still answers unchanged', () => {
     const first = neoSnapshotRevision(at(1), undefined, undefined);
     if (!('rev' in first)) throw new Error('expected a rev');
-    expect(neoSnapshotRevision(at(2), first.rev, undefined)).toMatchObject({ unchanged: true });
+    expect(neoSnapshotRevision(at(2), first.rev, undefined)).toMatchObject({
+      unchanged: true,
+      note: expect.stringMatching(/held until this turn ends.*end the turn now/),
+    });
     expect(neoSnapshotRevision(at(2, 'Needs you'), first.rev, undefined)).not.toHaveProperty(
       'unchanged'
     );
