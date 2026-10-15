@@ -6,11 +6,11 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [0.44.0] - 2026-10-15
 
-353 commits since v0.43.0. Headline families: one Neo conversation every Neo session can see and fix, daemon-detected notification triggers and derived ask and card views, work admission with dependencies and outcome checks, projects keyed by repository identity with merge and reorganize, driver input and configuration receipts, and network-outage and restart resilience for turns.
+355 commits since v0.43.0. Headline families: one Neo conversation every Neo session can see and fix, daemon-detected notification triggers and derived ask and card views, work admission with dependencies and outcome checks, projects keyed by repository identity with merge and reorganize, driver input and configuration receipts, and network-outage and restart resilience for turns.
 
 ### Added
 
-- **Neo conversation**: Every Neo session sees the whole public conversation; Neo edits a reply's wording in place or publishes one correction that answers the request, whichever session wrote it; quote replies; photo previews that load in full on scroll; each message shows received, queued, working, answered or failed.
+- **Neo conversation**: Every Neo session sees the whole public conversation; Neo edits a reply's wording in place or publishes one correction that answers the request, whichever session wrote it; every reply goes through one publication path, and a later input on the same trigger replaces its message in place; quote replies; photo previews that load in full on scroll; each message shows received, queued, working, answered or failed.
 - **Neo triggers and views**: The daemon detects notification triggers and wakes Neo, and Neo publishes only on one; the daemon derives each ask's and card's view (phase, PR verdict, human actions, last checked, what a blocked card waits for); summarized settled asks load in full when expanded.
 - **Neo work**: Work admission for start, adoption, approval, retry and recovery; `dependsOn` with dependency wakes; staged plans with bound outcomes and required outcome checks; a small pool of long-lived workers with load-aware dispatch; restart recovery reconciles each hand-off; the daemon mints request keys, project ids and correction ids.
 - **Neo projects**: Projects carry their repository identity, are mirrored from workspaces as nested avatars, and are merged by reorganize (which asks once when unsure); cross-project requests route by factual ownership; project history is read from the repository; GitHub pull requests and issues can be listed by time window.
