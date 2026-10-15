@@ -127,3 +127,13 @@ export function unmutedNeoAskSessions(
     [...sessions].map(([askId, list]) => [askId, list.filter((item) => !off.has(item.key))])
   );
 }
+
+export function busyNeoAskSessions(
+  sessions: ReadonlyMap<string, readonly NeoAskSessionView[]>
+): Set<string> {
+  return new Set(
+    [...sessions].flatMap(([askId, list]) =>
+      list.some((item) => item.status === 'queued' || item.status === 'running') ? [askId] : []
+    )
+  );
+}

@@ -35,15 +35,18 @@ type AskViewIndex = {
   cards: Map<string, NeoCardView>;
   merged: Map<string, string[]>;
   sessions: ReadonlyMap<string, readonly NeoAskSessionView[]>;
+  busy: ReadonlySet<string>;
 };
 
 export function indexNeoAskViewParts(
   cards: readonly NeoCardView[],
   prs: readonly NeoWorkPrReceipt[],
-  sessions: ReadonlyMap<string, readonly NeoAskSessionView[]> = new Map()
+  sessions: ReadonlyMap<string, readonly NeoAskSessionView[]> = new Map(),
+  busy: ReadonlySet<string> = new Set()
 ): AskViewIndex {
   return {
     sessions,
+    busy,
     cards: new Map(cards.map((card) => [card.workId, card])),
     merged: new Map(
       prs.map((receipt) => [
@@ -173,6 +176,7 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     ask.status === 'open' &&
     ask.workIds.length > 0 &&
     !needsYou &&
+    !index.busy.has(ask.id) &&
     !sessions.some((session) => session.status === 'queued' || session.status === 'running') &&
     !humanActions.length &&
     !live.some(isNeoCardInPlay) &&
@@ -204,12 +208,13 @@ export function describeNeoAskViews(asks: readonly NeoAsk[], index: AskViewIndex
 }
 
 export const projectNeoAskViews = (superpipe({})('neo-ask-views') as PipelineAPI)
-  .input(['asks', 'cards', 'prs', 'sessions'])
-  .pipe(indexNeoAskViewParts, ['cards', 'prs', 'sessions'], 'index')
+  .input(['asks', 'cards', 'prs', 'sessions', 'busy'])
+  .pipe(indexNeoAskViewParts, ['cards', 'prs', 'sessions', 'busy'], 'index')
   .pipe(describeNeoAskViews, ['asks', 'index'], 'askViews')
   .end('askViews') as (
   asks: readonly NeoAsk[],
   cards: readonly NeoCardView[],
   prs: readonly NeoWorkPrReceipt[],
-  sessions?: ReadonlyMap<string, readonly NeoAskSessionView[]>
+  sessions?: ReadonlyMap<string, readonly NeoAskSessionView[]>,
+  busy?: ReadonlySet<string>
 ) => NeoAskView[];

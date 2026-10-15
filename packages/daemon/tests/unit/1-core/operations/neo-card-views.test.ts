@@ -7,6 +7,7 @@ import type {
   NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { projectNeoAskViews } from '../../../../src/lib/neo/ask-views.ts';
+import { busyNeoAskSessions } from '../../../../src/lib/neo/session-ask-links.ts';
 import { neoCardPhase } from '../../../../src/lib/neo/card-phase.ts';
 import { NeoAskViewSchema, NeoCardViewSchema } from '../../../../src/lib/neo/card-view-schema.ts';
 import { type NeoCardViewParts, projectNeoCardViews } from '../../../../src/lib/neo/card-views.ts';
@@ -498,6 +499,15 @@ describe('projectNeoAskViews', () => {
     expect(linked[0]).toMatchObject({ group: 'running', label: 'Working on it' });
     expect(linked[0]).not.toHaveProperty('idle');
     expect(linked[3]).not.toHaveProperty('idle');
+    const muted = projectNeoAskViews(
+      input.asks,
+      projectNeoCardViews(input),
+      input.prs,
+      new Map(),
+      busyNeoAskSessions(new Map([['a1', [running]]]))
+    );
+    expect(muted[0]).toMatchObject({ label: 'Working on it', sessions: [] });
+    expect(muted[0]).not.toHaveProperty('idle');
   });
 
   test('done items count instead of cards when the ask has them', () => {
