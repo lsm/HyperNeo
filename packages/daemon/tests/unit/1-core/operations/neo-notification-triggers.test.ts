@@ -21,6 +21,7 @@ import {
   requireNeoTriggerUnheard,
   shouldRetryNeoTrigger,
   isNeoHumanOwnTurn,
+  neoTriggerWatchSessions,
   NEO_TRIGGER_RETRY_MS,
   neoAskTriggerKeys,
   neoTriggerNote,
@@ -103,13 +104,19 @@ describe('neoAskTriggerConcern', () => {
 
 describe('shouldPreemptNeoTurn', () => {
   const state = (status: string, messageId?: string) => JSON.stringify({ status, messageId });
-  const trigger = (id: string) => (id === 'system' ? null : `human:${id}`);
+  const trigger = (id: string) =>
+    id === 'system' ? null : id.startsWith('note') ? `idle:a1:${id}` : `human:${id}`;
   const answered = (value: string) => value === 'human:old';
 
-  test('preempts only a processing turn whose trigger already has its answer', () => {
+  test('preempts a human-triggered turn only once its answer is out', () => {
     expect(shouldPreemptNeoTurn(state('processing', 'old'), trigger, answered)).toBe(true);
     expect(shouldPreemptNeoTurn(state('processing', 'fresh'), trigger, answered)).toBe(false);
     expect(shouldPreemptNeoTurn(state('processing', 'system'), trigger, answered)).toBe(false);
+  });
+
+  test('preempts a turn answering a daemon note, which a waiting human message outranks', () => {
+    expect(shouldPreemptNeoTurn(state('processing', 'note-1'), trigger, answered)).toBe(true);
+    expect(shouldPreemptNeoTurn(state('idle', 'note-1'), trigger, answered)).toBe(false);
     expect(shouldPreemptNeoTurn(state('idle'), trigger, answered)).toBe(false);
     expect(shouldPreemptNeoTurn(undefined, trigger, answered)).toBe(false);
     expect(shouldPreemptNeoTurn('not json', trigger, answered)).toBe(false);
@@ -219,6 +226,19 @@ describe('isNeoHumanOwnTurn', () => {
     expect(isNeoHumanOwnTurn('neo-consult:c1:request', 'human:m1')).toBe(false);
     expect(isNeoHumanOwnTurn('neo-turn-limit:r1', 'idle:a1:x')).toBe(false);
     expect(isNeoHumanOwnTurn('m1', null)).toBe(false);
+  });
+});
+
+describe('neoTriggerWatchSessions', () => {
+  test('a trigger waits on its owner and on whoever proposed a card not yet started', () => {
+    expect(
+      neoTriggerWatchSessions(root, [
+        { status: 'proposed', originSessionId: 'neo:holder:a' },
+        { status: 'queued', originSessionId: 'neo:holder:b' },
+        { status: 'proposed', originSessionId: root },
+        null,
+      ])
+    ).toEqual([root, 'neo:holder:a']);
   });
 });
 
@@ -644,6 +664,38 @@ describe('NeoService notification triggers', () => {
     await sweep();
     await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
     expect(JSON.stringify(mailbox()[0])).toContain(encodeURIComponent(root));
+  });
+
+  test('a card proposed in a running turn raises no action note until that turn ends', async () => {
+    const holder = 'neo:holder:labs';
+    db.createSession(createTestSession(holder));
+    const opened = open();
+    seed();
+    db.updateSession(holder, {
+      processingState: JSON.stringify({
+        status: 'processing',
+        messageId: 'turn',
+        phase: 'streaming',
+      }),
+    });
+    const work = service.repo.proposeWork({
+      id: 'w-start',
+      requestKey: 'w-start',
+      projectId: null,
+      originSessionId: holder,
+      originMessageId: m0,
+      title: 'Update the iMac',
+      instruction: 'Update the iMac daemon.',
+    });
+    service.askRecords.link(opened.id, work.id);
+    await sweep();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mailbox()).toEqual([]);
+    service.repo.transitionWork(work.id, work, { status: 'queued' });
+    db.updateSession(holder, { processingState: JSON.stringify({ status: 'idle' }) });
+    await sweep();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mailbox().filter((note) => note.messageUuid.includes('action:'))).toEqual([]);
   });
 
   test('a session that refused the card wakes Neo with a talk trigger', async () => {

@@ -361,6 +361,7 @@ import {
   neoTriggerMessageIds,
   planNeoTriggerRetry,
   shouldRetryNeoTrigger,
+  neoTriggerWatchSessions,
   neoAskTriggerConcern,
   neoTriggerRetryStatuses,
   shouldPreemptNeoTurn,
@@ -1281,10 +1282,15 @@ export class NeoService {
   private isTriggerOwnerBusy(ask: NeoAsk): boolean {
     const owner = this.triggerOwner(ask);
     if (!owner) return true;
-    const status =
-      this.processingStatus.get(owner) ??
-      neoSessionStatus(this.db.getSession(owner)?.processingState);
-    return status !== null && status !== 'idle';
+    return neoTriggerWatchSessions(
+      owner,
+      ask.workIds.map((id) => this.repo.getWork(id))
+    ).some((session) => {
+      const status =
+        this.processingStatus.get(session) ??
+        neoSessionStatus(this.db.getSession(session)?.processingState);
+      return status !== null && status !== 'idle';
+    });
   }
 
   private reconcilePublishedAnswer(ask: NeoAsk): void {
@@ -3843,7 +3849,7 @@ export class NeoService {
     return reason ? { ok: false, reason } : null;
   }
 
-  async preemptAnsweredTurn(sessionId: string): Promise<void> {
+  async preemptForHumanMessage(sessionId: string): Promise<void> {
     const root = this.repo.getBindingForProject(null);
     if (!root?.sessionId.startsWith('neo:') || !this.repo.getBindingBySession(sessionId)) return;
     const conversationId = root.sessionId.slice(4);
@@ -3859,7 +3865,7 @@ export class NeoService {
       const live = await this.sessions.getSessionForControl(sessionId);
       await live?.handleInterrupt({ preserveDeliveryJobs: true });
     } catch (error) {
-      this.log.warn('Answered Neo turn not preempted', error);
+      this.log.warn('Neo turn not preempted for a human message', error);
     }
   }
 

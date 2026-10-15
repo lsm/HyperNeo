@@ -290,6 +290,18 @@ export function planNeoAskTrigger(
   };
 }
 
+export function neoTriggerWatchSessions(
+  owner: string,
+  works: readonly (Pick<NeoWork, 'status' | 'originSessionId'> | null)[]
+): string[] {
+  return [
+    ...new Set([
+      owner,
+      ...works.flatMap((work) => (work?.status === 'proposed' ? [work.originSessionId] : [])),
+    ]),
+  ];
+}
+
 export function requireNeoTriggerOwnerIdle(
   ask: NeoAsk,
   deps: NeoTriggerSweepDeps
@@ -328,7 +340,7 @@ export function shouldPreemptNeoTurn(
   }
   if (state?.status !== 'processing' || typeof state.messageId !== 'string') return false;
   const current = trigger(state.messageId);
-  return !!current && answered(current);
+  return !!current && (!current.startsWith(NEO_HUMAN_TRIGGER_PREFIX) || answered(current));
 }
 
 export function isNeoHumanOwnTurn(messageId: string, trigger: string | null): boolean {

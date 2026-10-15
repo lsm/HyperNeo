@@ -327,6 +327,25 @@ describe('NeoService direct consultation return', () => {
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('already_consulted') } });
   });
 
+  test('a waiting human message ends a root turn answering a daemon note', async () => {
+    const handleInterrupt = vi.fn(async () => {});
+    Object.assign(service.sessions, {
+      getSessionForControl: vi.fn(async () => ({ handleInterrupt })),
+    });
+    const note = 'neo-trigger:idle:a1:abc';
+    prompt(root, note, 'system');
+    service.inputOrigins.record({ sessionId: root, messageId: note }, ask, 0, 'idle:a1:abc');
+    db.updateSession(root, {
+      processingState: JSON.stringify({
+        status: 'processing',
+        messageId: note,
+        phase: 'streaming',
+      }),
+    });
+    await service.preemptForHumanMessage(root);
+    expect(handleInterrupt).toHaveBeenCalledExactlyOnceWith({ preserveDeliveryJobs: true });
+  });
+
   test('a waiting human message ends a root turn whose trigger is already answered', async () => {
     const handleInterrupt = vi.fn(async () => {});
     Object.assign(service.sessions, {
@@ -339,13 +358,13 @@ describe('NeoService direct consultation return', () => {
         phase: 'streaming',
       }),
     });
-    await service.preemptAnsweredTurn(root);
+    await service.preemptForHumanMessage(root);
     expect(handleInterrupt).not.toHaveBeenCalled();
     await publish();
-    await service.preemptAnsweredTurn(root);
+    await service.preemptForHumanMessage(root);
     expect(handleInterrupt).toHaveBeenCalledExactlyOnceWith({ preserveDeliveryJobs: true });
     db.updateSession(root, { processingState: JSON.stringify({ status: 'idle' }) });
-    await service.preemptAnsweredTurn(root);
+    await service.preemptForHumanMessage(root);
     expect(handleInterrupt).toHaveBeenCalledTimes(1);
   });
 
