@@ -1829,7 +1829,7 @@ describe('neo.ask operations', () => {
               id: 'i3',
               state: 'met',
               metBy: 'human',
-              evidence: 'The human answered: dev',
+              evidence: 'The human answered: dev (their message reply)',
             }),
           ],
         },

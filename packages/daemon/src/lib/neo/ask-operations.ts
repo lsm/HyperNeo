@@ -1624,7 +1624,8 @@ export function createNeoAskOperations(
       (
         input: z.infer<typeof Answer>,
         target: { ask: NeoAsk },
-        reply: { choice: string; met: boolean }
+        reply: { choice: string; met: boolean },
+        cited: { id: string | null }
       ) => {
         const written =
           !reply.met ||
@@ -1633,7 +1634,7 @@ export function createNeoAskOperations(
             {
               id: input.itemId,
               state: 'met',
-              evidence: `The human answered: ${reply.choice}`,
+              evidence: `The human answered: ${reply.choice}${cited.id ? ` (their message ${cited.id})` : ''}`,
               metBy: 'human',
             },
             Date.now(),
@@ -1642,7 +1643,7 @@ export function createNeoAskOperations(
           );
         return { ask: written ? service.askRecords.get(target.ask.id) : null };
       },
-      ['input', 'admission', 'reply'],
+      ['input', 'admission', 'reply', 'cited'],
       'answered'
     )
     .pipe(requireNeoAskWritten, 'answered', 'result:admission')
