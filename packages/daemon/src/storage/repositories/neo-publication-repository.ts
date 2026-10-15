@@ -70,6 +70,22 @@ export function planNeoTriggerAnswer(
   };
 }
 
+function isConsultationReturn(db: Database, publication: NeoPublication): boolean {
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE name = 'neo_consultation_publications' AND type = 'table'"
+      )
+      .get()
+  )
+    return false;
+  return !!db
+    .prepare(
+      'SELECT 1 FROM neo_consultation_publications WHERE conversation_id = ? AND publication_id = ?'
+    )
+    .get(publication.conversationId, publication.publicationId);
+}
+
 function answerTrigger(
   db: Database,
   input: NeoPublicationInput
@@ -82,6 +98,11 @@ function answerTrigger(
     .get(input.conversationId, input.triggerId, input.publicationId) as Row | null;
   if (!row) return null;
   const prior = decode(row);
+  if (isConsultationReturn(db, prior))
+    return sameInput(prior.answerInput ?? prior.producerInput, input.producerInput) &&
+      sameAnswer(prior, input)
+      ? { accepted: true, created: false, publication: prior }
+      : { accepted: false, reason: 'trigger_already_published' };
   const plan = planNeoTriggerAnswer(prior, input, new Date().toISOString());
   if (plan.kind === 'same') return { accepted: true, created: false, publication: prior };
   if (plan.kind === 'refused') return { accepted: false, reason: 'trigger_already_published' };

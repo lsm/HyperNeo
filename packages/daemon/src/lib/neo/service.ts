@@ -946,7 +946,10 @@ export class NeoService {
         if (!publication) throw new Error('Committed consultation publication is missing');
         return { accepted: true, created: receipt.created, publication };
       },
-      published: (input) => this.noteHumanReply(input),
+      published: (input, publication) => {
+        this.noteHumanReply(input);
+        if (publication.answerInput) this.notifyPublicationsChanged(publication.conversationId);
+      },
     });
     this.resolveWorkTarget = createNeoWorkTargetResolver({
       readTarget: (id) => {
