@@ -206,6 +206,14 @@ describe('createClaudeCodeAdapter', () => {
       expect((await adapter.find(query)).map((group) => group.place.folder)).toEqual([
         '/locked/project',
       ]);
+      writeFileSync(path, `${JSON.stringify({ cwd: '/moved/project' })}\n`);
+      utimesSync(path, new Date(), new Date(Date.now() + 5_000));
+      chmodSync(path, 0o000);
+      expect(await adapter.find(query)).toEqual([]);
+      chmodSync(path, 0o644);
+      expect((await adapter.find(query)).map((group) => group.place.folder)).toEqual([
+        '/moved/project',
+      ]);
     } finally {
       chmodSync(path, 0o644);
       rmSync(dir, { recursive: true, force: true });

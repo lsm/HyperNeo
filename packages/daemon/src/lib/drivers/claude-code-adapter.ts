@@ -58,7 +58,10 @@ export async function readClaudeCodeFolders(
       if (record !== undefined) cache.set(file.path, { at: file.mtime, record });
     });
   }
-  return files.flatMap((file) => cache.get(file.path)?.record ?? []);
+  return files.flatMap((file) => {
+    const known = cache.get(file.path);
+    return known?.at === file.mtime && known.record ? [known.record] : [];
+  });
 }
 
 export function shareInFlight<T>(run: () => Promise<T>): () => Promise<T> {
