@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -174,6 +174,31 @@ describe('createClaudeCodeAdapter', () => {
         (await adapter.find({ includeClosed: false, limit: 20 })).map((group) => group.place.folder)
       ).toEqual(['/late/project']);
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('retries a transcript it could not read instead of hiding its folder', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    const path = join(dir, 'encoded', 'locked.jsonl');
+    try {
+      mkdirSync(join(dir, 'encoded'));
+      writeFileSync(path, `${JSON.stringify({ cwd: '/locked/project' })}\n`);
+      chmodSync(path, 0o000);
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+      });
+      const query = { includeClosed: false, limit: 20 };
+      expect(await adapter.find(query)).toEqual([]);
+      chmodSync(path, 0o644);
+      expect((await adapter.find(query)).map((group) => group.place.folder)).toEqual([
+        '/locked/project',
+      ]);
+    } finally {
+      chmodSync(path, 0o644);
       rmSync(dir, { recursive: true, force: true });
     }
   });

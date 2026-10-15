@@ -28,14 +28,17 @@ interface ClaudeFolder {
 
 type FolderCache = Map<string, { at: number; record: ClaudeFolder | null }>;
 
-async function readClaudeFolder(path: string, at: number): Promise<ClaudeFolder | null> {
+async function readClaudeFolder(
+  path: string,
+  at: number
+): Promise<ClaudeFolder | null | undefined> {
   try {
     const folder =
       claudeTranscriptCwd(await readFeedPrefix(path, CWD_PREFIX_BYTES)) ||
       claudeTranscriptCwd(await readFeedPrefix(path));
     return folder ? { sessionId: basename(path, '.jsonl'), folder, at } : null;
   } catch {
-    return null;
+    return undefined;
   }
 }
 
@@ -50,9 +53,10 @@ export async function readClaudeCodeFolders(
   for (let start = 0; start < stale.length; start += HEAD_READS_AT_ONCE) {
     const batch = stale.slice(start, start + HEAD_READS_AT_ONCE);
     const records = await Promise.all(batch.map((file) => readClaudeFolder(file.path, file.mtime)));
-    batch.forEach((file, index) =>
-      cache.set(file.path, { at: file.mtime, record: records[index] })
-    );
+    batch.forEach((file, index) => {
+      const record = records[index];
+      if (record !== undefined) cache.set(file.path, { at: file.mtime, record });
+    });
   }
   return files.flatMap((file) => cache.get(file.path)?.record ?? []);
 }
