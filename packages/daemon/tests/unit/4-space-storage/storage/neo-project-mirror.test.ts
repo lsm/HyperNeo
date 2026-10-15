@@ -5,6 +5,7 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
+import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts';
 import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import {
@@ -43,6 +44,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
     db = new Database(':memory:');
     db.exec('PRAGMA foreign_keys = ON');
     createNeoTables(db);
+    runMigration313(db);
     runMigration361(db);
     repo = new NeoRepository(db);
   });
@@ -454,6 +456,30 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
         .map((project) => project.id)
         .sort()
     ).toEqual(['project:a', 'project:b']);
+    const holder = (
+      raw
+        .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')
+        .get('repository:github.com/lsm/app') as { project_id: string }
+    ).project_id;
+    const kept = holder === 'project:a' ? 'project:b' : 'project:a';
+    const folder = `folder:laptop\u0000/w/${kept}`;
+    raw
+      .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+      .run(folder, kept);
+    const shallow = workspace(`/w/${kept}`, 'laptop');
+    mirrorNeoWorkspaceProjects(raw, [
+      {
+        ...shallow,
+        place: {
+          ...shallow.place,
+          codeIdentity: undefined,
+          remotes: ['git@github.com:lsm/app.git'],
+        },
+      },
+    ]);
+    expect(
+      raw.prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?').get(folder)
+    ).toEqual({ project_id: kept });
     raw.prepare('DELETE FROM neo_asks').run();
     ask(NEO_PROJECT_SAME);
     expect(allowed()).toBe(true);

@@ -320,7 +320,8 @@ export function backfillNeoRepositoryIdentities(db: Database): boolean {
 
 export function persistNeoWorkspaceProjects(
   db: Database,
-  projects: readonly NeoWorkspaceProject[]
+  projects: readonly NeoWorkspaceProject[],
+  allowed: (a: string, b: string) => boolean = () => true
 ): boolean {
   const repo = new NeoRepository(db);
   return db.transaction(() => {
@@ -351,12 +352,21 @@ export function persistNeoWorkspaceProjects(
           existing.revision
         );
       }
-      for (const alias of project.aliases)
+      for (const alias of project.aliases) {
+        const held = (
+          db
+            .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')
+            .get(alias) as {
+            project_id: string;
+          } | null
+        )?.project_id;
+        if (held && held !== id && !allowed(held, id)) continue;
         db.prepare(
           `INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)
           ON CONFLICT(alias) DO UPDATE SET project_id = excluded.project_id
           WHERE excluded.alias LIKE 'folder:%' OR excluded.alias LIKE 'work:%'`
         ).run(alias, id);
+      }
     }
     return changed;
   })();
@@ -380,7 +390,7 @@ export const mirrorNeoWorkspaceProjects = (superpipe({})('neo-project-mirror') a
   .pipe(
     (db: Database, projects: readonly NeoWorkspaceProject[]) => {
       const merged = mergeNeoMirroredDuplicates(db, projects);
-      const persisted = persistNeoWorkspaceProjects(db, projects);
+      const persisted = persistNeoWorkspaceProjects(db, projects, neoProjectMergeAllowed(db));
       return backfillNeoRepositoryIdentities(db) || persisted || merged;
     },
     ['db', 'projects'],
