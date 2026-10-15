@@ -7,7 +7,6 @@ import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   findNeoSessionNotice,
-  isNeoAdoptOnlyAsk,
   isNeoTrackedFollowUp,
   keepNeoTrackedSessions,
   NEO_SESSION_TRACK_MS,
@@ -29,6 +28,7 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 const ref = { adapter: 'codex-desktop', id: 't1' };
 const key = neoSessionKey(ref);
@@ -39,14 +39,6 @@ const notice = (overrides: Partial<NeoSessionNotice> = {}): NeoSessionNotice => 
   kind: 'failed',
   at: 1,
   ...overrides,
-});
-
-describe('isNeoAdoptOnlyAsk', () => {
-  test('approves an ask only when the adopted card is its only work', () => {
-    expect(isNeoAdoptOnlyAsk({ workIds: ['w1'] }, 'w1')).toBe(true);
-    expect(isNeoAdoptOnlyAsk({ workIds: ['w1', 'w2'] }, 'w1')).toBe(false);
-    expect(isNeoAdoptOnlyAsk({ workIds: ['w2'] }, 'w1')).toBe(false);
-  });
 });
 
 describe('isNeoTrackedFollowUp', () => {
@@ -244,33 +236,46 @@ describe('neo.session.track', () => {
     };
     const registry = createOperationRegistry(createNeoOperations(service));
     expect(service.trackedSessions.size).toBe(0);
+    const turn = (messageId: string) => ({
+      ...neo,
+      neoTurn: { ...neo.neoTurn, messageId },
+    });
     const adopted = await invokeOperation(
       registry,
       'neo.work.propose',
-      {
-        requestKey: 'track',
-        title: 'Quiet-model research',
-        instruction: 'Follow the research session.',
-        goal: 'Finish the quiet-model research',
-        doneWhen: '- the research is written up',
-        work: { verb: 'adopt', ref },
-      },
+      withNeoProposalAsk(
+        service,
+        'neo.work.propose',
+        {
+          requestKey: 'track',
+          title: 'Quiet-model research',
+          instruction: 'Follow the research session.',
+          goal: 'Finish the quiet-model research',
+          work: { verb: 'adopt', ref },
+        },
+        neo
+      ),
       neo
     );
     expect(adopted).toMatchObject({ value: { ok: true } });
     expect(service.driverTargets.adoptedRefs(0)).toEqual([ref]);
     const propose = async (label: string, target: { adapter: string; id: string }) => {
+      const caller = label === 'follow-up' ? neo : turn(label);
       const proposed = await invokeOperation(
         registry,
         'neo.work.propose',
-        {
-          title: 'Finish the write-up',
-          instruction: `Write up the findings (${label}).`,
-          goal: 'A finished write-up',
-          doneWhen: '- the write-up is in the thread',
-          work: { verb: 'send', ref: target },
-        },
-        neo
+        withNeoProposalAsk(
+          service,
+          'neo.work.propose',
+          {
+            title: 'Finish the write-up',
+            instruction: `Write up the findings (${label}).`,
+            goal: 'A finished write-up',
+            work: { verb: 'send', ref: target },
+          },
+          caller
+        ),
+        caller
       );
       const card = (proposed as { value: { work: { id: string } } }).value.work;
       return service.askRecords.forWork(card.id);
@@ -364,23 +369,31 @@ describe('neo.session.track', () => {
           .map((job) => JSON.stringify(job.payload))
           .join('\n')
       ).toContain('tapped Track');
+      const trackAsk = service.askRecords
+        .list()
+        .find((ask) => ask.originMessageId?.startsWith(`neo-track:${key}:`));
+      expect(trackAsk).toMatchObject({
+        doneSource: 'human',
+        doneItems: [{ id: 'i1', check: null }],
+      });
 
       const proposed = await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.work.propose',
         {
           requestKey: 'track',
+          askId: trackAsk!.id,
+          delivers: ['i1'],
           title: 'Quiet-model research',
           instruction: 'Follow the research session.',
           goal: 'Research quiet models',
-          doneWhen: '- findings written up',
           work: { verb: 'adopt', ref },
         },
         {
           source: 'mcp',
           sessionId: 'neo:root',
           role: 'neo',
-          neoTurn: { messageId: 'turn-1', human: false, isLive: () => true },
+          neoTurn: { messageId: trackAsk!.originMessageId!, human: false, isLive: () => true },
         }
       );
       expect(proposed).toMatchObject({ value: { ok: true } });

@@ -25,6 +25,7 @@ import {
   requireNeoHumanWorkOrigin,
 } from '../../../../src/lib/neo/work-origin.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 describe('Neo existing trusted human work input', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -104,7 +105,7 @@ describe('Neo existing trusted human work input', () => {
     return invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
       name,
-      input,
+      withNeoProposalAsk(service, name, input, source),
       source
     );
   }

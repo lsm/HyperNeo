@@ -26,10 +26,6 @@ export function isNeoTrackedFollowUp(
   return next?.verb === 'send' && live(next.ref);
 }
 
-export function isNeoAdoptOnlyAsk(ask: Pick<NeoAsk, 'workIds'>, workId: string): boolean {
-  return ask.workIds.length === 1 && ask.workIds[0] === workId;
-}
-
 export function requireNeoTrackRoot(
   root: string | undefined
 ): { value: string } | { reason: Rejection } {
