@@ -246,27 +246,24 @@ describe('NeoCrossProjectRepository', () => {
     }
     const reopened = new NeoCrossProjectRepository(sql);
     expect(reopened.ready(group)).toBe(true);
-    expect(reopened.publicationProblem(input, reopened.members(group)[0].id)).toBe(
-      'cross_project_reply_to_root'
-    );
     const ledger = new NeoPublicationRepository(sql);
-    expect(reopened.append(input, undefined, () => ledger.append(input))).toMatchObject({
+    expect(reopened.append(input, () => ledger.append(input))).toMatchObject({
       accepted: true,
       created: true,
     });
-    expect(reopened.append(input, undefined, () => ledger.append(input))).toMatchObject({
+    expect(reopened.append(input, () => ledger.append(input))).toMatchObject({
       accepted: true,
       created: false,
     });
     const retry = { ...input, publicationId: crypto.randomUUID() };
     expect(reopened.publicationProblem(retry)).toBeNull();
-    expect(reopened.append(retry, undefined, () => ledger.append(retry))).toMatchObject({
+    expect(reopened.append(retry, () => ledger.append(retry))).toMatchObject({
       accepted: true,
       created: false,
       publication: { publicationId: input.publicationId },
     });
     const changed = { ...retry, shortText: 'A different aggregate.' };
-    expect(reopened.append(changed, undefined, () => ledger.append(changed))).toMatchObject({
+    expect(reopened.append(changed, () => ledger.append(changed))).toMatchObject({
       accepted: true,
       created: true,
     });

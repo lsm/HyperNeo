@@ -145,7 +145,7 @@ describe('Cross-project runtime', () => {
     };
     expect(await invoke('neo.publication.publish', draft, holder)).toMatchObject({
       kind: 'completed',
-      value: { accepted: false, reason: 'cross_project_reply_to_root' },
+      value: { accepted: false, reason: 'consultation_answer' },
     });
     expect(
       await invoke('neo.project.respond', { id: first.id, answer: 'Alpha finding' }, holder)

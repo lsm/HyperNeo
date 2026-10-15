@@ -10,24 +10,19 @@ type Rejection = { accepted: false; reason: string; detail?: string };
 type Receipt = NeoPublicationAppendResult | Rejection;
 
 export interface NeoPublicationCommitDeps {
-  commit(input: NeoPublicationInput, consultationId: string | undefined): Receipt;
+  commit(input: NeoPublicationInput): Receipt;
   published(input: NeoPublicationInput, publication: NeoPublication): void;
 }
 
 export function createNeoPublicationCommit(deps: NeoPublicationCommitDeps) {
   return (superpipe({})('neo-publication-commit') as PipelineAPI)
-    .input(['input', 'consultationId'])
+    .input(['input'])
     .pipe(
       (input: NeoPublicationInput) => requirePublicationNews(input, input),
       'input',
       'result:receipt'
     )
-    .pipe(
-      (input: NeoPublicationInput, consultationId: string | undefined) =>
-        deps.commit(input, consultationId),
-      ['input', 'consultationId'],
-      'receipt'
-    )
+    .pipe((input: NeoPublicationInput) => deps.commit(input), 'input', 'receipt')
     .pipe(
       (receipt: Receipt, input: NeoPublicationInput) => {
         if (receipt.accepted && receipt.created) deps.published(input, receipt.publication);
@@ -36,5 +31,5 @@ export function createNeoPublicationCommit(deps: NeoPublicationCommitDeps) {
       ['receipt', 'input'],
       'receipt'
     )
-    .end('receipt') as (input: NeoPublicationInput, consultationId?: string) => Receipt;
+    .end('receipt') as (input: NeoPublicationInput) => Receipt;
 }

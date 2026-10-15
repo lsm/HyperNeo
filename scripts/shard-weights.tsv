@@ -262,13 +262,11 @@
 8	packages/daemon/tests/unit/1-core/operations/neo-check-registry.test.ts
 344	packages/daemon/tests/unit/1-core/operations/neo-coding-preparation.test.ts
 7	packages/daemon/tests/unit/1-core/operations/neo-consultation-origin.test.ts
-5083	packages/daemon/tests/unit/1-core/operations/neo-consultation-publication-wire.test.ts
 8	packages/daemon/tests/unit/1-core/operations/neo-consultation-receipt.test.ts
 12	packages/daemon/tests/unit/1-core/operations/neo-consultation-recovery.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-consultation-reply-content.test.ts
 324	packages/daemon/tests/unit/1-core/operations/neo-consultation-reply.test.ts
 321	packages/daemon/tests/unit/1-core/operations/neo-consultation-request-content.test.ts
-341	packages/daemon/tests/unit/1-core/operations/neo-consultation-return-route.test.ts
 124	packages/daemon/tests/unit/1-core/operations/neo-conversation-ask-read.test.ts
 36	packages/daemon/tests/unit/1-core/operations/neo-conversation-images.test.ts
 8	packages/daemon/tests/unit/1-core/operations/neo-coordinator-cwd.test.ts
@@ -810,7 +808,6 @@
 13437	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-spaces-autonomy-level_test.ts
 32	packages/daemon/tests/unit/4-space-storage/storage/migrations/sentinel-replacement_test.ts
 263	packages/daemon/tests/unit/4-space-storage/storage/neo-atomic-intake.test.ts
-27958	packages/daemon/tests/unit/4-space-storage/storage/neo-consultation-publication-atomic.test.ts
 35	packages/daemon/tests/unit/4-space-storage/storage/neo-consultation-repository.test.ts
 681	packages/daemon/tests/unit/4-space-storage/storage/neo-consultation-waiter-repository.test.ts
 260	packages/daemon/tests/unit/4-space-storage/storage/neo-context-write-grants.test.ts
