@@ -92,14 +92,26 @@ describe('project cleanup plan', () => {
     ).toEqual([{ action: 'merge', projectId: 'topic', title: 'Topic', targetId: 'ios' }]);
   });
 
-  test('a project with content, no repository and no home is kept however little it was used', () => {
+  test('a one-off project with no repository and no home is archived; ongoing work, no work, or another machine is kept', () => {
+    expect(plan([project('once', oneOff)])).toEqual([
+      { action: 'archive', projectId: 'once', title: 'once' },
+    ]);
     expect(
       plan([
-        project('once', oneOff),
         project('notes', { context: 10, holderMessages: 4 }),
-        project('addressed', { asks: 1, routed: 1 }),
+        project('host', { ...oneOff, aliases: ['folder:here2\u0000/x'] }),
       ])
     ).toEqual([]);
+    const twoDays = {
+      asks: 1,
+      work: [
+        { lastActivityAt: DAY, ref: null },
+        { lastActivityAt: 3 * DAY, ref: null },
+      ],
+    };
+    expect(plan([project('days', twoDays), project('addressed', { asks: 1, routed: 1 })])).toEqual(
+      []
+    );
   });
 
   test('another machine is no home', () => {
@@ -108,7 +120,7 @@ describe('project cleanup plan', () => {
         project('away', { title: 'App', aliases: [repo, 'folder:tts\u0000/app'] }),
         project('topic', { title: 'App', ...oneOff }),
       ])
-    ).toEqual([]);
+    ).toEqual([{ action: 'archive', projectId: 'topic', title: 'App' }]);
   });
 
   test('live, section, pinned and other-machine projects are left alone', () => {
