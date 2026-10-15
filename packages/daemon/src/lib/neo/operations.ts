@@ -1362,16 +1362,16 @@ export function createNeoOperations(service: NeoService) {
         : null;
       if (projectId && !service.repo.getProject(projectId))
         return { ok: false as const, reason: 'Project not found.' };
-      void Promise.resolve()
-        .then(() =>
-          invokeOperation(
+      setTimeout(
+        () =>
+          void invokeOperation(
             service.sessions.getOperationRegistry(),
             'work.find',
             { limit: 50 },
             caller
-          )
-        )
-        .catch(() => null);
+          ).catch(() => null),
+        0
+      );
       const sessionId = await service.open(projectId);
       return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
     }
