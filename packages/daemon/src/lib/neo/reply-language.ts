@@ -37,6 +37,10 @@ export function neoPromptText(messages: readonly SDKMessage[]): string {
     .join('\n');
 }
 
+export function isNeoReplyLanguageInput(internal: boolean, text: string | undefined): boolean {
+  return !internal && !text?.trimStart().startsWith('/');
+}
+
 export function neoReplyLanguageNote(language: NeoReplyLanguage): string {
   return `Reply language for this turn: ${language}, the language of the human message it answers. Write everything for the human in ${language} unless that message asks for another language.`;
 }

@@ -35,6 +35,7 @@ import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { NeoHolderTurn } from '../neo/holder-turn.ts';
 import {
+  isNeoReplyLanguageInput,
   type NeoReplyLanguage,
   readNeoTurnLanguage,
   withNeoReplyLanguage,
@@ -2291,7 +2292,7 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      yield turnLanguage && message.uuid
+      yield turnLanguage && message.uuid && isNeoReplyLanguageInput(isInternal, promptText)
         ? withNeoReplyLanguage(message, turnLanguage(message.uuid))
         : message;
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());

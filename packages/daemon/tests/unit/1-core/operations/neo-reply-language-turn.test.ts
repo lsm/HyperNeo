@@ -3,6 +3,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import {
   detectNeoReplyLanguage,
+  isNeoReplyLanguageInput,
   readNeoTurnLanguage,
   withNeoReplyLanguage,
 } from '../../../../src/lib/neo/reply-language.ts';
@@ -51,6 +52,16 @@ describe('readNeoTurnLanguage', () => {
     expect(
       readNeoTurnLanguage({ sessionId: 'root', messageId: 'neo-trigger:x' }, reads)
     ).toBeNull();
+  });
+});
+
+describe('isNeoReplyLanguageInput', () => {
+  test('stamps human and note inputs, never daemon control prompts or slash commands', () => {
+    expect(isNeoReplyLanguageInput(false, 'what is running?')).toBe(true);
+    expect(isNeoReplyLanguageInput(false, undefined)).toBe(true);
+    expect(isNeoReplyLanguageInput(true, 'continue')).toBe(false);
+    expect(isNeoReplyLanguageInput(false, '/compact')).toBe(false);
+    expect(isNeoReplyLanguageInput(false, ' /clear')).toBe(false);
   });
 });
 

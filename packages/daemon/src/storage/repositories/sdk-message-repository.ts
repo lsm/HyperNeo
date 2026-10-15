@@ -1950,7 +1950,7 @@ export class SDKMessageRepository {
         `SELECT sdk_message FROM sdk_messages
           WHERE session_id = ? AND message_type = 'user'
             AND json_extract(sdk_message, '$.inputKind') = 'human'
-          ORDER BY timestamp DESC, id DESC LIMIT 1`
+          ORDER BY timestamp DESC, rowid DESC LIMIT 1`
       )
       .get(sessionId) as { sdk_message: string } | undefined;
     if (!row) return null;
