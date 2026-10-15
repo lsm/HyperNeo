@@ -356,6 +356,7 @@ const Scope = z
     askId: z.string().min(1).optional(),
     all: z.boolean().optional(),
     sinceRev: z.string().min(1).max(40).optional(),
+    summaries: z.boolean().optional(),
   })
   .default({});
 const Save = z.object({
@@ -957,13 +958,23 @@ export function createNeoOperations(service: NeoService) {
     });
   }
 
-  function snapshot(caller: OperationCaller, requested?: string, askId?: string) {
-    const built = buildSnapshot(caller, requested, askId);
+  function snapshot(
+    caller: OperationCaller,
+    requested?: string,
+    askId?: string,
+    summaries = false
+  ) {
+    const built = buildSnapshot(caller, requested, askId, summaries);
     return built.ok && caller.source !== 'rpc'
       ? fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET, { focused: !!askId })
       : built;
   }
-  function buildSnapshot(caller: OperationCaller, requested?: string, askId?: string) {
+  function buildSnapshot(
+    caller: OperationCaller,
+    requested: string | undefined,
+    askId: string | undefined,
+    summaries: boolean
+  ) {
     const focus = askId ? service.askRecords.get(askId) : null;
     if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
@@ -998,14 +1009,14 @@ export function createNeoOperations(service: NeoService) {
     const listed = focus
       ? [focus]
       : service.askRecords.list(scope === undefined ? undefined : scope);
+    const summarize = caller.source === 'rpc' && !focus && summaries;
     const asks = projectNeoSnapshotAsks(
       listed,
-      NEO_SNAPSHOT_SETTLED_ASKS,
+      caller.source === 'rpc' && !summarize ? 50 : NEO_SNAPSHOT_SETTLED_ASKS,
       Date.now(),
       new Set(workIds.filter((id) => service.isContinueStalled(id)))
     );
     const { workPrs, cards } = projectCards(visibleWork, asks);
-    const summarize = caller.source === 'rpc' && !focus;
     const built = {
       ok: true as const,
       sessionId: service.repo.getBindingForProject(scope ?? null)?.sessionId ?? null,
@@ -1221,7 +1232,7 @@ export function createNeoOperations(service: NeoService) {
     (input, caller) => {
       const scope = scopeOf(input, caller);
       const read = neoSnapshotRevision(
-        snapshot(caller, input.projectId, scope.askId),
+        snapshot(caller, input.projectId, scope.askId, input.summaries),
         input.sinceRev,
         scope.scopedTo
       );
@@ -1357,7 +1368,10 @@ export function createNeoOperations(service: NeoService) {
         { limit: 50 },
         caller
       );
-      return { ...snapshot(caller), sessionId: await service.open(projectId) };
+      return {
+        ...snapshot(caller, undefined, undefined, input.summaries),
+        sessionId: await service.open(projectId),
+      };
     }
   );
   const cancelConsultation = path(

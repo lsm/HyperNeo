@@ -384,7 +384,7 @@ describe('Neo MVP', () => {
     expect(boundedSnapshot.value.work.some((item) => item.id === queued.id)).toBe(false);
   });
 
-  test('the human snapshot sends the newest settled asks as summaries and reads one ask whole', async () => {
+  test('a human snapshot that asks for summaries sends the newest settled asks as summaries and reads one ask whole', async () => {
     const asks = Array.from(
       { length: 12 },
       (_, index) =>
@@ -402,7 +402,10 @@ describe('Neo MVP', () => {
     );
     for (const ask of asks.slice(1))
       service.askRecords.settle(ask, 'achieved', 'Shipped.', 'merged');
-    const read = (await invoke('neo.snapshot')) as {
+    const full = (await invoke('neo.snapshot')) as { value: { asks: NeoAsk[] } };
+    expect(full.value.asks).toHaveLength(12);
+    expect(full.value.asks.some((ask) => ask.summarized)).toBe(false);
+    const read = (await invoke('neo.snapshot', { summaries: true })) as {
       value: { asks: NeoAsk[]; moreSettled: boolean };
     };
     expect(read.value.moreSettled).toBe(true);
