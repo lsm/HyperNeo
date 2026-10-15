@@ -588,8 +588,8 @@ export const neoAskSummary = (input: z.infer<typeof Settle>) => input.summary ??
 
 export const isNeoAskReplay = (ask: NeoAsk, input: z.infer<typeof Settle>) =>
   ask.status === input.outcome &&
-  ask.outcome === neoAskSummary(input) &&
-  (ask.evidence ?? ask.outcome) === input.evidence;
+  (ask.status === 'achieved' ||
+    (ask.outcome === neoAskSummary(input) && (ask.evidence ?? ask.outcome) === input.evidence));
 
 export function requireNeoAskSummary(
   input: z.infer<typeof Settle>,

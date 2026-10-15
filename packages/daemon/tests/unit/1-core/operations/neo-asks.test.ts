@@ -1466,7 +1466,7 @@ describe('neo.ask operations', () => {
       evidence: settle.evidence,
     });
     expect(await invoke('neo.ask.settle', settle)).toMatchObject({
-      value: { ok: false, reason: 'ask_settled: this ask is already achieved.' },
+      value: { ok: true, ask: { status: 'achieved', outcome: settle.evidence } },
     });
     expect(
       await invoke('neo.ask.settle', { ...settle, outcome: 'blocked', evidence: 'x' })
@@ -3633,10 +3633,12 @@ describe('requireNeoAskSettleable', () => {
   const settle = { id: 'a1', outcome: 'achieved' as const, evidence: 'PR merged.' };
   const done = { ...ask, status: 'achieved' as const, outcome: 'PR merged.' };
 
-  test('refuses a different outcome on a final ask', () => {
-    expect(requireNeoAskSettleable(settle, { ...done, outcome: 'Other.' })).toEqual({
+  test('refuses a different outcome on a final ask, and achieving it again succeeds', () => {
+    expect(requireNeoAskSettleable({ ...settle, outcome: 'abandoned' }, done)).toEqual({
       reason: { ok: false, reason: 'ask_settled: this ask is already achieved.' },
     });
+    const other = { ...done, outcome: 'Other.' };
+    expect(requireNeoAskSettleable(settle, other)).toEqual({ value: other });
   });
 
   test('admits an open ask and an identical replay', () => {
@@ -3666,11 +3668,18 @@ describe('isNeoAskReplay', () => {
   const done = { ...ask, status: 'achieved' as const, outcome: 'Merged in #12.' };
   test.each<[string, NeoAsk, boolean]>([
     ['the same summary and evidence', { ...done, evidence: 'PR #12 merged.' }, true],
-    ['other evidence', { ...done, evidence: 'PR #13 merged.' }, false],
-    ['another summary', { ...done, outcome: 'Done.', evidence: 'PR #12 merged.' }, false],
+    ['achieved again with other evidence', { ...done, evidence: 'PR #13 merged.' }, true],
+    ['achieved again with another summary', { ...done, outcome: 'Done.' }, true],
     ['another status', { ...done, status: 'abandoned', evidence: 'PR #12 merged.' }, false],
   ])('%s', (_case, current, replay) => {
     expect(isNeoAskReplay(current, settle)).toBe(replay);
+  });
+
+  test('a blocked ask replays only the same summary and evidence', () => {
+    const blocked = { ...settle, outcome: 'blocked' as const };
+    const stuck = { ...ask, status: 'blocked' as const, outcome: 'Merged in #12.' };
+    expect(isNeoAskReplay({ ...stuck, evidence: 'PR #12 merged.' }, blocked)).toBe(true);
+    expect(isNeoAskReplay({ ...stuck, evidence: 'PR #13 merged.' }, blocked)).toBe(false);
   });
 });
 
