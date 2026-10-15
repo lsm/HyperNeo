@@ -1,9 +1,5 @@
 import type { Place, PlaceGroup } from '../drivers/types.ts';
-import {
-  canNeoMirrorCreateProject,
-  isNeoOngoingPlace,
-  planNeoWorkspaceProjects,
-} from './project-mirror.ts';
+import { canNeoMirrorCreateProject, planNeoWorkspaceProjects } from './project-mirror.ts';
 
 export type NeoProjectFacts = {
   id: string;
@@ -41,6 +37,12 @@ export function neoMirroredAliases(
       .filter(canNeoMirrorCreateProject)
       .flatMap((project) => project.aliases)
   );
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function isNeoOngoingPlace(work: readonly { lastActivityAt: number }[]): boolean {
+  return new Set(work.map((item) => Math.floor(item.lastActivityAt / DAY_MS))).size > 1;
 }
 
 const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork > 0;

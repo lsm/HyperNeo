@@ -11,7 +11,6 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import {
   backfillNeoRepositoryIdentities,
   canNeoMirrorCreateProject,
-  isNeoOngoingPlace,
   isNeoPlumbingFolder,
   neoProjectMergeAllowed,
   neoRepositoryIdentity,
@@ -112,7 +111,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
     expect(canNeoMirrorCreateProject({ aliases: ['repository:github.com/lsm/neokai'] })).toBe(true);
   });
 
-  test('a folder without a repository becomes a project once work happened there on two days', () => {
+  test('a folder without a repository never becomes a project, even with work on several days', () => {
     const day = 24 * 60 * 60 * 1000;
     const session = (id: string, at: number) => ({
       ref: { adapter: 'claude-desktop', id },
@@ -131,7 +130,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
     ]);
     expect(repo.listProjects()).toEqual([]);
     mirrorNeoWorkspaceProjects(db, [notes([session('a', 10 * day), session('c', 12 * day)])]);
-    expect(repo.listProjects().map((project) => project.title)).toEqual(['notes']);
+    expect(repo.listProjects()).toEqual([]);
   });
 
   test('ignores places reported by attached daemons', () => {
@@ -626,16 +625,5 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     mirrorNeoWorkspaceProjects(raw, place('/new', 'b'));
     expect(store.listProjects()).toHaveLength(1);
     full.close();
-  });
-});
-
-describe('isNeoOngoingPlace', () => {
-  test('counts work on more than one day as ongoing, and one day of work as a one-off', () => {
-    const day = 24 * 60 * 60 * 1000;
-    expect(isNeoOngoingPlace([])).toBe(false);
-    expect(isNeoOngoingPlace([{ lastActivityAt: day + 1 }, { lastActivityAt: day + 5_000 }])).toBe(
-      false
-    );
-    expect(isNeoOngoingPlace([{ lastActivityAt: day }, { lastActivityAt: 3 * day }])).toBe(true);
   });
 });

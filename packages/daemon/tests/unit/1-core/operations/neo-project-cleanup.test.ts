@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
+  isNeoOngoingPlace,
   type NeoProjectFacts,
   neoCleanupFolders,
   neoMirroredAliases,
@@ -175,7 +176,7 @@ describe('NeoRepository.projectCleanupFacts', () => {
 });
 
 describe('neoMirroredAliases', () => {
-  test('holds the aliases of places the mirror would make a project for: repositories and ongoing folders', () => {
+  test('holds only repository aliases: folders without a repository are never mirrored, even when ongoing', () => {
     const group = (folder: string, remotes?: string[], days: number[] = []) => ({
       place: { folder, machine: 'here', name: folder.slice(1), ...(remotes ? { remotes } : {}) },
       lastActivityAt: 0,
@@ -199,7 +200,7 @@ describe('neoMirroredAliases', () => {
       ),
     ];
     expect(aliases).toContain('repository:github.com/lsm/app');
-    expect(aliases.some((alias) => alias.includes('/ongoing'))).toBe(true);
+    expect(aliases.some((alias) => alias.includes('/ongoing'))).toBe(false);
     expect(aliases.some((alias) => alias.includes('/once'))).toBe(false);
   });
 });
@@ -216,5 +217,16 @@ describe('neoCleanupFolders', () => {
         'here'
       )
     ).toEqual(['/a']);
+  });
+});
+
+describe('isNeoOngoingPlace', () => {
+  test('counts work on more than one day as ongoing, and one day of work as a one-off', () => {
+    const day = 24 * 60 * 60 * 1000;
+    expect(isNeoOngoingPlace([])).toBe(false);
+    expect(isNeoOngoingPlace([{ lastActivityAt: day + 1 }, { lastActivityAt: day + 5_000 }])).toBe(
+      false
+    );
+    expect(isNeoOngoingPlace([{ lastActivityAt: day }, { lastActivityAt: 3 * day }])).toBe(true);
   });
 });
