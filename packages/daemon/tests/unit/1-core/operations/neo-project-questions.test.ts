@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
@@ -188,6 +189,56 @@ describe('reorganize merge questions on a real store', () => {
       true
     );
   };
+
+  test('retitles a generated title from the stored folder or the local repository, and records local identity', async () => {
+    const uuid = '50028a5f-f9ce-4692-a1ab-63f786f65b1f';
+    const save = (id: string, title: string, summary = `Project: ${title}`) =>
+      repo.saveProject({ id, title, summary, context: '' }, 0);
+    save('gone', uuid);
+    db.prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)').run(
+      `folder:elsewhere\u0000/w/bg-test-repo-2448f54b/worktrees/${uuid}`,
+      'gone'
+    );
+    save('kept', 'e6e0cc8b-1aba-47ce-9453-838b17d96dda', 'Human notes');
+    db.prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)').run(
+      'folder:elsewhere\u0000/w/readable/e6e0cc8b-1aba-47ce-9453-838b17d96dda',
+      'kept'
+    );
+    const checkout = join(directory, 'neo-ios');
+    const tree = join(directory, 'ee72a104-5c52-4e27-b08d-dcbfc49a1d7f');
+    mkdirSync(checkout);
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', ['-C', cwd, ...args], {
+        env: {
+          ...process.env,
+          GIT_CONFIG_GLOBAL: '/dev/null',
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_AUTHOR_NAME: 't',
+          GIT_AUTHOR_EMAIL: 't@example.com',
+          GIT_COMMITTER_NAME: 't',
+          GIT_COMMITTER_EMAIL: 't@example.com',
+        },
+      })
+        .toString()
+        .trim();
+    git(checkout, 'init');
+    git(checkout, 'commit', '--allow-empty', '-m', 'first');
+    git(checkout, 'worktree', 'add', '-b', 'topic', tree);
+    save('local', 'ee72a104-5c52-4e27-b08d-dcbfc49a1d7f');
+    db.prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)').run(
+      `folder:${hostname()}\u0000${tree}`,
+      'local'
+    );
+    await runtime().mergeProjects();
+    expect(repo.getProject('gone')?.title).toBe('bg-test-repo-2448f54b');
+    expect(repo.getProject('kept')?.title).toBe('e6e0cc8b-1aba-47ce-9453-838b17d96dda');
+    expect(repo.getProject('local')?.title).toBe('neo-ios');
+    expect(
+      db
+        .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')
+        .get(`git:${git(checkout, 'rev-parse', 'HEAD')}`)
+    ).toEqual({ project_id: 'local' });
+  });
 
   test('asks the human once and keeps the question pending across runs', async () => {
     expect(await runtime().mergeProjects()).toEqual({
