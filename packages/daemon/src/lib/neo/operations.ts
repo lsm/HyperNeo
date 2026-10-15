@@ -55,7 +55,6 @@ import {
   type NeoCardView,
   type NeoReceiptAskOrigin,
   type NeoWorkPr,
-  type NeoRouteFailure,
   type NeoSnapshot,
   type NeoWaitingOnHuman,
   type NeoWorkResourceReceipt,
@@ -75,6 +74,10 @@ import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { requireNeoProposal, type NeoProposal } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
+import {
+  createNeoRouteFailureOperation,
+  NeoRouteFailureSchema,
+} from './route-failure-operation.ts';
 import {
   createNeoAskForwardOperation,
   neoForwardedText,
@@ -344,13 +347,7 @@ const SnapshotOk = z.object({
       ),
     } satisfies ZodShape<NeoWaitingOnHuman>)
     .optional(),
-  routeFailure: z
-    .object({
-      at: z.number(),
-      signal: z.string(),
-      cause: z.string(),
-    } satisfies ZodShape<NeoRouteFailure>)
-    .optional(),
+  routeFailure: NeoRouteFailureSchema.optional(),
   preferences: z
     .object({
       model: z.string(),
@@ -2295,6 +2292,7 @@ export function createNeoOperations(service: NeoService) {
       },
     }),
     createNeoRouteCorrectOperation(service.db, service.repo),
+    createNeoRouteFailureOperation(service.db),
     createNeoAskForwardOperation({
       getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),

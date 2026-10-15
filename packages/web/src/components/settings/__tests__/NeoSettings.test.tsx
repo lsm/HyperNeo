@@ -5,6 +5,7 @@ import { connectionState } from '../../../lib/state.ts';
 import {
   NeoSettings,
   neoRouteModelChoice,
+  neoRouteFailureText,
   neoRouteModelOptions,
   neoRouteTimeoutOptions,
 } from '../NeoSettings.tsx';
@@ -59,6 +60,17 @@ describe('neoRouteTimeoutOptions', () => {
   });
 });
 
+describe('neoRouteFailureText', () => {
+  it('names when the last routing failure happened and why', () => {
+    expect(
+      neoRouteFailureText(
+        { at: 1_000_000, signal: 'classifier-failed', cause: 'route model returned 429' },
+        1_000_000 + 3 * 60_000
+      )
+    ).toBe('Last routing failure · 3m ago — route model returned 429');
+  });
+});
+
 describe('NeoSettings', () => {
   afterEach(() => {
     cleanup();
@@ -87,5 +99,45 @@ describe('NeoSettings', () => {
 
     await waitFor(() => expect(hubRequest).toHaveBeenCalledWith('models.list', { useCache: true }));
     await waitFor(() => expect(screen.getByText(/DeepSeek Flash/)).toBeTruthy());
+  });
+
+  it('shows the latest routing failure under the routing model', async () => {
+    hubRequest.mockImplementation(async (method: string, params?: { name?: string }) =>
+      method === 'operation.invoke' && params?.name === 'neo.route.failure'
+        ? {
+            failure: {
+              at: Date.now() - 3 * 60_000,
+              signal: 'classifier-failed',
+              cause: 'route model returned 429',
+            },
+          }
+        : { models: [] }
+    );
+    hubRef.current = { request: hubRequest };
+    connectionState.value = 'connected';
+    render(<NeoSettings />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Last routing failure · 3m ago — route model returned 429')
+      ).toBeTruthy()
+    );
+  });
+
+  it('shows no failure line when routing never failed', async () => {
+    hubRequest.mockImplementation(async (method: string) =>
+      method === 'operation.invoke' ? { failure: null } : { models: [] }
+    );
+    hubRef.current = { request: hubRequest };
+    connectionState.value = 'connected';
+    render(<NeoSettings />);
+
+    await waitFor(() =>
+      expect(hubRequest).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.route.failure',
+        input: {},
+      })
+    );
+    expect(screen.queryByText(/Last routing failure/)).toBeNull();
   });
 });
