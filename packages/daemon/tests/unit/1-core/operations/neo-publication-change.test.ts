@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import {
   createNeoPublicationChangeOperations,
+  planNeoCorrectionAnswer,
   requireChangeable,
   requireCorrectable,
   requireOwnPublication,
@@ -13,6 +14,7 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { createNeoPublicationTable } from '../../../../src/storage/schema/m288-neo-publications.ts';
+import { createNeoRoutingLogTable } from '../../../../src/storage/schema/m299-neo-routing-log.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const conversation = '10000000-0000-4000-8000-000000000001';
@@ -54,6 +56,8 @@ function setup() {
         '2026-10-14T10:00:00.000Z'
       );
   let notified = 0;
+  const published = new Set<string>();
+  const replies: string[] = [];
   const registry = createOperationRegistry(
     createNeoPublicationChangeOperations(
       {
@@ -62,7 +66,13 @@ function setup() {
         publications,
         isConsultationReturn: (_conversationId, publicationId) =>
           publicationId === consultationReply,
+        resolveAskOrigin: (input) => ({
+          sessionId: input.sessionId,
+          messageId: `ask-of-${input.messageId}`,
+        }),
+        isTriggerPublished: (_conversationId, triggerId) => published.has(triggerId),
         notify: () => notified++,
+        noteReply: (publication) => replies.push(publication.publicationId),
       },
       () => new Date('2026-10-14T11:00:00.000Z')
     )
@@ -71,7 +81,7 @@ function setup() {
     const outcome = await invokeOperation(registry, name, input, caller);
     return outcome.kind === 'completed' ? outcome.value : outcome;
   };
-  return { db, publications, insert, call, notified: () => notified };
+  return { db, publications, insert, call, notified: () => notified, published, replies };
 }
 
 describe('neo.publication.edit', () => {
@@ -257,6 +267,117 @@ describe('NeoPublicationRepository.findByProducer', () => {
         })
       ).toMatchObject({ accepted: true });
       expect(publications.findByProducer(root.sessionId, 'm-2')?.publicationId).toBe(sameTurnReply);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('planNeoCorrectionAnswer', () => {
+  const owned = {
+    publication: { askOrigin: { sessionId: root.sessionId, messageId: 'm-1' } },
+  } as never;
+  const ask = { sessionId: root.sessionId, messageId: 'm-2' };
+
+  test('a correction answers this turn when its trigger has no reply yet', () => {
+    expect(planNeoCorrectionAnswer(owned, 'human:m-2', false, ask)).toEqual({
+      askOrigin: ask,
+      triggerId: 'human:m-2',
+    });
+  });
+
+  test('otherwise it threads under the publication it corrects', () => {
+    const threaded = { askOrigin: { sessionId: root.sessionId, messageId: 'm-1' } };
+    expect(planNeoCorrectionAnswer(owned, 'human:m-2', true, ask)).toEqual(threaded);
+    expect(planNeoCorrectionAnswer(owned, null, false, ask)).toEqual(threaded);
+  });
+});
+
+describe('neo.publication.recent', () => {
+  test('lists only your own publications, newest first, with their correction links', async () => {
+    const { db, insert, call } = setup();
+    try {
+      insert(original);
+      insert(sameTurnReply, holder.sessionId);
+      await call('neo.publication.correct', {
+        publicationId: original,
+        correctionId: correction,
+        shortText: 'Correction.',
+        fullText: 'Correction.',
+      });
+      const listed = (await call('neo.publication.recent', { limit: 5 })) as {
+        publications: { publicationId: string; corrects?: string; correctedBy?: string }[];
+      };
+      expect(listed.publications.map((item) => item.publicationId)).toEqual([correction, original]);
+      expect(listed.publications[0].corrects).toBe(original);
+      expect(listed.publications[1].correctedBy).toBe(correction);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('neo.publication.correct as a reply', () => {
+  test('in a human turn with no reply yet, the correction carries that trigger and ask', async () => {
+    const { db, insert, call } = setup();
+    try {
+      insert(original);
+      const result = (await call(
+        'neo.publication.correct',
+        {
+          publicationId: original,
+          correctionId: correction,
+          shortText: 'Correction: PR #12 did not merge.',
+          fullText: 'PR #12 is still open.',
+        },
+        {
+          source: 'mcp',
+          sessionId: root.sessionId,
+          neoTurn: { messageId: 'm-3', human: true, isLive: () => true },
+        }
+      )) as { publication: { triggerId?: string; askOrigin: { messageId: string } } };
+      expect(result.publication.triggerId).toBe('human:m-3');
+      expect(result.publication.askOrigin.messageId).toBe('ask-of-m-3');
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('a correction that answers its turn', () => {
+  const asHuman: OperationCaller = {
+    source: 'mcp',
+    sessionId: root.sessionId,
+    neoTurn: { messageId: 'm-3', human: true, isLive: () => true },
+  };
+
+  test('is the reply of its turn for the fallback and records the routed outcome of the ask', async () => {
+    const { db, publications, insert, call, replies } = setup();
+    try {
+      createNeoRoutingLogTable(db);
+      db.exec(`ALTER TABLE neo_routing_log ADD COLUMN digested_at INTEGER;
+        ALTER TABLE neo_routing_log ADD COLUMN ask_summary TEXT;
+        ALTER TABLE neo_routing_log ADD COLUMN awaiting TEXT`);
+      db.prepare(
+        `INSERT INTO neo_routing_log (message_id, conversation_id, asked_at, ask, destination, signal)
+          VALUES ('ask-of-m-3', ?, 1, 'Fix that reply', 'main', 'test')`
+      ).run(conversation);
+      insert(original);
+      await call(
+        'neo.publication.correct',
+        {
+          publicationId: original,
+          correctionId: correction,
+          shortText: 'Correction: PR #12 did not merge.',
+          fullText: 'PR #12 is still open.',
+        },
+        asHuman
+      );
+      expect(publications.findByProducer(root.sessionId, 'm-3')?.publicationId).toBe(correction);
+      expect(replies).toEqual([correction]);
+      expect(
+        db.prepare("SELECT outcome FROM neo_routing_log WHERE message_id = 'ask-of-m-3'").get()
+      ).toEqual({ outcome: 'Correction: PR #12 did not merge.' });
     } finally {
       db.close();
     }
