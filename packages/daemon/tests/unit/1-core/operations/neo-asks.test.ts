@@ -2812,6 +2812,24 @@ describe('neo.ask operations', () => {
     expect(service.resolveAskOrigin(note)).toEqual({ sessionId: 'root', messageId: 'h1' });
   });
 
+  test('a restart-recovery note continues the cut-off turn; an unbound session gets no stamp', async () => {
+    db.getSDKMessageRepo().saveSDKMessage('root', {
+      type: 'user',
+      uuid: 'h1',
+      session_id: 'root',
+      parent_tool_use_id: null,
+      inputKind: 'human',
+      message: { role: 'user', content: 'dev' },
+    } as unknown as SDKUserMessage);
+    const note = { sessionId: 'root', messageId: 'restart-recovery:h1' };
+    service.stampContinuation(note, { sessionId: 'root', messageId: 'h1' });
+    expect(service.inputTrigger(note)).toBe('human:h1');
+    expect(service.resolveAskOrigin(note)).toEqual({ sessionId: 'root', messageId: 'h1' });
+    const loose = { sessionId: 'plain', messageId: 'restart-recovery:p1' };
+    service.stampContinuation(loose, { sessionId: 'plain', messageId: 'p1' });
+    expect(service.inputTrigger(loose)).toBeNull();
+  });
+
   test('a dropped turn-limit note does not stop the next cut-off turn from getting its own', async () => {
     const results = db.getSDKMessageRepo();
     const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
