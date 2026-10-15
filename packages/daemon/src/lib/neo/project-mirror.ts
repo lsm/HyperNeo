@@ -47,12 +47,36 @@ export function neoWorkspaceTitle(workspaces: readonly Place[], primary: Place):
   if (repo) return repo;
   const tool = workspaces.find((place) => place.toolProject)?.toolProject?.name;
   if (tool) return tool;
-  const readable = (primary.folder ?? '')
-    .split(/[/\\]/)
-    .filter(Boolean)
-    .reverse()
-    .find((segment) => !GENERATED_FOLDER.test(segment));
+  const readable = neoReadableFolderName(primary.folder ?? '');
   return GENERATED_FOLDER.test(primary.name) && readable ? readable : primary.name;
+}
+
+export function neoReadableFolderName(folder: string): string | null {
+  return (
+    folder
+      .split(/[/\\]/)
+      .filter(Boolean)
+      .reverse()
+      .find((segment) => !GENERATED_FOLDER.test(segment)) ?? null
+  );
+}
+
+export function planNeoProjectRetitles(
+  projects: readonly { id: string; title: string; summary: string; revision: number }[],
+  names: Readonly<Record<string, string>>,
+  folders: readonly { projectId: string; folder: string }[]
+): { id: string; title: string; revision: number }[] {
+  return projects.flatMap((project) => {
+    if (!GENERATED_FOLDER.test(project.title) || !isNeoMirrorTitled(project)) return [];
+    const title =
+      names[project.id] ??
+      folders
+        .filter((entry) => entry.projectId === project.id)
+        .flatMap((entry) => neoReadableFolderName(entry.folder) ?? [])[0];
+    return title && title !== project.title
+      ? [{ id: project.id, title, revision: project.revision }]
+      : [];
+  });
 }
 
 export function isNeoMirrorTitled(project: { title: string; summary: string }): boolean {

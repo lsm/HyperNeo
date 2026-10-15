@@ -1,4 +1,5 @@
 import { hostname } from 'node:os';
+import { planNeoProjectRetitles } from './project-mirror.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { readNeoProjectFacts } from './project-route-facts.ts';
 import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
@@ -80,6 +81,7 @@ import {
   NEO_PROJECT_QUESTION_ATTEMPTS,
   readNeoProjectDecision,
   readNeoProjectIdentities,
+  readNeoProjectNames,
   settleNeoProjectQuestions,
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -880,10 +882,9 @@ export function neoReorganizeRuntime(
     move: (ask, cards, owner) => service.moveAsk(ask, cards, owner),
     mergeProjects: async () => {
       const merges = service.repo.projectMerges;
-      const fresh = await readNeoProjectIdentities(
-        merges.localFolders(hostname()),
-        readWorkspaceIdentity
-      );
+      const local = merges.localFolders(hostname());
+      const fresh = await readNeoProjectIdentities(local, readWorkspaceIdentity);
+      merges.recordIdentities(fresh);
       const merged = mergeNeoDuplicateProjects(
         () => merges.plan(fresh),
         (input) => merges.merge(input),
@@ -900,6 +901,23 @@ export function neoReorganizeRuntime(
         (question, attempt) => askNeoProjectQuestion(service, question, attempt),
         (line) => service.logReorganize(line)
       );
+      const names = await readNeoProjectNames(
+        merges.localFolders(hostname()),
+        readWorkspaceIdentity
+      );
+      for (const retitle of planNeoProjectRetitles(
+        service.repo.listProjects(),
+        names,
+        merges.allFolders()
+      )) {
+        const project = service.repo.getProject(retitle.id);
+        if (!project) continue;
+        service.repo.saveProject(
+          { ...project, title: retitle.title, summary: `Project: ${retitle.title}` },
+          retitle.revision
+        );
+        service.logReorganize(`neo reorganize: retitled ${retitle.id} to ${retitle.title}`);
+      }
       return { merged: [...merged, ...settled.merged], asked: settled.asked };
     },
     log: (line) => service.logReorganize(line),

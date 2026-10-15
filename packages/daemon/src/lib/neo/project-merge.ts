@@ -104,6 +104,19 @@ export async function readNeoProjectIdentities(
   return fresh;
 }
 
+export async function readNeoProjectNames(
+  folders: readonly { projectId: string; folder: string }[],
+  read: (folder: string) => Promise<{ repoName?: string }>
+): Promise<Record<string, string>> {
+  const names: Record<string, string> = {};
+  for (const { projectId, folder } of folders) {
+    if (names[projectId]) continue;
+    const { repoName } = await read(folder);
+    if (repoName) names[projectId] = repoName;
+  }
+  return names;
+}
+
 export function planNeoProjectMerges(
   state: NeoProjectMergeState,
   fresh: Readonly<Record<string, readonly string[]>>
