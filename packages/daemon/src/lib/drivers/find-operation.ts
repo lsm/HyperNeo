@@ -1,3 +1,4 @@
+import { basename, isAbsolute, join, normalize } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation } from '../operations/registry.ts';
@@ -44,10 +45,17 @@ export interface RemoteDaemons {
   ): Promise<unknown>;
 }
 
+export interface NamedFolderDeps {
+  machine: string;
+  homeDir: string;
+  isDirectory(folder: string): boolean;
+}
+
 export interface FindWorkDeps {
   adapters(): readonly WorkAdapter[];
   remote: RemoteDaemons;
   mirrorProjects?(groups: readonly PlaceGroup[]): void;
+  namedFolder?: NamedFolderDeps;
 }
 
 function describe(error: unknown): string {
@@ -74,6 +82,50 @@ export function toFindQuery(input: FindInput): FindQuery {
         includeClosed: input.includeClosed,
         limit: input.limit,
       };
+}
+
+export function expandFindFolder(input: FindInput, deps: FindWorkDeps): FindInput {
+  const folder = input.folder?.trim();
+  const homeDir = deps.namedFolder?.homeDir;
+  if (!folder || !homeDir) return input;
+  const expanded =
+    folder === '~' ? homeDir : folder.startsWith('~/') ? join(homeDir, folder.slice(2)) : folder;
+  return isAbsolute(expanded)
+    ? { ...input, folder: normalize(expanded).replace(/(.)\/+$/, '$1') }
+    : input;
+}
+
+export function readNamedFolder(input: FindInput, deps: FindWorkDeps): { folder?: string } {
+  const { folder } = input;
+  if (input.id || !folder || !isAbsolute(folder) || !deps.namedFolder) return {};
+  return deps.namedFolder.isDirectory(folder) ? { folder } : {};
+}
+
+export function addNamedPlace(
+  local: SourceOutcome,
+  named: { folder?: string },
+  deps: FindWorkDeps
+): SourceOutcome {
+  const { folder } = named;
+  const machine = deps.namedFolder?.machine;
+  const known = local.groups.some((group) =>
+    [group.place, ...(group.workspaces ?? [])].some((place) => place.folder === folder)
+  );
+  if (!folder || !machine || known) return local;
+  return {
+    ...local,
+    groups: [
+      ...local.groups,
+      {
+        place: { machine, folder, name: basename(folder) },
+        lastActivityAt: 0,
+        openCount: 0,
+        archivedCount: 0,
+        adapters: [],
+        work: [],
+      },
+    ],
+  };
 }
 
 export function keepFindId(groups: readonly PlaceGroup[], id: string | undefined): PlaceGroup[] {
@@ -220,9 +272,12 @@ export function combineFindResults(
 const runFindWork = (superpipe({})('find-work') as PipelineAPI)
   .input(['input', 'deps', 'budget'])
   .pipe(selectFindAdapters, ['input', 'deps'], 'adapters')
-  .pipe(toFindQuery, 'input', 'query')
   .pipe(askRemotely, ['input', 'deps'], 'asked')
+  .pipe(expandFindFolder, ['input', 'deps'], 'input')
+  .pipe(toFindQuery, 'input', 'query')
+  .pipe(readNamedFolder, ['input', 'deps'], 'named')
   .pipe(findLocally, ['adapters', 'query'], 'local')
+  .pipe(addNamedPlace, ['local', 'named', 'deps'], 'local')
   .pipe(
     async (local: SourceOutcome, input: FindInput) => ({
       ...local,
@@ -253,7 +308,7 @@ export function createFindWorkOperation(deps: FindWorkDeps) {
   return defineOperation({
     name: 'work.find',
     description:
-      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. With id, it returns only the work whose ref id matches, closed or not, for example to turn a session id into its ref and place; id takes precedence over text, which is then ignored. The lookup covers the 50 most recent places and each place’s most recent work, so a long-idle item may not be found. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. Snippet handles are for work.read only; to send or propose work, use the item ref.',
+      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. With id, it returns only the work whose ref id matches, closed or not, for example to turn a session id into its ref and place; id takes precedence over text, which is then ignored. The lookup covers the 50 most recent places and each place’s most recent work, so a long-idle item may not be found. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. folder takes a path as the human wrote it (~ allowed); an existing directory there is returned as a place even when no work has run in it yet, so a folder the human names can always be started in. Snippet handles are for work.read only; to send or propose work, use the item ref.',
     inputSchema: FindWorkInputSchema,
     resultSchema: FindWorkResultSchema,
     policy: { safetyClass: 'read' },

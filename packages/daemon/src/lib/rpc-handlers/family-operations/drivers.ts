@@ -3,7 +3,7 @@ import {
   type WorkExecutionPreparer,
 } from '../../drivers/start-preparation.ts';
 import { mirrorNeoWorkspaceProjects } from '../../neo/project-mirror.ts';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
@@ -446,6 +446,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     adapters: () => adapters,
     remote: remoteDaemons,
     daemonName: machine,
+    namedFolder: {
+      machine,
+      homeDir: homedir(),
+      isDirectory: (folder: string) =>
+        statSync(folder, { throwIfNoEntry: false })?.isDirectory() === true,
+    },
     mirrorProjects: (groups: readonly PlaceGroup[]) => {
       if (mirrorNeoWorkspaceProjects(db(), groups))
         context.deps.messageHub.event('neo.changed', {});
