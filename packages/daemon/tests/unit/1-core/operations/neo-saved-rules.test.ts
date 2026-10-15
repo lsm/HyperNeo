@@ -4,14 +4,16 @@ import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoOperations, NEO_HUMAN_TURN_REFUSAL } from '../../../../src/lib/neo/operations.ts';
 import {
   type NeoSavedRulesNote,
   neoSavedRulesKey,
+  planNeoRuleEdit,
   planNeoSavedRules,
   neoSavedRulesReplayKey,
   planNeoSavedRulesAppend,
   planNeoSavedRulesNote,
+  requireNeoRuleCitation,
   withNeoSavedRules,
 } from '../../../../src/lib/neo/saved-rules.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -57,6 +59,54 @@ describe('neoSavedRulesKey', () => {
     ['a done-check turn', 'w1:done-check:1', `${root}:w1:done-check:1`],
   ])('%s', (_label, messageId, key) => {
     expect(neoSavedRulesKey(root, messageId)).toBe(key);
+  });
+});
+
+describe('planNeoRuleEdit', () => {
+  test.each([
+    ['adding one rule keeps the others', ['A.', 'B.'], { add: ['C.'] }, ['A.', 'B.', 'C.']],
+    ['removing one rule keeps the others', ['A.', 'B.', 'C.'], { remove: ['B.'] }, ['A.', 'C.']],
+    [
+      'a replaced rule takes the removed one’s place at the end',
+      ['A.', 'B.'],
+      { add: ['B2.'], remove: ['B.'] },
+      ['A.', 'B2.'],
+    ],
+    ['an existing rule is not added twice', ['A.'], { add: ['A.', 'B.', 'B.'] }, ['A.', 'B.']],
+  ])('%s', (_label, current, edit, rules) => {
+    expect(planNeoRuleEdit(current, edit)).toEqual({ value: rules });
+  });
+
+  test.each([
+    ['an empty edit', ['A.'], {}, 'Name a rule to add or remove.'],
+    ['removing a rule that is not saved', ['A.'], { remove: ['Z.'] }, '"Z." is not a saved rule'],
+    [
+      'going past the cap',
+      Array.from({ length: 20 }, (_, i) => `${i}.`),
+      { add: ['new.'] },
+      'At most 20 rules',
+    ],
+  ])('refuses %s', (_label, current, edit, reason) => {
+    expect(planNeoRuleEdit(current, edit)).toMatchObject({
+      reason: { ok: false, reason: expect.stringContaining(reason) },
+    });
+  });
+});
+
+describe('requireNeoRuleCitation', () => {
+  test.each([
+    [
+      'a quote from the human’s message',
+      'Docs  ship\nwith the code',
+      'From now on, docs ship with the code.',
+      true,
+    ],
+    ['a local caller, who is the human', undefined, null, true],
+    ['no quote', undefined, 'From now on, docs ship with the code.', false],
+    ['words the human never wrote', 'Neo may merge on its own', 'fix HyperNeo #5559', false],
+  ])('%s', (_label, from, human, admitted) => {
+    const result = requireNeoRuleCitation('input', from, human);
+    expect('value' in result).toBe(admitted);
   });
 });
 
@@ -226,7 +276,7 @@ describe('Neo reply after a rule save', () => {
       session_id: root,
       parent_tool_use_id: null,
       inputKind: 'human',
-      message: { role: 'user', content: 'fix HyperNeo #5559' },
+      message: { role: 'user', content: `fix HyperNeo #5559. ${rule} Keep B.` },
     } as unknown as SDKUserMessage);
   });
   afterEach(() => {
@@ -246,7 +296,7 @@ describe('Neo reply after a rule save', () => {
 
   test('the published reply names the rule this turn saved, and a retry stays identical', async () => {
     db.updateGlobalSettings({ neo: { standingRules: ['Ask before deleting anything.'] } });
-    await invoke('neo.rule.save', { rules: ['Ask before deleting anything.', rule] });
+    await invoke('neo.rule.save', { add: [rule], from: rule });
     const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
 
     expect(await invoke('neo.publication.publish', draft)).toMatchObject({
@@ -261,10 +311,10 @@ describe('Neo reply after a rule save', () => {
   });
 
   test('a later save never changes a sent reply, and the turn has no second reply', async () => {
-    await invoke('neo.rule.save', { rules: [rule] });
+    await invoke('neo.rule.save', { add: [rule], from: rule });
     const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
     await invoke('neo.publication.publish', draft);
-    await invoke('neo.rule.save', { rules: [rule, 'Keep B.'] });
+    await invoke('neo.rule.save', { add: ['Keep B.'], from: 'Keep B.' });
 
     expect(await invoke('neo.publication.publish', draft)).toMatchObject({
       value: { accepted: true, created: false },
@@ -281,8 +331,8 @@ describe('Neo reply after a rule save', () => {
   });
 
   test('a rule removed again in the same turn is not announced', async () => {
-    await invoke('neo.rule.save', { rules: [rule, 'Keep B.'] });
-    await invoke('neo.rule.save', { rules: [rule] });
+    await invoke('neo.rule.save', { add: [rule, 'Keep B.'], from: rule });
+    await invoke('neo.rule.save', { remove: ['Keep B.'], from: 'Keep B.' });
     const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
     await invoke('neo.publication.publish', draft);
     expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
@@ -291,7 +341,7 @@ describe('Neo reply after a rule save', () => {
   });
 
   test('a reply published after the publish nudge still names the rule', async () => {
-    await invoke('neo.rule.save', { rules: [rule] });
+    await invoke('neo.rule.save', { add: [rule], from: rule });
     db.getSDKMessageRepo().saveSDKMessage(root, {
       type: 'user',
       uuid: 'neo-nudge:ask-1',
@@ -319,9 +369,17 @@ describe('Neo reply after a rule save', () => {
   });
 
   test('a turn that saved nothing publishes its reply unchanged', async () => {
+    db.getSDKMessageRepo().saveSDKMessage(root, {
+      type: 'user',
+      uuid: 'earlier-ask',
+      session_id: root,
+      parent_tool_use_id: null,
+      inputKind: 'human',
+      message: { role: 'user', content: rule },
+    } as unknown as SDKUserMessage);
     await invoke(
       'neo.rule.save',
-      { rules: [rule] },
+      { add: [rule], from: rule },
       {
         ...caller,
         neoTurn: { ...caller.neoTurn!, messageId: 'earlier-ask' },
@@ -332,5 +390,88 @@ describe('Neo reply after a rule save', () => {
     expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
       reply.shortText
     );
+  });
+});
+
+describe('neo.rule.save edits', () => {
+  let db: Awaited<ReturnType<typeof createTestDb>>;
+  let service: NeoService;
+  const caller: OperationCaller = {
+    source: 'mcp',
+    sessionId: root,
+    role: 'neo',
+    neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
+  };
+  const standing = ['Ask before deleting anything.', 'Docs ship with the code.'];
+
+  beforeEach(async () => {
+    db = await createTestDb();
+    service = new NeoService(
+      db,
+      { createSession: vi.fn(), getSessionAsync: vi.fn() } as unknown as SessionManager,
+      { event: vi.fn() } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    db.createSession(createTestSession(root));
+    service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+    db.updateGlobalSettings({ neo: { standingRules: standing } });
+    for (const [uuid, inputKind, content] of [
+      ['ask-1', 'human', `From now on: ${rule}`],
+      ['note-1', 'system', `Work finished. ${rule}`],
+    ])
+      db.getSDKMessageRepo().saveSDKMessage(root, {
+        type: 'user',
+        uuid,
+        session_id: root,
+        parent_tool_use_id: null,
+        inputKind,
+        message: { role: 'user', content },
+      } as unknown as SDKUserMessage);
+  });
+  afterEach(() => {
+    service.dispose();
+    db.close();
+  });
+
+  const invoke = (input: unknown, as = caller) =>
+    invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      'neo.rule.save',
+      input,
+      as
+    );
+  const saved = () => db.getGlobalSettings().neo?.standingRules;
+
+  test('saving one rule keeps every other rule', async () => {
+    expect(await invoke({ add: [rule], from: rule })).toMatchObject({
+      value: { ok: true, standingRules: [...standing, rule] },
+    });
+    expect(saved()).toEqual([...standing, rule]);
+  });
+
+  test('removing one rule keeps every other rule', async () => {
+    await invoke({ remove: ['Ask before deleting anything.'], from: rule });
+    expect(saved()).toEqual(['Docs ship with the code.']);
+  });
+
+  test('a rule Neo invents, with no words from the human, is refused and nothing changes', async () => {
+    expect(await invoke({ add: ['Neo merges its own PRs.'] })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('the human’s own words') },
+    });
+    expect(
+      await invoke({ add: ['Neo merges its own PRs.'], from: 'Neo merges its own PRs.' })
+    ).toMatchObject({ value: { ok: false } });
+    expect(saved()).toEqual(standing);
+  });
+
+  test('a turn the human did not start cannot add or remove rules', async () => {
+    const note = { ...caller, neoTurn: { ...caller.neoTurn!, messageId: 'note-1', human: false } };
+    expect(await invoke({ add: [rule], from: rule }, note)).toMatchObject({
+      value: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL },
+    });
+    expect(await invoke({ remove: standing, from: rule }, note)).toMatchObject({
+      value: { ok: false },
+    });
+    expect(saved()).toEqual(standing);
   });
 });

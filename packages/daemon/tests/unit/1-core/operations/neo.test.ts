@@ -61,7 +61,7 @@ describe('Neo MVP', () => {
     expect(prompt).toContain('no implicit project, workspace, folder, repository or worktree');
     expect(prompt).toContain('ask one short clarifying question');
     expect(prompt).toContain('Apply them whenever you propose work and write doneWhen');
-    expect(prompt).toContain('neo.rule.save {rules}');
+    expect(prompt).toContain('neo.rule.save {add?,remove?,from}');
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save');
   });
 
@@ -249,13 +249,20 @@ describe('Neo MVP', () => {
     ).toMatchObject({ value: { projects: [{ context: '' }] } });
   });
 
-  test('standing rules start empty, and only root Neo can replace them', async () => {
+  test('standing rules start empty, the human adds them, and Neo cannot without a human turn', async () => {
     expect(await invoke('neo.snapshot')).toMatchObject({ value: { standingRules: [] } });
     const root = await service.open(null);
     const rules = ['Ask before deleting anything.'];
+    expect(await invoke('neo.rule.save', { add: rules })).toMatchObject({
+      value: { ok: true, standingRules: rules },
+    });
     expect(
-      await invoke('neo.rule.save', { rules }, { source: 'mcp', role: 'neo', sessionId: root })
-    ).toMatchObject({ value: { ok: true, standingRules: rules } });
+      await invoke(
+        'neo.rule.save',
+        { remove: rules, from: 'anything' },
+        { source: 'mcp', role: 'neo', sessionId: root }
+      )
+    ).toMatchObject({ value: { ok: false } });
     expect(await invoke('neo.snapshot')).toMatchObject({ value: { standingRules: rules } });
     expect(published).toEqual([expect.objectContaining({ neo: { standingRules: rules } })]);
     service.repo.saveProject({ id: 'book-club', title: 'Book club', summary: '', context: '' }, 0);
@@ -263,7 +270,7 @@ describe('Neo MVP', () => {
     expect(
       await invoke(
         'neo.rule.save',
-        { rules: [] },
+        { remove: rules },
         { source: 'mcp', role: 'neo', sessionId: holder }
       )
     ).toMatchObject({ value: { ok: false, reason: 'Only root Neo can save standing rules.' } });

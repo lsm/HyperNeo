@@ -6,6 +6,7 @@ import { readNeoProjectFacts } from './project-route-facts.ts';
 import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
 import { existsSync } from 'node:fs';
 import { requireNeoReadOperation } from './read-work.ts';
+import { neoPromptText } from './reply-language.ts';
 import {
   hasNeoWorkRequest,
   neoTargetSessionId,
@@ -176,7 +177,7 @@ import {
   requireNeoWorkSupersedeDecision,
 } from './work-supersede.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
-import { planNeoSavedRules } from './saved-rules.ts';
+import { planNeoRuleEdit, planNeoSavedRules, requireNeoRuleCitation } from './saved-rules.ts';
 import { projectNeoCardViews } from './card-views.ts';
 import { NeoAskStateViewSchema, NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
 import { projectNeoAskViews } from './ask-views.ts';
@@ -455,10 +456,11 @@ const SessionMuteResult = z.union([
 ]);
 const SessionTrack = z.object({ key: z.string().trim().min(1).max(400) });
 const SessionTrackResult = z.union([Failure, z.object({ ok: z.literal(true) })]);
+const StandingRule = z.string().trim().min(1).max(NEO_STANDING_RULE_MAX_CHARS);
 const SaveRules = z.object({
-  rules: z
-    .array(z.string().trim().min(1).max(NEO_STANDING_RULE_MAX_CHARS))
-    .max(NEO_STANDING_RULES_MAX),
+  add: z.array(StandingRule).max(NEO_STANDING_RULES_MAX).optional(),
+  remove: z.array(StandingRule).max(NEO_STANDING_RULES_MAX).optional(),
+  from: z.string().trim().min(1).max(2000).optional(),
 });
 const RulesResult = z.union([
   Failure,
@@ -796,6 +798,17 @@ export function requireNeoWorkCloser(
   };
 }
 
+function readNeoRuleSource(service: NeoService, caller: OperationCaller): string | null {
+  if (caller.source === 'rpc' && caller.principal === 'local') return null;
+  if (!caller.sessionId || !caller.neoTurn) return '';
+  return neoPromptText(
+    service.db
+      .getSDKMessageRepo()
+      .getStoredPromptsByUuid(caller.sessionId, caller.neoTurn.messageId)
+      .filter((message) => (message as { inputKind?: unknown }).inputKind === 'human')
+  );
+}
+
 function isNeoHumanTurn(service: NeoService, caller: OperationCaller): boolean {
   if (caller.source === 'rpc' && caller.principal === 'local') return true;
   const turn = caller.neoTurn;
@@ -835,7 +848,7 @@ function admitNeoCaller(
       },
     };
   if (
-    ['neo.work.start', 'neo.ask.approve'].includes(name) &&
+    ['neo.work.start', 'neo.ask.approve', 'neo.rule.save'].includes(name) &&
     !(askApproved && name === 'neo.work.start'
       ? service.db.getSession(caller.sessionId!)?.status === 'active'
       : isNeoHumanTurn(service, caller))
@@ -1280,34 +1293,37 @@ export function createNeoOperations(service: NeoService) {
     .pipe(
       (caller: OperationCaller) => admitNeoCaller(service, caller, 'neo.rule.save'),
       'caller',
-      'result:admission'
+      'result:save'
+    )
+    .pipe(
+      (input: z.infer<typeof SaveRules>, caller: OperationCaller) =>
+        requireNeoRuleCitation(input, input.from, readNeoRuleSource(service, caller)),
+      ['input', 'caller'],
+      'result:save'
     )
     .pipe(() => ({ neo: service.db.getGlobalSettings().neo }), 'input', 'current')
     .pipe(
       (input: z.infer<typeof SaveRules>, current: { neo?: NeoSettings }) =>
-        planNeoSavedRules(neoStandingRules(current.neo), input.rules),
+        planNeoRuleEdit(neoStandingRules(current.neo), input),
       ['input', 'current'],
-      'saved'
+      'result:save'
     )
     .pipe(
-      (input: z.infer<typeof SaveRules>, current: { neo?: NeoSettings }) => {
+      (rules: string[], current: { neo?: NeoSettings }) => {
         const updated = service.db.updateGlobalSettings({
-          neo: { ...current.neo, standingRules: input.rules },
+          neo: { ...current.neo, standingRules: rules },
         });
         service.publishSettings?.(updated);
       },
-      ['input', 'current']
+      ['save', 'current']
     )
     .pipe(
-      (caller: OperationCaller, saved: string[]) => service.noteSavedRules(caller, saved),
-      ['admission', 'saved']
+      (caller: OperationCaller, rules: string[], current: { neo?: NeoSettings }) =>
+        service.noteSavedRules(caller, planNeoSavedRules(neoStandingRules(current.neo), rules)),
+      ['caller', 'save', 'current']
     )
-    .pipe(
-      (input: z.infer<typeof SaveRules>) => ({ ok: true as const, standingRules: input.rules }),
-      'input',
-      'admission'
-    )
-    .end('admission') as (
+    .pipe((rules: string[]) => ({ ok: true as const, standingRules: rules }), 'save', 'save')
+    .end('save') as (
     input: z.infer<typeof SaveRules>,
     caller: OperationCaller
   ) => z.infer<typeof RulesResult>;
@@ -2285,7 +2301,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.rule.save',
       description:
-        'Replace the saved standing rules that neo.snapshot returns as standingRules. Save when the human states or corrects something lasting about how work should go (what done means, where a project lives, which app to use), answers your question about it, or when you reuse precedent from earlier work, without asking whether to save it; read the current list from neo.snapshot first and keep the rules they did not change. Up to 20 rules of up to 500 characters.',
+        'Add or remove standing rules (neo.snapshot standingRules); the other rules stay. Only while answering the human’s own message, when they state or correct something lasting about how work should go (what done means, where a project lives, which app to use) or answer your question about it: pass add with the new rule, remove with the exact text of a rule they replaced or withdrew, and from with the words of their message that state it, quoted exactly. Up to 20 rules of up to 500 characters.',
       inputSchema: SaveRules,
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
