@@ -184,8 +184,9 @@ export function neoRouteMiss(raw: string): string {
 
 function readNeoRouteAnswer(raw: string, candidates: readonly NeoHolder[]): NeoRouteVerdict {
   const decision = readNeoRouteDecision(raw, candidates);
-  if (!decision) log.error(neoRouteMiss(raw));
-  return decision;
+  if (decision) return decision;
+  log.error(neoRouteMiss(raw));
+  return { miss: 'unanswered', cause: neoRouteMiss(raw) };
 }
 
 async function askNeoRouteModel(
@@ -231,7 +232,7 @@ async function askNeoRouteModel(
     return readNeoRouteAnswer(raw ?? '', candidates);
   } catch (error) {
     log.error('Neo route classification failed:', error);
-    return 'failed';
+    return { miss: 'failed', cause: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -245,9 +246,9 @@ export async function classifyNeoRoute(
   if (process.env.NODE_ENV === 'test') return null;
   const abortController = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<'timeout'>((resolve) => {
+  const timeout = new Promise<NeoRouteVerdict>((resolve) => {
     timer = setTimeout(() => {
-      resolve('timeout');
+      resolve({ miss: 'timeout', cause: `no answer within ${timeoutMs} ms` });
       abortController.abort();
     }, timeoutMs);
   });

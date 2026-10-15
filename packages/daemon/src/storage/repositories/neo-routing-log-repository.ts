@@ -19,6 +19,7 @@ export interface NeoRoute {
   outcomeAt: number | null;
   askSummary: string | null;
   awaiting: string | null;
+  cause?: string | null;
 }
 
 export type NeoRouteEntry = Omit<
@@ -34,7 +35,7 @@ export interface NeoTurnNotes {
 const columns = `id, message_id AS messageId, conversation_id AS conversationId,
   asked_at AS askedAt, ask, destination, target_session_id AS targetSessionId,
   concern_id AS projectId, signal, confidence, outcome, outcome_at AS outcomeAt,
-  ask_summary AS askSummary, awaiting`;
+  ask_summary AS askSummary, awaiting, cause`;
 
 export function neoExcerpt(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -64,8 +65,8 @@ export class NeoRoutingLogRepository {
     this.db
       .prepare(
         `INSERT INTO neo_routing_log (message_id, conversation_id, asked_at, ask, destination,
-           target_session_id, concern_id, signal, confidence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(message_id) DO NOTHING`
+           target_session_id, concern_id, signal, confidence, cause)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(message_id) DO NOTHING`
       )
       .run(
         entry.messageId,
@@ -76,8 +77,21 @@ export class NeoRoutingLogRepository {
         entry.targetSessionId,
         entry.projectId,
         entry.signal,
-        entry.confidence
+        entry.confidence,
+        entry.cause ? clip(entry.cause) : null
       );
+  }
+
+  latestFailure(): { at: number; signal: string; cause: string } | null {
+    if (!this.ready()) return null;
+    return (
+      (this.db
+        .prepare(
+          `SELECT asked_at AS at, signal, cause FROM neo_routing_log
+           WHERE cause IS NOT NULL ORDER BY id DESC LIMIT 1`
+        )
+        .get() as { at: number; signal: string; cause: string } | undefined) ?? null
+    );
   }
 
   recordOutcome(
