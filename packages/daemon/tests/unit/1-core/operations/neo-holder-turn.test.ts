@@ -240,6 +240,19 @@ describe('Neo isolated holder turns', () => {
     expect(() => unknown.bind('human-input')).toThrow('already bound');
   });
 
+  test('a project event note turn may save what the event changed', async () => {
+    const note = turn();
+    note.bind('neo-project-event:club:event-1');
+    expect((await save(note, { context: 'PR #93 merged' })).content).toEqual([
+      expect.objectContaining({ text: expect.stringContaining('"ok":true') }),
+    ]);
+    expect(service.repo.getProject('club')?.context).toBe('PR #93 merged');
+    note.dispose();
+    expect((await save(note, { expectedRevision: 2 })).content).toEqual([
+      expect.objectContaining({ text: expect.stringContaining('"ok":false') }),
+    ]);
+  });
+
   test('deadline abort releases a stuck SDK iterator without waiting for its cleanup', async () => {
     vi.useFakeTimers();
     const abort = new AbortController();

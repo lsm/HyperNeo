@@ -78,9 +78,11 @@ import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import {
   isNeoCardLive,
+  neoProjectEventMessageId,
   planNeoCardEventRoute,
   planNeoCardSend,
   planNeoCardTopicsEnded,
+  planNeoProjectEventHolders,
   planNeoSessionTopicsHandedOver,
 } from './card-events.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
@@ -429,6 +431,8 @@ const dispatchNeoConsultationWaiter = (
   .endAsync('admission');
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
+const NEO_PROJECT_EVENT_NOTE =
+  'An event on one of this project’s cards, for your knowledge. Its ask belongs to another Neo session, which acts on it; save what it changes about the project with neo.project.save.';
 const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
 
 type NeoWorkPrCard = {
@@ -2848,6 +2852,36 @@ export class NeoService {
           ).catch((error) => this.log.warn('Card event not delivered', error));
       },
       ['event', 'route']
+    )
+    .pipe(
+      (route: NeoPackEventRoute) =>
+        planNeoProjectEventHolders(
+          route.workIds.flatMap((id) => {
+            const work = this.repo.getWork(id);
+            const ask = this.askRecords.forWork(id);
+            return work
+              ? [{ projectId: work.projectId, owner: ask ? this.triggerConcern(ask) : null }]
+              : [];
+          })
+        ),
+      'route',
+      'holders'
+    )
+    .pipe(
+      async (event: ExternalEvent, holders: string[]) => {
+        for (const projectId of holders)
+          await this.open(projectId)
+            .then((holder) =>
+              this.deliver(
+                holder,
+                neoProjectEventMessageId(projectId, event.id),
+                `${NEO_PROJECT_EVENT_NOTE}\n${sessionEventText(event)}`,
+                holder
+              )
+            )
+            .catch((error) => this.log.warn('Project event not delivered', error));
+      },
+      ['event', 'holders']
     )
     .pipe((route: NeoPackEventRoute) => {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
