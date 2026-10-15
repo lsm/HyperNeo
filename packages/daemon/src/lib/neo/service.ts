@@ -3848,7 +3848,7 @@ export class NeoService {
     return reason ? { ok: false, reason } : null;
   }
 
-  async preemptAnsweredTurn(sessionId: string): Promise<void> {
+  async preemptForHumanMessage(sessionId: string): Promise<void> {
     const root = this.repo.getBindingForProject(null);
     if (!root?.sessionId.startsWith('neo:') || !this.repo.getBindingBySession(sessionId)) return;
     const conversationId = root.sessionId.slice(4);
@@ -3864,7 +3864,7 @@ export class NeoService {
       const live = await this.sessions.getSessionForControl(sessionId);
       await live?.handleInterrupt({ preserveDeliveryJobs: true });
     } catch (error) {
-      this.log.warn('Answered Neo turn not preempted', error);
+      this.log.warn('Neo turn not preempted for a human message', error);
     }
   }
 
