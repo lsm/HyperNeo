@@ -8,14 +8,15 @@ export const NeoWorkBlockerSchema = z.object({
 });
 export type NeoWorkBlocker = z.infer<typeof NeoWorkBlockerSchema>;
 
-const BLOCKER_LINE = /^Blocked \((environment|needs_human)\): *(\S.*)$/gm;
+const BLOCKER_LINE = /^(?:Agent: )?Blocked \((environment|needs_human)\): *(\S.*)$/;
 
 export function neoWorkBlockerLine(blocker: NeoWorkBlocker): string {
   return `Blocked (${blocker.kind}): ${blocker.what.replace(/\s+/g, ' ').trim()}`;
 }
 
 export function readNeoWorkBlocker(report: string | null | undefined): NeoWorkBlocker | null {
-  const found = [...(report ?? '').matchAll(BLOCKER_LINE)].at(-1);
+  const last = (report ?? '').trimEnd().split('\n').at(-1)?.trim() ?? '';
+  const found = last.match(BLOCKER_LINE);
   return found ? { kind: found[1] as NeoWorkBlocker['kind'], what: found[2].trim() } : null;
 }
 

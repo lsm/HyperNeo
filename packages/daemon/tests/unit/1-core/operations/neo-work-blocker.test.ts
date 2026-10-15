@@ -31,14 +31,19 @@ describe('readNeoWorkBlocker', () => {
     });
     expect(
       readNeoWorkBlocker(
-        'Blocked (environment): no DNS\nRetried.\nBlocked (needs_human): pick a pricing rule'
+        'Blocked (environment): no DNS\nRetried.\nBlocked (needs_human): pick a pricing rule\n'
       )
     ).toEqual({ kind: 'needs_human', what: 'pick a pricing rule' });
+    expect(readNeoWorkBlocker('Agent: Blocked (environment): no DNS')).toEqual({
+      kind: 'environment',
+      what: 'no DNS',
+    });
   });
 
   test.each([
     'The shell cannot resolve GitHub, but I pushed over SSH and opened the PR.',
     'Blocked (other): something',
+    'Blocked (environment): no DNS\n\nAgent: Recovered over SSH and opened the PR.',
     'Blocked (environment):',
     null,
   ])('a report with no declared blocker has none: %s', (report) => {
