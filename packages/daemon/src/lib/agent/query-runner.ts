@@ -34,6 +34,7 @@ import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { NeoHolderTurn } from '../neo/holder-turn.ts';
+import { readNeoPublicationView, withNeoPublicationView } from '../neo/publication-view.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { stampNeoResponseInput } from '../neo/response-input.ts';
 import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
@@ -2272,7 +2273,12 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      yield message;
+      yield holderTurn && !isInternal
+        ? withNeoPublicationView(
+            message,
+            readNeoPublicationView(this.ctx.db, session.id, !session.sdkSessionId)
+          )
+        : message;
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
       if (holderTurn) return;

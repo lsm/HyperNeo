@@ -35,6 +35,6 @@ export function neoTurnLimitNote(
     done.length
       ? `It already created these, and they stay as they are:\n${done.join('\n')}\nContinue them: edit or start them, and never open or propose them again.`
       : 'It created no asks or cards.',
-    'Read neo.snapshot and finish only what is left of that turn.',
+    'Read neo.snapshot and finish only what is left of that turn. Anything the human has already read is listed after this; do not tell them it again.',
   ].join('\n');
 }
