@@ -360,6 +360,8 @@ import {
   neoTriggerMessageIds,
   planNeoTriggerRetry,
   shouldRetryNeoTrigger,
+  neoAskTriggerConcern,
+  neoTriggerRetryStatuses,
   shouldPreemptNeoTurn,
   neoTriggerWorkProblem,
   NEO_CONSULTATION_PENDING_DETAIL,
@@ -778,7 +780,7 @@ export class NeoService {
       heard: (ask) => this.heardOutcome(ask),
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
       wake: (ask, trigger) =>
-        this.open(ask.projectId)
+        this.open(this.triggerConcern(ask))
           .then((target) =>
             this.deliver(
               target,
@@ -1229,12 +1231,18 @@ export class NeoService {
       Date.now() - NEO_TRIGGER_ACHIEVED_WINDOW_MS
     )) {
       const ask = this.askRecords.get(askId);
-      const target = ask ? this.repo.getBindingForProject(ask.projectId)?.sessionId : null;
+      const target = ask ? this.triggerOwner(ask) : null;
       if (!ask || !target || this.isTriggerOwnerBusy(ask)) continue;
       if (!shouldRetryNeoTrigger(ask, triggerId.split(':')[0], this.heardOutcome(ask))) continue;
+      const legacy = this.repo.getBindingForProject(ask.projectId)?.sessionId;
       const plan = planNeoTriggerRetry(
         this.publications.hasTrigger(conversationId, triggerId, ''),
-        this.triggers.noteStatuses(target, neoTriggerMessageIds(triggerId))
+        neoTriggerRetryStatuses(
+          this.triggers.noteStatuses(target, neoTriggerMessageIds(triggerId)),
+          legacy && legacy !== target
+            ? this.triggers.noteStatuses(legacy, neoTriggerMessageIds(triggerId))
+            : []
+        )
       );
       if (plan === 'retry') this.triggers.forget(askId, triggerId);
     }
@@ -1254,8 +1262,16 @@ export class NeoService {
     );
   }
 
+  private triggerConcern(ask: NeoAsk): string | null {
+    return neoAskTriggerConcern(ask, this.repo.getBindingBySession(ask.originSessionId));
+  }
+
+  private triggerOwner(ask: NeoAsk): string | null {
+    return this.repo.getBindingForProject(this.triggerConcern(ask))?.sessionId ?? null;
+  }
+
   private isTriggerOwnerBusy(ask: NeoAsk): boolean {
-    const owner = this.repo.getBindingForProject(ask.projectId)?.sessionId;
+    const owner = this.triggerOwner(ask);
     if (!owner) return true;
     const status =
       this.processingStatus.get(owner) ??

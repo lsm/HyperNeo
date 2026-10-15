@@ -49,6 +49,13 @@ export interface NeoTriggerSweepDeps {
 
 export const NEO_TRIGGER_ATTEMPTS = 3;
 
+export function neoAskTriggerConcern(
+  ask: Pick<NeoAsk, 'projectId'>,
+  opener: { kind: string; projectId: string | null } | null
+): string | null {
+  return opener && opener.kind !== 'worker' ? opener.projectId : ask.projectId;
+}
+
 export function neoTriggerMessageId(triggerId: string, attempt = 0): string {
   return `${NEO_TRIGGER_PREFIX}${triggerId}${attempt ? `#${attempt + 1}` : ''}`;
 }
@@ -71,6 +78,14 @@ export function planNeoTriggerRetry(
 }
 
 const TURN_OVER: ReadonlySet<string> = new Set(['consumed', 'failed']);
+
+export function neoTriggerRetryStatuses(
+  owner: readonly string[],
+  legacy: readonly string[]
+): readonly string[] {
+  if (owner.length || !legacy.length) return owner;
+  return legacy.every((status) => TURN_OVER.has(status)) ? ['consumed'] : ['pending'];
+}
 
 export function neoHumanTrigger(messageId: string): string {
   return `${NEO_HUMAN_TRIGGER_PREFIX}${messageId}`;
