@@ -40,7 +40,8 @@ export function planNeoCardPrCandidates(input: {
   stored: readonly { url: string }[];
   mentioned?: readonly string[];
 }): NeoCardPrCandidate[] {
-  const followed = input.follows && parsePrUrl(input.follows) ? [input.follows] : [];
+  const pr = input.follows ? parsePrUrl(input.follows) : null;
+  const followed = pr ? [`https://${pr.host}/${pr.owner}/${pr.repo}/pull/${pr.number}`] : [];
   const named = new Set(followed.map(key));
   const onBranch = new Set(input.branch.map(key));
   const opened = new Set((input.opened ?? []).map(key));

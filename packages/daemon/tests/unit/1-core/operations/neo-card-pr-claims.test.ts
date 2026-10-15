@@ -427,6 +427,17 @@ describe('a PR the card follows', () => {
     ).toEqual([]);
   });
 
+  test('is tracked by its canonical URL, without query or fragment', () => {
+    expect(
+      planNeoCardPrCandidates({
+        report: null,
+        follows: `${pull(5)}/files?tab=files#diff`,
+        branch: [],
+        stored: [],
+      })
+    ).toEqual([{ url: pull(5), claim: 'named' }]);
+  });
+
   test('is ignored when the followed URL is not a pull request', () => {
     expect(
       planNeoCardPrCandidates({
