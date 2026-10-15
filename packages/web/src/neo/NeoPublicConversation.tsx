@@ -10,6 +10,8 @@ import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { type NeoAskItem, readNeoConversationImage } from './conversation-ask-client.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from './NeoMessageMenu.tsx';
+import { copyToClipboard } from '../lib/utils.ts';
 import { messageTime } from './NeoMessage.tsx';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 import { neoMessageAnchor } from './reply-context.ts';
@@ -299,6 +301,9 @@ function PublicEntry({
   const undelivered = ask?.delivery?.state === 'failed';
   const publication = entry.kind === 'publication' ? entry.publication : null;
   const [expanded, setExpanded] = useState(false);
+  const [copiedAt, setCopiedAt] = useState(0);
+  const bubbleText = useRef<HTMLDivElement>(null);
+  const menu = useNeoMessageMenu();
   const [showReason, setShowReason] = useState(false);
   const [restored, setRestored] = useState(
     () => !!ask && restoredUndelivered().includes(ask.requestId)
@@ -307,7 +312,8 @@ function PublicEntry({
   const short = publication?.shortText.trim() ?? '';
   const full = publication?.fullText.trim() ?? '';
   const hasDetails = !!short && !!full && full !== short;
-  const text = ask ? publicAskText(ask.content) : hasDetails && !expanded ? short : full || short;
+  const copyText = ask ? publicAskText(ask.content) : full || short;
+  const text = ask ? publicAskText(ask.content) : hasDetails ? short : full || short;
   const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : 'You';
@@ -326,7 +332,8 @@ function PublicEntry({
     <article
       id={anchor || undefined}
       data-public-entry={entry.key}
-      class={`neo-arrive neo-message w-fit break-words ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%]'}`}
+      class={`neo-arrive neo-message w-fit break-words ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%] max-md:w-full max-md:max-w-full'}`}
+      {...menu.bind}
     >
       <div
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${ask ? 'justify-end' : ''}`}
@@ -443,50 +450,81 @@ function PublicEntry({
             )}
           </div>
         )}
-        {/^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
-          <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
-        ) : (
-          <MarkdownRenderer
-            content={text}
-            class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
-          />
-        )}
-        {hasDetails && (
-          <button
-            type="button"
-            aria-expanded={expanded}
-            onClick={() => setExpanded(!expanded)}
-            class="mt-2 text-sm text-fg-muted hover:text-accent hover:underline"
-          >
-            {expanded ? 'Show less' : 'Show details'}
-          </button>
-        )}
-        {publication && (
-          <>
-            {links.length > 0 && (
-              <ul
-                aria-label="Related Neo scenes"
-                class="mt-3 flex flex-wrap gap-3 text-sm text-accent"
-              >
-                {links.map((link) => (
-                  <li key={JSON.stringify([link.kind, link.id])}>
-                    {onOpenScene && (canOpenScene?.(link) ?? true) ? (
-                      <button
-                        type="button"
-                        class="text-left hover:underline"
-                        onClick={() => onOpenScene({ kind: link.kind, id: link.id })}
-                      >
-                        {link.label}
-                      </button>
-                    ) : (
-                      <span>{link.label}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        )}
+        {(() => {
+          const body = /^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
+            <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
+          ) : (
+            <MarkdownRenderer
+              content={text}
+              class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
+            />
+          );
+          const chevron = hasDetails && (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              aria-label={expanded ? 'Hide details' : 'Show details'}
+              title={expanded ? 'Hide details' : 'Show details'}
+              onClick={() => setExpanded(!expanded)}
+              class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-fill-soft text-fg-muted hover:text-fg"
+            >
+              <NeoIcon
+                name="chevron"
+                class={`!h-3.5 !w-3.5 transition-transform${expanded ? '' : ' rotate-180'}`}
+              />
+            </button>
+          );
+          return (
+            <>
+              {chevron && !links.length ? (
+                <div class="flex items-end gap-2">
+                  <div ref={bubbleText} class="min-w-0 flex-1">
+                    {body}
+                  </div>
+                  {chevron}
+                </div>
+              ) : (
+                <div ref={bubbleText}>{body}</div>
+              )}
+              {hasDetails && expanded && (
+                <div
+                  data-publication-details
+                  class="mt-3 rounded-[10px] bg-fill-soft px-3 py-2 text-sm text-fg-muted"
+                >
+                  <MarkdownRenderer
+                    content={full}
+                    class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
+                  />
+                </div>
+              )}
+              {publication && links.length > 0 && (
+                <div class="mt-3 flex items-end gap-3">
+                  <ul
+                    aria-label="Related Neo scenes"
+                    class="flex min-w-0 flex-1 flex-wrap gap-3 text-sm text-accent"
+                  >
+                    {links.map((link) => (
+                      <li key={JSON.stringify([link.kind, link.id])}>
+                        {onOpenScene && (canOpenScene?.(link) ?? true) ? (
+                          <button
+                            type="button"
+                            class="text-left hover:underline"
+                            onClick={() => onOpenScene({ kind: link.kind, id: link.id })}
+                          >
+                            {link.label}
+                          </button>
+                        ) : (
+                          <span>{link.label}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {chevron}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
       {undelivered && showReason && (
         <p class="mt-1 px-1 text-right text-xs text-danger">{NOT_DELIVERED}</p>
@@ -516,9 +554,10 @@ function PublicEntry({
           </button>
         )}
         <CopyButton
-          text={ask ? text : full || text}
+          text={copyText}
           label={ask ? 'Copy your message' : 'Copy Neo’s message'}
           disabled={!text.trim()}
+          copiedAt={copiedAt}
         />
         {onQuote && (ask ? text : full || text).trim() && (
           <button
@@ -534,6 +573,30 @@ function PublicEntry({
           </button>
         )}
       </div>
+      {menu.at && (
+        <NeoMessageMenu
+          at={menu.at}
+          actions={neoMessageMenuActions({
+            canShare: typeof navigator !== 'undefined' && typeof navigator.share === 'function',
+            canReply: !!onQuote && !!copyText.trim(),
+          })}
+          onClose={menu.close}
+          onPick={(action) => {
+            if (action === 'select') {
+              const target = bubbleText.current;
+              if (target) window.getSelection()?.selectAllChildren(target);
+            } else if (action === 'copy') {
+              void copyToClipboard(copyText).then((ok) => {
+                if (ok) setCopiedAt(Date.now());
+              });
+            } else if (action === 'share') {
+              void navigator.share?.({ text: copyText }).catch(() => {});
+            } else {
+              onQuote?.({ author: ask ? 'You' : 'Neo', text: copyText, anchor });
+            }
+          }}
+        />
+      )}
     </article>
   );
 }
