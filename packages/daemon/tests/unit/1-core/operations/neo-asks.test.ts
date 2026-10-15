@@ -47,6 +47,7 @@ import {
   planNeoProposalBindings,
   requireNeoMetReadEvidence,
   requireNeoProposalDelivers,
+  requireNeoSettleKeepsOutcomeCards,
 } from '../../../../src/lib/neo/ask-operations.ts';
 import {
   driverDoneCheckNote,
@@ -1822,6 +1823,43 @@ describe('neo.ask operations', () => {
     });
     service.repo.transitionWork(card, queued, { status: 'reported', report: 'Merged it.' });
     expect(await tick()).toMatchObject({ value: { ok: true } });
+  });
+
+  test('Neo cannot settle an ask achieved while a card its outcome depends on is still live', async () => {
+    const askId = await openAsk();
+    const card = (await propose('card-1', askId)).value!.work!.id;
+    await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: card }] });
+    await invoke(
+      'neo.ask.tick',
+      { askId, itemId: 'i1', state: 'met', evidence: 'I checked it.' },
+      { source: 'rpc', principal: 'local' }
+    );
+    await invoke('neo.ask.tick', {
+      askId,
+      itemId: 'i2',
+      state: 'met',
+      evidence: 'CI run 42 green.',
+    });
+    const settle = () =>
+      invoke('neo.ask.settle', { id: askId, outcome: 'achieved', summary: 'Done.', evidence: 'x' });
+    expect(await settle()).toMatchObject({
+      value: {
+        ok: false,
+        reason: expect.stringContaining(
+          `i1 is delivered by card ${card.slice(0, 8)}, which is proposed`
+        ),
+      },
+    });
+    expect(service.repo.getWork(card)?.status).toBe('proposed');
+    const queued = service.repo.transitionWork(card, service.repo.getWork(card)!, {
+      status: 'queued',
+    })!;
+    expect(await settle()).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('which is queued') },
+    });
+    service.repo.transitionWork(card, queued, { status: 'reported', report: 'Merged it.' });
+    expect(await settle()).toMatchObject({ value: { ok: true, ask: { status: 'achieved' } } });
+    expect(service.repo.getWork(card)?.status).toBe('reported');
   });
 
   test("an item Neo only has an agent's word for is reported, never met", async () => {
@@ -3922,6 +3960,33 @@ describe('planNeoProposalBindings', () => {
     ]);
     expect(planNeoProposalBindings({}, ask, 'w1')).toEqual([{ itemId: 'i1', deliveredBy: 'w1' }]);
     expect(planNeoProposalBindings({ askId: 'a1' }, null, 'w1')).toEqual([]);
+  });
+});
+
+describe('requireNeoSettleKeepsOutcomeCards', () => {
+  const neo: OperationCaller = { source: 'mcp', sessionId: 'root', role: 'neo' };
+  const human: OperationCaller = { source: 'rpc', principal: 'local' };
+  const ask = (deliveredBy: string, removed = false) => ({
+    doneItems: [{ id: 'i1', deliveredBy, removed } as NeoAskItem],
+  });
+  const cards = [
+    { id: 'proposed-card', status: 'proposed' as const },
+    { id: 'queued-card', status: 'queued' as const },
+    { id: 'reported-card', status: 'reported' as const },
+    { id: 'failed-card', status: 'failed' as const },
+  ];
+
+  test.each([
+    ['a proposed card delivers an item', neo, 'achieved', ask('proposed-card'), false],
+    ['a queued card delivers an item', neo, 'achieved', ask('queued-card'), false],
+    ['the delivering card reported', neo, 'achieved', ask('reported-card'), true],
+    ['the delivering card failed', neo, 'achieved', ask('failed-card'), true],
+    ['the item was removed', neo, 'achieved', ask('queued-card', true), true],
+    ['the ask is abandoned', neo, 'abandoned', ask('queued-card'), true],
+    ['the human settles', human, 'achieved', ask('queued-card'), true],
+  ] as const)('%s', (_label, caller, outcome, target, admitted) => {
+    const result = requireNeoSettleKeepsOutcomeCards(caller, outcome, target, cards, 'ok');
+    expect('value' in result).toBe(admitted);
   });
 });
 

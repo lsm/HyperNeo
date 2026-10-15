@@ -13,7 +13,7 @@ const pack = (id: string): NeoPack => ({
 });
 
 describe('buildNeoCheckRegistry', () => {
-  test('preserves all six built-in kinds and their routes; only coding.pr_merged is independent', () => {
+  test('preserves all seven built-in kinds and their routes; only the PR checks are independent', () => {
     const coding = createCodingPack({
       prCandidates: async () => [],
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
@@ -36,6 +36,7 @@ describe('buildNeoCheckRegistry', () => {
       'coding.issue_filed',
       'coding.issue_sub_issue',
       'coding.pr_merged',
+      'coding.pr_opened',
       'life-admin.confirmed',
     ]);
     for (const kind of registry.kinds) {
@@ -44,7 +45,7 @@ describe('buildNeoCheckRegistry', () => {
         ok: true,
         value: {
           packId: source.id,
-          independent: kind === 'coding.pr_merged',
+          independent: kind === 'coding.pr_merged' || kind === 'coding.pr_opened',
           ...(source.checks?.[kind]
             ? { mode: 'evidence', check: source.checks[kind] }
             : { mode: 'ask-ticks', readAskTicks: source.readAskTicks }),
