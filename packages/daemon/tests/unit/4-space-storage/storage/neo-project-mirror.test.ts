@@ -184,14 +184,13 @@ describe('mirrorNeoWorkspaceProjects', () => {
     expect(repo.getProject('travel')?.context).toBe('Passport');
   });
 
-  test('mirrors several folders in a named tool project with different histories once', () => {
+  test('keeps folders with different histories separate inside one named tool project', () => {
     const groups = [workspace('/one'), workspace('/other', elsewhere, 'root:456')].map((group) => ({
       ...group,
       place: { ...group.place, toolProject: { id: 'product', name: 'Product' } },
     }));
     mirrorNeoWorkspaceProjects(db, mergePlaceGroups(groups, 50));
-    expect(repo.listProjects()).toHaveLength(1);
-    expect(repo.listProjects()[0].title).toBe('Product');
+    expect(repo.listProjects()).toHaveLength(2);
   });
 });
 

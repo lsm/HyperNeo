@@ -171,7 +171,7 @@ export function planNeoWorkspaceProjects(
               }),
               ...(place.codeIdentity ? [place.codeIdentity] : []),
               ...[neoRepositoryIdentity(place.remotes?.[0])].flatMap((identity) => identity ?? []),
-              ...(place.toolProject
+              ...(place.toolProject && !place.codeIdentity
                 ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`]
                 : []),
             ]),
