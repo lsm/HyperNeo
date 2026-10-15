@@ -217,6 +217,7 @@ function DetailProbe() {
     <>
       <button onClick={() => void neo.loadAskDetail('a')}>Load detail</button>
       <p>Done when: {neo.snapshot?.asks?.[0]?.doneWhen || 'summarized'}</p>
+      {neo.error && <p role="alert">{neo.error}</p>}
     </>
   );
 }
@@ -258,5 +259,89 @@ describe('useNeo ask detail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
     await waitFor(() => expect(screen.getByText('Done when: Merged to dev')).toBeTruthy());
     expect(detailReads()).toHaveLength(2);
+  });
+
+  it('reports a failed detail read and lets the next expand try again', async () => {
+    let fail = true;
+    request.mockImplementation(
+      async (_method: string, { name, input }: { name: string; input: { askId?: string } }) =>
+        name === 'neo.snapshot' && input.askId
+          ? fail
+            ? { ok: false, reason: 'Ask detail unavailable.' }
+            : {
+                ok: true,
+                sessionId: 'root',
+                projects: [],
+                work: [],
+                cards: [],
+                asks: [{ id: 'a', doneWhen: 'Merged to dev', revision: 2, workIds: [] }],
+              }
+          : {
+              ok: true,
+              sessionId: 'root',
+              projects: [],
+              work: [],
+              cards: [],
+              asks: [{ id: 'a', doneWhen: '', revision: 2, workIds: [], summarized: true }],
+            }
+    );
+    render(<DetailProbe />);
+    await waitFor(() => expect(screen.getByText('Done when: summarized')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toBe('Ask detail unavailable.')
+    );
+    fail = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
+    await waitFor(() => expect(screen.getByText('Done when: Merged to dev')).toBeTruthy());
+  });
+
+  it('keeps the newer detail when an older read for the same ask lands last', async () => {
+    let revision = 2;
+    const pending: ((value: unknown) => void)[] = [];
+    const ask = (doneWhen: string, rev: number, summarized?: true) => ({
+      id: 'a',
+      doneWhen,
+      revision: rev,
+      workIds: [],
+      ...(summarized ? { summarized } : {}),
+    });
+    const snap = (asks: unknown[]) => ({
+      ok: true,
+      sessionId: 'root',
+      projects: [],
+      work: [],
+      cards: [],
+      asks,
+    });
+    request.mockImplementation(
+      (_method: string, { name, input }: { name: string; input: { askId?: string } }) => {
+        if (name === 'neo.snapshot' && input.askId) {
+          const rev = revision;
+          return new Promise((resolve) =>
+            pending.push(() => resolve(snap([ask(`Done at ${rev}`, rev)])))
+          );
+        }
+        return Promise.resolve(snap([ask('', revision, true)]));
+      }
+    );
+    render(<DetailProbe />);
+    await waitFor(() => expect(screen.getByText('Done when: summarized')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
+    await waitFor(() => expect(pending).toHaveLength(1));
+    revision = 3;
+    act(() => neoEvents.changed?.());
+    await waitFor(() =>
+      expect(
+        request.mock.calls.filter(([, call]) => call.name === 'neo.snapshot' && !call.input.askId)
+      ).toHaveLength(1)
+    );
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    await act(async () => pending[1]!(undefined));
+    await waitFor(() => expect(screen.getByText('Done when: Done at 3')).toBeTruthy());
+    await act(async () => pending[0]!(undefined));
+    expect(screen.getByText('Done when: Done at 3')).toBeTruthy();
   });
 });
