@@ -584,6 +584,28 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)).toHaveLength(2);
   });
 
+  test('after the one reply, the card’s later result still reaches the human on its own trigger', () => {
+    expect(publish(draft, caller())).toMatchObject({ accepted: true, created: true });
+    const triggerId = 'outcome:ask-1:merged';
+    const note = `neo-trigger:${triggerId}`;
+    prompt(root.sessionId, note, 'system');
+    stamp({ sessionId: root.sessionId, messageId: note }, ask, { id: triggerId });
+    const result = publish(
+      {
+        ...draft,
+        publicationId: '20000000-0000-4000-8000-000000000005',
+        shortText: 'PR #12 merged.',
+        fullText: 'PR #12 merged after CI passed.',
+      },
+      { ...caller(root.sessionId, note), neoTurn: { ...caller().neoTurn, messageId: note } }
+    );
+    expect(result).toMatchObject({ accepted: true, created: true, publication: { triggerId } });
+    expect(ledger.list(conversationId)!.map((item) => item.triggerId)).toEqual([
+      `human:${ask.messageId}`,
+      triggerId,
+    ]);
+  });
+
   test('a human reply records its human trigger, and a triggerId it names is refused', () => {
     expect(publish(draft, caller())).toMatchObject({ accepted: true });
     expect(ledger.list(conversationId)![0].triggerId).toBe('human:ask-original');
