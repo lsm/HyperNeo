@@ -58,6 +58,13 @@ export function withdrawNeoProjectQuestions(db: Database, a: string, b: string):
 export interface NeoWorkspaceProject {
   aliases: string[];
   title: string;
+  ongoing?: boolean;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function isNeoOngoingPlace(work: readonly { lastActivityAt: number }[]): boolean {
+  return new Set(work.map((item) => Math.floor(item.lastActivityAt / DAY_MS))).size > 1;
 }
 
 export function neoRepositoryIdentity(remote: string | undefined): string | null {
@@ -73,6 +80,12 @@ export function neoRepositoryIdentity(remote: string | undefined): string | null
 
 export function isNeoIdentityAlias(alias: string): boolean {
   return alias.startsWith('git:') || alias.startsWith('repository:');
+}
+
+export function canNeoMirrorCreateProject(
+  project: Pick<NeoWorkspaceProject, 'aliases' | 'ongoing'>
+): boolean {
+  return !!project.ongoing || project.aliases.some((alias) => alias.startsWith('repository:'));
 }
 
 export function isNeoPlumbingFolder(
@@ -152,16 +165,18 @@ export function planNeoWorkspaceProjects(
   return groups
     .filter((group) => group.place.folder || group.place.toolProject)
     .flatMap((group) => {
-      const workspaces = (group.workspaces ?? [group.place]).filter((place) => !plumbing(place));
+      const workspaces = (group.workspaces ?? [group.place]).filter(
+        (place) => !place.daemon && !plumbing(place)
+      );
       if (!workspaces.length) return [];
-      const primary = plumbing(group.place) ? workspaces[0] : group.place;
+      const work = group.work.filter((item) => !item.ref.daemon && !item.place.daemon);
+      const primary = plumbing(group.place) || group.place.daemon ? workspaces[0] : group.place;
       return {
         aliases: [
           ...new Set([
             ...(group.projectId ? [group.projectId] : []),
-            ...group.work.map(
-              (work) =>
-                `work:${work.ref.daemon ?? work.place.daemon ?? work.place.machine}\u0000${work.ref.adapter}\u0000${work.ref.id}`
+            ...work.map(
+              (item) => `work:${item.place.machine}\u0000${item.ref.adapter}\u0000${item.ref.id}`
             ),
             ...workspaces.flatMap((place) => [
               `folder:${placeKey(place)}`,
@@ -178,6 +193,7 @@ export function planNeoWorkspaceProjects(
           ]),
         ],
         title: neoWorkspaceTitle(workspaces, primary),
+        ongoing: isNeoOngoingPlace(work),
       };
     });
 }
@@ -363,6 +379,7 @@ export function persistNeoWorkspaceProjects(
           .get(alias) as { project_id: string } | null;
         return row ? [row.project_id] : [];
       });
+      if (!known.length && !canNeoMirrorCreateProject(project)) continue;
       const id = known[0] ?? `project:${crypto.randomUUID()}`;
       const existing = known.length ? repo.getProject(id) : null;
       if (!known.length) {
