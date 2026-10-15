@@ -16,6 +16,7 @@ import {
   neoTriggerMessageId,
   shouldPreemptNeoTurn,
   planNeoTriggerRetry,
+  neoTriggerRetryStatuses,
   requireNeoTriggerUnheard,
   shouldRetryNeoTrigger,
   NEO_TRIGGER_RETRY_MS,
@@ -182,6 +183,17 @@ describe('trigger keys of an ask', () => {
     expect(keys(ask, failed, true)).toEqual([]);
     expect(isNeoCardFailedForGood(card({ phase: 'failed', retryable: true }), false)).toBe(false);
     expect(isNeoCardFailedForGood(card({ phase: 'failed', superseded: true }), false)).toBe(false);
+  });
+});
+
+describe('neoTriggerRetryStatuses', () => {
+  test('attempts count only at the opener; the old holder only shows whether its note ended', () => {
+    expect(neoTriggerRetryStatuses(['consumed'], ['consumed', 'consumed', 'consumed'])).toEqual([
+      'consumed',
+    ]);
+    expect(neoTriggerRetryStatuses([], ['consumed', 'consumed', 'consumed'])).toEqual(['consumed']);
+    expect(neoTriggerRetryStatuses([], ['consumed', 'enqueued'])).toEqual(['pending']);
+    expect(neoTriggerRetryStatuses([], [])).toEqual([]);
   });
 });
 
@@ -510,7 +522,7 @@ describe('NeoService notification triggers', () => {
     expect(mailbox()[1].messageUuid).toBe(`${first}#2`);
   });
 
-  test('a note an older release sent to the project holder is retried to the opener', async () => {
+  test('a note an older release spent every attempt on at the holder is still retried to the opener', async () => {
     const holder = 'neo:holder:labs';
     db.createSession(createTestSession(holder));
     service.repo.saveProject({ id: 'labs', title: 'Labs', summary: '', context: '' }, 0);
@@ -536,14 +548,15 @@ describe('NeoService notification triggers', () => {
     tickMet(opened);
     await sweep();
     const legacy = sent.mock.calls[0][1] as string;
-    db.getSDKMessageRepo().saveSDKMessage(holder, {
-      type: 'user',
-      uuid: legacy,
-      session_id: holder,
-      parent_tool_use_id: null,
-      inputKind: 'system',
-      message: { role: 'user', content: 'note' },
-    } as unknown as SDKUserMessage);
+    for (const uuid of [legacy, `${legacy}#2`, `${legacy}#3`])
+      db.getSDKMessageRepo().saveSDKMessage(holder, {
+        type: 'user',
+        uuid,
+        session_id: holder,
+        parent_tool_use_id: null,
+        inputKind: 'system',
+        message: { role: 'user', content: 'note' },
+      } as unknown as SDKUserMessage);
     sent.mockRestore();
     await sweep();
     await vi.waitFor(() => expect(mailbox()).toHaveLength(1));

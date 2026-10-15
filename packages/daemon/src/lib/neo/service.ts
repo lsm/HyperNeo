@@ -354,6 +354,7 @@ import {
   planNeoTriggerRetry,
   shouldRetryNeoTrigger,
   neoAskTriggerConcern,
+  neoTriggerRetryStatuses,
   shouldPreemptNeoTurn,
   neoTriggerWorkProblem,
   NEO_CONSULTATION_PENDING_DETAIL,
@@ -1222,11 +1223,15 @@ export class NeoService {
       const target = ask ? this.triggerOwner(ask) : null;
       if (!ask || !target || this.isTriggerOwnerBusy(ask)) continue;
       if (!shouldRetryNeoTrigger(ask, triggerId.split(':')[0], this.heardOutcome(ask))) continue;
+      const legacy = this.repo.getBindingForProject(ask.projectId)?.sessionId;
       const plan = planNeoTriggerRetry(
         this.publications.hasTrigger(conversationId, triggerId, ''),
-        [
-          ...new Set([target, this.repo.getBindingForProject(ask.projectId)?.sessionId ?? target]),
-        ].flatMap((session) => this.triggers.noteStatuses(session, neoTriggerMessageIds(triggerId)))
+        neoTriggerRetryStatuses(
+          this.triggers.noteStatuses(target, neoTriggerMessageIds(triggerId)),
+          legacy && legacy !== target
+            ? this.triggers.noteStatuses(legacy, neoTriggerMessageIds(triggerId))
+            : []
+        )
       );
       if (plan === 'retry') this.triggers.forget(askId, triggerId);
     }

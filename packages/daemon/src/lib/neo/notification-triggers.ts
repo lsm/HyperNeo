@@ -78,6 +78,14 @@ export function planNeoTriggerRetry(
 
 const TURN_OVER: ReadonlySet<string> = new Set(['consumed', 'failed']);
 
+export function neoTriggerRetryStatuses(
+  owner: readonly string[],
+  legacy: readonly string[]
+): readonly string[] {
+  if (owner.length || !legacy.length) return owner;
+  return legacy.every((status) => TURN_OVER.has(status)) ? ['consumed'] : ['pending'];
+}
+
 export function neoHumanTrigger(messageId: string): string {
   return `${NEO_HUMAN_TRIGGER_PREFIX}${messageId}`;
 }
