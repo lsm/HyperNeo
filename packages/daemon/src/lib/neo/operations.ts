@@ -17,7 +17,11 @@ import {
   NEO_CONSULTATION_RECEIPT_RETURNED,
   NEO_WORK_PROPOSE_DESCRIPTION,
 } from '@hyperneo/prompts';
-import { planNeoSnapshotRead, rememberNeoSnapshotRead } from './snapshot-read.ts';
+import {
+  NEO_SNAPSHOT_UNCHANGED_GUIDANCE,
+  planNeoSnapshotRead,
+  rememberNeoSnapshotRead,
+} from './snapshot-read.ts';
 import { neoAdmissionRefusal } from './work-admission.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { THINKING_LEVELS } from '@hyperneo/shared';
@@ -673,7 +677,7 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
         ok: true,
         unchanged: true,
         rev,
-        note: `unchanged since rev ${rev}: nothing changed since your last read.`,
+        note: `unchanged since rev ${rev}: nothing changed since your last read. ${NEO_SNAPSHOT_UNCHANGED_GUIDANCE}`,
         ...scoped,
       }
     : { ...snapshot, rev, ...scoped };
