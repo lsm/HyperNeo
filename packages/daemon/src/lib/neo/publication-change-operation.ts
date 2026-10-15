@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
+import { neoDerivedId } from './derived-id.ts';
 import { NeoPublicationSchema } from './publication.ts';
 import { requirePublicationProducer } from './publication-operation.ts';
 
@@ -28,7 +29,6 @@ const EditInput = z
 const CorrectInput = z
   .object({
     publicationId: z.string().uuid(),
-    correctionId: z.string().uuid(),
     shortText: NeoPublicationSchema.shape.shortText,
     fullText: NeoPublicationSchema.shape.fullText,
   })
@@ -91,6 +91,12 @@ export function planNeoCorrectionAnswer(
   return trigger && !published && ask
     ? { askOrigin: ask, triggerId: trigger }
     : { askOrigin: owned.publication.askOrigin };
+}
+
+export function neoCorrectionId(owned: Owned, trigger: string | null): string {
+  const { conversationId, publicationId } = owned.publication;
+  const turn = trigger ?? `${owned.producer.input.sessionId}:${owned.producer.input.messageId}`;
+  return neoDerivedId(`neo.publication.correct:${conversationId}:${publicationId}:${turn}`);
 }
 
 const RecentInput = z.object({ limit: z.number().int().min(1).max(20).default(10) }).strict();
@@ -190,16 +196,17 @@ export function createNeoPublicationChangeOperations(
     requireCorrectable,
     (owned, input: z.infer<typeof CorrectInput>) => {
       const trigger = runtime.inputTrigger(owned.producer.input);
+      const correctionId = neoCorrectionId(owned, trigger);
       const answer = planNeoCorrectionAnswer(
         owned,
         trigger,
         !!trigger &&
-          runtime.isTriggerPublished(owned.publication.conversationId, trigger, input.correctionId),
+          runtime.isTriggerPublished(owned.publication.conversationId, trigger, correctionId),
         runtime.resolveAskOrigin(owned.producer.input)
       );
       const result = runtime.publications.correct(owned.publication, {
         conversationId: owned.publication.conversationId,
-        publicationId: input.correctionId,
+        publicationId: correctionId,
         ...answer,
         producerInput: owned.producer.input,
         shortText: input.shortText,
@@ -278,7 +285,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.correct',
       description:
-        "Correct a Neo reply in this conversation, whichever Neo session produced it, when a fact or an action for the human changed (for example it said a PR merged and it did not). This publishes a separate message labelled as a correction that cites the original by publicationId; it never rewrites what the human already read. Base it on the original's content and fresh evidence, not a guess. Pass a new correctionId (reuse it only for identical retries). When this turn answers a human message (or a trigger note) that has no reply yet, the correction is that reply, so do not publish a separate one. Each message takes at most one correction, and a correction cannot be corrected (already_corrected). Only Neo publications in this conversation can be corrected (not_found), and a consultation reply cannot be (consultation_return). Otherwise it needs no notification trigger.",
+        "Correct a Neo reply in this conversation, whichever Neo session produced it, when a fact or an action for the human changed (for example it said a PR merged and it did not). This publishes a separate message labelled as a correction that cites the original by publicationId; it never rewrites what the human already read. Base it on the original's content and fresh evidence, not a guess. The daemon assigns the correction's id and returns it; a retry within the same turn returns the same correction. When this turn answers a human message (or a trigger note) that has no reply yet, the correction is that reply, so do not publish a separate one. Each message takes at most one correction, and a correction cannot be corrected (already_corrected). Only Neo publications in this conversation can be corrected (not_found), and a consultation reply cannot be (consultation_return). Otherwise it needs no notification trigger.",
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: CorrectInput,
       resultSchema: Result,
