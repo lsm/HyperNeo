@@ -27,6 +27,7 @@ export function useNeo() {
   const [askDetails, setAskDetails] = useState<ReadonlyMap<string, NeoSnapshot>>(new Map());
   const askDetailReads = useRef(new Map<string, string>());
   const [askDetailFailures, setAskDetailFailures] = useState<ReadonlySet<string>>(new Set());
+  const [askDetailEpoch, setAskDetailEpoch] = useState(0);
   const latest = useRef(received);
   latest.current = received;
   const snapshot = useMemo(() => mergeNeoAskDetails(received, askDetails), [received, askDetails]);
@@ -66,6 +67,7 @@ export function useNeo() {
     setError('');
     askDetailReads.current = new Map();
     setAskDetailFailures(new Set());
+    setAskDetailEpoch((epoch) => epoch + 1);
     setAskDetails(new Map());
     try {
       const hub = await connectionManager.getHub();
@@ -147,11 +149,10 @@ export function useNeo() {
       const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', { askId });
       if (!result.ok) throw new Error(result.reason);
       if (current()) setAskDetails((details) => new Map(details).set(askId, result));
-    } catch (cause) {
+    } catch {
       if (!current()) return;
       reads.delete(askId);
       setAskDetailFailures((failed) => new Set(failed).add(askId));
-      setError(cause instanceof Error ? cause.message : 'Could not load the ask details.');
     }
   }
 
@@ -311,6 +312,7 @@ export function useNeo() {
     refresh,
     loadAskDetail,
     askDetailFailed: (askId: string) => askDetailFailures.has(askId),
+    askDetailEpoch,
     act,
     settleAsk,
     approveAsk,

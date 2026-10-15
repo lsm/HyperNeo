@@ -713,6 +713,7 @@ export function NeoLive() {
                         : undefined
                     }
                     detailFailed={neo.askDetailFailed(ask.ask.id)}
+                    detailEpoch={neo.askDetailEpoch}
                     onApprove={() => void neo.approveAsk(ask.ask.id)}
                     onRetry={(id) => void neo.act(id, 'retry')}
                     onOpen={(id) => openScene({ kind: 'work', id })}

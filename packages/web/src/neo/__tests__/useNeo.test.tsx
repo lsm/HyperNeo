@@ -217,6 +217,9 @@ function DetailProbe() {
     <>
       <button onClick={() => void neo.loadAskDetail('a')}>Load detail</button>
       <p>Done when: {neo.snapshot?.asks?.[0]?.doneWhen || 'summarized'}</p>
+      <p>Detail failed: {String(neo.askDetailFailed('a'))}</p>
+      <p>Epoch: {neo.askDetailEpoch}</p>
+      <button onClick={() => void neo.open()}>Reopen</button>
       {neo.error && <p role="alert">{neo.error}</p>}
     </>
   );
@@ -261,7 +264,7 @@ describe('useNeo ask detail', () => {
     expect(detailReads()).toHaveLength(2);
   });
 
-  it('reports a failed detail read and lets the next expand try again', async () => {
+  it('marks a failed detail read on its ask only, and lets the next expand try again', async () => {
     let fail = true;
     request.mockImplementation(
       async (_method: string, { name, input }: { name: string; input: { askId?: string } }) =>
@@ -288,12 +291,15 @@ describe('useNeo ask detail', () => {
     render(<DetailProbe />);
     await waitFor(() => expect(screen.getByText('Done when: summarized')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
-    await waitFor(() =>
-      expect(screen.getByRole('alert').textContent).toBe('Ask detail unavailable.')
-    );
+    await waitFor(() => expect(screen.getByText('Detail failed: true')).toBeTruthy());
+    expect(screen.queryByRole('alert')).toBeNull();
     fail = false;
     fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
     await waitFor(() => expect(screen.getByText('Done when: Merged to dev')).toBeTruthy());
+    expect(screen.getByText('Detail failed: false')).toBeTruthy();
+    expect(screen.getByText('Epoch: 1')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen' }));
+    await waitFor(() => expect(screen.getByText('Epoch: 2')).toBeTruthy());
   });
 
   it('keeps the newer detail when an older read for the same ask lands last', async () => {

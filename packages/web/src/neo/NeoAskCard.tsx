@@ -285,6 +285,7 @@ export function NeoAskCard({
   onOpenSession,
   onExpand,
   detailFailed = false,
+  detailEpoch = 0,
   renderCard,
 }: {
   view: NeoAskView;
@@ -300,6 +301,7 @@ export function NeoAskCard({
   onOpenSession?: (sessionId: string, title: string) => void;
   onExpand?: () => void;
   detailFailed?: boolean;
+  detailEpoch?: number;
   renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
   const [open, setOpen] = useState(false);
@@ -307,7 +309,7 @@ export function NeoAskCard({
   const summarized = isNeoSummarized(ask);
   useEffect(() => {
     if (open && summarized) onExpand?.();
-  }, [open, summarized]);
+  }, [open, summarized, detailEpoch]);
   const tone =
     view.group === 'attention'
       ? 'attention'

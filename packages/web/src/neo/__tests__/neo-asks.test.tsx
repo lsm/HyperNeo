@@ -280,6 +280,14 @@ describe('NeoAskCard', () => {
     expect(card.getByRole('status').textContent).toContain('Couldn’t load details.');
     fireEvent.click(card.getByRole('button', { name: 'Retry' }));
     expect(onExpand).toHaveBeenCalledTimes(2);
+    card.rerender(
+      <NeoAskCard
+        view={describeAsk(summarized, [], { settled: true })}
+        onExpand={onExpand}
+        detailEpoch={1}
+      />
+    );
+    expect(onExpand).toHaveBeenCalledTimes(3);
   });
 
   it('shows no session rows when the ask has none', () => {
