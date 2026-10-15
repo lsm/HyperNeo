@@ -588,8 +588,8 @@ export const neoAskSummary = (input: z.infer<typeof Settle>) => input.summary ??
 
 export const isNeoAskReplay = (ask: NeoAsk, input: z.infer<typeof Settle>) =>
   ask.status === input.outcome &&
-  ask.outcome === neoAskSummary(input) &&
-  (ask.evidence ?? ask.outcome) === input.evidence;
+  (ask.status === 'achieved' ||
+    (ask.outcome === neoAskSummary(input) && (ask.evidence ?? ask.outcome) === input.evidence));
 
 export function requireNeoAskSummary(
   input: z.infer<typeof Settle>,
@@ -707,15 +707,11 @@ export function requireNeoMetReadEvidence<T>(
 
 const NEO_TERMINAL_CARD = new Set<NeoWork['status']>(['reported', 'failed', 'cancelled']);
 
-export function requireNeoSettleKeepsOutcomeCards<T>(
-  caller: OperationCaller,
-  outcome: z.infer<typeof Settle>['outcome'],
+export function neoAskLiveOutcomeCards(
   ask: Pick<NeoAsk, 'doneItems'>,
-  cards: readonly NeoOutcomeCard[],
-  value: T
-): Gate<T> {
-  if (caller.source !== 'mcp' || outcome !== 'achieved') return { value };
-  const live = (ask.doneItems ?? [])
+  cards: readonly NeoOutcomeCard[]
+): string[] {
+  return (ask.doneItems ?? [])
     .filter((item) => !item.removed)
     .flatMap((item) =>
       neoItemDependentCards(item, cards)
@@ -725,6 +721,17 @@ export function requireNeoSettleKeepsOutcomeCards<T>(
             `${item.id} is delivered by card ${card.id.slice(0, 8)}, which is ${card.status}`
         )
     );
+}
+
+export function requireNeoSettleKeepsOutcomeCards<T>(
+  caller: OperationCaller,
+  outcome: z.infer<typeof Settle>['outcome'],
+  ask: Pick<NeoAsk, 'doneItems'>,
+  cards: readonly NeoOutcomeCard[],
+  value: T
+): Gate<T> {
+  if (caller.source !== 'mcp' || outcome !== 'achieved') return { value };
+  const live = neoAskLiveOutcomeCards(ask, cards);
   return live.length
     ? {
         reason: fail(
@@ -1253,13 +1260,20 @@ export function planNeoAskEdit(
 }
 
 export function planNeoAskTickStatus(
-  ask: NeoAsk
+  ask: NeoAsk,
+  settle: { cardLive: boolean; outcome?: string } = { cardLive: false }
 ):
+  | { status: 'achieved'; outcome: string; evidence: string }
   | { status: 'waiting'; outcome: string; item: string }
   | { status: 'open' }
   | { status: 'unchanged' } {
   if (isFinal(ask)) return { status: 'unchanged' };
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
+  const held = ask.status === 'waiting' && !ask.waitingItem;
+  if (!held && !settle.cardLive && items.length && items.every((item) => item.state === 'met')) {
+    const evidence = [...new Set(items.map((item) => item.evidence ?? item.text))].join('; ');
+    return { status: 'achieved', outcome: settle.outcome ?? evidence, evidence };
+  }
   const asked =
     items.find((item) => item.state === 'needs_you') ??
     (items.some((item) => item.state === 'pending')
@@ -1281,11 +1295,13 @@ export function writeNeoAskTickStatus(
   ask: NeoAsk,
   plan: ReturnType<typeof planNeoAskTickStatus>
 ): NeoAsk | null {
-  return plan.status === 'waiting'
-    ? records.settle(ask, 'waiting', plan.outcome, plan.outcome, plan.item)
-    : plan.status === 'open'
-      ? records.reopen(ask)
-      : ask;
+  return plan.status === 'achieved'
+    ? records.settle(ask, 'achieved', plan.outcome, plan.evidence)
+    : plan.status === 'waiting'
+      ? records.settle(ask, 'waiting', plan.outcome, plan.outcome, plan.item)
+      : plan.status === 'open'
+        ? records.reopen(ask)
+        : ask;
 }
 
 export function requireNeoAskWritten(written: { ask: NeoAsk | null }): Gate<AskReceipt> {
@@ -1387,9 +1403,7 @@ export function createNeoAskOperations(
     name: string,
     verb: string
   ) => NeoAsk | Rejection;
-  const replanAsk = (receipt: AskReceipt) => ({
-    ask: writeNeoAskTickStatus(service.askRecords, receipt.ask, planNeoAskTickStatus(receipt.ask)),
-  });
+  const replanAsk = (receipt: AskReceipt) => ({ ask: service.writeAskStatus(receipt.ask) });
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
