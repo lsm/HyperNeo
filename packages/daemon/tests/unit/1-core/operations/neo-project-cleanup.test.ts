@@ -175,7 +175,7 @@ describe('NeoRepository.projectCleanupFacts', () => {
 });
 
 describe('neoMirroredAliases', () => {
-  test('holds the aliases of places the mirror would make a project for: repositories and ongoing folders', () => {
+  test('holds only repository aliases: folders without a repository are never mirrored, even when ongoing', () => {
     const group = (folder: string, remotes?: string[], days: number[] = []) => ({
       place: { folder, machine: 'here', name: folder.slice(1), ...(remotes ? { remotes } : {}) },
       lastActivityAt: 0,
@@ -199,7 +199,7 @@ describe('neoMirroredAliases', () => {
       ),
     ];
     expect(aliases).toContain('repository:github.com/lsm/app');
-    expect(aliases.some((alias) => alias.includes('/ongoing'))).toBe(true);
+    expect(aliases.some((alias) => alias.includes('/ongoing'))).toBe(false);
     expect(aliases.some((alias) => alias.includes('/once'))).toBe(false);
   });
 });

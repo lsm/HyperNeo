@@ -58,7 +58,6 @@ export function withdrawNeoProjectQuestions(db: Database, a: string, b: string):
 export interface NeoWorkspaceProject {
   aliases: string[];
   title: string;
-  ongoing?: boolean;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -82,10 +81,8 @@ export function isNeoIdentityAlias(alias: string): boolean {
   return alias.startsWith('git:') || alias.startsWith('repository:');
 }
 
-export function canNeoMirrorCreateProject(
-  project: Pick<NeoWorkspaceProject, 'aliases' | 'ongoing'>
-): boolean {
-  return !!project.ongoing || project.aliases.some((alias) => alias.startsWith('repository:'));
+export function canNeoMirrorCreateProject(project: Pick<NeoWorkspaceProject, 'aliases'>): boolean {
+  return project.aliases.some((alias) => alias.startsWith('repository:'));
 }
 
 export function isNeoPlumbingFolder(
@@ -193,7 +190,6 @@ export function planNeoWorkspaceProjects(
           ]),
         ],
         title: neoWorkspaceTitle(workspaces, primary),
-        ongoing: isNeoOngoingPlace(work),
       };
     });
 }
