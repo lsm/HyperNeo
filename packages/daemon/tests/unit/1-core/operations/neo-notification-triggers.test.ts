@@ -13,6 +13,7 @@ import {
   isNeoCardFailedForGood,
   neoReplyOriginKey,
   neoTriggerMessageId,
+  shouldPreemptNeoTurn,
   planNeoTriggerRetry,
   requireNeoTriggerUnheard,
   shouldRetryNeoTrigger,
@@ -80,6 +81,21 @@ const item = (id: string, state: 'met' | 'pending') => ({
   metBy: null,
   removed: false,
   addedAt: null,
+});
+
+describe('shouldPreemptNeoTurn', () => {
+  const state = (status: string, messageId?: string) => JSON.stringify({ status, messageId });
+  const trigger = (id: string) => (id === 'system' ? null : `human:${id}`);
+  const answered = (value: string) => value === 'human:old';
+
+  test('preempts only a processing turn whose trigger already has its answer', () => {
+    expect(shouldPreemptNeoTurn(state('processing', 'old'), trigger, answered)).toBe(true);
+    expect(shouldPreemptNeoTurn(state('processing', 'fresh'), trigger, answered)).toBe(false);
+    expect(shouldPreemptNeoTurn(state('processing', 'system'), trigger, answered)).toBe(false);
+    expect(shouldPreemptNeoTurn(state('idle'), trigger, answered)).toBe(false);
+    expect(shouldPreemptNeoTurn(undefined, trigger, answered)).toBe(false);
+    expect(shouldPreemptNeoTurn('not json', trigger, answered)).toBe(false);
+  });
 });
 
 describe('trigger keys of an ask', () => {

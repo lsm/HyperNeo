@@ -292,6 +292,28 @@ describe('NeoService direct consultation return', () => {
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('already_consulted') } });
   });
 
+  test('a waiting human message ends a root turn whose trigger is already answered', async () => {
+    const handleInterrupt = vi.fn(async () => {});
+    Object.assign(service.sessions, {
+      getSessionForControl: vi.fn(async () => ({ handleInterrupt })),
+    });
+    db.updateSession(root, {
+      processingState: JSON.stringify({
+        status: 'processing',
+        messageId: ask.messageId,
+        phase: 'streaming',
+      }),
+    });
+    await service.preemptAnsweredTurn(root);
+    expect(handleInterrupt).not.toHaveBeenCalled();
+    await publish();
+    await service.preemptAnsweredTurn(root);
+    expect(handleInterrupt).toHaveBeenCalledExactlyOnceWith({ preserveDeliveryJobs: true });
+    db.updateSession(root, { processingState: JSON.stringify({ status: 'idle' }) });
+    await service.preemptAnsweredTurn(root);
+    expect(handleInterrupt).toHaveBeenCalledTimes(1);
+  });
+
   test('E: a return that lands on an answered message settles quietly and publishes nothing', async () => {
     const answered = service.publications.append({
       ...interim,
