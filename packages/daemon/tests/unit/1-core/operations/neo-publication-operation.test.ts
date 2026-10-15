@@ -640,6 +640,8 @@ describe('requirePublicationNews', () => {
     'Let me check what is open on HyperNeo.',
     "I'll look into it and get back to you.",
     'Checking now…',
+    '稍等，我查一下。',
+    '正在确认，稍后告诉你。',
     '我再向 HyperNeo 当前负责会话核对开放事项，拿到清单后直接发给你。',
     'I will ask the HyperNeo holder to verify the list and get back to you.',
   ])('refuses the checking-only post %s', (text) => {
@@ -658,6 +660,8 @@ describe('requirePublicationNews', () => {
     "Let me check what's open: Slice 1 and Slice 6.",
     '我先核对一下：两张卡在等你。',
     '我再给你确认一下范围：Slice 1 到 Slice 6',
+    '我看一下日志，问题出在超时。',
+    'Hold on — Slice 6 is still waiting on you.',
     '看起来 Slice 6 还在等你决定。',
     'Checked: two cards are waiting on you.',
   ])('keeps the answer %s', (text) => {

@@ -31,7 +31,7 @@ const CHECKING_VERB =
 const CHECKING_PROMISE =
   /(?:后|再|就)(?:直接)?(?:发给|发|告诉|回复|整理给|给)你|get back to you|once i have|when i have|then (?:i'll|i will) (?:send|tell|report|share)/i;
 const CHECKING_MAX_CHARS = 120;
-const CARRIES_ANSWER = /[:：]\s*\S{2,}/;
+const CLAUSE_BREAK = /[:：，,;；。—–]|\s-\s|\.\s/;
 
 type Draft = { shortText: string; fullText: string };
 type Rejection = { accepted: false; reason: string; detail: string };
@@ -54,10 +54,20 @@ export function requirePublicationNews<T>(
           'This only acknowledges the message. Publish when you have something to tell the human, or end the turn.',
       },
     };
+  const announces = (text: string) =>
+    CHECKING_LEAD.test(text.trim()) || (CHECKING_VERB.test(text) && CHECKING_PROMISE.test(text));
+  const carriesAnswer = (text: string) => {
+    const brk = CLAUSE_BREAK.exec(text);
+    if (!brk) return false;
+    const rest = text.slice(brk.index + brk[0].length).trim();
+    return (
+      rest.replace(/[\p{P}\p{S}\s]+/gu, '').length >= 2 &&
+      !CHECKING_LEAD.test(rest) &&
+      !CHECKING_PROMISE.test(rest)
+    );
+  };
   const checking = (text: string) =>
-    text.length <= CHECKING_MAX_CHARS &&
-    !CARRIES_ANSWER.test(text) &&
-    (CHECKING_LEAD.test(text.trim()) || (CHECKING_VERB.test(text) && CHECKING_PROMISE.test(text)));
+    text.length <= CHECKING_MAX_CHARS && announces(text) && !carriesAnswer(text);
   if (checking(draft.shortText) && checking(draft.fullText))
     return {
       reason: {
