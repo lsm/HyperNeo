@@ -1,7 +1,12 @@
 import type { NeoAskItemOutcomeKind } from '@hyperneo/shared/types/neo-snapshot';
 import { neoDaemonTickPath } from './needs-you.ts';
 
-type Outcome = { text: string; check?: string | null; outcomeKind?: NeoAskItemOutcomeKind };
+type Outcome = {
+  text: string;
+  check?: string | null;
+  outcomeKind?: NeoAskItemOutcomeKind;
+  deliveredBy?: string | null;
+};
 type Check = 'coding.pr_merged' | 'coding.deployed';
 
 function requiredCheck(item: Outcome): Check | null {
@@ -24,13 +29,14 @@ function requireOpenedOnly<T extends Outcome>(
   items: readonly T[]
 ): { value: readonly T[] } | { reason: { ok: false; reason: string } } {
   const beyond = items.filter(
-    (item) => item.check === 'coding.pr_opened' && BEYOND_OPENED.test(item.text)
+    (item) =>
+      item.check === 'coding.pr_opened' && (BEYOND_OPENED.test(item.text) || !!item.deliveredBy)
   );
   return beyond.length
     ? {
         reason: {
           ok: false,
-          reason: `opened_check_too_weak: ${beyond.map(({ text }) => JSON.stringify(text)).join('; ')} asks for more than an open pull request; coding.pr_opened only fits an outcome that a pull request is open.`,
+          reason: `opened_check_too_weak: ${beyond.map(({ text }) => JSON.stringify(text)).join('; ')} asks for more than an open pull request or is bound to a card; coding.pr_opened only fits an unbound outcome that a pull request is open.`,
         },
       }
     : { value: items };

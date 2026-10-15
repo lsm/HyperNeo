@@ -18,6 +18,7 @@ function requireBindings(ask: NeoAsk | null, bindings: readonly Binding[], cards
     seen.add(binding.itemId);
     const next = binding.deliveredBy;
     if (next !== null && !local.has(next)) return reject('binding_card_not_owned');
+    if (next !== null && item.check === 'coding.pr_opened') return reject('opened_check_unbound');
     if ((item.deliveredBy ?? null) !== next) {
       if ([item.deliveredBy, next].some((id) => id && local.get(id)?.dispatched))
         return reject('binding_already_dispatched');
