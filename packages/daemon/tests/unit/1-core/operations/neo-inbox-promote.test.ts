@@ -108,7 +108,9 @@ describe('neo.inbox.promote', () => {
         delivered.push(`${sessionId}:${messageId}`);
       },
       move: (item, cards, owner) => {
+        if (item.id === 'raced') return false;
         moved.push({ askId: item.id, projectId: owner.projectId, cards: cards.length });
+        return true;
       },
       log: () => {},
       createProject: async (title) => {
@@ -142,12 +144,12 @@ describe('neo.inbox.promote', () => {
   });
 
   test('leaves in the Inbox an ask that changed or failed to move, and moves the rest', async () => {
-    const asks = [ask('a', 0), ask('b', DAY + 1), ask('boom', DAY + 2)];
+    const asks = [ask('a', 0), ask('b', DAY + 1), ask('boom', DAY + 2), ask('raced', DAY + 3)];
     const { invoke, moved } = setup(asks, true, () => {
       asks[1] = ask('b', DAY + 1, { status: 'achieved' });
     });
-    expect(await invoke({ title: 'Taxes', askIds: ['a', 'b', 'boom'] })).toMatchObject({
-      value: { ok: true, projectId: 'tax', moved: ['a'], stayed: ['b', 'boom'] },
+    expect(await invoke({ title: 'Taxes', askIds: ['a', 'b', 'boom', 'raced'] })).toMatchObject({
+      value: { ok: true, projectId: 'tax', moved: ['a'], stayed: ['b', 'boom', 'raced'] },
     });
     expect(moved.map((item) => item.askId)).toEqual(['a']);
   });

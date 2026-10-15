@@ -217,8 +217,10 @@ describe('neo.projects.reorganize', () => {
       deliver: async (sessionId, messageId, _content, _from, parent) => {
         delivered.push({ sessionId, messageId, parent });
       },
-      move: (item, _cards, owner) =>
-        moves.push({ askId: item.id, projectId: owner.projectId, messageId: owner.messageId }),
+      move: (item, _cards, owner) => {
+        moves.push({ askId: item.id, projectId: owner.projectId, messageId: owner.messageId });
+        return true;
+      },
       mergeProjects: async () => ({ merged, asked: [] }),
       log: (line) => {
         logged.push(line);
@@ -386,11 +388,10 @@ describe('NeoService.moveAsk', () => {
       instruction: 'Fix it.',
     });
     service.askRecords.link(opened.id, card.id);
-    service.moveAsk(opened, [card], {
-      projectId: 'drivers',
-      sessionId: 'holder:drivers',
-      messageId: 'neo-moved:a1',
-    });
+    const owner = { projectId: 'drivers', sessionId: 'holder:drivers', messageId: 'neo-moved:a1' };
+    expect(service.moveAsk({ ...opened, projectId: 'garden' }, [card], owner)).toBe(false);
+    expect(service.askRecords.get('a1')).toMatchObject({ projectId: null });
+    expect(service.moveAsk(opened, [card], owner)).toBe(true);
     expect(service.askRecords.get('a1')).toMatchObject({
       projectId: 'drivers',
       originSessionId: 'holder:drivers',

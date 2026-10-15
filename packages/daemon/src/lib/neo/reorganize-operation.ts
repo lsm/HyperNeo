@@ -53,7 +53,7 @@ export interface NeoReorganizeRuntime {
     fromSessionId: string,
     parent: NeoAskOrigin | null
   ): Promise<void>;
-  move(ask: NeoAsk, cards: readonly NeoWork[], owner: Project & { messageId: string }): void;
+  move(ask: NeoAsk, cards: readonly NeoWork[], owner: Project & { messageId: string }): boolean;
   mergeProjects(): Promise<{ merged: Merged[]; asked: Merged[] }>;
   log(line: string): void;
 }
@@ -157,7 +157,8 @@ export async function handOffNeoAsk(
     root,
     ask.originMessageId ? { sessionId: ask.originSessionId, messageId: ask.originMessageId } : null
   );
-  runtime.move(ask, cards, { ...project, messageId });
+  if (!runtime.move(ask, cards, { ...project, messageId }))
+    throw new Error(`neo: ask ${ask.id} changed during its hand-off`);
   runtime.log(
     `neo: moved ask ${ask.id} (${ask.title}) and ${cards.length} card(s) from ${ask.projectId ?? 'main'} to ${project.projectId}`
   );

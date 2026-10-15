@@ -570,11 +570,22 @@ export class NeoAskRepository {
     return this.withWork([row])[0];
   }
 
-  moveTo(id: string, owner: NeoAskOwner): NeoAsk | null {
+  moveTo(
+    ask: Pick<NeoAsk, 'id' | 'projectId' | 'originSessionId'>,
+    owner: NeoAskOwner
+  ): NeoAsk | null {
     const row = this.db
       .prepare(`UPDATE neo_asks SET concern_id = ?, origin_session_id = ?, origin_message_id = ?
-        WHERE id = ? RETURNING ${askColumns}`)
-      .get(owner.projectId, owner.originSessionId, owner.originMessageId, id) as NeoAskRow | null;
+        WHERE id = ? AND concern_id IS ? AND origin_session_id = ?
+          AND status IN ('open', 'waiting', 'blocked') RETURNING ${askColumns}`)
+      .get(
+        owner.projectId,
+        owner.originSessionId,
+        owner.originMessageId,
+        ask.id,
+        ask.projectId ?? null,
+        ask.originSessionId
+      ) as NeoAskRow | null;
     if (!row) return null;
     this.notify();
     return this.withWork([row])[0];
