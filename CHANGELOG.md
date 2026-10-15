@@ -11,7 +11,7 @@ Patch release: v0.44.0 never reached npm because its Windows build failed.
 ### Fixed
 
 - **Release**: Binaries build without a shell, so the Windows build receives the commit define and the release can publish (#7008).
-- **Neo**: Facts are read before publishing, and a wrong fact goes through correction (#6999); a refused change to a closed answer tells Neo to end the turn (#7004); a waiting human message ends a turn whose answer is already out (#7005).
+- **Neo**: Facts are read before publishing, and a wrong fact goes through correction (#6999); a refused change to a closed answer tells Neo to end the turn (#7004); a waiting human message ends a turn whose answer is already out (#7005); a human message decides its own turn's reply language (#7009).
 
 ### Added
 
