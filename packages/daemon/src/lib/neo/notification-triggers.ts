@@ -294,6 +294,26 @@ export function requireNeoTriggerUnheard(
   return { reason: null };
 }
 
+export function neoTriggerWorkProblem(
+  input: { sessionId: string; messageId: string },
+  trigger: string | null,
+  answeredBy: { sessionId: string; messageId: string } | null,
+  consulted: boolean
+): string | null {
+  if (!trigger) return null;
+  if (
+    answeredBy &&
+    (answeredBy.sessionId !== input.sessionId || answeredBy.messageId !== input.messageId)
+  )
+    return 'trigger_answered: the human already has the answer for this message. Start no new work for it; only a new human message can.';
+  return consulted
+    ? 'already_consulted: this holder already returned for this message. Use its answer instead of asking again.'
+    : null;
+}
+
+export const NEO_CONSULTATION_PENDING_DETAIL =
+  'A holder you consulted for this message has not returned yet. Its published answer is the reply to the human, so publish nothing now and end the turn.';
+
 export function shouldRetryNeoTrigger(
   ask: Pick<NeoAsk, 'status'>,
   kind: string,
