@@ -264,7 +264,12 @@ describe('chooseNeoRoute with a classifier', () => {
   });
 
   test('stays with main Neo and records why when the classifier says main or gives no answer', async () => {
-    const verdicts = ['main', null, 'timeout', 'failed'] as const;
+    const verdicts = [
+      'main',
+      null,
+      { miss: 'timeout', cause: 'no answer within 15000 ms' },
+      { miss: 'failed', cause: 'route model returned 429' },
+    ] as const;
     const routes = await Promise.all(
       verdicts.map((verdict) =>
         chooseNeoRoute(
@@ -276,8 +281,8 @@ describe('chooseNeoRoute with a classifier', () => {
     expect(routes).toEqual([
       { choice: null, fallback: 'classifier' },
       { choice: null, fallback: 'classifier-unanswered' },
-      { choice: null, fallback: 'classifier-timeout' },
-      { choice: null, fallback: 'classifier-failed' },
+      { choice: null, fallback: 'classifier-timeout', cause: 'no answer within 15000 ms' },
+      { choice: null, fallback: 'classifier-failed', cause: 'route model returned 429' },
     ]);
   });
 });

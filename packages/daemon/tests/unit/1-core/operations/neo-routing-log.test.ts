@@ -18,6 +18,7 @@ import {
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
+import { runMigration379 } from '../../../../src/storage/schema/m379-neo-routing-cause.ts';
 import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
@@ -170,5 +171,47 @@ describe('neoExcerpt', () => {
     expect(kept.startsWith('aaaa')).toBe(true);
     expect(kept.endsWith('so what is the question?')).toBe(true);
     expect(kept).toContain('…');
+  });
+});
+
+describe('runMigration379', () => {
+  test('adds the cause column to an existing routing log once', () => {
+    const db = new Sqlite(':memory:');
+    db.exec(`CREATE TABLE neo_routing_log (id INTEGER PRIMARY KEY, message_id TEXT)`);
+    runMigration379(db);
+    runMigration379(db);
+    const columns = db.prepare('PRAGMA table_info(neo_routing_log)').all() as { name: string }[];
+    expect(columns.filter((column) => column.name === 'cause')).toHaveLength(1);
+  });
+});
+
+describe('NeoRoutingLogRepository.latestFailure', () => {
+  test('returns the newest row with a cause, or null when routing never failed', () => {
+    const db = new Sqlite(':memory:');
+    createTables(db);
+    const log = new NeoRoutingLogRepository(db);
+    const entry = {
+      conversationId,
+      ask: 'which one?',
+      destination: 'main' as const,
+      targetSessionId: root.sessionId,
+      projectId: null,
+      confidence: 1,
+    };
+    log.record({ ...entry, messageId: ask(1), askedAt: 1, signal: 'classifier' });
+    expect(log.latestFailure()).toBeNull();
+    log.record({
+      ...entry,
+      messageId: ask(2),
+      askedAt: 2,
+      signal: 'classifier-failed',
+      cause: 'route model returned 429',
+    });
+    log.record({ ...entry, messageId: ask(3), askedAt: 3, signal: 'classifier' });
+    expect(log.latestFailure()).toEqual({
+      at: 2,
+      signal: 'classifier-failed',
+      cause: 'route model returned 429',
+    });
   });
 });

@@ -101,7 +101,11 @@ export interface NeoRouteDecision {
   basis: NeoRouteBasis | null;
   projectTitle?: string;
 }
-export type NeoRouteVerdict = NeoRouteAnswer | NeoRouteDecision | 'timeout' | 'failed';
+export interface NeoRouteMiss {
+  miss: 'timeout' | 'failed' | 'unanswered';
+  cause: string;
+}
+export type NeoRouteVerdict = NeoRouteAnswer | NeoRouteDecision | NeoRouteMiss;
 const CLASSIFIER_CONFIDENCE = 0.6;
 export type NeoRouteSignal = 'facts' | 'embedding' | 'classifier' | `classifier:${NeoRouteBasis}`;
 
@@ -139,7 +143,7 @@ export function pickNeoHolder(
 }
 
 type Score = { holder: NeoHolder; similarity: number };
-export type NeoRouted = { choice: NeoRouteChoice | null; fallback?: string };
+export type NeoRouted = { choice: NeoRouteChoice | null; fallback?: string; cause?: string };
 type Routed = NeoRouted;
 type Exit = { reason: Routed };
 
@@ -274,7 +278,7 @@ export function renderNeoRouteContext(
 }
 
 function unanswered(verdict: NeoRouteVerdict): boolean {
-  return verdict === null || verdict === 'timeout' || verdict === 'failed';
+  return verdict === null || (typeof verdict === 'object' && 'miss' in verdict);
 }
 
 export async function askNeoRouteModel(
@@ -298,9 +302,8 @@ async function classifyNeoAsk(
   holders: readonly NeoHolder[]
 ): Promise<Routed> {
   const decided = verdict && typeof verdict === 'object' && 'decision' in verdict ? verdict : null;
-  const chosen = decided
-    ? decided.decision
-    : (verdict as Exclude<NeoRouteVerdict, NeoRouteDecision>);
+  const missed = verdict && typeof verdict === 'object' && 'miss' in verdict ? verdict : null;
+  const chosen = decided ? decided.decision : missed ? null : (verdict as NeoRouteAnswer);
   const unheld = decided?.basis === 'new_subject' || decided?.basis === 'matches_project';
   if (chosen === 'main' && unheld && decided?.projectTitle && deps.newProject) {
     const existing = holders.filter(
@@ -323,8 +326,12 @@ async function classifyNeoAsk(
       };
   }
   if (chosen === 'main') return { choice: null, fallback: classifierSignal(decided?.basis) };
-  if (!chosen || chosen === 'timeout' || chosen === 'failed')
-    return { choice: pickNeoHolder(scores), fallback: `classifier-${chosen ?? 'unanswered'}` };
+  if (!chosen)
+    return {
+      choice: pickNeoHolder(scores),
+      fallback: `classifier-${missed?.miss ?? 'unanswered'}`,
+      ...(missed ? { cause: missed.cause } : {}),
+    };
   const holder = chosen.projectId === NEO_INBOX_ID ? await deps.inbox?.() : chosen;
   return {
     choice: holder
