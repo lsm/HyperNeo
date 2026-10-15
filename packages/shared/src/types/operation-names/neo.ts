@@ -4,6 +4,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.ask.edit',
   'neo.ask.fold',
   'neo.ask.forward',
+  'neo.inbox.promote',
   'neo.ask.open',
   'neo.ask.question',
   'neo.ask.settle',

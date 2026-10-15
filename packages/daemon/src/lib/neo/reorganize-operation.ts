@@ -142,6 +142,28 @@ export function neoMovedAskNote(ask: NeoAsk, cards: readonly NeoWork[]): string 
   })}`;
 }
 
+export async function handOffNeoAsk(
+  runtime: Pick<NeoReorganizeRuntime, 'deliver' | 'move' | 'log'>,
+  ask: NeoAsk,
+  root: string,
+  project: Project,
+  cards: readonly NeoWork[]
+): Promise<Moved> {
+  const messageId = neoMovedAskMessageId(ask);
+  await runtime.deliver(
+    project.sessionId,
+    messageId,
+    neoMovedAskNote(ask, cards),
+    root,
+    ask.originMessageId ? { sessionId: ask.originSessionId, messageId: ask.originMessageId } : null
+  );
+  runtime.move(ask, cards, { ...project, messageId });
+  runtime.log(
+    `neo: moved ask ${ask.id} (${ask.title}) and ${cards.length} card(s) from ${ask.projectId ?? 'main'} to ${project.projectId}`
+  );
+  return { askId: ask.id, projectId: project.projectId };
+}
+
 export type NeoReorganized = {
   merged: Merged[];
   asked: Merged[];
@@ -174,23 +196,8 @@ export function createNeoProjectsReorganizer(
     )
     .pipe((ask: NeoAsk) => runtime.cards(ask), 'fresh', 'cards')
     .pipe(
-      async (ask: NeoAsk, root: string, project: Project, cards: NeoWork[]) => {
-        const messageId = neoMovedAskMessageId(ask);
-        await runtime.deliver(
-          project.sessionId,
-          messageId,
-          neoMovedAskNote(ask, cards),
-          root,
-          ask.originMessageId
-            ? { sessionId: ask.originSessionId, messageId: ask.originMessageId }
-            : null
-        );
-        runtime.move(ask, cards, { ...project, messageId });
-        runtime.log(
-          `neo reorganize: moved ask ${ask.id} (${ask.title}) and ${cards.length} card(s) from ${ask.projectId ?? 'main'} to ${project.projectId}`
-        );
-        return { askId: ask.id, projectId: project.projectId };
-      },
+      (ask: NeoAsk, root: string, project: Project, cards: NeoWork[]) =>
+        handOffNeoAsk(runtime, ask, root, project, cards),
       ['fresh', 'root', 'move', 'cards'],
       'move'
     )
