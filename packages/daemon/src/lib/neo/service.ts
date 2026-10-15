@@ -70,6 +70,7 @@ import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-
 import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
 import {
+  neoAskLiveOutcomeCards,
   planNeoAskTickStatus,
   planNeoAskWorkStops,
   writeNeoAskTickStatus,
@@ -442,6 +443,7 @@ type NeoWorkPrCard = {
   packEvidence: boolean;
   toldAt: number | null;
   doneWhenMet: boolean;
+  changedAt: number | null;
 };
 type NeoWorkPrRefreshed = { read: NeoEvidenceRead | null; failed: boolean };
 type NeoNeedsYouCard = {
@@ -1285,18 +1287,7 @@ export class NeoService {
           true
         );
       const ticked = this.askRecords.get(ask.id);
-      if (!plan.settle || !ticked) continue;
-      this.askRecords.settle(
-        ticked,
-        'achieved',
-        publication.shortText,
-        `Answered the human in publication ${publication.publicationId}.`
-      );
-      const works = ticked.workIds.flatMap((id) => this.repo.getWork(id) ?? []);
-      for (const stop of planNeoAskWorkStops(works, 'achieved'))
-        void this.close(stop.id, stop.close).catch((error) =>
-          this.log.warn(`Closing card ${stop.id} after its answer was published failed`, error)
-        );
+      if (ticked) this.writeAskStatus(ticked, publication.shortText);
     }
   }
 
@@ -1664,6 +1655,13 @@ export class NeoService {
       readStatus: (work: NeoWork, ref: WorkRef, receipt: DriverSent['receipt']) =>
         this.invokeAsCard(work, 'work.status', { ref, ...(receipt ? { receipt } : {}) }),
     });
+  }
+
+  async startApprovedWork(workIds: readonly string[]): Promise<void> {
+    const startable = workIds.filter(
+      (id) => this.repo.getWork(id)?.status === 'proposed' && this.resolveWorkTarget(id).accepted
+    );
+    await Promise.allSettled(startable.map((id) => this.admitWork(id, false)));
   }
 
   async admitWork(id: string, authorized: boolean, now = Date.now()) {
@@ -2180,6 +2178,7 @@ export class NeoService {
     }
     this.forgetUnfollowedAskTopics();
     for (const ask of this.askRecords.listLive()) {
+      this.writeAskStatus(ask);
       this.followAskTopics(ask);
       try {
         this.runAskPackTicks(ask.id);
@@ -2499,11 +2498,11 @@ export class NeoService {
     .endAsync('note') as (ask: NeoAsk, now: number) => Promise<unknown>;
 
   private readonly refreshWorkPrs = (superpipe({})('neo-work-pr-refresh') as PipelineAPI)
-    .input(['workId', 'now'])
+    .input(['workId', 'now', 'changedAt'])
     .pipe((workId: string) => ({ work: this.repo.getWork(workId) }), 'workId', 'current')
     .pipe(requireNeoWorkPrCurrent, 'current', 'result:refresh')
     .pipe(
-      (refresh: { work: NeoWork }) => {
+      (refresh: { work: NeoWork }, changedAt: number | undefined) => {
         const ask = this.askRecords.forWork(refresh.work.id);
         return {
           ask,
@@ -2513,9 +2512,10 @@ export class NeoService {
           packEvidence: this.askPackReadsReport(ask),
           toldAt: this.workChecks.get(refresh.work.id)?.toldAt ?? null,
           doneWhenMet: isNeoCardDoneWhenMet(refresh.work, ask),
+          changedAt: changedAt ?? null,
         };
       },
-      'refresh',
+      ['refresh', 'changedAt'],
       'card'
     )
     .pipe(
@@ -2538,7 +2538,8 @@ export class NeoService {
           (id, error) => {
             failed = true;
             this.log.warn(`Neo pack ${id} evidence read failed`, error);
-          }
+          },
+          card.changedAt
         );
         return { read, failed };
       },
@@ -2601,7 +2602,8 @@ export class NeoService {
     )
     .endAsync('refresh') as (
     workId: string,
-    now: number
+    now: number,
+    changedAt?: number
   ) => Promise<{ work: NeoWork } | NeoWorkPrRefreshSkip>;
 
   packs(): NeoPack[] {
@@ -2846,6 +2848,15 @@ export class NeoService {
             .catch((error) => this.log.warn('Project event not delivered', error));
       },
       ['event', 'holders']
+    )
+    .pipe(
+      async (event: ExternalEvent, route: NeoPackEventRoute) => {
+        for (const workId of new Set([...route.workIds, ...route.ending.map((row) => row.workId)]))
+          await this.refreshWorkPrs(workId, Date.now(), event.occurredAt).catch((error) =>
+            this.log.warn('Card evidence refresh after its event pending', error)
+          );
+      },
+      ['event', 'route']
     )
     .pipe((route: NeoPackEventRoute) => {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
@@ -3196,7 +3207,7 @@ export class NeoService {
           );
     const ticked = this.askRecords.get(ask.id);
     if (ticked && neoAskReopensAfterClear(ticked)) this.askRecords.reopen(ticked);
-    else if (ticked) writeNeoAskTickStatus(this.askRecords, ticked, planNeoAskTickStatus(ticked));
+    else if (ticked) this.writeAskStatus(ticked);
     if (!this.db.getSession(ask.originSessionId)) return;
     await this.deliverToOrigin(
       ask.originSessionId,
@@ -3517,9 +3528,22 @@ export class NeoService {
       if (write) this.askRecords.tickItem(ask.id, write, Date.now(), item, write.state === 'met');
     }
     const ticked = ticks.length ? this.askRecords.get(ask.id) : null;
-    return ticked
-      ? (writeNeoAskTickStatus(this.askRecords, ticked, planNeoAskTickStatus(ticked)) ?? ticked)
-      : ask;
+    return ticked ? this.writeAskStatus(ticked) : ask;
+  }
+
+  writeAskStatus(ask: NeoAsk, outcome?: string): NeoAsk {
+    const cards = ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []);
+    const plan = planNeoAskTickStatus(ask, {
+      cardLive: neoAskLiveOutcomeCards(ask, cards).length > 0,
+      outcome,
+    });
+    const written = writeNeoAskTickStatus(this.askRecords, ask, plan);
+    if (plan.status === 'achieved' && written)
+      for (const stop of planNeoAskWorkStops(cards, 'achieved'))
+        void this.close(stop.id, stop.close).catch((error) =>
+          this.log.warn(`Closing card ${stop.id} after its ask was met failed`, error)
+        );
+    return written ?? ask;
   }
 
   private readonly runAskReadTicks = (superpipe({})('neo-ask-read-ticks') as PipelineAPI)

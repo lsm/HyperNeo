@@ -284,8 +284,15 @@ export function createCodingPack(
     ],
     externalTopics: (work: NeoWork) => neoCardPrTopics(deps.workPrs.get(work.id)?.prs ?? []),
     routeExternalEvent: routeNeoCardPrEvent,
-    readEvidence: async (work: NeoWork) => {
-      const { row, ok } = await readNeoCardPrs(deps, work, deps.workPrs.get(work.id), Date.now());
+    readEvidence: async (work: NeoWork, changedAt?: number | null) => {
+      const stored = deps.workPrs.get(work.id);
+      const { row, ok } = await readNeoCardPrs(
+        deps,
+        work,
+        stored,
+        Date.now(),
+        (changedAt ?? 0) > (stored?.readAt ?? 0)
+      );
       return row?.prs.length
         ? { evidence: neoWorkPrEvidence(row.prs), read: { ok, okAt: row.readOkAt } }
         : null;

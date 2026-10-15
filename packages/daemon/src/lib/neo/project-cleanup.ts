@@ -1,9 +1,5 @@
 import type { Place, PlaceGroup } from '../drivers/types.ts';
-import {
-  canNeoMirrorCreateProject,
-  isNeoOngoingPlace,
-  planNeoWorkspaceProjects,
-} from './project-mirror.ts';
+import { canNeoMirrorCreateProject, planNeoWorkspaceProjects } from './project-mirror.ts';
 
 export type NeoProjectFacts = {
   id: string;
@@ -13,10 +9,11 @@ export type NeoProjectFacts = {
   context: number;
   asks: number;
   liveAsks: number;
-  work: { lastActivityAt: number; ref: string | null }[];
+  work: { ref: string | null }[];
   liveWork: number;
   routed: number;
   holderMessages: number;
+  archived: boolean;
   aliases: readonly string[];
 };
 
@@ -44,9 +41,6 @@ export function neoMirroredAliases(
 }
 
 const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork > 0;
-
-const isOneOff = (project: NeoProjectFacts) =>
-  project.routed === 0 && project.work.length > 0 && !isNeoOngoingPlace(project.work);
 
 export function neoCleanupFolders(projects: readonly NeoProjectFacts[], machine: string): string[] {
   const local = `folder:${machine}\u0000`;
@@ -87,23 +81,34 @@ function home(
 
 export function planNeoProjectCleanup(
   projects: readonly NeoProjectFacts[],
-  scope: { pinned: ReadonlySet<string>; machine: string; mirrored: ReadonlySet<string> }
+  scope: {
+    pinned: ReadonlySet<string>;
+    machine: string;
+    mirrored: ReadonlySet<string>;
+    archive?: ReadonlySet<string>;
+  }
 ): NeoProjectCleanup[] {
   const homes = projects
-    .filter((project) => repositories(project).length && !isElsewhere(project, scope.machine))
+    .filter(
+      (project) =>
+        repositories(project).length &&
+        !project.archived &&
+        !scope.archive?.has(project.id) &&
+        !isElsewhere(project, scope.machine)
+    )
     .sort((a, b) => a.createdAt - b.createdAt);
   return projects
-    .filter((project) => !scope.pinned.has(project.id) && !project.section)
+    .filter((project) => !scope.pinned.has(project.id) && !project.section && !project.archived)
     .flatMap((project): NeoProjectCleanup[] => {
       const named = { projectId: project.id, title: project.title };
-      if (repositories(project).length || isElsewhere(project, scope.machine) || isLive(project))
-        return [];
+      if (isLive(project)) return [];
+      if (scope.archive?.has(project.id)) return [{ action: 'archive', ...named }];
+      if (repositories(project).length || isElsewhere(project, scope.machine)) return [];
       if (isEmpty(project))
         return project.aliases.some((alias) => scope.mirrored.has(alias))
           ? []
           : [{ action: 'delete', ...named }];
       const target = home(project, homes);
-      if (target) return [{ action: 'merge', ...named, targetId: target.id }];
-      return isOneOff(project) ? [{ action: 'archive', ...named }] : [];
+      return target ? [{ action: 'merge', ...named, targetId: target.id }] : [];
     });
 }

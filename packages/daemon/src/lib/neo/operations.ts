@@ -10,6 +10,7 @@ import { neoFolderPath } from './folder.ts';
 import { isTempCwd } from '../drivers/claude-feed.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { neoMirroredAliases } from './project-cleanup.ts';
+import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
 import { readNeoProjectFacts } from './project-route-facts.ts';
 import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
@@ -449,6 +450,13 @@ export function requireNeoProjectSaveId(
     return { reason: { ok: false, reason: 'Pass the id of the project you are updating.' } };
   return { value: caller };
 }
+const DependsOn = z
+  .array(z.string().min(1))
+  .max(20)
+  .optional()
+  .describe(
+    'Card ids this card must wait for. Each card needs an outcome item bound to it (deliveredBy); changing them needs the ask approved again.'
+  );
 const Propose = z.object({
   projectId: z.string().min(1).nullable().default(null),
   title: z.string().trim().min(1).max(160),
@@ -473,6 +481,7 @@ const Propose = z.object({
       'Ids of the open ask items this card delivers; the daemon binds them to the card. Required under an ask with open items; pass [] when the card delivers none.'
     ),
   supersedes: z.string().min(1).max(160).nullable().optional(),
+  dependsOn: DependsOn,
   allowBusyTarget: z.boolean().optional(),
   follows: z
     .string()
@@ -495,15 +504,7 @@ const ReceiptResult = z.union([
   z.object({ ok: z.literal(true), work: Work }),
   z.object({ ok: z.literal(true), consultation: Consultation }),
 ]);
-const StartWork = WorkId.extend({
-  dependsOn: z
-    .array(z.string().min(1))
-    .max(20)
-    .optional()
-    .describe(
-      'Card ids this card must wait for. Each card needs an outcome item bound to it (deliveredBy); changing them needs the ask approved again.'
-    ),
-});
+const StartWork = WorkId.extend({ dependsOn: DependsOn });
 const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
 const SessionMuteResult = z.union([
   Failure,
@@ -1044,6 +1045,7 @@ export function neoReorganizeRuntime(
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
     machine: () => hostname(),
+    cleanup: createNeoProjectCleanupApply(service),
     mirroredAliases: async (folders) => {
       const caller = {
         source: 'internal' as const,
@@ -2000,6 +2002,18 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (input: ProposeRequest, receipt: { work: NeoWork }) => {
+        const edit = input.dependsOn
+          ? service.editDependencies(receipt.work.id, input.dependsOn)
+          : null;
+        return !edit || edit.ok
+          ? { value: receipt }
+          : { reason: { ok: false, reason: edit.reason ?? 'dependency_rejected' } };
+      },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: ProposeRequest, receipt: { work: NeoWork }) => {
         service.workGoals.record(receipt.work.id, input.goal ?? null, input.doneWhen ?? null);
         return true;
       },
@@ -2028,6 +2042,8 @@ export function createNeoOperations(service: NeoService) {
             )
           )
             service.askRecords.approve(owned.id, Date.now(), owned.revision ?? 0);
+          await service.startApprovedWork([receipt.work.id]);
+          receipt.work = service.repo.getWork(receipt.work.id)!;
           return;
         }
         const tracked = service.trackedSessions;

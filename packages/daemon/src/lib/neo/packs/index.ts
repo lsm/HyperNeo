@@ -88,14 +88,16 @@ export function requireNeoEvidenceRefresh<
     packEvidence: boolean;
     toldAt: number | null;
     doneWhenMet: boolean;
+    changedAt?: number | null;
   },
   now: number,
   closedDonePrefix: string
 ): { value: Refresh & { row: Row | null } } | { reason: 'not_due' } {
-  if (card.doneWhenMet) return { reason: 'not_due' };
+  const changed = !!card.row && (card.changedAt ?? 0) > card.row.readAt;
+  if (card.doneWhenMet && !changed) return { reason: 'not_due' };
   const pr = requireNeoWorkPrRefresh(
     refresh,
-    { row: card.row, session: card.session },
+    { row: card.row, session: card.session, changed },
     now,
     closedDonePrefix
   );
@@ -137,12 +139,13 @@ export function neoPacks(input: {
 export async function readNeoPackEvidence(
   packs: readonly NeoPack[],
   work: NeoWork,
-  warn: (id: string, error: unknown) => void
+  warn: (id: string, error: unknown) => void,
+  changedAt: number | null = null
 ): Promise<NeoEvidenceRead | null> {
   return combineNeoEvidenceReads(
     await Promise.all(
       packs.map((pack) =>
-        pack.readEvidence?.(work).catch((error: unknown) => {
+        pack.readEvidence?.(work, changedAt).catch((error: unknown) => {
           warn(pack.id, error);
           return null;
         })

@@ -12,6 +12,7 @@ import {
   type NeoAsk,
   type NeoAskItem,
   neoAskApprovalSpent,
+  type NeoCardView,
   type NeoSnapshot,
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
@@ -60,7 +61,7 @@ import {
   neoAskScope,
 } from '../../../../src/lib/neo/operations.ts';
 import { neoTurnRequestKey } from '../../../../src/lib/neo/request-key.ts';
-import { neoAskItemAction } from '../../../../src/lib/neo/ask-views.ts';
+import { neoAskItemAction, neoCardHumanAction } from '../../../../src/lib/neo/ask-views.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { isNeoHumanOwnTurn } from '../../../../src/lib/neo/notification-triggers.ts';
@@ -180,6 +181,17 @@ describe('neo.ask operations', () => {
     return opened.value!.ask!.id;
   }
 
+  function unapprove(askId: string): string {
+    db.getDatabase()
+      .prepare('UPDATE neo_asks SET approved_at = NULL, approved_revision = NULL WHERE id = ?')
+      .run(askId);
+    return askId;
+  }
+
+  async function openUnapprovedAsk(): Promise<string> {
+    return unapprove(await openAsk());
+  }
+
   function humanSays(content: string, uuid = 'ask-1') {
     db.getSDKMessageRepo().saveSDKMessage('root', {
       type: 'user',
@@ -253,7 +265,7 @@ describe('neo.ask operations', () => {
   });
 
   test('binds outcomes through edit with one revision and atomically refuses invalid compound changes', async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const card = (await propose('bound-card', askId)).value!.work!.id;
     const old = service.askRecords.get(askId)!.doneItems![0];
     service.askRecords.tickItem(
@@ -371,7 +383,7 @@ describe('neo.ask operations', () => {
   });
 
   test('refuses foreign-ask bindings, unauthorized edits and mutation after dispatch', async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const card = (await propose('bound-card', askId)).value!.work!.id;
     const other = await invoke('neo.ask.open', { ...opening, requestKey: 'other' }, nextMessage);
     const otherId = other.value!.ask!.id;
@@ -405,7 +417,7 @@ describe('neo.ask operations', () => {
   });
 
   test('public fold preserves bound proof and stable cards but never transfers source approval', async () => {
-    const targetId = await openAsk();
+    const targetId = await openUnapprovedAsk();
     const source = await invoke(
       'neo.ask.open',
       {
@@ -421,7 +433,7 @@ describe('neo.ask operations', () => {
       },
       nextMessage
     );
-    const sourceId = source.value!.ask!.id;
+    const sourceId = unapprove(source.value!.ask!.id);
     const card = (await propose('source-card', sourceId)).value!.work!.id;
     await invoke('neo.ask.edit', { askId: sourceId, bind: [{ itemId: 'i1', deliveredBy: card }] });
     const item = service.askRecords.get(sourceId)!.doneItems![0];
@@ -631,7 +643,7 @@ describe('neo.ask operations', () => {
   });
 
   test('a card proposed under an ask names the items it delivers, and binding it keeps the approval', async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const approved = service.askRecords.get(askId)!;
     const card = (input: { requestKey: string; delivers?: string[]; supersedes?: string }) =>
       invoke('neo.work.propose', {
@@ -674,12 +686,11 @@ describe('neo.ask operations', () => {
   test('an ask opened in a turn the human sent is approved, so its cards start without Start', async () => {
     const askId = await openAsk();
     expect(service.askRecords.get(askId)?.approvedAt).toEqual(expect.any(Number));
-    const card = service.repo.getWork((await propose('card-1', askId)).value!.work!.id)!;
-    const later: OperationCaller = {
-      ...neo,
-      neoTurn: { ...neo.neoTurn!, messageId: 'later', human: false },
-    };
-    expect(isNeoAskStartApproved(card, service.askRecords.get(askId), later)).toBe(true);
+    const proposed = await propose('card-1', askId);
+    expect(service.repo.getWork(proposed.value!.work!.id)?.status).not.toBe('proposed');
+    const card = { workId: 'w', phase: 'proposed' } as NeoCardView;
+    expect(neoCardHumanAction(card, true)).toBeNull();
+    expect(neoCardHumanAction(card, false)).toEqual({ kind: 'start', workId: 'w' });
   });
 
   test('only a human message opens an ask; a note turn is told to edit the ask it works on', async () => {
@@ -839,7 +850,7 @@ describe('neo.ask operations', () => {
   });
 
   test('a work operation answers with its ask, so Neo needs no follow-up read', async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const proposed = await propose('card-1', askId);
     const card = proposed.value!.work!.id;
     expect(proposed).toMatchObject({
@@ -862,7 +873,7 @@ describe('neo.ask operations', () => {
   });
 
   test('an ask operation answers with the derived view, its human actions included', async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const card = (await propose('card-1', askId)).value!.work!.id;
     const asked = await invoke('neo.ask.question', {
       askId,
@@ -893,7 +904,7 @@ describe('neo.ask operations', () => {
   });
 
   test('a work operation answers with each card phase and the wake-note PR verdict', async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const card = (await propose('card-1', askId)).value!.work!.id;
     service.workPrs.record(
       card,
@@ -951,16 +962,14 @@ describe('neo.ask operations', () => {
 
   test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
     const askId = await openAsk();
-    for (const itemId of ['i1', 'i2'])
-      await invoke('neo.ask.tick', { askId, itemId, state: 'met', evidence: 'PR #12 merged.' });
     expect(
       await invoke('neo.ask.settle', {
         askId,
-        outcome: 'achieved',
-        summary: 'Merged in #12.',
-        evidence: 'PR #12 merged.',
+        outcome: 'abandoned',
+        summary: 'Not needed after #12.',
+        evidence: 'The human dropped it.',
       })
-    ).toMatchObject({ value: { ok: true, ask: { id: askId, status: 'achieved' } } });
+    ).toMatchObject({ value: { ok: true, ask: { id: askId, status: 'abandoned' } } });
     const settle = createNeoOperations(service).find((op) => op.name === 'neo.ask.settle')!;
     const schema = z.toJSONSchema(settle.inputSchema, { io: 'input' }) as {
       properties?: Record<string, unknown>;
@@ -1038,7 +1047,7 @@ describe('neo.ask operations', () => {
   });
 
   test("an ask-scoped read lists the ask's newest cards first, within the snapshot's bounds", async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     for (let index = 0; index < 12; index++) await propose(`card-${index}`, askId);
     const ids = service.askRecords.get(askId)!.workIds;
     expect(ids).toHaveLength(12);
@@ -1337,7 +1346,13 @@ describe('neo.ask operations', () => {
       },
     ];
     db.updateGlobalSettings({ neo: { packs: ['coding', 'legal'] } });
-    const input = { ...opening, doneItems: [{ text: 'Letter signed', check: 'legal.confirmed' }] };
+    const input = {
+      ...opening,
+      doneItems: [
+        { text: 'Letter signed', check: 'legal.confirmed' },
+        { text: 'Letter filed', check: null },
+      ],
+    };
     const opened = await invoke('neo.ask.open', input);
     expect(opened).toMatchObject({ value: { ok: true } });
     const askId = opened.value!.ask!.id;
@@ -1353,6 +1368,7 @@ describe('neo.ask operations', () => {
       service.askRecords.get(askId)?.doneItems?.map((item) => [item.state, item.evidence])
     ).toEqual([
       ['met', 'Signed receipt'],
+      ['pending', null],
       ['met', 'Signed receipt'],
     ]);
     db.updateGlobalSettings({ neo: { packs: ['coding'] } });
@@ -1372,7 +1388,7 @@ describe('neo.ask operations', () => {
         { source: 'rpc', principal: 'local' }
       )
     ).toMatchObject({ value: { ok: false, reason: 'unsupported_check: legal.confirmed' } });
-    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(3);
   });
 
   test.each(['legal.missing', '__proto__'])(
@@ -1455,13 +1471,14 @@ describe('neo.ask operations', () => {
         state: 'met',
         evidence: 'PR #12 merged, CI green.',
       });
-    expect(await invoke('neo.ask.settle', settle)).toMatchObject({
-      value: {
-        ok: true,
-        ask: { status: 'achieved', outcome: 'Merged in #12.', evidence: settle.evidence },
-      },
+    expect(service.askRecords.get(askId)).toMatchObject({
+      status: 'achieved',
+      outcome: settle.evidence,
+      evidence: settle.evidence,
     });
-    expect(await invoke('neo.ask.settle', settle)).toMatchObject({ value: { ok: true } });
+    expect(await invoke('neo.ask.settle', settle)).toMatchObject({
+      value: { ok: true, ask: { status: 'achieved', outcome: settle.evidence } },
+    });
     expect(
       await invoke('neo.ask.settle', { ...settle, outcome: 'blocked', evidence: 'x' })
     ).toMatchObject({ value: { ok: false, reason: 'ask_settled: this ask is already achieved.' } });
@@ -1543,7 +1560,7 @@ describe('neo.ask operations', () => {
       value: {
         ok: true,
         ask: {
-          status: 'open',
+          status: 'achieved',
           doneItems: [expect.anything(), expect.objectContaining({ metBy: 'human' })],
         },
       },
@@ -1559,8 +1576,7 @@ describe('neo.ask operations', () => {
 
   test('a decision Neo settles waiting on is asked as its own question it cannot drop', async () => {
     const askId = await openAsk();
-    for (const itemId of ['i1', 'i2'])
-      await invoke('neo.ask.tick', { askId, itemId, state: 'met', evidence: 'PR #12 merged.' });
+    await invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met', evidence: 'PR #12 merged.' });
     const waiting = {
       id: askId,
       outcome: 'waiting',
@@ -1792,7 +1808,7 @@ describe('neo.ask operations', () => {
   });
 
   test('an item a card delivers is met only once the daemon has read that card’s report', async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const card = (await propose('card-1', askId)).value!.work!.id;
     expect(
       await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: card }] })
@@ -1816,7 +1832,7 @@ describe('neo.ask operations', () => {
   });
 
   test('Neo cannot settle an ask achieved while a card its outcome depends on is still live', async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const card = (await propose('card-1', askId)).value!.work!.id;
     await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: card }] });
     await invoke(
@@ -1900,7 +1916,7 @@ describe('neo.ask operations', () => {
         { askId, itemId: 'i1', state: 'met', evidence: 'The human confirmed it.' },
         { source: 'rpc', principal: 'local' }
       )
-    ).toMatchObject({ value: { ok: true, ask: { status: 'open' } } });
+    ).toMatchObject({ value: { ok: true, ask: { status: 'achieved' } } });
   });
 
   test('a reported item waits on the human only once nothing else is pending', () => {
@@ -2242,7 +2258,7 @@ describe('neo.ask operations', () => {
   });
 
   test('an offer waits on the human, and starting its work item reopens the ask', async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const offered = (await propose('card-1', askId)).value!.work!.id;
     expect(
       await invoke('neo.ask.settle', {
@@ -2268,7 +2284,7 @@ describe('neo.ask operations', () => {
   });
 
   test("settling for good stops its live work; only the user can settle another session's ask", async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const running = (await propose('card-1', askId)).value!.work!.id;
     const idle = (await propose('card-2', askId)).value!.work!.id;
     const work = service.repo.getWork(running)!;
@@ -2325,9 +2341,10 @@ describe('neo.ask operations', () => {
   });
 
   test('the same card proposed under another ask is a separate card that leaves the first alone', async () => {
-    const first = await openAsk();
-    const second = (await invoke('neo.ask.open', { ...opening, ask: 'Other' }, nextMessage)).value!
-      .ask!.id;
+    const first = await openUnapprovedAsk();
+    const second = unapprove(
+      (await invoke('neo.ask.open', { ...opening, ask: 'Other' }, nextMessage)).value!.ask!.id
+    );
     const card = (await propose('card-1', first)).value!.work!.id;
 
     const other = await propose('card-1', second);
@@ -2681,7 +2698,7 @@ describe('neo.ask operations', () => {
   });
 
   test('a legacy needs_you item goes back to pending and Neo hears why once its card starts', async () => {
-    const askId = await openAsk();
+    const askId = await openUnapprovedAsk();
     const cardId = (await propose('card-1', askId)).value!.work!.id;
     expect(service.repo.getWork(cardId)?.status).toBe('proposed');
     service.askRecords.tickItem(
@@ -2927,7 +2944,7 @@ describe('neo.ask operations', () => {
       })
     ).toMatchObject({ value: { ok: true } });
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', waitingItem: null });
-    const spare = (await propose('spare-card', askId)).value!.work!.id;
+    const spare = (await propose('spare-card', unapprove(askId))).value!.work!.id;
     const internals = service as unknown as {
       triggers: { record(askId: string, keys: string[], triggerId: string, at: number): void };
       notePublishedAnswer(publication: unknown): void;
@@ -3628,10 +3645,12 @@ describe('requireNeoAskSettleable', () => {
   const settle = { id: 'a1', outcome: 'achieved' as const, evidence: 'PR merged.' };
   const done = { ...ask, status: 'achieved' as const, outcome: 'PR merged.' };
 
-  test('refuses a different outcome on a final ask', () => {
-    expect(requireNeoAskSettleable(settle, { ...done, outcome: 'Other.' })).toEqual({
+  test('refuses a different outcome on a final ask, and achieving it again succeeds', () => {
+    expect(requireNeoAskSettleable({ ...settle, outcome: 'abandoned' }, done)).toEqual({
       reason: { ok: false, reason: 'ask_settled: this ask is already achieved.' },
     });
+    const other = { ...done, outcome: 'Other.' };
+    expect(requireNeoAskSettleable(settle, other)).toEqual({ value: other });
   });
 
   test('admits an open ask and an identical replay', () => {
@@ -3661,11 +3680,18 @@ describe('isNeoAskReplay', () => {
   const done = { ...ask, status: 'achieved' as const, outcome: 'Merged in #12.' };
   test.each<[string, NeoAsk, boolean]>([
     ['the same summary and evidence', { ...done, evidence: 'PR #12 merged.' }, true],
-    ['other evidence', { ...done, evidence: 'PR #13 merged.' }, false],
-    ['another summary', { ...done, outcome: 'Done.', evidence: 'PR #12 merged.' }, false],
+    ['achieved again with other evidence', { ...done, evidence: 'PR #13 merged.' }, true],
+    ['achieved again with another summary', { ...done, outcome: 'Done.' }, true],
     ['another status', { ...done, status: 'abandoned', evidence: 'PR #12 merged.' }, false],
   ])('%s', (_case, current, replay) => {
     expect(isNeoAskReplay(current, settle)).toBe(replay);
+  });
+
+  test('a blocked ask replays only the same summary and evidence', () => {
+    const blocked = { ...settle, outcome: 'blocked' as const };
+    const stuck = { ...ask, status: 'blocked' as const, outcome: 'Merged in #12.' };
+    expect(isNeoAskReplay({ ...stuck, evidence: 'PR #12 merged.' }, blocked)).toBe(true);
+    expect(isNeoAskReplay({ ...stuck, evidence: 'PR #13 merged.' }, blocked)).toBe(false);
   });
 });
 
@@ -3828,7 +3854,12 @@ describe('planNeoAskTickStatus', () => {
         waitingItem: 'i1',
         doneItems: [item('i1', 'met')],
       },
-      { status: 'open' },
+      { status: 'achieved', outcome: 'Item i1', evidence: 'Item i1' },
+    ],
+    [
+      'every item met',
+      { doneItems: [item('i1', 'met'), item('i2', 'met'), item('i3', 'met', true)] },
+      { status: 'achieved', outcome: 'Item i1; Item i2', evidence: 'Item i1; Item i2' },
     ],
     [
       'a deliberate wait whose summary happens to match an item',

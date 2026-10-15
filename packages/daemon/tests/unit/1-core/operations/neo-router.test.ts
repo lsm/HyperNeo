@@ -8,6 +8,7 @@ import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import {
   askNeoRouteModel,
   chooseNeoRoute,
+  createNeoRouter,
   type NeoHolder,
   type NeoRouteVerdict,
   type NeoRouterDeps,
@@ -19,6 +20,7 @@ import {
   reopenNeoHolder,
   wakeNeoRoute,
 } from '../../../../src/lib/neo/router.ts';
+import { createTestDb } from '../../../helpers/database.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import type { Database } from '../../../../src/storage/database.ts';
@@ -327,6 +329,26 @@ describe('wakeNeoRoute', () => {
       choice: null,
       fallback: 'holder-unavailable',
     });
+  });
+});
+
+describe('createNeoRouter', () => {
+  test('opens no holder for a project the message is not routed to', async () => {
+    const db = await createTestDb();
+    try {
+      const repo = new NeoRepository(db.getDatabase());
+      for (const id of ['alpha', 'beta'])
+        repo.saveProject({ id, title: id, summary: '', context: '' }, 0);
+      const opened: string[] = [];
+      const router = createNeoRouter(db, repo, async (projectId) => {
+        opened.push(projectId);
+        return `neo:holder:${projectId}`;
+      });
+      await router('a note about nothing in particular');
+      expect(opened.filter((id) => id === 'alpha' || id === 'beta')).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 });
 

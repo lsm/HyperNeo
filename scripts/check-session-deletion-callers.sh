@@ -42,6 +42,8 @@ ALLOWLIST=(
     "packages/daemon/src/lib/rpc-handlers/room-handlers.ts"
     # Human-requested driver archive, gated by a live human turn and idle session.
     "packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts"
+    # Neo project cleanup applied on request: deletes only holders that never spoke, archives one-offs.
+    "packages/daemon/src/lib/neo/project-cleanup-apply.ts"
 
 
     # Task archive pipeline (UI-initiated via task.archive event cascade)
