@@ -162,6 +162,7 @@ export class NeoConsultationRepository {
 
   private insertAssociation(
     input: NeoConsultationPublicationInput,
+    publicationId: string,
     payload: string,
     createdAt: string
   ): void {
@@ -174,7 +175,7 @@ export class NeoConsultationRepository {
       .run(
         input.consultationId,
         input.publication.conversationId,
-        input.publication.publicationId,
+        publicationId,
         input.answer,
         payload,
         createdAt
@@ -226,7 +227,7 @@ export class NeoConsultationRepository {
         if (!appended.accepted) return { accepted: false, reason: appended.reason };
         const owner = this.publicationOwner(
           admitted.value.conversationId,
-          admitted.value.publicationId
+          appended.publication.publicationId
         );
         if (owner !== null && owner !== input.consultationId)
           throw new NeoSettlementRefusal('publication_conflict');
@@ -237,14 +238,19 @@ export class NeoConsultationRepository {
           )
           .run(input.answer, input.consultationId);
         if (!settled.changes) throw new NeoSettlementRefusal('consultation_settled');
-        this.insertAssociation(input, canonical, appended.publication.createdAt);
+        this.insertAssociation(
+          input,
+          appended.publication.publicationId,
+          canonical,
+          appended.publication.createdAt
+        );
         return {
           accepted: true,
           created: appended.created,
           association: {
             consultationId: input.consultationId,
             conversationId: admitted.value.conversationId,
-            publicationId: admitted.value.publicationId,
+            publicationId: appended.publication.publicationId,
             answer: input.answer,
             createdAt: appended.publication.createdAt,
           },

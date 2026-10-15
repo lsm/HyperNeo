@@ -22,6 +22,7 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { requirePublicationNews } from '../../../../src/lib/neo/publication-news.ts';
+import { createNeoPublicationCommit } from '../../../../src/lib/neo/publication-commit.ts';
 import {
   type NeoDeliveryTrigger,
   neoDeliveryTrigger,
@@ -179,7 +180,10 @@ describe('runtime-bound publication operation', () => {
       getWork: (id) => repo.getWork(id),
       getConsultation: (id) => consultations.get(id),
       resolveAskOrigin: resolve,
-      append: (input) => ledger.append(input),
+      append: createNeoPublicationCommit({
+        commit: (input) => ledger.append(input),
+        published: () => {},
+      }),
       inputTrigger,
       isTriggerPublished: (conversationId, triggerId, publicationId) =>
         ledger.hasTrigger(conversationId, triggerId, publicationId),
@@ -274,17 +278,38 @@ describe('runtime-bound publication operation', () => {
         { ...draft, publicationId: '20000000-0000-4000-8000-000000000002' },
         caller(root.sessionId, note, false)
       )
+    ).toMatchObject({ accepted: true, created: false });
+    expect(
+      publish(
+        {
+          ...draft,
+          publicationId: '20000000-0000-4000-8000-000000000003',
+          shortText: 'A second sentence.',
+        },
+        caller(root.sessionId, note, false)
+      )
     ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
+    const later = { sessionId: root.sessionId, messageId: `${note}:again` };
     expect(
       ledger.append({
         ...draft,
         publicationId: '20000000-0000-4000-8000-000000000099',
         conversationId,
         askOrigin: ask,
-        producerInput: { sessionId: root.sessionId, messageId: `${note}:again` },
+        producerInput: later,
         triggerId,
+        shortText: 'The outcome, restated.',
       })
-    ).toEqual({ accepted: false, reason: 'trigger_already_published' });
+    ).toMatchObject({
+      accepted: true,
+      created: true,
+      publication: {
+        publicationId: draft.publicationId,
+        shortText: 'The outcome, restated.',
+        answerInput: later,
+        editedAt: expect.any(String),
+      },
+    });
     expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
@@ -297,8 +322,12 @@ describe('runtime-bound publication operation', () => {
       publication: { triggerId: `human:${ask.messageId}` },
     });
     expect(
-      publish({ ...draft, publicationId: '20000000-0000-4000-8000-000000000002' }, caller())
+      publish(
+        { ...draft, publicationId: '20000000-0000-4000-8000-000000000002', shortText: 'Final.' },
+        caller(root.sessionId, reply, false)
+      )
     ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
+    expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
   test('a returned consultation answers the human message that asked it, but not a note', () => {
@@ -349,9 +378,35 @@ describe('runtime-bound publication operation', () => {
       accepted: true,
       publication: { triggerId: `human:${ask.messageId}` },
     });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+  });
+
+  test('a later input on the same trigger replaces the interim post in place, marked edited', () => {
+    expect(publish({ ...draft, shortText: 'Checking with the holder.' }, caller())).toMatchObject({
+      accepted: true,
+      created: true,
+    });
+    const reply = 'neo-consult:consult:9:reply';
+    prompt(root.sessionId, reply, 'system');
+    stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
     expect(
-      publish({ ...draft, publicationId: '20000000-0000-4000-8000-000000000002' }, caller())
-    ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
+      publish(
+        { ...draft, publicationId: '20000000-0000-4000-8000-000000000002', shortText: '12' },
+        caller(root.sessionId, reply, false)
+      )
+    ).toMatchObject({
+      accepted: true,
+      created: true,
+      publication: { publicationId: draft.publicationId, shortText: '12' },
+    });
+    const [only] = ledger.list(conversationId)!;
+    expect(only).toMatchObject({
+      shortText: '12',
+      producerInput: ask,
+      answerInput: { sessionId: root.sessionId, messageId: reply },
+      editedAt: expect.any(String),
+    });
+    expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
   test.each([
@@ -442,7 +497,7 @@ describe('runtime-bound publication operation', () => {
     ).toMatchObject({
       accepted: false,
       reason: 'trigger_already_published',
-      detail: expect.stringContaining('told once'),
+      detail: expect.stringContaining('cannot post again'),
     });
     expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({
       accepted: true,
@@ -481,7 +536,10 @@ describe('runtime-bound publication operation', () => {
       publication: { triggerId },
     });
     expect(
-      publish({ ...draft, publicationId: '20000000-0000-4000-8000-000000000002' }, who)
+      publish(
+        { ...draft, publicationId: '20000000-0000-4000-8000-000000000002', shortText: 'Again.' },
+        who
+      )
     ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
     expect(ledger.list(conversationId)).toHaveLength(1);
   });

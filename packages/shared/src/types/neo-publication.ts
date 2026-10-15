@@ -20,6 +20,7 @@ export interface NeoPublicationInput {
   readonly awaiting?: string;
   readonly editedAt?: string;
   readonly editedBy?: string;
+  readonly answerInput?: NeoInputOrigin;
   readonly corrects?: string;
   readonly correctedBy?: string;
 }
