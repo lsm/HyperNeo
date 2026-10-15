@@ -181,8 +181,7 @@ describe('neo.publication.correct', () => {
       });
       expect(await call('neo.publication.correct', corrected, neo(root.sessionId, 'm-4'))).toEqual({
         accepted: false,
-        reason: 'answer_closed',
-        detail: expect.stringContaining('end the turn'),
+        reason: 'already_corrected',
       });
       expect(
         await call(
@@ -442,29 +441,15 @@ describe('requireNeoEditable', () => {
   const reason = (result: ReturnType<typeof requireNeoEditable>) =>
     'reason' in result ? result.reason.reason : 'ok';
   test('a human-triggered turn may fix any message’s wording', () => {
-    expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'Fixed.' }, 'human:m-9'))).toBe(
-      'ok'
-    );
+    expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'Fixed.' }))).toBe('ok');
   });
-  test('an answered message changes only from a new human message', () => {
-    const turn = 'neo-trigger:outcome:a:x';
-    expect(reason(requireNeoEditable(owned(turn), { shortText: 'Fixed.' }, 'outcome:a:x'))).toBe(
-      'answer_closed'
-    );
-    expect(reason(requireNeoEditable(owned('n'), { shortText: 'X.' }, 'idle:a:y'))).toBe(
-      'answer_closed'
-    );
-    expect(reason(requireNeoEditable(owned('n'), { shortText: 'X.' }, null))).toBe('answer_closed');
+  test('any turn may fix the wording of an answered message', () => {
     expect(
-      reason(
-        requireNeoEditable(
-          owned('m-1', { triggerId: 'human:m-1' }),
-          { shortText: 'X.' },
-          'human:m-1'
-        )
-      )
-    ).toBe('answer_closed');
-    expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'X.' }, 'human:m-9'))).toBe('ok');
+      reason(requireNeoEditable(owned('neo-trigger:outcome:a:x'), { shortText: 'Fixed.' }))
+    ).toBe('ok');
+    expect(
+      reason(requireNeoEditable(owned('m-1', { triggerId: 'human:m-1' }), { shortText: 'X.' }))
+    ).toBe('ok');
   });
   test('a continuation carrying the human trigger edits a message once, not again', () => {
     const turn = 'neo-turn-limit:r2';
@@ -472,17 +457,11 @@ describe('requireNeoEditable', () => {
       editedAt: '2026-10-14T11:00:00.000Z',
       answerInput: { sessionId: root.sessionId, messageId: turn },
     });
-    expect(reason(requireNeoEditable(owned(turn), { shortText: 'First.' }, 'human:m-9'))).toBe(
-      'ok'
-    );
-    expect(reason(requireNeoEditable(editedOnce, { shortText: 'Second.' }, 'human:m-9'))).toBe(
-      'already_edited'
-    );
+    expect(reason(requireNeoEditable(owned(turn), { shortText: 'First.' }))).toBe('ok');
+    expect(reason(requireNeoEditable(editedOnce, { shortText: 'Second.' }))).toBe('already_edited');
   });
   test('an unchanged edit is refused', () => {
-    expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'Done.' }, 'human:m-9'))).toBe(
-      'edit_unchanged'
-    );
+    expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'Done.' }))).toBe('edit_unchanged');
   });
 });
 

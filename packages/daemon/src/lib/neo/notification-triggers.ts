@@ -360,16 +360,8 @@ export function isNeoHumanOwnTurn(messageId: string, trigger: string | null): bo
   return neoHumanTurnOrigin(messageId, trigger, (id) => id === human) !== null;
 }
 
-export function neoTriggerWorkProblem(
-  messageId: string,
-  trigger: string | null,
-  answered: boolean,
-  consulted: boolean
-): string | null {
-  if (!trigger) return null;
-  if (answered && !isNeoHumanOwnTurn(messageId, trigger))
-    return 'trigger_answered: the human already has the answer for this message. Start no new work for it; only a new human message can.';
-  return consulted
+export function neoTriggerWorkProblem(trigger: string | null, consulted: boolean): string | null {
+  return trigger && consulted
     ? 'already_consulted: this holder already returned for this message. Use its answer instead of asking again.'
     : null;
 }

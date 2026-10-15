@@ -251,7 +251,7 @@ describe('NeoService direct consultation return', () => {
     });
   });
 
-  test('the human’s own turn may still start work after a consulted holder answered', async () => {
+  test('any turn may still start work after a consulted holder answered', async () => {
     await holderPublish('check');
     expect(service.triggerWorkProblem(rootCaller())).toBeNull();
     const continued = 'neo-turn-limit:human:result-1';
@@ -271,9 +271,7 @@ describe('NeoService direct consultation return', () => {
       0,
       `human:${ask.messageId}`
     );
-    expect(service.triggerWorkProblem(rootCaller(nudgeContinued, false))).toMatchObject({
-      ok: false,
-    });
+    expect(service.triggerWorkProblem(rootCaller(nudgeContinued, false))).toBeNull();
     prompt(root, 'neo-nudge:later', 'system');
     service.inputOrigins.record(
       { sessionId: root, messageId: 'neo-nudge:later' },
@@ -281,14 +279,12 @@ describe('NeoService direct consultation return', () => {
       0,
       `human:${ask.messageId}`
     );
-    expect(service.triggerWorkProblem(rootCaller('neo-nudge:later', false))).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('trigger_answered'),
-    });
+    expect(service.triggerWorkProblem(rootCaller('neo-nudge:later', false))).toBeNull();
   });
 
-  test('B and C: the holder’s answer closes the message; no later post, edit or new consultation', async () => {
+  test('after the holder’s answer a later turn may post a new fact and edit, but not re-consult that holder', async () => {
     await holderPublish('check');
+    await service.syncConsultation('check');
     prompt(root, 'neo-nudge:later', 'system');
     service.inputOrigins.record(
       { sessionId: root, messageId: 'neo-nudge:later' },
@@ -301,18 +297,18 @@ describe('NeoService direct consultation return', () => {
       await invokeOperation(
         ops(),
         'neo.publication.publish',
-        withMintedPublicationId(service, { ...interim, shortText: 'Overwrite.' }),
+        withMintedPublicationId(service, { ...interim, shortText: 'A later fact.' }),
         later
       )
-    ).toMatchObject({ value: { accepted: false, reason: 'trigger_already_published' } });
+    ).toMatchObject({ value: { accepted: true, created: true } });
     expect(
       await invokeOperation(
         ops(),
         'neo.publication.edit',
-        { publicationId: draft.publicationId, shortText: 'Overwrite.' },
+        { publicationId: draft.publicationId, shortText: 'Reworded.' },
         later
       )
-    ).toMatchObject({ value: { accepted: false } });
+    ).toMatchObject({ value: { accepted: true } });
     expect(
       await invokeOperation(
         ops(),
@@ -320,9 +316,10 @@ describe('NeoService direct consultation return', () => {
         { projectId: 'fictional', question: 'Again?' },
         later
       )
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('trigger_answered') } });
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('already_consulted') } });
     expect(service.publications.list(conversationId)?.map((item) => item.shortText)).toEqual([
-      draft.shortText,
+      'Reworded.',
+      'A later fact.',
     ]);
   });
 
@@ -379,11 +376,10 @@ describe('NeoService direct consultation return', () => {
     expect(handleInterrupt).toHaveBeenCalledTimes(1);
   });
 
-  test('E: a return that lands on an answered message settles quietly and publishes nothing', async () => {
+  test('E: a return that repeats what the human already has settles quietly and publishes nothing', async () => {
     const answered = service.publications.append({
-      ...interim,
-      shortText: 'Root answered first.',
-      fullText: 'Root answered first.',
+      ...draft,
+      publicationId: interim.publicationId,
       conversationId,
       askOrigin: ask,
       producerInput: ask,
@@ -394,12 +390,28 @@ describe('NeoService direct consultation return', () => {
       value: {
         accepted: true,
         created: false,
-        publication: { publicationId: interim.publicationId, shortText: 'Root answered first.' },
+        publication: { publicationId: interim.publicationId, shortText: draft.shortText },
       },
     });
     expect(service.consultations.get('check')).toMatchObject({ status: 'reported' });
     expect(returned('check')).toEqual({ returned: 1 });
     expect(service.publications.list(conversationId)).toHaveLength(1);
+  });
+
+  test('E: a return with a new fact on an answered message is published', async () => {
+    service.publications.append({
+      ...interim,
+      shortText: 'Root answered first.',
+      fullText: 'Root answered first.',
+      conversationId,
+      askOrigin: ask,
+      producerInput: ask,
+      triggerId: `human:${ask.messageId}`,
+    });
+    expect(await holderPublish('check')).toMatchObject({
+      value: { accepted: true, created: true, publication: { shortText: draft.shortText } },
+    });
+    expect(service.publications.list(conversationId)).toHaveLength(2);
   });
 
   test('reload and recovery need only the immutable receipt, not removed SDK history or a recaptured ask', async () => {

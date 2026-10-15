@@ -32,7 +32,10 @@ import {
 } from '../../../../src/lib/neo/notification-triggers.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
-import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
+import {
+  findNeoRepeatedPublication,
+  NeoPublicationRepository,
+} from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
@@ -294,7 +297,7 @@ describe('runtime-bound publication operation', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  test('a trigger note turn publishes once under its trigger id, and the same transition never posts twice', () => {
+  test('a trigger note turn publishes under its trigger id; a repeat returns the first, a new fact posts', () => {
     const triggerId = 'outcome:ask-1:abc';
     const note = neoTriggerMessageId(triggerId);
     prompt(root.sessionId, note, 'system');
@@ -318,7 +321,7 @@ describe('runtime-bound publication operation', () => {
         },
         caller(root.sessionId, note, false)
       )
-    ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
+    ).toMatchObject({ accepted: true, created: true });
     const later = { sessionId: root.sessionId, messageId: `${note}:again` };
     expect(
       ledger.append({
@@ -328,13 +331,13 @@ describe('runtime-bound publication operation', () => {
         askOrigin: ask,
         producerInput: later,
         triggerId,
-        shortText: 'The outcome, restated.',
+        shortText: 'A second sentence.',
       })
-    ).toEqual({ accepted: false, reason: 'trigger_already_published' });
-    expect(ledger.list(conversationId)).toHaveLength(1);
+    ).toMatchObject({ accepted: true, created: false });
+    expect(ledger.list(conversationId)).toHaveLength(2);
   });
 
-  test('a cross-project return answers the human message that started it, once', () => {
+  test('a cross-project return answers the human message that started it; a later fact also posts', () => {
     const reply = 'neo-cross-project:group-1:reply';
     prompt(root.sessionId, reply, 'system');
     stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
@@ -347,8 +350,8 @@ describe('runtime-bound publication operation', () => {
         { ...draft, publicationId: '20000000-0000-4000-8000-000000000002', shortText: 'Final.' },
         caller(root.sessionId, reply, false)
       )
-    ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
-    expect(ledger.list(conversationId)).toHaveLength(1);
+    ).toMatchObject({ accepted: true, created: true });
+    expect(ledger.list(conversationId)).toHaveLength(2);
   });
 
   test('a returned consultation answers the human message that asked it, but not a note', () => {
@@ -402,7 +405,7 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
-  test('the first answer closes a human trigger: a later input cannot replace it', () => {
+  test('a later input on an answered human trigger posts its new fact, never replacing the first', () => {
     expect(publish(draft, caller())).toMatchObject({ accepted: true, created: true });
     const reply = 'neo-consult:consult:9:reply';
     prompt(root.sessionId, reply, 'system');
@@ -416,12 +419,11 @@ describe('runtime-bound publication operation', () => {
         },
         caller(root.sessionId, reply, false)
       )
-    ).toMatchObject({
-      accepted: false,
-      reason: 'trigger_already_published',
-      detail: expect.stringContaining('first answer closes it'),
-    });
-    expect(ledger.list(conversationId)!.map((item) => item.shortText)).toEqual([draft.shortText]);
+    ).toMatchObject({ accepted: true, created: true });
+    expect(ledger.list(conversationId)!.map((item) => item.shortText)).toEqual([
+      draft.shortText,
+      'Overwrite.',
+    ]);
   });
 
   test.each([
@@ -501,7 +503,7 @@ describe('runtime-bound publication operation', () => {
     expect(notify).toHaveBeenCalledTimes(2);
   });
 
-  test('one reply per human message: a bare acknowledgement and a second reply are refused', () => {
+  test('a bare acknowledgement is refused, a repeat returns the first, a new fact posts', () => {
     const id = (n: number) => `20000000-0000-4000-8000-00000000010${n}`;
     expect(
       publish({ ...draft, publicationId: id(1), shortText: '收到。', fullText: '收到。' }, caller())
@@ -509,16 +511,15 @@ describe('runtime-bound publication operation', () => {
     expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({ accepted: true });
     expect(
       publish({ ...draft, publicationId: id(3), shortText: 'One more thing.' }, caller())
-    ).toMatchObject({
-      accepted: false,
-      reason: 'trigger_already_published',
-      detail: expect.stringContaining('first answer closes it'),
-    });
+    ).toMatchObject({ accepted: true, created: true });
     expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({
       accepted: true,
       created: false,
     });
-    expect(ledger.list(conversationId)).toHaveLength(1);
+    expect(
+      publish({ ...draft, publicationId: id(5), shortText: 'One more thing.' }, caller())
+    ).toMatchObject({ accepted: true, created: false, publication: { publicationId: id(3) } });
+    expect(ledger.list(conversationId)).toHaveLength(2);
     prompt(root.sessionId, 'next-ask');
     expect(
       publish({ ...draft, publicationId: id(4) }, caller(root.sessionId, 'next-ask'))
@@ -537,7 +538,7 @@ describe('runtime-bound publication operation', () => {
     );
   });
 
-  test('a trigger note turn records its trigger, and the same transition never posts twice', () => {
+  test('a trigger note turn records its trigger, and a new fact for it also posts', () => {
     const triggerId = 'outcome:ask-1:abc';
     const note = `neo-trigger:${triggerId}`;
     prompt(root.sessionId, note, 'system');
@@ -555,8 +556,8 @@ describe('runtime-bound publication operation', () => {
         { ...draft, publicationId: '20000000-0000-4000-8000-000000000002', shortText: 'Again.' },
         who
       )
-    ).toMatchObject({ accepted: false, reason: 'trigger_already_published' });
-    expect(ledger.list(conversationId)).toHaveLength(1);
+    ).toMatchObject({ accepted: true, created: true, publication: { triggerId } });
+    expect(ledger.list(conversationId)).toHaveLength(2);
   });
 
   test('a human reply records its human trigger, and a triggerId it names is refused', () => {
@@ -756,5 +757,37 @@ describe('requirePublicationTrigger', () => {
       'reason.reason',
       'no_trigger'
     );
+  });
+});
+
+describe('findNeoRepeatedPublication', () => {
+  const prior = {
+    conversationId: '10000000-0000-4000-8000-000000000001',
+    publicationId: '20000000-0000-4000-8000-000000000001',
+    askOrigin: { sessionId: 'neo:root', messageId: 'm1' },
+    producerInput: { sessionId: 'neo:root', messageId: 'm1' },
+    shortText: 'Merged #12.',
+    fullText: 'Merged #12 to dev.',
+    links: [],
+    triggerId: 'human:m1',
+    sequence: 1,
+    createdAt: '2026-10-15T00:00:00.000Z',
+  };
+  const input = { ...prior, publicationId: '20000000-0000-4000-8000-000000000002' };
+
+  test('an identical message for the trigger is a repeat, whoever produced it', () => {
+    expect(
+      findNeoRepeatedPublication([prior], {
+        ...input,
+        producerInput: { sessionId: 'neo:holder', messageId: 'x' },
+      })
+    ).toBe(prior);
+  });
+
+  test('a message with any new text is a new fact', () => {
+    expect(
+      findNeoRepeatedPublication([prior], { ...input, fullText: 'Merged #12; CI green.' })
+    ).toBeNull();
+    expect(findNeoRepeatedPublication([], input)).toBeNull();
   });
 });

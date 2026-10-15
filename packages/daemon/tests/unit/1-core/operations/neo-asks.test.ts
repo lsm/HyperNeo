@@ -2997,7 +2997,7 @@ describe('neo.ask operations', () => {
     expect(service.inputTrigger(loose)).toBeNull();
   });
 
-  test('a cut-off turn whose trigger is already answered gets no turn-limit note', async () => {
+  test('a cut-off nudge turn whose trigger is already answered gets no turn-limit note', async () => {
     const messages = db.getSDKMessageRepo();
     const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
     messages.saveSDKMessage('root', {
@@ -3009,12 +3009,18 @@ describe('neo.ask operations', () => {
     await pause();
     messages.saveSDKMessage('root', {
       type: 'user',
-      uuid: 'h1',
+      uuid: 'neo-nudge:h1',
       session_id: 'root',
       parent_tool_use_id: null,
-      inputKind: 'human',
-      message: { role: 'user', content: 'dev' },
+      inputKind: 'system',
+      message: { role: 'user', content: 'Publish your answer.' },
     } as unknown as SDKUserMessage);
+    service.inputOrigins.record(
+      { sessionId: 'root', messageId: 'neo-nudge:h1' },
+      { sessionId: 'root', messageId: 'h1' },
+      0,
+      'human:h1'
+    );
     await pause();
     messages.saveSDKMessage('root', {
       type: 'result',

@@ -310,7 +310,7 @@ describe('Neo reply after a rule save', () => {
     });
   });
 
-  test('a later save never changes a sent reply, and the turn has no second reply', async () => {
+  test('a later save never changes a sent reply; a new fact goes out as its own reply', async () => {
     await invoke('neo.rule.save', { add: [rule], from: rule });
     const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
     await invoke('neo.publication.publish', draft);
@@ -325,9 +325,11 @@ describe('Neo reply after a rule save', () => {
       shortText: 'Kept B as well.',
     };
     expect(await invoke('neo.publication.publish', next)).toMatchObject({
-      value: { accepted: false, reason: 'trigger_already_published' },
+      value: { accepted: true, created: true },
     });
-    expect(service.publications.get(conversationId, next.publicationId)).toBeNull();
+    expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
+      `${reply.shortText}\n\nSaved: ${rule}`
+    );
   });
 
   test('a rule removed again in the same turn is not announced', async () => {
