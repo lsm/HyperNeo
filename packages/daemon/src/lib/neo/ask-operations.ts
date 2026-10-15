@@ -656,6 +656,38 @@ function requireNeoAskTick(
     : { value: { ask, item } };
 }
 
+type NeoOutcomeCard = Pick<NeoWork, 'id' | 'status'>;
+
+export function neoItemCards<T extends NeoOutcomeCard>(
+  item: Pick<NeoAskItem, 'text' | 'deliveredBy'>,
+  evidence: string | null | undefined,
+  cards: readonly T[]
+): T[] {
+  const said = `${item.text}\n${evidence ?? ''}`.toLowerCase();
+  return cards.filter(
+    (card) => card.id === item.deliveredBy || said.includes(card.id.slice(0, 8).toLowerCase())
+  );
+}
+
+export function requireNeoMetReadEvidence<T>(
+  caller: OperationCaller,
+  state: NeoAskItem['state'],
+  item: Pick<NeoAskItem, 'id' | 'text' | 'deliveredBy'>,
+  evidence: string | undefined,
+  cards: readonly NeoOutcomeCard[],
+  value: T
+): Gate<T> {
+  if (caller.source !== 'mcp' || state !== 'met') return { value };
+  const unread = neoItemCards(item, evidence, cards).filter((card) => card.status !== 'reported');
+  return unread.length
+    ? {
+        reason: fail(
+          `met_unread: ${item.id} depends on ${unread.map((card) => `card ${card.id.slice(0, 8)}, which is ${card.status}`).join(' and ')}, so the daemon has not read its result. Keep the item pending: a proposed or queued card wakes you when it reports, and a failed or cancelled one needs new work.`
+        ),
+      }
+    : { value };
+}
+
 const NEO_HUMAN_TASK_REFUSALS = {
   approval:
     "approval_on_ask: re-approving continued work is the ask's Approve, not a question. The daemon shows Approve itself when the approval expires or a card stalls; approving it wakes you.",
@@ -1566,6 +1598,23 @@ export function createNeoAskOperations(
     )
     .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskTick, ['input', 'admission', 'caller'], 'result:admission')
+    .pipe(
+      (target: { ask: NeoAsk }) =>
+        target.ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
+      'admission',
+      'cards'
+    )
+    .pipe(
+      (
+        input: z.infer<typeof Tick>,
+        target: { item: NeoAskItem },
+        caller: OperationCaller,
+        cards: NeoWork[]
+      ) =>
+        requireNeoMetReadEvidence(caller, input.state, target.item, input.evidence, cards, target),
+      ['input', 'admission', 'caller', 'cards'],
+      'result:admission'
+    )
     .pipe(
       (target: { ask: NeoAsk; item: NeoAskItem }) =>
         requireRegisteredChecks([target.item], service.checkRegistry(), target),
