@@ -31,12 +31,8 @@ import {
   requirePublicationTrigger,
 } from '../../../../src/lib/neo/notification-triggers.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import { NeoRoutingLogRepository } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
-import {
-  NeoPublicationRepository,
-  planNeoTriggerAnswer,
-} from '../../../../src/storage/repositories/neo-publication-repository.ts';
+import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
@@ -302,16 +298,7 @@ describe('runtime-bound publication operation', () => {
         triggerId,
         shortText: 'The outcome, restated.',
       })
-    ).toMatchObject({
-      accepted: true,
-      created: true,
-      publication: {
-        publicationId: draft.publicationId,
-        shortText: 'The outcome, restated.',
-        answerInput: later,
-        editedAt: expect.any(String),
-      },
-    });
+    ).toEqual({ accepted: false, reason: 'trigger_already_published' });
     expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
@@ -383,45 +370,26 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
-  test('a later input on the same trigger replaces the interim post in place, marked edited', () => {
-    const routes = new NeoRoutingLogRepository(mailbox.db);
-    routes.record({
-      messageId: ask.messageId,
-      conversationId,
-      askedAt: 0,
-      ask: 'How many merged?',
-      destination: 'main',
-      targetSessionId: root.sessionId,
-      projectId: null,
-      signal: 'embedding',
-      confidence: 1,
-    });
-    expect(publish({ ...draft, shortText: 'Checking with the holder.' }, caller())).toMatchObject({
-      accepted: true,
-      created: true,
-    });
+  test('the first answer closes a human trigger: a later input cannot replace it', () => {
+    expect(publish(draft, caller())).toMatchObject({ accepted: true, created: true });
     const reply = 'neo-consult:consult:9:reply';
     prompt(root.sessionId, reply, 'system');
     stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
     expect(
       publish(
-        { ...draft, publicationId: '20000000-0000-4000-8000-000000000002', shortText: '12' },
+        {
+          ...draft,
+          publicationId: '20000000-0000-4000-8000-000000000002',
+          shortText: 'Overwrite.',
+        },
         caller(root.sessionId, reply, false)
       )
     ).toMatchObject({
-      accepted: true,
-      created: true,
-      publication: { publicationId: draft.publicationId, shortText: '12' },
+      accepted: false,
+      reason: 'trigger_already_published',
+      detail: expect.stringContaining('first answer closes it'),
     });
-    const [only] = ledger.list(conversationId)!;
-    expect(only).toMatchObject({
-      shortText: '12',
-      producerInput: ask,
-      answerInput: { sessionId: root.sessionId, messageId: reply },
-      editedAt: expect.any(String),
-    });
-    expect(ledger.list(conversationId)).toHaveLength(1);
-    expect(routes.find(ask.messageId)?.outcome).toBe('12');
+    expect(ledger.list(conversationId)!.map((item) => item.shortText)).toEqual([draft.shortText]);
   });
 
   test.each([
@@ -512,7 +480,7 @@ describe('runtime-bound publication operation', () => {
     ).toMatchObject({
       accepted: false,
       reason: 'trigger_already_published',
-      detail: expect.stringContaining('cannot post again'),
+      detail: expect.stringContaining('first answer closes it'),
     });
     expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({
       accepted: true,
@@ -753,43 +721,6 @@ describe('requirePublicationTrigger', () => {
     expect(requirePublicationTrigger({ a: 1 }, {}, null)).toHaveProperty(
       'reason.reason',
       'no_trigger'
-    );
-  });
-});
-
-describe('planNeoTriggerAnswer', () => {
-  const prior = {
-    conversationId,
-    publicationId: '20000000-0000-4000-8000-000000000001',
-    askOrigin: ask,
-    producerInput: ask,
-    shortText: 'Checking.',
-    fullText: 'Checking.',
-    links: [],
-    triggerId: `human:${ask.messageId}`,
-    interim: true as const,
-    corrects: '20000000-0000-4000-8000-000000000009',
-    correctedBy: '20000000-0000-4000-8000-000000000008',
-    sequence: 1,
-    createdAt: '2026-10-15T00:00:00.000Z',
-  };
-  const later = { sessionId: ask.sessionId, messageId: 'neo-nudge:x' };
-  test('a later input replaces the text and drops the interim and correction marks', () => {
-    const plan = planNeoTriggerAnswer(
-      prior,
-      { ...prior, producerInput: later, shortText: '12', fullText: '12' },
-      '2026-10-15T01:00:00.000Z'
-    );
-    expect(plan).toMatchObject({ kind: 'replace', next: { shortText: '12', answerInput: later } });
-    const next = plan.kind === 'replace' ? plan.next : null;
-    expect(next).not.toHaveProperty('interim');
-    expect(next).not.toHaveProperty('corrects');
-    expect(next).not.toHaveProperty('correctedBy');
-  });
-  test('the same input is a no-op when unchanged and refused when it says something else', () => {
-    expect(planNeoTriggerAnswer(prior, prior, 'now').kind).toBe('same');
-    expect(planNeoTriggerAnswer(prior, { ...prior, shortText: 'Other.' }, 'now').kind).toBe(
-      'refused'
     );
   });
 });

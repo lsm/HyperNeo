@@ -161,6 +161,26 @@ describe('planNeoConsultationReturn', () => {
     expect({ item, association, publication, originalAsk }).toEqual(before);
     expect(planNeoConsultationReturn(item, association, publication, originalAsk)).toEqual(result);
   });
+  test('a return that replaced an earlier post in place before this release still settles', () => {
+    const replaced = {
+      ...publication,
+      publicationId: '20000000-0000-4000-8000-000000000009',
+      producerInput: { sessionId: 'neo:root', messageId: 'root-system-input' },
+      answerInput: publication.producerInput,
+      editedAt: '2026-10-01T00:00:01.000Z',
+      editedBy: item.sessionId!,
+    };
+    const { sequence: _sequence, createdAt: _createdAt, ...captured } = publication;
+    expect(
+      planNeoConsultationReturn(
+        item,
+        { ...association, publicationId: replaced.publicationId },
+        replaced,
+        originalAsk,
+        captured
+      )
+    ).toEqual({ kind: 'published', publication: replaced });
+  });
   test('an internal work-review id and null consultation origin do not replace the proven human ask', () => {
     const review = { ...item, id: 'neo-work:job:review', originMessageId: null };
     const receipt = { ...association, consultationId: review.id };

@@ -166,6 +166,6 @@ export function createNeoCrossProjectOperation(service: NeoService) {
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: dispatch,
+    execute: async (input, caller) => service.triggerWorkProblem(caller) ?? dispatch(input, caller),
   });
 }
