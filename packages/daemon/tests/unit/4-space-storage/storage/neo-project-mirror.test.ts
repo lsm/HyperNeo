@@ -371,6 +371,26 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     full.close();
   });
 
+  test('does not pull an old project into a new repository through a reused folder', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const at = (root: string, remote?: string) => {
+      const found = workspace('/w/app', 'laptop', `git:${root.repeat(40)}`);
+      return [{ ...found, place: { ...found.place, remotes: remote ? [remote] : undefined } }];
+    };
+    mirrorNeoWorkspaceProjects(raw, at('a'));
+    const old = store.listProjects()[0]!.id;
+    const other = workspace('/w/other', 'laptop', `git:${'b'.repeat(40)}`);
+    mirrorNeoWorkspaceProjects(raw, [
+      { ...other, place: { ...other.place, remotes: ['git@github.com:lsm/new.git'] } },
+    ]);
+    mirrorNeoWorkspaceProjects(raw, at('b', 'git@github.com:lsm/new.git'));
+    expect(store.listProjects().map((project) => project.id)).toContain(old);
+    expect(store.projectMerges.redirects()).toEqual([]);
+    full.close();
+  });
+
   test('retitles a generated title from the repository when the project kept it', async () => {
     const full = await createTestDb();
     const raw = full.getDatabase();

@@ -16,6 +16,7 @@ export interface NeoProjectMergeInput {
 export interface NeoProjectMergeState {
   projects: readonly NeoProject[];
   identities: Readonly<Record<string, readonly string[]>>;
+  repositories?: Readonly<Record<string, readonly string[]>>;
   unavailable: readonly string[];
   retired: readonly string[];
 }
@@ -87,8 +88,8 @@ export function requireNeoMergeIdentity(
     )
   )
     return { reason: { ok: false, reason: 'identity_conflict' } };
-  const repositories = (ids: string[]) => ids.filter((id) => id.startsWith('repository:'));
-  const [sourceRepos, targetRepos] = [repositories(source), repositories(target)];
+  const stored = (id: string) => state.repositories?.[id] ?? [];
+  const [sourceRepos, targetRepos] = [stored(plan.source.id), stored(plan.target.id)];
   const gits = (ids: string[]) => ids.filter((id) => id.startsWith('git:'));
   if (sourceRepos.length && targetRepos.length) {
     if (!sourceRepos.some((repository) => targetRepos.includes(repository)))
