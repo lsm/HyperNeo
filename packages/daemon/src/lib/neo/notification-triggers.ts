@@ -289,6 +289,18 @@ export function planNeoAskTrigger(
   };
 }
 
+export function neoTriggerWatchSessions(
+  owner: string,
+  works: readonly (Pick<NeoWork, 'status' | 'originSessionId'> | null)[]
+): string[] {
+  return [
+    ...new Set([
+      owner,
+      ...works.flatMap((work) => (work?.status === 'proposed' ? [work.originSessionId] : [])),
+    ]),
+  ];
+}
+
 export function requireNeoTriggerOwnerIdle(
   ask: NeoAsk,
   deps: NeoTriggerSweepDeps

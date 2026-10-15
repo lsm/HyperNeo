@@ -20,6 +20,7 @@ import {
   neoTriggerRetryStatuses,
   requireNeoTriggerUnheard,
   shouldRetryNeoTrigger,
+  neoTriggerWatchSessions,
   NEO_TRIGGER_RETRY_MS,
   neoAskTriggerKeys,
   neoTriggerNote,
@@ -213,6 +214,19 @@ describe('neoTriggerRetryStatuses', () => {
     expect(neoTriggerRetryStatuses([], ['consumed', 'consumed', 'consumed'])).toEqual(['consumed']);
     expect(neoTriggerRetryStatuses([], ['consumed', 'enqueued'])).toEqual(['pending']);
     expect(neoTriggerRetryStatuses([], [])).toEqual([]);
+  });
+});
+
+describe('neoTriggerWatchSessions', () => {
+  test('a trigger waits on its owner and on whoever proposed a card not yet started', () => {
+    expect(
+      neoTriggerWatchSessions(root, [
+        { status: 'proposed', originSessionId: 'neo:holder:a' },
+        { status: 'queued', originSessionId: 'neo:holder:b' },
+        { status: 'proposed', originSessionId: root },
+        null,
+      ])
+    ).toEqual([root, 'neo:holder:a']);
   });
 });
 
@@ -638,6 +652,38 @@ describe('NeoService notification triggers', () => {
     await sweep();
     await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
     expect(JSON.stringify(mailbox()[0])).toContain(encodeURIComponent(root));
+  });
+
+  test('a card proposed in a running turn raises no action note until that turn ends', async () => {
+    const holder = 'neo:holder:labs';
+    db.createSession(createTestSession(holder));
+    const opened = open();
+    seed();
+    db.updateSession(holder, {
+      processingState: JSON.stringify({
+        status: 'processing',
+        messageId: 'turn',
+        phase: 'streaming',
+      }),
+    });
+    const work = service.repo.proposeWork({
+      id: 'w-start',
+      requestKey: 'w-start',
+      projectId: null,
+      originSessionId: holder,
+      originMessageId: m0,
+      title: 'Update the iMac',
+      instruction: 'Update the iMac daemon.',
+    });
+    service.askRecords.link(opened.id, work.id);
+    await sweep();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mailbox()).toEqual([]);
+    service.repo.transitionWork(work.id, work, { status: 'queued' });
+    db.updateSession(holder, { processingState: JSON.stringify({ status: 'idle' }) });
+    await sweep();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mailbox().filter((note) => note.messageUuid.includes('action:'))).toEqual([]);
   });
 
   test('a session that refused the card wakes Neo with a talk trigger', async () => {

@@ -361,6 +361,7 @@ import {
   neoTriggerMessageIds,
   planNeoTriggerRetry,
   shouldRetryNeoTrigger,
+  neoTriggerWatchSessions,
   neoAskTriggerConcern,
   neoTriggerRetryStatuses,
   shouldPreemptNeoTurn,
@@ -1281,10 +1282,15 @@ export class NeoService {
   private isTriggerOwnerBusy(ask: NeoAsk): boolean {
     const owner = this.triggerOwner(ask);
     if (!owner) return true;
-    const status =
-      this.processingStatus.get(owner) ??
-      neoSessionStatus(this.db.getSession(owner)?.processingState);
-    return status !== null && status !== 'idle';
+    return neoTriggerWatchSessions(
+      owner,
+      ask.workIds.map((id) => this.repo.getWork(id))
+    ).some((session) => {
+      const status =
+        this.processingStatus.get(session) ??
+        neoSessionStatus(this.db.getSession(session)?.processingState);
+      return status !== null && status !== 'idle';
+    });
   }
 
   private reconcilePublishedAnswer(ask: NeoAsk): void {
