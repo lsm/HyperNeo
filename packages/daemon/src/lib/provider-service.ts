@@ -375,7 +375,6 @@ export class ProviderService {
     const provider = registry.detectProviderForModel(modelId, providerId);
 
     if (!provider) {
-      if (providerId === 'anthropic') return {};
       throw new Error(`No provider '${providerId}' is registered for model '${modelId}'`);
     }
 
