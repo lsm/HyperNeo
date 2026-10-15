@@ -3757,18 +3757,19 @@ export class NeoService {
     ask: NeoAsk,
     cards: readonly NeoWork[],
     owner: { projectId: string; sessionId: string; messageId: string }
-  ): void {
+  ): boolean {
     const to = {
       projectId: owner.projectId,
       originSessionId: owner.sessionId,
       originMessageId: owner.messageId,
     };
-    this.db.getDatabase().transaction(() => {
-      this.askRecords.moveTo(ask.id, to);
+    return this.db.getDatabase().transaction(() => {
+      if (!this.askRecords.moveTo(ask, to)) return false;
       this.repo.moveWork(
         cards.map((card) => card.id),
         to
       );
+      return true;
     })();
   }
 
