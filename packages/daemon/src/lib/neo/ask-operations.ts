@@ -222,6 +222,7 @@ const Answer = z.object({
   askId: z.string().min(1),
   itemId: z.string().min(1),
   choice: z.string().trim().min(1).max(1000),
+  humanMessageId: z.string().min(1).max(200).optional(),
 });
 
 const Approve = z.object({ askId: z.string().min(1), expectedRevision: ExpectedRevision });
@@ -1010,6 +1011,41 @@ export function requireNeoAskQuestion(
     : { value: { ask, item } };
 }
 
+export function neoAnswerCitation(
+  input: z.infer<typeof Answer>,
+  caller: OperationCaller
+): string | null {
+  if (caller.source !== 'mcp') return null;
+  return input.humanMessageId ?? caller.neoTurn?.messageId ?? null;
+}
+
+export function requireNeoAnswerProvenance(
+  target: { ask: NeoAsk; item: NeoAskItem },
+  caller: OperationCaller,
+  cited: { id: string | null; at: number | null }
+): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
+  if (caller.source !== 'mcp') return { value: target };
+  if (!cited.id)
+    return {
+      reason: fail(
+        "answer_needs_human_message: record the human's chat answer in the turn their message started, or pass humanMessageId, the id of that message."
+      ),
+    };
+  if (cited.at === null)
+    return {
+      reason: fail(
+        `answer_not_from_human: ${cited.id} is not a message the human sent in this conversation.`
+      ),
+    };
+  return target.item.addedAt === null || cited.at <= target.item.addedAt
+    ? {
+        reason: fail(
+          `answer_predates_question: ${cited.id} was sent before this question was asked, so it cannot answer it.`
+        ),
+      }
+    : { value: target };
+}
+
 export function readNeoAskReply(
   input: z.infer<typeof Answer>,
   target: { item: NeoAskItem }
@@ -1558,15 +1594,31 @@ export function createNeoAskOperations(
     )
     .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskQuestion, ['input', 'admission'], 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Answer>, target: { ask: NeoAsk }, caller: OperationCaller) => {
+        const id = neoAnswerCitation(input, caller);
+        return {
+          id,
+          at: id
+            ? service.db.getSDKMessageRepo().getHumanPromptTime(target.ask.originSessionId, id)
+            : null,
+        };
+      },
+      ['input', 'admission', 'caller'],
+      'cited'
+    )
+    .pipe(requireNeoAnswerProvenance, ['admission', 'caller', 'cited'], 'result:admission')
     .pipe(readNeoAskReply, ['input', 'admission'], 'reply')
     .pipe(
       async (
         target: { ask: NeoAsk; item: NeoAskItem },
-        reply: { choice: string; met: boolean }
+        reply: { choice: string; met: boolean },
+        caller: OperationCaller
       ) => {
-        await service.deliverAskAnswer(target.ask, target.item, reply.choice, reply.met);
+        if (caller.source !== 'mcp')
+          await service.deliverAskAnswer(target.ask, target.item, reply.choice, reply.met);
       },
-      ['admission', 'reply']
+      ['admission', 'reply', 'caller']
     )
     .pipe(
       (
@@ -1874,10 +1926,10 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.answer',
       description:
-        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met and is sent to the Neo session that opened the ask, which acts on it. A question about a step's result (kind action) is answered with one of its own options: the first ticks it met, any other keeps it open, and Neo hears the answer either way.",
+        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met. From the Answer control it is sent to the Neo session that opened the ask, which acts on it. When the human answers in chat instead, Neo records it here in the turn their message started (or passes humanMessageId, the id of an earlier human message that answered it): the daemon accepts it only if that message is the human's own, in this ask's conversation, and sent after the question, so never ask them to repeat it in a control and never open a second ask for it. A question about a step's result (kind action) is answered with one of its own options: the first ticks it met, any other keeps it open.",
       inputSchema: Answer,
       resultSchema: AskResult,
-      policy: { safetyClass: 'human_only' },
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => withView(await answer(input, caller)),
     }),
     defineOperation({

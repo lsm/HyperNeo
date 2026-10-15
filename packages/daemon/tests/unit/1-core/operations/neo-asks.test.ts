@@ -1770,6 +1770,75 @@ describe('neo.ask operations', () => {
     ).toEqual({ status: 'waiting', outcome: 'Confirm: i1', item: 'i1' });
   });
 
+  test("Neo records the human's chat reply as the answer from that message's turn, and a forged citation is refused", async () => {
+    const askId = await openAsk();
+    const elsewhere = 'other-conversation';
+    db.createSession(createTestSession(elsewhere));
+    humanSays('dev, I said so earlier', 'before-question');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(
+      await invoke('neo.ask.question', {
+        askId,
+        question: 'Base this on dev or the latest release tag?',
+        options: ['dev', 'latest tag'],
+        kind: 'decision',
+      })
+    ).toMatchObject({ value: { ok: true, ask: { waitingItem: 'i3' } } });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    humanSays('dev', 'reply');
+    db.getSDKMessageRepo().saveSDKMessage('root', {
+      type: 'user',
+      uuid: 'injected',
+      session_id: 'root',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'dev' },
+    } as unknown as SDKUserMessage);
+    db.getSDKMessageRepo().saveSDKMessage(elsewhere, {
+      type: 'user',
+      uuid: 'elsewhere',
+      session_id: elsewhere,
+      parent_tool_use_id: null,
+      inputKind: 'human',
+      message: { role: 'user', content: 'dev' },
+    } as unknown as SDKUserMessage);
+    const delivered = mock(async () => {});
+    service.deliverAskAnswer = delivered;
+    const answer = { askId, itemId: 'i3', choice: 'dev' };
+    expect(await invoke('neo.ask.answer', answer, { ...neo, neoTurn: undefined })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('answer_needs_human_message') },
+    });
+    for (const [humanMessageId, refusal] of [
+      ['injected', 'answer_not_from_human'],
+      ['elsewhere', 'answer_not_from_human'],
+      ['missing', 'answer_not_from_human'],
+      ['before-question', 'answer_predates_question'],
+    ] as const)
+      expect(await invoke('neo.ask.answer', { ...answer, humanMessageId })).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining(refusal) },
+      });
+    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({ state: 'needs_you' });
+    const replyTurn: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'reply' } };
+    expect(await invoke('neo.ask.answer', answer, replyTurn)).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          doneItems: [
+            expect.anything(),
+            expect.anything(),
+            expect.objectContaining({
+              id: 'i3',
+              state: 'met',
+              metBy: 'human',
+              evidence: 'The human answered: dev',
+            }),
+          ],
+        },
+      },
+    });
+    expect(delivered).not.toHaveBeenCalled();
+    expect(service.askRecords.list().filter((ask) => ask.status !== 'abandoned')).toHaveLength(1);
+  });
+
   test('neo.ask.question asks a decision as its own item, and the human answers it back to Neo', async () => {
     const askId = await openAsk();
     expect(

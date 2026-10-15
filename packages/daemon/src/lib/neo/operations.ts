@@ -792,7 +792,7 @@ function admitNeoCaller(
       : isNeoHumanTurn(service, caller))
   )
     return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
-  if (['neo.open', 'neo.project.cancel', 'neo.ask.answer', 'neo.session.track'].includes(name))
+  if (['neo.open', 'neo.project.cancel', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'project' && projectId !== undefined && projectId !== binding.projectId)
     return { reason: { ok: false, reason: 'This context holder cannot access another project.' } };

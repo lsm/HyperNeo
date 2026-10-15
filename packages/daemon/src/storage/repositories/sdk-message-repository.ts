@@ -1944,6 +1944,27 @@ export class SDKMessageRepository {
     return messages;
   }
 
+  getHumanPromptTime(sessionId: string, uuid: string): number | null {
+    const rows = this.db
+      .prepare(
+        `SELECT sdk_message, timestamp FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+          ORDER BY timestamp ASC, rowid ASC`
+      )
+      .all(sessionId, uuid) as Array<{ sdk_message: string; timestamp: string | number }>;
+    for (const row of rows) {
+      try {
+        if ((JSON.parse(row.sdk_message) as { inputKind?: unknown }).inputKind !== 'human')
+          continue;
+      } catch {
+        continue;
+      }
+      const at = typeof row.timestamp === 'number' ? row.timestamp : Date.parse(row.timestamp);
+      return Number.isFinite(at) ? at : null;
+    }
+    return null;
+  }
+
   getUserMessageContentByUuid(sessionId: string, uuid: string): string | MessageContent[] | null {
     const row = this.db
       .prepare(
