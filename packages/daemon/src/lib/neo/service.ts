@@ -78,9 +78,11 @@ import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import {
   isNeoCardLive,
+  neoProjectEventMessageId,
   planNeoCardEventRoute,
   planNeoCardSend,
   planNeoCardTopicsEnded,
+  planNeoProjectEventHolders,
   planNeoSessionTopicsHandedOver,
 } from './card-events.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
@@ -118,7 +120,6 @@ import {
 } from './ask-origin.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
-import { planNeoConsultationReturn } from './consultation-return-route.ts';
 import {
   NEO_PUBLISH_NUDGE,
   type NeoDirectReplyRuntime,
@@ -429,6 +430,8 @@ const dispatchNeoConsultationWaiter = (
   .endAsync('admission');
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
+const NEO_PROJECT_EVENT_NOTE =
+  'An event on one of this project’s cards, for your knowledge. Its ask belongs to another Neo session, which acts on it; save what it changes about the project with neo.project.save.';
 const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
 
 type NeoWorkPrCard = {
@@ -908,7 +911,6 @@ export class NeoService {
         this.db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, messageId),
       getStamp: (sessionId, messageId) => inputOrigins.get(sessionId, messageId),
     });
-    const publicationSettlements = new NeoConsultationRepository(db.getDatabase(), () => {});
     const notifyPublication = () => {
       try {
         void hub.event('neo.changed', {});
@@ -923,74 +925,20 @@ export class NeoService {
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
       inputTrigger: (input) => this.inputTrigger(input),
       newId: () => this.newPublicationId(),
-      replay: (input, caller) => {
-        const turn = caller.neoTurn;
-        const item = turn?.consultationId ? this.consultations.get(turn.consultationId) : null;
-        const binding = caller.sessionId ? this.repo.getBindingBySession(caller.sessionId) : null;
-        if (
-          caller.source !== 'mcp' ||
-          !item ||
-          binding?.kind !== 'project' ||
-          binding.sessionId !== item.sessionId ||
-          binding.projectId !== item.projectId ||
-          turn?.messageId !== `neo-consult:${item.id}:request`
-        )
-          return null;
-        const association = this.consultations.getPublication(item.id);
-        if (!association) return null;
-        const root = this.repo.getBindingForProject(null);
-        if (root?.kind !== 'neo' || root.sessionId !== `neo:${association.conversationId}`)
-          return { accepted: false, reason: 'publication_superseded' };
-        const publication = this.publications.get(
-          association.conversationId,
-          association.publicationId
-        );
-        if (!publication) throw new Error('Committed consultation publication is missing');
-        if (
-          publication.producerInput.sessionId !== caller.sessionId ||
-          publication.producerInput.messageId !== turn.messageId ||
-          publication.shortText !== input.shortText ||
-          publication.fullText !== input.fullText ||
-          publication.askSummary !== input.askSummary ||
-          publication.awaiting !== input.awaiting ||
-          JSON.stringify(publication.links) !== JSON.stringify(input.links)
-        )
-          return { accepted: false, reason: 'publication_conflict' };
-        notifyPublication();
-        return { accepted: true, created: false, publication };
-      },
-      append: (input, consultationId) => this.commitPublication(input, consultationId),
+      append: (input) => this.commitPublication(input),
       notify: notifyPublication,
     });
     this.commitPublication = createNeoPublicationCommit({
-      commit: (input, consultationId) => {
-        const problem = this.crossProjects.publicationProblem(input, consultationId);
+      commit: (input) => {
+        const problem = this.crossProjects.publicationProblem(input);
         if (problem) return { accepted: false, reason: problem };
-        if (!consultationId && input.triggerId && this.consultationOpenFor(input.triggerId))
+        if (input.triggerId && this.consultationOpenFor(input.triggerId))
           return {
             accepted: false,
             reason: 'consultation_pending',
             detail: NEO_CONSULTATION_PENDING_DETAIL,
           };
-        if (!consultationId) return this.appendPublication(input);
-        const repeat = this.publications.repeatOf(input);
-        if (repeat) {
-          this.consultations.finish(consultationId, 'reported', input.fullText);
-          this.consultations.returned(consultationId);
-          return { accepted: true, created: false, publication: repeat };
-        }
-        const receipt = publicationSettlements.settleWithPublication({
-          consultationId,
-          answer: input.fullText,
-          publication: input,
-        });
-        if (!receipt.accepted) return receipt;
-        const publication = this.publications.get(
-          receipt.association.conversationId,
-          receipt.association.publicationId
-        );
-        if (!publication) throw new Error('Committed consultation publication is missing');
-        return { accepted: true, created: receipt.created, publication };
+        return this.appendPublication(input);
       },
       published: (input, publication) => {
         this.noteHumanReply(input);
@@ -1026,7 +974,7 @@ export class NeoService {
           { sessionId: id, messageId: nudgedMessageId(nudgeId) ?? nudgeId },
           'continues'
         ).catch((error) => this.log.warn('Publish nudge failed', error)),
-      append: (input) => this.commitPublication(input, undefined),
+      append: (input) => this.commitPublication(input),
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),
     };
@@ -1384,7 +1332,7 @@ export class NeoService {
       standingRules: neoStandingRules(this.db.getGlobalSettings?.().neo),
       stored: !!this.publications.get(input.conversationId, input.publicationId),
     });
-    const receipt = this.crossProjects.append(input, undefined, () =>
+    const receipt = this.crossProjects.append(input, () =>
       this.publications.append(withNeoSavedRules(input, plan.rules))
     );
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
@@ -2868,6 +2816,36 @@ export class NeoService {
       },
       ['event', 'route']
     )
+    .pipe(
+      (route: NeoPackEventRoute) =>
+        planNeoProjectEventHolders(
+          route.workIds.flatMap((id) => {
+            const work = this.repo.getWork(id);
+            const ask = this.askRecords.forWork(id);
+            return work
+              ? [{ projectId: work.projectId, owner: ask ? this.triggerConcern(ask) : null }]
+              : [];
+          })
+        ),
+      'route',
+      'holders'
+    )
+    .pipe(
+      async (event: ExternalEvent, holders: string[]) => {
+        for (const projectId of holders)
+          await this.open(projectId)
+            .then((holder) =>
+              this.deliver(
+                holder,
+                neoProjectEventMessageId(projectId, event.id),
+                `${NEO_PROJECT_EVENT_NOTE}\n${sessionEventText(event)}`,
+                holder
+              )
+            )
+            .catch((error) => this.log.warn('Project event not delivered', error));
+      },
+      ['event', 'holders']
+    )
     .pipe((route: NeoPackEventRoute) => {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
     }, 'route')
@@ -3282,21 +3260,6 @@ export class NeoService {
     await dispatchNeoConsultationWaiter(this, projectId);
   }
 
-  private planConsultationReturn(item: NeoConsultation) {
-    const association = this.consultations.getPublication(item.id);
-    const captured = this.consultations.getPublicationInput(item.id);
-    const publication = association
-      ? this.publications.get(association.conversationId, association.publicationId)
-      : this.publications.findByProducer(item.sessionId, `neo-consult:${item.id}:request`);
-    return planNeoConsultationReturn(
-      item,
-      association,
-      publication,
-      captured?.askOrigin ?? null,
-      captured
-    );
-  }
-
   async syncConsultation(id: string): Promise<void> {
     let item = this.consultations.expire(id);
     if (!item) return;
@@ -3319,9 +3282,7 @@ export class NeoService {
         const content = neoConsultationRequestContent(
           item,
           !!this.crossProjects.forReceipt(item.id),
-          this.crossProjects.forReceipt(item.id)?.askMessageId,
-          item.originMessageId !== null &&
-            this.parentTrigger(this.consultationParent(item)) !== null
+          this.crossProjects.forReceipt(item.id)?.askMessageId
         );
         await this.deliver(
           item.sessionId,
@@ -3342,13 +3303,12 @@ export class NeoService {
       await this.dispatchConsultationWaiter(item.projectId);
       return;
     }
-    const route = this.consultations.isReturned(id)
-      ? 'returned'
-      : this.planConsultationReturn(item);
-    if (route === 'inconsistent')
-      throw new Error('Consultation publication return is inconsistent');
-    if (route === 'pending') return;
-    if (route === 'legacy' && !(item.status === 'reported' && item.answer === NEO_WORK_REVIEWED)) {
+    if (item.status === 'pending') return;
+    if (
+      !this.consultations.isReturned(id) &&
+      !this.consultations.wasPublished(id) &&
+      !(item.status === 'reported' && item.answer === NEO_WORK_REVIEWED)
+    ) {
       const content = neoConsultationReplyContent(item);
       if (content === null) return;
       await this.deliver(
@@ -3489,10 +3449,6 @@ export class NeoService {
     work: NeoWork,
     stored: { prs: readonly NeoWorkPr[] } | null
   ): Promise<NeoCardPrCandidate[]> {
-    const goal = this.workGoals.get(work.id);
-    const brief = [work.title, work.instruction, goal?.goal, goal?.doneWhen]
-      .filter(Boolean)
-      .join('\n');
     const ref = this.driverTargets.readRef(work.id);
     const sent = neoCardSent(this.driverTargets.readSent(work.id), work);
     const outcome =
@@ -3504,26 +3460,21 @@ export class NeoService {
     return planNeoCardPrCandidates({
       window,
       report: work.report,
-      brief,
+      follows: work.follows,
       branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),
       opened: this.cardOpenedPrs.get(work.id) ?? [],
       stored: stored?.prs ?? [],
-      refs: await this.cardPrRefs(work, brief, outcome),
+      mentioned: await this.cardPrRefs(work, outcome),
     });
   }
 
-  private async cardPrRefs(
-    work: NeoWork,
-    brief: string,
-    outcome: OperationOutcome | null
-  ): Promise<{ named: string[]; mentioned: string[] }> {
+  private async cardPrRefs(work: NeoWork, outcome: OperationOutcome | null): Promise<string[]> {
     const ref = this.driverTargets.readRef(work.id);
     const localId = localCodingSessionId(ref);
     const cwd =
       neoWorkRepoCwd(localId ? this.db.getSession(localId) : null) ??
       localCodingExecutionDirectory(ref, outcome, hostname());
     return readCodingCardRefs(
-      brief,
       work.report,
       () => (cwd ? this.readWorkRepo(cwd) : Promise.resolve(null)),
       (refs) => this.readRefStates(refs)

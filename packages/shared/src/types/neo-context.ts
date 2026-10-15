@@ -43,6 +43,7 @@ export interface NeoWork {
   sessionId: string | null;
   status: 'proposed' | 'queued' | 'reported' | 'failed' | 'cancelled';
   report: string | null;
+  follows?: string | null;
   createdAt: number;
   updatedAt: number;
 }

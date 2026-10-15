@@ -10,14 +10,14 @@ const bindingColumns = 'session_id AS sessionId, concern_id AS projectId, kind';
 const workColumns = `id, request_key AS requestKey, concern_id AS projectId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
   title, instruction, target_session_id AS targetSessionId, session_id AS sessionId,
-  status, report, created_at AS createdAt, updated_at AS updatedAt`;
+  status, report, follows, created_at AS createdAt, updated_at AS updatedAt`;
 
 export type NeoProjectInput = Pick<NeoProject, 'id' | 'title' | 'summary' | 'context'>;
 export type NeoWorkInput = Pick<
   NeoWork,
   'id' | 'requestKey' | 'projectId' | 'originSessionId' | 'title' | 'instruction'
 > &
-  Partial<Pick<NeoWork, 'originMessageId'>> & { targetSessionId?: string | null };
+  Partial<Pick<NeoWork, 'originMessageId' | 'follows'>> & { targetSessionId?: string | null };
 export interface NeoWorkTarget {
   readonly id: string;
   readonly targetSessionId: string | null;
@@ -345,8 +345,8 @@ export class NeoRepository {
     const result = this.db
       .prepare(`INSERT INTO neo_work
         (id, request_key, concern_id, origin_session_id, origin_message_id, target_session_id, title, instruction,
-          session_id, status, report, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'proposed', NULL, ?, ?)
+          session_id, status, report, follows, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'proposed', NULL, ?, ?, ?)
         ON CONFLICT(request_key) DO NOTHING`)
       .run(
         input.id,
@@ -357,6 +357,7 @@ export class NeoRepository {
         input.targetSessionId ?? null,
         input.title,
         input.instruction,
+        input.follows ?? null,
         now,
         now
       );

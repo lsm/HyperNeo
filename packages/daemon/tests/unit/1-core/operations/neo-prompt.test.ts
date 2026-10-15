@@ -269,7 +269,7 @@ describe('Neo world briefing delivery', () => {
     expect(root).toContain('consult its holder before giving the substantive answer');
     expect(holder).toContain('context holder for project "saas"');
     expect(holder).toContain('Use the consultationId from that request, not a work id');
-    expect(holder).toContain('complete its requested return operation before ending your turn');
+    expect(holder).toContain('return your answer with neo.project.respond before ending your turn');
     expect(holder).toContain('If a save is rejected as superseded, do not reread and retry it');
   });
 

@@ -59,3 +59,25 @@ export function planNeoSessionTopicsHandedOver<Row extends { topic: string }>(
   const owned = new Set(topics.map((topic) => topic.toLowerCase()));
   return own.filter((row) => owned.has(row.topic.toLowerCase()));
 }
+
+const PROJECT_EVENT = 'neo-project-event:';
+
+export function neoProjectEventMessageId(projectId: string, eventId: string): string {
+  return `${PROJECT_EVENT}${projectId}:${eventId}`;
+}
+
+export function isNeoProjectEventTurn(turn: { messageId: string } | undefined): boolean {
+  return !!turn?.messageId.startsWith(PROJECT_EVENT);
+}
+
+export function planNeoProjectEventHolders(
+  cards: readonly { projectId: string | null; owner: string | null }[]
+): string[] {
+  return [
+    ...new Set(
+      cards.flatMap((card) =>
+        card.projectId && card.projectId !== card.owner ? [card.projectId] : []
+      )
+    ),
+  ];
+}

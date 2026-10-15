@@ -71,6 +71,7 @@ import {
   type presentNeoWorkTarget,
 } from './work-target.ts';
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
+import { isNeoProjectEventTurn } from './card-events.ts';
 import { requireNeoProposal, type NeoProposal } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
@@ -221,6 +222,7 @@ const Work = z.object({
   sessionId: z.string().nullable(),
   status: z.enum(['proposed', 'queued', 'reported', 'failed', 'cancelled']),
   report: z.string().nullable(),
+  follows: z.string().nullable().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
 } satisfies ZodShape<NeoWork>);
@@ -444,6 +446,14 @@ const Propose = z.object({
     ),
   supersedes: z.string().min(1).max(160).nullable().optional(),
   allowBusyTarget: z.boolean().optional(),
+  follows: z
+    .string()
+    .url()
+    .max(500)
+    .optional()
+    .describe(
+      'URL of the item this card works on, such as the pull request it continues. The card tracks it alongside what it opens itself, and several cards may follow one item.'
+    ),
 });
 type ProposeRequest = z.infer<typeof Propose> & { requestKey: string };
 const Refused = z.object({ workId: z.string().min(1), what: z.string().trim().min(1).max(500) });
@@ -1570,7 +1580,13 @@ export function createNeoOperations(service: NeoService) {
     .pipe(
       (input: SaveRequest, caller: OperationCaller) => {
         const turn = caller.neoTurn;
-        return isHolder(caller) && (!turn?.isLive() || (!turn.human && !turn.consultationId))
+        const origin =
+          turn && caller.sessionId
+            ? service.resolveAskOrigin({ sessionId: caller.sessionId, messageId: turn.messageId })
+            : null;
+        return isHolder(caller) &&
+          (!turn?.isLive() ||
+            (!turn.human && !turn.consultationId && !isNeoProjectEventTurn(origin ?? turn)))
           ? {
               reason: {
                 ok: false as const,

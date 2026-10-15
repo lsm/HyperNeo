@@ -1,4 +1,3 @@
-import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub, Session, SessionConfig } from '@hyperneo/shared';
@@ -29,14 +28,8 @@ const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = `neo:${conversationId}`;
 const holder = 'neo:holder:fictional-runtime';
 const requestId = 'neo-consult:check:request';
-const draft = {
-  publicationId: '20000000-0000-4000-8000-000000000001',
-  shortText: 'The fictional plan is current.',
-  fullText: '**Plan B** replaced the old plan. External completion is not verified.',
-  links: [{ kind: 'consultation' as const, id: 'check', label: 'View comparison' }],
-};
 
-describe('published consultation runtime activation', () => {
+describe('consultation runtime', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
   let events: InternalEventBus<DaemonInternalEventMap>;
@@ -138,59 +131,6 @@ describe('published consultation runtime activation', () => {
     await service.syncConsultation(item.id);
     expect(mailbox(root)).toHaveLength(1);
     expect(JSON.stringify(mailbox(root)[0].payload)).toContain('Legacy answer after restart.');
-  });
-
-  test('commits the same authored tuple and original ask without another root query', async () => {
-    const item = reserve();
-    await service.syncConsultation(item.id);
-    savePrompt(holder, requestId, neoConsultationRequestContent(item));
-    savePrompt(root, 'unrelated-newer-ask', 'An unrelated fictional question.', true);
-    const turn = new NeoHolderTurn(db, holder, { isLive: () => true }, () => {});
-    turns.push(turn);
-    expect(turn.bind(requestId)).toBe(true);
-    const registry = createOperationRegistry(createNeoOperations(service));
-    const caller = {
-      source: 'mcp' as const,
-      sessionId: holder,
-      role: 'neo' as const,
-      neoTurn: turn.identity(),
-    };
-    expect(
-      await invokeOperation(
-        registry,
-        'neo.publication.publish',
-        withMintedPublicationId(service, draft),
-        caller
-      )
-    ).toMatchObject({
-      kind: 'completed',
-      value: { accepted: true, created: true },
-    });
-    expect(
-      await invokeOperation(
-        registry,
-        'neo.publication.publish',
-        withMintedPublicationId(service, draft),
-        caller
-      )
-    ).toMatchObject({
-      kind: 'completed',
-      value: { accepted: true, created: false },
-    });
-    await service.syncConsultation(item.id);
-    expect(service.publications.get(conversationId, draft.publicationId)).toMatchObject({
-      ...draft,
-      askOrigin: { sessionId: root, messageId: 'original-ask' },
-      producerInput: { sessionId: holder, messageId: requestId },
-    });
-    expect(mailbox(root)).toEqual([]);
-    expect(
-      db.getDatabase().prepare('SELECT returned FROM neo_consultations WHERE id = ?').get(item.id)
-    ).toEqual({ returned: 1 });
-    startService();
-    await service.recoverConsultations();
-    expect(mailbox(root)).toEqual([]);
-    expect(db.getDatabase().prepare('SELECT * FROM neo_publications').all()).toHaveLength(1);
   });
 
   test.each([null, 'fictional'])(

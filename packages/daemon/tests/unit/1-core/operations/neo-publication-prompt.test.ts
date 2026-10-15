@@ -170,14 +170,14 @@ describe('direct human publication prompt', () => {
   test('does not instruct consultation or returned-result turns to publish the same answer', () => {
     const holder = delivered('research');
     expect(holder).toContain(
-      'For every consultation request, complete its requested return operation before ending your turn'
+      'For every consultation request, return your answer with neo.project.respond before ending your turn'
     );
     expect(holder).toContain(
-      'do not also call neo.project.respond or send ordinary assistant text'
+      'do not call neo.publication.publish for it or send ordinary assistant text'
     );
     const root = delivered(null);
     expect(root).toContain(
-      'This rule does not apply to a returned consultation answer: leave a published answer authored by its holder unchanged'
+      'This rule does not apply to a returned consultation answer: answer the human yourself from it'
     );
     expect(root).toContain('consult its holder before giving the substantive answer');
   });

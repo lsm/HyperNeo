@@ -60,18 +60,24 @@ describe('staleNeoForwardHops', () => {
 });
 
 describe('requireForwardingHolder', () => {
-  test('admits only a project holder in a live turn', () => {
+  test('admits a project holder or main in a live turn', () => {
     expect(requireForwardingHolder(caller(garden.sessionId, 'ask-1'), garden)).toEqual({
       value: { sessionId: garden.sessionId, projectId: 'garden', input: ask },
     });
+    expect(requireForwardingHolder(caller(root.sessionId, 'ask-1'), root)).toEqual({
+      value: {
+        sessionId: root.sessionId,
+        projectId: null,
+        input: { sessionId: root.sessionId, messageId: 'ask-1' },
+      },
+    });
     for (const [who, binding] of [
-      [caller(root.sessionId, 'ask-1'), root],
       [caller('worker', 'ask-1'), { sessionId: 'worker', projectId: null, kind: 'worker' }],
       [caller(garden.sessionId, 'ask-1', false), garden],
       [{ source: 'rpc', principal: 'local' }, garden],
     ] as const)
       expect(requireForwardingHolder(who as OperationCaller, binding as NeoBinding)).toEqual({
-        reason: { ok: false, reason: 'project_holder_only' },
+        reason: { ok: false, reason: 'coordinator_only' },
       });
   });
 });
@@ -99,6 +105,35 @@ describe('planNeoAskForward', () => {
     });
   });
 
+  test('main forwards once, to a project, and that project cannot forward it on', () => {
+    const mainAsk = { sessionId: root.sessionId, messageId: 'ask-2' };
+    const main = { sessionId: root.sessionId, projectId: null, input: mainAsk };
+    expect(planNeoAskForward({ to: 'pond' }, main, mainAsk, [], root.sessionId)).toEqual({
+      value: { hop: 0, to: 'pond' },
+    });
+    expect(planNeoAskForward({ to: 'main' }, main, mainAsk, [], root.sessionId)).toEqual({
+      reason: { ok: false, reason: 'same_project' },
+    });
+    const receiver = {
+      sessionId: pond.sessionId,
+      projectId: 'pond',
+      input: { sessionId: pond.sessionId, messageId: 'neo-forward:ask-2:0' },
+    };
+    const fromMain = [{ fromSessionId: root.sessionId, toSessionId: pond.sessionId }];
+    expect(planNeoAskForward({ to: 'main' }, receiver, mainAsk, fromMain, root.sessionId)).toEqual({
+      reason: { ok: false, reason: 'forward_limit' },
+    });
+    const toMain = [{ fromSessionId: garden.sessionId, toSessionId: root.sessionId }];
+    const mainReceiver = {
+      sessionId: root.sessionId,
+      projectId: null,
+      input: { sessionId: root.sessionId, messageId: 'neo-forward:ask-1:0' },
+    };
+    expect(planNeoAskForward({ to: 'main' }, mainReceiver, ask, toMain, root.sessionId)).toEqual({
+      reason: { ok: false, reason: 'forward_limit' },
+    });
+  });
+
   test('only the turn that carries the message itself can forward it, not a consultation or nudge', () => {
     const consulted = {
       ...holder,
@@ -109,12 +144,14 @@ describe('planNeoAskForward', () => {
     });
     const nudged = { ...second, input: { ...second.input, messageId: 'neo-nudge:x' } };
     expect(
-      planNeoAskForward({ to: 'main' }, nudged, ask, [{ toSessionId: pond.sessionId }])
+      planNeoAskForward({ to: 'main' }, nudged, ask, [
+        { fromSessionId: garden.sessionId, toSessionId: pond.sessionId },
+      ])
     ).toEqual({ reason: { ok: false, reason: 'not_your_ask' } });
   });
 
   test('the holder that received it may only send it on to main, and nothing goes further', () => {
-    const forwarded = [{ toSessionId: pond.sessionId }];
+    const forwarded = [{ fromSessionId: garden.sessionId, toSessionId: pond.sessionId }];
     expect(planNeoAskForward({ to: 'main' }, second, ask, forwarded)).toEqual({
       value: { hop: 1, to: 'main' },
     });
@@ -127,7 +164,7 @@ describe('planNeoAskForward', () => {
     expect(
       planNeoAskForward({ to: 'main' }, second, ask, [
         ...forwarded,
-        { toSessionId: root.sessionId },
+        { fromSessionId: pond.sessionId, toSessionId: root.sessionId },
       ])
     ).toEqual({ reason: { ok: false, reason: 'forward_limit' } });
   });
@@ -216,14 +253,14 @@ describe('neoForwardContent', () => {
 });
 
 describe('neo.ask.forward', () => {
-  function runtime() {
+  function runtime(origin = ask) {
     const bindings = new Map([garden, pond, root].map((binding) => [binding.sessionId, binding]));
     const forwards: NeoAskForward[] = [];
     let failDelivery = false;
     const delivered: unknown[] = [];
     const deps: NeoAskForwardRuntime = {
       getBinding: (id) => bindings.get(id) ?? null,
-      resolveAskOrigin: () => ask,
+      resolveAskOrigin: () => origin,
       forwards: () => forwards,
       getProject: (id) => (id === 'garden' || id === 'pond' ? { id, title: id } : null),
       listProjects: () => [
@@ -291,6 +328,24 @@ describe('neo.ask.forward', () => {
       [pond.sessionId, 'neo-forward:ask-1:0', garden.sessionId, ask],
       [root.sessionId, 'neo-forward:ask-1:1', pond.sessionId, ask],
     ]);
+  });
+
+  test('main hands the message to a project, which owns it and cannot pass it on', async () => {
+    const mainAsk = { sessionId: root.sessionId, messageId: 'ask-2' };
+    const { invoke, forwards, delivered } = runtime(mainAsk);
+    expect(await invoke(caller(root.sessionId, 'ask-2'), 'pond')).toMatchObject({
+      value: { ok: true, hop: 0, to: 'pond' },
+    });
+    expect(forwards.map((item) => [item.hop, item.fromSessionId, item.toSessionId])).toEqual([
+      [0, root.sessionId, pond.sessionId],
+    ]);
+    const [to, messageId, content] = delivered[0] as [string, string, string];
+    expect([to, messageId]).toEqual([pond.sessionId, 'neo-forward:ask-2:0']);
+    expect(content).toContain('“main”');
+    expect(content).not.toContain('forward it to main');
+    expect(await invoke(caller(pond.sessionId, 'neo-forward:ask-2:0'), 'main')).toMatchObject({
+      value: { ok: false, reason: 'forward_limit' },
+    });
   });
 
   test('a failed delivery takes the hop back, so the holder can forward again', async () => {
