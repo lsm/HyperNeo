@@ -252,21 +252,14 @@ describe('readNeoDaemonCommits', () => {
 });
 
 describe('neoDaemonTickPath', () => {
-  test('names how the daemon reads an item, or null when only Neo or the human can', () => {
+  test('reads only the check and the watch, never the words', () => {
     expect(neoDaemonTickPath(item('i', { check: 'coding.deployed', watch: [pull(1)] }))).toBe(
       'check'
     );
+    expect(neoDaemonTickPath(item('i', { check: 'life-admin.confirmed' }))).toBe('check');
     expect(neoDaemonTickPath(item('i', { watch: [pull(1)] }))).toBe('watch');
-    expect(neoDaemonTickPath(item('i', { text: 'Deployed to the iMac' }))).toBe(
-      'needs_deploy_check'
-    );
-    expect(neoDaemonTickPath(item('i', { text: 'lsm/HyperNeo#6700 merged' }))).toBe('needs_watch');
-    expect(neoDaemonTickPath(item('i', { text: `${pull(3)} closed` }))).toBe('needs_watch');
-    expect(neoDaemonTickPath(item('i', { text: 'Installed on the iPhone via TestFlight' }))).toBe(
-      null
-    );
-    expect(neoDaemonTickPath(item('i', { text: 'The copy reads well' }))).toBe(null);
-    expect(neoDaemonTickPath(item('i', { check: 'life-admin.confirmed' }))).toBe(null);
+    for (const text of ['Deployed to the iMac', 'lsm/HyperNeo#6700 merged', `${pull(3)} closed`])
+      expect(neoDaemonTickPath(item('i', { text }))).toBe(null);
   });
 });
 

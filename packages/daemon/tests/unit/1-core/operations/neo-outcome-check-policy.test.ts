@@ -4,35 +4,42 @@ import { neoOutcomeBindingPolicy } from '../../../../src/lib/neo/outcome-binding
 import { neoOutcomeCheckPolicy } from '../../../../src/lib/neo/outcome-check-policy';
 
 describe('neoOutcomeCheckPolicy', () => {
+  const registry = { ok: true, kinds: ['coding.deployed', 'coding.pr_merged'] };
+
   test.each([
     'no merge or deployment',
     'Merged to dev',
-    'PR #42 is merged',
     'Deployed to both daemons',
-    'Merge CSV files into one report',
     'A pull request is open, not merged yet',
   ])('never demands a check from the words in %j', (text) => {
-    const items = [{ text }];
-    expect(neoOutcomeCheckPolicy.requireChecks(items)).toEqual({ value: items });
+    const items = [{ text, check: null }];
+    expect(neoOutcomeCheckPolicy.requireChecks(items, registry)).toEqual({ value: items });
+  });
+
+  test('refuses an outcome that declares no check and lists the kinds', () => {
+    const result = neoOutcomeCheckPolicy.requireChecks([{ text: 'Docs updated' }], registry);
+    if (!('reason' in result)) throw new Error('expected refusal');
+    expect(result.reason.reason).toContain('check_required: "Docs updated"');
+    expect(result.reason.reason).toContain('coding.deployed, coding.pr_merged');
   });
 
   test('accepts the checks an outcome carries and preserves the original immutable items', () => {
     const items = Object.freeze([
       Object.freeze({ text: 'Merged to dev', check: 'coding.pr_merged', id: 'merge' }),
-      Object.freeze({ text: 'Deployed', check: 'coding.deployed', id: 'deploy' }),
       Object.freeze({ text: 'A pull request is open', check: 'coding.pr_opened', id: 'open' }),
       Object.freeze({ text: 'Design chosen', check: null, id: 'design' }),
     ]);
-    const result = neoOutcomeCheckPolicy.requireChecks(items);
+    const result = neoOutcomeCheckPolicy.requireChecks(items, registry);
     expect(result).toEqual({ value: items });
     if (!('value' in result)) throw new Error('unexpected refusal');
     expect(result.value).toBe(items);
   });
 
   test('an opened check is refused on an item bound to a card', () => {
-    const result = neoOutcomeCheckPolicy.requireChecks([
-      { text: 'A pull request is open', check: 'coding.pr_opened', deliveredBy: 'card-a' },
-    ]);
+    const result = neoOutcomeCheckPolicy.requireChecks(
+      [{ text: 'A pull request is open', check: 'coding.pr_opened', deliveredBy: 'card-a' }],
+      registry
+    );
     if (!('reason' in result)) throw new Error('expected refusal');
     expect(result.reason.reason).toContain('opened_check_unbound');
   });

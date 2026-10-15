@@ -56,42 +56,12 @@ export function planNeoNeedsYou(
     : { notify: null, record: null, resume: planNeoAskResume(ask, siblingsWaiting, cardId) };
 }
 
-const NEO_DAEMON_SUBJECT =
-  /#\d+|\b(PRs?|pull requests?|merges?|merged|merging|CI|checks?|builds?|deploy\w*|cards?|standing rules?)\b/i;
-const NEO_CHECK_WORD =
-  /\b(verify|confirm|check|make sure|ensure|read back|after|once|until|wait\w*)\b/i;
-const NEO_DAEMON_FACT =
-  /\b(merged|merge[sd]? (to|into)|PRs?|pull requests?|CI|checks? (pass|green)\w*|standing rules?|cards?)\b|\blaptop\b[^.;]*\bdeploy|\bdeploy\w*\b[^.;]*\blaptop\b/i;
-const NEO_REMOTE_FACT = /\b(iMac|tts|remote|other machine|phone|device)\b/i;
-
-export function neoDaemonReadsClaim(text: string, context = ''): boolean {
-  if (NEO_REMOTE_FACT.test(`${text}\n${context}`) || !NEO_DAEMON_SUBJECT.test(text)) return false;
-  return NEO_CHECK_WORD.test(text) || NEO_DAEMON_FACT.test(text);
-}
-
-const NEO_DAEMON_CHECKS: ReadonlySet<string> = new Set([
-  'coding.pr_merged',
-  'coding.pr_opened',
-  'coding.issue_filed',
-  'coding.issue_sub_issue',
-  'coding.issue_closed',
-  'coding.deployed',
-]);
-const NEO_REF_NAMED =
-  /github\.com\/[\w.-]+\/[\w.-]+\/(pull|issues)\/\d+|[\w.-]+\/[\w.-]+#\d+\b|(?<![\w&])#\d+\b/i;
-const NEO_REF_SETTLES = /\b(merg\w*|clos\w*|land\w*)\b/i;
-const NEO_DEPLOY = /\b(re-?)?deploy\w*\b|\brolled? out\b|\bruns? (the )?(new |latest )?commit\b/i;
-const NEO_DEVICE = /\b(phone|iPhone|iPad|device|TestFlight|App Store)\b/i;
-
-export type NeoDaemonTickPath = 'check' | 'watch' | 'needs_deploy_check' | 'needs_watch';
+export type NeoDaemonTickPath = 'check' | 'watch';
 
 export function neoDaemonTickPath(
-  item: Pick<NeoAskItem, 'text' | 'check' | 'watch'>
+  item: Pick<NeoAskItem, 'check' | 'watch'>
 ): NeoDaemonTickPath | null {
-  if (item.check && NEO_DAEMON_CHECKS.has(item.check)) return 'check';
-  if (item.watch?.length) return 'watch';
-  if (NEO_DEPLOY.test(item.text) && !NEO_DEVICE.test(item.text)) return 'needs_deploy_check';
-  return NEO_REF_NAMED.test(item.text) && NEO_REF_SETTLES.test(item.text) ? 'needs_watch' : null;
+  return item.check ? 'check' : item.watch?.length ? 'watch' : null;
 }
 
 export type NeoAskCardWait = {

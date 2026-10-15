@@ -1833,7 +1833,8 @@ export function createNeoOperations(service: NeoService) {
         const stored = service.repo.workForRequest(`${origin.originSessionId}:${input.requestKey}`);
         if (stored && service.askRecords.forWork(stored.id)) return { value: caller };
         const checked = service.outcomeCheckPolicy.requireChecks(
-          planned ? planNeoAskItems(planned).items : []
+          planned ? planNeoAskItems(planned).items : [],
+          service.checkRegistry()
         );
         return 'reason' in checked
           ? {

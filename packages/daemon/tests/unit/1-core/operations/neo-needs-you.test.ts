@@ -4,7 +4,6 @@ import {
   neoAskReopensAfterClear,
   neoAskTickedNote,
   neoHumanTickWakes,
-  neoDaemonReadsClaim,
   neoNeedsYouClearedNote,
   neoResumeWhy,
   planNeoAskResume,
@@ -147,24 +146,6 @@ describe('planNeoAskResume for one card', () => {
       items: ['i1', 'i2'],
       reopen: true,
     });
-  });
-});
-
-describe('neoDaemonReadsClaim', () => {
-  test.each<[string, string, boolean]>([
-    ['a merge Neo can read', 'Issue filed with its fix merged to dev', true],
-    ['a standing rule Neo can read', 'confirm the #6587 stopgap rule was removed', true],
-    ['a deploy on this machine', 'The laptop runs the deploy', true],
-    ['another machine', 'laptop and iMac deployed, read back over RPC', false],
-    ['a plain claim', 'The photos look right', false],
-  ])('%s', (_name, text, expected) => {
-    expect(neoDaemonReadsClaim(text)).toBe(expected);
-  });
-
-  test('evidence about another machine keeps a reported claim', () => {
-    expect(neoDaemonReadsClaim('merged to dev', 'The session says the iMac is updated.')).toBe(
-      false
-    );
   });
 });
 
