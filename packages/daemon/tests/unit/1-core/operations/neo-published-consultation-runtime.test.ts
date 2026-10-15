@@ -1,4 +1,3 @@
-import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub, Session, SessionConfig } from '@hyperneo/shared';
@@ -29,14 +28,8 @@ const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = `neo:${conversationId}`;
 const holder = 'neo:holder:fictional-runtime';
 const requestId = 'neo-consult:check:request';
-const draft = {
-  publicationId: '20000000-0000-4000-8000-000000000001',
-  shortText: 'The fictional plan is current.',
-  fullText: '**Plan B** replaced the old plan. External completion is not verified.',
-  links: [{ kind: 'consultation' as const, id: 'check', label: 'View comparison' }],
-};
 
-describe('published consultation runtime activation', () => {
+describe('consultation runtime', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
   let events: InternalEventBus<DaemonInternalEventMap>;
