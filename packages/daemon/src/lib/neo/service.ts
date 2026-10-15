@@ -3199,7 +3199,7 @@ export class NeoService {
         content,
         item.sessionId,
         this.consultationParent(item),
-        neoConsultationDelivery(item)
+        'continues'
       );
     }
     this.consultations.returned(id);

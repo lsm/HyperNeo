@@ -333,6 +333,26 @@ describe('NeoService direct consultation return', () => {
       expect(receiptRows()).toEqual([[], []]);
     }
   );
+  test('a failed work review’s reply still answers the human message behind the reviewed card', async () => {
+    db.getDatabase().prepare('DELETE FROM neo_consultations').run();
+    const work = service.repo.proposeWork({
+      id: 'work',
+      requestKey: 'work',
+      projectId: 'fictional',
+      originSessionId: root,
+      originMessageId: ask.messageId,
+      title: 'Fictional work',
+      instruction: 'Bounded work',
+    });
+    service.repo.transitionWork(work.id, work, { status: 'reported', report: 'Claimed only' });
+    const id = 'neo-work:work:review';
+    reserve(id, null);
+    service.consultations.finish(id, 'failed', 'The holder stopped');
+    await service.syncConsultation(id);
+    const reply = { sessionId: root, messageId: `neo-consult:${id}:reply` };
+    expect(service.inputTrigger(reply)).toBe(`human:${ask.messageId}`);
+  });
+
   test('published returns admit queued holder requests and reconcile terminal work without a root summary', async () => {
     service.consultationWaiters.enqueue({
       id: 'next',
