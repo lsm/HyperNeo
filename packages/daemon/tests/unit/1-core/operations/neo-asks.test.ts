@@ -44,6 +44,7 @@ import {
   requireNeoWorkAskOwner,
   requireNeoWorkAskLink,
   neoAskTitleNamedIn,
+  requireNeoMetReadEvidence,
 } from '../../../../src/lib/neo/ask-operations.ts';
 import {
   driverDoneCheckNote,
@@ -1753,6 +1754,30 @@ describe('neo.ask operations', () => {
         options: ['Friday', 'Monday'],
       })
     ).toMatchObject({ value: { ok: true, ask: { status: 'waiting', waitingItem: 'i13' } } });
+  });
+
+  test('an item a card delivers is met only once the daemon has read that card’s report', async () => {
+    const askId = await openAsk();
+    const card = (await propose('card-1', askId)).value!.work!.id;
+    expect(
+      await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: card }] })
+    ).toMatchObject({ value: { ok: true } });
+    const tick = () =>
+      invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met', evidence: 'It is scoped.' });
+    expect(await tick()).toMatchObject({
+      value: {
+        ok: false,
+        reason: expect.stringContaining(`card ${card.slice(0, 8)}, which is proposed`),
+      },
+    });
+    const queued = service.repo.transitionWork(card, service.repo.getWork(card)!, {
+      status: 'queued',
+    })!;
+    expect(await tick()).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('which is queued') },
+    });
+    service.repo.transitionWork(card, queued, { status: 'reported', report: 'Merged it.' });
+    expect(await tick()).toMatchObject({ value: { ok: true } });
   });
 
   test("an item Neo only has an agent's word for is reported, never met", async () => {
@@ -3777,6 +3802,25 @@ describe('neoWorkDoneGoal', () => {
       doneWhen: ask.doneWhen,
     });
     expect(neoWorkDoneGoal('w', null, null)).toBe(null);
+  });
+});
+
+describe('requireNeoMetReadEvidence', () => {
+  const neo: OperationCaller = { source: 'mcp', sessionId: 'root', role: 'neo' };
+  const human: OperationCaller = { source: 'rpc', principal: 'local' };
+  const proposed = { id: '39340a28-f92f-41e9-a541-beb3fc04c3ee', status: 'proposed' as const };
+  const reported = { id: '9e1f1cb5-c292-4046-b7d2-f72f662cd3e0', status: 'reported' as const };
+  const bound = (deliveredBy: string | null) => ({ id: 'i2', deliveredBy });
+
+  test.each([
+    ['a proposed card delivers it', bound(proposed.id), neo, 'met', false],
+    ['a reported card delivers it', bound(reported.id), neo, 'met', true],
+    ['no card delivers it', bound(null), neo, 'met', true],
+    ['the tick is reported, not met', bound(proposed.id), neo, 'reported', true],
+    ['the human ticks it', bound(proposed.id), human, 'met', true],
+  ] as const)('%s', (_label, item, caller, state, admitted) => {
+    const result = requireNeoMetReadEvidence(caller, state, item, [proposed, reported], 'ok');
+    expect('value' in result).toBe(admitted);
   });
 });
 

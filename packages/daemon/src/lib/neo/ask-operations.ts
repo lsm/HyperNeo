@@ -656,6 +656,33 @@ function requireNeoAskTick(
     : { value: { ask, item } };
 }
 
+type NeoOutcomeCard = Pick<NeoWork, 'id' | 'status'>;
+
+export function neoItemDependentCards<T extends NeoOutcomeCard>(
+  item: Pick<NeoAskItem, 'deliveredBy'>,
+  cards: readonly T[]
+): T[] {
+  return item.deliveredBy ? cards.filter((card) => card.id === item.deliveredBy) : [];
+}
+
+export function requireNeoMetReadEvidence<T>(
+  caller: OperationCaller,
+  state: NeoAskItem['state'],
+  item: Pick<NeoAskItem, 'id' | 'deliveredBy'>,
+  cards: readonly NeoOutcomeCard[],
+  value: T
+): Gate<T> {
+  if (caller.source !== 'mcp' || state !== 'met') return { value };
+  const unread = neoItemDependentCards(item, cards).filter((card) => card.status !== 'reported');
+  return unread.length
+    ? {
+        reason: fail(
+          `met_unread: ${item.id} is delivered by ${unread.map((card) => `card ${card.id.slice(0, 8)}, which is ${card.status}`).join(' and ')}, so the daemon has not read its result. Keep the item pending: a proposed or queued card wakes you when it reports, and a failed or cancelled one needs new work.`
+        ),
+      }
+    : { value };
+}
+
 const NEO_HUMAN_TASK_REFUSALS = {
   approval:
     "approval_on_ask: re-approving continued work is the ask's Approve, not a question. The daemon shows Approve itself when the approval expires or a card stalls; approving it wakes you.",
@@ -1567,6 +1594,22 @@ export function createNeoAskOperations(
     .pipe(requireAskRevision, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskTick, ['input', 'admission', 'caller'], 'result:admission')
     .pipe(
+      (target: { ask: NeoAsk }) =>
+        target.ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
+      'admission',
+      'cards'
+    )
+    .pipe(
+      (
+        input: z.infer<typeof Tick>,
+        target: { item: NeoAskItem },
+        caller: OperationCaller,
+        cards: NeoWork[]
+      ) => requireNeoMetReadEvidence(caller, input.state, target.item, cards, target),
+      ['input', 'admission', 'caller', 'cards'],
+      'result:admission'
+    )
+    .pipe(
       (target: { ask: NeoAsk; item: NeoAskItem }) =>
         requireRegisteredChecks([target.item], service.checkRegistry(), target),
       'admission',
@@ -1983,7 +2026,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.tick',
       description:
-        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, only for an item the daemon cannot read (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but nobody can read it (a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), or back to pending. met and reported are refused for what the daemon reads: an item with watch or a GitHub or deploy check is ticked by the daemon, and an item naming a pull request, issue or deploy needs watch or check coding.deployed first (neo.ask.edit track). needs_you is refused: a decision or a check only the human can make is its own item, asked with neo.ask.question. reported is also refused for anything else the daemon reads itself (CI, a card, standing rules). Only the Neo session that opened the ask or the user can tick it.",
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, only for an item the daemon cannot read (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but nobody can read it (a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), or back to pending. met and reported are refused for what the daemon reads: an item with watch or a GitHub or deploy check is ticked by the daemon, and an item naming a pull request, issue or deploy needs watch or check coding.deployed first (neo.ask.edit track). needs_you is refused: a decision or a check only the human can make is its own item, asked with neo.ask.question. reported is also refused for anything else the daemon reads itself (CI, a card, standing rules). met is refused for an item a card delivers (deliveredBy) until that card has reported. Only the Neo session that opened the ask or the user can tick it.",
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
