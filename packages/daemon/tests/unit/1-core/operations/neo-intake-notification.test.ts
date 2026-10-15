@@ -92,6 +92,7 @@ describe('accepted public ask notification', () => {
       getSDKMessageRepo: () => sdk,
       getJobQueueRepo: () => jobs,
       getSession: (id: string) => sessions.getSession(id),
+      getGlobalSettings: () => ({}),
     } as unknown as Database;
   });
   afterEach(() => {
