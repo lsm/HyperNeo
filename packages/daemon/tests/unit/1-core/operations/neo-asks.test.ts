@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { NEO_UNFINISHED_REPLY } from '../../../../src/lib/neo/direct-reply-fallback.ts';
 import { adoptNeoFilePacks } from '../../../../src/lib/neo/packs/index.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { tmpdir } from 'node:os';
@@ -2781,6 +2782,67 @@ describe('neo.ask operations', () => {
     expect(delivered).toHaveBeenCalledTimes(1);
     expect(delivered.mock.calls[0]?.[1]).toBe('neo-turn-limit:r2');
     expect(delivered.mock.calls[0]?.[2]).toContain(`- ask ${askId} "${opening.title}" (open`);
+  });
+
+  test('an answer item is reported from its card and met only by the answer published for its trigger', async () => {
+    const opened = await invoke('neo.ask.open', {
+      ...opening,
+      doneWhen: undefined,
+      doneItems: [{ text: 'How many .md files are under packages/prompts', outcomeKind: 'answer' }],
+    });
+    const askId = opened.value!.ask!.id;
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i1',
+        state: 'met',
+        evidence: 'The worker counted 42 files.',
+      })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('answer_unpublished') },
+    });
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i1',
+        state: 'reported',
+        evidence: 'The worker reported 42 files.',
+      })
+    ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', waitingItem: null });
+    const spare = (await propose('spare-card', askId)).value!.work!.id;
+    const internals = service as unknown as {
+      triggers: { record(askId: string, keys: string[], triggerId: string, at: number): void };
+      notePublishedAnswer(publication: unknown): void;
+    };
+    internals.triggers.record(askId, ['outcome:1'], `outcome:${askId}:x`, Date.now());
+    internals.notePublishedAnswer({
+      publicationId: 'p-unrelated',
+      triggerId: 'outcome:other:x',
+      askOrigin: { sessionId: 'root', messageId: 'elsewhere' },
+      shortText: 'Something else.',
+    });
+    expect(service.askRecords.get(askId)?.status).toBe('open');
+    internals.notePublishedAnswer({
+      publicationId: 'p-unfinished',
+      triggerId: `outcome:${askId}:x`,
+      askOrigin: { sessionId: 'root', messageId: 'elsewhere' },
+      shortText: NEO_UNFINISHED_REPLY,
+    });
+    expect(service.askRecords.get(askId)?.status).toBe('open');
+    internals.notePublishedAnswer({
+      publicationId: 'p1',
+      triggerId: `outcome:${askId}:x`,
+      askOrigin: { sessionId: 'root', messageId: 'elsewhere' },
+      shortText: 'There are 42 .md files.',
+    });
+    expect(service.askRecords.get(askId)).toMatchObject({
+      status: 'achieved',
+      outcome: 'There are 42 .md files.',
+      doneItems: [{ id: 'i1', state: 'met', metBy: 'daemon' }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(service.repo.getWork(spare)?.status).toBe('cancelled');
   });
 
   test('a turn-limit note continues the cut-off turn, so it keeps that turn’s ask and trigger', async () => {

@@ -25,7 +25,8 @@ import {
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import { isNeoAskAnswerReady, planNeoAnswerPublished } from './answer-outcome.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import {
   isNeoWorkClosedDone,
@@ -64,7 +65,11 @@ import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-c
 import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
 import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
-import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
+import {
+  planNeoAskTickStatus,
+  planNeoAskWorkStops,
+  writeNeoAskTickStatus,
+} from './ask-operations.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import {
@@ -116,6 +121,7 @@ import {
   neoIdleReplySessions,
   neoNoteDeliveryMode,
   neoSessionStatus,
+  NEO_UNFINISHED_REPLY,
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
 import {
@@ -349,6 +355,7 @@ import {
   NEO_TRIGGER_ACHIEVED_WINDOW_MS,
   NEO_TRIGGER_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
+  neoAskOutcomeKey,
   neoHumanTriggerMessageId,
   neoTriggerMessageId,
   neoTriggerMessageIds,
@@ -966,7 +973,10 @@ export class NeoService {
         if (!publication) throw new Error('Committed consultation publication is missing');
         return { accepted: true, created: receipt.created, publication };
       },
-      published: (input) => this.noteHumanReply(input),
+      published: (input, publication) => {
+        this.noteHumanReply(input);
+        this.notePublishedAnswer(publication);
+      },
       turnLanguage: (input) =>
         readNeoTurnLanguage(input.producerInput, {
           resolveAskOrigin: this.resolveAskOrigin,
@@ -1204,6 +1214,7 @@ export class NeoService {
     this.retryUnpublishedTriggers();
     for (const ask of this.triggerAsks()) {
       try {
+        this.reconcilePublishedAnswer(ask);
         await noteNeoAskTrigger(ask, this.triggerDeps);
       } catch (error) {
         this.log.warn(`Trigger check for ask ${ask.id} failed`, error);
@@ -1258,6 +1269,56 @@ export class NeoService {
       this.processingStatus.get(owner) ??
       neoSessionStatus(this.db.getSession(owner)?.processingState);
     return status !== null && status !== 'idle';
+  }
+
+  private reconcilePublishedAnswer(ask: NeoAsk): void {
+    const root = this.repo.getBindingForProject(null);
+    if (!isNeoAskAnswerReady(ask) || !root?.sessionId.startsWith('neo:')) return;
+    for (const triggerId of this.triggers.triggerIdsFor(ask.id, neoAskOutcomeKey(ask))) {
+      const publication = this.publications.byTrigger(root.sessionId.slice(4), triggerId);
+      if (publication) this.notePublishedAnswer(publication);
+    }
+  }
+
+  private notePublishedAnswer(publication: NeoPublication): void {
+    const triggerId = publication.triggerId;
+    if (!triggerId || publication.shortText === NEO_UNFINISHED_REPLY) return;
+    const traced = this.triggers.trigger(triggerId);
+    const outcome = traced?.keys.some((key) => key.startsWith('outcome:'))
+      ? this.askRecords.get(traced.askId)
+      : null;
+    const human =
+      neoHumanTriggerMessageId(triggerId) === publication.askOrigin.messageId
+        ? this.askRecords.liveForOrigin(
+            publication.askOrigin.sessionId,
+            publication.askOrigin.messageId
+          )
+        : null;
+    for (const ask of new Set([outcome, human].filter((ask) => ask !== null))) {
+      const plan = planNeoAnswerPublished(ask, publication.publicationId);
+      if (!plan) continue;
+      for (const { item, evidence } of plan.ticks)
+        this.askRecords.tickItem(
+          ask.id,
+          { ...item, state: 'met', evidence, metBy: 'daemon' },
+          Date.now(),
+          item,
+          true
+        );
+      const ticked = this.askRecords.get(ask.id);
+      if (!plan.settle || !ticked) continue;
+      this.askRecords.settle(
+        ticked,
+        'achieved',
+        publication.shortText,
+        `Answered the human in publication ${publication.publicationId}.`
+      );
+      const works = ticked.workIds.flatMap((id) => this.repo.getWork(id) ?? []);
+      for (const stop of planNeoAskWorkStops(works, 'achieved'))
+        void this.close(stop.id, stop.close).catch((error) =>
+          this.log.warn(`Closing card ${stop.id} after its answer was published failed`, error)
+        );
+    }
   }
 
   private noteHumanReply(input: NeoPublicationInput): void {

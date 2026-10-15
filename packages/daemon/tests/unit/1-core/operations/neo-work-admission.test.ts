@@ -107,8 +107,10 @@ describe('neoOutcomeEligibility', () => {
   const item = (metBy: NeoAskItem['metBy'], check: string | null) =>
     ({ metBy, check }) as NeoAskItem;
 
-  test('only human answers and independent daemon checks release dependents', () => {
+  test('only human answers, independent daemon checks and published answers release dependents', () => {
     expect(eligible(ask, item('human', null))).toBe(true);
+    expect(eligible(ask, { ...item('daemon', null), outcomeKind: 'answer' })).toBe(true);
+    expect(eligible(ask, { ...item('neo', null), outcomeKind: 'answer' })).toBe(false);
     expect(eligible(ask, item('daemon', 'coding.pr_merged'))).toBe(true);
     expect(eligible(ask, item('daemon', 'coding.reported'))).toBe(false);
     expect(eligible(ask, item('daemon', 'legal.signed'))).toBe(false);

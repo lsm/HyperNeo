@@ -1,0 +1,59 @@
+import { describe, expect, test } from 'bun:test';
+import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  isNeoAskAnswerReady,
+  planNeoAnswerPublished,
+} from '../../../../src/lib/neo/answer-outcome.ts';
+import { neoAskHasHumanAction } from '../../../../src/lib/neo/ask-operations.ts';
+import { neoAskItemAction } from '../../../../src/lib/neo/ask-views.ts';
+
+const item = (id: string, state: NeoAskItem['state'], extra: Partial<NeoAskItem> = {}) =>
+  ({
+    id,
+    text: id,
+    state,
+    evidence: null,
+    check: null,
+    metBy: null,
+    removed: false,
+    addedAt: null,
+    ...extra,
+  }) as NeoAskItem;
+const ask = (doneItems: NeoAskItem[], status: NeoAsk['status'] = 'open') =>
+  ({ id: 'a1', status, doneItems }) as NeoAsk;
+const answer = item('i2', 'reported', { outcomeKind: 'answer' });
+
+describe('isNeoAskAnswerReady', () => {
+  test('needs a reported answer and every other item met', () => {
+    expect(isNeoAskAnswerReady(ask([item('i1', 'met'), answer]))).toBe(true);
+    expect(isNeoAskAnswerReady(ask([item('i1', 'pending'), answer]))).toBe(false);
+    expect(isNeoAskAnswerReady(ask([item('i1', 'met')]))).toBe(false);
+  });
+});
+
+describe('planNeoAnswerPublished', () => {
+  test('meets the reported answers and settles only when nothing else is open', () => {
+    expect(planNeoAnswerPublished(ask([item('i1', 'met'), answer]), 'p1')).toEqual({
+      ticks: [{ item: answer, evidence: 'Answered the human in publication p1.' }],
+      settle: true,
+    });
+    expect(planNeoAnswerPublished(ask([item('i1', 'pending'), answer]), 'p1')?.settle).toBe(false);
+    expect(planNeoAnswerPublished(ask([answer], 'achieved'), 'p1')).toBeNull();
+    expect(planNeoAnswerPublished(ask([item('i1', 'reported')]), 'p1')).toBeNull();
+  });
+});
+
+describe('neoAskItemAction', () => {
+  test('a reported answer asks the human for nothing, a reported state still asks to confirm', () => {
+    expect(neoAskItemAction(answer)).toBeNull();
+    expect(neoAskItemAction(item('i1', 'reported'))).toMatchObject({ kind: 'confirm' });
+  });
+});
+
+describe('neoAskHasHumanAction', () => {
+  test('a reported answer is not the human’s to act on, a reported state is', () => {
+    const facts = { offered: false, stalled: false, failed: false };
+    expect(neoAskHasHumanAction(ask([answer]), facts, 0)).toBe(false);
+    expect(neoAskHasHumanAction(ask([item('i1', 'reported')]), facts, 0)).toBe(true);
+  });
+});
