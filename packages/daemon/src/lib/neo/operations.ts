@@ -2238,7 +2238,8 @@ export function createNeoOperations(service: NeoService) {
       inputSchema: Consult,
       resultSchema: ConsultationResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: (input, caller) =>
+      execute: async (input, caller) =>
+        service.triggerWorkProblem(caller, input.projectId) ??
         consult(
           {
             ...input,
@@ -2343,6 +2344,8 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (proposal, caller) => {
+        const closed = service.triggerWorkProblem(caller);
+        if (closed) return closed;
         const input = {
           ...proposal,
           requestKey: neoTurnRequestKey(caller, 'neo.work.propose', proposal),
