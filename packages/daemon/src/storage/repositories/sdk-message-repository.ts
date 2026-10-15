@@ -1944,6 +1944,23 @@ export class SDKMessageRepository {
     return messages;
   }
 
+  latestHumanPrompt(sessionId: string): SDKMessage | null {
+    const row = this.db
+      .prepare(
+        `SELECT sdk_message FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND json_valid(sdk_message)
+            AND json_extract(sdk_message, '$.inputKind') = 'human'
+          ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+      )
+      .get(sessionId) as { sdk_message: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.sdk_message) as SDKMessage;
+    } catch {
+      return null;
+    }
+  }
+
   getHumanPrompt(sessionId: string, uuid: string): { at: number; text: string } | null {
     const rows = this.db
       .prepare(

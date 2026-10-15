@@ -467,9 +467,9 @@ describe('projectNeoAskViews', () => {
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
     expect(views[0]).toMatchObject({
       group: 'attention',
-      label: 'Nothing running · start again or drop it',
+      label: 'Nothing running · Neo will propose again, or drop it',
       idle: true,
-      humanActions: [],
+      humanActions: [{ kind: 'drop' }],
     });
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
     expect(views[1]).toMatchObject({ group: 'running', label: 'Working on it' });
@@ -481,7 +481,7 @@ describe('projectNeoAskViews', () => {
         projectNeoCardViews(input),
         input.prs
       )[0]
-    ).toMatchObject({ idle: true, label: 'Nothing running · start again or drop it' });
+    ).toMatchObject({ idle: true, label: 'Nothing running · Neo will propose again, or drop it' });
     const running = {
       key: 'codex-desktop::t1',
       title: 'Ship the fix',

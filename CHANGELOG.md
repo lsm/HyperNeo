@@ -4,6 +4,33 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-15
+
+357 commits since v0.43.0. Headline families: one Neo conversation every Neo session can see and fix, daemon-detected notification triggers and derived ask and card views, work admission with dependencies and outcome checks, projects keyed by repository identity with merge and reorganize, driver input and configuration receipts, and network-outage and restart resilience for turns.
+
+### Added
+
+- **Neo conversation**: Every Neo session sees the whole public conversation; Neo edits a reply's wording in place or publishes one correction that answers the request, whichever session wrote it; every reply goes through one publication path, and a later input on the same trigger replaces its message in place; a message's first answer is final, with no placeholders and no self-edit loops; quote replies; photo previews that load in full on scroll; each message shows received, queued, working, answered or failed.
+- **Neo triggers and views**: The daemon detects notification triggers and wakes Neo, and Neo publishes only on one; the daemon derives each ask's and card's view (phase, PR verdict, human actions, last checked, what a blocked card waits for); summarized settled asks load in full when expanded.
+- **Neo work**: Work admission for start, adoption, approval, retry and recovery; `dependsOn` with dependency wakes; staged plans with bound outcomes and required outcome checks; a small pool of long-lived workers with load-aware dispatch; restart recovery reconciles each hand-off; the daemon mints request keys, project ids and correction ids.
+- **Neo projects**: Projects carry their repository identity, are mirrored from workspaces as nested avatars, and are merged by reorganize (which asks once when unsure); cross-project requests route by factual ownership; project history is read from the repository; GitHub pull requests and issues can be listed by time window.
+- **Neo packs**: A life-admin pack joins coding; coding cards prepare fresh checkouts, attribute their branch, and start dependents only from a base containing the prerequisite's merge.
+- **Drivers**: HyperNeo, Space, Claude Desktop and Codex starts and sends return input receipts with exchange evidence; durable start-configuration receipts confirm model and reasoning effort; Codex model catalog selection; HyperNeo projects gain folders linked by git history.
+- **Web**: Neo header and settings drawer, live-ask summary above the composer, session notices as one-line rows with Mute and Open, edited and corrected reply labels, and a message context menu.
+- **Daemon**: A silent model request is cut and retried; a network outage pauses the turn instead of failing it; a turn cut off by a restart resumes; event-loop stalls sample stacks; `state.global.snapshot` reports the build commit.
+
+### Changed
+
+- **Neo**: A tiered tool rule replaces Neo's Bash allowlist; an approved ask's work stops on no progress instead of after 20 continues; routine CI and review progress no longer wakes Neo; snapshots stay within Neo's tool budget and answer "unchanged" on repeat reads.
+- **Performance**: Driver listings read Claude Code folders off the event loop, reuse the last Copilot listing while refreshing, and query other daemons in parallel; `neo.open` returns before work discovery.
+
+### Fixed
+
+- **Neo**: A holder's reply can be fixed once root has received it; an ask with nothing running says so; "recently" means up to now; a restart-recovery note continues the cut-off turn's ask and trigger; one request becomes one ask; each pull request belongs to the card whose session made it; cards stop following past their doneWhen.
+- **Agent and providers**: A process exit after a turn's result is not a crash; bridges answer non-streaming Messages requests; the selected Codex model runs; model requests are capped at 15 minutes.
+- **External events**: Subscribed pull requests are always checked for conflicts, reviews and reactions; self-echo filtering survives restarts and cache expiry; the check-run poller scans every row.
+- **Daemon and tasks**: Large databases are copied for migration backups; a rate-limit cooldown cut off by a restart resumes; a blocked task no longer cascades to its dependents.
+
 ## [0.43.0] - 2026-10-10
 
 260 commits since v0.42.0. Headline families: Neo asks with done-when checklists that Neo, the daemon, and the human tick, approve-once asks that start their cards under a shared continue budget, Neo packs (core prompt plus a per-ask pack, starting with coding), pull request and issue awareness on asks and cards, direct-task dependency and stop hardening, and adaptive thinking levels.

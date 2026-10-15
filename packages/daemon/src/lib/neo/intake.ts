@@ -59,7 +59,7 @@ type IntakeInput = z.infer<typeof Input>;
 type IntakeResult = z.infer<typeof Result>;
 type Gate<T> = { value: T } | { reason: Extract<IntakeResult, { ok: false }> };
 type Target = Pick<Session, 'id' | 'status' | 'config'>;
-type NeoIntakeNotifier = () => void;
+type NeoIntakeNotifier = (sessionId: string) => void;
 
 const noNotification: NeoIntakeNotifier = () => {};
 
@@ -230,10 +230,14 @@ function logNeoRoute(
   return receipt;
 }
 
-function notifyNeoIntakeAcceptance(receipt: IntakeResult, notify: NeoIntakeNotifier): IntakeResult {
+function notifyNeoIntakeAcceptance(
+  receipt: IntakeResult,
+  notify: NeoIntakeNotifier,
+  routed: Routed
+): IntakeResult {
   if (receipt.ok) {
     try {
-      notify();
+      notify(routed.target.id);
     } catch {}
   }
   return receipt;
@@ -420,7 +424,7 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   )
   .pipe(recordNeoIntakeImages, ['receipt', 'input', 'conversationId', 'db'], 'receipt')
   .pipe(logNeoRoute, ['receipt', 'message', 'routed', 'conversationId', 'db'], 'receipt')
-  .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify'], 'receipt')
+  .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify', 'routed'], 'receipt')
   .endAsync('receipt') as (
   input: IntakeInput,
   caller: OperationCaller,

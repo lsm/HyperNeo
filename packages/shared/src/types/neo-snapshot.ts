@@ -315,6 +315,7 @@ export type NeoAskHumanAction =
   | { kind: 'confirm'; itemId: string; step: string }
   | { kind: 'retry'; workId: string }
   | { kind: 'close'; workId: string }
+  | { kind: 'drop' }
   | { kind: 'talk'; workId: string; what: string };
 
 export interface NeoAskAnswer {

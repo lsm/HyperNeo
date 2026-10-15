@@ -107,6 +107,7 @@ const HumanAction = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('confirm'), itemId: z.string(), step: z.string() }),
   z.object({ kind: z.literal('retry'), workId: z.string() }),
   z.object({ kind: z.literal('close'), workId: z.string() }),
+  z.object({ kind: z.literal('drop') }),
   z.object({ kind: z.literal('talk'), workId: z.string(), what: z.string() }),
 ]);
 
