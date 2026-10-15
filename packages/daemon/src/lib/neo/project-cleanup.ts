@@ -25,7 +25,7 @@ const repositories = (project: NeoProjectFacts) =>
 
 const isEmpty = (project: NeoProjectFacts) =>
   project.asks + project.work.length + project.routed + project.context + project.holderMessages ===
-  0;
+    0 && !project.aliases.some((alias) => alias.startsWith('work:'));
 
 const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork > 0;
 
@@ -50,27 +50,15 @@ const cards = (project: NeoProjectFacts, other: NeoProjectFacts) =>
       )
   ).length;
 
-function belongsTo(project: NeoProjectFacts, other: NeoProjectFacts): boolean {
-  const own = repositories(project);
-  if (own.length) return repositories(other).some((alias) => own.includes(alias));
-  return (
-    sameKey(other.title) === sameKey(project.title) ||
-    other.aliases.some((alias) => alias.startsWith('folder:') && project.aliases.includes(alias))
-  );
-}
-
 function home(
   project: NeoProjectFacts,
   homes: readonly NeoProjectFacts[]
 ): NeoProjectFacts | undefined {
-  const others = homes.filter((other) => other.id !== project.id);
-  if (repositories(project).length)
-    return others.find((other) => other.createdAt < project.createdAt && belongsTo(project, other));
-  const byCards = others
+  const byCards = homes
     .map((other) => ({ other, count: cards(project, other) }))
     .filter((entry) => entry.count > 0)
     .sort((a, b) => b.count - a.count)[0]?.other;
-  return byCards ?? others.find((other) => belongsTo(project, other));
+  return byCards ?? homes.find((other) => sameKey(other.title) === sameKey(project.title));
 }
 
 export function planNeoProjectCleanup(
@@ -84,11 +72,11 @@ export function planNeoProjectCleanup(
     .filter((project) => !scope.pinned.has(project.id) && !project.section)
     .flatMap((project): NeoProjectCleanup[] => {
       const named = { projectId: project.id, title: project.title };
-      const repository = repositories(project).length > 0;
-      if (isElsewhere(project, scope.machine) || isLive(project)) return [];
-      if (!repository && isEmpty(project)) return [{ action: 'delete', ...named }];
+      if (repositories(project).length || isElsewhere(project, scope.machine) || isLive(project))
+        return [];
+      if (isEmpty(project)) return [{ action: 'delete', ...named }];
       const target = home(project, homes);
       if (target) return [{ action: 'merge', ...named, targetId: target.id }];
-      return !repository && isOneOff(project) ? [{ action: 'archive', ...named }] : [];
+      return isOneOff(project) ? [{ action: 'archive', ...named }] : [];
     });
 }

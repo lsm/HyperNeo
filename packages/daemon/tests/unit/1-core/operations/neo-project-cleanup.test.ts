@@ -34,37 +34,26 @@ const oneOff = {
 };
 
 describe('project cleanup plan', () => {
-  test('an empty project with a silent holder is deleted', () => {
+  test('an empty project with a silent holder and no driver sessions is deleted', () => {
     expect(plan([project('empty')])).toEqual([
       { action: 'delete', projectId: 'empty', title: 'empty' },
     ]);
-    expect(plan([project('spoke', { holderMessages: 1, routed: 1 })])).toEqual([]);
+    expect(
+      plan([
+        project('spoke', { holderMessages: 1, routed: 1 }),
+        project('driven', { aliases: ['work:here\u0000claude\u0000s1'] }),
+      ])
+    ).toEqual([]);
   });
 
-  test('a repository project is never deleted or archived, and duplicates merge into the oldest', () => {
-    const oldest = project('old', { createdAt: 1, aliases: [repo] });
-    const twin = project('twin', { createdAt: 2, ...oneOff, aliases: [repo] });
-    expect(plan([twin, oldest])).toEqual([
-      { action: 'merge', projectId: 'twin', title: 'twin', targetId: 'old' },
-    ]);
+  test('a repository project is left to the mirror: never deleted, merged or archived here', () => {
     expect(plan([project('alone', { aliases: [repo] })])).toEqual([]);
   });
 
-  test('a project with no repository merges into the repository project with its title or folder', () => {
-    const home = project('home', {
-      title: 'App',
-      createdAt: 5,
-      aliases: [repo, 'folder:here\u0000/app'],
-    });
-    expect(
-      plan([
-        home,
-        project('titled', { title: ' app ', ...oneOff }),
-        project('foldered', { title: 'Other', ...oneOff, aliases: ['folder:here\u0000/app'] }),
-      ])
-    ).toEqual([
+  test('a project with no repository merges into the repository project with its title', () => {
+    const home = project('home', { title: 'App', createdAt: 5, aliases: [repo] });
+    expect(plan([home, project('titled', { title: ' app ', ...oneOff })])).toEqual([
       { action: 'merge', projectId: 'titled', title: ' app ', targetId: 'home' },
-      { action: 'merge', projectId: 'foldered', title: 'Other', targetId: 'home' },
     ]);
   });
 
@@ -115,15 +104,7 @@ describe('project cleanup plan', () => {
     );
   });
 
-  test('a live or other-machine repository duplicate is not merged, and another machine is no home', () => {
-    const oldest = project('old', { createdAt: 1, aliases: [repo] });
-    expect(
-      plan([
-        oldest,
-        project('live', { createdAt: 2, aliases: [repo], liveWork: 1 }),
-        project('remote', { createdAt: 3, aliases: [repo, 'folder:tts\u0000/app'] }),
-      ])
-    ).toEqual([]);
+  test('another machine is no home', () => {
     expect(
       plan([
         project('away', { title: 'App', aliases: [repo, 'folder:tts\u0000/app'] }),
