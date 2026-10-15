@@ -189,8 +189,37 @@
   outline-offset: 2px;
 }
 
+.neo-glass-button {
+  --neo-glass-fill: light-dark(rgb(255 255 255 / 0.55), rgb(40 44 52 / 0.5));
+  --neo-glass-edge: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.14));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+  border: 0.5px solid var(--neo-glass-edge);
+  background: var(--neo-glass-fill);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    0 6px 20px rgb(0 0 0 / 0.14),
+    inset 0 1px 0 var(--neo-glass-edge);
+  color: var(--fg);
+  pointer-events: auto;
+  transition:
+    transform 120ms ease-out,
+    background 120ms ease-out;
+}
+
+.neo-glass-button:active {
+  transform: scale(0.94);
+  background: color-mix(in srgb, var(--neo-glass-fill) 70%, var(--fg) 8%);
+}
+
 @supports not (backdrop-filter: blur(1px)) {
-  .neo-float-link {
+  .neo-float-link,
+  .neo-glass-button {
     background: var(--surface-raised);
   }
 }
