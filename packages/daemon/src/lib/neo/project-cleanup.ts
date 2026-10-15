@@ -33,12 +33,14 @@ const isEmpty = (project: NeoProjectFacts) =>
 
 const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork > 0;
 
-const isOngoing = (project: NeoProjectFacts) =>
-  project.routed > 0 || isNeoOngoingPlace(project.work);
+const isOneOff = (project: NeoProjectFacts) =>
+  project.routed === 0 && project.work.length > 0 && !isNeoOngoingPlace(project.work);
 
 const isElsewhere = (project: NeoProjectFacts, machine: string) => {
   const folders = project.aliases.filter((alias) => alias.startsWith('folder:'));
-  return folders.length > 0 && !folders.some((alias) => alias.startsWith(`folder:${machine}`));
+  return (
+    folders.length > 0 && !folders.some((alias) => alias.startsWith(`folder:${machine}\u0000`))
+  );
 };
 
 const sameKey = (title: string) => title.trim().toLowerCase();
@@ -91,6 +93,6 @@ export function planNeoProjectCleanup(
       if (!repository && isEmpty(project)) return [{ action: 'delete', ...named }];
       const target = home(project, homes);
       if (target) return [{ action: 'merge', ...named, targetId: target.id }];
-      return repository || isOngoing(project) ? [] : [{ action: 'archive', ...named }];
+      return !repository && isOneOff(project) ? [{ action: 'archive', ...named }] : [];
     });
 }

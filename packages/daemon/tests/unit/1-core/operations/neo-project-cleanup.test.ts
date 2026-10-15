@@ -54,13 +54,13 @@ describe('project cleanup plan', () => {
     const home = project('home', {
       title: 'App',
       createdAt: 5,
-      aliases: [repo, 'folder:here/app'],
+      aliases: [repo, 'folder:here\u0000/app'],
     });
     expect(
       plan([
         home,
         project('titled', { title: ' app ', ...oneOff }),
-        project('foldered', { title: 'Other', ...oneOff, aliases: ['folder:here/app'] }),
+        project('foldered', { title: 'Other', ...oneOff, aliases: ['folder:here\u0000/app'] }),
       ])
     ).toEqual([
       { action: 'merge', projectId: 'titled', title: ' app ', targetId: 'home' },
@@ -93,10 +93,16 @@ describe('project cleanup plan', () => {
     ).toEqual([{ action: 'merge', projectId: 'topic', title: 'Topic', targetId: 'ios' }]);
   });
 
-  test('a one-off project with no repository and no home is archived; ongoing work is kept', () => {
+  test('a one-off project with no repository and no home is archived; ongoing work, no work, or another machine is kept', () => {
     expect(plan([project('once', oneOff)])).toEqual([
       { action: 'archive', projectId: 'once', title: 'once' },
     ]);
+    expect(
+      plan([
+        project('notes', { context: 10, holderMessages: 4 }),
+        project('host', { ...oneOff, aliases: ['folder:here2\u0000/x'] }),
+      ])
+    ).toEqual([]);
     const twoDays = {
       asks: 1,
       work: [
@@ -115,12 +121,12 @@ describe('project cleanup plan', () => {
       plan([
         oldest,
         project('live', { createdAt: 2, aliases: [repo], liveWork: 1 }),
-        project('remote', { createdAt: 3, aliases: [repo, 'folder:tts/app'] }),
+        project('remote', { createdAt: 3, aliases: [repo, 'folder:tts\u0000/app'] }),
       ])
     ).toEqual([]);
     expect(
       plan([
-        project('away', { title: 'App', aliases: [repo, 'folder:tts/app'] }),
+        project('away', { title: 'App', aliases: [repo, 'folder:tts\u0000/app'] }),
         project('topic', { title: 'App', ...oneOff }),
       ])
     ).toEqual([{ action: 'archive', projectId: 'topic', title: 'App' }]);
@@ -133,7 +139,7 @@ describe('project cleanup plan', () => {
           project('live', { ...oneOff, liveAsks: 1 }),
           project('section', { section: true }),
           project('inbox'),
-          project('remote', { ...oneOff, aliases: ['folder:tts/x'] }),
+          project('remote', { ...oneOff, aliases: ['folder:tts\u0000/x'] }),
         ],
         ['inbox']
       )
