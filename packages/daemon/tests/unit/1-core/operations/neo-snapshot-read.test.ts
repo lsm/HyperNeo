@@ -21,7 +21,7 @@ describe('planNeoSnapshotRead', () => {
         ok: true,
         unchanged: true,
         rev: 'r1',
-        note: expect.stringContaining('end the turn'),
+        note: expect.stringMatching(/held until this turn ends.*end the turn now/),
         scopedTo: 'ask-1',
       },
       remember: null,

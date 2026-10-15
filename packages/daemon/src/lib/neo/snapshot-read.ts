@@ -22,7 +22,7 @@ export function planNeoSnapshotRead<T extends { ok: boolean; rev?: string; uncha
       ok: true,
       unchanged: true,
       rev: read.rev,
-      note: `unchanged since your last read (rev ${read.rev}): nothing changed. Read again only after a new event; if nothing else is left, end the turn.`,
+      note: `unchanged since your last read (rev ${read.rev}): nothing changed. Waiting here does not bring news: consultation answers, work reports and trigger notes arrive as new messages, and trigger notes are held until this turn ends, so reading again only delays them. If nothing else is left, end the turn now.`,
       ...(scoped ? { scopedTo: scoped } : {}),
     },
     remember: null,
