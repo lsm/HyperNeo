@@ -3415,6 +3415,10 @@ export class NeoService {
     .pipe(planNeoEnvironmentMove, ['blocker', 'target', 'adapters'], 'result:move')
     .endAsync('move') as (work: NeoWork) => Promise<NeoEnvironmentMove | null>;
 
+  async environmentMoveNote(work: NeoWork): Promise<string> {
+    return neoEnvironmentMoveNote(await this.readEnvironmentMove(work));
+  }
+
   private async returnReport(work: NeoWork): Promise<void> {
     if (work.status === 'reported' && isNeoWorkClosedDone(work.report)) return;
     if (this.deferToDeliveryRetry(work)) return;
@@ -3447,7 +3451,7 @@ export class NeoService {
     const packLine = packNote
       ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: packNote.id })}${packNote.inPrompt ? '' : `\n${packNote.instructions}`}\n`
       : '';
-    const move = neoEnvironmentMoveNote(await this.readEnvironmentMove(work));
+    const move = await this.environmentMoveNote(work);
     const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote, summary: NEO_WORK_SUMMARY_NOTE })}${move}${packLine}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, projectId: work.projectId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
     const messageId = neoWorkReturnMessageId(
       work.id,
@@ -3625,13 +3629,7 @@ export class NeoService {
       'options',
       'current'
     )
-    .pipe(
-      async (work: NeoWork) => ({
-        note: neoEnvironmentMoveNote(await this.readEnvironmentMove(work)),
-      }),
-      'work',
-      'move'
-    )
+    .pipe(async (work: NeoWork) => ({ note: await this.environmentMoveNote(work) }), 'work', 'move')
     .pipe(
       (
         work: NeoWork,

@@ -31,12 +31,18 @@ export const returnWorkThroughHolder = (superpipe({})('neo-work-holder-return') 
     'holderId'
   )
   .pipe(
+    (service: NeoService, work: NeoWork) => service.environmentMoveNote(work),
+    ['service', 'work'],
+    'move'
+  )
+  .pipe(
     (
       service: NeoService,
       work: NeoWork,
       rootId: string,
       holderId: string,
-      { id }: { id: string }
+      { id }: { id: string },
+      move: string
     ) => {
       const item = service.consultations.reserve({
         id,
@@ -44,11 +50,11 @@ export const returnWorkThroughHolder = (superpipe({})('neo-work-holder-return') 
         projectId: work.projectId!,
         originSessionId: rootId,
         sessionId: holderId,
-        question: `${NEO_WORK_RETURN_REVIEW}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`,
+        question: `${NEO_WORK_RETURN_REVIEW}${move}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`,
       });
       return item?.id === id ? { value: { id } } : { reason: 'holder-busy' };
     },
-    ['service', 'work', 'rootId', 'holderId', 'admission'],
+    ['service', 'work', 'rootId', 'holderId', 'admission', 'move'],
     'result:admission'
   )
   .pipe(
