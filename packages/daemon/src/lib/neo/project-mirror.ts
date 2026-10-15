@@ -9,6 +9,7 @@ import { sep } from 'node:path';
 import type { Place, PlaceGroup } from '../drivers/types.ts';
 import { placeKey } from '../drivers/places.ts';
 import { neoFolderPath } from './folder.ts';
+import { mergeNeoDuplicateProjects, type NeoProjectMergeInput } from './project-merge.ts';
 
 export interface NeoWorkspaceProject {
   aliases: string[];
@@ -72,6 +73,57 @@ export function planNeoWorkspaceProjects(
     });
 }
 
+export function planNeoMirrorMerges(
+  projects: readonly NeoWorkspaceProject[],
+  owner: (alias: string) => string | null,
+  revision: (projectId: string) => number | null
+): NeoProjectMergeInput[] {
+  return projects.flatMap((project) => {
+    const identities = project.aliases.filter((alias) => alias.startsWith('git:'));
+    if (!identities.length) return [];
+    const [target, ...sources] = [
+      ...new Set([...identities, ...project.aliases].flatMap((alias) => owner(alias) ?? [])),
+    ];
+    const targetRevision = target ? revision(target) : null;
+    if (!target || targetRevision === null) return [];
+    return sources.flatMap((sourceId) => {
+      const sourceRevision = revision(sourceId);
+      return sourceRevision === null
+        ? []
+        : [
+            {
+              sourceId,
+              targetId: target,
+              sourceRevision,
+              targetRevision,
+              sourceIdentities: identities,
+              targetIdentities: identities,
+            },
+          ];
+    });
+  });
+}
+
+export function mergeNeoMirroredDuplicates(
+  db: Database,
+  projects: readonly NeoWorkspaceProject[]
+): boolean {
+  const repo = new NeoRepository(db);
+  const owner = (alias: string) =>
+    (
+      db.prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?').get(alias) as {
+        project_id: string;
+      } | null
+    )?.project_id ?? null;
+  return (
+    mergeNeoDuplicateProjects(
+      () => planNeoMirrorMerges(projects, owner, (id) => repo.getProject(id)?.revision ?? null),
+      (input) => repo.projectMerges.merge(input),
+      () => {}
+    ).length > 0
+  );
+}
+
 export function persistNeoWorkspaceProjects(
   db: Database,
   projects: readonly NeoWorkspaceProject[]
@@ -124,5 +176,12 @@ export const mirrorNeoWorkspaceProjects = (superpipe({})('neo-project-mirror') a
     'groups',
     'projects'
   )
-  .pipe(persistNeoWorkspaceProjects, ['db', 'projects'], 'changed')
+  .pipe(
+    (db: Database, projects: readonly NeoWorkspaceProject[]) => {
+      const merged = mergeNeoMirroredDuplicates(db, projects);
+      return persistNeoWorkspaceProjects(db, projects) || merged;
+    },
+    ['db', 'projects'],
+    'changed'
+  )
   .end('changed') as (db: Database, groups: readonly PlaceGroup[]) => boolean;
