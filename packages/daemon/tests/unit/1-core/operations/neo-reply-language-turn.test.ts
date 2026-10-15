@@ -15,6 +15,8 @@ describe('detectNeoReplyLanguage', () => {
     ["what's open on HyperNeo right now?", 'English'],
     ['dev', null],
     ['请帮我 fix this bug', 'Chinese'],
+    ['in Ordnung', null],
+    ['fix it', 'English'],
     ['修复#12的问题', 'Chinese'],
     ['Why does it fail with 无法连接到服务器 when I start it?', 'English'],
     ['现在有卡片还在运行吗？', 'Chinese'],

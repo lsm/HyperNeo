@@ -31,7 +31,7 @@ export function detectNeoReplyLanguage(text: string): NeoReplyLanguage | null {
   if (cjk >= 2 && (leadsCjk || Math.ceil(cjk / 2) >= words))
     return kana >= 2 ? 'Japanese' : hangul >= 2 ? 'Korean' : 'Chinese';
   const english = count(prose, ENGLISH_WORD);
-  if (english && english * 4 >= words) return 'English';
+  if (english >= 2 && english * 4 >= words) return 'English';
   const sample = prose.replace(/\s+/g, ' ').trim().slice(0, SAMPLE_LIMIT);
   return words >= 3 ? `the language of "${sample}"` : null;
 }
