@@ -3759,6 +3759,14 @@ describe('neoPrompt', () => {
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save as a rule');
   });
 
+  test('answers card state from the snapshot’s cards, never from work.find', () => {
+    const prompt = neoPrompt(null);
+    expect(prompt).toContain(
+      "Answer what cards or work are running, done or stuck from neo.snapshot's cards (phase and label), never from work.find"
+    );
+    expect(prompt).toContain('is not a card');
+  });
+
   test('carries the enabled packs and their guidance, and keeps the core prompt free of coding examples', () => {
     const prompt = neoPrompt(null);
     expect(prompt).toContain('coding — Software work in git repositories');
