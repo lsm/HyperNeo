@@ -683,6 +683,35 @@ export function requireNeoMetReadEvidence<T>(
     : { value };
 }
 
+const NEO_TERMINAL_CARD = new Set<NeoWork['status']>(['reported', 'failed', 'cancelled']);
+
+export function requireNeoSettleKeepsOutcomeCards<T>(
+  caller: OperationCaller,
+  outcome: z.infer<typeof Settle>['outcome'],
+  ask: Pick<NeoAsk, 'doneItems'>,
+  cards: readonly NeoOutcomeCard[],
+  value: T
+): Gate<T> {
+  if (caller.source !== 'mcp' || outcome !== 'achieved') return { value };
+  const live = (ask.doneItems ?? [])
+    .filter((item) => !item.removed)
+    .flatMap((item) =>
+      neoItemDependentCards(item, cards)
+        .filter((card) => !NEO_TERMINAL_CARD.has(card.status))
+        .map(
+          (card) =>
+            `${item.id} is delivered by card ${card.id.slice(0, 8)}, which is ${card.status}`
+        )
+    );
+  return live.length
+    ? {
+        reason: fail(
+          `outcome_card_live: ${live.join('; ')}. Settling achieved would close a card the outcome still depends on; wait for it to report, or settle waiting.`
+        ),
+      }
+    : { value };
+}
+
 const NEO_HUMAN_TASK_REFUSALS = {
   approval:
     "approval_on_ask: re-approving continued work is the ask's Approve, not a question. The daemon shows Approve itself when the approval expires or a card stalls; approving it wakes you.",
@@ -1500,15 +1529,25 @@ export function createNeoAskOperations(
     .pipe(requireNeoAskSettleable, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskChecklistMet, ['input', 'admission', 'caller'], 'result:admission')
     .pipe(
-      (ask: NeoAsk): NeoAskSettleFacts => {
-        const cards = ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []);
-        return {
-          offered: cards.some((card) => card.status === 'proposed'),
-          stalled: cards.some((card) => service.isContinueStalled(card.id)),
-          failed: cards.some((card) => card.status === 'failed'),
-        };
-      },
+      (ask: NeoAsk) => ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
       'admission',
+      'cards'
+    )
+    .pipe(
+      (input: z.infer<typeof Settle>, ask: NeoAsk, caller: OperationCaller, cards: NeoWork[]) =>
+        isNeoAskReplay(ask, input)
+          ? { value: ask }
+          : requireNeoSettleKeepsOutcomeCards(caller, input.outcome, ask, cards, ask),
+      ['input', 'admission', 'caller', 'cards'],
+      'result:admission'
+    )
+    .pipe(
+      (cards: NeoWork[]): NeoAskSettleFacts => ({
+        offered: cards.some((card) => card.status === 'proposed'),
+        stalled: cards.some((card) => service.isContinueStalled(card.id)),
+        failed: cards.some((card) => card.status === 'failed'),
+      }),
+      'cards',
       'facts'
     )
     .pipe(planNeoAskSettle, ['input', 'admission', 'caller'], 'plan')
