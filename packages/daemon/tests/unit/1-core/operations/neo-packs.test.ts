@@ -6,6 +6,7 @@ import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
 import {
   cachedNeoCardPrRead,
   codingPrMergedCheck,
+  codingPrOpenedCheck,
   createCodingPack,
   neoCardPrsFresh,
   readNeoCardPrs,
@@ -13,6 +14,7 @@ import {
 import { createLifeAdminPack } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
 import { planNeoCardPrCandidates } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
+import { neoWorkPrEvidence } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import {
   NEO_DEFAULT_PACKS,
   neoPackEvidenceOrNone,
@@ -281,6 +283,42 @@ describe('codingPrMergedCheck', () => {
   });
 });
 
+describe('codingPrOpenedCheck', () => {
+  const opened = item({
+    text: 'A pull request is open in lsm/HyperNeo',
+    check: 'coding.pr_opened',
+  });
+  const closed: NeoEvidence = { ...open, state: 'failed', summary: 'closed' };
+  const redCi: NeoEvidence = { ...open, state: 'failed', summary: 'open, checks failing' };
+  const issue: NeoEvidence = { ...open, key: 'confirmation:<msg-1>', summary: 'open' };
+  test.each<[string, NeoEvidence[], ReturnType<typeof codingPrOpenedCheck>]>([
+    ['an open pull request', [open], { value: `Opened: ${open.key}` }],
+    ['an open one with failing CI', [redCi], { value: `Opened: ${redCi.key}` }],
+    ['a merged one', [merged], { value: `Opened: ${merged.key}` }],
+    ['only a closed one', [closed], { reason: 'not_opened' }],
+    ['no pull requests', [], { reason: 'not_opened' }],
+    ['evidence that is not a pull request', [issue], { reason: 'not_opened' }],
+  ])('%s', (_label, evidence, gate) => {
+    expect(codingPrOpenedCheck(opened, evidence)).toEqual(gate);
+  });
+
+  test('reads the state the card pull request evidence records', () => {
+    const pr = (state: NeoWorkPr['state'], number: number) =>
+      ({
+        url: `https://github.com/lsm/HyperNeo/pull/${number}`,
+        state,
+        checks: 'failing',
+        review: 'none',
+      }) as NeoWorkPr;
+    expect(
+      codingPrOpenedCheck(opened, neoWorkPrEvidence([pr('CLOSED', 1), pr('OPEN', 2)]))
+    ).toEqual({ value: 'Opened: https://github.com/lsm/HyperNeo/pull/2' });
+    expect(codingPrOpenedCheck(opened, neoWorkPrEvidence([pr('CLOSED', 1)]))).toEqual({
+      reason: 'not_opened',
+    });
+  });
+});
+
 describe('neoPackChecks', () => {
   test('refuses colliding or foreign registrations instead of selecting the first definition', () => {
     const first = () => ({ value: 'first' });
@@ -302,8 +340,19 @@ describe('neoPackChecks', () => {
 describe('planNeoPackTicks', () => {
   const ask = (items: NeoAskItem[], status: NeoAsk['status'] = 'open') =>
     ({ id: 'a1', status, doneItems: items }) as NeoAsk;
-  const checks = { 'coding.pr_merged': codingPrMergedCheck };
+  const checks = {
+    'coding.pr_merged': codingPrMergedCheck,
+    'coding.pr_opened': codingPrOpenedCheck,
+  };
+  const openItem = item({ text: 'A pull request is open', check: 'coding.pr_opened' });
   test.each<[string, NeoAsk | null, NeoEvidence[], ReturnType<typeof planNeoPackTicks>]>([
+    [
+      'an opened item once its pull request is open',
+      ask([openItem]),
+      [open],
+      [{ id: 'i1', evidence: `Opened: ${open.key}` }],
+    ],
+    ['a merge item while its pull request is only open', ask([item()]), [open], []],
     [
       'a merged item on a live ask',
       ask([item()]),

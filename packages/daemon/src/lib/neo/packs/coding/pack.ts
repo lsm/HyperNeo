@@ -46,6 +46,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 import {
   extractNeoWorkPrUrls,
+  isNeoWorkPrEvidenceOpened,
   mergeNeoWorkPrReads,
   neoAskPrEvidence,
   neoWorkPrEvidence,
@@ -65,6 +66,15 @@ export const codingPrMergedCheck: NeoPackCheck = (item, evidence: readonly NeoEv
   return prs.length && evidence.every((item) => item.state === 'done')
     ? { value: `Merged: ${prs.map((item) => item.key).join(', ')}` }
     : { reason: 'not_merged' };
+};
+
+const CODING_CHECK_PR_OPENED = 'coding.pr_opened';
+
+export const codingPrOpenedCheck: NeoPackCheck = (item, evidence: readonly NeoEvidence[]) => {
+  const opened = evidence.filter(isNeoWorkPrEvidenceOpened);
+  return opened.length
+    ? { value: `Opened: ${opened.map((pr) => pr.key).join(', ')}` }
+    : { reason: 'not_opened' };
 };
 
 export interface NeoCardPrDeps {
@@ -257,8 +267,14 @@ export function createCodingPack(
         cardBase: deps.cardBase,
       }),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
-    checks: { [CODING_CHECK_PR_MERGED]: codingPrMergedCheck },
-    checkEvidence: { [CODING_CHECK_PR_MERGED]: { independent: true } },
+    checks: {
+      [CODING_CHECK_PR_MERGED]: codingPrMergedCheck,
+      [CODING_CHECK_PR_OPENED]: codingPrOpenedCheck,
+    },
+    checkEvidence: {
+      [CODING_CHECK_PR_MERGED]: { independent: true },
+      [CODING_CHECK_PR_OPENED]: { independent: true },
+    },
     askTickChecks: [
       CODING_CHECK_ISSUE_FILED,
       CODING_CHECK_ISSUE_SUB_ISSUE,
