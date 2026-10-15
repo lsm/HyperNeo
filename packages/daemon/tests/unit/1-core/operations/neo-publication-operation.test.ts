@@ -294,6 +294,15 @@ describe('runtime-bound publication operation', () => {
       value: { accepted: true, publication: { shortText: draft.shortText } },
     });
     expect(ledger.list(conversationId)?.[0]?.triggerId).toBeUndefined();
+    expect(
+      await invoke({ ...draft, publicationId: '20000000-0000-4000-8000-000000000009' }, caller())
+    ).toMatchObject({
+      value: {
+        accepted: true,
+        created: true,
+        publication: { triggerId: `human:${ask.messageId}` },
+      },
+    });
   });
 
   test('a trigger note turn publishes under its trigger id; a repeat returns the first, a new fact posts', () => {

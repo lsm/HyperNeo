@@ -55,12 +55,13 @@ function repeatOnTrigger(db: Database, input: NeoPublicationInput): NeoPublicati
   const rows = db
     .prepare(`SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
       AND publication_id <> ? AND (json_extract(payload_json, '$.triggerId') = ?
-        OR (json_extract(payload_json, '$.askOrigin.sessionId') = ?
+        OR (? IS NULL AND json_extract(payload_json, '$.askOrigin.sessionId') = ?
           AND json_extract(payload_json, '$.askOrigin.messageId') = ?))
       ORDER BY sequence`)
     .all(
       input.conversationId,
       input.publicationId,
+      input.triggerId ?? null,
       input.triggerId ?? null,
       input.askOrigin.sessionId,
       input.askOrigin.messageId
