@@ -2312,8 +2312,9 @@ export class NeoService {
   }
 
   async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
-    this.trackedSessions = keepNeoTrackedSessions(this.trackedSessions, notice.key, now);
-    const messageId = `neo-track:${notice.key}:${now}`;
+    const tracked = keepNeoTrackedSessions(this.trackedSessions, notice.key, now);
+    this.trackedSessions = tracked;
+    const messageId = `neo-track:${notice.key}:${tracked.get(notice.key)}`;
     const done = 'The session finishes its work';
     const ask = this.askRecords.open(
       {

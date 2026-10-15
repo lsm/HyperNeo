@@ -59,7 +59,7 @@ export function keepNeoTrackedSessions(
   now: number
 ): Map<string, number> {
   const kept = new Map([...tracked].filter(([, at]) => now - at < NEO_SESSION_TRACK_MS));
-  kept.set(key, now);
+  kept.set(key, kept.get(key) ?? now);
   return kept;
 }
 

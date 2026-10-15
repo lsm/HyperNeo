@@ -107,6 +107,10 @@ describe('keepNeoTrackedSessions', () => {
     const kept = keepNeoTrackedSessions(new Map([['old', 0]]), key, NEO_SESSION_TRACK_MS);
     expect([...kept]).toEqual([[key, NEO_SESSION_TRACK_MS]]);
   });
+
+  test('a repeated tap keeps the window its first tap opened', () => {
+    expect([...keepNeoTrackedSessions(new Map([[key, 5]]), key, 9)]).toEqual([[key, 5]]);
+  });
 });
 
 describe('requireNeoTrackedAdoption', () => {
@@ -376,6 +380,11 @@ describe('neo.session.track', () => {
         doneSource: 'human',
         doneItems: [{ id: 'i1', check: null }],
       });
+      clock += 1_000;
+      expect(await invoke({ key })).toMatchObject({ value: { ok: true } });
+      expect(
+        service.askRecords.list().filter((ask) => ask.originMessageId?.startsWith('neo-track:'))
+      ).toEqual([expect.objectContaining({ id: trackAsk!.id })]);
 
       const proposed = await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
