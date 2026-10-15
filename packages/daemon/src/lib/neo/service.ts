@@ -3839,12 +3839,7 @@ export class NeoService {
             messageId: item.originMessageId,
           }) === trigger
       );
-    const reason = neoTriggerWorkProblem(
-      input,
-      trigger,
-      answered?.producerInput ?? null,
-      consulted
-    );
+    const reason = neoTriggerWorkProblem(input.messageId, trigger, !!answered, consulted);
     return reason ? { ok: false, reason } : null;
   }
 

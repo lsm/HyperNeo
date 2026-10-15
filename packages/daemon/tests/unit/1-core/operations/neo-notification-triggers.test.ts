@@ -20,6 +20,7 @@ import {
   neoTriggerRetryStatuses,
   requireNeoTriggerUnheard,
   shouldRetryNeoTrigger,
+  isNeoHumanOwnTurn,
   NEO_TRIGGER_RETRY_MS,
   neoAskTriggerKeys,
   neoTriggerNote,
@@ -207,6 +208,17 @@ describe('neoTriggerRetryStatuses', () => {
     expect(neoTriggerRetryStatuses([], ['consumed', 'consumed', 'consumed'])).toEqual(['consumed']);
     expect(neoTriggerRetryStatuses([], ['consumed', 'enqueued'])).toEqual(['pending']);
     expect(neoTriggerRetryStatuses([], [])).toEqual([]);
+  });
+});
+
+describe('isNeoHumanOwnTurn', () => {
+  test('the human message and its turn-limit continuations are the human’s own turn', () => {
+    expect(isNeoHumanOwnTurn('m1', 'human:m1')).toBe(true);
+    expect(isNeoHumanOwnTurn('neo-turn-limit:r1', 'human:m1')).toBe(true);
+    expect(isNeoHumanOwnTurn('neo-nudge:m1', 'human:m1')).toBe(false);
+    expect(isNeoHumanOwnTurn('neo-consult:c1:request', 'human:m1')).toBe(false);
+    expect(isNeoHumanOwnTurn('neo-turn-limit:r1', 'idle:a1:x')).toBe(false);
+    expect(isNeoHumanOwnTurn('m1', null)).toBe(false);
   });
 });
 
