@@ -6,12 +6,13 @@ import { z } from 'zod';
 import type { NeoAskForward } from '../../storage/repositories/neo-ask-forward-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
+import { isNeoCoordinatorBinding } from './binding-roles.ts';
 
 const Input = z.object({ to: z.string().trim().min(1) });
 const Rejection = z.object({
   ok: z.literal(false),
   reason: z.enum([
-    'project_holder_only',
+    'coordinator_only',
     'unknown_ask',
     'not_your_ask',
     'same_project',
@@ -125,8 +126,7 @@ export function requireForwardingHolder(
 ): Gate<Holder> {
   const turn = caller.neoTurn;
   return caller.source === 'mcp' &&
-    ((binding?.kind === 'project' && binding.projectId) ||
-      (binding?.kind === 'neo' && binding.projectId === null)) &&
+    isNeoCoordinatorBinding(binding) &&
     binding.sessionId === caller.sessionId &&
     turn?.messageId &&
     turn.isLive()
@@ -137,7 +137,7 @@ export function requireForwardingHolder(
           input: { sessionId: binding.sessionId, messageId: turn.messageId },
         },
       }
-    : refuse('project_holder_only');
+    : refuse('coordinator_only');
 }
 
 export function requireForwardedAsk(ask: NeoAskOrigin | null): Gate<NeoAskOrigin> {

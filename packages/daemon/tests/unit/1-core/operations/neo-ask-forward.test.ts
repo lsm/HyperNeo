@@ -77,7 +77,7 @@ describe('requireForwardingHolder', () => {
       [{ source: 'rpc', principal: 'local' }, garden],
     ] as const)
       expect(requireForwardingHolder(who as OperationCaller, binding as NeoBinding)).toEqual({
-        reason: { ok: false, reason: 'project_holder_only' },
+        reason: { ok: false, reason: 'coordinator_only' },
       });
   });
 });
