@@ -16,6 +16,7 @@ export interface NeoProjectMergeInput {
 export interface NeoProjectMergeState {
   projects: readonly NeoProject[];
   identities: Readonly<Record<string, readonly string[]>>;
+  repositories?: Readonly<Record<string, readonly string[]>>;
   unavailable: readonly string[];
   retired: readonly string[];
 }
@@ -81,12 +82,23 @@ export function requireNeoMergeIdentity(
   ].sort();
   if (
     [...source, ...target].some(
-      (identity) => !/^git:[a-f0-9]{40,64}(?::[a-f0-9]{40,64})*$/.test(identity)
+      (identity) =>
+        !/^git:[a-f0-9]{40,64}(?::[a-f0-9]{40,64})*$/.test(identity) &&
+        !/^repository:[^/\s]+\/\S+$/.test(identity)
     )
   )
     return { reason: { ok: false, reason: 'identity_conflict' } };
-  if (source.length && target.length && JSON.stringify(source) !== JSON.stringify(target))
-    return { reason: { ok: false, reason: 'identity_conflict' } };
+  const stored = (id: string) => state.repositories?.[id] ?? [];
+  const [sourceRepos, targetRepos] = [stored(plan.source.id), stored(plan.target.id)];
+  const gits = (ids: string[]) => ids.filter((id) => id.startsWith('git:'));
+  if (sourceRepos.length && targetRepos.length) {
+    if (!sourceRepos.some((repository) => targetRepos.includes(repository)))
+      return { reason: { ok: false, reason: 'identity_conflict' } };
+  } else {
+    const [left, right] = [gits(source), gits(target)];
+    if (left.length && right.length && JSON.stringify(left) !== JSON.stringify(right))
+      return { reason: { ok: false, reason: 'identity_conflict' } };
+  }
   return (source.length > 0 && target.length > 0) || input.humanApproved
     ? { value: plan }
     : { reason: { ok: false, reason: 'needs_human' } };

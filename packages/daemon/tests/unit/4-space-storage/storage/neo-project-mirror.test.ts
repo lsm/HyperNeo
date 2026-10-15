@@ -5,10 +5,14 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
+import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts';
 import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import {
+  backfillNeoRepositoryIdentities,
   isNeoPlumbingFolder,
+  neoProjectMergeAllowed,
+  neoRepositoryIdentity,
   mirrorNeoWorkspaceProjects,
   planNeoWorkspaceProjects,
 } from '../../../../src/lib/neo/project-mirror.ts';
@@ -16,6 +20,9 @@ import { mergePlaceGroups } from '../../../../src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
 import { isTempCwd } from '../../../../src/lib/drivers/claude-feed.ts';
 import { createTestDb } from '../../../helpers/database.ts';
+import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository.ts';
+import { planNeoAskQuestion } from '../../../../src/lib/neo/ask-operations.ts';
+import { NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE } from '../../../../src/lib/neo/project-merge.ts';
 
 const elsewhere = `not-${hostname()}`;
 
@@ -37,6 +44,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
     db = new Database(':memory:');
     db.exec('PRAGMA foreign_keys = ON');
     createNeoTables(db);
+    runMigration313(db);
     runMigration361(db);
     repo = new NeoRepository(db);
   });
@@ -286,5 +294,223 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     expect(plan.aliases.filter((alias) => alias.startsWith('folder:'))).toEqual([
       `folder:${elsewhere}\u0000/live`,
     ]);
+  });
+
+  test('names a repository the same way from every remote form', () => {
+    for (const remote of [
+      'git@github.com:lsm/HyperNeo.git',
+      'https://github.com/lsm/hyperneo',
+      'https://token@github.com/lsm/HyperNeo.git/',
+      'ssh://git@github.com/lsm/hyperneo.git',
+    ])
+      expect(neoRepositoryIdentity(remote)).toBe('repository:github.com/lsm/hyperneo');
+    expect(neoRepositoryIdentity('git@gitlab.example.com:team/app.git')).toBe(
+      'repository:gitlab.example.com/team/app'
+    );
+    expect(neoRepositoryIdentity('file:///Users/lsm/repo')).toBeNull();
+    expect(neoRepositoryIdentity(undefined)).toBeNull();
+  });
+
+  test('folds projects whose folders are gone into their repository by the stored remote, and leaves other repositories and repo-less projects alone', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const save = (title: string, aliases: string[]) => {
+      const id = `project:${title}`;
+      store.saveProject({ id, title, summary: `Project: ${title}`, context: '' }, 0);
+      for (const alias of aliases)
+        raw
+          .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+          .run(alias, id);
+      return id;
+    };
+    const repoAlias = (name: string, folder: string) => `repo:${name}\u0000tts\u0000${folder}`;
+    const kept = save('neokai', [repoAlias('lsm/hyperneo', '/focus/neokai')]);
+    save('001ce5d6-494e-4db1-9d65-0a8745ef4162', [
+      'folder:tts\u0000/gone/001ce5d6',
+      repoAlias('lsm/hyperneo', '/gone/001ce5d6'),
+    ]);
+    save('3a4a1989-7093-4b8e-bb18-0248d528a9dd', [repoAlias('lsm/hyperneo', '/gone/3a4a1989')]);
+    const other = save('makai', [repoAlias('lsm/makai', '/focus/makai')]);
+    const bare = save('180460d2-753e-4418-91b9-6636a831c0c0', ['folder:laptop\u0000/w/180460d2']);
+    expect(backfillNeoRepositoryIdentities(raw)).toBe(true);
+    expect(
+      store
+        .listProjects()
+        .map((project) => project.id)
+        .sort()
+    ).toEqual([bare, kept, other].sort());
+    expect(store.getProject(kept)?.title).toBe('neokai');
+    expect(
+      raw
+        .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')
+        .get('repository:github.com/lsm/hyperneo')
+    ).toEqual({ project_id: kept });
+    expect(store.projectMerges.redirects()).toHaveLength(2);
+    expect(backfillNeoRepositoryIdentities(raw)).toBe(false);
+    full.close();
+  });
+
+  test('merges a project holding two repository identities with one sharing either, and leaves a hex-named repository settled', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const insert = raw.prepare(
+      'INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
+    );
+    store.saveProject({ id: 'project:a', title: 'app', summary: 'Project: app', context: '' }, 0);
+    insert.run('repository:github.com/lsm/app', 'project:a');
+    insert.run('repository:github.com/lsm/app-old', 'project:a');
+    store.saveProject({ id: 'project:b', title: 'b', summary: 'Project: b', context: '' }, 0);
+    insert.run('repo:lsm/app-old\u0000laptop\u0000/w/b', 'project:b');
+    backfillNeoRepositoryIdentities(raw);
+    expect(store.listProjects().map((project) => project.id)).toEqual(['project:a']);
+    store.saveProject(
+      { id: 'project:hex', title: 'deadbeef', summary: 'Project: deadbeef', context: '' },
+      0
+    );
+    insert.run('repo:lsm/deadbeef\u0000laptop\u0000/w/deadbeef', 'project:hex');
+    backfillNeoRepositoryIdentities(raw);
+    const revision = store.getProject('project:hex')!.revision;
+    expect(backfillNeoRepositoryIdentities(raw)).toBe(false);
+    expect(store.getProject('project:hex')!.revision).toBe(revision);
+    full.close();
+  });
+
+  test('does not pull an old project into a new repository through a reused folder', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const at = (root: string, remote?: string) => {
+      const found = workspace('/w/app', 'laptop', `git:${root.repeat(40)}`);
+      return [{ ...found, place: { ...found.place, remotes: remote ? [remote] : undefined } }];
+    };
+    mirrorNeoWorkspaceProjects(raw, at('a'));
+    const old = store.listProjects()[0]!.id;
+    const other = workspace('/w/other', 'laptop', `git:${'b'.repeat(40)}`);
+    mirrorNeoWorkspaceProjects(raw, [
+      { ...other, place: { ...other.place, remotes: ['git@github.com:lsm/new.git'] } },
+    ]);
+    mirrorNeoWorkspaceProjects(raw, at('b', 'git@github.com:lsm/new.git'));
+    expect(store.listProjects().map((project) => project.id)).toContain(old);
+    expect(store.projectMerges.redirects()).toEqual([]);
+    full.close();
+  });
+
+  test('never merges a pair the human kept separate or has not answered yet', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const asks = new NeoAskRepository(raw);
+    const key = 'neo-project-merge:project:a\u0000project:b';
+    const ask = (answer?: string) => {
+      const opened = asks.open({
+        id: crypto.randomUUID(),
+        requestKey: key,
+        projectId: null,
+        originSessionId: 'root',
+        originMessageId: null,
+        title: 'a and b: one project?',
+        ask: 'Are a and b the same project?',
+        doneWhen: 'The human decided.',
+        doneSource: 'daemon',
+      })!;
+      const item = planNeoAskQuestion(opened, {
+        question: 'Are a and b the same project?',
+        options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
+        decides: key,
+      });
+      const waiting = asks.settle(opened, 'waiting', 'q', 'q', item.id, item)!;
+      if (!answer) return;
+      const question = waiting.doneItems!.find((entry) => entry.decides === key)!;
+      asks.tickItem(
+        waiting.id,
+        {
+          id: question.id,
+          state: 'met',
+          evidence: `The human answered: ${answer}`,
+          metBy: 'human',
+        },
+        Date.now(),
+        question,
+        true
+      );
+    };
+    const allowed = () => neoProjectMergeAllowed(raw)('project:b', 'project:a');
+    expect(allowed()).toBe(true);
+    ask();
+    expect(allowed()).toBe(false);
+    raw.prepare('DELETE FROM neo_asks').run();
+    ask(NEO_PROJECT_SEPARATE);
+    expect(allowed()).toBe(false);
+    for (const id of ['project:a', 'project:b']) {
+      store.saveProject({ id, title: id, summary: `Project: ${id}`, context: '' }, 0);
+      raw
+        .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+        .run(`repo:lsm/app\u0000x\u0000/${id}`, id);
+    }
+    backfillNeoRepositoryIdentities(raw);
+    expect(
+      store
+        .listProjects()
+        .map((project) => project.id)
+        .sort()
+    ).toEqual(['project:a', 'project:b']);
+    const holder = (
+      raw
+        .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')
+        .get('repository:github.com/lsm/app') as { project_id: string }
+    ).project_id;
+    const kept = holder === 'project:a' ? 'project:b' : 'project:a';
+    const folder = `folder:laptop\u0000/w/${kept}`;
+    raw
+      .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+      .run(folder, kept);
+    const shallow = workspace(`/w/${kept}`, 'laptop');
+    mirrorNeoWorkspaceProjects(raw, [
+      {
+        ...shallow,
+        place: {
+          ...shallow.place,
+          codeIdentity: undefined,
+          remotes: ['git@github.com:lsm/app.git'],
+        },
+      },
+    ]);
+    expect(
+      raw.prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?').get(folder)
+    ).toEqual({ project_id: kept });
+    raw.prepare('DELETE FROM neo_asks').run();
+    ask(NEO_PROJECT_SAME);
+    expect(allowed()).toBe(true);
+    full.close();
+  });
+
+  test('retitles a generated title from the repository when the project kept it', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const title = '6c79b9f4-531a-4c83-a514-fa20c272ea80';
+    store.saveProject({ id: 'project:x', title, summary: `Project: ${title}`, context: '' }, 0);
+    raw
+      .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+      .run('repo:lsm/hyperneo\u0000x', 'project:x');
+    backfillNeoRepositoryIdentities(raw);
+    expect(store.getProject('project:x')?.title).toBe('hyperneo');
+    full.close();
+  });
+
+  test('merges a re-created repository with the same remote though its history differs', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const place = (folder: string, root: string) => {
+      const found = workspace(folder, 'laptop', `git:${root.repeat(40)}`);
+      return [{ ...found, place: { ...found.place, remotes: ['git@github.com:lsm/neokai.git'] } }];
+    };
+    mirrorNeoWorkspaceProjects(raw, place('/old', 'a'));
+    mirrorNeoWorkspaceProjects(raw, place('/new', 'b'));
+    expect(store.listProjects()).toHaveLength(1);
+    full.close();
   });
 });
