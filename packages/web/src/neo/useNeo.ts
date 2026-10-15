@@ -14,6 +14,7 @@ import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
 import { projectNeoPublicConversation } from './public-conversation.ts';
 import { projectNeoPublicHolderConversation } from './public-holder-conversation.ts';
+import { mergeNeoAskDetails } from './neo-ask-detail.ts';
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
@@ -22,7 +23,10 @@ export function useNeo() {
     () => createNeoIntakeClient(() => connectionManager.getHub(), setPendingAsks),
     []
   );
-  const [snapshot, setSnapshot] = useState<NeoSnapshot | null>(null);
+  const [received, setSnapshot] = useState<NeoSnapshot | null>(null);
+  const [askDetails, setAskDetails] = useState<ReadonlyMap<string, NeoSnapshot>>(new Map());
+  const askDetailReads = useRef(new Set<string>());
+  const snapshot = useMemo(() => mergeNeoAskDetails(received, askDetails), [received, askDetails]);
   const publications = useNeoPublications(snapshot?.sessionId ?? null);
   const asks = useNeoConversationAsks(snapshot?.sessionId ?? null);
   useEffect(() => {
@@ -55,6 +59,8 @@ export function useNeo() {
     const opened = ++refreshGeneration.current;
     setSessionId(null);
     setError('');
+    askDetailReads.current = new Set();
+    setAskDetails(new Map());
     try {
       const hub = await connectionManager.getHub();
       const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.open', {});
@@ -114,6 +120,21 @@ export function useNeo() {
     },
     [store]
   );
+
+  async function loadAskDetail(askId: string) {
+    if (askDetailReads.current.has(askId)) return;
+    const reads = askDetailReads.current;
+    reads.add(askId);
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', { askId });
+      if (!result.ok) throw new Error(result.reason);
+      if (alive.current && reads === askDetailReads.current)
+        setAskDetails((current) => new Map(current).set(askId, result));
+    } catch {
+      reads.delete(askId);
+    }
+  }
 
   async function act(id: string, action: NeoWorkAction) {
     if (busyWork) return;
@@ -269,6 +290,7 @@ export function useNeo() {
     busyWork,
     open,
     refresh,
+    loadAskDetail,
     act,
     settleAsk,
     approveAsk,

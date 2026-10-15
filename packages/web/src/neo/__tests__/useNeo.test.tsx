@@ -210,3 +210,44 @@ describe('useNeo revision guards', () => {
     }
   );
 });
+
+function DetailProbe() {
+  const neo = useNeo();
+  return (
+    <>
+      <button onClick={() => void neo.loadAskDetail('a')}>Load detail</button>
+      <p>Done when: {neo.snapshot?.asks?.[0]?.doneWhen || 'summarized'}</p>
+    </>
+  );
+}
+
+describe('useNeo ask detail', () => {
+  it('reads a summarized ask once and shows its full fields', async () => {
+    const ask = (doneWhen: string, summarized?: true) => ({
+      id: 'a',
+      title: 'Ask a',
+      doneWhen,
+      revision: 2,
+      workIds: [],
+      ...(summarized ? { summarized } : {}),
+    });
+    request.mockImplementation(
+      async (_method: string, { name, input }: { name: string; input: { askId?: string } }) => ({
+        ok: true,
+        sessionId: 'root',
+        projects: [],
+        work: [],
+        cards: [],
+        asks: [name === 'neo.snapshot' && input.askId ? ask('Merged to dev') : ask('', true)],
+      })
+    );
+    render(<DetailProbe />);
+    await waitFor(() => expect(screen.getByText('Done when: summarized')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
+    await waitFor(() => expect(screen.getByText('Done when: Merged to dev')).toBeTruthy());
+    expect(
+      request.mock.calls.filter(([, call]) => call.name === 'neo.snapshot' && call.input.askId)
+    ).toEqual([['operation.invoke', { name: 'neo.snapshot', input: { askId: 'a' } }]]);
+  });
+});

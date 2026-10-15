@@ -29,6 +29,7 @@ import {
 } from './neo-asks.ts';
 import type { NeoScene, NeoSceneCards } from './neo-scenes.ts';
 import { neoAppLabel, neoAppLogo, neoSessionLink } from './work-driver.ts';
+import { isNeoSummarized } from './neo-ask-detail.ts';
 
 const tones = {
   attention: 'text-warning bg-warning/10',
@@ -282,6 +283,7 @@ export function NeoAskCard({
   onRetry,
   onOpen,
   onOpenSession,
+  onExpand,
   renderCard,
 }: {
   view: NeoAskView;
@@ -295,6 +297,7 @@ export function NeoAskCard({
   onRetry?: (workId: string) => void;
   onOpen?: (workId: string) => void;
   onOpenSession?: (sessionId: string, title: string) => void;
+  onExpand?: () => void;
   renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
   const [open, setOpen] = useState(false);
@@ -434,7 +437,12 @@ export function NeoAskCard({
       )}
       {open && (
         <div data-ask-details class="mt-3 space-y-3">
-          <div class="text-sm text-fg-muted">
+          {isNeoSummarized(ask) && (
+            <p role="status" class="text-xs text-fg-faint">
+              Loading details…
+            </p>
+          )}
+          <div class="text-sm text-fg-muted" hidden={isNeoSummarized(ask)}>
             <p class="text-xs font-medium text-fg-faint">Done when</p>
             {outcomes.length > 0 ? (
               <div class="mt-1.5">
@@ -521,7 +529,10 @@ export function NeoAskCard({
         <button
           type="button"
           aria-expanded={open}
-          onClick={() => setOpen(!open)}
+          onClick={() => {
+            if (!open) onExpand?.();
+            setOpen(!open);
+          }}
           class={neoPlainClass}
         >
           Details
