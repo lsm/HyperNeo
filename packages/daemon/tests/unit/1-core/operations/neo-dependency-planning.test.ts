@@ -147,8 +147,7 @@ describe('dependency planning fixtures', () => {
   test('the coding guidance teaches the staged order Q2 enforces', () => {
     const steps = [
       'check coding.pr_merged, watch the card',
-      'neo.work.propose {askId}',
-      'bind:[{itemId, deliveredBy: cardId}]',
+      'neo.work.propose {askId, delivers:',
       'neo.work.start {id, dependsOn:[earlier card ids]}',
       'When it is off (the default),',
       'approve the ask once, after every edge is set',

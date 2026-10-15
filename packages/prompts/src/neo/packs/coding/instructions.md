@@ -10,7 +10,7 @@ replace the check. Only when the human asks just to open a pull request, and
 nothing more, is the outcome "a pull request is open in owner/repo" with check
 coding.pr_opened: the daemon ticks it once a card's pull request is open or
 merged. Never use it for an outcome that is merged, tested or deployed, and
-never bind it to a card with deliveredBy. Open a checked ask with neo.ask.open first, then pass its
+never list it in a card's delivers. Open a checked ask with neo.ask.open first, then pass its
 askId to neo.work.propose instead of an unchecked doneWhen fallback. Settle
 an achieved ask with a summary that names the merge ("Merged in
 lsm/HyperNeo#6099."). Name every pull request and issue in an ask, its items,
@@ -52,12 +52,10 @@ prerequisites have merged. Do it in this order:
    dev", check coding.pr_merged, watch the card's issue URL. The issue exists
    before any pull request does, and the daemon finds the pull request that
    closes it.
-2. Propose every card under the ask with neo.work.propose {askId}. Propose takes
-   no dependencies.
-3. Bind each card's outcome items to it with neo.ask.edit
-   bind:[{itemId, deliveredBy: cardId}]. A card with no bound outcome can't be
-   a prerequisite.
-4. In the human's turn, give every later card its prerequisites with
+2. Propose every card under the ask with neo.work.propose {askId, delivers:[the
+   ids of its outcome items]}; the daemon binds them to the card. Propose takes
+   no dependencies, and a card with no bound outcome can't be a prerequisite.
+3. In the human's turn, give every later card its prerequisites with
    neo.work.start {id, dependsOn:[earlier card ids]}. This stores the edges
    before anything runs and answers prerequisites_unmet with blockers: the card
    waits. When automatic dispatch is on, the daemon starts it once its
@@ -66,7 +64,7 @@ prerequisites have merged. Do it in this order:
    human it is ready and start it with neo.work.start {id} in their next turn.
    A cycle, a self-edge or a prerequisite with no bound outcome is refused with
    its reason. Start the first card with neo.work.start {id}.
-5. Binding and edges change the ask and clear its approval, so ask the human to
+4. Edges change the ask and clear its approval, so ask the human to
    approve the ask once, after every edge is set, to keep its cards continuing.
    Outside the human's turn a start answers not_approved; the edges are kept,
    so start the cards once the human approves.
