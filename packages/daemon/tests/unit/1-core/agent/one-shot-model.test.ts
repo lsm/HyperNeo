@@ -4,6 +4,7 @@ import {
   buildOneShotQueryOptions,
   firstAssistantText,
   oneShotModelIds,
+  readAssistantReply,
   runOneShotModel,
   type OneShotModelRequest,
 } from '../../../../src/lib/agent/one-shot-model';
@@ -21,6 +22,12 @@ const assistant = (...texts: string[]) =>
   ({
     type: 'assistant',
     message: { content: texts.map((text) => ({ type: 'text', text })) },
+  }) as unknown as SDKMessage;
+const failed = (error: string, text: string) =>
+  ({
+    type: 'assistant',
+    error,
+    message: { content: [{ type: 'text', text }] },
   }) as unknown as SDKMessage;
 async function* stream(...messages: SDKMessage[]) {
   yield* messages;
@@ -77,6 +84,29 @@ describe('firstAssistantText', () => {
     ],
   ] as const)('%s', async (_label, messages, separator, expected) => {
     expect(await firstAssistantText(stream(...messages), separator)).toBe(expected);
+  });
+});
+
+describe('readAssistantReply', () => {
+  test('reads the text of an ordinary reply', () => {
+    expect(readAssistantReply(assistant('a', 'b') as never)).toEqual({ text: 'a b' });
+  });
+
+  test('reports an error reply with its text instead of treating it as an answer', () => {
+    expect(
+      readAssistantReply(failed('model_not_found', 'There is an issue with the model.') as never)
+    ).toEqual({ error: 'model_not_found: There is an issue with the model.' });
+    expect(readAssistantReply(failed('rate_limit', '') as never)).toEqual({
+      error: 'rate_limit',
+    });
+  });
+});
+
+describe('firstAssistantText with an error reply', () => {
+  test('throws instead of returning the error text as the answer', async () => {
+    await expect(
+      firstAssistantText(stream(failed('model_not_found', 'There is an issue with the model.')))
+    ).rejects.toThrow('The model answered with an error: model_not_found');
   });
 });
 

@@ -7,6 +7,7 @@ import {
   ProviderService,
   getProviderService,
   resetProviderServiceInstance,
+  buildSdkConfigWithDiscovery,
 } from '../../../../src/lib/provider-service';
 import {
   markBuiltInProviderDisabled,
@@ -329,6 +330,39 @@ async function applyForModel(service: ProviderService, modelId: string, provider
     await service.getEnvVarsForModel(modelId, providerId)
   );
 }
+
+describe('buildSdkConfigWithDiscovery', () => {
+  it('discovers models once when the model is not known yet, then configures it', async () => {
+    let discovered = false;
+    const provider = {
+      getModels: async () => {
+        discovered = true;
+        return [];
+      },
+      buildSdkConfig: (modelId: string): ProviderSdkConfig => {
+        if (!discovered) throw new Error(`Unknown Codex model: ${modelId}`);
+        return {
+          envVars: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:1' },
+          isAnthropicCompatible: true,
+        };
+      },
+    };
+    const config = await buildSdkConfigWithDiscovery(provider as never, 'gpt-6-luna');
+    expect(config.envVars.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:1');
+  });
+
+  it('throws when the model is still unknown after discovery', async () => {
+    const provider = {
+      getModels: async () => [],
+      buildSdkConfig: (modelId: string): ProviderSdkConfig => {
+        throw new Error(`Unknown Codex model: ${modelId}`);
+      },
+    };
+    await expect(buildSdkConfigWithDiscovery(provider as never, 'gpt-9')).rejects.toThrow(
+      'Unknown Codex model: gpt-9'
+    );
+  });
+});
 
 describe('ProviderService', () => {
   let service: ProviderService;
@@ -1585,11 +1619,18 @@ describe('ProviderService', () => {
       expect(envVars).toEqual({});
     });
 
-    it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', async () => {
+    it('throws instead of returning {} when the provider cannot configure the model', async () => {
       registry.register(new ThrowingMockProvider());
 
-      const envVars = await service.getEnvVarsForModel('throwing-model', 'throwing');
-      expect(envVars).toEqual({});
+      await expect(service.getEnvVarsForModel('throwing-model', 'throwing')).rejects.toThrow(
+        'embedded server not started'
+      );
+    });
+
+    it('throws for a provider that is not registered instead of falling back to Anthropic', async () => {
+      await expect(service.getEnvVarsForModel('gpt-6-luna', 'anthropic-codex')).rejects.toThrow(
+        "No provider 'anthropic-codex' is registered for model 'gpt-6-luna'"
+      );
     });
 
     it('uses explicit providerId to route to the correct provider for colliding model IDs', async () => {

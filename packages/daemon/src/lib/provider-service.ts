@@ -94,6 +94,18 @@ function sdkConfigToEnvVars(sdkConfig: ProviderSdkConfig): ProviderEnvVars {
   return envVars;
 }
 
+export async function buildSdkConfigWithDiscovery(
+  provider: Pick<SdkProvider, 'buildSdkConfig' | 'getModels'>,
+  modelId: string
+): Promise<ProviderSdkConfig> {
+  try {
+    return provider.buildSdkConfig(modelId);
+  } catch {
+    await provider.getModels();
+    return provider.buildSdkConfig(modelId);
+  }
+}
+
 export class ProviderService {
   private readonly logger = new Logger('provider-service');
 
@@ -363,22 +375,19 @@ export class ProviderService {
     const provider = registry.detectProviderForModel(modelId, providerId);
 
     if (!provider) {
-      return {};
+      if (providerId === 'anthropic') return {};
+      throw new Error(`No provider '${providerId}' is registered for model '${modelId}'`);
     }
 
     await this.ensureProviderBridges(provider, modelId);
-    try {
-      const sdkConfig = provider.buildSdkConfig(modelId);
-      if (provider.id === 'anthropic' && process.env.HYPERNEO_USE_DEV_PROXY === '1') {
-        sdkConfig.envVars = {
-          ...sdkConfig.envVars,
-          ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
-        };
-      }
-      return sdkConfigToEnvVars(sdkConfig);
-    } catch {
-      return {};
+    const sdkConfig = await buildSdkConfigWithDiscovery(provider, modelId);
+    if (provider.id === 'anthropic' && process.env.HYPERNEO_USE_DEV_PROXY === '1') {
+      sdkConfig.envVars = {
+        ...sdkConfig.envVars,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
+      };
     }
+    return sdkConfigToEnvVars(sdkConfig);
   }
 
   getProviderEnvVars(session: Session): ProviderEnvVars {
