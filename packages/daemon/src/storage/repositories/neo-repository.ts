@@ -79,20 +79,27 @@ export class NeoRepository {
   }
 
   repositories(): Map<string, string> {
-    const found = new Map<string, string>();
+    const canonical = new Map<string, string>();
+    const legacy = new Map<string, Set<string>>();
     for (const row of this.db
       .prepare(
-        "SELECT alias, project_id FROM neo_project_workspaces WHERE alias >= 'repo' AND alias < 'repp' ORDER BY alias DESC"
+        "SELECT alias, project_id FROM neo_project_workspaces WHERE alias >= 'repo' AND alias < 'repp'"
       )
       .all() as { alias: string; project_id: string }[]) {
-      const repository = row.alias.startsWith('repository:')
-        ? row.alias.slice('repository:'.length).replace(/^github\.com\//, '')
-        : row.alias.startsWith('repo:')
-          ? row.alias.slice('repo:'.length).split('\u0000')[0]
-          : null;
-      if (repository && !found.has(row.project_id)) found.set(row.project_id, repository);
+      if (row.alias.startsWith('repository:'))
+        canonical.set(
+          row.project_id,
+          row.alias.slice('repository:'.length).replace(/^github\.com\//, '')
+        );
+      else if (row.alias.startsWith('repo:'))
+        legacy
+          .set(row.project_id, legacy.get(row.project_id) ?? new Set())
+          .get(row.project_id)!
+          .add(row.alias.slice('repo:'.length).split('\u0000')[0]);
     }
-    return found;
+    for (const [projectId, names] of legacy)
+      if (!canonical.has(projectId) && names.size === 1) canonical.set(projectId, [...names][0]);
+    return canonical;
   }
 
   workspaceAliases(id: string, projects = this.listProjects()): string[] {

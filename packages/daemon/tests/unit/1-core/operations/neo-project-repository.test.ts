@@ -23,7 +23,7 @@ describe('neo.snapshot project repository', () => {
         new InternalEventBus<DaemonInternalEventMap>()
       );
       const raw = db.getDatabase();
-      for (const id of ['ios', 'web', 'notes'])
+      for (const id of ['ios', 'web', 'notes', 'forked'])
         service.repo.saveProject({ id, title: id, summary: id, context: '' }, 0);
       const alias = raw.prepare(
         'INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
@@ -32,6 +32,8 @@ describe('neo.snapshot project repository', () => {
       alias.run('repo:lsm/old-name\u0000laptop\u0000/w/web', 'web');
       alias.run('repository:github.com/lsm/hyperneo', 'web');
       alias.run('folder:tts\u0000/Users/lsm/notes', 'notes');
+      alias.run('repo:lsm/app\u0000tts\u0000/w/app', 'forked');
+      alias.run('repo:upstream/app\u0000tts\u0000/w/app', 'forked');
       const result = await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.snapshot',
@@ -44,6 +46,7 @@ describe('neo.snapshot project repository', () => {
       expect(repository('ios')).toBe('lsm/neo-ios');
       expect(repository('web')).toBe('lsm/hyperneo');
       expect(repository('notes')).toBeUndefined();
+      expect(repository('forked')).toBeUndefined();
     } finally {
       db.close();
     }
