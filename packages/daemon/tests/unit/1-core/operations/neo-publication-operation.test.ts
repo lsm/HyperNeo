@@ -695,9 +695,11 @@ describe('runtime-bound publication operation', () => {
       'unknown_ask_origin'
     );
     expect(requirePublicationAsk(admission.value, ask)).toHaveProperty('value.ask', ask);
+    const { publicationId: _publicationId, ...authored } = draft;
+    expect(admitPublicationDraft(authored)).toHaveProperty('value');
     expect(
       admitPublicationDraft({
-        ...draft,
+        ...authored,
         links: Array.from({ length: 17 }, () => ({ label: 'Open', kind: 'project', id: 'a' })),
       })
     ).toHaveProperty('reason.reason', 'invalid_publication');
