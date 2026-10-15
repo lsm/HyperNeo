@@ -12,6 +12,7 @@ import {
   isNeoAskAnsweredByReply,
   isNeoCardFailedForGood,
   neoReplyOriginKey,
+  neoAskTriggerOwner,
   neoTriggerMessageId,
   planNeoTriggerRetry,
   requireNeoTriggerUnheard,
@@ -80,6 +81,19 @@ const item = (id: string, state: 'met' | 'pending') => ({
   metBy: null,
   removed: false,
   addedAt: null,
+});
+
+describe('neoAskTriggerOwner', () => {
+  const projectAsk = { ...ask, projectId: 'labs' };
+  const holder = (projectId: string | null) => (projectId ? 'neo:holder:labs' : root);
+
+  test('a trigger about an ask goes to the Neo session that opened it, not the project holder', () => {
+    expect(neoAskTriggerOwner(projectAsk, (id) => id === root, holder)).toBe(root);
+  });
+
+  test('an ask whose opener is no Neo session falls back to its project holder', () => {
+    expect(neoAskTriggerOwner(projectAsk, () => false, holder)).toBe('neo:holder:labs');
+  });
 });
 
 describe('trigger keys of an ask', () => {
@@ -407,7 +421,10 @@ describe('NeoService notification triggers', () => {
       service as unknown as { scheduleTriggerSweep(delay?: number): void },
       'scheduleTriggerSweep'
     );
-    vi.spyOn(service, 'open').mockRejectedValueOnce(new Error('session gone'));
+    vi.spyOn(
+      service as unknown as { deliver(...args: unknown[]): Promise<void> },
+      'deliver'
+    ).mockRejectedValueOnce(new Error('session gone'));
     tickMet(opened);
     rearm.mockClear();
     await sweep();
