@@ -645,6 +645,33 @@ describe('requireNeoEvidenceRefresh', () => {
       { reason: 'not_due' },
     ],
     [
+      'a card whose done list is met but whose pull request changed after the last read',
+      refresh(),
+      {
+        goal: true,
+        session: true,
+        row: fresh,
+        packEvidence: true,
+        toldAt: null,
+        doneWhenMet: true,
+        changedAt: 20 * 60_000,
+      },
+      { value: expect.objectContaining({ row: fresh }) },
+    ],
+    [
+      'a freshly read row with no change since',
+      refresh(),
+      {
+        goal: true,
+        session: true,
+        row: fresh,
+        packEvidence: false,
+        toldAt: null,
+        changedAt: 18 * 60_000,
+      },
+      { reason: 'not_due' },
+    ],
+    [
       'a card with neither a row nor an evidence-reading pack',
       refresh(),
       { goal: true, session: true, row: null, packEvidence: false, toldAt: null },

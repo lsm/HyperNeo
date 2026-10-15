@@ -951,16 +951,14 @@ describe('neo.ask operations', () => {
 
   test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
     const askId = await openAsk();
-    for (const itemId of ['i1', 'i2'])
-      await invoke('neo.ask.tick', { askId, itemId, state: 'met', evidence: 'PR #12 merged.' });
     expect(
       await invoke('neo.ask.settle', {
         askId,
-        outcome: 'achieved',
-        summary: 'Merged in #12.',
-        evidence: 'PR #12 merged.',
+        outcome: 'abandoned',
+        summary: 'Not needed after #12.',
+        evidence: 'The human dropped it.',
       })
-    ).toMatchObject({ value: { ok: true, ask: { id: askId, status: 'achieved' } } });
+    ).toMatchObject({ value: { ok: true, ask: { id: askId, status: 'abandoned' } } });
     const settle = createNeoOperations(service).find((op) => op.name === 'neo.ask.settle')!;
     const schema = z.toJSONSchema(settle.inputSchema, { io: 'input' }) as {
       properties?: Record<string, unknown>;
@@ -1337,7 +1335,13 @@ describe('neo.ask operations', () => {
       },
     ];
     db.updateGlobalSettings({ neo: { packs: ['coding', 'legal'] } });
-    const input = { ...opening, doneItems: [{ text: 'Letter signed', check: 'legal.confirmed' }] };
+    const input = {
+      ...opening,
+      doneItems: [
+        { text: 'Letter signed', check: 'legal.confirmed' },
+        { text: 'Letter filed', check: null },
+      ],
+    };
     const opened = await invoke('neo.ask.open', input);
     expect(opened).toMatchObject({ value: { ok: true } });
     const askId = opened.value!.ask!.id;
@@ -1353,6 +1357,7 @@ describe('neo.ask operations', () => {
       service.askRecords.get(askId)?.doneItems?.map((item) => [item.state, item.evidence])
     ).toEqual([
       ['met', 'Signed receipt'],
+      ['pending', null],
       ['met', 'Signed receipt'],
     ]);
     db.updateGlobalSettings({ neo: { packs: ['coding'] } });
@@ -1372,7 +1377,7 @@ describe('neo.ask operations', () => {
         { source: 'rpc', principal: 'local' }
       )
     ).toMatchObject({ value: { ok: false, reason: 'unsupported_check: legal.confirmed' } });
-    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(3);
   });
 
   test.each(['legal.missing', '__proto__'])(
@@ -1455,13 +1460,14 @@ describe('neo.ask operations', () => {
         state: 'met',
         evidence: 'PR #12 merged, CI green.',
       });
-    expect(await invoke('neo.ask.settle', settle)).toMatchObject({
-      value: {
-        ok: true,
-        ask: { status: 'achieved', outcome: 'Merged in #12.', evidence: settle.evidence },
-      },
+    expect(service.askRecords.get(askId)).toMatchObject({
+      status: 'achieved',
+      outcome: settle.evidence,
+      evidence: settle.evidence,
     });
-    expect(await invoke('neo.ask.settle', settle)).toMatchObject({ value: { ok: true } });
+    expect(await invoke('neo.ask.settle', settle)).toMatchObject({
+      value: { ok: false, reason: 'ask_settled: this ask is already achieved.' },
+    });
     expect(
       await invoke('neo.ask.settle', { ...settle, outcome: 'blocked', evidence: 'x' })
     ).toMatchObject({ value: { ok: false, reason: 'ask_settled: this ask is already achieved.' } });
@@ -1543,7 +1549,7 @@ describe('neo.ask operations', () => {
       value: {
         ok: true,
         ask: {
-          status: 'open',
+          status: 'achieved',
           doneItems: [expect.anything(), expect.objectContaining({ metBy: 'human' })],
         },
       },
@@ -1559,8 +1565,7 @@ describe('neo.ask operations', () => {
 
   test('a decision Neo settles waiting on is asked as its own question it cannot drop', async () => {
     const askId = await openAsk();
-    for (const itemId of ['i1', 'i2'])
-      await invoke('neo.ask.tick', { askId, itemId, state: 'met', evidence: 'PR #12 merged.' });
+    await invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met', evidence: 'PR #12 merged.' });
     const waiting = {
       id: askId,
       outcome: 'waiting',
@@ -1900,7 +1905,7 @@ describe('neo.ask operations', () => {
         { askId, itemId: 'i1', state: 'met', evidence: 'The human confirmed it.' },
         { source: 'rpc', principal: 'local' }
       )
-    ).toMatchObject({ value: { ok: true, ask: { status: 'open' } } });
+    ).toMatchObject({ value: { ok: true, ask: { status: 'achieved' } } });
   });
 
   test('a reported item waits on the human only once nothing else is pending', () => {
@@ -3828,7 +3833,12 @@ describe('planNeoAskTickStatus', () => {
         waitingItem: 'i1',
         doneItems: [item('i1', 'met')],
       },
-      { status: 'open' },
+      { status: 'achieved', outcome: 'Item i1', evidence: 'Item i1' },
+    ],
+    [
+      'every item met',
+      { doneItems: [item('i1', 'met'), item('i2', 'met'), item('i3', 'met', true)] },
+      { status: 'achieved', outcome: 'Item i1; Item i2', evidence: 'Item i1; Item i2' },
     ],
     [
       'a deliberate wait whose summary happens to match an item',
