@@ -117,7 +117,7 @@ function publishDirectReply(
     shortText: reply.text.length > 2000 ? `${reply.text.slice(0, 1999)}…` : reply.text,
     fullText: reply.text.slice(0, 16000),
     links: [],
-    triggerId: neoHumanTrigger(reply.ask.requestId),
+    triggerId: neoHumanTrigger(reply.ask.askOrigin.messageId),
   };
   if (!runtime.append(input).accepted) return { skipped: true };
   runtime.notify();
