@@ -640,6 +640,8 @@ describe('requirePublicationNews', () => {
     'Let me check what is open on HyperNeo.',
     "I'll look into it and get back to you.",
     'Checking now…',
+    '我再向 HyperNeo 当前负责会话核对开放事项，拿到清单后直接发给你。',
+    'I will ask the HyperNeo holder to verify the list and get back to you.',
   ])('refuses the checking-only post %s', (text) => {
     expect(
       requirePublicationNews('v', { ...reply, shortText: text, fullText: text })
@@ -652,6 +654,7 @@ describe('requirePublicationNews', () => {
     '我检查了一下，CI 失败了。',
     '我确认了，#12 已合并。',
     '我先确认好了：两张卡在等你。',
+    'PR #12 已开，合并后告诉你。',
     '看起来 Slice 6 还在等你决定。',
     'Checked: two cards are waiting on you.',
   ])('keeps the answer %s', (text) => {
