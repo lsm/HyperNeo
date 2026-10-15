@@ -973,13 +973,11 @@ export class NeoService {
             detail: NEO_CONSULTATION_PENDING_DETAIL,
           };
         if (!consultationId) return this.appendPublication(input);
-        const answered = input.triggerId
-          ? this.publications.byTrigger(input.conversationId, input.triggerId)
-          : null;
-        if (answered && answered.publicationId !== input.publicationId) {
+        const repeat = this.publications.repeatOf(input);
+        if (repeat) {
           this.consultations.finish(consultationId, 'reported', input.fullText);
           this.consultations.returned(consultationId);
-          return { accepted: true, created: false, publication: answered };
+          return { accepted: true, created: false, publication: repeat };
         }
         const receipt = publicationSettlements.settleWithPublication({
           consultationId,
@@ -3087,7 +3085,7 @@ export class NeoService {
     const interrupted = messages.firstUserUuidBetween(sessionId, plan.sinceAt, plan.untilAt);
     const parent = interrupted ? { sessionId, messageId: interrupted } : null;
     const own = !!parent && isNeoHumanOwnTurn(parent.messageId, this.parentTrigger(parent));
-    if (this.triggerAnswered(parent)) return;
+    if (!own && this.triggerAnswered(parent)) return;
     await this.deliverToOrigin(
       sessionId,
       `${own ? NEO_HUMAN_TURN_LIMIT_PREFIX : NEO_TURN_LIMIT_PREFIX}${plan.resultUuid}`,
@@ -3883,9 +3881,6 @@ export class NeoService {
     if (!caller.sessionId || !caller.neoTurn) return null;
     const input = { sessionId: caller.sessionId, messageId: caller.neoTurn.messageId };
     const trigger = this.inputTrigger(input);
-    const root = this.repo.getBindingForProject(null);
-    const answered =
-      trigger && root ? this.publications.byTrigger(root.sessionId.slice(4), trigger) : null;
     const consulted =
       !!trigger &&
       !!projectId &&
@@ -3898,7 +3893,7 @@ export class NeoService {
             messageId: item.originMessageId,
           }) === trigger
       );
-    const reason = neoTriggerWorkProblem(input.messageId, trigger, !!answered, consulted);
+    const reason = neoTriggerWorkProblem(trigger, consulted);
     return reason ? { ok: false, reason } : null;
   }
 

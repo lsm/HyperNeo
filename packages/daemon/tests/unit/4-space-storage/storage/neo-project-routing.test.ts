@@ -267,10 +267,10 @@ describe('NeoCrossProjectRepository', () => {
     });
     const changed = { ...retry, shortText: 'A different aggregate.' };
     expect(reopened.append(changed, undefined, () => ledger.append(changed))).toMatchObject({
-      accepted: false,
-      reason: 'trigger_already_published',
+      accepted: true,
+      created: true,
     });
-    expect(reopened.forAsk(input.askOrigin)?.publicationId).toBe(input.publicationId);
+    expect(reopened.forAsk(input.askOrigin)?.publicationId).toBe(changed.publicationId);
   });
   test('rolls back the group and all queued parts when a membership write fails', () => {
     const sql = db.getDatabase();

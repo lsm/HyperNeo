@@ -38,29 +38,27 @@ function hasTrigger(
     .get(conversationId, triggerId, publicationId);
 }
 
-const sameInput = (a: NeoInputOrigin, b: NeoInputOrigin) =>
-  a.sessionId === b.sessionId && a.messageId === b.messageId;
-
 const sameAnswer = (a: NeoPublicationInput, b: NeoPublicationInput) =>
   a.shortText === b.shortText &&
   a.fullText === b.fullText &&
+  a.awaiting === b.awaiting &&
   JSON.stringify(a.links) === JSON.stringify(b.links);
 
-function answerTrigger(
-  db: Database,
+export function findNeoRepeatedPublication(
+  priors: readonly NeoPublication[],
   input: NeoPublicationInput
-): NeoPublicationAppendResult | null {
+): NeoPublication | null {
+  return priors.find((prior) => sameAnswer(prior, input)) ?? null;
+}
+
+function repeatOnTrigger(db: Database, input: NeoPublicationInput): NeoPublication | null {
   if (!input.triggerId) return null;
-  const row = db
+  const rows = db
     .prepare(`SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
       AND json_extract(payload_json, '$.triggerId') = ? AND publication_id <> ?
-      ORDER BY sequence LIMIT 1`)
-    .get(input.conversationId, input.triggerId, input.publicationId) as Row | null;
-  if (!row) return null;
-  const prior = decode(row);
-  return sameInput(prior.producerInput, input.producerInput) && sameAnswer(prior, input)
-    ? { accepted: true, created: false, publication: prior }
-    : { accepted: false, reason: 'trigger_already_published' };
+      ORDER BY sequence`)
+    .all(input.conversationId, input.triggerId, input.publicationId) as Row[];
+  return findNeoRepeatedPublication(rows.map(decode), input);
 }
 
 function appendImmutable(
@@ -69,8 +67,8 @@ function appendImmutable(
   payload: string
 ): NeoPublicationAppendResult {
   return db.transaction((): NeoPublicationAppendResult => {
-    const answered = answerTrigger(db, input);
-    if (answered) return answered;
+    const repeat = repeatOnTrigger(db, input);
+    if (repeat) return { accepted: true, created: false, publication: repeat };
     const inserted = db
       .prepare(`INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at)
         VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id, publication_id) DO NOTHING
@@ -226,6 +224,10 @@ export class NeoPublicationRepository {
     );
   }
 
+  repeatOf(input: NeoPublicationInput): NeoPublication | null {
+    return repeatOnTrigger(this.db, input);
+  }
+
   byTrigger(conversationId: string, triggerId: string): NeoPublication | null {
     const row = this.db
       .prepare(`SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
@@ -264,17 +266,17 @@ export class NeoPublicationRepository {
   }
 
   findByProducer(sessionId: string, messageId: string): NeoPublication | null {
-    const rows = this.db
+    const row = this.db
       .prepare(
         `SELECT ${columns} FROM neo_publications
         WHERE json_extract(payload_json, '$.producerInput.sessionId') = ?
           AND json_extract(payload_json, '$.producerInput.messageId') = ?
           AND json_extract(payload_json, '$.interim') IS NULL
           AND (json_extract(payload_json, '$.corrects') IS NULL
-            OR json_extract(payload_json, '$.triggerId') IS NOT NULL) LIMIT 2`
+            OR json_extract(payload_json, '$.triggerId') IS NOT NULL)
+          ORDER BY sequence LIMIT 1`
       )
-      .all(sessionId, messageId) as Row[];
-    if (rows.length > 1) throw new Error('Ambiguous consultation publications');
-    return rows[0] ? decode(rows[0]) : null;
+      .get(sessionId, messageId) as Row | null;
+    return row ? decode(row) : null;
   }
 }

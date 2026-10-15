@@ -36,7 +36,7 @@ export type NeoPublicationAppendResult =
   | { accepted: true; created: boolean; publication: NeoPublication }
   | {
       accepted: false;
-      reason: 'invalid_publication' | 'publication_conflict' | 'trigger_already_published';
+      reason: 'invalid_publication' | 'publication_conflict';
     };
 
 export type NeoPublicationChangeResult =

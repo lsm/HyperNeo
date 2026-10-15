@@ -34,8 +34,7 @@ export type NeoConsultationPublicationRejection =
   | 'consultation_settled'
   | 'consultation_expired'
   | 'publication_conflict'
-  | 'invalid_publication'
-  | 'trigger_already_published';
+  | 'invalid_publication';
 export type NeoConsultationPublicationInput = {
   consultationId: string;
   answer: string;

@@ -14,18 +14,6 @@ export interface NeoPublicationCommitDeps {
   published(input: NeoPublicationInput, publication: NeoPublication): void;
 }
 
-export function explainNeoPublicationRefusal(receipt: Receipt): Receipt {
-  return !receipt.accepted &&
-    receipt.reason === 'trigger_already_published' &&
-    !('detail' in receipt)
-    ? {
-        ...receipt,
-        detail:
-          'The human already has the answer for this trigger; its first answer closes it. A later fact goes out as its own outcome or trigger message. End the turn.',
-      }
-    : receipt;
-}
-
 export function createNeoPublicationCommit(deps: NeoPublicationCommitDeps) {
   return (superpipe({})('neo-publication-commit') as PipelineAPI)
     .input(['input', 'consultationId'])
@@ -43,7 +31,7 @@ export function createNeoPublicationCommit(deps: NeoPublicationCommitDeps) {
     .pipe(
       (receipt: Receipt, input: NeoPublicationInput) => {
         if (receipt.accepted && receipt.created) deps.published(input, receipt.publication);
-        return explainNeoPublicationRefusal(receipt);
+        return receipt;
       },
       ['receipt', 'input'],
       'receipt'
