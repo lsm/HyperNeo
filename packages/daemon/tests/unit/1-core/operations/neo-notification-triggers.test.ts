@@ -85,6 +85,12 @@ describe('trigger keys of an ask', () => {
   const keys = (target: NeoAsk, read = { view: view(), cards: [card()] }, pending = false) =>
     neoAskTriggerKeys(target, read, work, () => pending).map((key) => [key.kind, key.key]);
 
+  test('an ask with nothing running wakes Neo once per ended card', () => {
+    const idle = { view: view({ workIds: [], idle: true }), cards: [card({ phase: 'cancelled' })] };
+    expect(keys(ask, idle)).toEqual([['failed', 'idle:500']]);
+    expect(keys({ ...ask, workIds: [] }, idle)).toEqual([['failed', 'idle:10']]);
+  });
+
   test('an achieved ask, or one with every item met, is one outcome trigger', () => {
     expect(keys({ ...ask, status: 'achieved' })).toEqual([['outcome', 'outcome:0']]);
     expect(keys({ ...ask, doneItems: [item('i1', 'met'), item('i2', 'met')] })).toEqual([

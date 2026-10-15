@@ -10,6 +10,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
 import { neoForwardedAskMessageId } from './ask-forward-operation.ts';
 import { nudgedMessageId } from './ask-origin.ts';
+import { isNeoCardInPlay } from './ask-views.ts';
 
 export const NEO_TRIGGER_PREFIX = 'neo-trigger:';
 export const NEO_HUMAN_TRIGGER_PREFIX = 'human:';
@@ -195,10 +196,6 @@ export function isNeoCardFailedForGood(card: NeoCardView, pending: boolean): boo
   );
 }
 
-export function isNeoCardInPlay(card: Pick<NeoCardView, 'group' | 'phase'>): boolean {
-  return card.group !== 'outcomes' && card.phase !== 'abandoned';
-}
-
 export function neoAskTriggerKeys(
   ask: NeoAsk,
   read: NeoAskTriggerRead,
@@ -227,8 +224,18 @@ export function neoAskTriggerKeys(
         line: `${titled(work(card.workId), card.workId)} failed with no retry left`,
       })
     );
+  const idle: NeoTriggerKey[] = read.view.idle
+    ? [
+        {
+          key: `idle:${Math.max(ask.createdAt, ...ask.workIds.map((id) => work(id)?.updatedAt ?? 0))}`,
+          kind: 'failed',
+          line: 'nothing is running for this ask and its outcome is not met: propose new work or settle it',
+        },
+      ]
+    : [];
   return [
     ...failed,
+    ...idle,
     ...(read.view.humanActions ?? [])
       .filter((action) => action.kind !== 'close')
       .map((action) => neoActionTriggerKey(ask, action, work)),

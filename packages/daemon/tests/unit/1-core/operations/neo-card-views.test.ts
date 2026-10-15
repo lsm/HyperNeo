@@ -454,6 +454,28 @@ describe('projectNeoAskViews', () => {
     expect(quiet[0]).toMatchObject({ group: 'running', needsYou: false });
   });
 
+  test('an open ask whose cards all ended says nothing is running, and only then', () => {
+    const input = parts({
+      work: [work('gone', 'cancelled', 's1'), work('live', 'queued')],
+      asks: [
+        ask({ workIds: ['gone'] }),
+        ask({ id: 'a2', workIds: ['gone', 'live'] }),
+        ask({ id: 'a3', workIds: ['gone'], doneItems: [item('a', 'met')] }),
+      ],
+    });
+    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
+    expect(views[0]).toMatchObject({
+      group: 'attention',
+      label: 'Nothing running · start again or drop it',
+      idle: true,
+      humanActions: [],
+    });
+    expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
+    expect(views[1]).toMatchObject({ group: 'running', label: 'Working on it' });
+    expect(views[1]).not.toHaveProperty('idle');
+    expect(views[2]).not.toHaveProperty('idle');
+  });
+
   test('done items count instead of cards when the ask has them', () => {
     const input = parts({
       work: [work('w', 'queued')],

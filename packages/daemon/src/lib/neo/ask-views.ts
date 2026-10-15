@@ -25,6 +25,12 @@ const askScenes: Record<NeoAskStatus, { group: NeoCardGroup; label: string }> = 
 const dropped = (card: NeoCardView) =>
   card.phase === 'cancelled' || (card.phase === 'failed' && card.superseded);
 
+export const NEO_ASK_IDLE_LABEL = 'Nothing running · start again or drop it';
+
+export function isNeoCardInPlay(card: Pick<NeoCardView, 'group' | 'phase'>): boolean {
+  return card.group !== 'outcomes' && card.phase !== 'abandoned';
+}
+
 type AskViewIndex = {
   cards: Map<string, NeoCardView>;
   merged: Map<string, string[]>;
@@ -162,12 +168,20 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     .filter((card) => card.phase === 'merged' && !card.pr?.setback)
     .map((card) => card.workId);
   const counted = (ask.doneItems ?? []).filter((item) => !item.removed);
+  const humanActions = deriveNeoAskHumanActions(ask, live);
+  const idle =
+    ask.status === 'open' &&
+    !needsYou &&
+    !humanActions.length &&
+    !live.some(isNeoCardInPlay) &&
+    !(counted.length && counted.every((item) => item.state === 'met'));
   return {
     askId: ask.id,
-    group: needsYou ? 'attention' : truth.group,
-    label: needsYou ? 'Needs you' : truth.label,
+    group: needsYou || idle ? 'attention' : truth.group,
+    label: needsYou ? 'Needs you' : idle ? NEO_ASK_IDLE_LABEL : truth.label,
     settled,
     needsYou,
+    ...(idle ? { idle: true as const } : {}),
     done: counted.length
       ? counted.filter((item) => item.state === 'met').length
       : doneWorkIds.length,
@@ -179,7 +193,7 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     summary: neoAskViewSummary(ask, live, index.merged),
     sessions,
     answer: neoAskAnswer(ask),
-    humanActions: deriveNeoAskHumanActions(ask, live),
+    humanActions,
   };
 }
 

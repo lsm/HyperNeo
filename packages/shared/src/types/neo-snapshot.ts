@@ -291,6 +291,7 @@ export interface NeoAskView {
   label: string;
   settled: boolean;
   needsYou: boolean;
+  idle?: true;
   done: number;
   total: number;
   workIds: string[];
