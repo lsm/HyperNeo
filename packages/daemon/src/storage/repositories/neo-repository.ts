@@ -1,8 +1,9 @@
-import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
-import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { Database } from '../sqlite-compat.ts';
+import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import { CONSULTATION_TIMEOUT_MS } from '../../lib/neo/consultation-policy.ts';
+import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
+import type { Database } from '../sqlite-compat.ts';
+import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
 
 const concernColumns = `id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl,
   created_at AS createdAt, updated_at AS updatedAt`;
@@ -44,6 +45,40 @@ export class NeoRepository {
       .prepare(`SELECT ${concernColumns} FROM neo_concerns
         WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id`)
       .all() as NeoProject[];
+  }
+
+  projectCleanupFacts(): NeoProjectFacts[] {
+    const rows = this.db
+      .prepare(`SELECT c.id, c.title, c.created_at AS createdAt,
+          (c.epic_url IS NOT NULL OR EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)) AS section,
+          length(c.context) AS context,
+          (SELECT count(*) FROM neo_asks a WHERE a.concern_id = c.id) AS asks,
+          (SELECT count(*) FROM neo_asks a WHERE a.concern_id = c.id
+            AND a.status IN ('open', 'waiting', 'blocked')) AS liveAsks,
+          (SELECT count(*) FROM neo_work w WHERE w.concern_id = c.id
+            AND w.status IN ('proposed', 'queued')) AS liveWork,
+          (SELECT count(*) FROM neo_routing_log r WHERE r.concern_id = c.id) AS routed,
+          (SELECT count(*) FROM neo_session_bindings b JOIN sdk_messages m ON m.session_id = b.session_id
+            WHERE b.kind = 'project' AND b.concern_id = c.id) AS holderMessages
+        FROM neo_concerns c
+        WHERE c.id NOT IN (SELECT source_id FROM neo_project_merges)`)
+      .all() as (Omit<NeoProjectFacts, 'section' | 'work' | 'aliases'> & { section: number })[];
+    const work = this.db
+      .prepare(`SELECT w.concern_id AS projectId, w.updated_at AS lastActivityAt,
+          json_extract(t.ref, '$.adapter') || char(0) || json_extract(t.ref, '$.id') AS ref
+        FROM neo_work w LEFT JOIN neo_work_driver_targets t ON t.work_id = w.id`)
+      .all() as { projectId: string; lastActivityAt: number; ref: string | null }[];
+    const aliases = this.db
+      .prepare('SELECT project_id AS projectId, alias FROM neo_project_workspaces')
+      .all() as { projectId: string; alias: string }[];
+    return rows.map((row) => ({
+      ...row,
+      section: !!row.section,
+      work: work
+        .filter((entry) => entry.projectId === row.id)
+        .map((entry) => ({ lastActivityAt: entry.lastActivityAt, ref: entry.ref })),
+      aliases: aliases.filter((entry) => entry.projectId === row.id).map((entry) => entry.alias),
+    }));
   }
 
   listProjectTitles(): Array<{ id: string; title: string }> {

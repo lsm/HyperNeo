@@ -3,9 +3,15 @@ import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { hashString32 } from '../runtime-hash.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { hashString32 } from '../runtime-hash.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
+import {
+  type NeoProjectCleanup,
+  type NeoProjectFacts,
+  neoCleanupFolders,
+  planNeoProjectCleanup,
+} from './project-cleanup.ts';
 import { NEO_INBOX_ID, type NeoRouted } from './router.ts';
 
 const Input = z.object({}).default({});
@@ -29,6 +35,14 @@ const Result = z.union([
     asked: z.array(z.object({ sourceId: z.string(), targetId: z.string() })),
     moved: z.array(z.object({ askId: z.string(), projectId: z.string() })),
     stayed: z.array(Stayed),
+    cleanupPlanned: z.array(
+      z.object({
+        action: z.enum(['delete', 'merge', 'archive']),
+        projectId: z.string(),
+        title: z.string(),
+        targetId: z.string().optional(),
+      })
+    ),
   }),
 ]);
 type Stay = z.infer<typeof Stayed>;
@@ -55,6 +69,9 @@ export interface NeoReorganizeRuntime {
   ): Promise<void>;
   move(ask: NeoAsk, cards: readonly NeoWork[], owner: Project & { messageId: string }): boolean;
   mergeProjects(): Promise<{ merged: Merged[]; asked: Merged[] }>;
+  projectFacts(): NeoProjectFacts[];
+  machine(): string;
+  mirroredAliases(folders: readonly string[]): Promise<ReadonlySet<string> | null>;
   log(line: string): void;
 }
 
@@ -170,6 +187,7 @@ export type NeoReorganized = {
   asked: Merged[];
   moved: Moved[];
   stayed: Stay[];
+  cleanupPlanned: NeoProjectCleanup[];
 };
 
 export function createNeoProjectsReorganizer(
@@ -208,7 +226,10 @@ export function createNeoProjectsReorganizer(
     const root = runtime.rootSessionId();
     const moved: Moved[] = [];
     const stayed: Stay[] = [];
-    if (!root) return { merged: [], asked: [], moved, stayed };
+    if (!root) return { merged: [], asked: [], moved, stayed, cleanupPlanned: [] };
+    const mirrored = await runtime.mirroredAliases(
+      neoCleanupFolders(runtime.projectFacts(), runtime.machine())
+    );
     const { merged, asked } = await runtime.mergeProjects();
     for (const merge of merged)
       runtime.log(`neo reorganize: merged project ${merge.sourceId} into ${merge.targetId}`);
@@ -222,7 +243,19 @@ export function createNeoProjectsReorganizer(
       if ('reason' in result) stayed.push(result);
       else moved.push(result);
     }
-    return { merged, asked, moved, stayed };
+    if (!mirrored) runtime.log('neo reorganize: no project cleanup, the places could not be read');
+    const cleanupPlanned = mirrored
+      ? planNeoProjectCleanup(runtime.projectFacts(), {
+          pinned: new Set([NEO_INBOX_ID]),
+          machine: runtime.machine(),
+          mirrored,
+        })
+      : [];
+    for (const step of cleanupPlanned)
+      runtime.log(
+        `neo reorganize: would ${step.action} project ${step.projectId} (${step.title})${'targetId' in step ? ` into ${step.targetId}` : ''}`
+      );
+    return { merged, asked, moved, stayed, cleanupPlanned };
   };
 }
 
@@ -240,7 +273,7 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
   return defineOperation({
     name: 'neo.projects.reorganize',
     description:
-      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read are asked about once on main (asked): run this again after the human answers to apply it, and a saved answer is never asked again. Then move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
+      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read are asked about once on main (asked): run this again after the human answers to apply it, and a saved answer is never asked again. Then move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also plans project cleanup and returns it in cleanupPlanned without applying it yet: projects sharing a repository merge into the oldest, which is never deleted or archived; a project with no repository is deleted when empty and the mirror would not create it again (its places are not a repository and not ongoing), merged into the repository project with its title or folder, or, when it was a one-off (one day of work and never addressed by the human), has its holder session archived. Projects only on another machine are left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

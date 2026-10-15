@@ -66,6 +66,7 @@ describe('runNeoNightlyReorganize', () => {
           asked: [],
           moved: [{ askId: 'a', projectId: 'c' }],
           stayed: [{ askId: 'b', reason: 'stays_main' }],
+          cleanupPlanned: [],
         };
       },
       log: (line) => lines.push(line),
@@ -91,7 +92,7 @@ describe('runNeoNightlyReorganize', () => {
         lastHumanAt: () => now - 60_000,
         reorganize: async () => {
           runs++;
-          return { merged: [], asked: [], moved: [], stayed: [] };
+          return { merged: [], asked: [], moved: [], stayed: [], cleanupPlanned: [] };
         },
         log: () => {},
       }
