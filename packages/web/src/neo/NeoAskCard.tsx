@@ -307,9 +307,12 @@ export function NeoAskCard({
   const [open, setOpen] = useState(false);
   const { ask } = view;
   const summarized = isNeoSummarized(ask);
+  const sceneStatuses = view.scenes
+    .map((scene) => (scene.receipt.kind === 'work' ? scene.receipt.status : ''))
+    .join();
   useEffect(() => {
     if (open && summarized) onExpand?.();
-  }, [open, summarized, detailEpoch]);
+  }, [open, summarized, detailEpoch, ask.revision, sceneStatuses]);
   const tone =
     view.group === 'attention'
       ? 'attention'

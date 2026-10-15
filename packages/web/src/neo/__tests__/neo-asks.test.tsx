@@ -288,6 +288,14 @@ describe('NeoAskCard', () => {
       />
     );
     expect(onExpand).toHaveBeenCalledTimes(3);
+    card.rerender(
+      <NeoAskCard
+        view={describeAsk({ ...summarized, revision: 9 }, [], { settled: true })}
+        onExpand={onExpand}
+        detailEpoch={1}
+      />
+    );
+    expect(onExpand).toHaveBeenCalledTimes(4);
   });
 
   it('shows no session rows when the ask has none', () => {
