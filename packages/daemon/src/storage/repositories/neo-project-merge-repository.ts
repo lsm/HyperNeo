@@ -140,7 +140,7 @@ export class NeoProjectMergeRepository {
     for (const [table, condition] of [
       ['neo_asks', "status IN ('waiting', 'blocked')"],
       ['neo_consultations', "status = 'pending'"],
-      ['neo_consultation_waiters', "status IN ('queued', 'admitted')"],
+      ['neo_consultation_waiters', "status = 'queued'"],
     ]) {
       for (const row of this.db
         .prepare(`SELECT DISTINCT concern_id AS id FROM ${table} WHERE ${condition}`)

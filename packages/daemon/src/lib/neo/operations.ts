@@ -1,6 +1,6 @@
 import { neoTurnRequestKey } from './request-key.ts';
 import { hostname } from 'node:os';
-import { planNeoProjectRetitles } from './project-mirror.ts';
+import { backfillNeoRepositoryIdentities, planNeoProjectRetitles } from './project-mirror.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { readNeoProjectFacts } from './project-route-facts.ts';
 import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
@@ -913,6 +913,12 @@ export function neoReorganizeRuntime(
     move: (ask, cards, owner) => service.moveAsk(ask, cards, owner),
     mergeProjects: async () => {
       const merges = service.repo.projectMerges;
+      const before = new Set(merges.redirects().map((entry) => entry.sourceId));
+      if (backfillNeoRepositoryIdentities(service.db.getDatabase())) service.notifyChanged();
+      const backfilled = merges
+        .redirects()
+        .filter((entry) => !before.has(entry.sourceId))
+        .map(({ sourceId, targetId }) => ({ sourceId, targetId }));
       const local = merges.localFolders(hostname());
       const fresh = await readNeoProjectIdentities(local, readWorkspaceIdentity);
       merges.recordIdentities(fresh);
@@ -949,7 +955,7 @@ export function neoReorganizeRuntime(
         );
         service.logReorganize(`neo reorganize: retitled ${retitle.id} to ${retitle.title}`);
       }
-      return { merged: [...merged, ...settled.merged], asked: settled.asked };
+      return { merged: [...backfilled, ...merged, ...settled.merged], asked: settled.asked };
     },
     log: (line) => service.logReorganize(line),
   };
