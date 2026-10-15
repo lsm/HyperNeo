@@ -87,7 +87,10 @@ describe('trigger keys of an ask', () => {
     neoAskTriggerKeys(target, read, work, () => pending).map((key) => [key.kind, key.key]);
 
   test('an ask with nothing running wakes Neo once per ended card', () => {
-    const idle = { view: view({ workIds: [], idle: true }), cards: [card({ phase: 'cancelled' })] };
+    const idle = {
+      view: view({ workIds: [], idle: true, humanActions: [{ kind: 'drop' }] }),
+      cards: [card({ phase: 'cancelled' })],
+    };
     expect(keys(ask, idle)).toEqual([['idle', 'idle:500']]);
     expect(keys({ ...ask, workIds: [] }, idle)).toEqual([['idle', 'idle:10']]);
   });
@@ -296,30 +299,27 @@ describe('noteNeoAskTrigger', () => {
 });
 
 describe('neoTriggerNote', () => {
-  test('names the trigger and quotes the human’s last message for its language', () => {
-    const note = neoTriggerNote(
-      ask,
-      {
-        triggerId: 'outcome:a1:x',
-        kind: 'outcome',
-        keys: ['outcome:0'],
-        lines: ['the ask is achieved'],
-      },
-      '把输入框修好'
-    );
+  test('names the trigger and what to tell the human, leaving the language to the turn', () => {
+    const note = neoTriggerNote(ask, {
+      triggerId: 'outcome:a1:x',
+      kind: 'outcome',
+      keys: ['outcome:0'],
+      lines: ['the ask is achieved'],
+    });
     expect(note).toContain('Notification trigger outcome:a1:x: the ask reached its outcome');
     expect(note).toContain('triggerId: "outcome:a1:x"');
     expect(note).toContain('- the ask is achieved');
     expect(note).toContain('name the outcome.');
-    expect(note).toContain('"把输入框修好"');
+    expect(note).not.toContain('language');
   });
 
   test('an idle trigger asks Neo to restart or settle, never to report a failure', () => {
-    const note = neoTriggerNote(
-      ask,
-      { triggerId: 'idle:a1:x', kind: 'idle', keys: ['idle:500'], lines: ['nothing is running'] },
-      null
-    );
+    const note = neoTriggerNote(ask, {
+      triggerId: 'idle:a1:x',
+      kind: 'idle',
+      keys: ['idle:500'],
+      lines: ['nothing is running'],
+    });
     expect(note).toContain('nothing is running for the ask and its outcome is not met');
     expect(note).toContain('propose new work for it or settle it');
     expect(note).not.toContain('failed');
@@ -404,7 +404,6 @@ describe('NeoService notification triggers', () => {
     const [note] = mailbox();
     expect(note.messageUuid).toMatch(/^neo-trigger:outcome:a1:/);
     expect(JSON.stringify(note.message)).toContain('the ask reached its outcome');
-    expect(JSON.stringify(note.message)).toContain('把输入框修好');
     service.askRecords.settle(service.askRecords.get('a1')!, 'achieved', 'Fixed.', 'merged');
     sweep();
     sweep();

@@ -26,7 +26,7 @@ const askScenes: Record<NeoAskStatus, { group: NeoCardGroup; label: string }> = 
 const dropped = (card: NeoCardView) =>
   card.phase === 'cancelled' || (card.phase === 'failed' && card.superseded);
 
-export const NEO_ASK_IDLE_LABEL = 'Nothing running · start again or drop it';
+export const NEO_ASK_IDLE_LABEL = 'Nothing running · Neo will propose again, or drop it';
 
 export function isNeoCardInPlay(card: Pick<NeoCardView, 'group' | 'phase'>): boolean {
   return card.group !== 'outcomes' && card.phase !== 'abandoned';
@@ -201,7 +201,7 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     summary: neoAskViewSummary(ask, live, index.merged),
     sessions,
     answer: neoAskAnswer(ask),
-    humanActions,
+    humanActions: idle ? [...humanActions, { kind: 'drop' }] : humanActions,
   };
 }
 
