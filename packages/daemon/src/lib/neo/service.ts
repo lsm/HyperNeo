@@ -932,7 +932,7 @@ export class NeoService {
       commit: (input) => {
         const problem = this.crossProjects.publicationProblem(input);
         if (problem) return { accepted: false, reason: problem };
-        if (input.triggerId && this.consultationOpenFor(input.triggerId))
+        if (this.consultationOpenFor(input))
           return {
             accepted: false,
             reason: 'consultation_pending',
@@ -3832,16 +3832,22 @@ export class NeoService {
     );
   }
 
-  private consultationOpenFor(trigger: string): boolean {
+  private consultationOpenFor(
+    input: Pick<NeoPublicationInput, 'triggerId' | 'askOrigin'>
+  ): boolean {
     return [
       ...this.consultations.unsettled().filter((item) => item.status === 'pending'),
       ...this.consultationWaiters.queued(),
-    ].some(
-      (item) =>
-        !!item.originMessageId &&
-        this.inputTrigger({ sessionId: item.originSessionId, messageId: item.originMessageId }) ===
-          trigger
-    );
+    ].some((item) => {
+      if (!item.originMessageId) return false;
+      const origin = { sessionId: item.originSessionId, messageId: item.originMessageId };
+      const ask = this.resolveAskOrigin(origin);
+      return (
+        (!!input.triggerId && this.inputTrigger(origin) === input.triggerId) ||
+        (ask?.sessionId === input.askOrigin.sessionId &&
+          ask.messageId === input.askOrigin.messageId)
+      );
+    });
   }
 
   triggerWorkProblem(

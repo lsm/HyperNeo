@@ -275,20 +275,34 @@ describe('runtime-bound publication operation', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  test('a returned-work note is not a trigger, so its publication is refused with a reason', async () => {
+  test('a turn without a trigger may still tell the human a new fact, but not filler', async () => {
     const item = work();
     repo.transitionWork(item.id, item, { status: 'reported', report: 'Reported context only' });
     prompt(root.sessionId, item.id, 'system');
     stamp({ sessionId: root.sessionId, messageId: item.id }, ask, null);
-    expect(await invoke(draft, caller(root.sessionId, item.id, false))).toMatchObject({
+    const note = caller(root.sessionId, item.id, false);
+    expect(await invoke({ ...draft, shortText: '收到。', fullText: '收到。' }, note)).toMatchObject(
+      {
+        value: {
+          accepted: false,
+          reason: 'no_news',
+          detail: expect.stringContaining('end the turn'),
+        },
+      }
+    );
+    expect(await invoke(draft, note)).toMatchObject({
+      value: { accepted: true, publication: { shortText: draft.shortText } },
+    });
+    expect(ledger.list(conversationId)?.[0]?.triggerId).toBeUndefined();
+    expect(
+      await invoke({ ...draft, publicationId: '20000000-0000-4000-8000-000000000009' }, caller())
+    ).toMatchObject({
       value: {
-        accepted: false,
-        reason: 'no_trigger',
-        detail: expect.stringContaining('End the turn'),
+        accepted: true,
+        created: true,
+        publication: { triggerId: `human:${ask.messageId}` },
       },
     });
-    expect(ledger.list(conversationId)).toEqual([]);
-    expect(notify).not.toHaveBeenCalled();
   });
 
   test('a trigger note turn publishes under its trigger id; a repeat returns the first, a new fact posts', () => {
@@ -348,7 +362,7 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)).toHaveLength(2);
   });
 
-  test('a returned consultation answers the human message that asked it, but not a note', () => {
+  test('a returned consultation answers the human message that asked it; a note’s new fact posts without one', () => {
     const reply = 'neo-consult:consult:1:reply';
     prompt(root.sessionId, reply, 'system');
     stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
@@ -364,12 +378,17 @@ describe('runtime-bound publication operation', () => {
       { sessionId: root.sessionId, messageId: 'note-1' },
       'continues'
     );
-    expect(
-      publish(
-        { ...draft, publicationId: '20000000-0000-4000-8000-000000000004' },
-        caller(root.sessionId, noted, false)
-      )
-    ).toMatchObject({ accepted: false, reason: 'no_trigger' });
+    const fact = publish(
+      {
+        ...draft,
+        publicationId: '20000000-0000-4000-8000-000000000004',
+        shortText: 'A note fact.',
+        fullText: 'A note fact.',
+      },
+      caller(root.sessionId, noted, false)
+    );
+    expect(fact).toMatchObject({ accepted: true, created: true });
+    expect(fact.accepted && fact.publication.triggerId).toBeUndefined();
   });
 
   test('refuses a triggerId that is not this turn’s trigger', () => {
@@ -383,7 +402,7 @@ describe('runtime-bound publication operation', () => {
   test('refuses an interim status post even on a human turn', () => {
     expect(publish({ ...draft, interim: true }, caller())).toMatchObject({
       accepted: false,
-      reason: 'interim_refused',
+      reason: 'no_news',
     });
     expect(publish(draft, caller())).toMatchObject({ accepted: true });
   });
@@ -434,15 +453,22 @@ describe('runtime-bound publication operation', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  test.each(['missing', 'system', 'dead', 'wrong-session'])(
-    'refuses %s producer evidence before any append',
+  test('refuses a dead turn before any append', async () => {
+    const who = caller(root.sessionId, 'unrecorded');
+    who.neoTurn!.isLive = () => false;
+    expect(await invoke(draft, who)).toMatchObject({ value: { accepted: false } });
+    expect(ledger.list(conversationId)).toEqual([]);
+  });
+
+  test.each(['missing', 'system', 'wrong-session'])(
+    'a live turn with %s input evidence may still tell a new fact, once',
     async (kind) => {
       const who = caller(root.sessionId, 'unrecorded');
       if (kind === 'system') prompt(root.sessionId, 'unrecorded', 'system');
-      if (kind === 'dead') who.neoTurn!.isLive = () => false;
       if (kind === 'wrong-session') prompt(holder.sessionId, 'unrecorded');
-      expect(await invoke(draft, who)).toMatchObject({ value: { accepted: false } });
-      expect(ledger.list(conversationId)).toEqual([]);
+      expect(await invoke(draft, who)).toMatchObject({ value: { accepted: true, created: true } });
+      expect(await invoke(draft, who)).toMatchObject({ value: { accepted: true, created: false } });
+      expect(ledger.list(conversationId)).toHaveLength(1);
     }
   );
 
@@ -501,7 +527,7 @@ describe('runtime-bound publication operation', () => {
     const id = (n: number) => `20000000-0000-4000-8000-00000000010${n}`;
     expect(
       publish({ ...draft, publicationId: id(1), shortText: '收到。', fullText: '收到。' }, caller())
-    ).toMatchObject({ accepted: false, reason: 'empty_acknowledgement' });
+    ).toMatchObject({ accepted: false, reason: 'no_news' });
     expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({ accepted: true });
     expect(
       publish({ ...draft, publicationId: id(3), shortText: 'One more thing.' }, caller())
@@ -678,7 +704,7 @@ describe('requirePublicationNews', () => {
     (text) => {
       expect(
         requirePublicationNews('v', { ...reply, shortText: text, fullText: text })
-      ).toMatchObject({ reason: { reason: 'empty_acknowledgement' } });
+      ).toMatchObject({ reason: { reason: 'no_news' } });
     }
   );
 
@@ -687,7 +713,7 @@ describe('requirePublicationNews', () => {
     ['👍', '👍'],
   ])('refuses %s with full text %s', (shortText, fullText) => {
     expect(requirePublicationNews('v', { ...reply, shortText, fullText })).toMatchObject({
-      reason: { reason: 'empty_acknowledgement' },
+      reason: { reason: 'no_news' },
     });
   });
 
@@ -711,13 +737,16 @@ describe('neoDeliveryTrigger', () => {
 });
 
 describe('requirePublicationTrigger', () => {
-  test('stamps the turn trigger and refuses a turn without one', () => {
+  test('stamps the turn trigger when there is one, and refuses only a wrong trigger', () => {
     expect(requirePublicationTrigger({ a: 1 }, {}, 'human:m1')).toEqual({
       value: { a: 1, triggerId: 'human:m1' },
     });
-    expect(requirePublicationTrigger({ a: 1 }, {}, null)).toHaveProperty(
+    expect(requirePublicationTrigger({ a: 1 }, {}, null)).toEqual({
+      value: { a: 1, triggerId: undefined },
+    });
+    expect(requirePublicationTrigger({ a: 1 }, { triggerId: 'x' }, 'human:m1')).toHaveProperty(
       'reason.reason',
-      'no_trigger'
+      'wrong_trigger'
     );
   });
 });

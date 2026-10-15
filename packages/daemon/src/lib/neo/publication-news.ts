@@ -24,7 +24,7 @@ const ACKNOWLEDGEMENTS = new Set([
   'heard',
 ]);
 
-type Draft = { shortText: string; fullText: string };
+type Draft = { shortText: string; fullText: string; interim?: true };
 type Rejection = { accepted: false; reason: string; detail: string };
 
 export function neoReplyText(text: string): string {
@@ -36,14 +36,15 @@ export function requirePublicationNews<T>(
   draft: Draft
 ): { value: T } | { reason: Rejection } {
   const empty = (value: string) => value === '' || ACKNOWLEDGEMENTS.has(value);
-  if (empty(neoReplyText(draft.shortText)) && empty(neoReplyText(draft.fullText)))
-    return {
-      reason: {
-        accepted: false,
-        reason: 'empty_acknowledgement',
-        detail:
-          'This only acknowledges the message. Publish when you have something to tell the human, or end the turn.',
-      },
-    };
-  return { value };
+  return draft.interim ||
+    (empty(neoReplyText(draft.shortText)) && empty(neoReplyText(draft.fullText)))
+    ? {
+        reason: {
+          accepted: false,
+          reason: 'no_news',
+          detail:
+            'Speak when there is something new for the human: a result, a change, something they must do, or something that broke. Acknowledgements and progress updates are not published; end the turn.',
+        },
+      }
+    : { value };
 }

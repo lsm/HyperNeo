@@ -32,7 +32,7 @@ function publication(index = 1, target = conversationId) {
     publicationId: `20000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
     askOrigin: { sessionId: root.sessionId, messageId: 'original-ask' },
     producerInput: { sessionId: 'holder:research', messageId: 'return-input' },
-    shortText: 'Two differences are worth checking.',
+    shortText: `Two differences are worth checking (${index}).`,
     fullText: '**Fictional comparison**\n\nKeep this as a draft.',
     links: [{ kind: 'project' as const, id: 'research', label: '查看对照 ↗' }],
   };

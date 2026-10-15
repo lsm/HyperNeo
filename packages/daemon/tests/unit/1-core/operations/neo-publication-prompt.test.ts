@@ -64,10 +64,10 @@ describe('direct human publication prompt', () => {
     }
   });
   test.each([null, 'research'])(
-    'tells %s to publish only for a notification trigger, never an interim post',
+    'tells %s to publish only a new fact, never an interim post',
     (projectId) => {
       const prompt = delivered(projectId);
-      expect(prompt).toContain('You publish to the human only for a notification trigger');
+      expect(prompt).toContain('You publish to the human when you have something new for them');
       expect(prompt).toContain(
         'There are no interim or status posts, and never repeat yourself: publish the answer, then only a new fact'
       );
@@ -136,9 +136,9 @@ describe('direct human publication prompt', () => {
   test.each([null, 'research'])('excludes internal and non-human inputs for %s', (projectId) => {
     const prompt = delivered(projectId);
     expect(prompt).toContain(
-      'Never publish internal compaction, tool chatter, other system deliveries or returned results as answers'
+      'Never publish internal compaction, tool chatter, or a returned result as it stands'
     );
-    expect(prompt).toContain('or the sentence a trigger note asks for');
+    expect(prompt).toContain('or a new fact a note or returned result brings for the human');
     expect(prompt).toContain('not a consultation request from Neo');
     expect(prompt).toContain('not a returned work or consultation result');
   });
