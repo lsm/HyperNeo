@@ -9,7 +9,8 @@ outcomes with doneItems and check coding.pr_merged; watch URLs alone do not
 replace the check. Only when the human asks just to open a pull request, and
 nothing more, is the outcome "a pull request is open in owner/repo" with check
 coding.pr_opened: the daemon ticks it once a card's pull request is open or
-merged. Never use it for an outcome that is merged, tested or deployed. Open a checked ask with neo.ask.open first, then pass its
+merged. Never use it for an outcome that is merged, tested or deployed, and
+never bind it to a card with deliveredBy. Open a checked ask with neo.ask.open first, then pass its
 askId to neo.work.propose instead of an unchecked doneWhen fallback. Settle
 an achieved ask with a summary that names the merge ("Merged in
 lsm/HyperNeo#6099."). Name every pull request and issue in an ask, its items,

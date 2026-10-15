@@ -41,14 +41,18 @@ describe('neoOutcomeCheckPolicy', () => {
     expect(result.reason.reason).toContain('coding.pr_merged');
     expect(result.reason.reason).toContain('coding.deployed');
   });
-  test('an opened check never stands in for a merged or deployed outcome', () => {
-    for (const [text, required] of [
-      ['PR merged to dev', 'coding.pr_merged'],
-      ['Deployed to both daemons', 'coding.deployed'],
+  test('an opened check never stands in for a merged, tested or deployed outcome', () => {
+    for (const text of [
+      'PR merged to dev',
+      'Deployed to both daemons',
+      'Fix merged',
+      'CI green',
+      'Released to users',
+      'Tests pass',
     ]) {
       const result = neoOutcomeCheckPolicy.requireChecks([{ text, check: 'coding.pr_opened' }]);
       if (!('reason' in result)) throw new Error('expected refusal');
-      expect(result.reason.reason).toContain(`requires check ${required}`);
+      expect(result.reason.reason).toContain('opened_check_too_weak');
     }
     const opened = [{ text: 'A pull request is open in lsm/HyperNeo', check: 'coding.pr_opened' }];
     expect(neoOutcomeCheckPolicy.requireChecks(opened)).toEqual({ value: opened });

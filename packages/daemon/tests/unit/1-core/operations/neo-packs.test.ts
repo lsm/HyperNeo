@@ -302,6 +302,12 @@ describe('codingPrOpenedCheck', () => {
     expect(codingPrOpenedCheck(opened, evidence)).toEqual(gate);
   });
 
+  test.each<[string, NeoEvidence[], ReturnType<typeof codingPrOpenedCheck>]>([
+    ['a card-bound item, whatever the ask-wide evidence shows', [open], { reason: 'card_bound' }],
+  ])('%s', (_label, evidence, gate) => {
+    expect(codingPrOpenedCheck({ ...opened, deliveredBy: 'card-a' }, evidence)).toEqual(gate);
+  });
+
   test('reads the state the card pull request evidence records', () => {
     const pr = (state: NeoWorkPr['state'], number: number) =>
       ({

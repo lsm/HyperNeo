@@ -71,6 +71,7 @@ export const codingPrMergedCheck: NeoPackCheck = (item, evidence: readonly NeoEv
 const CODING_CHECK_PR_OPENED = 'coding.pr_opened';
 
 export const codingPrOpenedCheck: NeoPackCheck = (item, evidence: readonly NeoEvidence[]) => {
+  if (item.deliveredBy) return { reason: 'card_bound' };
   const opened = evidence.filter(isNeoWorkPrEvidenceOpened);
   return opened.length
     ? { value: `Opened: ${opened.map((pr) => pr.key).join(', ')}` }
