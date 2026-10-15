@@ -1,7 +1,7 @@
 import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import { CONSULTATION_TIMEOUT_MS } from '../../lib/neo/consultation-policy.ts';
-import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
+import type { NeoProjectFacts, NeoRetiredHolder } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
 
@@ -61,7 +61,9 @@ export class NeoRepository {
           (SELECT count(*) FROM neo_session_bindings b JOIN sdk_messages m ON m.session_id = b.session_id
             WHERE b.kind = 'project' AND b.concern_id = c.id) AS holderMessages,
           EXISTS (SELECT 1 FROM neo_session_bindings b JOIN sessions s ON s.id = b.session_id
-            WHERE b.kind = 'project' AND b.concern_id = c.id AND s.status = 'archived') AS archived
+            WHERE b.kind = 'project' AND b.concern_id = c.id AND s.status = 'archived') AS archived,
+          (SELECT b.session_id FROM neo_session_bindings b
+            WHERE b.kind = 'project' AND b.concern_id = c.id) AS holder
         FROM neo_concerns c
         WHERE c.id NOT IN (SELECT source_id FROM neo_project_merges)`)
       .all() as (Omit<NeoProjectFacts, 'section' | 'archived' | 'work' | 'aliases'> & {
@@ -108,6 +110,25 @@ export class NeoRepository {
     })();
     this.notify();
     return holder;
+  }
+
+  retiredHolders(): NeoRetiredHolder[] {
+    return (
+      this.db
+        .prepare(`SELECT m.source_id AS projectId, c.title, m.source_session_id AS sessionId,
+            EXISTS (SELECT 1 FROM sdk_messages x WHERE x.session_id = m.source_session_id) AS spoke
+          FROM neo_project_merges m
+          JOIN neo_concerns c ON c.id = m.source_id
+          JOIN sessions s ON s.id = m.source_session_id
+          WHERE s.status != 'archived'`)
+        .all() as (Omit<NeoRetiredHolder, 'spoke'> & { spoke: number })[]
+    ).map((row) => ({ ...row, spoke: !!row.spoke }));
+  }
+
+  sessionSpoke(sessionId: string): boolean {
+    return !!this.db
+      .prepare('SELECT 1 FROM sdk_messages WHERE session_id = ? LIMIT 1')
+      .get(sessionId);
   }
 
   listProjectTitles(): Array<{ id: string; title: string }> {

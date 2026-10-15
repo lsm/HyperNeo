@@ -225,6 +225,7 @@ describe('neo.projects.reorganize', () => {
       mergeProjects: async () => ({ merged, asked: [] }),
       projectFacts: () => [],
       machine: () => 'here',
+      retiredHolders: () => [],
       cleanup: async (step) => {
         cleaned.push(step.projectId);
         if (step.projectId === 'stuck') throw new Error('busy');
@@ -297,6 +298,7 @@ describe('neo.projects.reorganize', () => {
         routed: 0,
         holderMessages: 0,
         archived: false,
+        holder: null,
         aliases: [],
       },
     ];
@@ -325,6 +327,7 @@ describe('neo.projects.reorganize', () => {
       routed: 0,
       holderMessages: 0,
       archived: false,
+      holder: null,
       aliases: [],
     });
     deps.projectFacts = () => [empty('empty'), empty('stuck')];

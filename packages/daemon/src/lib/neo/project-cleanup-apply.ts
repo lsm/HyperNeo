@@ -6,8 +6,6 @@ type Step<A extends NeoProjectCleanup['action']> = Extract<NeoProjectCleanup, { 
 export function createNeoProjectCleanupApply(
   service: Pick<NeoService, 'repo' | 'sessions'>
 ): (step: NeoProjectCleanup) => Promise<void> {
-  const holder = (projectId: string) =>
-    service.repo.getBindingForProject(projectId)?.sessionId ?? null;
   const apply = {
     delete: async (step: Step<'delete'>) => {
       const session = service.repo.deleteEmptyProject(step.projectId);
@@ -29,13 +27,15 @@ export function createNeoProjectCleanupApply(
       });
       if (!result.ok) throw new Error(result.reason);
     },
+    drop: async (step: Step<'drop'>) => {
+      if (service.repo.sessionSpoke(step.sessionId)) throw new Error('the holder has spoken');
+      await service.sessions.deleteSessionResources(step.sessionId, 'ui_session_delete');
+    },
     archive: async (step: Step<'archive'>) => {
-      const session = holder(step.projectId);
-      if (!session) return;
-      const turn = service.sessions.getCachedSession(session)?.getProcessingState().status;
+      const turn = service.sessions.getCachedSession(step.sessionId)?.getProcessingState().status;
       if (turn && !['idle', 'interrupted'].includes(turn))
         throw new Error('the holder is mid-turn');
-      await service.sessions.archiveSessionResources(session, 'ui_session_archive');
+      await service.sessions.archiveSessionResources(step.sessionId, 'ui_session_archive');
     },
   };
   return (step) => (apply[step.action] as (step: NeoProjectCleanup) => Promise<void>)(step);

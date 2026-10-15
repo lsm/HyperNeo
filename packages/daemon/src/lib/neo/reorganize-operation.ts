@@ -9,6 +9,7 @@ import type { NeoAskOrigin } from './ask-origin.ts';
 import {
   type NeoProjectCleanup,
   type NeoProjectFacts,
+  type NeoRetiredHolder,
   neoCleanupFolders,
   planNeoProjectCleanup,
 } from './project-cleanup.ts';
@@ -39,7 +40,8 @@ const Result = z.union([
     stayed: z.array(Stayed),
     cleanupPlanned: z.array(
       z.object({
-        action: z.enum(['delete', 'merge', 'archive']),
+        action: z.enum(['delete', 'merge', 'archive', 'drop']),
+        sessionId: z.string().optional(),
         projectId: z.string(),
         title: z.string(),
         targetId: z.string().optional(),
@@ -75,6 +77,7 @@ export interface NeoReorganizeRuntime {
   mergeProjects(): Promise<{ merged: Merged[]; asked: Merged[] }>;
   projectFacts(): NeoProjectFacts[];
   machine(): string;
+  retiredHolders(): NeoRetiredHolder[];
   cleanup(step: NeoProjectCleanup): Promise<void>;
   mirroredAliases(folders: readonly string[]): Promise<ReadonlySet<string> | null>;
   log(line: string): void;
@@ -229,6 +232,27 @@ export function createNeoProjectsReorganizer(
     )
     .endAsync('move') as (ask: NeoAsk, root: string) => Promise<Moved | Stay>;
 
+  const planNeoProjectCleanupNow = (
+    mirrored: ReadonlySet<string>,
+    archive: readonly string[]
+  ): NeoProjectCleanup[] => {
+    const projects = runtime.projectFacts();
+    const retired = runtime.retiredHolders();
+    const holders = [
+      ...projects.flatMap((project) => project.holder ?? []),
+      ...retired.map((holder) => holder.sessionId),
+    ];
+    return planNeoProjectCleanup(projects, {
+      pinned: new Set([NEO_INBOX_ID]),
+      machine: runtime.machine(),
+      mirrored,
+      archive: new Set(archive),
+      retired,
+      busy: new Set(
+        holders.filter((id) => !['idle', 'interrupted', null].includes(runtime.sessionStatus(id)))
+      ),
+    });
+  };
   return async ({ apply = false, archive = [] } = {}) => {
     const root = runtime.rootSessionId();
     const moved: Moved[] = [];
@@ -260,17 +284,10 @@ export function createNeoProjectsReorganizer(
       else moved.push(result);
     }
     if (!mirrored) runtime.log('neo reorganize: no project cleanup, the places could not be read');
-    const cleanupPlanned = mirrored
-      ? planNeoProjectCleanup(runtime.projectFacts(), {
-          pinned: new Set([NEO_INBOX_ID]),
-          machine: runtime.machine(),
-          mirrored,
-          archive: new Set(archive),
-        })
-      : [];
+    const cleanupPlanned = mirrored ? planNeoProjectCleanupNow(mirrored, archive) : [];
     const cleanupFailed: { projectId: string; reason: string }[] = [];
     for (const step of cleanupPlanned) {
-      const line = `${step.action} project ${step.projectId} (${step.title})${'targetId' in step ? ` into ${step.targetId}` : ''}`;
+      const line = `${step.action} project ${step.projectId} (${step.title})${'targetId' in step ? ` into ${step.targetId}` : ''}${'sessionId' in step ? ` holder ${step.sessionId}` : ''}`;
       if (!apply) {
         runtime.log(`neo reorganize: would ${line}`);
         continue;
