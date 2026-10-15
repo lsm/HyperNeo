@@ -274,7 +274,7 @@ describe('NeoService direct consultation return', () => {
         }
       )
     ).toMatchObject({ value: { accepted: false, reason: 'trigger_already_published' } });
-    expect(service.publications.list(conversationId)[0].shortText).toBe(draft.shortText);
+    expect(service.publications.list(conversationId)?.[0].shortText).toBe(draft.shortText);
   });
   test('reload and recovery need only the immutable receipt, not removed SDK history or a recaptured ask', async () => {
     await publish();

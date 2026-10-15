@@ -186,8 +186,6 @@ describe('runtime-bound publication operation', () => {
         published: () => {},
       }),
       inputTrigger,
-      isTriggerPublished: (conversationId, triggerId, publicationId) =>
-        ledger.hasTrigger(conversationId, triggerId, publicationId),
       notify,
     };
     publish = createNeoPublisher(runtime);
