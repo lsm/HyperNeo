@@ -12,7 +12,12 @@ const Input = z.object({
 });
 const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
-  z.object({ ok: z.literal(true), projectId: z.string(), moved: z.array(z.string()) }),
+  z.object({
+    ok: z.literal(true),
+    projectId: z.string(),
+    moved: z.array(z.string()),
+    stayed: z.array(z.string()),
+  }),
 ]);
 type Refusal = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Refusal };
@@ -107,9 +112,24 @@ export function createNeoInboxPromoteOperation(runtime: NeoInboxPromoteRuntime) 
     .pipe(
       async (topic: NeoAsk[], inbox: string, project: NeoHolder) => {
         const moved: string[] = [];
-        for (const ask of topic)
-          moved.push((await handOffNeoAsk(runtime, ask, inbox, project, runtime.cards(ask))).askId);
-        return { ok: true as const, projectId: project.projectId, moved };
+        const stayed: string[] = [];
+        for (const ask of topic) {
+          const current = requireNeoInboxAsks([ask.id], [runtime.ask(ask.id)]);
+          const handedOff =
+            'value' in current &&
+            (await handOffNeoAsk(
+              runtime,
+              current.value[0],
+              inbox,
+              project,
+              runtime.cards(current.value[0])
+            ).then(
+              () => true,
+              () => false
+            ));
+          (handedOff ? moved : stayed).push(ask.id);
+        }
+        return { ok: true as const, projectId: project.projectId, moved, stayed };
       },
       ['topic', 'inbox', 'promote'],
       'promote'
@@ -121,7 +141,7 @@ export function createNeoInboxPromoteOperation(runtime: NeoInboxPromoteRuntime) 
   return defineOperation({
     name: 'neo.inbox.promote',
     description:
-      'From the Inbox, give a recurring topic its own project. Pass a short title and the askIds of that topic’s Inbox asks; they must come from more than one day or number at least three. The daemon creates the project and its holder, moves those asks and their cards there with their history, and later messages about the topic route there.',
+      'From the Inbox, give a recurring topic its own project. Pass a short title and the askIds of that topic’s Inbox asks; they must come from more than one day or number at least three. The daemon creates the project and its holder, moves those asks and their cards there with their history, and later messages about the topic route there. An ask that changed meanwhile or failed to move is listed in stayed and remains in the Inbox.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

@@ -94,7 +94,7 @@ describe('requireNeoInboxAsks', () => {
 });
 
 describe('neo.inbox.promote', () => {
-  function setup(asks: NeoAsk[], project = true) {
+  function setup(asks: NeoAsk[], project = true, meanwhile = () => {}) {
     const created: string[] = [];
     const delivered: string[] = [];
     const moved: { askId: string; projectId: string; cards: number }[] = [];
@@ -104,6 +104,7 @@ describe('neo.inbox.promote', () => {
       ask: (id) => asks.find((item) => item.id === id) ?? null,
       cards: (item) => (item.id === 'a' ? [card] : []),
       deliver: async (sessionId, messageId) => {
+        if (messageId.includes('boom')) throw new Error('delivery failed');
         delivered.push(`${sessionId}:${messageId}`);
       },
       move: (item, cards, owner) => {
@@ -112,6 +113,7 @@ describe('neo.inbox.promote', () => {
       log: () => {},
       createProject: async (title) => {
         created.push(title);
+        meanwhile();
         return project ? { projectId: 'tax', sessionId: 'neo:tax', title, summary: '' } : null;
       },
     };
@@ -128,7 +130,7 @@ describe('neo.inbox.promote', () => {
   test('gives a topic that came up on two days its own project and moves its asks and cards', async () => {
     const { invoke, created, delivered, moved } = setup([ask('a', 0), ask('b', DAY + 1)]);
     expect(await invoke({ title: 'Taxes', askIds: ['a', 'b'] })).toMatchObject({
-      value: { ok: true, projectId: 'tax', moved: ['a', 'b'] },
+      value: { ok: true, projectId: 'tax', moved: ['a', 'b'], stayed: [] },
     });
     expect(created).toEqual(['Taxes']);
     expect(moved).toEqual([
@@ -137,6 +139,17 @@ describe('neo.inbox.promote', () => {
     ]);
     expect(delivered).toHaveLength(2);
     expect(delivered.every((line) => line.startsWith('neo:tax:neo-moved:'))).toBe(true);
+  });
+
+  test('leaves in the Inbox an ask that changed or failed to move, and moves the rest', async () => {
+    const asks = [ask('a', 0), ask('b', DAY + 1), ask('boom', DAY + 2)];
+    const { invoke, moved } = setup(asks, true, () => {
+      asks[1] = ask('b', DAY + 1, { status: 'achieved' });
+    });
+    expect(await invoke({ title: 'Taxes', askIds: ['a', 'b', 'boom'] })).toMatchObject({
+      value: { ok: true, projectId: 'tax', moved: ['a'], stayed: ['b', 'boom'] },
+    });
+    expect(moved.map((item) => item.askId)).toEqual(['a']);
   });
 
   test('refuses a one-off topic and creates nothing', async () => {
