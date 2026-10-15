@@ -35,4 +35,37 @@ describe('runMigration377', () => {
     expect(repo.trigger('neo:root', 'note-2')).toBeNull();
     expect(repo.trigger('neo:root', 'note-3')).toBeNull();
   });
+
+  test('backfills the trigger of inputs stamped before the column existed', () => {
+    const db = new Database(':memory:');
+    runMigration339(db);
+    db.exec(`CREATE TABLE neo_consultations (id TEXT PRIMARY KEY, origin_message_id TEXT)`);
+    db.prepare('INSERT INTO neo_consultations VALUES (?, ?)').run('c1', 'human-1');
+    db.prepare('INSERT INTO neo_consultations VALUES (?, ?)').run(
+      'c2',
+      'neo-trigger:outcome:a:x#2'
+    );
+    db.prepare('INSERT INTO neo_consultations VALUES (?, ?)').run('review', null);
+    const stamp = db.prepare(
+      'INSERT INTO neo_input_origins(session_id, message_id, origin_session_id, origin_message_id, stamped_at) VALUES (?, ?, ?, ?, 0)'
+    );
+    const rows: [string, string, string | null][] = [
+      ['neo-trigger:outcome:a:x', 'human-1', 'outcome:a:x'],
+      ['neo-trigger:action:a:y#3', 'human-1', 'action:a:y'],
+      ['neo-nudge:human-1', 'human-1', 'human:human-1'],
+      ['neo-forward:human-1:0', 'human-1', 'human:human-1'],
+      ['neo-cross-project:g1:reply', 'human-1', 'human:human-1'],
+      ['neo-consult:c1:request', 'human-1', 'human:human-1'],
+      ['neo-consult:c1:reply', 'human-1', 'human:human-1'],
+      ['neo-consult:c2:reply', 'human-1', 'outcome:a:x'],
+      ['neo-consult:review:request', 'human-1', null],
+      ['work-1:done-check:0', 'human-1', null],
+    ];
+    for (const [messageId, origin] of rows) stamp.run('neo:root', messageId, 'neo:root', origin);
+    runMigration377(db);
+    const repo = new NeoInputOriginRepository(db);
+    expect(rows.map(([messageId]) => repo.trigger('neo:root', messageId))).toEqual(
+      rows.map(([, , trigger]) => trigger)
+    );
+  });
 });
