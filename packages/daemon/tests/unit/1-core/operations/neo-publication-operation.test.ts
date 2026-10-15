@@ -633,6 +633,39 @@ describe('requirePublicationNews', () => {
     });
   });
 
+  test.each([
+    '我先核对一下 HyperNeo 目前开放的事项，再给你整理。',
+    '稍等，我查一下。',
+    '正在确认 Slice 6 的状态。',
+    'Let me check what is open on HyperNeo.',
+    "I'll look into it and get back to you.",
+    'Checking now…',
+  ])('refuses the checking-only post %s', (text) => {
+    expect(
+      requirePublicationNews('v', { ...reply, shortText: text, fullText: text })
+    ).toMatchObject({ reason: { reason: 'interim_refused' } });
+  });
+
+  test.each([
+    '查到了：HyperNeo 有两张卡在等你。',
+    '看起来 Slice 6 还在等你决定。',
+    'Checked: two cards are waiting on you.',
+  ])('keeps the answer %s', (text) => {
+    expect(requirePublicationNews('v', { ...reply, shortText: text, fullText: text })).toEqual({
+      value: 'v',
+    });
+  });
+
+  test('keeps a reply whose full text carries the answer after a checking lead', () => {
+    expect(
+      requirePublicationNews('v', {
+        ...reply,
+        shortText: 'Let me check.',
+        fullText: 'Two cards are open on HyperNeo: Slice 1 needs approval and Slice 6 needs you.',
+      })
+    ).toEqual({ value: 'v' });
+  });
+
   test('keeps an acknowledgement that carries details', () => {
     expect(requirePublicationNews('v', { ...reply, shortText: '收到。' })).toEqual({
       value: 'v',
