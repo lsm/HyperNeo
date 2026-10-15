@@ -214,6 +214,12 @@ describe('neo.ask operations', () => {
     expect(
       await invoke('neo.ask.edit', {
         askId,
+        add: [{ text: 'How many PRs merged into dev this week', outcomeKind: 'answer' }],
+      })
+    ).toMatchObject({ value: { ok: true } });
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
         add: [
           {
             text: 'Open PR count',
