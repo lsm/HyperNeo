@@ -1,7 +1,14 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { NeoAskOrigin } from './ask-origin.ts';
 
-export type NeoReplyLanguage = 'English' | 'Chinese' | 'Japanese' | 'Korean';
+export type NeoReplyLanguage =
+  | 'English'
+  | 'Chinese'
+  | 'Japanese'
+  | 'Korean'
+  | `the language of ${string}`;
+
+const SAMPLE_LIMIT = 60;
 
 const count = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 0;
 
@@ -20,7 +27,9 @@ export function detectNeoReplyLanguage(text: string): NeoReplyLanguage | null {
   if (cjk >= 2 && (leadsCjk || Math.ceil(cjk / 2) >= words))
     return kana >= 2 ? 'Japanese' : hangul >= 2 ? 'Korean' : 'Chinese';
   const english = count(prose, ENGLISH_WORD);
-  return english && english * 4 >= words ? 'English' : null;
+  if (english && english * 4 >= words) return 'English';
+  const sample = prose.replace(/\s+/g, ' ').trim().slice(0, SAMPLE_LIMIT);
+  return words >= 3 ? `the language of "${sample}"` : null;
 }
 
 export function neoPromptText(messages: readonly SDKMessage[]): string {
