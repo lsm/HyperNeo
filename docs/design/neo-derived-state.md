@@ -156,7 +156,7 @@ A publication to the human happens in three cases only:
 
 - The daemon refuses every other `neo.publication.publish`, with a reason. Interim "I'm checking…" posts go away.
 - For each trigger, the daemon wakes Neo with a note naming the trigger. The publication carries the trigger's id, so it can't be repeated for the same transition.
-- A publication is written in the language of the human's last message.
+- A publication is written in the reply language its turn names: the language of the human message the turn answers, traced through the input's origin.
 - Once an ask's outcome is reached, a failed card under it is no longer news.
 - A reply to the human covers only the ask it answered: changes on other asks still get their own note.
 - A trigger is told only once its note was delivered and Neo published for it; a note whose turn ended without a post is sent again, up to three times.
