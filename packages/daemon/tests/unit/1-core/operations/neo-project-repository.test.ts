@@ -41,8 +41,8 @@ describe('neo.snapshot project repository', () => {
       const projects = (result as { value: { projects: { id: string; repository?: string }[] } })
         .value.projects;
       const repository = (id: string) => projects.find((project) => project.id === id)?.repository;
-      expect(repository('ios')).toBe('github.com/lsm/neo-ios');
-      expect(repository('web')).toBe('github.com/lsm/hyperneo');
+      expect(repository('ios')).toBe('lsm/neo-ios');
+      expect(repository('web')).toBe('lsm/hyperneo');
       expect(repository('notes')).toBeUndefined();
     } finally {
       db.close();

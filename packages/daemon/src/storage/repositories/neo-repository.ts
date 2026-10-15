@@ -86,9 +86,9 @@ export class NeoRepository {
       )
       .all() as { alias: string; project_id: string }[]) {
       const repository = row.alias.startsWith('repository:')
-        ? row.alias.slice('repository:'.length)
+        ? row.alias.slice('repository:'.length).replace(/^github\.com\//, '')
         : row.alias.startsWith('repo:')
-          ? `github.com/${row.alias.slice('repo:'.length).split('\u0000')[0]}`
+          ? row.alias.slice('repo:'.length).split('\u0000')[0]
           : null;
       if (repository && !found.has(row.project_id)) found.set(row.project_id, repository);
     }
