@@ -348,7 +348,7 @@ describe('chooseNeoRoute with a new subject', () => {
     expect(route.choice).toBeNull();
   });
 
-  test('deduplicates against holders omitted from the capped classifier candidates', async () => {
+  test('sends a new subject to the existing project with that title instead of opening one', async () => {
     let opened = 0;
     const holders = Array.from({ length: 20 }, (_, i) => ({
       ...drivers,
@@ -361,8 +361,7 @@ describe('chooseNeoRoute with a new subject', () => {
         return null;
       }),
       holders: () => holders,
-      classify: async (_text, options) => {
-        expect(options.some((holder) => holder.projectId === 'project-19')).toBe(false);
+      classify: async () => {
         return {
           decision: 'main',
           confidence: 0.8,

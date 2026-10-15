@@ -12,12 +12,10 @@ import {
   type NeoRouteVerdict,
   type NeoRouterDeps,
   neoHolderProfile,
-  neoRouteCandidates,
   pickNeoHolder,
   renderNeoRouteContext,
   runnableNeoHolders,
   scoreNeoHolders,
-  neoProjectOpenAsks,
   reopenNeoHolder,
   wakeNeoRoute,
 } from '../../../../src/lib/neo/router.ts';
@@ -112,43 +110,44 @@ describe('renderNeoRouteContext', () => {
       outcome: 'A git beta.',
       awaiting: 'Draft a reply?',
     });
-    const context = renderNeoRouteContext(
-      [drivers, youtube],
-      [drivers, youtube],
-      [pr, blog],
-      [pr, blog],
-      true
-    );
+    const context = renderNeoRouteContext([drivers, youtube], [pr, blog], [pr, blog], true);
     expect(context).toContain(
       '- main: Neo itself, the last resort for questions across projects or when you cannot tell\n    last: [main] you: "is the font-size PR done?" → Still in review.'
     );
-    expect(context).toContain(
-      '- youtube: YouTube (drivers)\n    last: [YouTube] you: "What is the post?" → A git beta.\n    WAITING ON YOU: "Draft a reply?"'
-    );
+    expect(context).toContain('- youtube: YouTube (drivers)\n    WAITING ON YOU: "Draft a reply?"');
     expect(context).toContain('- inbox: Self-contained one-off questions');
     expect(context.split('Recent turns (newest first):\n')[1]).toBe(
       '- [YouTube] you: "What is the post?" → A git beta.'
     );
   });
 
-  test("shows each topic's open asks under it", () => {
+  test('names each topic with its repository and summary on one line', () => {
     const context = renderNeoRouteContext(
-      [drivers, youtube],
-      [drivers, youtube],
+      [
+        { ...drivers, repository: 'lsm/neo-ios' },
+        { ...youtube, summary: '' },
+      ],
       [],
       [],
-      false,
-      new Map([['youtube', ['Draft the launch post', 'Pick a thumbnail']]])
+      false
     );
     expect(context).toContain(
-      '- youtube: YouTube (drivers)\n    open asks: "Draft the launch post"; "Pick a thumbnail"'
+      '- drivers: Neo driver epic [lsm/neo-ios] (drivers)\n- youtube: YouTube\n'
     );
-    expect(context).toContain('- drivers: Neo driver epic (drivers)\n- youtube');
+  });
+
+  test('lists every topic on one line, however many there are', () => {
+    const many = Array.from({ length: 40 }, (_, n) => ({ ...drivers, projectId: `t${n}` }));
+    const projects = renderNeoRouteContext(many, [], [], false)
+      .split('Recent turns')[0]
+      .split('\n')
+      .filter((line) => line.startsWith('- t'));
+    expect(projects).toHaveLength(40);
   });
 
   test('keeps recent turns within the budget', () => {
     const many = Array.from({ length: 40 }, (_, n) => route({ id: n, ask: 'q'.repeat(300) }));
-    const turns = renderNeoRouteContext([drivers], [drivers], many, [], false)
+    const turns = renderNeoRouteContext([drivers], many, [], false)
       .split('Recent turns (newest first):\n')[1]
       .split('\n');
     expect(turns.length).toBeLessThan(40);
@@ -173,39 +172,6 @@ describe('runnableNeoHolders', () => {
     expect(runnableNeoHolders([glm], new Map()).map((holder) => holder.projectId)).toEqual([
       'drivers',
     ]);
-  });
-});
-
-describe('neoRouteCandidates', () => {
-  test('offers every topic when there are few, otherwise recent, waiting and close ones', () => {
-    expect(neoRouteCandidates([drivers, youtube], [], [], [])).toEqual([drivers, youtube]);
-    const many = Array.from({ length: 30 }, (_, n) => ({ ...drivers, projectId: `t${n}` }));
-    const picked = neoRouteCandidates(
-      many,
-      [
-        { holder: many[7], similarity: 0.5 },
-        { holder: many[8], similarity: 0.2 },
-      ],
-      [route({ projectId: 't3' })],
-      [route({ projectId: 't5', awaiting: 'Ship it?' }), route({ projectId: 't6' })]
-    );
-    expect(picked.map((holder) => holder.projectId)).toEqual(['t3', 't5', 't7']);
-  });
-});
-
-describe('neoProjectOpenAsks', () => {
-  test("keeps each candidate's first five open asks, shortened", () => {
-    const asked: string[] = [];
-    const asks = neoProjectOpenAsks([drivers, youtube], {
-      openAsks: (projectId) => {
-        asked.push(projectId);
-        return projectId === 'youtube' ? ['a', 'b', 'c', 'd', 'e', 'f', 'x'.repeat(500)] : [];
-      },
-    });
-    expect(asked).toEqual(['drivers', 'youtube']);
-    expect(asks.get('drivers')).toEqual([]);
-    expect(asks.get('youtube')).toEqual(['a', 'b', 'c', 'd', 'e']);
-    expect(neoProjectOpenAsks([drivers], {}).get('drivers')).toEqual([]);
   });
 });
 
@@ -285,6 +251,21 @@ describe('chooseNeoRoute', () => {
     });
     expect(choice).toEqual({ choice: null, fallback: 'classifier' });
     expect(seen[0]).toContain('[main] you: "is PR 5650 done?"');
+  });
+
+  test('offers the classifier every topic without recent turns or embeddings', async () => {
+    const many = Array.from({ length: 30 }, (_, n) => ({ ...drivers, projectId: `t${n}` }));
+    const offered: string[][] = [];
+    await chooseNeoRoute('what changed in t29?', {
+      ...deps(),
+      holders: () => many,
+      embed: async () => null,
+      classify: async (_text, options) => {
+        offered.push(options.map((option) => option.projectId));
+        return 'main';
+      },
+    });
+    expect(offered[0]).toEqual(many.map((holder) => holder.projectId));
   });
 
   test('skips the classifier when there are no topics and no history', async () => {

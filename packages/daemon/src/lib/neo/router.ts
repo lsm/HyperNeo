@@ -3,7 +3,6 @@ import { readNeoSectionFacts } from './section-route-facts.ts';
 import { neoFactOwners, readNeoProjectFacts, type NeoProjectFact } from './project-route-facts.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
-import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import {
   type NeoRoute,
@@ -13,22 +12,17 @@ import {
 import { getProviderService } from '../provider-service.ts';
 import { classifyNeoRoute, neoRouteTimeoutMs } from './route-classifier.ts';
 import { cosineSimilarity, embedQueryOrNull } from '../../storage/vector-similarity.ts';
-import { isNeoAskSettled } from './done-check.ts';
 import { fitLines } from './fit-lines.ts';
 
 const MIN_SIMILARITY = 0.55;
 const MIN_MARGIN = 0.05;
 const PROFILE_ASKS = 8;
 const PROFILE_ASK_CHARS = 300;
-const CLASSIFY_FLOOR = 0.35;
-const PROJECT_LIMIT = 15;
 const RECENT_TURNS = 20;
 const TURNS_CHARS = 3_000;
 const TURN_TEXT_CHARS = 300;
 const PROJECT_SUMMARY_CHARS = 160;
 const PROFILE_VECTOR_LIMIT = 256;
-const OPEN_ASKS = 5;
-const OPEN_ASK_CHARS = 120;
 export const NEO_INBOX_ID = 'inbox';
 export const NEO_INBOX_SUMMARY =
   'Self-contained one-off questions that need no continuing project.';
@@ -79,6 +73,7 @@ export interface NeoHolder {
   sessionId: string;
   title: string;
   summary: string;
+  repository?: string;
   provider?: string;
 }
 
@@ -120,7 +115,6 @@ export interface NeoRouterDeps {
   recentTurns(): NeoRoute[];
   projectTurns(): NeoRoute[];
   recentAsks(projectId: string, limit: number): string[];
-  openAsks?(projectId: string): string[];
   embed(text: string): Promise<Float32Array | null>;
   classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteVerdict>;
   inbox?(): Promise<NeoHolder | null>;
@@ -225,25 +219,6 @@ export function neoTurnLine(route: NeoRoute, titles: ReadonlyMap<string, string>
   return `[${titles.get(project) ?? project}] you: "${ask}" → ${answer}`;
 }
 
-export function neoRouteCandidates(
-  holders: readonly NeoHolder[],
-  scores: readonly Score[],
-  recent: readonly NeoRoute[],
-  latest: readonly NeoRoute[]
-): NeoHolder[] {
-  if (holders.length <= PROJECT_LIMIT) return [...holders];
-  const keep = new Set(
-    [...recent, ...latest.filter((route) => route.awaiting)].flatMap((route) =>
-      route.projectId ? [route.projectId] : []
-    )
-  );
-  for (const score of [...scores].sort((a, b) => b.similarity - a.similarity)) {
-    if (keep.size >= PROJECT_LIMIT || score.similarity < CLASSIFY_FLOOR) break;
-    keep.add(score.holder.projectId);
-  }
-  return holders.filter((holder) => keep.has(holder.projectId)).slice(0, PROJECT_LIMIT);
-}
-
 function requireRouteQuestion(
   candidates: readonly NeoHolder[],
   recent: readonly NeoRoute[]
@@ -253,27 +228,11 @@ function requireRouteQuestion(
     : { reason: { choice: null } };
 }
 
-export function neoProjectOpenAsks(
-  candidates: readonly NeoHolder[],
-  deps: Pick<NeoRouterDeps, 'openAsks'>
-): Map<string, string[]> {
-  return new Map(
-    candidates.map((holder) => [
-      holder.projectId,
-      (deps.openAsks?.(holder.projectId) ?? [])
-        .slice(0, OPEN_ASKS)
-        .map((ask) => neoExcerpt(ask, OPEN_ASK_CHARS)),
-    ])
-  );
-}
-
 export function renderNeoRouteContext(
   holders: readonly NeoHolder[],
-  candidates: readonly NeoHolder[],
   recent: readonly NeoRoute[],
   latest: readonly NeoRoute[],
-  withInbox: boolean,
-  openAsks: ReadonlyMap<string, readonly string[]> = new Map()
+  withInbox: boolean
 ): string {
   const titles = new Map(holders.map((holder) => [holder.projectId, holder.title]));
   const notes = (project: string) => {
@@ -286,17 +245,16 @@ export function renderNeoRouteContext(
         : []),
     ];
   };
-  const asks = (project: string) => {
-    const open = openAsks.get(project) ?? [];
-    return open.length > 0 ? [`    open asks: ${open.map((ask) => `"${ask}"`).join('; ')}`] : [];
+  const waiting = (project: string) => {
+    const awaiting = latest.find((item) => projectOf(item) === project)?.awaiting;
+    return awaiting ? [`    WAITING ON YOU: "${neoExcerpt(awaiting, TURN_TEXT_CHARS)}"`] : [];
   };
   const projects = [
     '- main: Neo itself, the last resort for questions across projects or when you cannot tell',
     ...notes('main'),
-    ...candidates.flatMap((holder) => [
-      `- ${holder.projectId}: ${holder.title}${holder.summary ? ` (${neoExcerpt(holder.summary, PROJECT_SUMMARY_CHARS)})` : ''}`,
-      ...asks(holder.projectId),
-      ...notes(holder.projectId),
+    ...holders.flatMap((holder) => [
+      `- ${holder.projectId}: ${holder.title}${holder.repository ? ` [${holder.repository}]` : ''}${holder.summary ? ` (${neoExcerpt(holder.summary, PROJECT_SUMMARY_CHARS)})` : ''}`,
+      ...waiting(holder.projectId),
     ]),
     ...(withInbox ? [`- ${NEO_INBOX_ID}: ${NEO_INBOX_SUMMARY}`, ...notes(NEO_INBOX_ID)] : []),
   ];
@@ -422,20 +380,14 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
   .pipe((deps: NeoRouterDeps) => deps.recentTurns(), 'deps', 'recent')
   .pipe((deps: NeoRouterDeps) => deps.projectTurns(), 'deps', 'latest')
   .pipe(scoreNeoHolders, ['text', 'holders', 'deps'], 'scores')
-  .pipe(neoRouteCandidates, ['holders', 'scores', 'recent', 'latest'], 'candidates')
-  .pipe(requireRouteQuestion, ['candidates', 'recent'], 'result:route')
+  .pipe(requireRouteQuestion, ['holders', 'recent'], 'result:route')
   .pipe(
     async (deps: NeoRouterDeps) => !!deps.inbox && (await deps.inboxRunnable?.()) !== false,
     'deps',
     'withInbox'
   )
-  .pipe(neoProjectOpenAsks, ['candidates', 'deps'], 'openAsks')
-  .pipe(
-    renderNeoRouteContext,
-    ['holders', 'candidates', 'recent', 'latest', 'withInbox', 'openAsks'],
-    'context'
-  )
-  .pipe(askNeoRouteModel, ['text', 'candidates', 'context', 'withInbox', 'deps'], 'verdict')
+  .pipe(renderNeoRouteContext, ['holders', 'recent', 'latest', 'withInbox'], 'context')
+  .pipe(askNeoRouteModel, ['text', 'holders', 'context', 'withInbox', 'deps'], 'verdict')
   .pipe(classifyNeoAsk, ['text', 'verdict', 'scores', 'deps', 'holders'], 'route')
   .endAsync('route') as (text: string, deps: NeoRouterDeps) => Promise<Routed>;
 
@@ -575,7 +527,6 @@ export function createNeoRouter(
   refreshFacts?: (text: string) => Promise<void>
 ): NeoRouter {
   const log = new NeoRoutingLogRepository(db.getDatabase());
-  const asks = new NeoAskRepository(db.getDatabase());
   const deps: NeoRouterDeps = {
     facts: async (text) => {
       const facts = readNeoProjectFacts(db.getDatabase(), text);
@@ -595,7 +546,9 @@ export function createNeoRouter(
           if (!repo.getBindingForProject(project.id)) await openHolder(project.id);
         }
       }
+      const repositories = repo.repositories();
       const holders: NeoHolder[] = repo.listProjects().flatMap((project) => {
+        const repository = repositories.get(project.id);
         const binding = repo.getBindingForProject(project.id);
         const session = binding ? db.getSession(binding.sessionId) : null;
         return binding?.kind === 'project'
@@ -606,6 +559,7 @@ export function createNeoRouter(
                 sessionId: binding.sessionId,
                 title: project.title,
                 summary: project.summary,
+                ...(repository ? { repository } : {}),
                 ...(session?.config.provider ? { provider: session.config.provider } : {}),
               },
             ]
@@ -631,11 +585,6 @@ export function createNeoRouter(
     recentTurns: () => neoRedirectTurns(log.recent(RECENT_TURNS), repo),
     projectTurns: () => neoRedirectTurns(log.latestPerProject(), repo),
     recentAsks: (projectId, limit) => log.recentAsks(projectId, limit),
-    openAsks: (projectId) =>
-      asks
-        .list(projectId)
-        .filter((ask) => !isNeoAskSettled(ask))
-        .map((ask) => ask.title),
     embed: async (text) =>
       process.env.NODE_ENV === 'test' ? null : embedQueryOrNull(db.getEmbedder(), text),
     classify: (text, options, context) => {
