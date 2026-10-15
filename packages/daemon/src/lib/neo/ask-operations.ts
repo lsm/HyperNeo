@@ -1,3 +1,4 @@
+import { NEO_ASK_ANSWER_PREFIX } from './ask-origin.ts';
 import { neoTurnRequestKey } from './request-key.ts';
 import { NeoAskBindingError } from '../../storage/repositories/neo-ask-repository.ts';
 import { neoAskAnswerEvidence } from './ask-answer-evidence.ts';
@@ -1371,7 +1372,11 @@ export function createNeoAskOperations(
     service.db
       .getSDKMessageRepo()
       .getStoredPromptsByUuid(sessionId, messageId)
-      .filter((message) => 'inputKind' in message && message.inputKind === 'human')
+      .filter(
+        (message) =>
+          ('inputKind' in message && message.inputKind === 'human') ||
+          messageId.startsWith(NEO_ASK_ANSWER_PREFIX)
+      )
       .map((message) => neoPromptText(message));
   const openNeoAsksOf = (origin: NeoWorkOrigin): NeoAskNameable[] =>
     service.askRecords

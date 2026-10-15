@@ -9,6 +9,9 @@ import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
 import { NEO_HUMAN_TURN_LIMIT_PREFIX } from './turn-limit.ts';
+import { NEO_ASK_ANSWER_PREFIX } from './ask-origin.ts';
+
+const NEO_HUMAN_CONTINUATIONS = [NEO_HUMAN_TURN_LIMIT_PREFIX, NEO_ASK_ANSWER_PREFIX];
 import { isNeoCardInPlay } from './ask-views.ts';
 import { isNeoAskAnswerReady } from './answer-outcome.ts';
 
@@ -350,7 +353,9 @@ export function neoHumanTurnOrigin(
 ): string | null {
   if (isHumanInput(messageId)) return messageId;
   const human = neoHumanTriggerMessageId(trigger ?? undefined);
-  return human && messageId.startsWith(NEO_HUMAN_TURN_LIMIT_PREFIX) && isHumanInput(human)
+  return human &&
+    NEO_HUMAN_CONTINUATIONS.some((prefix) => messageId.startsWith(prefix)) &&
+    isHumanInput(human)
     ? human
     : null;
 }

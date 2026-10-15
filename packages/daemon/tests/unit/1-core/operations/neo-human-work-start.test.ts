@@ -427,6 +427,65 @@ describe('Neo existing trusted human work input', () => {
     expect(jobs(work.id)).toEqual([]);
   });
 
+  test('the human’s answer note acts for their message: it may start work and drop what they named', async () => {
+    storeInput();
+    const opened = service.askRecords.open(
+      {
+        id: 'ask-answered',
+        requestKey: 'ask-answered',
+        projectId: null,
+        originSessionId: root,
+        originMessageId: ask,
+        title: 'Publish the go vet result',
+        ask: 'Publish the go vet result',
+        doneWhen: '- go vet result delivered\n- go vet passes',
+        doneSource: 'human',
+      },
+      [
+        { text: 'go vet result delivered', check: null },
+        { text: 'go vet passes', check: null },
+      ]
+    )!;
+    const work = await propose(caller());
+    const note = `neo-ask-answer:${opened.id}:i1:1`;
+    await service.deliverAskAnswer(opened, opened.doneItems![0], 'Drop the go vet result check');
+    const [delivered] = db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': root })
+      .filter((job) =>
+        (job.payload as { messageUuid: string }).messageUuid.startsWith('neo-ask-answer:')
+      );
+    const noteId = (delivered.payload as { messageUuid: string }).messageUuid;
+    expect(noteId.startsWith(note.slice(0, -1))).toBe(true);
+    db.getSDKMessageRepo().saveSDKMessage(root, {
+      type: 'user',
+      uuid: noteId,
+      session_id: root,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Their answer: Drop the go vet result check' },
+      inputKind: 'system',
+    } as SDKMessage);
+    expect(service.inputTrigger({ sessionId: root, messageId: noteId })).toBe(`human:${ask}`);
+    const answering = caller(root, noteId);
+    expect(answering.neoTurn).toMatchObject({ human: true, origin: ask });
+    expect(await invoke('neo.work.start', { id: work.id }, answering)).toMatchObject({
+      value: { ok: true },
+    });
+    expect(
+      await invoke(
+        'neo.ask.edit',
+        {
+          askId: opened.id,
+          expectedRevision: service.askRecords.get(opened.id)!.revision,
+          remove: ['i1'],
+          humanSaid: 'Drop the go vet result check',
+        },
+        answering
+      )
+    ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(opened.id)!.doneItems![0]).toMatchObject({ removed: true });
+  });
+
   test('a continuation of the human’s own turn may start its work; a plain continuation may not', async () => {
     storeInput();
     const work = await propose(caller());
