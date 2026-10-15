@@ -894,16 +894,35 @@ describe('readNeoCardPrs', () => {
 });
 
 describe('runMigration380', () => {
-  test('adds follows to cards once and drops claims parsed from card text', () => {
+  test('adds follows once and drops PRs parsed from card text, claims and receipts alike', () => {
     const db = new Sqlite(':memory:');
     db.exec(
-      "CREATE TABLE neo_work (id TEXT PRIMARY KEY); CREATE TABLE neo_work_pr_claims (work_id TEXT, url_key TEXT, claim TEXT); INSERT INTO neo_work_pr_claims VALUES ('a', 'u1', 'named'), ('a', 'u2', 'branch')"
+      `CREATE TABLE neo_work (id TEXT PRIMARY KEY);
+       CREATE TABLE neo_work_pr_claims (work_id TEXT, url_key TEXT, claim TEXT);
+       CREATE TABLE neo_work_prs (work_id TEXT PRIMARY KEY, prs_json TEXT)`
+    );
+    db.prepare('INSERT INTO neo_work_pr_claims VALUES (?, ?, ?), (?, ?, ?)').run(
+      'a',
+      pull(4).toLowerCase(),
+      'named',
+      'a',
+      pull(5).toLowerCase(),
+      'branch'
+    );
+    db.prepare('INSERT INTO neo_work_prs VALUES (?, ?)').run(
+      'a',
+      JSON.stringify([{ url: pull(4) }, { url: pull(5) }])
     );
     runMigration380(db);
     runMigration380(db);
     const columns = db.prepare('PRAGMA table_info(neo_work)').all() as { name: string }[];
     expect(columns.filter((column) => column.name === 'follows')).toHaveLength(1);
     expect(db.prepare('SELECT claim FROM neo_work_pr_claims').all()).toEqual([{ claim: 'branch' }]);
+    expect(
+      JSON.parse(
+        (db.prepare('SELECT prs_json AS prs FROM neo_work_prs').get() as { prs: string }).prs
+      )
+    ).toEqual([{ url: pull(5) }]);
   });
 });
 
