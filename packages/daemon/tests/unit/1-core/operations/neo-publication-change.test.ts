@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import {
   createNeoPublicationChangeOperations,
+  requireNeoEditable,
   planNeoCorrectionAnswer,
   requireChangeable,
   requireCorrectable,
@@ -98,10 +99,11 @@ describe('neo.publication.edit', () => {
     try {
       insert(original);
       expect(
-        await call('neo.publication.edit', {
-          publicationId: original,
-          shortText: 'PR #12 is merged.',
-        })
+        await call(
+          'neo.publication.edit',
+          { publicationId: original, shortText: 'PR #12 is merged.' },
+          neo(root.sessionId, 'm-3')
+        )
       ).toMatchObject({
         accepted: true,
         created: false,
@@ -400,7 +402,7 @@ describe('neo.publication.edit across sessions', () => {
         await call(
           'neo.publication.edit',
           { publicationId: original, shortText: 'PR #12 is merged.' },
-          neo(holder.sessionId)
+          neo(holder.sessionId, 'm-3')
         )
       ).toMatchObject({ accepted: true, publication: { editedBy: holder.sessionId } });
       expect(publications.get(conversation, original)?.producerInput.sessionId).toBe(
@@ -409,6 +411,62 @@ describe('neo.publication.edit across sessions', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('requireNeoEditable', () => {
+  const publication = {
+    conversationId: conversation,
+    publicationId: original,
+    askOrigin: { sessionId: root.sessionId, messageId: 'm-1' },
+    producerInput: { sessionId: root.sessionId, messageId: 'neo-trigger:outcome:a:x' },
+    shortText: 'Done.',
+    fullText: 'Done.',
+    links: [],
+    triggerId: 'outcome:a:x',
+    sequence: 1,
+    createdAt: '2026-10-14T10:00:00.000Z',
+  };
+  const owned = (messageId: string, extra = {}) =>
+    ({
+      producer: { input: { sessionId: root.sessionId, messageId } },
+      publication: { ...publication, ...extra },
+    }) as unknown as Parameters<typeof requireNeoEditable>[0];
+  const reason = (result: ReturnType<typeof requireNeoEditable>) =>
+    'reason' in result ? result.reason.reason : 'ok';
+  test('a human-triggered turn may fix any message’s wording', () => {
+    expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'Fixed.' }, 'human:m-9'))).toBe(
+      'ok'
+    );
+  });
+  test('a turn may change its own trigger’s message once, and nothing else', () => {
+    const turn = 'neo-trigger:outcome:a:x';
+    expect(reason(requireNeoEditable(owned(turn), { shortText: 'Fixed.' }, 'outcome:a:x'))).toBe(
+      'ok'
+    );
+    expect(
+      reason(
+        requireNeoEditable(
+          owned(turn, {
+            editedAt: '2026-10-14T11:00:00.000Z',
+            answerInput: { sessionId: root.sessionId, messageId: turn },
+          }),
+          { shortText: 'Again.' },
+          'outcome:a:x'
+        )
+      )
+    ).toBe('already_edited');
+    expect(reason(requireNeoEditable(owned('n'), { shortText: 'X.' }, 'idle:a:y'))).toBe(
+      'edit_needs_trigger'
+    );
+    expect(reason(requireNeoEditable(owned('n'), { shortText: 'X.' }, null))).toBe(
+      'edit_needs_trigger'
+    );
+  });
+  test('an unchanged edit is refused', () => {
+    expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'Done.' }, 'human:m-9'))).toBe(
+      'edit_unchanged'
+    );
   });
 });
 

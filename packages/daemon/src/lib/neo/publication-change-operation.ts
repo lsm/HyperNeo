@@ -93,6 +93,28 @@ export function planNeoCorrectionAnswer(
     : { askOrigin: owned.publication.askOrigin };
 }
 
+export function requireNeoEditable(
+  owned: Owned,
+  text: { shortText?: string; fullText?: string },
+  trigger: string | null
+): { value: Owned } | { reason: Rejection } {
+  const { publication, producer } = owned;
+  if (
+    (text.shortText ?? publication.shortText) === publication.shortText &&
+    (text.fullText ?? publication.fullText) === publication.fullText
+  )
+    return { reason: { accepted: false, reason: 'edit_unchanged' } };
+  if (trigger?.startsWith('human:')) return { value: owned };
+  if (!trigger || trigger !== publication.triggerId)
+    return { reason: { accepted: false, reason: 'edit_needs_trigger' } };
+  const last = publication.answerInput ?? publication.producerInput;
+  return last.sessionId === producer.input.sessionId &&
+    last.messageId === producer.input.messageId &&
+    !!publication.editedAt
+    ? { reason: { accepted: false, reason: 'already_edited' } }
+    : { value: owned };
+}
+
 export function neoCorrectionId(owned: Owned, trigger: string | null): string {
   const { conversationId, publicationId } = owned.publication;
   const turn = trigger ?? `${owned.producer.input.sessionId}:${owned.producer.input.messageId}`;
@@ -105,7 +127,7 @@ function changePipeline(
   name: string,
   schema: z.ZodType,
   runtime: NeoPublicationChangeRuntime,
-  gate: (owned: Owned) => { value: Owned } | { reason: Rejection },
+  gate: (owned: Owned, request: never) => { value: Owned } | { reason: Rejection },
   change: (owned: Owned, input: never) => NeoPublicationChangeResult
 ) {
   return (superpipe({})(name) as PipelineAPI)
@@ -152,7 +174,7 @@ function changePipeline(
       'change',
       'result:change'
     )
-    .pipe(gate, 'change', 'result:change')
+    .pipe(gate, ['change', 'request'], 'result:change')
     .pipe(
       (owned: Owned, request: never) => {
         const result = change(owned, request);
@@ -176,7 +198,8 @@ export function createNeoPublicationChangeOperations(
     'neo-publication-edit',
     EditInput,
     runtime,
-    (owned) => ({ value: owned }),
+    (owned, input: z.infer<typeof EditInput>) =>
+      requireNeoEditable(owned, input, runtime.inputTrigger(owned.producer.input)),
     (owned, input: z.infer<typeof EditInput>) =>
       runtime.publications.edit(
         owned.publication.conversationId,
@@ -186,7 +209,8 @@ export function createNeoPublicationChangeOperations(
           ...(input.fullText !== undefined ? { fullText: input.fullText } : {}),
         },
         now().toISOString(),
-        owned.producer.input.sessionId
+        owned.producer.input.sessionId,
+        owned.producer.input
       )
   );
   const correct = changePipeline(
@@ -276,7 +300,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.edit',
       description:
-        "Fix the wording of a Neo reply in this conversation in place, by its publicationId, whichever Neo session produced it: to the human they are all Neo's. Use it only for wording: the meaning, facts and anything the human should do must stay the same. The message is marked edited and records you as editedBy. Links, the ask it answers and its trigger never change. Only Neo publications in this conversation can change, never session messages (not_found). A project holder's reply to a consultation cannot change until Neo has received it (consultation_return); after that it is a Neo reply like any other.",
+        "Fix the wording of a Neo reply in this conversation in place, by its publicationId, whichever Neo session produced it: to the human they are all Neo's. Use it only for wording: the meaning, facts and anything the human should do must stay the same. Only when the human asked for it (this turn answers a human message), or once for the message this turn's own trigger produced; otherwise edit_needs_trigger or already_edited, and an edit that changes nothing is edit_unchanged. The message is marked edited, records you as editedBy, and drops its awaiting question. Links, the ask it answers and its trigger never change. Only Neo publications in this conversation can change, never session messages (not_found). A project holder's reply to a consultation cannot change until Neo has received it (consultation_return); after that it is a Neo reply like any other.",
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: Result,
