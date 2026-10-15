@@ -3759,7 +3759,7 @@ export class NeoService {
       !!projectId &&
       this.consultations.list(projectId).some(
         (item) =>
-          item.status !== 'pending' &&
+          item.status === 'reported' &&
           !!item.originMessageId &&
           this.inputTrigger({
             sessionId: item.originSessionId,
