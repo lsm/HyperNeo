@@ -179,6 +179,8 @@ export function neoActionTriggerKey(
       );
     case 'confirm':
       return key(`confirm:${action.itemId}`, `step to confirm: ${action.step}`);
+    case 'drop':
+      return key('drop', 'nothing is running; the human can drop the ask');
     case 'talk':
       return key(
         `talk:${action.workId}:${action.what}`,
@@ -238,7 +240,7 @@ export function neoAskTriggerKeys(
     ...failed,
     ...idle,
     ...(read.view.humanActions ?? [])
-      .filter((action) => action.kind !== 'close')
+      .filter((action) => action.kind !== 'close' && action.kind !== 'drop')
       .map((action) => neoActionTriggerKey(ask, action, work)),
   ];
 }
