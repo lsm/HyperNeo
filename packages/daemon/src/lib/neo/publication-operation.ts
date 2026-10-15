@@ -97,15 +97,6 @@ export function requirePublicationProducer(
     : { reason: { accepted: false, reason: 'live_avatar_required' } };
 }
 
-export function requirePublicationAsk(
-  producer: Producer,
-  ask: NeoAskOrigin | null
-): { value: Proof } | { reason: Rejection } {
-  return ask
-    ? { value: { ...producer, ask } }
-    : { reason: { accepted: false, reason: 'unknown_ask_origin' } };
-}
-
 function publicationLinkProblem(
   proof: Proof,
   { link, exists, projectId, origin }: LinkEvidence
@@ -197,8 +188,14 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
     .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
-    .pipe((producer: Producer) => runtime.resolveAskOrigin(producer.input), 'publication', 'ask')
-    .pipe(requirePublicationAsk, ['publication', 'ask'], 'result:publication')
+    .pipe(
+      (producer: Producer): Proof => ({
+        ...producer,
+        ask: runtime.resolveAskOrigin(producer.input) ?? producer.input,
+      }),
+      'publication',
+      'publication'
+    )
     .pipe(
       (draft: Draft) => draft.links.map((link) => readLinkEvidence(link, runtime)),
       'draft',

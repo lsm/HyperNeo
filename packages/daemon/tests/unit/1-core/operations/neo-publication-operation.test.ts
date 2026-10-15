@@ -10,7 +10,6 @@ import {
   admitPublicationDraft,
   createNeoPublicationOperation,
   createNeoPublisher,
-  requirePublicationAsk,
   requirePublicationProducer,
   requirePublicationLinks,
   requirePublicationLifetime,
@@ -684,19 +683,12 @@ describe('runtime-bound publication operation', () => {
     ).toHaveProperty('reason.reason', 'publication_superseded');
   });
 
-  test('pure producer, draft and ask gates reject invalid evidence without consulting a database', () => {
+  test('pure producer and draft gates reject invalid evidence without consulting a database', () => {
     expect(requirePublicationProducer(caller(), root, root)).toHaveProperty('value.input', ask);
     expect(requirePublicationProducer(caller(), { ...root, kind: 'worker' }, root)).toHaveProperty(
       'reason.accepted',
       false
     );
-    const admission = requirePublicationProducer(caller(), root, root);
-    if (!('value' in admission)) throw new Error('Expected producer');
-    expect(requirePublicationAsk(admission.value, null)).toHaveProperty(
-      'reason.reason',
-      'unknown_ask_origin'
-    );
-    expect(requirePublicationAsk(admission.value, ask)).toHaveProperty('value.ask', ask);
     const { publicationId: _publicationId, ...authored } = draft;
     expect(admitPublicationDraft(authored)).toHaveProperty('value');
     expect(
