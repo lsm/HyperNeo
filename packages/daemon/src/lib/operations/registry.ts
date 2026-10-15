@@ -18,6 +18,7 @@ export interface OperationCaller {
   readonly agentName?: string;
   readonly neoTurn?: {
     readonly messageId: string;
+    readonly origin?: string;
     readonly consultationId?: string;
     readonly human: boolean;
     readonly isLive: () => boolean;

@@ -14,7 +14,7 @@ import {
 import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isNeoCardLive } from './card-events.ts';
-import { hasNeoHumanWorkInput } from './work-origin.ts';
+import { hasNeoHumanWorkInput, neoTurnOrigin } from './work-origin.ts';
 import { neoWorkerRefKey } from './work-reroute.ts';
 
 const ResultSchema = workResultSchema(z.object({ archived: z.boolean() }));
@@ -36,7 +36,7 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
       db.getSession(binding.sessionId)?.status === 'active' &&
       hasNeoHumanWorkInput(
         caller,
-        db.getSDKMessageRepo().getStoredPromptsByUuid(binding.sessionId, turn.messageId)
+        db.getSDKMessageRepo().getStoredPromptsByUuid(binding.sessionId, neoTurnOrigin(turn))
       )
     )
   )

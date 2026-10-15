@@ -1,6 +1,8 @@
 import type { Database } from '../../storage/database.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
+import { neoHumanTurnOrigin } from './notification-triggers.ts';
+import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 
 export class NeoHolderTurn {
   private bound = false;
@@ -28,17 +30,24 @@ export class NeoHolderTurn {
       this.closed = true;
       return false;
     }
-    const human =
-      !item &&
-      this.db
-        .getSDKMessageRepo()
-        .getStoredPromptsByUuid(this.sessionId, messageId)
-        .some(
-          (message) =>
-            message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
+    const origin = item
+      ? null
+      : neoHumanTurnOrigin(
+          messageId,
+          new NeoInputOriginRepository(this.db.getDatabase()).trigger(this.sessionId, messageId),
+          (id) =>
+            this.db
+              .getSDKMessageRepo()
+              .getStoredPromptsByUuid(this.sessionId, id)
+              .some(
+                (message) =>
+                  message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
+              )
         );
+    const human = origin !== null;
     this.turn = {
       messageId,
+      ...(origin && origin !== messageId ? { origin } : {}),
       consultationId: item?.id,
       human,
       isLive: () => !this.closed && this.attempt.isLive(),
