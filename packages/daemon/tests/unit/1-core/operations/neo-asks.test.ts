@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { NEO_UNFINISHED_REPLY } from '../../../../src/lib/neo/direct-reply-fallback.ts';
 import { adoptNeoFilePacks } from '../../../../src/lib/neo/packs/index.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { tmpdir } from 'node:os';
@@ -2820,6 +2821,13 @@ describe('neo.ask operations', () => {
       triggerId: 'outcome:other:x',
       askOrigin: { sessionId: 'root', messageId: 'elsewhere' },
       shortText: 'Something else.',
+    });
+    expect(service.askRecords.get(askId)?.status).toBe('open');
+    internals.notePublishedAnswer({
+      publicationId: 'p-unfinished',
+      triggerId: `outcome:${askId}:x`,
+      askOrigin: { sessionId: 'root', messageId: 'elsewhere' },
+      shortText: NEO_UNFINISHED_REPLY,
     });
     expect(service.askRecords.get(askId)?.status).toBe('open');
     internals.notePublishedAnswer({

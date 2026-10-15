@@ -121,6 +121,7 @@ import {
   neoIdleReplySessions,
   neoNoteDeliveryMode,
   neoSessionStatus,
+  NEO_UNFINISHED_REPLY,
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
 import {
@@ -1278,7 +1279,7 @@ export class NeoService {
 
   private notePublishedAnswer(publication: NeoPublication): void {
     const triggerId = publication.triggerId;
-    if (!triggerId) return;
+    if (!triggerId || publication.shortText === NEO_UNFINISHED_REPLY) return;
     const traced = this.triggers.trigger(triggerId);
     const outcome = traced?.keys.some((key) => key.startsWith('outcome:'))
       ? this.askRecords.get(traced.askId)
