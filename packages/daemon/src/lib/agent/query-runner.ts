@@ -34,6 +34,11 @@ import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { NeoHolderTurn } from '../neo/holder-turn.ts';
+import {
+  type NeoReplyLanguage,
+  readNeoTurnLanguage,
+  withNeoReplyLanguage,
+} from '../neo/reply-language.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { stampNeoResponseInput } from '../neo/response-input.ts';
 import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
@@ -733,6 +738,7 @@ export class QueryRunner {
     let runAbortController: AbortController | null = null;
     let holderTurn: NeoHolderTurn | undefined;
     let resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver> | undefined;
+    let turnLanguage: ((messageId: string) => NeoReplyLanguage | null) | undefined;
     let isAbortError = false;
     this.turnEndedGeneration = null;
     this.fedAfterTurnEnd = [];
@@ -893,6 +899,16 @@ export class QueryRunner {
             this.ctx.db.getSDKMessageRepo().getStoredPromptsByUuid(id, messageId),
           getStamp: (sessionId, messageId) => inputOrigins.get(sessionId, messageId),
         });
+        const resolveOrigin = resolveAskOrigin;
+        turnLanguage = (messageId) =>
+          readNeoTurnLanguage(
+            { sessionId: session.id, messageId },
+            {
+              resolveAskOrigin: resolveOrigin,
+              getPrompts: (id, uuid) =>
+                this.ctx.db.getSDKMessageRepo().getStoredPromptsByUuid(id, uuid),
+            }
+          );
         queryOptions.mcpServers = {
           'hyperneo-operations': this.ctx.createNeoTurnMcpServer(() => isolated.identity()),
         };
@@ -1045,7 +1061,8 @@ export class QueryRunner {
           queryGeneration,
           recoveryState.startGuard,
           holderTurn,
-          questionInputs
+          questionInputs,
+          turnLanguage
         ),
         options: queryOptions,
       });
@@ -2187,7 +2204,8 @@ export class QueryRunner {
     queryGeneration: number,
     startGuard?: () => void,
     holderTurn?: NeoHolderTurn,
-    questionInputs?: QuestionInputScope
+    questionInputs?: QuestionInputScope,
+    turnLanguage?: (messageId: string) => NeoReplyLanguage | null
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
@@ -2272,7 +2290,9 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      yield message;
+      yield turnLanguage && message.uuid
+        ? withNeoReplyLanguage(message, turnLanguage(message.uuid))
+        : message;
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
       if (holderTurn) return;

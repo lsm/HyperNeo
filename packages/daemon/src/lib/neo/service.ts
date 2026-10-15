@@ -772,7 +772,7 @@ export class NeoService {
                 trigger.triggerId,
                 this.triggers.noteStatuses(target, neoTriggerMessageIds(trigger.triggerId)).length
               ),
-              neoTriggerNote(ask, trigger, this.lastHumanText()),
+              neoTriggerNote(ask, trigger),
               target,
               neoAskParent(ask),
               { id: trigger.triggerId }
@@ -1210,23 +1210,6 @@ export class NeoService {
       this.processingStatus.get(owner) ??
       neoSessionStatus(this.db.getSession(owner)?.processingState);
     return status !== null && status !== 'idle';
-  }
-
-  private lastHumanText(): string | null {
-    const root = this.repo.getBindingForProject(null);
-    if (!root?.sessionId.startsWith('neo:')) return null;
-    const content = this.asks.list(root.sessionId.slice(4), 0, 1, Number.MAX_SAFE_INTEGER)?.[0]
-      ?.content;
-    if (typeof content === 'string') return content;
-    if (!Array.isArray(content)) return null;
-    return (
-      content
-        .flatMap((block) =>
-          block.type === 'text' && typeof block.text === 'string' ? [block.text] : []
-        )
-        .join('\n')
-        .trim() || null
-    );
   }
 
   private noteHumanReply(input: NeoPublicationInput): void {
