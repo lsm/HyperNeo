@@ -193,6 +193,7 @@ const Project = z.object({
   parentId: z.string().nullable().optional(),
   epicUrl: z.string().nullable().optional(),
   workspaceAliases: z.array(z.string()).optional(),
+  repository: z.string().optional(),
   revision: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -1040,6 +1041,7 @@ export function createNeoOperations(service: NeoService) {
     const projects = service.repo
       .listProjects()
       .filter((item) => (focus ? item.id === focus.projectId : !scope || item.id === scope));
+    const repositories = service.repo.repositories();
     const work = focus
       ? focus.workIds.flatMap((id) => service.repo.getWork(id) ?? [])
       : service.repo.listWork(scope === undefined ? undefined : scope);
@@ -1112,6 +1114,7 @@ export function createNeoOperations(service: NeoService) {
       projects: projects.map((item) => ({
         ...item,
         ...(item.epicUrl ? { workspaceAliases: service.repo.workspaceAliases(item.id) } : {}),
+        ...(repositories.get(item.id) ? { repository: repositories.get(item.id) } : {}),
         context: detailed ? item.context : '',
       })),
       consultations: consultations.map((item) =>
