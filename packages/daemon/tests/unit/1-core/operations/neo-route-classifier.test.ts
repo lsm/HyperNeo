@@ -347,10 +347,14 @@ describe('chooseNeoRoute with a new subject', () => {
   });
 
   test('stays with main Neo when the Inbox cannot open', async () => {
-    expect(await chooseNeoRoute('Plan the garden', { ...base(), inbox: undefined })).toEqual({
-      choice: null,
-      fallback: 'inbox-unavailable',
-    });
+    const failing = async (): Promise<null> => {
+      throw new Error('holder open failed');
+    };
+    for (const inbox of [undefined, failing])
+      expect(await chooseNeoRoute('Plan the garden', { ...base(), inbox })).toEqual({
+        choice: null,
+        fallback: 'inbox-unavailable',
+      });
   });
 
   const projectDb = () => {

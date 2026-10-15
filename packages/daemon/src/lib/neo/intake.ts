@@ -344,7 +344,7 @@ const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
   .pipe(replayedNeoRoute, ['asked', 'earlier'], 'result:route')
   .pipe(
     (input: IntakeInput, router: NeoRouter): Promise<NeoRouted> =>
-      router(neoAskText(input.content), input.requestId),
+      router(neoAskText(input.content)),
     ['input', 'router'],
     'route'
   )

@@ -315,7 +315,8 @@ async function classifyNeoAsk(
   const title = decided?.projectTitle?.trim().toLowerCase();
   const titled = holders.filter((holder) => holder.title.trim().toLowerCase() === title);
   const target = chosen !== 'main' ? chosen : titled.length === 1 ? titled[0] : INBOX_CHOICE;
-  const holder = target.projectId === NEO_INBOX_ID ? await deps.inbox?.() : target;
+  const holder =
+    target.projectId === NEO_INBOX_ID ? await deps.inbox?.().catch(() => null) : target;
   return {
     choice: holder
       ? {
@@ -474,7 +475,7 @@ export async function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise
   }
 }
 
-export type NeoRouter = (text: string, requestId?: string) => Promise<NeoRouted>;
+export type NeoRouter = (text: string) => Promise<NeoRouted>;
 
 export interface NeoHolderWake {
   asleep(sessionId: string): boolean;

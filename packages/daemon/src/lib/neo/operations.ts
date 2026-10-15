@@ -973,7 +973,7 @@ export function neoReorganizeRuntime(
     rootSessionId: () => service.repo.getBindingForProject(null)?.sessionId ?? null,
     liveAsks: () => service.askRecords.listLive(),
     ask: (id) => service.askRecords.get(id),
-    route: (ask) => router(`${ask.title}\n${ask.ask}`, ask.id),
+    route: (ask) => router(`${ask.title}\n${ask.ask}`),
     sessionStatus: (sessionId) =>
       neoSessionStatus(service.db.getSession(sessionId)?.processingState),
     projectSession: (projectId) => service.repo.getBindingForProject(projectId)?.sessionId ?? null,
