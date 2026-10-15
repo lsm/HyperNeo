@@ -116,6 +116,10 @@ export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
   }));
 }
 
+export function isNeoWorkPrEvidenceOpened(evidence: Pick<NeoEvidence, 'key' | 'summary'>) {
+  return /^https?:\/\//.test(evidence.key) && /^(open|merged)\b/.test(evidence.summary);
+}
+
 type NeoPrClaimHold = { workId: string; urlKey: string; claim: string };
 
 export function neoCardDisownsPr(

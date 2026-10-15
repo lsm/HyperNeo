@@ -71,6 +71,7 @@ export function neoDaemonReadsClaim(text: string, context = ''): boolean {
 
 const NEO_DAEMON_CHECKS: ReadonlySet<string> = new Set([
   'coding.pr_merged',
+  'coding.pr_opened',
   'coding.issue_filed',
   'coding.issue_sub_issue',
   'coding.issue_closed',
