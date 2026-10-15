@@ -3754,8 +3754,7 @@ export class NeoService {
     parent: NeoAskOrigin | null,
     trigger: NeoDeliveryTrigger
   ): void {
-    const origin = parent ? this.resolveAskOrigin(parent) : null;
-    if (!origin) return;
+    const origin = (parent ? this.resolveAskOrigin(parent) : null) ?? input;
     const triggerId = neoDeliveryTrigger(trigger, () => this.parentTrigger(parent));
     this.inputOrigins.record(input, origin, Date.now(), triggerId);
   }

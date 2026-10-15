@@ -593,6 +593,30 @@ describe('NeoService notification triggers', () => {
     expect(reopen).not.toHaveBeenCalledWith('labs');
   });
 
+  test('a note for an ask with no origin message is attributed to itself and keeps its trigger', async () => {
+    const opened = service.askRecords.open(
+      {
+        id: 'a4',
+        requestKey: 'k4',
+        projectId: null,
+        originSessionId: root,
+        originMessageId: null,
+        title: 'Fix the composer',
+        ask: 'Fix the composer',
+        doneWhen: '- composer fixed',
+        doneSource: 'human',
+      },
+      [{ text: 'composer fixed', check: null }]
+    )!;
+    seed();
+    tickMet(opened);
+    await sweep();
+    await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
+    const note = { sessionId: root, messageId: mailbox()[0].messageUuid };
+    expect(service.inputTrigger(note)).toMatch(/^outcome:a4:/);
+    expect(service.resolveAskOrigin(note)).toEqual(note);
+  });
+
   test('a failed note delivery re-arms the sweep, and the retry sends it', async () => {
     const opened = open();
     seed();
