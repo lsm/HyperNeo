@@ -657,6 +657,14 @@ describe('NeoService notification triggers', () => {
     expect(mailbox()[0].messageUuid).toMatch(/^neo-trigger:outcome:a1:/);
   });
 
+  test('an outcome trigger recorded while a question was open is still found once it is answered', () => {
+    const triggers = new NeoNotificationTriggerRepository(db.getDatabase());
+    triggers.record('a1', ['outcome:2:q1'], 'outcome:a1:early', Date.now());
+    triggers.record('a1', ['outcome:1'], 'outcome:a1:stale', Date.now());
+    triggers.record('a1', ['idle:5'], 'idle:a1:x', Date.now());
+    expect(triggers.triggerIdsFor('a1', 'outcome:2')).toEqual(['outcome:a1:early']);
+  });
+
   test('seeding at startup marks what is already there as told, without waking Neo', async () => {
     tickMet(open());
     seed();

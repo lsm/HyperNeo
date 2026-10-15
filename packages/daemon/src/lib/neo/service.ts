@@ -373,11 +373,11 @@ import {
   NEO_TRIGGER_ACHIEVED_WINDOW_MS,
   NEO_TRIGGER_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
-  neoAskOutcomeKey,
   neoHumanTriggerMessageId,
   neoTriggerMessageId,
   neoTriggerMessageIds,
   planNeoTriggerRetry,
+  neoAskOutcomeBase,
   shouldRetryNeoTrigger,
   neoTriggerWatchSessions,
   neoAskTriggerConcern,
@@ -1305,7 +1305,7 @@ export class NeoService {
   private reconcilePublishedAnswer(ask: NeoAsk): void {
     const root = this.repo.getBindingForProject(null);
     if (!isNeoAskAnswerReady(ask) || !root?.sessionId.startsWith('neo:')) return;
-    for (const triggerId of this.triggers.triggerIdsFor(ask.id, neoAskOutcomeKey(ask))) {
+    for (const triggerId of this.triggers.triggerIdsFor(ask.id, neoAskOutcomeBase(ask))) {
       const publication = this.publications.byTrigger(root.sessionId.slice(4), triggerId);
       if (publication) this.notePublishedAnswer(publication);
     }
