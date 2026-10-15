@@ -109,6 +109,23 @@ describe('project cleanup plan', () => {
     );
   });
 
+  test('a live or other-machine repository duplicate is not merged, and another machine is no home', () => {
+    const oldest = project('old', { createdAt: 1, aliases: [repo] });
+    expect(
+      plan([
+        oldest,
+        project('live', { createdAt: 2, aliases: [repo], liveWork: 1 }),
+        project('remote', { createdAt: 3, aliases: [repo, 'folder:tts/app'] }),
+      ])
+    ).toEqual([]);
+    expect(
+      plan([
+        project('away', { title: 'App', aliases: [repo, 'folder:tts/app'] }),
+        project('topic', { title: 'App', ...oneOff }),
+      ])
+    ).toEqual([{ action: 'archive', projectId: 'topic', title: 'App' }]);
+  });
+
   test('live, section, pinned and other-machine projects are left alone', () => {
     expect(
       plan(

@@ -80,14 +80,14 @@ export function planNeoProjectCleanup(
   scope: { pinned: ReadonlySet<string>; machine: string }
 ): NeoProjectCleanup[] {
   const homes = projects
-    .filter((project) => repositories(project).length)
+    .filter((project) => repositories(project).length && !isElsewhere(project, scope.machine))
     .sort((a, b) => a.createdAt - b.createdAt);
   return projects
     .filter((project) => !scope.pinned.has(project.id) && !project.section)
     .flatMap((project): NeoProjectCleanup[] => {
       const named = { projectId: project.id, title: project.title };
       const repository = repositories(project).length > 0;
-      if (!repository && (isElsewhere(project, scope.machine) || isLive(project))) return [];
+      if (isElsewhere(project, scope.machine) || isLive(project)) return [];
       if (!repository && isEmpty(project)) return [{ action: 'delete', ...named }];
       const target = home(project, homes);
       if (target) return [{ action: 'merge', ...named, targetId: target.id }];
