@@ -71,6 +71,7 @@ import {
   type presentNeoWorkTarget,
 } from './work-target.ts';
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
+import { isNeoProjectEventTurn } from './card-events.ts';
 import { requireNeoProposal, type NeoProposal } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
@@ -1583,7 +1584,13 @@ export function createNeoOperations(service: NeoService) {
     .pipe(
       (input: SaveRequest, caller: OperationCaller) => {
         const turn = caller.neoTurn;
-        return isHolder(caller) && (!turn?.isLive() || (!turn.human && !turn.consultationId))
+        const origin =
+          turn && caller.sessionId
+            ? service.resolveAskOrigin({ sessionId: caller.sessionId, messageId: turn.messageId })
+            : null;
+        return isHolder(caller) &&
+          (!turn?.isLive() ||
+            (!turn.human && !turn.consultationId && !isNeoProjectEventTurn(origin ?? turn)))
           ? {
               reason: {
                 ok: false as const,
