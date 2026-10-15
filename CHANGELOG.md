@@ -4,6 +4,19 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.44.1] - 2026-10-15
+
+Patch release: v0.44.0 never reached npm because its Windows build failed.
+
+### Fixed
+
+- **Release**: Binaries build without a shell, so the Windows build receives the commit define and the release can publish (#7008).
+- **Neo**: Facts are read before publishing, and a wrong fact goes through correction (#6999); a refused change to a closed answer tells Neo to end the turn (#7004); a waiting human message ends a turn whose answer is already out (#7005).
+
+### Added
+
+- **Neo**: Every Neo turn states the reply language of the human message it answers (#6995); an ask with nothing running offers Drop and says Neo will propose again, shown on its card in the web (#7001, #7006).
+
 ## [0.44.0] - 2026-10-15
 
 357 commits since v0.43.0. Headline families: one Neo conversation every Neo session can see and fix, daemon-detected notification triggers and derived ask and card views, work admission with dependencies and outcome checks, projects keyed by repository identity with merge and reorganize, driver input and configuration receipts, and network-outage and restart resilience for turns.
