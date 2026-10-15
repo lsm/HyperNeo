@@ -142,12 +142,17 @@ describe('Neo floating controls', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('closes the drawer on Escape, a backdrop click and a drag to the left', () => {
+  it('closes the drawer on Escape, a backdrop click and a drag to the left, returning focus to the mark', async () => {
     renderLive();
     const logo = within(banner()).getByRole('button', { name: 'Settings and connection' });
+    logo.focus();
     fireEvent.click(logo);
+    expect(document.activeElement).toBe(
+      screen.getByRole('dialog', { name: 'Settings and connection' })
+    );
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(logo));
     fireEvent.click(logo);
     fireEvent.click(screen.getByTestId('neo-drawer-backdrop'));
     expect(screen.queryByRole('dialog')).toBeNull();

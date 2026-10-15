@@ -1,6 +1,7 @@
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import type { ConnectionState } from '../lib/state.ts';
 import { useEffect, useRef } from 'preact/hooks';
+import { setupFocusTrap } from '../components/ui/Modal.tsx';
 import { NeoProjectTree } from './NeoProjectTree.tsx';
 
 const CONNECTION_TEXT: Record<ConnectionState, string> = {
@@ -32,13 +33,19 @@ export function NeoDrawer({
   const dragFrom = useRef<number | null>(null);
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (!open) return;
+    if (!open || !panel.current) return;
+    const opener = document.activeElement as HTMLElement | null;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
-    panel.current?.focus();
-    return () => document.removeEventListener('keydown', onKey);
+    const release = setupFocusTrap(panel.current);
+    panel.current.focus();
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      release();
+      setTimeout(() => opener?.focus?.(), 0);
+    };
   }, [open, onClose]);
   if (!open) return null;
   const drag = (x: number) => {
