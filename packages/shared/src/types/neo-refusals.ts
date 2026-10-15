@@ -9,6 +9,10 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'This card already has a working session. Use neo.work.continue to send it more instructions instead of starting it again.',
   ambiguous_target_agent:
     'More than one agent owns that session, so the target is ambiguous. Propose the work against one specific agent session.',
+  approval_expired:
+    'The human’s approval of this ask has run out. Ask the human to approve it again before starting work.',
+  approval_stale:
+    'The ask changed after the human approved it, so that approval no longer covers it. Ask the human to approve the current revision.',
   ask_not_found:
     'No ask has that askId. Read the conversation’s asks with neo.snapshot and pass an askId from there.',
   ask_not_live:
@@ -37,6 +41,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'A card in this dependency edit does not exist or is not visible to this ask. Use card ids from this ask’s neo.snapshot.',
   dependency_outcomes_missing:
     'Every card in a dependency must have outcome items. Bind the prerequisite cards’ items with delivers first.',
+  dependency_rejected:
+    'The dependency change was not accepted. Read the card’s dependencies with neo.snapshot and send a valid edit.',
   dependent_cancelled:
     'The card is cancelled, so it cannot gain dependencies. Propose a new card instead.',
   duplicate_dependency:
@@ -96,6 +102,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'Merging a project without a repository identity needs the human’s approval. Ask the human, then retry with humanApproved.',
   no_driver_target:
     'The card has no place to run its work. Propose it with a work target, such as a repository or a session.',
+  not_approved:
+    'The human has not approved this ask yet. Ask the human to approve it before starting work.',
   not_found:
     'No Neo reply in this conversation has that publicationId. Use a publicationId from neo.publication.recent.',
   not_your_ask:
