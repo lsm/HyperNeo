@@ -41,6 +41,11 @@ export const NeoGithubQueryResult = z.union([
     kind: z.literal('list'),
     repo: z.string(),
     search: z.string(),
+    window: z.object({
+      by: z.enum(['created', 'updated', 'merged', 'closed']),
+      since: z.string().nullable(),
+      until: z.string(),
+    }),
     items: z.array(Item),
     truncated: z.boolean(),
   }),
@@ -100,7 +105,7 @@ export function planNeoGithubQuery(query: NeoGithubQuery): { value: Plan } | { r
 
 export function presentNeoGithubQuery(
   plan: Plan,
-  listed: { data: unknown | null }
+  listed: { data: unknown | null; at: string }
 ): { value: NeoGithubQueryResult } | { reason: Failure } {
   const parsed = z.array(Item).safeParse(listed.data);
   if (!parsed.success)
@@ -127,6 +132,11 @@ export function presentNeoGithubQuery(
       kind: 'list',
       repo: plan.query.repo,
       search: plan.search,
+      window: {
+        by: plan.by,
+        since: plan.query.since ?? null,
+        until: plan.query.until ?? listed.at,
+      },
       items: items.slice(0, plan.query.limit),
       truncated: items.length > plan.query.limit,
     },
@@ -145,7 +155,10 @@ export const queryNeoGithub = (superpipe({})('neo-github-query') as PipelineAPI)
   .input(['list', 'query'])
   .pipe(planNeoGithubQuery, 'query', 'result:query')
   .pipe(
-    async (list: NeoGithubLister, plan: Plan) => ({ data: await list(plan.args) }),
+    async (list: NeoGithubLister, plan: Plan) => {
+      const at = new Date().toISOString();
+      return { data: await list(plan.args), at };
+    },
     ['list', 'query'],
     'listed'
   )
