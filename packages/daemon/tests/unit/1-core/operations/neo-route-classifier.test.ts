@@ -260,7 +260,7 @@ describe('chooseNeoRoute with a classifier', () => {
       'new thing',
       deps(async () => ({ decision: 'main', confidence: 0.7, basis: 'new_subject' }))
     );
-    expect(main).toEqual({ choice: null, fallback: 'classifier:new_subject' });
+    expect(main).toEqual({ choice: null, fallback: 'inbox-unavailable' });
   });
 
   test('stays with main Neo and records why when the classifier says main or gives no answer', async () => {
@@ -288,7 +288,8 @@ describe('chooseNeoRoute with a classifier', () => {
 });
 
 describe('chooseNeoRoute with a new subject', () => {
-  const base = (newProject?: NeoRouterDeps['newProject']): NeoRouterDeps => ({
+  const inbox = { projectId: NEO_INBOX_ID, sessionId: 'neo:inbox', title: 'Inbox', summary: '' };
+  const base = (opened: string[] = []): NeoRouterDeps => ({
     holders: () => [drivers, youtube],
     recentTurns: () => [turn({})],
     projectTurns: () => [turn({})],
@@ -300,99 +301,64 @@ describe('chooseNeoRoute with a new subject', () => {
       basis: 'new_subject',
       projectTitle: 'Spring garden',
     }),
-    newProject,
+    inbox: async () => {
+      opened.push(NEO_INBOX_ID);
+      return inbox;
+    },
   });
 
-  test('opens a project for a new subject and routes the message to its holder', async () => {
-    const asked: string[] = [];
-    const route = await chooseNeoRoute(
-      'Plan the garden for spring',
-      base(async (text) => {
-        asked.push(text);
-        return { projectId: 't1', sessionId: 'neo:t1', title: text, summary: '' };
-      })
-    );
-    expect(asked).toEqual(['Spring garden']);
-    expect(route).toEqual({
+  test('sends a new subject to the Inbox, never opening a project on the spot', async () => {
+    const opened: string[] = [];
+    expect(await chooseNeoRoute('Plan the garden for spring', base(opened))).toEqual({
       choice: {
-        projectId: 't1',
-        sessionId: 'neo:t1',
+        projectId: NEO_INBOX_ID,
+        sessionId: 'neo:inbox',
         signal: 'classifier:new_subject',
         confidence: 0.8,
       },
     });
+    expect(opened).toEqual([NEO_INBOX_ID]);
   });
 
-  test('opens a project when the classifier matches a project but names no holder', async () => {
+  test.each([
+    ['a project match with no holder', { basis: 'matches_project', projectTitle: 'HyperNeo' }],
+    ['a new subject with no name', { basis: 'new_subject' }],
+  ] as const)('sends %s to the Inbox', async (_label, answer) => {
     const route = await chooseNeoRoute('fix HyperNeo #5554', {
-      ...base(async () => ({ projectId: 't4', sessionId: 'neo:t4', title: 'fix', summary: '' })),
-      classify: async () => ({
-        decision: 'main',
-        confidence: 0.7,
-        basis: 'matches_project',
-        projectTitle: 'HyperNeo',
-      }),
+      ...base(),
+      classify: async () => ({ decision: 'main', confidence: 0.7, ...answer }),
     });
-    expect(route.choice).toMatchObject({
-      projectId: 't4',
-      signal: 'classifier:matches_project',
-      confidence: 0.7,
-    });
+    expect(route.choice?.projectId).toBe(NEO_INBOX_ID);
   });
 
-  test('does not create a project when the classifier cannot name its target', async () => {
-    let opened = 0;
-    const route = await chooseNeoRoute('Fix a spinner in the app', {
-      ...base(async () => {
-        opened++;
-        return null;
-      }),
-      classify: async () => ({ decision: 'main', confidence: 0.8, basis: 'new_subject' }),
-    });
-    expect(opened).toBe(0);
-    expect(route.choice).toBeNull();
-  });
-
-  test('sends a new subject to the existing project with that title instead of opening one', async () => {
-    let opened = 0;
+  test('sends a new subject to the existing project with that title', async () => {
+    const opened: string[] = [];
     const holders = Array.from({ length: 20 }, (_, i) => ({
       ...drivers,
       projectId: `project-${i}`,
       title: i === 19 ? 'Spring garden' : `Target ${i}`,
     }));
     const route = await chooseNeoRoute('Help with spring planting', {
-      ...base(async () => {
-        opened++;
-        return null;
-      }),
+      ...base(opened),
       holders: () => holders,
-      classify: async () => {
-        return {
-          decision: 'main',
-          confidence: 0.8,
-          basis: 'new_subject',
-          projectTitle: 'Spring garden',
-        };
-      },
     });
-    expect(opened).toBe(0);
+    expect(opened).toEqual([]);
     expect(route.choice?.projectId).toBe('project-19');
   });
 
-  test('stays with main Neo when no project can be opened', async () => {
-    expect(
-      await chooseNeoRoute(
-        'Plan the garden',
-        base(async () => null)
-      )
-    ).toEqual({
-      choice: null,
-      fallback: 'classifier:new_subject',
-    });
-    expect(await chooseNeoRoute('Plan the garden', base())).toEqual({
-      choice: null,
-      fallback: 'classifier:new_subject',
-    });
+  test('stays with main Neo when the Inbox cannot open', async () => {
+    const failing = async (): Promise<null> => {
+      throw new Error('holder open failed');
+    };
+    for (const deps of [
+      { ...base(), inbox: undefined },
+      { ...base(), inbox: failing },
+      { ...base(), inboxRunnable: async () => false },
+    ])
+      expect(await chooseNeoRoute('Plan the garden', deps)).toEqual({
+        choice: null,
+        fallback: 'inbox-unavailable',
+      });
   });
 
   const projectDb = () => {
