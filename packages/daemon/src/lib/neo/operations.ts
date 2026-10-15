@@ -1524,14 +1524,7 @@ export function createNeoOperations(service: NeoService) {
     .pipe(
       (input: SaveRequest, caller: OperationCaller) => ({
         ...input,
-        id:
-          input.id ??
-          neoTurnRequestKey(
-            (turn) => service.inputTrigger(turn),
-            caller,
-            'neo.project.save',
-            input
-          ),
+        id: input.id ?? neoTurnRequestKey(caller, 'neo.project.save', input),
       }),
       ['input', 'admission'],
       'request'
