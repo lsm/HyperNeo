@@ -135,6 +135,7 @@ import mdneoWorkPackNote from './neo/work/pack-note.md' with { type: 'text' };
 import mdneoWorkReturnReview from './neo/work/return-review.md' with { type: 'text' };
 import mdneoWorkReturned from './neo/work/returned.md' with { type: 'text' };
 import mdneoWorkReturnedRetried from './neo/work/returned-retried.md' with { type: 'text' };
+import mdneoWorkEnvironmentMove from './neo/work/environment-move.md' with { type: 'text' };
 import mdneoWorkReturnedRetry from './neo/work/returned-retry.md' with { type: 'text' };
 import mdneoWorkStall from './neo/work/stall.md' with { type: 'text' };
 import mdneoWorkStallBudget from './neo/work/stall-budget.md' with { type: 'text' };
@@ -417,6 +418,7 @@ const registry: Record<string, string> = {
   'neo/work/pack-note.md': mdneoWorkPackNote,
   'neo/work/return-review.md': mdneoWorkReturnReview,
   'neo/work/returned-retried.md': mdneoWorkReturnedRetried,
+  'neo/work/environment-move.md': mdneoWorkEnvironmentMove,
   'neo/work/returned-retry.md': mdneoWorkReturnedRetry,
   'neo/work/returned.md': mdneoWorkReturned,
   'neo/work/stall-budget.md': mdneoWorkStallBudget,
@@ -608,6 +610,7 @@ export const {
   NEO_WORK_PACK_NOTE,
   NEO_WORK_RETURN_REVIEW,
   NEO_WORK_RETURNED_RETRIED,
+  NEO_WORK_ENVIRONMENT_MOVE,
   NEO_WORK_RETURNED_RETRY,
   NEO_WORK_RETURNED,
   NEO_WORK_STALL_BUDGET,

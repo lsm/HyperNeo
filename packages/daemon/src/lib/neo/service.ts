@@ -125,7 +125,15 @@ import {
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
 import {
+  classifyNeoWorkerEnvironmentFailure,
+  neoEnvironmentMoveNote,
+  planNeoEnvironmentMove,
+  type NeoEnvironmentMove,
+} from './worker-environment.ts';
+import {
   driverStartedReport,
+  driverTargetDaemon,
+  readNeoDriverAdapters,
   driverWorkCall,
   driverWorkCaller,
   type DriverSent,
@@ -3384,6 +3392,28 @@ export class NeoService {
     .pipe((work: NeoWork) => this.returnReport(work), 'work')
     .endAsync('recover') as (work: NeoWork) => Promise<unknown>;
 
+  private readonly readEnvironmentMove = (superpipe({})('neo-environment-move') as PipelineAPI)
+    .input(['work'])
+    .pipe((work: NeoWork) => classifyNeoWorkerEnvironmentFailure(work.report), 'work', 'failure')
+    .pipe((work: NeoWork) => this.driverTargets.get(work.id), 'work', 'target')
+    .pipe(
+      (work: NeoWork, failure: string | null, target: NeoDriverTarget | null) =>
+        failure && target?.verb === 'start'
+          ? readNeoDriverAdapters(() =>
+              invokeOperation(
+                this.sessions.getOperationRegistry(),
+                'work.adapters',
+                { daemon: driverTargetDaemon(target) },
+                driverWorkCaller(work)
+              )
+            )
+          : null,
+      ['work', 'failure', 'target'],
+      'adapters'
+    )
+    .pipe(planNeoEnvironmentMove, ['failure', 'target', 'adapters'], 'result:move')
+    .endAsync('move') as (work: NeoWork) => Promise<NeoEnvironmentMove | null>;
+
   private async returnReport(work: NeoWork): Promise<void> {
     if (work.status === 'reported' && isNeoWorkClosedDone(work.report)) return;
     if (this.deferToDeliveryRetry(work)) return;
@@ -3416,7 +3446,8 @@ export class NeoService {
     const packLine = packNote
       ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: packNote.id })}${packNote.inPrompt ? '' : `\n${packNote.instructions}`}\n`
       : '';
-    const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote, summary: NEO_WORK_SUMMARY_NOTE })}${packLine}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, projectId: work.projectId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
+    const move = neoEnvironmentMoveNote(await this.readEnvironmentMove(work));
+    const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote, summary: NEO_WORK_SUMMARY_NOTE })}${move}${packLine}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, projectId: work.projectId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
     const messageId = neoWorkReturnMessageId(
       work.id,
       retries,
@@ -3594,12 +3625,20 @@ export class NeoService {
       'current'
     )
     .pipe(
+      async (work: NeoWork) => ({
+        note: neoEnvironmentMoveNote(await this.readEnvironmentMove(work)),
+      }),
+      'work',
+      'move'
+    )
+    .pipe(
       (
         work: NeoWork,
         goal: NeoWorkGoal,
         found: NeoDoneCheckFound,
         options: NeoDoneCheckDelivery,
-        current: { ask: NeoAsk | null }
+        current: { ask: NeoAsk | null },
+        move: { note: string }
       ) => {
         const continued = this.workContinues.get(work.id)?.count ?? 0;
         return {
@@ -3628,11 +3667,12 @@ export class NeoService {
                     this.workPrs.list(current.ask.workIds)
                   )
                 : [],
+              move: move.note,
             }
           ),
         };
       },
-      ['work', 'goal', 'found', 'options', 'current'],
+      ['work', 'goal', 'found', 'options', 'current', 'move'],
       'note'
     )
     .pipe(

@@ -647,6 +647,7 @@ export function driverDoneCheckNote(
     ask,
     pack = null,
     cards = [],
+    move = '',
   }: {
     stalled?: number;
     prs?: readonly NeoWorkPr[];
@@ -654,6 +655,7 @@ export function driverDoneCheckNote(
     ask?: NeoAsk | null;
     pack?: NeoPackFragment | null;
     cards?: readonly NeoAskCard[];
+    move?: string;
   } = {}
 ): string {
   const live = !prs
@@ -680,7 +682,7 @@ export function driverDoneCheckNote(
   const items = owned && ask ? neoNoteChecklist(ask) : [];
   const restates = (doneWhen: string | null | undefined) =>
     !!ask && items.length > 0 && isNeoDoneWhenRestated(doneWhen ?? '', ask);
-  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}${packNote}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, ...(restates(goal.doneWhen) ? {} : { doneWhen: goal.doneWhen }), continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs: neoNotePrs(prs) } : {}), ...(ask ? { ask: { id: ask.id, ...(restates(ask.doneWhen) ? {} : { doneWhen: ask.doneWhen }), status: ask.status, ...(owned ? { cards: neoNoteCards(cards), items } : {}) } } : {}) })}`;
+  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}${move}${packNote}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, ...(restates(goal.doneWhen) ? {} : { doneWhen: goal.doneWhen }), continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs: neoNotePrs(prs) } : {}), ...(ask ? { ask: { id: ask.id, ...(restates(ask.doneWhen) ? {} : { doneWhen: ask.doneWhen }), status: ask.status, ...(owned ? { cards: neoNoteCards(cards), items } : {}) } } : {}) })}`;
 }
 
 export function neoWorkDoneGoal(
