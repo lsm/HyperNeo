@@ -27,7 +27,7 @@ const plan = (projects: NeoProjectFacts[], pinned: string[] = []) =>
 const repo = 'repository:github.com/lsm/app';
 const oneOff = { asks: 1, work: [{ lastActivityAt: DAY }, { lastActivityAt: DAY + 60_000 }] };
 
-describe('planNeoProjectCleanup', () => {
+describe('project cleanup plan', () => {
   test('an empty project with a silent holder is deleted', () => {
     expect(plan([project('empty')])).toEqual([
       { action: 'delete', projectId: 'empty', title: 'empty' },
