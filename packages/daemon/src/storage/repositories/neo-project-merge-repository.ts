@@ -91,7 +91,9 @@ export class NeoProjectMergeRepository {
       .all() as NeoProject[];
     const identities: Record<string, string[]> = {};
     for (const row of this.db
-      .prepare("SELECT alias, project_id FROM neo_project_workspaces WHERE alias LIKE 'git:%'")
+      .prepare(
+        "SELECT alias, project_id FROM neo_project_workspaces WHERE alias LIKE 'git:%' OR alias LIKE 'repository:%'"
+      )
       .all() as { alias: string; project_id: string }[])
       (identities[row.project_id] ??= []).push(row.alias);
     const unavailable = new Set<string>();

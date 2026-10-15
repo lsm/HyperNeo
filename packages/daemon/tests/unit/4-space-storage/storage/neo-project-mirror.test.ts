@@ -8,7 +8,9 @@ import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import {
+  backfillNeoRepositoryIdentities,
   isNeoPlumbingFolder,
+  neoRepositoryIdentity,
   mirrorNeoWorkspaceProjects,
   planNeoWorkspaceProjects,
 } from '../../../../src/lib/neo/project-mirror.ts';
@@ -286,5 +288,88 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     expect(plan.aliases.filter((alias) => alias.startsWith('folder:'))).toEqual([
       `folder:${elsewhere}\u0000/live`,
     ]);
+  });
+
+  test('names a repository the same way from every remote form', () => {
+    for (const remote of [
+      'git@github.com:lsm/HyperNeo.git',
+      'https://github.com/lsm/hyperneo',
+      'https://token@github.com/lsm/HyperNeo.git/',
+      'ssh://git@github.com/lsm/hyperneo.git',
+    ])
+      expect(neoRepositoryIdentity(remote)).toBe('repository:github.com/lsm/hyperneo');
+    expect(neoRepositoryIdentity('git@gitlab.example.com:team/app.git')).toBe(
+      'repository:gitlab.example.com/team/app'
+    );
+    expect(neoRepositoryIdentity('file:///Users/lsm/repo')).toBeNull();
+    expect(neoRepositoryIdentity(undefined)).toBeNull();
+  });
+
+  test('folds projects whose folders are gone into their repository by the stored remote, and leaves other repositories and repo-less projects alone', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const save = (title: string, aliases: string[]) => {
+      const id = `project:${title}`;
+      store.saveProject({ id, title, summary: `Project: ${title}`, context: '' }, 0);
+      for (const alias of aliases)
+        raw
+          .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+          .run(alias, id);
+      return id;
+    };
+    const repoAlias = (name: string, folder: string) => `repo:${name}\u0000tts\u0000${folder}`;
+    const kept = save('neokai', [repoAlias('lsm/hyperneo', '/focus/neokai')]);
+    save('001ce5d6-494e-4db1-9d65-0a8745ef4162', [
+      'folder:tts\u0000/gone/001ce5d6',
+      repoAlias('lsm/hyperneo', '/gone/001ce5d6'),
+    ]);
+    save('3a4a1989-7093-4b8e-bb18-0248d528a9dd', [repoAlias('lsm/hyperneo', '/gone/3a4a1989')]);
+    const other = save('makai', [repoAlias('lsm/makai', '/focus/makai')]);
+    const bare = save('180460d2-753e-4418-91b9-6636a831c0c0', ['folder:laptop\u0000/w/180460d2']);
+    expect(backfillNeoRepositoryIdentities(raw)).toBe(true);
+    expect(
+      store
+        .listProjects()
+        .map((project) => project.id)
+        .sort()
+    ).toEqual([bare, kept, other].sort());
+    expect(store.getProject(kept)?.title).toBe('neokai');
+    expect(
+      raw
+        .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')
+        .get('repository:github.com/lsm/hyperneo')
+    ).toEqual({ project_id: kept });
+    expect(store.projectMerges.redirects()).toHaveLength(2);
+    expect(backfillNeoRepositoryIdentities(raw)).toBe(false);
+    full.close();
+  });
+
+  test('retitles a generated title from the repository when the project kept it', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const title = '6c79b9f4-531a-4c83-a514-fa20c272ea80';
+    store.saveProject({ id: 'project:x', title, summary: `Project: ${title}`, context: '' }, 0);
+    raw
+      .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+      .run('repo:lsm/hyperneo\u0000x', 'project:x');
+    backfillNeoRepositoryIdentities(raw);
+    expect(store.getProject('project:x')?.title).toBe('hyperneo');
+    full.close();
+  });
+
+  test('merges a re-created repository with the same remote though its history differs', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const place = (folder: string, root: string) => {
+      const found = workspace(folder, 'laptop', `git:${root.repeat(40)}`);
+      return [{ ...found, place: { ...found.place, remotes: ['git@github.com:lsm/neokai.git'] } }];
+    };
+    mirrorNeoWorkspaceProjects(raw, place('/old', 'a'));
+    mirrorNeoWorkspaceProjects(raw, place('/new', 'b'));
+    expect(store.listProjects()).toHaveLength(1);
+    full.close();
   });
 });
