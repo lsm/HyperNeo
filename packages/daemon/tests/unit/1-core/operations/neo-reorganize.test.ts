@@ -222,6 +222,7 @@ describe('neo.projects.reorganize', () => {
       mergeProjects: async () => ({ merged, asked: [] }),
       projectFacts: () => [],
       machine: () => 'here',
+      mirroredAliases: async () => new Set(),
       log: (line) => {
         logged.push(line);
       },
@@ -290,6 +291,9 @@ describe('neo.projects.reorganize', () => {
       cleanupPlanned: [{ action: 'delete', projectId: 'empty', title: 'Empty' }],
     });
     expect(logged).toContain('neo reorganize: would delete project empty (Empty)');
+    deps.mirroredAliases = async () => null;
+    expect(await invoke(deps)).toMatchObject({ ok: true, cleanupPlanned: [] });
+    expect(logged).toContain('neo reorganize: no project cleanup, the places could not be read');
   });
 
   test('merges matching projects first and logs each merge', async () => {

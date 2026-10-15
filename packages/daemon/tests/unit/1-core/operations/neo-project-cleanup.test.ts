@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   type NeoProjectFacts,
+  neoMirroredAliases,
   planNeoProjectCleanup,
 } from '../../../../src/lib/neo/project-cleanup.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -22,8 +23,12 @@ const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProje
   aliases: [],
   ...overrides,
 });
-const plan = (projects: NeoProjectFacts[], pinned: string[] = []) =>
-  planNeoProjectCleanup(projects, { pinned: new Set(pinned), machine: 'here' });
+const plan = (projects: NeoProjectFacts[], pinned: string[] = [], mirrored: string[] = []) =>
+  planNeoProjectCleanup(projects, {
+    pinned: new Set(pinned),
+    machine: 'here',
+    mirrored: new Set(mirrored),
+  });
 const repo = 'repository:github.com/lsm/app';
 const oneOff = {
   asks: 1,
@@ -34,15 +39,19 @@ const oneOff = {
 };
 
 describe('project cleanup plan', () => {
-  test('an empty project with a silent holder and no driver sessions is deleted', () => {
+  test('an empty project with a silent holder is deleted unless the mirror would create it again', () => {
     expect(plan([project('empty')])).toEqual([
       { action: 'delete', projectId: 'empty', title: 'empty' },
     ]);
     expect(
-      plan([
-        project('spoke', { holderMessages: 1, routed: 1 }),
-        project('driven', { aliases: ['work:here\u0000claude\u0000s1'] }),
-      ])
+      plan(
+        [
+          project('spoke', { holderMessages: 1, routed: 1 }),
+          project('driven', { aliases: ['folder:here\u0000/kept'] }),
+        ],
+        [],
+        ['folder:here\u0000/kept']
+      )
     ).toEqual([]);
   });
 
@@ -155,7 +164,38 @@ describe('NeoRepository.projectCleanupFacts', () => {
       aliases: [],
     });
     expect(
-      planNeoProjectCleanup([...facts.values()], { pinned: new Set(), machine: 'here' })
+      planNeoProjectCleanup([...facts.values()], {
+        pinned: new Set(),
+        machine: 'here',
+        mirrored: new Set(),
+      })
     ).toEqual([{ action: 'delete', projectId: 'child', title: 'Child' }]);
+  });
+});
+
+describe('neoMirroredAliases', () => {
+  test('holds the aliases of places the mirror would make a project for: repositories and ongoing folders', () => {
+    const group = (folder: string, remotes?: string[], days: number[] = []) => ({
+      place: { folder, machine: 'here', name: folder.slice(1), ...(remotes ? { remotes } : {}) },
+      lastActivityAt: 0,
+      openCount: 0,
+      archivedCount: 0,
+      adapters: ['hyperneo'],
+      work: days.map((day, index) => ({
+        ref: { adapter: 'hyperneo', id: `${folder}-${index}` },
+        place: { folder, machine: 'here', name: folder.slice(1) },
+        lastActivityAt: day * DAY,
+      })),
+    });
+    const aliases = [
+      ...neoMirroredAliases([
+        group('/repo', ['https://github.com/lsm/app.git']),
+        group('/ongoing', undefined, [1, 3]),
+        group('/once', undefined, [1, 1]),
+      ] as never),
+    ];
+    expect(aliases).toContain('repository:github.com/lsm/app');
+    expect(aliases.some((alias) => alias.includes('/ongoing'))).toBe(true);
+    expect(aliases.some((alias) => alias.includes('/once'))).toBe(false);
   });
 });

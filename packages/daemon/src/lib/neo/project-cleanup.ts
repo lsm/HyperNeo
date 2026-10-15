@@ -1,4 +1,9 @@
-import { isNeoOngoingPlace } from './project-mirror.ts';
+import type { PlaceGroup } from '../drivers/types.ts';
+import {
+  canNeoMirrorCreateProject,
+  isNeoOngoingPlace,
+  planNeoWorkspaceProjects,
+} from './project-mirror.ts';
 
 export type NeoProjectFacts = {
   id: string;
@@ -25,7 +30,15 @@ const repositories = (project: NeoProjectFacts) =>
 
 const isEmpty = (project: NeoProjectFacts) =>
   project.asks + project.work.length + project.routed + project.context + project.holderMessages ===
-    0 && !project.aliases.some((alias) => alias.startsWith('work:'));
+  0;
+
+export function neoMirroredAliases(places: readonly PlaceGroup[]): Set<string> {
+  return new Set(
+    planNeoWorkspaceProjects(places)
+      .filter(canNeoMirrorCreateProject)
+      .flatMap((project) => project.aliases)
+  );
+}
 
 const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork > 0;
 
@@ -63,7 +76,7 @@ function home(
 
 export function planNeoProjectCleanup(
   projects: readonly NeoProjectFacts[],
-  scope: { pinned: ReadonlySet<string>; machine: string }
+  scope: { pinned: ReadonlySet<string>; machine: string; mirrored: ReadonlySet<string> }
 ): NeoProjectCleanup[] {
   const homes = projects
     .filter((project) => repositories(project).length && !isElsewhere(project, scope.machine))
@@ -74,7 +87,10 @@ export function planNeoProjectCleanup(
       const named = { projectId: project.id, title: project.title };
       if (repositories(project).length || isElsewhere(project, scope.machine) || isLive(project))
         return [];
-      if (isEmpty(project)) return [{ action: 'delete', ...named }];
+      if (isEmpty(project))
+        return project.aliases.some((alias) => scope.mirrored.has(alias))
+          ? []
+          : [{ action: 'delete', ...named }];
       const target = home(project, homes);
       if (target) return [{ action: 'merge', ...named, targetId: target.id }];
       return isOneOff(project) ? [{ action: 'archive', ...named }] : [];

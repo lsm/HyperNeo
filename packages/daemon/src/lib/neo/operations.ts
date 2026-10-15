@@ -3,6 +3,8 @@ import { NeoWorkBlockerSchema } from './work-blocker.ts';
 import { hostname } from 'node:os';
 import { backfillNeoRepositoryIdentities, planNeoProjectRetitles } from './project-mirror.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
+import { neoMirroredAliases } from './project-cleanup.ts';
+import type { PlaceGroup } from '../drivers/types.ts';
 import { readNeoProjectFacts } from './project-route-facts.ts';
 import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
 import { existsSync } from 'node:fs';
@@ -1029,6 +1031,23 @@ export function neoReorganizeRuntime(
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
     machine: () => hostname(),
+    mirroredAliases: async () => {
+      const outcome = await invokeOperation(
+        service.sessions.getOperationRegistry(),
+        'work.find',
+        { localOnly: true, limit: 50 },
+        {
+          source: 'internal',
+          sessionId: service.repo.getBindingForProject(null)?.sessionId,
+          role: 'neo',
+        }
+      );
+      const value =
+        outcome.kind === 'completed'
+          ? (outcome.value as { places?: PlaceGroup[]; unreachable?: unknown[] } | null)
+          : null;
+      return value?.places && !value.unreachable?.length ? neoMirroredAliases(value.places) : null;
+    },
     log: (line) => service.logReorganize(line),
   };
 }
