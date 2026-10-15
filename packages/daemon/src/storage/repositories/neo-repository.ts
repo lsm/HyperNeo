@@ -88,7 +88,7 @@ export class NeoRepository {
   }
 
   deleteEmptyProject(projectId: string): string | null {
-    return this.db.transaction(() => {
+    const holder = this.db.transaction(() => {
       const empty = this.db
         .prepare(`SELECT 1 FROM neo_concerns c WHERE c.id = ? AND length(c.context) = 0
           AND c.epic_url IS NULL
@@ -100,14 +100,16 @@ export class NeoRepository {
             ON m.session_id = b.session_id WHERE b.kind = 'project' AND b.concern_id = c.id)`)
         .get(projectId);
       if (!empty) throw new Error('the project is no longer empty');
-      const holder = this.getBindingForProject(projectId)?.sessionId ?? null;
+      const session = this.getBindingForProject(projectId)?.sessionId ?? null;
       this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
       this.db
         .prepare("DELETE FROM neo_session_bindings WHERE concern_id = ? AND kind = 'project'")
         .run(projectId);
       this.db.prepare('DELETE FROM neo_concerns WHERE id = ?').run(projectId);
-      return holder;
+      return session;
     })();
+    this.notify();
+    return holder;
   }
 
   listProjectTitles(): Array<{ id: string; title: string }> {
