@@ -429,6 +429,53 @@ describe('Neo MVP', () => {
     expect(whole.value.moreSettled).toBeUndefined();
   });
 
+  test('a summarized work item or consultation reads back whole by its id', async () => {
+    const work = (await propose())!;
+    const long = 'A quiet library room is a possible free venue. '.repeat(40);
+    service.repo.transitionWork(work.id, work, { status: 'reported', report: long });
+    await invoke('neo.project.save', project);
+    const root = await service.open(null);
+    const consultation = service.consultations.reserve({
+      id: 'c1',
+      requestKey: 'c1',
+      projectId: project.id,
+      originSessionId: root,
+      sessionId: 'holder',
+      question: 'Which venues are free? '.repeat(40),
+    })!;
+    service.consultations.finish(consultation.id, 'reported', 'The library. '.repeat(60));
+    const summary = (await invoke('neo.snapshot', { summaries: true })) as {
+      value: {
+        work: Array<{ id: string; report: string | null; summarized?: true }>;
+        consultations: Array<{ id: string; answer: string | null; summarized?: true }>;
+      };
+    };
+    expect(summary.value.work.find((item) => item.id === work.id)).toMatchObject({
+      summarized: true,
+      report: long.slice(0, 300),
+    });
+    expect(summary.value.consultations[0]?.summarized).toBe(true);
+    expect(await invoke('neo.receipt.read', { workId: work.id })).toMatchObject({
+      value: { ok: true, work: { id: work.id, report: long, instruction: work.instruction } },
+    });
+    expect(await invoke('neo.receipt.read', { consultationId: 'c1' })).toMatchObject({
+      value: {
+        ok: true,
+        consultation: {
+          id: 'c1',
+          question: consultation.question,
+          answer: 'The library. '.repeat(60),
+        },
+      },
+    });
+    expect(await invoke('neo.receipt.read', { workId: 'gone' })).toMatchObject({
+      value: { ok: false, reason: 'Receipt not found.' },
+    });
+    expect(
+      await invoke('neo.receipt.read', { workId: work.id }, { source: 'mcp', sessionId: root })
+    ).toMatchObject({ value: { ok: false, reason: 'This action needs the user.' } });
+  });
+
   test('opening a missing project reports a domain rejection instead of an execution fault', async () => {
     expect(await invoke('neo.open', { projectId: 'gone' })).toMatchObject({
       value: { ok: false, reason: 'Project not found.' },
@@ -539,6 +586,7 @@ describe('Neo MVP', () => {
       'neo.project.consult',
       'neo.project.respond',
       'neo.open',
+      'neo.receipt.read',
       'neo.rule.save',
       'neo.session.mute',
       'neo.session.track',

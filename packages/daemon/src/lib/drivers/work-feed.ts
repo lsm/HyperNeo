@@ -1,4 +1,5 @@
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import { open, readdir, stat } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import {
@@ -61,6 +62,39 @@ export function listFeedFiles(root: string, since: number, depth = FEED_DEPTH): 
   };
   walk(root, 1);
   return files.sort((a, b) => b.mtime - a.mtime);
+}
+
+export async function listFeedFilesAsync(
+  root: string,
+  since: number,
+  depth = FEED_DEPTH
+): Promise<FeedFile[]> {
+  const walk = async (dir: string, level: number): Promise<FeedFile[]> => {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    const found = await Promise.all(
+      entries.map(async (entry): Promise<FeedFile[]> => {
+        const path = join(dir, entry.name);
+        if (entry.isFile() && !entry.name.endsWith('.jsonl')) return [];
+        const info = await stat(path).catch(() => null);
+        if (info?.isDirectory()) return level < depth ? walk(path, level + 1) : [];
+        return info?.isFile() && entry.name.endsWith('.jsonl') && info.mtimeMs >= since
+          ? [{ path, size: info.size, mtime: Math.floor(info.mtimeMs) }]
+          : [];
+      })
+    );
+    return found.flat();
+  };
+  return (await walk(root, 1)).sort((a, b) => b.mtime - a.mtime);
+}
+
+export async function readFeedPrefix(path: string, bytes = HEAD_BYTES): Promise<string> {
+  const handle = await open(path, 'r');
+  try {
+    const { buffer, bytesRead } = await handle.read(Buffer.alloc(bytes), 0, bytes, 0);
+    return buffer.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await handle.close();
+  }
 }
 
 export function changedFeedFiles(

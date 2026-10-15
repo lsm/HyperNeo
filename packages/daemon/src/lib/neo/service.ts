@@ -1,4 +1,5 @@
 import { NeoDependencyRepository } from '../../storage/repositories/neo-dependency-repository.ts';
+import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
 import { runNeoReadWork } from './read-work.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-refusal-repository.ts';
@@ -497,6 +498,7 @@ export class NeoService {
   readCheckoutPrs = (cwd: string): Promise<string[]> => readGithubBranchPrs({ cwd });
   readWorkRepo: NeoWorkRepoReader = readGithubWorkRepo;
   readRefStates: NeoRefStateReader = readGithubRefStates;
+  listGithub: NeoGithubLister = (args) => listNeoGithub(args);
   readMergeCommit = (url: string): Promise<string | null> => readMergeCommit(url);
   readDeploys: NeoDeployReader = (urls) =>
     readGithubDeploys(urls, () =>

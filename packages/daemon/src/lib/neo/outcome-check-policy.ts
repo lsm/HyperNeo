@@ -1,9 +1,11 @@
+import type { NeoAskItemOutcomeKind } from '@hyperneo/shared/types/neo-snapshot';
 import { neoDaemonTickPath } from './needs-you.ts';
 
-type Outcome = { text: string; check?: string | null };
+type Outcome = { text: string; check?: string | null; outcomeKind?: NeoAskItemOutcomeKind };
 type Check = 'coding.pr_merged' | 'coding.deployed';
 
 function requiredCheck(item: Outcome): Check | null {
+  if (item.outcomeKind === 'answer') return null;
   const path = neoDaemonTickPath({ text: item.text, check: null, watch: [] });
   if (path === 'needs_deploy_check') return 'coding.deployed';
   const mergesPr =

@@ -116,7 +116,10 @@ export interface NeoAskItem {
   decides?: string;
   because?: NeoAskQuestionBecause;
   watch?: string[];
+  outcomeKind?: NeoAskItemOutcomeKind;
 }
+
+export type NeoAskItemOutcomeKind = 'state' | 'answer';
 
 export const NEO_ASK_QUESTION_REASONS = [
   'target_unavailable',
@@ -350,6 +353,10 @@ export interface NeoWaitingOnHuman {
   asks: { id: string; title: string; status: NeoAskStatus; question: string }[];
 }
 
+export interface NeoSnapshotConsultation extends NeoConsultation {
+  summarized?: true;
+}
+
 export interface NeoSnapshotWork extends NeoWork {
   summarized?: true;
   askId?: string;
@@ -366,7 +373,7 @@ export interface NeoSnapshot {
   publicAuthorBindings?: { sessionId: string; projectId: string; kind: 'project' }[];
   askForwards?: NeoAskForwardView[];
   work: NeoSnapshotWork[];
-  consultations: NeoConsultation[];
+  consultations: NeoSnapshotConsultation[];
   consultationWaiters?: NeoConsultationWaiter[];
   askOrigins?: NeoReceiptAskOrigin[];
   workResources?: NeoWorkResourceReceipt[];

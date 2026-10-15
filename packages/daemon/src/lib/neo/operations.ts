@@ -27,6 +27,11 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { THINKING_LEVELS } from '@hyperneo/shared';
 import { z } from 'zod';
 import { NeoGithubReadResult, readNeoGithubRef } from './packs/coding/github-read.ts';
+import {
+  NeoGithubQuery,
+  NeoGithubQueryResult,
+  queryNeoGithub,
+} from './packs/coding/github-query.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { hashString32 } from '../runtime-hash.ts';
@@ -280,7 +285,7 @@ const SnapshotOk = z.object({
     Work.extend({ summarized: z.literal(true).optional(), askId: z.string().optional() })
   ),
   standingRules: z.array(z.string()).optional(),
-  consultations: z.array(Consultation),
+  consultations: z.array(Consultation.extend({ summarized: z.literal(true).optional() })),
   consultationWaiters: z.array(ConsultationWaiter).optional(),
   workResources: z
     .array(
@@ -392,6 +397,15 @@ const Propose = z.object({
 });
 const Refused = z.object({ workId: z.string().min(1), what: z.string().trim().min(1).max(500) });
 const WorkId = z.object({ id: z.string().min(1) });
+const ReceiptRead = z.union([
+  z.object({ workId: z.string().min(1) }),
+  z.object({ consultationId: z.string().min(1) }),
+]);
+const ReceiptResult = z.union([
+  Failure,
+  z.object({ ok: z.literal(true), work: Work }),
+  z.object({ ok: z.literal(true), consultation: Consultation }),
+]);
 const StartWork = WorkId.extend({
   dependsOn: z
     .array(z.string().min(1))
@@ -423,7 +437,9 @@ const Close = z.object({
   reason: z.string().trim().min(1).max(500).optional(),
 });
 const PackRead = z.object({ id: z.string().trim().min(1).max(80) });
-const GithubRead = z.object({ url: z.string().trim().min(1).max(500) });
+const GithubRead = NeoGithubQuery.partial({ repo: true })
+  .extend({ url: z.string().trim().min(1).max(500).optional() })
+  .refine((input) => !input.url !== !input.repo, 'Pass either url or repo.');
 const PackReadResult = z.union([
   Failure,
   z.object({
@@ -792,7 +808,15 @@ function admitNeoCaller(
       : isNeoHumanTurn(service, caller))
   )
     return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
-  if (['neo.open', 'neo.project.cancel', 'neo.ask.answer', 'neo.session.track'].includes(name))
+  if (
+    [
+      'neo.open',
+      'neo.receipt.read',
+      'neo.project.cancel',
+      'neo.ask.answer',
+      'neo.session.track',
+    ].includes(name)
+  )
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'project' && projectId !== undefined && projectId !== binding.projectId)
     return { reason: { ok: false, reason: 'This context holder cannot access another project.' } };
@@ -1378,6 +1402,18 @@ export function createNeoOperations(service: NeoService) {
       );
       const sessionId = await service.open(projectId);
       return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
+    }
+  );
+  const readReceipt = path(
+    'neo.receipt.read',
+    (_input: z.infer<typeof ReceiptRead>) => undefined,
+    (input) => {
+      const work = 'workId' in input ? service.repo.getWork(input.workId) : null;
+      const consultation =
+        'consultationId' in input ? service.consultations.get(input.consultationId) : null;
+      if (work) return { ok: true as const, work };
+      if (consultation) return { ok: true as const, consultation };
+      return { ok: false as const, reason: 'Receipt not found.' };
     }
   );
   const cancelConsultation = path(
@@ -1978,7 +2014,13 @@ export function createNeoOperations(service: NeoService) {
   const readGithub = path(
     'neo.github.read',
     (_input: z.infer<typeof GithubRead>) => undefined,
-    ({ url }) => readNeoGithubRef(service, url)
+    async (input): Promise<NeoGithubReadResult | NeoGithubQueryResult> =>
+      input.url
+        ? await readNeoGithubRef(service, input.url)
+        : await queryNeoGithub((args: string[]) => service.listGithub(args), {
+            ...input,
+            repo: input.repo!,
+          })
   );
   const readPack = path(
     'neo.pack.read',
@@ -2100,6 +2142,15 @@ export function createNeoOperations(service: NeoService) {
       execute: open,
     }),
     defineOperation({
+      name: 'neo.receipt.read',
+      description:
+        'Read one work item or consultation in full, by workId or consultationId, for a row the snapshot sent summarized.',
+      inputSchema: ReceiptRead,
+      resultSchema: ReceiptResult,
+      policy: { safetyClass: 'human_only' },
+      execute: readReceipt,
+    }),
+    defineOperation({
       name: 'neo.rule.save',
       description:
         'Replace the saved standing rules that neo.snapshot returns as standingRules. Save when the human states or corrects something lasting about how work should go (what done means, where a project lives, which app to use), answers your question about it, or when you reuse precedent from earlier work, without asking whether to save it; read the current list from neo.snapshot first and keep the rules they did not change. Up to 20 rules of up to 500 characters.',
@@ -2129,9 +2180,9 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.github.read',
       description:
-        'Read a GitHub pull request or issue as it is now, from its URL. A pull request returns its state (OPEN, MERGED or CLOSED), checks (passing, failing, pending or none), review verdict on its current head (approved, changes_requested or none), merge blockers and title; an issue returns its state, how it closed (completed, not_planned or duplicate), the merged pull request that closed it, and its parent issue. Read-only; use it to check a PR, merge, CI or issue yourself before ticking an item met.',
+        'Read GitHub as it is now. With {url}, one pull request or issue: a pull request returns its state (OPEN, MERGED or CLOSED), checks (passing, failing, pending or none), review verdict on its current head (approved, changes_requested or none), merge blockers and title; an issue returns its state, how it closed (completed, not_planned or duplicate), the merged pull request that closed it, and its parent issue. With {repo: "owner/name", kind: "pr" or "issue", state: "open", "merged", "closed" or "all", by: "created", "updated", "merged" or "closed", since, until (ISO times), limit}, a list: every match in that window with number, title, url, state, createdAt, updatedAt, mergedAt and closedAt, newest first, and truncated when more matched than limit. by defaults to merged for state merged, closed for closed, otherwise created. Use the list for any question about what happened in a time range ("which PRs merged in the last 2 hours") instead of guessing numbers and reading them one by one. Read-only.',
       inputSchema: GithubRead,
-      resultSchema: NeoGithubReadResult,
+      resultSchema: z.union([NeoGithubReadResult, NeoGithubQueryResult]),
       policy: { safetyClass: 'read', roles: ['neo'] },
       execute: readGithub,
     }),

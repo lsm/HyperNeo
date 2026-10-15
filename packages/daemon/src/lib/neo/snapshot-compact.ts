@@ -42,6 +42,21 @@ export const NEO_SNAPSHOT_SETTLED_ASKS = 10;
 const SUMMARY_TEXT_LIMIT = 300;
 const LIVE_WORK: ReadonlySet<NeoSnapshotWork['status']> = new Set(['proposed', 'queued']);
 
+function clip(text: string): string {
+  const cut = text.slice(0, SUMMARY_TEXT_LIMIT);
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
+
+function summarizeWork(item: NeoSnapshotWork, askId: string | undefined): NeoSnapshotWork {
+  return {
+    ...item,
+    instruction: '',
+    report: item.report === null ? null : clip(item.report),
+    summarized: true,
+    ...(askId ? { askId } : {}),
+  };
+}
+
 export function summarizeNeoSnapshot<T extends NeoSnapshot>(
   snapshot: T,
   asks: readonly NeoAsk[]
@@ -50,17 +65,10 @@ export function summarizeNeoSnapshot<T extends NeoSnapshot>(
   const askOf = new Map(asks.flatMap((ask) => ask.workIds.map((id) => [id, ask.id] as const)));
   const work = snapshot.work.map((item): NeoSnapshotWork => {
     const askId = askOf.get(item.id);
-    return askId && brief.has(askId) && !LIVE_WORK.has(item.status)
-      ? {
-          ...item,
-          instruction: '',
-          report: item.report?.slice(0, SUMMARY_TEXT_LIMIT) ?? null,
-          summarized: true,
-          askId,
-        }
-      : item;
+    if (LIVE_WORK.has(item.status) || (askId && !brief.has(askId))) return item;
+    return summarizeWork(item, askId);
   });
-  const briefWork = new Set(work.flatMap((item) => (item.summarized ? [item.id] : [])));
+  const briefWork = new Set(work.flatMap((item) => (item.askId ? [item.id] : [])));
   return {
     ...snapshot,
     asks: snapshot.asks?.map((ask) =>
@@ -71,7 +79,7 @@ export function summarizeNeoSnapshot<T extends NeoSnapshot>(
             doneWhen: '',
             doneItems: [],
             evidence: null,
-            outcome: ask.outcome?.slice(0, SUMMARY_TEXT_LIMIT) ?? null,
+            outcome: ask.outcome === null ? null : clip(ask.outcome),
             summarized: true as const,
           }
         : ask
@@ -81,6 +89,16 @@ export function summarizeNeoSnapshot<T extends NeoSnapshot>(
       briefWork.has(card.workId) && FINISHED_PHASES.has(card.phase)
         ? { ...card, goal: null, doneWhen: null, continuedMessage: null }
         : card
+    ),
+    consultations: snapshot.consultations.map((item) =>
+      item.status === 'pending'
+        ? item
+        : {
+            ...item,
+            question: clip(item.question),
+            answer: item.answer === null ? null : clip(item.answer),
+            summarized: true as const,
+          }
     ),
   };
 }
