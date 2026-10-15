@@ -537,22 +537,17 @@ export function createNeoRouter(
       return readNeoSectionFacts(text, facts, repo.listProjects());
     },
     holders: async () => {
-      if (openHolder) {
-        for (const project of repo.listProjects()) {
-          if (!repo.getBindingForProject(project.id)) await openHolder(project.id);
-        }
-      }
       const repositories = repo.repositories();
       const holders: NeoHolder[] = repo.listProjects().flatMap((project) => {
         const repository = repositories.get(project.id);
         const binding = repo.getBindingForProject(project.id);
         const session = binding ? db.getSession(binding.sessionId) : null;
-        return binding?.kind === 'project'
+        return !binding || binding.kind === 'project'
           ? [
               {
                 projectId: project.id,
                 parentId: project.parentId,
-                sessionId: binding.sessionId,
+                sessionId: binding?.sessionId ?? '',
                 title: project.title,
                 summary: project.summary,
                 ...(repository ? { repository } : {}),
