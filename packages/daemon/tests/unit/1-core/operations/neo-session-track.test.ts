@@ -321,6 +321,7 @@ describe('neo.session.track', () => {
         title: 'Quiet-model research',
         instruction: 'Follow the research session.',
         askId,
+        delivers: [],
         work: { verb: 'adopt', ref },
       },
       neo
