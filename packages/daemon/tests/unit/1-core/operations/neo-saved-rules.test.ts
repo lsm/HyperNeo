@@ -9,6 +9,7 @@ import {
   type NeoSavedRulesNote,
   neoSavedRulesKey,
   planNeoSavedRules,
+  neoSavedRulesReplayKey,
   planNeoSavedRulesAppend,
   planNeoSavedRulesNote,
   withNeoSavedRules,
@@ -107,7 +108,7 @@ describe('planNeoSavedRulesAppend', () => {
   const kept = { standingRules: [rule, 'Keep B.'], stored: false };
   const pending = new Map([[key, { pending: [rule], published: {} }]]);
   const sent = new Map([
-    [key, { pending: ['Keep B.'], published: { [reply.publicationId]: [rule] } }],
+    [key, { pending: ['Keep B.'], published: { [neoSavedRulesReplayKey(reply)]: [rule] } }],
   ]);
   test.each<
     [
@@ -144,7 +145,7 @@ describe('planNeoSavedRulesAppend', () => {
     const plan = planNeoSavedRulesAppend(input, notes, current);
     expect(plan.rules).toEqual(rules);
     expect(plan.keep !== null).toBe(keeps);
-    if (plan.keep) expect(plan.keep.note.published[input.publicationId]).toEqual(rules);
+    if (plan.keep) expect(plan.keep.note.published[neoSavedRulesReplayKey(input)]).toEqual(rules);
   });
 });
 
@@ -314,6 +315,44 @@ describe('Neo reply after a rule save', () => {
     ).toMatchObject({ value: { accepted: true } });
     expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
       `${reply.shortText}\n\nSaved: ${rule}`
+    );
+  });
+
+  test('a rule saved after the first reply is named when a continuation replaces it', async () => {
+    await invoke('neo.rule.save', { rules: [rule] });
+    const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
+    await invoke('neo.publication.publish', draft);
+    await invoke('neo.rule.save', { rules: [rule, 'Keep B.'] });
+    db.getSDKMessageRepo().saveSDKMessage(root, {
+      type: 'user',
+      uuid: 'neo-nudge:ask-1',
+      session_id: root,
+      parent_tool_use_id: null,
+      inputKind: 'system',
+      message: { role: 'user', content: 'Publish your answer.' },
+    } as unknown as SDKUserMessage);
+    service.inputOrigins.record(
+      { sessionId: root, messageId: 'neo-nudge:ask-1' },
+      { sessionId: root, messageId: 'ask-1' },
+      0,
+      'human:ask-1'
+    );
+    expect(
+      await invoke(
+        'neo.publication.publish',
+        {
+          ...draft,
+          publicationId: '20000000-0000-4000-8000-000000000003',
+          shortText: 'Kept B as well.',
+        },
+        {
+          ...caller,
+          neoTurn: { ...caller.neoTurn!, messageId: 'neo-nudge:ask-1', human: false },
+        }
+      )
+    ).toMatchObject({ value: { accepted: true, created: true } });
+    expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
+      'Kept B as well.\n\nSaved: Keep B.'
     );
   });
 

@@ -37,6 +37,12 @@ export function planNeoSavedRulesNote(
   };
 }
 
+export function neoSavedRulesReplayKey(
+  input: Pick<NeoPublicationInput, 'producerInput' | 'triggerId' | 'publicationId'>
+): string {
+  return `${input.producerInput.messageId}\0${input.triggerId ?? input.publicationId}`;
+}
+
 export function planNeoSavedRulesAppend(
   input: NeoPublicationInput,
   notes: NeoSavedRulesNotes,
@@ -45,7 +51,7 @@ export function planNeoSavedRulesAppend(
   if (input.interim) return { rules: [], keep: null };
   const key = neoSavedRulesKey(input.producerInput.sessionId, input.producerInput.messageId);
   const note = notes.get(key);
-  const id = input.triggerId ?? input.publicationId;
+  const id = neoSavedRulesReplayKey(input);
   const replay = note?.published[id];
   if (replay !== undefined) return { rules: replay, keep: null };
   if (current.stored || !note) return { rules: [], keep: null };
