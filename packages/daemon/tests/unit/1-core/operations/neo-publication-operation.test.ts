@@ -33,7 +33,10 @@ import {
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoRoutingLogRepository } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
-import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
+import {
+  NeoPublicationRepository,
+  planNeoTriggerAnswer,
+} from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
@@ -750,6 +753,43 @@ describe('requirePublicationTrigger', () => {
     expect(requirePublicationTrigger({ a: 1 }, {}, null)).toHaveProperty(
       'reason.reason',
       'no_trigger'
+    );
+  });
+});
+
+describe('planNeoTriggerAnswer', () => {
+  const prior = {
+    conversationId,
+    publicationId: '20000000-0000-4000-8000-000000000001',
+    askOrigin: ask,
+    producerInput: ask,
+    shortText: 'Checking.',
+    fullText: 'Checking.',
+    links: [],
+    triggerId: `human:${ask.messageId}`,
+    interim: true as const,
+    corrects: '20000000-0000-4000-8000-000000000009',
+    correctedBy: '20000000-0000-4000-8000-000000000008',
+    sequence: 1,
+    createdAt: '2026-10-15T00:00:00.000Z',
+  };
+  const later = { sessionId: ask.sessionId, messageId: 'neo-nudge:x' };
+  test('a later input replaces the text and drops the interim and correction marks', () => {
+    const plan = planNeoTriggerAnswer(
+      prior,
+      { ...prior, producerInput: later, shortText: '12', fullText: '12' },
+      '2026-10-15T01:00:00.000Z'
+    );
+    expect(plan).toMatchObject({ kind: 'replace', next: { shortText: '12', answerInput: later } });
+    const next = plan.kind === 'replace' ? plan.next : null;
+    expect(next).not.toHaveProperty('interim');
+    expect(next).not.toHaveProperty('corrects');
+    expect(next).not.toHaveProperty('correctedBy');
+  });
+  test('the same input is a no-op when unchanged and refused when it says something else', () => {
+    expect(planNeoTriggerAnswer(prior, prior, 'now').kind).toBe('same');
+    expect(planNeoTriggerAnswer(prior, { ...prior, shortText: 'Other.' }, 'now').kind).toBe(
+      'refused'
     );
   });
 });

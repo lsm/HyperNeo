@@ -53,7 +53,14 @@ export function planNeoTriggerAnswer(
 ): { kind: 'same' } | { kind: 'refused' } | { kind: 'replace'; next: NeoPublicationInput } {
   if (sameInput(prior.answerInput ?? prior.producerInput, input.producerInput))
     return sameAnswer(prior, input) ? { kind: 'same' } : { kind: 'refused' };
-  const { sequence: _sequence, createdAt: _createdAt, ...stored } = prior;
+  const {
+    sequence: _sequence,
+    createdAt: _createdAt,
+    interim: _interim,
+    corrects: _corrects,
+    correctedBy: _correctedBy,
+    ...stored
+  } = prior;
   return {
     kind: 'replace',
     next: {
@@ -121,11 +128,18 @@ function answerTrigger(
 function appendImmutable(
   db: Database,
   input: NeoPublicationInput,
-  payload: string
+  payload: string,
+  answers = true
 ): NeoPublicationAppendResult {
   return db.transaction((): NeoPublicationAppendResult => {
-    const answered = answerTrigger(db, input);
+    const answered = answers ? answerTrigger(db, input) : null;
     if (answered) return answered;
+    if (
+      !answers &&
+      input.triggerId &&
+      hasTrigger(db, input.conversationId, input.triggerId, input.publicationId)
+    )
+      return { accepted: false, reason: 'trigger_already_published' };
     const inserted = db
       .prepare(`INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at)
         VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id, publication_id) DO NOTHING
@@ -245,7 +259,12 @@ export class NeoPublicationRepository {
         return { accepted: false, reason: 'already_corrected' };
       const admitted = admitNeoPublication({ ...correction, corrects: current.publicationId });
       if ('reason' in admitted) return { accepted: false, reason: 'publication_conflict' };
-      const appended = appendImmutable(this.db, admitted.value, JSON.stringify(admitted.value));
+      const appended = appendImmutable(
+        this.db,
+        admitted.value,
+        JSON.stringify(admitted.value),
+        false
+      );
       if (!appended.accepted || !appended.created)
         return { accepted: false, reason: 'publication_conflict' };
       const { sequence: _sequence, createdAt: _createdAt, ...stored } = current;
