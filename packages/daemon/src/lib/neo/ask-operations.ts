@@ -1,3 +1,4 @@
+import { NEO_ASK_ANSWER_PREFIX } from './ask-origin.ts';
 import { neoTurnRequestKey } from './request-key.ts';
 import { NeoAskBindingError } from '../../storage/repositories/neo-ask-repository.ts';
 import { neoAskAnswerEvidence } from './ask-answer-evidence.ts';
@@ -27,7 +28,12 @@ import { requireNeoAskPack } from './packs/index.ts';
 import type { buildNeoCheckRegistry } from './packs/check-registry.ts';
 import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
-import { neoDaemonTickPath, neoHumanTickWakes, type NeoDaemonTickPath } from './needs-you.ts';
+import {
+  neoAskAnswerChoice,
+  neoDaemonTickPath,
+  neoHumanTickWakes,
+  type NeoDaemonTickPath,
+} from './needs-you.ts';
 import { isNeoAskOutcomeItem } from './ask-views.ts';
 import { NeoAskStateViewSchema } from './card-view-schema.ts';
 import { isNeoAnswerItem } from './answer-outcome.ts';
@@ -1373,8 +1379,13 @@ export function createNeoAskOperations(
     service.db
       .getSDKMessageRepo()
       .getStoredPromptsByUuid(sessionId, messageId)
-      .filter((message) => 'inputKind' in message && message.inputKind === 'human')
-      .map((message) => neoPromptText(message));
+      .flatMap((message) =>
+        'inputKind' in message && message.inputKind === 'human'
+          ? [neoPromptText(message)]
+          : messageId.startsWith(NEO_ASK_ANSWER_PREFIX)
+            ? (neoAskAnswerChoice(neoPromptText(message)) ?? [])
+            : []
+      );
   const openNeoAsksOf = (origin: NeoWorkOrigin): NeoAskNameable[] =>
     service.askRecords
       .listLive()

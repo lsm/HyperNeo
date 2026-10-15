@@ -13,6 +13,8 @@ import {
 } from '../../../../src/lib/neo/ask-views.ts';
 import { busyNeoAskSessions } from '../../../../src/lib/neo/session-ask-links.ts';
 import { neoCardPhase } from '../../../../src/lib/neo/card-phase.ts';
+import { runMigration381 } from '../../../../src/storage/schema/m381-neo-ask-refusal.ts';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import { NeoAskViewSchema, NeoCardViewSchema } from '../../../../src/lib/neo/card-view-schema.ts';
 import { type NeoCardViewParts, projectNeoCardViews } from '../../../../src/lib/neo/card-views.ts';
 import {
@@ -589,6 +591,17 @@ describe('projectNeoAskViews', () => {
     expect(asked).toMatchObject({ group: 'attention', label: 'Waiting on you' });
     expect(asked.answer).toMatchObject({ itemId: 'q', options: ['Use Codex', 'Stop'] });
     expect(asked).not.toHaveProperty('idle');
+  });
+
+  test('m381 repairs a partly added refusal column pair', () => {
+    const db = new Sqlite(':memory:');
+    db.exec('CREATE TABLE neo_asks (id TEXT PRIMARY KEY, refused TEXT)');
+    runMigration381(db);
+    runMigration381(db);
+    const columns = (db.prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[]).map(
+      (column) => column.name
+    );
+    expect(columns).toEqual(['id', 'refused', 'refused_count']);
   });
 
   test('done items count instead of cards when the ask has them', () => {
