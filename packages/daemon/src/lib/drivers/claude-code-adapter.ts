@@ -2,13 +2,15 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { basename } from 'node:path';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import { claudeTranscriptCwd, isTempCwd } from './claude-feed.ts';
-import { listFeedFiles, readFeedHead } from './work-feed.ts';
+import { listFeedFilesAsync, readFeedPrefix } from './work-feed.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { mergePlaceGroups, withChatEvidence } from './places.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
 
 const SESSIONS_PER_PLACE = 10;
 const TITLE_CHARS = 80;
+const CWD_PREFIX_BYTES = 16 * 1024;
+const HEAD_READS_AT_ONCE = 32;
 
 export interface ClaudeCodeAdapterDeps {
   projectsDir?: string;
@@ -26,24 +28,50 @@ interface ClaudeFolder {
 
 type FolderCache = Map<string, { at: number; record: ClaudeFolder | null }>;
 
-export function readClaudeCodeFolders(root: string, cache: FolderCache): ClaudeFolder[] {
-  const files = listFeedFiles(root, Date.now() - 90 * 24 * 60 * 60_000, 2);
+async function readClaudeFolder(
+  path: string,
+  at: number
+): Promise<ClaudeFolder | null | undefined> {
+  try {
+    const folder =
+      claudeTranscriptCwd(await readFeedPrefix(path, CWD_PREFIX_BYTES)) ||
+      claudeTranscriptCwd(await readFeedPrefix(path));
+    return folder ? { sessionId: basename(path, '.jsonl'), folder, at } : null;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function readClaudeCodeFolders(
+  root: string,
+  cache: FolderCache
+): Promise<ClaudeFolder[]> {
+  const files = await listFeedFilesAsync(root, Date.now() - 90 * 24 * 60 * 60_000, 2);
   const paths = new Set(files.map((file) => file.path));
   for (const path of cache.keys()) if (!paths.has(path)) cache.delete(path);
+  const stale = files.filter((file) => cache.get(file.path)?.at !== file.mtime);
+  for (let start = 0; start < stale.length; start += HEAD_READS_AT_ONCE) {
+    const batch = stale.slice(start, start + HEAD_READS_AT_ONCE);
+    const records = await Promise.all(batch.map((file) => readClaudeFolder(file.path, file.mtime)));
+    batch.forEach((file, index) => {
+      const record = records[index];
+      if (record !== undefined) cache.set(file.path, { at: file.mtime, record });
+    });
+  }
   return files.flatMap((file) => {
     const known = cache.get(file.path);
-    if (known?.at === file.mtime) return known.record ? [known.record] : [];
-    try {
-      const folder = claudeTranscriptCwd(readFeedHead(file.path));
-      const record = folder
-        ? { sessionId: basename(file.path, '.jsonl'), folder, at: file.mtime }
-        : null;
-      cache.set(file.path, { at: file.mtime, record });
-      return record ? [record] : [];
-    } catch {
-      return [];
-    }
+    return known?.at === file.mtime && known.record ? [known.record] : [];
   });
+}
+
+export function shareInFlight<T>(run: () => Promise<T>): () => Promise<T> {
+  let running: Promise<T> | null = null;
+  return () => {
+    running ??= run().finally(() => {
+      running = null;
+    });
+    return running;
+  };
 }
 
 function sessionTitle(chat: WorkChatMatch): string {
@@ -113,7 +141,7 @@ export function buildClaudeCodeGroups(
 }
 
 const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI)
-  .input(['query', 'deps', 'cache'])
+  .input(['query', 'deps', 'scan'])
   .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(
     async (query: FindQuery, deps: ClaudeCodeAdapterDeps) =>
@@ -123,12 +151,7 @@ const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI
   )
   .pipe((deps: ClaudeCodeAdapterDeps) => deps.desktopSessions(), 'deps', 'desktop')
   .pipe((deps: ClaudeCodeAdapterDeps) => deps.ownedSessions?.() ?? new Set(), 'deps', 'owned')
-  .pipe(
-    (deps: ClaudeCodeAdapterDeps, cache: FolderCache) =>
-      deps.projectsDir ? readClaudeCodeFolders(deps.projectsDir, cache) : [],
-    ['deps', 'cache'],
-    'folders'
-  )
+  .pipe((scan: () => Promise<ClaudeFolder[]>) => scan(), 'scan', 'folders')
   .pipe(
     (
       chats: WorkChatMatch[],
@@ -144,14 +167,18 @@ const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI
   .endAsync('groups') as (
   query: FindQuery,
   deps: ClaudeCodeAdapterDeps,
-  cache: FolderCache
+  scan: () => Promise<ClaudeFolder[]>
 ) => Promise<PlaceGroup[]>;
 
 export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapter {
   const cache: FolderCache = new Map();
+  const projectsDir = deps.projectsDir;
+  const scan = projectsDir
+    ? shareInFlight(() => readClaudeCodeFolders(projectsDir, cache))
+    : async () => [];
   return {
     id: 'claude-code',
     capabilities: ['find'],
-    find: (query) => runClaudeCodeFind(query, deps, cache),
+    find: (query) => runClaudeCodeFind(query, deps, scan),
   };
 }
