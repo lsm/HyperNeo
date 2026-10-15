@@ -161,9 +161,13 @@ describe('coding PR provenance', () => {
     checks: 'pending' as const,
     review: 'none' as const,
   });
-  const candidates = (branch = [url], brief = '', scope: typeof window | null = window) =>
+  const candidates = (
+    branch = [url],
+    follows: string | null = null,
+    scope: typeof window | null = window
+  ) =>
     planNeoCardPrCandidates({
-      brief,
+      follows,
       branch,
       report: url,
       stored: [],
@@ -189,8 +193,8 @@ describe('coding PR provenance', () => {
       ]).kept
     ).toEqual([]);
   });
-  test('a PR explicitly named by the brief remains valid outside the execution window', () => {
-    const owned = planNeoCardPrOwnership(card, candidates([url], `Review ${url}`, null), [], 50);
+  test('a PR the card follows remains valid outside the execution window', () => {
+    const owned = planNeoCardPrOwnership(card, candidates([url], url, null), [], 50);
     expect(owned[0].claim).toBe('named');
     expect(keepNeoCardPrReads(card, owned, [pr(1)]).kept).toHaveLength(1);
   });
@@ -210,7 +214,7 @@ describe('coding PR provenance', () => {
       expect(kept[0].scoped).toBe(true);
       repo.replace(card.id, kept);
       const restored = new NeoWorkPrClaimRepository(raw).forUrls([url]);
-      const continued = candidates([], '', null);
+      const continued = candidates([], null, null);
       expect(
         keepNeoCardPrReads(card, planNeoCardPrOwnership(card, continued, restored, 60), []).kept
       ).toHaveLength(1);

@@ -6,6 +6,7 @@ import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../../src/storage/schema/neo.ts';
 import { runMigration283 } from '../../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration284 } from '../../../../../src/storage/schema/m284-neo-work-targets.ts';
+import { runMigration380 } from '../../../../../src/storage/schema/m380-neo-work-follows.ts';
 import { NeoRepository } from '../../../../../src/storage/repositories/neo-repository.ts';
 import { Database as DaemonDatabase } from '../../../../../src/storage/database.ts';
 import { createReactiveDatabase } from '../../../../../src/storage/reactive-database.ts';
@@ -101,6 +102,7 @@ describe('migration 284 and work-target storage', () => {
       expect(columns.filter((column) => column.name === 'target_session_id')).toEqual([
         expect.objectContaining({ name: 'target_session_id', notnull: 0 }),
       ]);
+      runMigration380(db);
       const repo = new NeoRepository(db);
       expect(repo.getWorkTarget('old')).toEqual({ id: 'old', targetSessionId: null });
       expect(repo.getWorkTarget('missing')).toBeNull();
@@ -134,6 +136,7 @@ describe('migration 284 and work-target storage', () => {
           runMigration283(db);
         }
         runMigration284(db);
+        runMigration380(db);
         const notify = mock(() => {});
         const repo = new NeoRepository(db, notify);
         const targetSessionId = "existing:manager/α|?x=1';SELECT 1";

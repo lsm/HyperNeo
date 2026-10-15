@@ -78,9 +78,11 @@ import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import {
   isNeoCardLive,
+  neoProjectEventMessageId,
   planNeoCardEventRoute,
   planNeoCardSend,
   planNeoCardTopicsEnded,
+  planNeoProjectEventHolders,
   planNeoSessionTopicsHandedOver,
 } from './card-events.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
@@ -372,11 +374,11 @@ import {
   NEO_TRIGGER_ACHIEVED_WINDOW_MS,
   NEO_TRIGGER_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
-  neoAskOutcomeKey,
   neoHumanTriggerMessageId,
   neoTriggerMessageId,
   neoTriggerMessageIds,
   planNeoTriggerRetry,
+  neoAskOutcomeBase,
   shouldRetryNeoTrigger,
   neoTriggerWatchSessions,
   neoAskTriggerConcern,
@@ -428,6 +430,8 @@ const dispatchNeoConsultationWaiter = (
   .endAsync('admission');
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
+const NEO_PROJECT_EVENT_NOTE =
+  'An event on one of this project’s cards, for your knowledge. Its ask belongs to another Neo session, which acts on it; save what it changes about the project with neo.project.save.';
 const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
 
 type NeoWorkPrCard = {
@@ -1249,7 +1253,7 @@ export class NeoService {
   private reconcilePublishedAnswer(ask: NeoAsk): void {
     const root = this.repo.getBindingForProject(null);
     if (!isNeoAskAnswerReady(ask) || !root?.sessionId.startsWith('neo:')) return;
-    for (const triggerId of this.triggers.triggerIdsFor(ask.id, neoAskOutcomeKey(ask))) {
+    for (const triggerId of this.triggers.triggerIdsFor(ask.id, neoAskOutcomeBase(ask))) {
       const publication = this.publications.byTrigger(root.sessionId.slice(4), triggerId);
       if (publication) this.notePublishedAnswer(publication);
     }
@@ -2620,7 +2624,8 @@ export class NeoService {
       ask.originSessionId,
       neoAskAnswerMessageId(ask.id, item.id, Date.now()),
       neoAskAnswerNote(ask, item, choice, met),
-      neoAskParent(ask)
+      neoAskParent(ask),
+      'continues'
     );
   }
 
@@ -2792,6 +2797,36 @@ export class NeoService {
           ).catch((error) => this.log.warn('Card event not delivered', error));
       },
       ['event', 'route']
+    )
+    .pipe(
+      (route: NeoPackEventRoute) =>
+        planNeoProjectEventHolders(
+          route.workIds.flatMap((id) => {
+            const work = this.repo.getWork(id);
+            const ask = this.askRecords.forWork(id);
+            return work
+              ? [{ projectId: work.projectId, owner: ask ? this.triggerConcern(ask) : null }]
+              : [];
+          })
+        ),
+      'route',
+      'holders'
+    )
+    .pipe(
+      async (event: ExternalEvent, holders: string[]) => {
+        for (const projectId of holders)
+          await this.open(projectId)
+            .then((holder) =>
+              this.deliver(
+                holder,
+                neoProjectEventMessageId(projectId, event.id),
+                `${NEO_PROJECT_EVENT_NOTE}\n${sessionEventText(event)}`,
+                holder
+              )
+            )
+            .catch((error) => this.log.warn('Project event not delivered', error));
+      },
+      ['event', 'holders']
     )
     .pipe((route: NeoPackEventRoute) => {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
@@ -3396,10 +3431,6 @@ export class NeoService {
     work: NeoWork,
     stored: { prs: readonly NeoWorkPr[] } | null
   ): Promise<NeoCardPrCandidate[]> {
-    const goal = this.workGoals.get(work.id);
-    const brief = [work.title, work.instruction, goal?.goal, goal?.doneWhen]
-      .filter(Boolean)
-      .join('\n');
     const ref = this.driverTargets.readRef(work.id);
     const sent = neoCardSent(this.driverTargets.readSent(work.id), work);
     const outcome =
@@ -3411,26 +3442,21 @@ export class NeoService {
     return planNeoCardPrCandidates({
       window,
       report: work.report,
-      brief,
+      follows: work.follows,
       branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),
       opened: this.cardOpenedPrs.get(work.id) ?? [],
       stored: stored?.prs ?? [],
-      refs: await this.cardPrRefs(work, brief, outcome),
+      mentioned: await this.cardPrRefs(work, outcome),
     });
   }
 
-  private async cardPrRefs(
-    work: NeoWork,
-    brief: string,
-    outcome: OperationOutcome | null
-  ): Promise<{ named: string[]; mentioned: string[] }> {
+  private async cardPrRefs(work: NeoWork, outcome: OperationOutcome | null): Promise<string[]> {
     const ref = this.driverTargets.readRef(work.id);
     const localId = localCodingSessionId(ref);
     const cwd =
       neoWorkRepoCwd(localId ? this.db.getSession(localId) : null) ??
       localCodingExecutionDirectory(ref, outcome, hostname());
     return readCodingCardRefs(
-      brief,
       work.report,
       () => (cwd ? this.readWorkRepo(cwd) : Promise.resolve(null)),
       (refs) => this.readRefStates(refs)

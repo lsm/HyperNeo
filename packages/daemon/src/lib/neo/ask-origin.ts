@@ -29,8 +29,10 @@ export function neoAskTickedMessageId(askId: string, itemId: string, at: number)
   return `neo-ask-ticked:${askId}:${itemId}:${at}`;
 }
 
+export const NEO_ASK_ANSWER_PREFIX = 'neo-ask-answer:';
+
 export function neoAskAnswerMessageId(askId: string, itemId: string, at: number): string {
-  return `neo-ask-answer:${askId}:${itemId}:${at}`;
+  return `${NEO_ASK_ANSWER_PREFIX}${askId}:${itemId}:${at}`;
 }
 
 export function neoWorkParent(
