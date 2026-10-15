@@ -30,8 +30,6 @@ import {
   planNeoAskRestate,
   requireNeoAskEdit,
   planNeoAskWorkStops,
-  planNeoCardAsk,
-  isNeoCardAsk,
   requireNeoAskReceipt,
   requireNeoAskSettleable,
   requireNeoAskSummary,
@@ -948,51 +946,6 @@ describe('neo.ask operations', () => {
     expect(await invoke('neo.ask.open', input, nextMessage)).toMatchObject({
       value: { ok: true },
     });
-    expect(service.askRecords.list()).toHaveLength(2);
-  });
-
-  test('retries an unchecked legacy card only when its ask already exists', async () => {
-    const input = {
-      projectId: null,
-      title: 'Fix it',
-      instruction: 'Fix it.',
-      doneWhen: '- merged to dev',
-      work: { verb: 'start' as const, adapter: 'claude-desktop', place },
-    };
-    const origin = { originSessionId: 'root', originMessageId: 'ask-1' };
-    const requestKey = derivedKey('neo.work.propose', input);
-    const planned = planNeoCardAsk({ ...input, requestKey }, origin)!;
-    const stored = service.askRecords.open(
-      { ...planned, id: 'legacy-card-ask' },
-      planNeoAskItems(planned).items
-    )!;
-    const { work } = service.driverTargets.propose(
-      service.repo,
-      { ...input, ...origin, id: 'legacy-card', requestKey: `root:${requestKey}` },
-      input.work
-    );
-    service.askRecords.link(stored.id, work.id);
-    const before = service.askRecords.get(stored.id);
-    expect(await invoke('neo.work.propose', input)).toMatchObject({
-      value: { ok: true, work: { id: work.id } },
-    });
-    expect(service.askRecords.get(stored.id)).toEqual(before);
-    expect(service.repo.listWork()).toHaveLength(1);
-    const unlinked = { ...input, title: 'Unlinked' };
-    service.driverTargets.propose(
-      service.repo,
-      {
-        ...unlinked,
-        ...origin,
-        id: 'unlinked',
-        requestKey: `root:${derivedKey('neo.work.propose', unlinked)}`,
-      },
-      input.work
-    );
-    expect(await invoke('neo.work.propose', { ...input, title: 'New' })).toMatchObject({
-      value: { ok: true },
-    });
-    expect(service.repo.listWork()).toHaveLength(3);
     expect(service.askRecords.list()).toHaveLength(2);
   });
 
@@ -2351,7 +2304,7 @@ describe('neo.ask operations', () => {
     expect(service.repo.getWork(idle)?.status).toBe('cancelled');
   });
 
-  test('opens an ask from a card proposed with a done list and no ask', async () => {
+  test('propose never opens an ask: a note turn and a human turn alike need an askId', async () => {
     const card = {
       title: 'Fix #5555',
       instruction: 'Fix it.',
@@ -2359,37 +2312,17 @@ describe('neo.ask operations', () => {
       goal: 'Remove the write-only field',
       doneWhen: '- implementation ready',
     };
-    const first = await invoke('neo.work.propose', { ...card, requestKey: 'card-1' });
-    await invoke('neo.work.propose', { ...card, requestKey: 'card-1' });
-    await invoke('neo.work.propose', { ...card, requestKey: 'card-2', doneWhen: undefined });
-
-    const asks = service.askRecords.list();
-    expect(asks).toEqual([
-      expect.objectContaining({
-        ask: 'Remove the write-only field',
-        doneWhen: '- implementation ready',
-        doneSource: 'card',
-        workIds: [first.value!.work!.id],
-      }),
-    ]);
+    const note: OperationCaller = {
+      ...neo,
+      neoTurn: { messageId: 'neo-ask-answer:a1:i1:1', human: false, isLive: () => true },
+    };
+    for (const caller of [note, neo])
+      expect(await invoke('neo.work.propose', card, caller)).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('ask_required') },
+      });
+    expect(service.askRecords.list()).toEqual([]);
+    expect(service.repo.listWork()).toEqual([]);
   });
-
-  test.each(['PR merged', 'Deployed'])(
-    'proposes an implicit card outcome without a check, whatever its words: %s',
-    async (text) => {
-      const input = {
-        requestKey: 'checked-card',
-        title: 'Fix it',
-        instruction: 'Fix it.',
-        work: { verb: 'start', adapter: 'claude-desktop', place },
-        doneWhen: text,
-      };
-      const proposed = await invoke('neo.work.propose', input);
-      expect(proposed).toMatchObject({ value: { ok: true, ask: { items: [{ text }] } } });
-      expect(service.askRecords.list()).toHaveLength(1);
-      expect(service.repo.listWork()).toHaveLength(1);
-    }
-  );
 
   test('the same card proposed under another ask is a separate card that leaves the first alone', async () => {
     const first = await openAsk();
@@ -4057,11 +3990,11 @@ describe('planNeoProposalBindings', () => {
     ],
   } as NeoAsk;
 
-  test('binds what the card declares under a named ask, and every unbound outcome of its own ask', () => {
+  test('binds only what the card declares under a named ask', () => {
     expect(planNeoProposalBindings({ askId: 'a1', delivers: ['i2'] }, ask, 'w1')).toEqual([
       { itemId: 'i2', deliveredBy: 'w1' },
     ]);
-    expect(planNeoProposalBindings({}, ask, 'w1')).toEqual([{ itemId: 'i1', deliveredBy: 'w1' }]);
+    expect(planNeoProposalBindings({}, ask, 'w1')).toEqual([]);
     expect(planNeoProposalBindings({ askId: 'a1' }, null, 'w1')).toEqual([]);
   });
 });
@@ -4214,40 +4147,6 @@ describe('projectNeoAskCards', () => {
     ]
   )('%s', (_label, args, cards) => {
     expect(projectNeoAskCards(...args)).toEqual(cards);
-  });
-});
-
-describe('planNeoCardAsk', () => {
-  const origin = { originSessionId: 'root', originMessageId: 'm1' };
-  const card = { requestKey: 'k', projectId: null, title: 'Fix it', doneWhen: '- merged' };
-
-  test('plans an ask only for a card with a done list and no ask', () => {
-    expect(planNeoCardAsk({ ...card, askId: 'a1' }, origin)).toBe(null);
-    expect(planNeoCardAsk({ ...card, doneWhen: undefined }, origin)).toBe(null);
-    expect(planNeoCardAsk(card, origin)).toEqual({
-      requestKey: 'card:root:k',
-      projectId: null,
-      originSessionId: 'root',
-      originMessageId: 'm1',
-      title: 'Fix it',
-      ask: 'Fix it',
-      doneWhen: '- merged',
-      doneSource: 'card',
-    });
-    expect(planNeoCardAsk({ ...card, goal: 'Their words' }, origin)?.ask).toBe('Their words');
-  });
-});
-
-describe('isNeoCardAsk', () => {
-  test('accepts only the ask the card planned, never one that shares its key', () => {
-    const planned = planNeoCardAsk(
-      { requestKey: 'k', projectId: null, title: 'Fix it', doneWhen: '- merged' },
-      { originSessionId: 'root', originMessageId: 'm1' }
-    )!;
-    const opened = { ...ask, ...planned };
-    expect(isNeoCardAsk(opened, planned)).toBe(true);
-    expect(isNeoCardAsk({ ...opened, doneWhen: '- deployed' }, planned)).toBe(false);
-    expect(isNeoCardAsk(null, planned)).toBe(false);
   });
 });
 

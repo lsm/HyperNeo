@@ -18,7 +18,6 @@ import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { GITHUB_REF_PATH } from '../github/parse-pr-url.ts';
 import type {
-  NeoAskInput,
   NeoAskItemInput,
   NeoAskRepository,
 } from '../../storage/repositories/neo-ask-repository.ts';
@@ -435,46 +434,9 @@ export function planNeoProposalBindings(
   ask: NeoAsk | null,
   workId: string
 ): { itemId: string; deliveredBy: string }[] {
-  if (!ask) return [];
-  const ids = input.askId
-    ? (input.delivers ?? [])
-    : (ask.doneItems ?? [])
-        .filter((item) => neoOutcomeBindingPolicy.isBindable(item) && !item.deliveredBy)
-        .map((item) => item.id);
-  return ids.map((itemId) => ({ itemId, deliveredBy: workId }));
-}
-
-export function planNeoCardAsk(
-  input: {
-    askId?: string;
-    requestKey: string;
-    projectId: string | null;
-    title: string;
-    goal?: string;
-    doneWhen?: string;
-  },
-  origin: NeoWorkOrigin
-): Omit<NeoAskInput, 'id'> | null {
-  if (input.askId || !input.doneWhen) return null;
-  return {
-    requestKey: `card:${origin.originSessionId}:${input.requestKey}`,
-    projectId: input.projectId,
-    originSessionId: origin.originSessionId,
-    originMessageId: origin.originMessageId,
-    title: input.title,
-    ask: input.goal ?? input.title,
-    doneWhen: input.doneWhen,
-    doneSource: 'card',
-  };
-}
-
-export function isNeoCardAsk(ask: NeoAsk | null, planned: Omit<NeoAskInput, 'id'>): boolean {
-  return (
-    !!ask &&
-    (Object.keys(planned) as (keyof typeof planned)[]).every(
-      (field) => ask[field] === planned[field]
-    )
-  );
+  return ask && input.askId
+    ? (input.delivers ?? []).map((itemId) => ({ itemId, deliveredBy: workId }))
+    : [];
 }
 
 export function projectNeoSnapshotAsks(

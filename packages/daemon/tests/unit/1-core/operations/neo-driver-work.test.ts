@@ -47,7 +47,7 @@ import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
-  requireNeoProposalDoneWhen,
+  requireNeoProposalAsk,
   requireNeoWorkContinuation,
   requireNeoWorkRetryCaller,
 } from '../../../../src/lib/neo/operations.ts';
@@ -73,6 +73,7 @@ import {
   pickNeoReplacementWorkers,
 } from '../../../../src/lib/neo/work-reroute.ts';
 import type { WorkRef, WorkSummary } from '../../../../src/lib/drivers/types.ts';
+import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
 const retryVia = async (service: NeoService, id = 'work-1') => {
@@ -270,20 +271,20 @@ describe('done-check note data', () => {
   });
 });
 
-describe('requireNeoProposalDoneWhen', () => {
+describe('requireNeoProposalAsk', () => {
   const neo = { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const };
   const human = { source: 'rpc' as const, principal: 'local' as const };
 
-  test('refuses a Neo proposal with neither doneWhen nor an ask', () => {
-    expect(requireNeoProposalDoneWhen({}, neo)).toMatchObject({
-      reason: { ok: false, reason: expect.stringContaining('doneWhen') },
-    });
-    expect(requireNeoProposalDoneWhen({ doneWhen: '- merged' }, neo)).toEqual({ value: neo });
-    expect(requireNeoProposalDoneWhen({ askId: 'a1' }, neo)).toEqual({ value: neo });
+  test('refuses a Neo proposal without an ask, a done list no longer standing in for one', () => {
+    for (const input of [{}, { doneWhen: '- merged' }])
+      expect(requireNeoProposalAsk(input, neo)).toMatchObject({
+        reason: { ok: false, reason: expect.stringContaining('ask_required') },
+      });
+    expect(requireNeoProposalAsk({ askId: 'a1' }, neo)).toEqual({ value: neo });
   });
 
   test('leaves the human proposing from the app alone', () => {
-    expect(requireNeoProposalDoneWhen({}, human)).toEqual({ value: human });
+    expect(requireNeoProposalAsk({}, human)).toEqual({ value: human });
   });
 });
 
@@ -4519,12 +4520,17 @@ describe('neo.work.propose with a drivers target', () => {
       invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.work.propose',
-        {
-          title: work.title,
-          instruction: work.instruction,
-          doneWhen: '- font raised',
-          ...target,
-        },
+        withNeoProposalAsk(
+          service,
+          'neo.work.propose',
+          {
+            title: work.title,
+            instruction: work.instruction,
+            doneWhen: '- font raised',
+            ...target,
+          },
+          neo
+        ),
         neo
       );
     try {
@@ -4589,13 +4595,18 @@ describe('neo.work.propose with a drivers target', () => {
       invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.work.propose',
-        {
-          requestKey,
-          title: 'Fix it',
-          instruction: 'Fix the bug.',
-          doneWhen: '- bug fixed',
-          work: { verb: 'start', adapter, place },
-        },
+        withNeoProposalAsk(
+          service,
+          'neo.work.propose',
+          {
+            requestKey,
+            title: 'Fix it',
+            instruction: 'Fix the bug.',
+            doneWhen: '- bug fixed',
+            work: { verb: 'start', adapter, place },
+          },
+          neo
+        ),
         neo
       );
     try {

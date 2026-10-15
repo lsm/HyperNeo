@@ -41,6 +41,7 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
+import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const project = {
@@ -163,7 +164,7 @@ describe('Neo MVP', () => {
     return invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
       name,
-      input,
+      withNeoProposalAsk(service, name, input, caller),
       caller
     );
   }
@@ -737,6 +738,19 @@ describe('Neo MVP', () => {
       };
       try {
         first.bind('ask-A');
+        Object.assign(
+          request.input,
+          withNeoProposalAsk(
+            service,
+            'neo.work.propose',
+            { projectId: scope },
+            {
+              source: 'mcp',
+              sessionId,
+              neoTurn: first.identity(),
+            }
+          )
+        );
         const receipt = JSON.parse((await handler(first)(request)).content[0].text);
         expect(receipt).toMatchObject({
           ok: true,

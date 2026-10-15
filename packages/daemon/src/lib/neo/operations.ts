@@ -160,7 +160,6 @@ import {
 } from './session-watch.ts';
 import {
   findNeoSessionNotice,
-  isNeoAdoptOnlyAsk,
   isNeoTrackedFollowUp,
   requireNeoTrackRoot,
   requireNeoTrackableSession,
@@ -170,11 +169,8 @@ import {
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
   createNeoAskOperations,
-  isNeoCardAsk,
   NeoAskSchema,
-  planNeoAskItems,
   planNeoAskQuestion,
-  planNeoCardAsk,
   projectNeoSnapshotAsks,
   requireNeoWorkAsk,
   planNeoProposalBindings,
@@ -580,17 +576,17 @@ export function requireNeoConsultationReceipt(
     : { value: item };
 }
 
-export function requireNeoProposalDoneWhen(
-  input: { doneWhen?: string; askId?: string },
+export function requireNeoProposalAsk(
+  input: { askId?: string },
   caller: OperationCaller
 ): { value: OperationCaller } | { reason: Rejection } {
-  return input.doneWhen || input.askId || caller.source !== 'mcp'
+  return input.askId || caller.source !== 'mcp'
     ? { value: caller }
     : {
         reason: {
           ok: false,
           reason:
-            'Set doneWhen to a short checklist of what finished means (and goal to what the human asked), or pass the askId of the ask this work serves.',
+            'ask_required: work serves an ask. In the human’s turn open it with neo.ask.open (each doneItem declares its check), then propose with its askId; in any other turn, propose under the ask you are working on.',
         },
       };
 }
@@ -1839,7 +1835,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe((target: NeoWorkTarget) => target, 'admission', 'target')
     .pipe(requireLiveNeoWorkOrigin, ['origin', 'caller'], 'result:admission')
-    .pipe(requireNeoProposalDoneWhen, ['input', 'caller'], 'result:admission')
+    .pipe(requireNeoProposalAsk, ['input', 'caller'], 'result:admission')
     .pipe(
       (input: ProposeRequest, origin: NeoWorkOrigin, ask: NeoAsk | null) => ({
         stored:
@@ -1889,24 +1885,10 @@ export function createNeoOperations(service: NeoService) {
       ['input', 'admission']
     )
     .pipe(
-      (input: ProposeRequest, origin: NeoWorkOrigin, receipt: { work: NeoWork }) => {
-        const planned = planNeoCardAsk(input, origin);
-        const filed = service.askRecords.forWork(receipt.work.id);
-        const opened =
-          planned && !filed
-            ? service.askRecords.open(
-                { ...planned, id: crypto.randomUUID() },
-                planNeoAskItems(planned).items
-              )
-            : null;
-        return {
-          askId:
-            input.askId ??
-            filed?.id ??
-            (planned && isNeoCardAsk(opened, planned) ? opened?.id : undefined),
-        };
-      },
-      ['input', 'origin', 'admission'],
+      (input: ProposeRequest, receipt: { work: NeoWork }) => ({
+        askId: input.askId ?? service.askRecords.forWork(receipt.work.id)?.id,
+      }),
+      ['input', 'admission'],
       'ask'
     )
     .pipe(
@@ -1973,9 +1955,6 @@ export function createNeoOperations(service: NeoService) {
         const tracked = service.trackedSessions;
         tracked.delete(neoSessionKey(input.work.ref));
         service.trackedSessions = tracked;
-        const owned = ask.askId && !input.askId ? service.askRecords.get(ask.askId) : null;
-        if (owned && isNeoAdoptOnlyAsk(owned, receipt.work.id))
-          service.askRecords.approve(owned.id, Date.now(), owned.revision ?? 0);
         await service.admitWork(receipt.work.id, true);
       },
       ['input', 'ask', 'admission']
@@ -2395,7 +2374,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.session.track',
       description:
-        'Track a session the human started themselves, from its notice: key is the notice key from snapshot.sessionNoticeGroups or sessionNotices. Neo is asked to write the goal and doneWhen from the session\'s first message and propose a card that adopts the session as its driver target ({verb:"adopt", ref}) without sending it anything; the tap counts as the human’s Start for that card, so it starts on its own; the ask the proposal opens for it is approved, but an existing ask Neo names is not, and a shared ask keeps needing the human’s approval for its other work.',
+        'Track a session the human started themselves, from its notice: key is the notice key from snapshot.sessionNoticeGroups or sessionNotices. The daemon opens and approves one ask for the tap (a repeated tap within the track window reuses it), and Neo is asked to propose under that askId a card that adopts the session as its driver target ({verb:"adopt", ref}) without sending it anything; the tap counts as the human’s Start for that card, so it starts on its own.',
       inputSchema: SessionTrack,
       resultSchema: SessionTrackResult,
       policy: { safetyClass: 'human_only' },
