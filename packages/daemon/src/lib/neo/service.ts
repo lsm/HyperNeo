@@ -3674,6 +3674,11 @@ export class NeoService {
     this.inputOrigins.record(input, origin, Date.now(), triggerId);
   }
 
+  stampContinuation(input: NeoAskOrigin, parent: NeoAskOrigin): void {
+    if (!this.repo.getBindingBySession(input.sessionId)) return;
+    this.stampDelivery(input, parent, 'continues');
+  }
+
   inputTrigger(input: NeoAskOrigin): string | null {
     return (
       this.inputOrigins.trigger(input.sessionId, input.messageId) ??

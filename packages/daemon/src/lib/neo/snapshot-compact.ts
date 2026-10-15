@@ -103,6 +103,17 @@ export function summarizeNeoSnapshot<T extends NeoSnapshot>(
   };
 }
 
+export function neoSnapshotOmitted<T extends NeoSnapshot>(fitted: T, built: NeoSnapshot): T {
+  const { omitted: _omitted, ...rest } = fitted;
+  const work = (built.omitted?.work ?? 0) + built.work.length - fitted.work.length;
+  const asks = (built.omitted?.asks ?? 0) + (built.asks?.length ?? 0) - (fitted.asks?.length ?? 0);
+  return (
+    work || asks
+      ? { ...rest, omitted: { ...(work ? { work } : {}), ...(asks ? { asks } : {}) } }
+      : rest
+  ) as T;
+}
+
 export const NEO_MCP_SNAPSHOT_BUDGET = 40_000;
 const TRIMMED_TEXT_LIMIT = 300;
 const TRIMMED_NOTE_RESERVE = 512;

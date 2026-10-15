@@ -67,6 +67,25 @@ export class NeoProjectMergeRepository {
     );
   }
 
+  allFolders(): { projectId: string; folder: string }[] {
+    return (
+      this.db
+        .prepare("SELECT alias, project_id FROM neo_project_workspaces WHERE alias LIKE 'folder:%'")
+        .all() as { alias: string; project_id: string }[]
+    ).flatMap((row) => {
+      const at = row.alias.indexOf('\u0000');
+      return at > 0 ? [{ projectId: row.project_id, folder: row.alias.slice(at + 1) }] : [];
+    });
+  }
+
+  recordIdentities(fresh: Readonly<Record<string, readonly string[]>>): void {
+    const insert = this.db.prepare(
+      'INSERT OR IGNORE INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
+    );
+    for (const [projectId, identities] of Object.entries(fresh))
+      for (const identity of identities) insert.run(identity, projectId);
+  }
+
   questions(fresh: Readonly<Record<string, readonly string[]>>): NeoProjectQuestion[] {
     const repositories: Record<string, string[]> = {};
     for (const row of this.db

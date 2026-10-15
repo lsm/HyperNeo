@@ -1,5 +1,6 @@
 import { neoTurnRequestKey } from './request-key.ts';
 import { hostname } from 'node:os';
+import { planNeoProjectRetitles } from './project-mirror.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { readNeoProjectFacts } from './project-route-facts.ts';
 import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
@@ -81,6 +82,7 @@ import {
   NEO_PROJECT_QUESTION_ATTEMPTS,
   readNeoProjectDecision,
   readNeoProjectIdentities,
+  readNeoProjectNames,
   settleNeoProjectQuestions,
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -99,6 +101,7 @@ import {
   compactNeoSnapshotCards,
   fitNeoSnapshotBudget,
   NEO_MCP_SNAPSHOT_BUDGET,
+  neoSnapshotOmitted,
   NEO_SNAPSHOT_SETTLED_ASKS,
   summarizeNeoSnapshot,
 } from './snapshot-compact.ts';
@@ -283,7 +286,12 @@ const SnapshotOk = z.object({
     .max(NEO_SNAPSHOT_FORWARDS)
     .optional(),
   work: z.array(
-    Work.extend({ summarized: z.literal(true).optional(), askId: z.string().optional() })
+    Work.extend({
+      summarized: z.literal(true).optional(),
+      askId: z.string().optional(),
+      phase: NeoCardViewSchema.shape.phase.optional(),
+      label: z.string().optional(),
+    })
   ),
   standingRules: z.array(z.string()).optional(),
   consultations: z.array(Consultation.extend({ summarized: z.literal(true).optional() })),
@@ -302,6 +310,9 @@ const SnapshotOk = z.object({
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
   asks: z.array(NeoAskSchema).optional(),
   moreSettled: z.boolean().optional(),
+  omitted: z
+    .object({ work: z.number().int().optional(), asks: z.number().int().optional() })
+    .optional(),
   cards: z.array(NeoCardViewSchema).max(100),
   sessionLoad: z
     .array(z.object({ sessionId: z.string(), liveCards: z.number().int(), busy: z.boolean() }))
@@ -881,10 +892,9 @@ export function neoReorganizeRuntime(
     move: (ask, cards, owner) => service.moveAsk(ask, cards, owner),
     mergeProjects: async () => {
       const merges = service.repo.projectMerges;
-      const fresh = await readNeoProjectIdentities(
-        merges.localFolders(hostname()),
-        readWorkspaceIdentity
-      );
+      const local = merges.localFolders(hostname());
+      const fresh = await readNeoProjectIdentities(local, readWorkspaceIdentity);
+      merges.recordIdentities(fresh);
       const merged = mergeNeoDuplicateProjects(
         () => merges.plan(fresh),
         (input) => merges.merge(input),
@@ -901,6 +911,23 @@ export function neoReorganizeRuntime(
         (question, attempt) => askNeoProjectQuestion(service, question, attempt),
         (line) => service.logReorganize(line)
       );
+      const names = await readNeoProjectNames(
+        merges.localFolders(hostname()),
+        readWorkspaceIdentity
+      );
+      for (const retitle of planNeoProjectRetitles(
+        service.repo.listProjects(),
+        names,
+        merges.allFolders()
+      )) {
+        const project = service.repo.getProject(retitle.id);
+        if (!project) continue;
+        service.repo.saveProject(
+          { ...project, title: retitle.title, summary: `Project: ${retitle.title}` },
+          retitle.revision
+        );
+        service.logReorganize(`neo reorganize: retitled ${retitle.id} to ${retitle.title}`);
+      }
       return { merged: [...merged, ...settled.merged], asked: settled.asked };
     },
     log: (line) => service.logReorganize(line),
@@ -987,7 +1014,10 @@ export function createNeoOperations(service: NeoService) {
   ) {
     const built = buildSnapshot(caller, requested, askId, summaries);
     return built.ok && caller.source !== 'rpc'
-      ? fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET, { focused: !!askId })
+      ? neoSnapshotOmitted(
+          fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET, { focused: !!askId }),
+          built
+        )
       : built;
   }
   function buildSnapshot(
@@ -1016,13 +1046,12 @@ export function createNeoOperations(service: NeoService) {
       : service.repo.listWork(scope === undefined ? undefined : scope);
     const limit = caller.source === 'rpc' ? 50 : 10;
     const recentWork = focus ? work.slice(-limit).reverse() : work.slice(0, limit);
-    const olderActiveWork =
-      caller.source === 'rpc' && !focus
-        ? work
-            .slice(50)
-            .filter((item) => item.status === 'proposed' || item.status === 'queued')
-            .slice(0, 50)
-        : [];
+    const olderActiveWork = focus
+      ? []
+      : work
+          .slice(limit)
+          .filter((item) => item.status === 'proposed' || item.status === 'queued')
+          .slice(0, limit);
     const visibleWork = [...recentWork, ...olderActiveWork];
     const consultations = focus ? [] : service.consultations.list(scope ?? undefined);
     const waiters = focus ? [] : service.consultationWaiters.queued(scope ?? undefined);
@@ -1038,6 +1067,9 @@ export function createNeoOperations(service: NeoService) {
       new Set(workIds.filter((id) => service.isContinueStalled(id)))
     );
     const { workPrs, cards } = projectCards(visibleWork, asks);
+    const cardOf = new Map(cards.map((card) => [card.workId, card]));
+    const omittedWork = work.length - visibleWork.length;
+    const omittedAsks = listed.length - asks.length;
     const built = {
       ok: true as const,
       sessionId: service.repo.getBindingForProject(scope ?? null)?.sessionId ?? null,
@@ -1095,6 +1127,14 @@ export function createNeoOperations(service: NeoService) {
       ...(summarize
         ? { moreSettled: listed.filter(isNeoAskSettled).length > NEO_SNAPSHOT_SETTLED_ASKS }
         : {}),
+      ...(omittedWork || omittedAsks
+        ? {
+            omitted: {
+              ...(omittedWork ? { work: omittedWork } : {}),
+              ...(omittedAsks ? { asks: omittedAsks } : {}),
+            },
+          }
+        : {}),
       cards: compact ? compactNeoSnapshotCards(cards) : cards,
       sessionLoad: readNeoSessionLoad(service.db.getDatabase()).slice(0, 50),
       askViews: projectNeoAskViews(asks, cards, workPrs, unmutedAskSessions()),
@@ -1114,6 +1154,9 @@ export function createNeoOperations(service: NeoService) {
               ...item,
               instruction: cardDetail ? item.instruction.slice(0, 1000) : '',
               report: cardDetail ? (item.report?.slice(0, 3000) ?? null) : null,
+              ...(cardOf.get(item.id)
+                ? { phase: cardOf.get(item.id)!.phase, label: cardOf.get(item.id)!.label }
+                : {}),
             }
       ),
     };
@@ -2193,7 +2236,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable project summaries and execution receipts. Pass projectId to load that project’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. In a turn that belongs to an ask, the snapshot is scoped to that ask (scopedTo says which) unless you pass askId, projectId or all: true. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+        'Read durable project summaries and execution receipts. Pass projectId to load that project’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. Each work item carries phase and label, the same card view the human sees: handed means given to a worker but not seen working yet; running means the worker reports it running, and its label says when that is not confirmed; stopped, abandoned, reported, failed and cancelled mean nothing is running. status is only storage, and queued does not mean running. A list that does not hold every item says so in omitted ({work, asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. In a turn that belongs to an ask, the snapshot is scoped to that ask (scopedTo says which) unless you pass askId, projectId or all: true. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },

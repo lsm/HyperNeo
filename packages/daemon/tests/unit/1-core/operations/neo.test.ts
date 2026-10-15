@@ -305,6 +305,42 @@ describe('Neo MVP', () => {
     }
   });
 
+  test('Neo reads a stale queued card as abandoned, the phase the human sees', async () => {
+    const root = await service.open(null);
+    service.driverTargets.propose(
+      service.repo,
+      {
+        id: 'stale',
+        requestKey: 'stale',
+        projectId: null,
+        originSessionId: root,
+        title: 'Waiting on Codex',
+        instruction: 'Count the files.',
+      },
+      {
+        verb: 'start',
+        adapter: 'codex-desktop',
+        place: { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' },
+      }
+    );
+    service.repo.transitionWork('stale', service.repo.getWork('stale')!, {
+      status: 'queued',
+      sessionId: null,
+    });
+    sqlite.prepare("UPDATE neo_work SET updated_at = 1 WHERE id = 'stale'").run();
+    const read = (await invoke(
+      'neo.snapshot',
+      {},
+      { source: 'mcp', role: 'neo', sessionId: root }
+    )) as {
+      value: { work: Array<{ id: string; status: string; phase?: string }>; omitted?: unknown };
+    };
+    expect(read.value.work).toEqual([
+      expect.objectContaining({ id: 'stale', status: 'queued', phase: 'abandoned' }),
+    ]);
+    expect(read.value.omitted).toBeUndefined();
+  });
+
   test('human snapshots retain a bounded set of older actionable work', async () => {
     service.repo.saveProject({ id: 'book-club', title: 'Book club', summary: '', context: '' }, 0);
     const root = await service.open(null);
@@ -361,11 +397,18 @@ describe('Neo MVP', () => {
       {},
       { source: 'mcp', role: 'neo', sessionId: root }
     )) as {
-      value: { work: Array<{ id: string }> };
+      value: {
+        work: Array<{ id: string; status: string; phase?: string; label?: string }>;
+        omitted?: { work?: number };
+      };
     };
-    expect(agentSnapshot.value.work).toHaveLength(10);
-    expect(agentSnapshot.value.work.some((item) => item.id === oldest.id)).toBe(false);
-    expect(agentSnapshot.value.work.some((item) => item.id === queued.id)).toBe(false);
+    expect(agentSnapshot.value.work).toHaveLength(12);
+    expect(agentSnapshot.value.work.find((item) => item.id === queued.id)).toMatchObject({
+      status: 'queued',
+      phase: 'handed',
+    });
+    expect(agentSnapshot.value.work.find((item) => item.id === oldest.id)?.phase).toBe('proposed');
+    expect(agentSnapshot.value.omitted).toEqual({ work: 40 });
     for (let index = 0; index < 50; index++) {
       const item = service.repo.proposeWork({
         id: `extra-${index}`,
