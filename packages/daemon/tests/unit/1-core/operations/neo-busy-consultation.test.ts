@@ -222,7 +222,7 @@ describe('Neo durable busy consultation intake', () => {
     );
     expect(service.repo.listWork()).toEqual([]);
   });
-  test('queued retries remain stable and conflicting or foreign inputs cannot adopt a receipt', async () => {
+  test('queued retries remain stable, and changed or foreign requests get their own receipts', async () => {
     await consult(0);
     const b = await consult(1);
     for (const result of await Promise.all([
@@ -232,16 +232,22 @@ describe('Neo durable busy consultation intake', () => {
       expect(result).toMatchObject({
         value: { waiter: { id: b.receipt.waiter!.id, status: 'queued' } },
       });
+    const receipts = new Set([b.receipt.waiter!.id]);
     for (const [input, source] of [
       [{ ...b.input, question: 'Changed' }, b.source],
       [{ ...b.input, projectId: 'family' }, b.source],
       [b.input, caller(ids[0])],
-    ] as const)
-      expect(await invoke('neo.project.consult', input, source)).toMatchObject({
-        value: { ok: false },
-      });
-    expect(service.consultationWaiters.queued()).toHaveLength(1);
-    expect(service.consultations.list()).toHaveLength(1);
+    ] as const) {
+      const first = await invoke('neo.project.consult', input, source);
+      const receipt = (
+        first as { value: { waiter?: { id: string }; consultation?: { id: string } } }
+      ).value;
+      receipts.add((receipt.waiter ?? receipt.consultation)!.id);
+      expect(await invoke('neo.project.consult', input, source)).toEqual(first);
+    }
+    expect(receipts.size).toBe(4);
+    expect(service.consultationWaiters.queued()).toHaveLength(3);
+    expect(service.consultations.list()).toHaveLength(2);
   });
   test('human cancellation tombstones only the queued ask and does not interrupt the shared holder', async () => {
     const a = (await consult(0)).receipt.consultation!;

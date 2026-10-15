@@ -1,3 +1,4 @@
+import { neoTurnRequestKey } from './request-key.ts';
 import { NeoAskBindingError } from '../../storage/repositories/neo-ask-repository.ts';
 import { neoAskAnswerEvidence } from './ask-answer-evidence.ts';
 import type { NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -146,7 +147,6 @@ const Item = z.object({
 });
 const Open = z
   .object({
-    requestKey: z.string().min(1).max(160),
     projectId: z.string().min(1).nullable().default(null),
     title: z.string().trim().min(1).max(160),
     ask: z.string().trim().min(1).max(4000),
@@ -160,7 +160,8 @@ const Open = z
     (input) => countNeoAskWatches(input.doneItems ?? []) <= NEO_ASK_WATCH_MAX,
     `An ask watches at most ${NEO_ASK_WATCH_MAX} pull requests and issues across its items.`
   );
-type Opening = Omit<z.infer<typeof Open>, 'doneItems' | 'doneWhen'> & { doneWhen: string };
+type OpenRequest = z.infer<typeof Open> & { requestKey: string };
+type Opening = Omit<OpenRequest, 'doneItems' | 'doneWhen'> & { doneWhen: string };
 const Options = z
   .array(z.string().trim().min(1).max(80))
   .min(2)
@@ -1311,13 +1312,13 @@ export function createNeoAskOperations(
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Open>, caller: OperationCaller) =>
+      (input: OpenRequest, caller: OperationCaller) =>
         admit(caller, 'neo.ask.open', input.projectId),
       ['input', 'caller'],
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Open>) => ({
+      (input: OpenRequest) => ({
         project: input.projectId ? service.repo.getProject(input.projectId) : null,
       }),
       'input',
@@ -1325,13 +1326,13 @@ export function createNeoAskOperations(
     )
     .pipe(requireNeoAskProject, ['input', 'project', 'admission'], 'result:admission')
     .pipe(
-      (input: z.infer<typeof Open>) => requireNeoAskPack(input.pack, service.packs()),
+      (input: OpenRequest) => requireNeoAskPack(input.pack, service.packs()),
       'input',
       'result:admission'
     )
     .pipe(requireNeoAskHumanTurn, 'caller', 'result:admission')
     .pipe(
-      (input: z.infer<typeof Open>, caller: OperationCaller) =>
+      (input: OpenRequest, caller: OperationCaller) =>
         admitNeoWorkOrigin(
           caller,
           caller.sessionId ?? service.repo.getBindingForProject(input.projectId)?.sessionId
@@ -1340,7 +1341,7 @@ export function createNeoAskOperations(
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Open>, origin: NeoWorkOrigin) =>
+      (input: OpenRequest, origin: NeoWorkOrigin) =>
         requireNeoAskOriginFree(
           input.requestKey,
           origin,
@@ -1365,11 +1366,7 @@ export function createNeoAskOperations(
     )
     .pipe(planNeoAskItems, 'input', 'checklist')
     .pipe(
-      (
-        checklist: ReturnType<typeof planNeoAskItems>,
-        origin: NeoWorkOrigin,
-        input: z.infer<typeof Open>
-      ) =>
+      (checklist: ReturnType<typeof planNeoAskItems>, origin: NeoWorkOrigin, input: OpenRequest) =>
         service.askRecords.forRequest(`${origin.originSessionId}:${input.requestKey}`)
           ? { value: origin }
           : requireRegisteredChecks(checklist.items, service.checkRegistry(), origin),
@@ -1386,7 +1383,7 @@ export function createNeoAskOperations(
       (
         checklist: ReturnType<typeof planNeoAskItems>,
         origin: NeoWorkOrigin,
-        input: z.infer<typeof Open>
+        input: OpenRequest
       ) => {
         if (service.askRecords.forRequest(`${origin.originSessionId}:${input.requestKey}`))
           return { value: origin };
@@ -1397,7 +1394,7 @@ export function createNeoAskOperations(
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Open>, checklist: ReturnType<typeof planNeoAskItems>): Opening => {
+      (input: OpenRequest, checklist: ReturnType<typeof planNeoAskItems>): Opening => {
         const { doneItems: _items, ...rest } = input;
         return { ...rest, doneWhen: checklist.doneWhen };
       },
@@ -1441,10 +1438,7 @@ export function createNeoAskOperations(
       'admission',
       'admission'
     )
-    .end('admission') as (
-    input: z.infer<typeof Open>,
-    caller: OperationCaller
-  ) => AskOpened | Rejection;
+    .end('admission') as (input: OpenRequest, caller: OperationCaller) => AskOpened | Rejection;
   const settle = (superpipe({})('neo.ask.settle') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -1958,11 +1952,20 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; new merge/deploy outcomes require the matching coding.pr_merged/coding.deployed check in doneItems; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps. Reuse requestKey only to retry this input.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; new merge/deploy outcomes require the matching coding.pr_merged/coding.deployed check in doneItems; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => withBindingView(() => open(input, caller)),
+      execute: async (input, caller) =>
+        withBindingView(() =>
+          open(
+            {
+              ...input,
+              requestKey: neoTurnRequestKey(caller, 'neo.ask.open', input),
+            },
+            caller
+          )
+        ),
     }),
     defineOperation({
       name: 'neo.ask.tick',

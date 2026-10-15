@@ -56,6 +56,7 @@ import {
   isNeoTurnAskReadable,
   neoAskScope,
 } from '../../../../src/lib/neo/operations.ts';
+import { neoTurnRequestKey } from '../../../../src/lib/neo/request-key.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -160,6 +161,11 @@ describe('neo.ask operations', () => {
     }>;
   }
 
+  function derivedKey(name: string, input: unknown, caller: OperationCaller = neo) {
+    const operation = createNeoOperations(service).find((op) => op.name === name)!;
+    return neoTurnRequestKey(caller, name, operation.inputSchema.parse(input));
+  }
+
   async function openAsk(): Promise<string> {
     const opened = await invoke('neo.ask.open', opening);
     return opened.value!.ask!.id;
@@ -178,9 +184,8 @@ describe('neo.ask operations', () => {
 
   function propose(requestKey: string, askId: string) {
     return invoke('neo.work.propose', {
-      requestKey,
       title: 'Fix it',
-      instruction: 'Fix the login bug.',
+      instruction: `Fix the login bug (${requestKey}).`,
       work: { verb: 'start', adapter: 'claude-desktop', place },
       askId,
     });
@@ -852,7 +857,7 @@ describe('neo.ask operations', () => {
       {
         ...input,
         id: 'legacy',
-        requestKey: 'root:fix',
+        requestKey: `root:${derivedKey('neo.ask.open', input)}`,
         originSessionId: 'root',
         originMessageId: 'ask-1',
         doneSource: 'human',
@@ -869,11 +874,9 @@ describe('neo.ask operations', () => {
       createdAt: stored.createdAt,
     });
     expect(await invoke('neo.ask.open', { ...input, title: 'Changed' })).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('another ask') },
+      value: { ok: false, reason: expect.stringContaining('ask_exists_for_message') },
     });
-    expect(
-      await invoke('neo.ask.open', { ...input, requestKey: 'new' }, nextMessage)
-    ).toMatchObject({
+    expect(await invoke('neo.ask.open', input, nextMessage)).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('outcome_check_required') },
     });
     expect(service.askRecords.list()).toHaveLength(1);
@@ -881,7 +884,6 @@ describe('neo.ask operations', () => {
 
   test('retries an unchecked legacy card only when its ask already exists', async () => {
     const input = {
-      requestKey: 'legacy-card',
       projectId: null,
       title: 'Fix it',
       instruction: 'Fix it.',
@@ -889,14 +891,15 @@ describe('neo.ask operations', () => {
       work: { verb: 'start' as const, adapter: 'claude-desktop', place },
     };
     const origin = { originSessionId: 'root', originMessageId: 'ask-1' };
-    const planned = planNeoCardAsk(input, origin)!;
+    const requestKey = derivedKey('neo.work.propose', input);
+    const planned = planNeoCardAsk({ ...input, requestKey }, origin)!;
     const stored = service.askRecords.open(
       { ...planned, id: 'legacy-card-ask' },
       planNeoAskItems(planned).items
     )!;
     const { work } = service.driverTargets.propose(
       service.repo,
-      { ...input, ...origin, id: 'legacy-card', requestKey: 'root:legacy-card' },
+      { ...input, ...origin, id: 'legacy-card', requestKey: `root:${requestKey}` },
       input.work
     );
     service.askRecords.link(stored.id, work.id);
@@ -906,13 +909,19 @@ describe('neo.ask operations', () => {
     });
     expect(service.askRecords.get(stored.id)).toEqual(before);
     expect(service.repo.listWork()).toHaveLength(1);
+    const unlinked = { ...input, title: 'Unlinked' };
     service.driverTargets.propose(
       service.repo,
-      { ...input, ...origin, id: 'unlinked', requestKey: 'root:unlinked' },
+      {
+        ...unlinked,
+        ...origin,
+        id: 'unlinked',
+        requestKey: `root:${derivedKey('neo.work.propose', unlinked)}`,
+      },
       input.work
     );
-    for (const requestKey of ['unlinked', 'new']) {
-      expect(await invoke('neo.work.propose', { ...input, requestKey })).toMatchObject({
+    for (const retry of [unlinked, { ...input, title: 'New' }]) {
+      expect(await invoke('neo.work.propose', retry)).toMatchObject({
         value: { ok: false, reason: expect.stringContaining('outcome_check_required') },
       });
     }
@@ -939,14 +948,14 @@ describe('neo.ask operations', () => {
     expect(Object.keys(schema.properties ?? {})).toEqual(expect.arrayContaining(['id', 'outcome']));
   });
 
-  test('opens one ask per request key and shows its cards in the snapshot', async () => {
+  test('a retried open returns its ask, and a changed open in the same turn is refused', async () => {
     const askId = await openAsk();
     expect(await invoke('neo.ask.open', opening)).toMatchObject({
       value: { ok: true, ask: { id: askId, originMessageId: 'ask-1', status: 'open' } },
     });
     for (const change of [{ ask: 'Something else' }, { doneWhen: '- PR open' }])
       expect(await invoke('neo.ask.open', { ...opening, ...change })).toMatchObject({
-        value: { ok: false, reason: 'This request key already belongs to another ask.' },
+        value: { ok: false, reason: expect.stringContaining('ask_exists_for_message') },
       });
 
     const proposed = await propose('card-1', askId);
@@ -1221,7 +1230,7 @@ describe('neo.ask operations', () => {
       },
     });
     expect(await invoke('neo.ask.open', opening)).toMatchObject({
-      value: { ok: false, reason: 'This request key already belongs to another ask.' },
+      value: { ok: false, reason: expect.stringContaining('ask_exists_for_message') },
     });
 
     const asks = (await invoke('neo.snapshot', {})).value?.asks as NeoAsk[];
@@ -2251,27 +2260,20 @@ describe('neo.ask operations', () => {
     }
   );
 
-  test('refuses a retried request key under another ask', async () => {
+  test('the same card proposed under another ask is a separate card that leaves the first alone', async () => {
     const first = await openAsk();
-    const second = (await invoke('neo.ask.open', { ...opening, requestKey: 'other' }, nextMessage))
-      .value!.ask!.id;
-    await propose('card-1', first);
+    const second = (await invoke('neo.ask.open', { ...opening, ask: 'Other' }, nextMessage)).value!
+      .ask!.id;
+    const card = (await propose('card-1', first)).value!.work!.id;
 
-    const refused = await invoke('neo.work.propose', {
-      requestKey: 'card-1',
-      title: 'Fix it',
-      instruction: 'Fix the login bug.',
-      work: { verb: 'start', adapter: 'claude-desktop', place },
-      askId: second,
-      goal: 'Something else',
-      doneWhen: '- deployed',
+    const other = await propose('card-1', second);
+    expect(other).toMatchObject({ value: { ok: true } });
+    expect(other.value!.work!.id).not.toBe(card);
+    expect(service.askRecords.get(first)?.workIds).toEqual([card]);
+    expect(service.askRecords.get(second)?.workIds).toEqual([other.value!.work!.id]);
+    expect(await propose('card-1', first)).toMatchObject({
+      value: { ok: true, work: { id: card } },
     });
-    expect(refused).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('another ask') },
-    });
-    expect(service.workGoals.get(service.askRecords.get(first)!.workIds[0])).toBe(null);
-    expect(service.askRecords.get(second)?.workIds).toEqual([]);
-    expect(await propose('card-1', first)).toMatchObject({ value: { ok: true } });
   });
 
   test('reported stays refused for what the daemon reads itself', async () => {

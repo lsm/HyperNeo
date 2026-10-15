@@ -31,7 +31,7 @@ describe('current human work guidance', () => {
     expect(delegation).toContain('later says “yes, run it” about an earlier work item');
     expect(delegation).toContain('they must use that work item’s Start work button');
     expect(delegation).toContain('do not invoke neo.work.start for it');
-    expect(delegation).toContain('or re-propose the same work with a new requestKey');
+    expect(delegation).toContain('or re-propose the same work to evade its original input binding');
     expect(delegation).toContain('to evade its original input binding');
   });
 
