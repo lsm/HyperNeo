@@ -211,8 +211,15 @@ export function isNeoCardFailedForGood(card: NeoCardView, pending: boolean): boo
   );
 }
 
-export function neoAskOutcomeKey(ask: Pick<NeoAsk, 'doneItems'>): string {
+export function neoAskOutcomeBase(ask: Pick<NeoAsk, 'doneItems'>): string {
   return `outcome:${(ask.doneItems ?? []).filter((item) => !item.removed).length}`;
+}
+
+export function neoAskOutcomeKey(ask: Pick<NeoAsk, 'doneItems'>): string {
+  const open = (ask.doneItems ?? []).filter(
+    (item) => !item.removed && item.state === 'needs_you'
+  ).length;
+  return `${neoAskOutcomeBase(ask)}${open ? `:q${open}` : ''}`;
 }
 
 export function neoAskTriggerKeys(

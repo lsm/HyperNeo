@@ -11,7 +11,9 @@ export function isNeoAskAnswerReady(ask: Pick<NeoAsk, 'doneItems'>): boolean {
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
   return (
     items.some(isNeoAnswerReady) &&
-    items.every((item) => item.state === 'met' || isNeoAnswerReady(item))
+    items.every(
+      (item) => item.state === 'met' || item.state === 'needs_you' || isNeoAnswerReady(item)
+    )
   );
 }
 
