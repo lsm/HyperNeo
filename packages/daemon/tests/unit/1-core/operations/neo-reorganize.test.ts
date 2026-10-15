@@ -268,7 +268,7 @@ describe('neo.projects.reorganize', () => {
   });
 
   test('plans the project cleanup as a dry run: it logs and reports, and applies nothing', async () => {
-    const { deps, logged } = runtime([]);
+    const { deps, logged } = runtime([], {});
     deps.projectFacts = () => [
       {
         id: 'empty',
