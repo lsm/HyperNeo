@@ -10,9 +10,10 @@ const named = (language: NeoReplyLanguage | null): NeoReplyLanguage | null =>
   language && !language.startsWith('the language of') ? language : null;
 
 export function planPublicationLanguage(
-  input: Pick<NeoPublicationInput, 'shortText'>,
+  input: Pick<NeoPublicationInput, 'shortText' | 'requestedLanguage'>,
   expected: NeoReplyLanguage | null
 ): NeoPublicationLanguageMismatch | null {
+  if (input.requestedLanguage) return null;
   const want = named(expected);
   const got = named(detectNeoReplyLanguage(input.shortText));
   return want && got && want !== got ? { expected: want, published: got } : null;
@@ -30,7 +31,7 @@ export function requirePublicationLanguage(
         reason: {
           accepted: false,
           reason: 'wrong_language',
-          detail: `This turn's reply language is ${mismatch.expected}, and this message reads as ${mismatch.published}. Rewrite it in ${mismatch.expected} and publish again.`,
+          detail: `This turn's reply language is ${mismatch.expected}, and this message reads as ${mismatch.published}. Rewrite it in ${mismatch.expected} and publish again; if the human asked for a reply in another language, publish again with requestedLanguage naming it.`,
         },
       }
     : { value: input };

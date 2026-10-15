@@ -36,6 +36,7 @@ export const NeoPublicationSchema = z
     editedBy: text(160).optional(),
     answerInput: origin.optional(),
     languageMismatch: text(120).optional(),
+    requestedLanguage: text(60).optional(),
     corrects: z.string().uuid().optional(),
     correctedBy: z.string().uuid().optional(),
   })

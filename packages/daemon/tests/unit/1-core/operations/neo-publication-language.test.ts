@@ -20,6 +20,12 @@ describe('planPublicationLanguage', () => {
       published: 'Chinese',
     });
     expect(planPublicationLanguage(post('One card is running now.'), 'English')).toBeNull();
+    expect(
+      planPublicationLanguage(
+        { ...post('现在有一张卡片在运行。'), requestedLanguage: 'Chinese' },
+        'English'
+      )
+    ).toBeNull();
     expect(planPublicationLanguage(post('现在有一张卡片在运行。'), null)).toBeNull();
     expect(
       planPublicationLanguage(post('Une carte est en cours.'), 'the language of "Bonjour"')
@@ -47,9 +53,12 @@ describe('the publication commit language gate', () => {
     expect(run(post('现在有一张卡片在运行，另一张已经完成。'))).toMatchObject({
       accepted: false,
       reason: 'wrong_language',
-      detail: expect.stringContaining('Rewrite it in English'),
+      detail: expect.stringContaining('requestedLanguage'),
     });
     expect(commit).not.toHaveBeenCalled();
+    expect(
+      run({ ...post('现在有一张卡片在运行，另一张已经完成。'), requestedLanguage: 'Chinese' })
+    ).toMatchObject({ accepted: true });
   });
 
   test('posts the end-of-turn fallback anyway, flagged with the language it should have used', () => {

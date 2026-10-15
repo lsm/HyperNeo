@@ -22,6 +22,7 @@ export interface NeoPublicationInput {
   readonly editedBy?: string;
   readonly answerInput?: NeoInputOrigin;
   readonly languageMismatch?: string;
+  readonly requestedLanguage?: string;
   readonly corrects?: string;
   readonly correctedBy?: string;
 }
