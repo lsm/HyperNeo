@@ -1032,7 +1032,7 @@ export function createNeoOperations(service: NeoService) {
       : work
           .slice(limit)
           .filter((item) => item.status === 'proposed' || item.status === 'queued')
-          .slice(0, 50);
+          .slice(0, limit);
     const visibleWork = [...recentWork, ...olderActiveWork];
     const consultations = focus ? [] : service.consultations.list(scope ?? undefined);
     const waiters = focus ? [] : service.consultationWaiters.queued(scope ?? undefined);
@@ -2216,7 +2216,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable project summaries and execution receipts. Pass projectId to load that project’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. Each work item carries phase and label, the same card view the human sees (handed means given to a worker but not yet confirmed started; running means confirmed; stalled, abandoned, reported and failed mean nothing is running); status is only storage, and queued does not mean running. A list that does not hold every item says so in omitted ({work, asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. In a turn that belongs to an ask, the snapshot is scoped to that ask (scopedTo says which) unless you pass askId, projectId or all: true. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+        'Read durable project summaries and execution receipts. Pass projectId to load that project’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. Each work item carries phase and label, the same card view the human sees: handed means given to a worker but not seen working yet; running means the worker reports it running, and its label says when that is not confirmed; stopped, abandoned, reported, failed and cancelled mean nothing is running. status is only storage, and queued does not mean running. A list that does not hold every item says so in omitted ({work, asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. In a turn that belongs to an ask, the snapshot is scoped to that ask (scopedTo says which) unless you pass askId, projectId or all: true. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },

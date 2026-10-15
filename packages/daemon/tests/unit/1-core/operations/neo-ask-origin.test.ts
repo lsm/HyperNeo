@@ -558,7 +558,7 @@ describe('real SQLite ask lineage facade', () => {
     const before = unchangedState();
     for (const [caller, count] of [
       [{ source: 'rpc', principal: 'local' }, 100],
-      [{ source: 'mcp', role: 'neo', sessionId: root.sessionId }, 10],
+      [{ source: 'mcp', role: 'neo', sessionId: root.sessionId }, 20],
     ] as [OperationCaller, number][]) {
       const value = await snapshot(caller);
       expect(value.work).toHaveLength(count);
