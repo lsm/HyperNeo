@@ -648,6 +648,10 @@ describe('requirePublicationNews', () => {
 
   test.each([
     '查到了：HyperNeo 有两张卡在等你。',
+    '我查到了：Slice 6 还在等你审批。',
+    '我检查了一下，CI 失败了。',
+    '我确认了，#12 已合并。',
+    '我先确认好了：两张卡在等你。',
     '看起来 Slice 6 还在等你决定。',
     'Checked: two cards are waiting on you.',
   ])('keeps the answer %s', (text) => {
