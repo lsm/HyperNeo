@@ -23,6 +23,7 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 describe('Neo existing chat work', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -86,7 +87,7 @@ describe('Neo existing chat work', () => {
     return invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
       name,
-      input,
+      withNeoProposalAsk(service, name, input, caller),
       caller
     );
   }

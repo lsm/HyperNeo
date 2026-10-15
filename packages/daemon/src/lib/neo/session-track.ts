@@ -26,10 +26,6 @@ export function isNeoTrackedFollowUp(
   return next?.verb === 'send' && live(next.ref);
 }
 
-export function isNeoAdoptOnlyAsk(ask: Pick<NeoAsk, 'workIds'>, workId: string): boolean {
-  return ask.workIds.length === 1 && ask.workIds[0] === workId;
-}
-
 export function requireNeoTrackRoot(
   root: string | undefined
 ): { value: string } | { reason: Rejection } {
@@ -63,7 +59,7 @@ export function keepNeoTrackedSessions(
   now: number
 ): Map<string, number> {
   const kept = new Map([...tracked].filter(([, at]) => now - at < NEO_SESSION_TRACK_MS));
-  kept.set(key, now);
+  kept.set(key, kept.get(key) ?? now);
   return kept;
 }
 

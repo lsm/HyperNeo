@@ -21,6 +21,7 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 describe('requireNeoWorkSupersedable', () => {
   const old = { id: 'w1', status: 'failed' as const, projectId: null };
@@ -117,7 +118,12 @@ describe('neo.work.propose with supersedes', () => {
     neoTurn: { messageId, human: true, isLive: () => true },
   });
   const invoke = (name: string, input: unknown, caller: OperationCaller) =>
-    invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, caller);
+    invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      name,
+      withNeoProposalAsk(service, name, input, caller),
+      caller
+    );
   const propose = async (requestKey: string, extra: Record<string, unknown> = {}) =>
     invoke(
       'neo.work.propose',

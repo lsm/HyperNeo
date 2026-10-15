@@ -22,6 +22,7 @@ import {
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 const agent = Object.freeze({
   spaceId: 'space-A',
@@ -191,7 +192,12 @@ describe('Neo existing Space-agent handoff operation', () => {
     db.close();
   });
   const invoke = (value: unknown = input, source: OperationCaller = caller) =>
-    invokeOperation(registry, 'neo.work.propose', value, source);
+    invokeOperation(
+      registry,
+      'neo.work.propose',
+      withNeoProposalAsk(service, 'neo.work.propose', value, source),
+      source
+    );
   const jobs = (id: string) =>
     db.getJobQueueRepo().listActiveByPayload('mailbox', { messageUuid: id });
   function nativeState() {
@@ -363,7 +369,9 @@ describe('Neo existing Space-agent handoff operation', () => {
       requestKey: `root:${neoTurnRequestKey(
         caller,
         'neo.work.propose',
-        registry.get('neo.work.propose')!.inputSchema.parse(input)
+        registry
+          .get('neo.work.propose')!
+          .inputSchema.parse(withNeoProposalAsk(service, 'neo.work.propose', input, caller))
       )}`,
     });
     expect(await invoke()).toMatchObject({
