@@ -171,7 +171,7 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
   const humanActions = deriveNeoAskHumanActions(ask, live);
   const idle =
     ask.status === 'open' &&
-    scenes.length > 0 &&
+    ask.workIds.length > 0 &&
     !needsYou &&
     !sessions.some((session) => session.status === 'queued' || session.status === 'running') &&
     !humanActions.length &&

@@ -456,7 +456,7 @@ describe('projectNeoAskViews', () => {
 
   test('an open ask whose cards all ended says nothing is running, and only then', () => {
     const input = parts({
-      work: [work('gone', 'cancelled', 's1'), work('live', 'queued')],
+      work: [work('gone', 'cancelled', 's1'), work('live', 'queued'), work('unsent', 'cancelled')],
       asks: [
         ask({ workIds: ['gone'] }),
         ask({ id: 'a2', workIds: ['gone', 'live'] }),
@@ -474,6 +474,13 @@ describe('projectNeoAskViews', () => {
     expect(views[1]).toMatchObject({ group: 'running', label: 'Working on it' });
     expect(views[1]).not.toHaveProperty('idle');
     expect(views[2]).not.toHaveProperty('idle');
+    expect(
+      projectNeoAskViews(
+        [ask({ id: 'a5', workIds: ['unsent'] })],
+        projectNeoCardViews(input),
+        input.prs
+      )[0]
+    ).toMatchObject({ idle: true, label: 'Nothing running · start again or drop it' });
     const running = {
       key: 'codex-desktop::t1',
       title: 'Ship the fix',
