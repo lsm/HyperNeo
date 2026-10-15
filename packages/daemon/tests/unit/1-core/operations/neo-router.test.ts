@@ -12,7 +12,6 @@ import {
   type NeoRouteVerdict,
   type NeoRouterDeps,
   neoHolderProfile,
-  neoRouteCandidateLine,
   pickNeoHolder,
   renderNeoRouteContext,
   runnableNeoHolders,
@@ -122,6 +121,21 @@ describe('renderNeoRouteContext', () => {
     );
   });
 
+  test('names each topic with its repository and summary on one line', () => {
+    const context = renderNeoRouteContext(
+      [
+        { ...drivers, repository: 'lsm/neo-ios' },
+        { ...youtube, summary: '' },
+      ],
+      [],
+      [],
+      false
+    );
+    expect(context).toContain(
+      '- drivers: Neo driver epic [lsm/neo-ios] (drivers)\n- youtube: YouTube\n'
+    );
+  });
+
   test('lists every topic on one line, however many there are', () => {
     const many = Array.from({ length: 40 }, (_, n) => ({ ...drivers, projectId: `t${n}` }));
     const projects = renderNeoRouteContext(many, [], [], false)
@@ -158,15 +172,6 @@ describe('runnableNeoHolders', () => {
     expect(runnableNeoHolders([glm], new Map()).map((holder) => holder.projectId)).toEqual([
       'drivers',
     ]);
-  });
-});
-
-describe('neoRouteCandidateLine', () => {
-  test('names the topic with its repository and summary', () => {
-    expect(neoRouteCandidateLine({ ...drivers, repository: 'lsm/neo-ios' })).toBe(
-      '- drivers: Neo driver epic [lsm/neo-ios] (drivers)'
-    );
-    expect(neoRouteCandidateLine({ ...drivers, summary: '' })).toBe('- drivers: Neo driver epic');
   });
 });
 

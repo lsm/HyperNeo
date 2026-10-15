@@ -228,12 +228,6 @@ function requireRouteQuestion(
     : { reason: { choice: null } };
 }
 
-export function neoRouteCandidateLine(holder: NeoHolder): string {
-  const repository = holder.repository ? ` [${holder.repository}]` : '';
-  const summary = holder.summary ? ` (${neoExcerpt(holder.summary, PROJECT_SUMMARY_CHARS)})` : '';
-  return `- ${holder.projectId}: ${holder.title}${repository}${summary}`;
-}
-
 export function renderNeoRouteContext(
   holders: readonly NeoHolder[],
   recent: readonly NeoRoute[],
@@ -258,7 +252,10 @@ export function renderNeoRouteContext(
   const projects = [
     '- main: Neo itself, the last resort for questions across projects or when you cannot tell',
     ...notes('main'),
-    ...holders.flatMap((holder) => [neoRouteCandidateLine(holder), ...waiting(holder.projectId)]),
+    ...holders.flatMap((holder) => [
+      `- ${holder.projectId}: ${holder.title}${holder.repository ? ` [${holder.repository}]` : ''}${holder.summary ? ` (${neoExcerpt(holder.summary, PROJECT_SUMMARY_CHARS)})` : ''}`,
+      ...waiting(holder.projectId),
+    ]),
     ...(withInbox ? [`- ${NEO_INBOX_ID}: ${NEO_INBOX_SUMMARY}`, ...notes(NEO_INBOX_ID)] : []),
   ];
   const turns = fitLines(
