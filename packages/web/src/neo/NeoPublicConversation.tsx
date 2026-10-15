@@ -10,6 +10,8 @@ import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { type NeoAskItem, readNeoConversationImage } from './conversation-ask-client.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from './NeoMessageMenu.tsx';
+import { copyToClipboard } from '../lib/utils.ts';
 import { messageTime } from './NeoMessage.tsx';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 import { neoMessageAnchor } from './reply-context.ts';
@@ -218,57 +220,59 @@ function NoticeRow({
     <div
       role="note"
       data-public-entry={entryKey}
-      class="neo-arrive mx-auto max-w-[94%] px-1 text-center text-xs text-fg-muted"
+      class="neo-arrive mx-auto max-w-[94%] text-xs text-fg-muted"
     >
-      {time && (
-        <time dateTime={time.iso} title={time.full} class="mr-2 text-[11px] text-fg-faint">
-          {time.label}
-        </time>
-      )}
       {shown.map((notice, index) => {
         const link = neoSessionLink(notice.link, notice.ref.daemon);
         return (
-          <span key={notice.key + notice.at}>
-            {index > 0 && '; '}
-            {neoAppLabel(notice.ref.adapter)} · {notice.title}{' '}
-            <span class={notice.kind === 'needs_you' ? 'font-medium text-fg' : ''}>
-              {NOTICE_KINDS[notice.kind]}
+          <div
+            key={notice.key + notice.at}
+            data-notice={notice.key}
+            class="grid grid-cols-[4.5rem_minmax(0,1fr)_4.5rem] items-center"
+          >
+            {mute ? (
+              <button
+                type="button"
+                class="min-h-9 justify-self-start rounded-md px-3 text-left text-fg-faint hover:bg-fill-soft hover:text-fg"
+                aria-label={`${mute.muted.has(notice.key) ? 'Unmute' : 'Mute'} ${notice.title}`}
+                onClick={() => mute.onMute(notice.key, !mute.muted.has(notice.key))}
+              >
+                {mute.muted.has(notice.key) ? 'Unmute' : 'Mute'}
+              </button>
+            ) : (
+              <span />
+            )}
+            <span class="min-w-0 break-words px-1 py-1 text-center">
+              {index === 0 && time && (
+                <time dateTime={time.iso} title={time.full} class="mr-2 text-[11px] text-fg-faint">
+                  {time.label}
+                </time>
+              )}
+              {neoAppLabel(notice.ref.adapter)} · {notice.title}{' '}
+              <span class={notice.kind === 'needs_you' ? 'font-medium text-fg' : ''}>
+                {NOTICE_KINDS[notice.kind]}
+              </span>
             </span>
-            {link && (
-              <>
-                {' · '}
-                <a
-                  href={link}
-                  class="text-accent hover:underline"
-                  aria-label={`Open ${notice.title}`}
-                >
-                  Open
-                </a>
-              </>
+            {link ? (
+              <a
+                href={link}
+                class="flex min-h-9 items-center justify-self-end rounded-md px-3 text-accent hover:bg-fill-soft"
+                aria-label={`Open ${notice.title}`}
+              >
+                Open
+              </a>
+            ) : (
+              <span />
             )}
-            {mute && (
-              <>
-                {' · '}
-                <button
-                  type="button"
-                  class="text-fg-faint hover:text-fg hover:underline"
-                  aria-label={`${mute.muted.has(notice.key) ? 'Unmute' : 'Mute'} ${notice.title}`}
-                  onClick={() => mute.onMute(notice.key, !mute.muted.has(notice.key))}
-                >
-                  {mute.muted.has(notice.key) ? 'Unmute' : 'Mute'}
-                </button>
-              </>
-            )}
-          </span>
+          </div>
         );
       })}
       {more > 0 && (
-        <>
-          {'; '}
+        <p class="text-center">
           <button type="button" class="text-accent hover:underline" onClick={() => setAll(true)}>
             {more} more
           </button>
-        </>
+        </p>
       )}
     </div>
   );
@@ -299,6 +303,10 @@ function PublicEntry({
   const undelivered = ask?.delivery?.state === 'failed';
   const publication = entry.kind === 'publication' ? entry.publication : null;
   const [expanded, setExpanded] = useState(false);
+  const [copiedAt, setCopiedAt] = useState(0);
+  const bubbleText = useRef<HTMLDivElement>(null);
+  const article = useRef<HTMLElement>(null);
+  const menu = useNeoMessageMenu();
   const [showReason, setShowReason] = useState(false);
   const [restored, setRestored] = useState(
     () => !!ask && restoredUndelivered().includes(ask.requestId)
@@ -307,7 +315,8 @@ function PublicEntry({
   const short = publication?.shortText.trim() ?? '';
   const full = publication?.fullText.trim() ?? '';
   const hasDetails = !!short && !!full && full !== short;
-  const text = ask ? publicAskText(ask.content) : hasDetails && !expanded ? short : full || short;
+  const copyText = ask ? publicAskText(ask.content) : full || short;
+  const text = ask ? publicAskText(ask.content) : hasDetails ? short : full || short;
   const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : 'You';
@@ -324,9 +333,12 @@ function PublicEntry({
       : '';
   return (
     <article
+      ref={article}
+      tabIndex={-1}
       id={anchor || undefined}
       data-public-entry={entry.key}
-      class={`neo-arrive neo-message w-fit break-words ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%]'}`}
+      class={`neo-arrive neo-message w-fit break-words focus:outline-none ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%] max-md:w-full max-md:max-w-full'}`}
+      {...(copyText.trim() ? menu.bind : {})}
     >
       <div
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${ask ? 'justify-end' : ''}`}
@@ -443,50 +455,82 @@ function PublicEntry({
             )}
           </div>
         )}
-        {/^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
-          <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
-        ) : (
-          <MarkdownRenderer
-            content={text}
-            class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
-          />
-        )}
-        {hasDetails && (
-          <button
-            type="button"
-            aria-expanded={expanded}
-            onClick={() => setExpanded(!expanded)}
-            class="mt-2 text-sm text-fg-muted hover:text-accent hover:underline"
-          >
-            {expanded ? 'Show less' : 'Show details'}
-          </button>
-        )}
-        {publication && (
-          <>
-            {links.length > 0 && (
-              <ul
-                aria-label="Related Neo scenes"
-                class="mt-3 flex flex-wrap gap-3 text-sm text-accent"
-              >
-                {links.map((link) => (
-                  <li key={JSON.stringify([link.kind, link.id])}>
-                    {onOpenScene && (canOpenScene?.(link) ?? true) ? (
-                      <button
-                        type="button"
-                        class="text-left hover:underline"
-                        onClick={() => onOpenScene({ kind: link.kind, id: link.id })}
-                      >
-                        {link.label}
-                      </button>
-                    ) : (
-                      <span>{link.label}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        )}
+        {(() => {
+          const body = /^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
+            <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
+          ) : (
+            <MarkdownRenderer
+              content={text}
+              class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
+            />
+          );
+          const chevron = hasDetails && (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              aria-label={expanded ? 'Hide details' : 'Show details'}
+              title={expanded ? 'Hide details' : 'Show details'}
+              onClick={() => setExpanded(!expanded)}
+              class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-fill-soft text-fg-muted hover:text-fg"
+            >
+              <NeoIcon
+                name="chevron"
+                class={`!h-3.5 !w-3.5 transition-transform${expanded ? '' : ' rotate-180'}`}
+              />
+            </button>
+          );
+          return (
+            <>
+              {chevron && !links.length ? (
+                <div class="flex items-end gap-2">
+                  <div ref={bubbleText} class="min-w-0 flex-1">
+                    {body}
+                  </div>
+                  {chevron}
+                </div>
+              ) : (
+                <div ref={bubbleText}>{body}</div>
+              )}
+              {hasDetails && expanded && (
+                <div
+                  data-publication-details
+                  class="mt-3 rounded-[10px] bg-fill-soft px-3 py-2 text-sm text-fg-muted"
+                  style={{ '--prose-fg': 'var(--fg-muted)' }}
+                >
+                  <MarkdownRenderer
+                    content={full}
+                    class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
+                  />
+                </div>
+              )}
+              {publication && links.length > 0 && (
+                <div class="mt-3 flex items-end gap-3">
+                  <ul
+                    aria-label="Related Neo scenes"
+                    class="flex min-w-0 flex-1 flex-wrap gap-3 text-sm text-accent"
+                  >
+                    {links.map((link) => (
+                      <li key={JSON.stringify([link.kind, link.id])}>
+                        {onOpenScene && (canOpenScene?.(link) ?? true) ? (
+                          <button
+                            type="button"
+                            class="text-left hover:underline"
+                            onClick={() => onOpenScene({ kind: link.kind, id: link.id })}
+                          >
+                            {link.label}
+                          </button>
+                        ) : (
+                          <span>{link.label}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {chevron}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
       {undelivered && showReason && (
         <p class="mt-1 px-1 text-right text-xs text-danger">{NOT_DELIVERED}</p>
@@ -516,9 +560,10 @@ function PublicEntry({
           </button>
         )}
         <CopyButton
-          text={ask ? text : full || text}
+          text={copyText}
           label={ask ? 'Copy your message' : 'Copy Neo’s message'}
           disabled={!text.trim()}
+          copiedAt={copiedAt}
         />
         {onQuote && (ask ? text : full || text).trim() && (
           <button
@@ -534,6 +579,32 @@ function PublicEntry({
           </button>
         )}
       </div>
+      {menu.at && !!copyText.trim() && (
+        <NeoMessageMenu
+          at={menu.at}
+          actions={neoMessageMenuActions({
+            hasText: !!copyText.trim(),
+            canShare: typeof navigator !== 'undefined' && typeof navigator.share === 'function',
+            canReply: !!onQuote && !!copyText.trim(),
+          })}
+          onClose={menu.close}
+          returnFocus={() => article.current}
+          onPick={(action) =>
+            ({
+              select: () => {
+                const target = bubbleText.current;
+                if (target) window.getSelection()?.selectAllChildren(target);
+              },
+              copy: () =>
+                void copyToClipboard(copyText).then((ok) => {
+                  if (ok) setCopiedAt(Date.now());
+                }),
+              share: () => void navigator.share?.({ text: copyText }).catch(() => {}),
+              reply: () => onQuote?.({ author: ask ? 'You' : 'Neo', text: copyText, anchor }),
+            })[action]()
+          }
+        />
+      )}
     </article>
   );
 }

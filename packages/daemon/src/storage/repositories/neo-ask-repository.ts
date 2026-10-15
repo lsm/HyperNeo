@@ -33,7 +33,8 @@ export type NeoAskInput = Omit<
   | 'updatedAt'
   | 'settledAt'
 >;
-export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'deliveredBy'>;
+export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'deliveredBy'> &
+  Partial<Pick<NeoAskItem, 'outcomeKind'>>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
   | 'removed'
@@ -47,6 +48,7 @@ type NeoAskItemRow = Omit<
   | 'decides'
   | 'because'
   | 'watch'
+  | 'outcomeKind'
 > & {
   askId: string;
   removed: number;
@@ -60,13 +62,14 @@ type NeoAskItemRow = Omit<
   decides: string | null;
   because: string | null;
   watch: string | null;
+  outcomeKind: NonNullable<NeoAskItem['outcomeKind']>;
 };
 
 const watchJson = (item: Pick<NeoAskItem, 'watch'>) =>
   item.watch?.length ? JSON.stringify(item.watch) : null;
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  delivered_by AS deliveredBy, verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, removed_reason AS removedReason, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, decides, because, watch`;
+  delivered_by AS deliveredBy, verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, removed_reason AS removedReason, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, decides, because, watch, outcome_kind AS outcomeKind`;
 
 export interface NeoAskOwner {
   projectId: string;
@@ -91,10 +94,19 @@ export class NeoAskRepository {
       const opened = this.insertAsk(input, now);
       if (opened) {
         const insert = this.db.prepare(`INSERT INTO neo_ask_items
-          (ask_id, id, position, text, state, check_kind, watch, updated_at)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`);
+          (ask_id, id, position, text, state, check_kind, watch, outcome_kind, updated_at)
+          VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`);
         items.forEach((item, index) =>
-          insert.run(input.id, `i${index + 1}`, index, item.text, item.check, watchJson(item), now)
+          insert.run(
+            input.id,
+            `i${index + 1}`,
+            index,
+            item.text,
+            item.check,
+            watchJson(item),
+            item.outcomeKind ?? 'state',
+            now
+          )
         );
       }
       if (opened) {
@@ -332,10 +344,20 @@ export class NeoAskRepository {
       for (const item of edit.track ?? [])
         track.run(item.check, watchJson(item), at, askId, item.itemId);
       const insert = this.db.prepare(`INSERT INTO neo_ask_items
-        (ask_id, id, position, text, state, check_kind, watch, added_at, updated_at)
-        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`);
+        (ask_id, id, position, text, state, check_kind, watch, outcome_kind, added_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`);
       for (const item of edit.add)
-        insert.run(askId, item.id, item.position, item.text, item.check, watchJson(item), at, at);
+        insert.run(
+          askId,
+          item.id,
+          item.position,
+          item.text,
+          item.check,
+          watchJson(item),
+          item.outcomeKind ?? 'state',
+          at,
+          at
+        );
       this.db
         .prepare(`UPDATE neo_ask_items SET removed = 1, removed_reason = ?, updated_at = ?
           WHERE ask_id = ? AND id IN (SELECT value FROM json_each(?))`)
@@ -480,9 +502,10 @@ export class NeoAskRepository {
       if (!closed || !kept) throw new Error('neo-ask-fold-lost');
       const copy = this.db.prepare(`INSERT INTO neo_ask_items
         (ask_id, id, position, text, state, evidence, check_kind, met_by, removed, added_at,
-         updated_at, options, decision, action, wait_card, kind, question, decides, because)
+         updated_at, options, decision, action, wait_card, kind, question, decides, because,
+         outcome_kind)
         SELECT ?, ?, ?, text, state, evidence, check_kind, met_by, 0, ?, ?, options, decision,
-               action, wait_card, kind, question, decides, because
+               action, wait_card, kind, question, decides, because, outcome_kind
           FROM neo_ask_items WHERE ask_id = ? AND id = ?`);
       for (const move of moves)
         copy.run(target.id, move.id, move.position, at, at, source.id, move.from);
@@ -744,6 +767,7 @@ export class NeoAskRepository {
             decides,
             because,
             watch,
+            outcomeKind,
             ...item
           }) => ({
             ...item,
@@ -758,6 +782,7 @@ export class NeoAskRepository {
             ...(decides ? { decides } : {}),
             ...(because ? { because: JSON.parse(because) as NeoAskQuestionBecause } : {}),
             ...(watch ? { watch: JSON.parse(watch) as string[] } : {}),
+            ...(outcomeKind === 'answer' ? { outcomeKind } : {}),
           })
         ),
     }));

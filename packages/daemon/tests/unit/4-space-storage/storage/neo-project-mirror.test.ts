@@ -15,6 +15,7 @@ import {
 import { mergePlaceGroups } from '../../../../src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
 import { isTempCwd } from '../../../../src/lib/drivers/claude-feed.ts';
+import { createTestDb } from '../../../helpers/database.ts';
 
 const elsewhere = `not-${hostname()}`;
 
@@ -86,6 +87,49 @@ describe('mirrorNeoWorkspaceProjects', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM neo_project_workspaces').get()).toMatchObject({
       n: 4,
     });
+  });
+
+  test('merges older folder-only projects into the project of their stored code identity, without reading any folder here', async () => {
+    const full = await createTestDb();
+    const db = full.getDatabase();
+    const repo = new NeoRepository(db);
+    const neokai = `git:${'a'.repeat(40)}`;
+    const other = `git:${'b'.repeat(40)}`;
+    const group = (folder: string, machine: string, identity?: string) => {
+      const found = workspace(folder, machine);
+      return [{ ...found, place: { ...found.place, codeIdentity: identity } }];
+    };
+    mirrorNeoWorkspaceProjects(db, group('/w1', 'laptop'));
+    mirrorNeoWorkspaceProjects(db, group('/w2', 'laptop'));
+    mirrorNeoWorkspaceProjects(db, group('/w3', 'laptop', other));
+    mirrorNeoWorkspaceProjects(db, group('/repo', 'imac', neokai));
+    expect(repo.listProjects()).toHaveLength(4);
+    const owner = db
+      .prepare('SELECT project_id AS id FROM neo_project_workspaces WHERE alias = ?')
+      .get(neokai) as { id: string };
+    expect(
+      mirrorNeoWorkspaceProjects(
+        db,
+        mergePlaceGroups(
+          [
+            workspace('/repo', 'imac', neokai),
+            workspace('/w1', 'laptop', neokai),
+            workspace('/w2', 'laptop', neokai),
+            workspace('/w3', 'laptop', neokai),
+          ],
+          50
+        )
+      )
+    ).toBe(true);
+    const left = repo.listProjects();
+    expect(left).toHaveLength(2);
+    expect(left.map((project) => project.id)).toContain(owner.id);
+    expect(
+      left.find((project) => project.id !== owner.id) &&
+        db.prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?').get(other)
+    ).toMatchObject({ project_id: left.find((project) => project.id !== owner.id)!.id });
+    expect(repo.projectMerges.redirects()).toHaveLength(2);
+    full.close();
   });
 
   test('does not let a reused folder collapse unrelated repository histories', () => {

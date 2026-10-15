@@ -163,7 +163,7 @@ describe('durable public conversation presentation', () => {
     expect(screen.queryByLabelText('Edit and send again')).toBeNull();
   });
 
-  it('shows the short reply, the full one on demand, and copies the full one without scene labels', async () => {
+  it('keeps the short reply, shows the full one under it on demand, and copies the full one', async () => {
     const value = publication({ shortText: 'The comparison is ready. Nothing has been executed.' });
     const { container } = render(
       <NeoPublicConversation conversation={conversation([], [value])} />
@@ -175,12 +175,50 @@ describe('durable public conversation presentation', () => {
     await waitFor(() => expect(container.querySelector('table')).toBeTruthy());
     expect(container.querySelector('blockquote')?.textContent).toContain('not verified completion');
     expect(container.querySelector('pre code')?.textContent).toContain('Fictional detail');
-    expect(screen.queryByText(value.shortText)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Show less' }));
-    expect(await screen.findByText(value.shortText)).toBeTruthy();
+    expect(screen.getByText(value.shortText)).toBeTruthy();
+    expect(container.querySelector('[data-publication-details] table')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide details' }));
+    expect(container.querySelector('[data-publication-details]')).toBeNull();
+    expect(screen.getByText(value.shortText)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
     await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
     expect(container.querySelector('script')).toBeNull();
+  });
+
+  it('offers select, copy and reply on a right-click, and copying flips the footer icon', async () => {
+    const quote = vi.fn();
+    const value = publication({ shortText: 'Short.', links: [] });
+    const { container } = render(
+      <NeoPublicConversation conversation={conversation([], [value])} onQuote={quote} />
+    );
+    const entry = container.querySelector('[data-public-entry]')!;
+    fireEvent.contextMenu(entry, { clientX: 10, clientY: 10 });
+    const menu = screen.getByRole('menu', { name: 'Message actions' });
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent)
+    ).toEqual(['Select text', 'Copy', 'Reply']);
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy' }));
+    await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
+    await waitFor(() => expect(screen.getByTitle('Copied!')).toBeTruthy());
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.contextMenu(entry, { clientX: 10, clientY: 10 });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reply' }));
+    expect(quote).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ author: 'Neo', text: value.fullText })
+    );
+  });
+
+  it('leaves the native menu alone on a message with no text to copy', () => {
+    const { container } = render(
+      <NeoPublicConversation conversation={conversation([ask({ content: [photo] })], [])} />
+    );
+    fireEvent.contextMenu(container.querySelector('[data-public-entry]')!, {
+      clientX: 1,
+      clientY: 1,
+    });
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('opens only work references through the owning callback, never as native actions', () => {
@@ -696,5 +734,37 @@ describe('session notice rows', () => {
       [notices[0].key, true],
       [notices[1].key, false],
     ]);
+  });
+
+  it('gives each session its own row with Mute first, Open last and the time only once', () => {
+    const notices = [
+      notice(1, 'finished', 'claude://resume?session=s1'),
+      notice(2, 'needs_you', 'claude://resume?session=s2'),
+    ];
+    const { container } = render(
+      <NeoPublicConversation
+        mute={{ muted: new Set(), onMute: vi.fn() }}
+        conversation={{
+          conversationId: 'c1',
+          status: 'ready',
+          hasEarlier: false,
+          hasMore: false,
+          entries: [
+            {
+              kind: 'notices',
+              key: 'notices:1',
+              group: { id: 'g1', at: notices[0].at, line: '', notices },
+            },
+          ],
+        }}
+      />
+    );
+    const rows = [...container.querySelectorAll('[data-notice]')];
+    expect(rows).toHaveLength(2);
+    for (const [index, row] of rows.entries()) {
+      const controls = [...row.querySelectorAll('a, button')];
+      expect(controls.map((control) => control.textContent)).toEqual(['Mute', 'Open']);
+      expect(row.querySelectorAll('time')).toHaveLength(index === 0 ? 1 : 0);
+    }
   });
 });

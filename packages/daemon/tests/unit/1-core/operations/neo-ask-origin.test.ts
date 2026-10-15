@@ -67,7 +67,7 @@ import { runMigration321 } from '../../../../src/storage/schema/m321-neo-work-dr
 import { runMigration334 } from '../../../../src/storage/schema/m334-neo-driver-start-interrupted.ts';
 import { runMigration338 } from '../../../../src/storage/schema/m338-neo-driver-checked-at.ts';
 import { runMigration339 } from '../../../../src/storage/schema/m339-neo-input-origins.ts';
-import { runMigration376 } from '../../../../src/storage/schema/m376-neo-input-origin-trigger.ts';
+import { runMigration377 } from '../../../../src/storage/schema/m377-neo-input-origin-trigger.ts';
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
 import { runMigration345 } from '../../../../src/storage/schema/m345-neo-work-continue-progress.ts';
 import { runMigration344 } from '../../../../src/storage/schema/m344-neo-ask-forwards.ts';
@@ -333,7 +333,7 @@ describe('real SQLite ask lineage facade', () => {
     runMigration334(mailbox.db);
     runMigration338(mailbox.db);
     runMigration339(mailbox.db);
-    runMigration376(mailbox.db);
+    runMigration377(mailbox.db);
     runMigration340(mailbox.db);
     runMigration345(mailbox.db);
     runMigration344(mailbox.db);

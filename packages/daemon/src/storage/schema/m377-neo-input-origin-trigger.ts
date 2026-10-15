@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration376(db: Database): void {
+export function runMigration377(db: Database): void {
   if (
     !db
       .prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_input_origins' AND type = 'table'")

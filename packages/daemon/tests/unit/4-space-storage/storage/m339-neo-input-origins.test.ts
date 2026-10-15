@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { runMigration339 } from '../../../../src/storage/schema/m339-neo-input-origins';
-import { runMigration376 } from '../../../../src/storage/schema/m376-neo-input-origin-trigger';
+import { runMigration377 } from '../../../../src/storage/schema/m377-neo-input-origin-trigger';
 import { NeoInputOriginRepository } from '../../../../src/storage/repositories/neo-input-origin-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -11,7 +11,7 @@ describe('runMigration339', () => {
     expect(repo.get('neo:root', 'note-1')).toBeNull();
     runMigration339(db);
     runMigration339(db);
-    runMigration376(db);
+    runMigration377(db);
     const input = { sessionId: 'neo:root', messageId: 'note-1' };
     repo.record(input, { sessionId: 'neo:root', messageId: 'human-1' }, 1);
     repo.record(input, { sessionId: 'neo:root', messageId: 'human-2' }, 2);
@@ -20,14 +20,14 @@ describe('runMigration339', () => {
   });
 });
 
-describe('runMigration376', () => {
+describe('runMigration377', () => {
   test('adds the trigger to each input stamp once, and an input without one reads null', () => {
     const db = new Database(':memory:');
     const repo = new NeoInputOriginRepository(db);
-    runMigration376(db);
+    runMigration377(db);
     runMigration339(db);
-    runMigration376(db);
-    runMigration376(db);
+    runMigration377(db);
+    runMigration377(db);
     const origin = { sessionId: 'neo:root', messageId: 'human-1' };
     repo.record({ sessionId: 'neo:root', messageId: 'note-1' }, origin, 1, 'human:human-1');
     repo.record({ sessionId: 'neo:root', messageId: 'note-2' }, origin, 1);
