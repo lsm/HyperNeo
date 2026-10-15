@@ -1808,7 +1808,8 @@ export function createNeoOperations(service: NeoService) {
     .pipe(requireNeoProposalDoneWhen, ['input', 'caller'], 'result:admission')
     .pipe(
       (input: ProposeRequest, origin: NeoWorkOrigin, ask: NeoAsk | null) => ({
-        replay: !!service.repo.workForRequest(`${origin.originSessionId}:${input.requestKey}`),
+        stored:
+          service.repo.workForRequest(`${origin.originSessionId}:${input.requestKey}`)?.id ?? null,
         cards: (ask?.workIds ?? []).flatMap((id) => service.repo.getWork(id) ?? []),
       }),
       ['input', 'origin', 'workAsk'],
@@ -1818,7 +1819,7 @@ export function createNeoOperations(service: NeoService) {
       (
         input: ProposeRequest,
         ask: NeoAsk | null,
-        read: { replay: boolean; cards: NeoWork[] },
+        read: { stored: string | null; cards: NeoWork[] },
         caller: OperationCaller
       ) => requireNeoProposalDelivers(input.delivers, ask, read, caller),
       ['input', 'workAsk', 'deliveries', 'admission'],
@@ -1906,10 +1907,11 @@ export function createNeoOperations(service: NeoService) {
       (
         input: ProposeRequest,
         ask: { askId?: string },
-        read: { replay: boolean },
+        read: { stored: string | null },
         receipt: { work: NeoWork }
       ) => {
-        const owned = ask.askId && !read.replay ? service.askRecords.get(ask.askId) : null;
+        const owned =
+          ask.askId && (input.askId || !read.stored) ? service.askRecords.get(ask.askId) : null;
         const bindings = planNeoProposalBindings(input, owned, receipt.work.id);
         const bound =
           owned && bindings.length

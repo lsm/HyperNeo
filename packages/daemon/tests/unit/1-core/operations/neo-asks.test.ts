@@ -629,6 +629,10 @@ describe('neo.ask operations', () => {
     });
     expect(service.repo.listWork()).toEqual([]);
     const first = (await card({ requestKey: 'card-1', delivers: ['i1'] })).value!.work!.id;
+    db.getDatabase().exec('UPDATE neo_ask_items SET delivered_by = NULL');
+    expect(await card({ requestKey: 'card-1', delivers: ['i1'] })).toMatchObject({
+      value: { ok: true, work: { id: first } },
+    });
     const bound = service.askRecords.get(askId)!;
     expect(bound.doneItems?.map((item) => item.deliveredBy ?? null)).toEqual([first, null]);
     expect([bound.revision, bound.approvedAt]).toEqual([approved.revision, approved.approvedAt]);
@@ -3862,11 +3866,13 @@ describe('requireNeoProposalDelivers', () => {
     { id: 'live', status: 'queued' as const },
     { id: 'gone', status: 'failed' as const },
   ];
-  const read = { replay: false, cards };
+  const read = { stored: null, cards };
 
   test.each([
     ['no ask', undefined, null, read, true],
-    ['a retry of the same proposal', undefined, ask, { ...read, replay: true }, true],
+    ['a retry of the same proposal', undefined, ask, { ...read, stored: 'live' }, true],
+    ['a retry rebinding its own item', ['i2'], ask, { ...read, stored: 'live' }, true],
+    ['a retry naming another card’s item', ['i2'], ask, { ...read, stored: 'other' }, false],
     ['an open ask and no delivers', undefined, ask, read, false],
     ['delivers: []', [], ask, read, true],
     ['an unbound open item', ['i1'], ask, read, true],

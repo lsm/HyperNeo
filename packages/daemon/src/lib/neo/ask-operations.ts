@@ -388,10 +388,10 @@ const NEO_RELEASED_CARD = new Set(['failed', 'cancelled']);
 export function requireNeoProposalDelivers<T>(
   delivers: readonly string[] | undefined,
   ask: NeoAsk | null,
-  read: { replay: boolean; cards: readonly Pick<NeoWork, 'id' | 'status'>[] },
+  read: { stored: string | null; cards: readonly Pick<NeoWork, 'id' | 'status'>[] },
   value: T
 ): Gate<T> {
-  if (!ask || read.replay) return { value };
+  if (!ask || (read.stored && delivers === undefined)) return { value };
   const open = (ask.doneItems ?? []).filter(
     (item) => !item.removed && !item.decision && !item.kind && item.state !== 'met'
   );
@@ -409,7 +409,9 @@ export function requireNeoProposalDelivers<T>(
   for (const id of delivers) {
     const item = open.find((entry) => entry.id === id);
     if (!item) return { reason: fail(`delivers_unknown: ${id} is not an open item on this ask.`) };
-    const holder = read.cards.find((card) => card.id === item.deliveredBy);
+    const holder = read.cards.find(
+      (card) => card.id === item.deliveredBy && card.id !== read.stored
+    );
     if (holder && !NEO_RELEASED_CARD.has(holder.status))
       return {
         reason: fail(
