@@ -23,10 +23,8 @@ function bestScore(group: PlaceGroup): number {
 }
 
 function projectKeys(place: Place): string[] {
-  return [
-    ...(place.codeIdentity ? [place.codeIdentity] : []),
-    ...(place.toolProject ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`] : []),
-  ];
+  if (place.codeIdentity) return [place.codeIdentity];
+  return place.toolProject ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`] : [];
 }
 
 function workspaceLocations(places: readonly Place[]): Place[] {
