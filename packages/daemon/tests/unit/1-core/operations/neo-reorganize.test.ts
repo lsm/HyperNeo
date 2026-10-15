@@ -1,16 +1,20 @@
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { vi } from 'vitest';
 import { NEO_ASK_MOVED } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import { vi } from 'vitest';
+import {
+  type DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
 import {
   admitNeoReorganizer,
   createNeoReorganizeOperation,
+  type NeoReorganizeRuntime,
   neoMovedAskMessageId,
   neoMovedAskNote,
-  type NeoReorganizeRuntime,
   requireNeoAskMovable,
   requireNeoAskProject,
   requireNeoAskUnchanged,
@@ -18,12 +22,8 @@ import {
   requireNeoSourceIdle,
   selectNeoReorganizableAsks,
 } from '../../../../src/lib/neo/reorganize-operation.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
 import type { NeoRouted } from '../../../../src/lib/neo/router.ts';
-import {
-  InternalEventBus,
-  type DaemonInternalEventMap,
-} from '../../../../src/lib/internal-event-bus.ts';
+import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -220,6 +220,7 @@ describe('neo.projects.reorganize', () => {
       move: (item, _cards, owner) =>
         moves.push({ askId: item.id, projectId: owner.projectId, messageId: owner.messageId }),
       mergeProjects: async () => ({ merged, asked: [] }),
+      projectFacts: () => [],
       log: (line) => {
         logged.push(line);
       },
@@ -242,6 +243,7 @@ describe('neo.projects.reorganize', () => {
     );
     expect(await invoke(deps)).toEqual({
       ok: true,
+      cleanupPlanned: [],
       merged: [],
       asked: [],
       moved: [{ askId: 'a', projectId: 'drivers' }],
@@ -264,10 +266,36 @@ describe('neo.projects.reorganize', () => {
     ]);
   });
 
+  test('plans the project cleanup as a dry run: it logs and reports, and applies nothing', async () => {
+    const { deps, logged } = runtime([]);
+    deps.projectFacts = () => [
+      {
+        id: 'empty',
+        title: 'Empty',
+        createdAt: 1,
+        lastActivity: Date.now(),
+        section: false,
+        context: 0,
+        asks: 0,
+        liveAsks: 0,
+        work: 0,
+        liveWork: 0,
+        routed: 0,
+        workspaces: [],
+      },
+    ];
+    expect(await invoke(deps)).toMatchObject({
+      ok: true,
+      cleanupPlanned: [{ action: 'delete', projectId: 'empty', title: 'Empty' }],
+    });
+    expect(logged).toContain('neo reorganize: would delete project empty (Empty)');
+  });
+
   test('merges matching projects first and logs each merge', async () => {
     const { deps, logged } = runtime([], {}, [], {}, [{ sourceId: 'web-2', targetId: 'web' }]);
     expect(await invoke(deps)).toEqual({
       ok: true,
+      cleanupPlanned: [],
       merged: [{ sourceId: 'web-2', targetId: 'web' }],
       asked: [],
       moved: [],
@@ -289,6 +317,7 @@ describe('neo.projects.reorganize', () => {
     );
     expect(await invoke(deps)).toEqual({
       ok: true,
+      cleanupPlanned: [],
       merged: [],
       asked: [],
       moved: [{ askId: 'a', projectId: 'drivers' }],
@@ -316,6 +345,7 @@ describe('neo.projects.reorganize', () => {
     );
     expect(await invoke(deps)).toEqual({
       ok: true,
+      cleanupPlanned: [],
       merged: [],
       asked: [],
       moved: [],
@@ -336,6 +366,7 @@ describe('neo.projects.reorganize', () => {
     };
     expect(await invoke(deps)).toEqual({
       ok: true,
+      cleanupPlanned: [],
       merged: [],
       asked: [],
       moved: [],
