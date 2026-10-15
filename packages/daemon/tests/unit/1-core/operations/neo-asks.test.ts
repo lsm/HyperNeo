@@ -1952,7 +1952,7 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true, ask: { status: 'achieved' } } });
   });
 
-  test('a settled ask keeps only its identity and outcome for Neo, and its full text over RPC or by askId', async () => {
+  test('a settled ask keeps only its identity and outcome for Neo, a marked summary over RPC, and its full text by askId', async () => {
     const askId = await openAsk();
     await invoke(
       'neo.ask.settle',
@@ -1974,7 +1974,15 @@ describe('neo.ask operations', () => {
     const full = { ask: opening.ask, doneWhen: opening.doneWhen };
     expect(
       (await invoke('neo.snapshot', {}, { source: 'rpc', principal: 'local' })).value?.asks
-    ).toEqual([expect.objectContaining({ id: askId, ...full })]);
+    ).toEqual([
+      expect.objectContaining({
+        id: askId,
+        ask: '',
+        doneWhen: '',
+        doneItems: [],
+        summarized: true,
+      }),
+    ]);
     expect((await invoke('neo.snapshot', { askId })).value?.asks).toEqual([
       expect.objectContaining({ id: askId, ...full }),
     ]);
