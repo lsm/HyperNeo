@@ -251,7 +251,13 @@ export function backfillNeoRepositoryIdentities(db: Database): boolean {
     const id = owner(alias);
     const found = id ? repo.getProject(id) : null;
     const title = alias.split('/').at(-1);
-    if (!found || !title || !GENERATED_FOLDER.test(found.title) || !isNeoMirrorTitled(found))
+    if (
+      !found ||
+      !title ||
+      found.title === title ||
+      !GENERATED_FOLDER.test(found.title) ||
+      !isNeoMirrorTitled(found)
+    )
       continue;
     repo.saveProject({ ...found, title, summary: `Project: ${title}` }, found.revision);
     changed = true;

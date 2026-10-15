@@ -89,12 +89,14 @@ export function requireNeoMergeIdentity(
   const repositories = (ids: string[]) => ids.filter((id) => id.startsWith('repository:'));
   const [sourceRepos, targetRepos] = [repositories(source), repositories(target)];
   const gits = (ids: string[]) => ids.filter((id) => id.startsWith('git:'));
-  const [left, right] =
-    sourceRepos.length && targetRepos.length
-      ? [sourceRepos, targetRepos]
-      : [gits(source), gits(target)];
-  if (left.length && right.length && JSON.stringify(left) !== JSON.stringify(right))
-    return { reason: { ok: false, reason: 'identity_conflict' } };
+  if (sourceRepos.length && targetRepos.length) {
+    if (!sourceRepos.some((repository) => targetRepos.includes(repository)))
+      return { reason: { ok: false, reason: 'identity_conflict' } };
+  } else {
+    const [left, right] = [gits(source), gits(target)];
+    if (left.length && right.length && JSON.stringify(left) !== JSON.stringify(right))
+      return { reason: { ok: false, reason: 'identity_conflict' } };
+  }
   return (source.length > 0 && target.length > 0) || input.humanApproved
     ? { value: plan }
     : { reason: { ok: false, reason: 'needs_human' } };

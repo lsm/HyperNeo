@@ -345,6 +345,32 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     full.close();
   });
 
+  test('merges a project holding two repository identities with one sharing either, and leaves a hex-named repository settled', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const insert = raw.prepare(
+      'INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
+    );
+    store.saveProject({ id: 'project:a', title: 'app', summary: 'Project: app', context: '' }, 0);
+    insert.run('repository:github.com/lsm/app', 'project:a');
+    insert.run('repository:github.com/lsm/app-old', 'project:a');
+    store.saveProject({ id: 'project:b', title: 'b', summary: 'Project: b', context: '' }, 0);
+    insert.run('repo:lsm/app-old\u0000laptop\u0000/w/b', 'project:b');
+    backfillNeoRepositoryIdentities(raw);
+    expect(store.listProjects().map((project) => project.id)).toEqual(['project:a']);
+    store.saveProject(
+      { id: 'project:hex', title: 'deadbeef', summary: 'Project: deadbeef', context: '' },
+      0
+    );
+    insert.run('repo:lsm/deadbeef\u0000laptop\u0000/w/deadbeef', 'project:hex');
+    backfillNeoRepositoryIdentities(raw);
+    const revision = store.getProject('project:hex')!.revision;
+    expect(backfillNeoRepositoryIdentities(raw)).toBe(false);
+    expect(store.getProject('project:hex')!.revision).toBe(revision);
+    full.close();
+  });
+
   test('retitles a generated title from the repository when the project kept it', async () => {
     const full = await createTestDb();
     const raw = full.getDatabase();
