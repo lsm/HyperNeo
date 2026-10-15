@@ -1,4 +1,5 @@
 import { hostname } from 'node:os';
+import { neoTurnRequestKey } from './request-key.ts';
 import { planNeoProjectRetitles } from './project-mirror.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { readNeoProjectFacts } from './project-route-facts.ts';
@@ -380,12 +381,32 @@ const Scope = z
   })
   .default({});
 const Save = z.object({
-  id: z.string().min(1).max(100),
+  id: z.string().min(1).max(100).optional(),
   title: z.string().trim().min(1).max(160),
   summary: z.string().max(1000),
   context: z.string().max(16000),
   expectedRevision: z.number().int().min(0),
 });
+type SaveRequest = z.infer<typeof Save>;
+
+export function requireNeoProjectSaveId(
+  input: Pick<SaveRequest, 'id' | 'expectedRevision'>,
+  holder: boolean,
+  caller: OperationCaller
+): { value: OperationCaller } | { reason: z.infer<typeof Failure> } {
+  if (input.id && input.expectedRevision === 0)
+    return {
+      reason: {
+        ok: false,
+        reason: 'Omit id to create a project; the daemon assigns its id and returns it.',
+      },
+    };
+  if (!input.id && holder)
+    return { reason: { ok: false, reason: 'A context holder saves only its own project id.' } };
+  if (!input.id && input.expectedRevision > 0)
+    return { reason: { ok: false, reason: 'Pass the id of the project you are updating.' } };
+  return { value: caller };
+}
 const Propose = z.object({
   requestKey: z.string().min(1).max(160),
   projectId: z.string().min(1).nullable().default(null),
@@ -1467,37 +1488,93 @@ export function createNeoOperations(service: NeoService) {
       return { ok: true as const, consultation: service.consultations.get(id)! };
     }
   );
-  const save = path(
-    'neo.project.save',
-    (input: z.infer<typeof Save>) => input.id,
-    (input, caller) => {
-      const holder =
-        caller.source === 'mcp' &&
-        caller.sessionId &&
-        service.repo.getBindingBySession(caller.sessionId)?.kind === 'project';
-      const turn = caller.neoTurn;
-      if (holder && (!turn?.isLive() || (!turn.human && !turn.consultationId)))
-        return { ok: false as const, reason: 'A live holder input is required to save context.' };
-      const project =
-        holder && turn?.consultationId
+  const isHolder = (caller: OperationCaller) =>
+    caller.source === 'mcp' &&
+    !!caller.sessionId &&
+    service.repo.getBindingBySession(caller.sessionId)?.kind === 'project';
+  const save = (superpipe({})('neo.project.save') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: SaveRequest, caller: OperationCaller) =>
+        admitNeoCaller(service, caller, 'neo.project.save', input.id),
+      ['input', 'caller'],
+      'result:admission'
+    )
+    .pipe(
+      (input: SaveRequest, caller: OperationCaller) =>
+        requireNeoProjectSaveId(input, isHolder(caller), caller),
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: SaveRequest, caller: OperationCaller) => {
+        const turn = caller.neoTurn;
+        return isHolder(caller) && (!turn?.isLive() || (!turn.human && !turn.consultationId))
+          ? {
+              reason: {
+                ok: false as const,
+                reason: 'A live holder input is required to save context.',
+              },
+            }
+          : { value: caller };
+      },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: SaveRequest, caller: OperationCaller) => ({
+        ...input,
+        id:
+          input.id ??
+          neoTurnRequestKey(
+            (turn) => service.inputTrigger(turn),
+            caller,
+            'neo.project.save',
+            input
+          ),
+      }),
+      ['input', 'admission'],
+      'request'
+    )
+    .pipe(
+      (input: SaveRequest, request: SaveRequest & { id: string }, caller: OperationCaller) => {
+        const created = input.id ? null : service.repo.getProject(request.id);
+        return created ? { reason: { ok: true as const, project: created } } : { value: caller };
+      },
+      ['input', 'request', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: SaveRequest & { id: string }, caller: OperationCaller) => {
+        const turn = caller.neoTurn;
+        const consultation = isHolder(caller) && turn?.consultationId;
+        const project = consultation
           ? service.repo.saveConsultationContext(
               input,
               input.expectedRevision,
-              turn.consultationId,
+              consultation,
               caller.sessionId!
             )
           : service.repo.saveProject(input, input.expectedRevision);
-      return project
-        ? { ok: true as const, project }
-        : {
-            ok: false as const,
-            reason:
-              holder && turn?.consultationId
+        return project
+          ? { ok: true as const, project }
+          : {
+              ok: false as const,
+              reason: consultation
                 ? 'superseded: this request cannot save context. Return the uncertainty to Neo; a fresh consultation is required.'
                 : 'superseded: read the current project before saving again',
-          };
-    }
-  );
+            };
+      },
+      ['request', 'admission'],
+      'admission'
+    )
+    .endAsync('admission') as (
+    input: SaveRequest,
+    caller: OperationCaller
+  ) => Promise<
+    | z.infer<typeof Failure>
+    | { ok: true; project: NonNullable<ReturnType<NeoService['repo']['getProject']>> }
+  >;
   const propose = (superpipe({})('neo.work.propose') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -2244,7 +2321,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.save',
       description:
-        'Create a continuing context only when needed, or update an existing context with revision protection. Never one project per message.',
+        'Create a continuing context only when needed, or update an existing context with revision protection. Never one project per message. To create, omit id and pass expectedRevision 0; the daemon assigns the id and returns it, and a retry returns the same project. To update, pass the id and current revision.',
       inputSchema: Save,
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true), project: Project })]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
