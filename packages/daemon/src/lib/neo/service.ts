@@ -48,7 +48,11 @@ import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-age
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
-import { neoForwardedAskMessageId, neoForwardMessageId } from './ask-forward-operation.ts';
+import {
+  neoForwardedAskMessageId,
+  neoForwardMessageId,
+  neoTurnOwnsMessage,
+} from './ask-forward-operation.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
@@ -3839,6 +3843,17 @@ export class NeoService {
     if (!origin) return;
     const triggerId = neoDeliveryTrigger(trigger, () => this.parentTrigger(parent));
     this.inputOrigins.record(input, origin, Date.now(), triggerId);
+  }
+
+  ownsHumanMessage(caller: OperationCaller): boolean {
+    const turn = caller.neoTurn;
+    if (!turn || !caller.sessionId) return false;
+    const ask = this.resolveAskOrigin({ sessionId: caller.sessionId, messageId: turn.messageId });
+    const delivered = (ask ? this.askForwards.list(ask) : []).filter(
+      (forward) =>
+        !!ask && this.hasDelivery(forward.toSessionId, neoForwardMessageId(ask, forward.hop))
+    );
+    return neoTurnOwnsMessage(caller.sessionId, turn, delivered);
   }
 
   stampContinuation(input: NeoAskOrigin, parent: NeoAskOrigin): void {

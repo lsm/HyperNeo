@@ -5,6 +5,8 @@ import {
   type NeoAskForwardRuntime,
   neoForwardContent,
   neoForwardedText,
+  neoForwardHop,
+  neoTurnOwnsMessage,
   planNeoAskForward,
   requireForwardingHolder,
   staleNeoForwardHops,
@@ -26,7 +28,9 @@ import {
 } from '../../../../src/storage/repositories/neo-ask-forward-repository.ts';
 import { runMigration344 } from '../../../../src/storage/schema/m344-neo-ask-forwards.ts';
 import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
-import { createTestDb } from '../../../helpers/database.ts';
+import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 
 const garden: NeoBinding = { sessionId: 'neo:garden', projectId: 'garden', kind: 'project' };
 const pond: NeoBinding = { sessionId: 'neo:pond', projectId: 'pond', kind: 'project' };
@@ -126,6 +130,42 @@ describe('planNeoAskForward', () => {
         { toSessionId: root.sessionId },
       ])
     ).toEqual({ reason: { ok: false, reason: 'forward_limit' } });
+  });
+});
+
+describe('neoTurnOwnsMessage', () => {
+  const toPond = { hop: 0, toSessionId: pond.sessionId };
+  const toMain = { hop: 1, toSessionId: root.sessionId };
+  const turn = (messageId: string, human = false, consultationId?: string) => ({
+    messageId,
+    human,
+    consultationId,
+  });
+
+  test.each([
+    ['the human turn it landed in, before any forward', garden, turn('ask-1', true), [], true],
+    ['the human turn after it was forwarded away', garden, turn('ask-1', true), [toPond], false],
+    ['a consultation turn', garden, turn('neo-consult:c:request', true, 'c'), [], false],
+    ['the holder it was forwarded to', pond, turn('neo-forward:ask-1:0'), [toPond], true],
+    [
+      'that holder once it forwarded on to main',
+      pond,
+      turn('neo-forward:ask-1:0'),
+      [toPond, toMain],
+      false,
+    ],
+    ['main after the second hop', root, turn('neo-forward:ask-1:1'), [toPond, toMain], true],
+    ['a session the forward did not reach', root, turn('neo-forward:ask-1:0'), [toPond], false],
+    ['a system note', garden, turn('neo-note:x'), [], false],
+  ] as const)('%s', (_label, binding, current, forwards, owns) => {
+    expect(neoTurnOwnsMessage(binding.sessionId, current, forwards)).toBe(owns);
+  });
+});
+
+describe('neoForwardHop', () => {
+  test('reads the hop of a forwarded message id', () => {
+    expect(neoForwardHop('neo-forward:ask-1:1')).toBe(1);
+    expect(neoForwardHop('ask-1')).toBeNull();
   });
 });
 
@@ -456,6 +496,70 @@ describe('NeoAskForwardRepository', () => {
         payload: { to: { sessionId: root.sessionId }, messageUuid: 'neo-forward:ask-1:1' },
       });
       expect(service.forwardedAway(pond.sessionId, 'neo-forward:ask-1:0')).toBe(true);
+    } finally {
+      service.dispose();
+      db.close();
+    }
+  });
+
+  test('the holder a message was forwarded to owns it: its turn is the human’s, and the forwarder’s no longer is', async () => {
+    const db = await createTestDb();
+    const service = new NeoService(
+      db,
+      {} as never,
+      { event: () => {} } as never,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    try {
+      for (const binding of [garden, pond]) {
+        service.repo.saveProject(
+          { id: binding.projectId!, title: binding.projectId!, summary: '', context: '' },
+          0
+        );
+        db.createSession(createTestSession(binding.sessionId));
+        service.repo.reserveBinding(binding);
+      }
+      db.getSDKMessageRepo().saveSDKMessage(garden.sessionId, {
+        type: 'user',
+        uuid: 'ask-1',
+        session_id: garden.sessionId,
+        parent_tool_use_id: null,
+        inputKind: 'human',
+        message: { role: 'user', content: 'Fix the pond pump' },
+      } as unknown as SDKUserMessage);
+      const human: OperationCaller = {
+        source: 'mcp',
+        sessionId: garden.sessionId,
+        neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
+      };
+      expect(service.ownsHumanMessage(human)).toBe(true);
+      service.askForwards.record(ask, {
+        hop: 0,
+        fromSessionId: garden.sessionId,
+        toSessionId: pond.sessionId,
+        toProjectId: 'pond',
+        forwardedAt: 1,
+      });
+      expect(service.ownsHumanMessage(human)).toBe(true);
+      db.getJobQueueRepo().enqueue({
+        queue: 'mailbox',
+        payload: { to: { sessionId: pond.sessionId }, messageUuid: 'neo-forward:ask-1:0' },
+      });
+      service.inputOrigins.record(
+        { sessionId: pond.sessionId, messageId: 'neo-forward:ask-1:0' },
+        ask,
+        1,
+        'human:ask-1'
+      );
+      expect(service.ownsHumanMessage(human)).toBe(false);
+      const holder = new NeoHolderTurn(db, pond.sessionId, { isLive: () => true }, () => {});
+      expect(holder.bind('neo-forward:ask-1:0')).toBe(true);
+      const forwarded = holder.identity()!;
+      expect(forwarded.human).toBe(true);
+      expect(
+        service.ownsHumanMessage({ source: 'mcp', sessionId: pond.sessionId, neoTurn: forwarded })
+      ).toBe(true);
+      holder.dispose();
     } finally {
       service.dispose();
       db.close();
