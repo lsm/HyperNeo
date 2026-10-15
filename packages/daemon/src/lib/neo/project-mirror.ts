@@ -10,7 +10,30 @@ import type { Place, PlaceGroup } from '../drivers/types.ts';
 import { placeKey } from '../drivers/places.ts';
 import { neoFolderPath } from './folder.ts';
 import { repoNameFromRemote } from '../drivers/code-identity.ts';
-import { mergeNeoDuplicateProjects, type NeoProjectMergeInput } from './project-merge.ts';
+import {
+  mergeNeoDuplicateProjects,
+  NEO_PROJECT_QUESTION_ATTEMPTS,
+  neoProjectQuestionKey,
+  readNeoProjectDecision,
+  type NeoProjectMergeInput,
+} from './project-merge.ts';
+import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
+
+export function neoProjectMergeAllowed(db: Database): (a: string, b: string) => boolean {
+  const asks = new NeoAskRepository(db);
+  return (a, b) => {
+    const key = `neo-project-merge:${[a, b].sort().join('\u0000')}`;
+    const found = [];
+    for (let attempt = 1; attempt <= NEO_PROJECT_QUESTION_ATTEMPTS; attempt++) {
+      const ask = asks.forRequest(neoProjectQuestionKey(key, attempt));
+      if (!ask) break;
+      found.push(ask);
+    }
+    if (!found.length) return true;
+    const decision = readNeoProjectDecision(found, key);
+    return 'decision' in decision && decision.decision === 'same';
+  };
+}
 
 export interface NeoWorkspaceProject {
   aliases: string[];
@@ -177,6 +200,7 @@ export function mergeNeoMirroredDuplicates(
   projects: readonly NeoWorkspaceProject[]
 ): boolean {
   const repo = new NeoRepository(db);
+  const allowed = neoProjectMergeAllowed(db);
   const owner = (alias: string) =>
     (
       db.prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?').get(alias) as {
@@ -185,7 +209,10 @@ export function mergeNeoMirroredDuplicates(
     )?.project_id ?? null;
   return (
     mergeNeoDuplicateProjects(
-      () => planNeoMirrorMerges(projects, owner, (id) => repo.getProject(id)?.revision ?? null),
+      () =>
+        planNeoMirrorMerges(projects, owner, (id) => repo.getProject(id)?.revision ?? null).filter(
+          (input) => allowed(input.sourceId, input.targetId)
+        ),
       (input) => repo.projectMerges.merge(input),
       () => {}
     ).length > 0
@@ -195,7 +222,8 @@ export function mergeNeoMirroredDuplicates(
 export function planNeoRepositoryBackfill(
   carriers: ReadonlyMap<string, readonly string[]>,
   owner: (alias: string) => string | null,
-  project: (id: string) => { revision: number; createdAt: number; generated: boolean } | null
+  project: (id: string) => { revision: number; createdAt: number; generated: boolean } | null,
+  allowed: (a: string, b: string) => boolean = () => true
 ): { claims: { alias: string; projectId: string }[]; merges: NeoProjectMergeInput[] } {
   const claims: { alias: string; projectId: string }[] = [];
   const merges: NeoProjectMergeInput[] = [];
@@ -217,7 +245,7 @@ export function planNeoRepositoryBackfill(
     if (!target) continue;
     if (!held) claims.push({ alias, projectId: target.id });
     for (const source of live)
-      if (source.id !== target.id)
+      if (source.id !== target.id && allowed(source.id, target.id))
         merges.push({
           sourceId: source.id,
           targetId: target.id,
@@ -232,6 +260,7 @@ export function planNeoRepositoryBackfill(
 
 export function backfillNeoRepositoryIdentities(db: Database): boolean {
   const repo = new NeoRepository(db);
+  const allowed = neoProjectMergeAllowed(db);
   const owner = (alias: string) =>
     (
       db.prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?').get(alias) as {
@@ -267,7 +296,7 @@ export function backfillNeoRepositoryIdentities(db: Database): boolean {
     changed = true;
   }
   const merged = mergeNeoDuplicateProjects(
-    () => planNeoRepositoryBackfill(carriers(), owner, project).merges,
+    () => planNeoRepositoryBackfill(carriers(), owner, project, allowed).merges,
     (input) => repo.projectMerges.merge(input),
     () => {}
   );

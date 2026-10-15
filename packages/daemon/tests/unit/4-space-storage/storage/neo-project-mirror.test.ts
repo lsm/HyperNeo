@@ -10,6 +10,7 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import {
   backfillNeoRepositoryIdentities,
   isNeoPlumbingFolder,
+  neoProjectMergeAllowed,
   neoRepositoryIdentity,
   mirrorNeoWorkspaceProjects,
   planNeoWorkspaceProjects,
@@ -18,6 +19,9 @@ import { mergePlaceGroups } from '../../../../src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
 import { isTempCwd } from '../../../../src/lib/drivers/claude-feed.ts';
 import { createTestDb } from '../../../helpers/database.ts';
+import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository.ts';
+import { planNeoAskQuestion } from '../../../../src/lib/neo/ask-operations.ts';
+import { NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE } from '../../../../src/lib/neo/project-merge.ts';
 
 const elsewhere = `not-${hostname()}`;
 
@@ -388,6 +392,71 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     mirrorNeoWorkspaceProjects(raw, at('b', 'git@github.com:lsm/new.git'));
     expect(store.listProjects().map((project) => project.id)).toContain(old);
     expect(store.projectMerges.redirects()).toEqual([]);
+    full.close();
+  });
+
+  test('never merges a pair the human kept separate or has not answered yet', async () => {
+    const full = await createTestDb();
+    const raw = full.getDatabase();
+    const store = new NeoRepository(raw);
+    const asks = new NeoAskRepository(raw);
+    const key = 'neo-project-merge:project:a\u0000project:b';
+    const ask = (answer?: string) => {
+      const opened = asks.open({
+        id: crypto.randomUUID(),
+        requestKey: key,
+        projectId: null,
+        originSessionId: 'root',
+        originMessageId: null,
+        title: 'a and b: one project?',
+        ask: 'Are a and b the same project?',
+        doneWhen: 'The human decided.',
+        doneSource: 'daemon',
+      })!;
+      const item = planNeoAskQuestion(opened, {
+        question: 'Are a and b the same project?',
+        options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
+        decides: key,
+      });
+      const waiting = asks.settle(opened, 'waiting', 'q', 'q', item.id, item)!;
+      if (!answer) return;
+      const question = waiting.doneItems!.find((entry) => entry.decides === key)!;
+      asks.tickItem(
+        waiting.id,
+        {
+          id: question.id,
+          state: 'met',
+          evidence: `The human answered: ${answer}`,
+          metBy: 'human',
+        },
+        Date.now(),
+        question,
+        true
+      );
+    };
+    const allowed = () => neoProjectMergeAllowed(raw)('project:b', 'project:a');
+    expect(allowed()).toBe(true);
+    ask();
+    expect(allowed()).toBe(false);
+    raw.prepare('DELETE FROM neo_asks').run();
+    ask(NEO_PROJECT_SEPARATE);
+    expect(allowed()).toBe(false);
+    for (const id of ['project:a', 'project:b']) {
+      store.saveProject({ id, title: id, summary: `Project: ${id}`, context: '' }, 0);
+      raw
+        .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+        .run(`repo:lsm/app\u0000x\u0000/${id}`, id);
+    }
+    backfillNeoRepositoryIdentities(raw);
+    expect(
+      store
+        .listProjects()
+        .map((project) => project.id)
+        .sort()
+    ).toEqual(['project:a', 'project:b']);
+    raw.prepare('DELETE FROM neo_asks').run();
+    ask(NEO_PROJECT_SAME);
+    expect(allowed()).toBe(true);
     full.close();
   });
 
