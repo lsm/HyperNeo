@@ -343,12 +343,21 @@ export function shouldPreemptNeoTurn(
   return !!current && (!current.startsWith(NEO_HUMAN_TRIGGER_PREFIX) || answered(current));
 }
 
+export function neoHumanTurnOrigin(
+  messageId: string,
+  trigger: string | null,
+  isHumanInput: (messageId: string) => boolean
+): string | null {
+  if (isHumanInput(messageId)) return messageId;
+  const human = neoHumanTriggerMessageId(trigger ?? undefined);
+  return human && messageId.startsWith(NEO_HUMAN_TURN_LIMIT_PREFIX) && isHumanInput(human)
+    ? human
+    : null;
+}
+
 export function isNeoHumanOwnTurn(messageId: string, trigger: string | null): boolean {
-  return (
-    neoHumanTriggerMessageId(trigger ?? undefined) === messageId ||
-    (!!trigger?.startsWith(NEO_HUMAN_TRIGGER_PREFIX) &&
-      messageId.startsWith(NEO_HUMAN_TURN_LIMIT_PREFIX))
-  );
+  const human = neoHumanTriggerMessageId(trigger ?? undefined);
+  return neoHumanTurnOrigin(messageId, trigger, (id) => id === human) !== null;
 }
 
 export function neoTriggerWorkProblem(
