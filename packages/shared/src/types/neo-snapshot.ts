@@ -116,7 +116,10 @@ export interface NeoAskItem {
   decides?: string;
   because?: NeoAskQuestionBecause;
   watch?: string[];
+  outcomeKind?: NeoAskItemOutcomeKind;
 }
+
+export type NeoAskItemOutcomeKind = 'state' | 'answer';
 
 export const NEO_ASK_QUESTION_REASONS = [
   'target_unavailable',

@@ -186,6 +186,45 @@ describe('neo.ask operations', () => {
     });
   }
 
+  test('an item records whether it is an answer or a state outcome, and an answer carries no check', async () => {
+    const opened = await invoke('neo.ask.open', {
+      ...opening,
+      doneWhen: undefined,
+      doneItems: [{ text: 'Merged' }, { text: 'How many .md files', outcomeKind: 'answer' }],
+    });
+    expect(opened).toMatchObject({
+      value: { ok: true, ask: { doneItems: [{ id: 'i1' }, { id: 'i2', outcomeKind: 'answer' }] } },
+    });
+    const askId = opened.value!.ask!.id;
+    expect(opened.value!.ask!.doneItems?.[0]).not.toHaveProperty('outcomeKind');
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        add: [{ text: 'Which files', outcomeKind: 'answer' }],
+      })
+    ).toMatchObject({
+      value: { ok: true, ask: { doneItems: [{}, {}, { id: 'i3', outcomeKind: 'answer' }] } },
+    });
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        track: [{ itemId: 'i2', watch: ['https://github.com/lsm/HyperNeo/pull/42'] }],
+      })
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('answer_checked') } });
+    expect(
+      await invoke('neo.ask.edit', {
+        askId,
+        add: [
+          {
+            text: 'Open PR count',
+            outcomeKind: 'answer',
+            watch: ['https://github.com/lsm/HyperNeo/pull/42'],
+          },
+        ],
+      })
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('answer_checked') } });
+  });
+
   test('binds outcomes through edit with one revision and atomically refuses invalid compound changes', async () => {
     const askId = await openAsk();
     const card = (await propose('bound-card', askId)).value!.work!.id;
