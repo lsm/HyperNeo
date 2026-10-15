@@ -171,10 +171,19 @@ export function reuseAcpSessionList(
   now: () => number
 ): () => Promise<readonly AcpAgentSession[]> {
   let last: { at: number; sessions: Promise<readonly AcpAgentSession[]> } | null = null;
+  let listed: readonly AcpAgentSession[] | null = null;
   return () => {
-    if (last && now() - last.at < LIST_REUSE_MS) return last.sessions;
-    last = { at: now(), sessions: list() };
-    return last.sessions;
+    if (last && now() - last.at < LIST_REUSE_MS)
+      return listed ? Promise.resolve(listed) : last.sessions;
+    const sessions = list();
+    last = { at: now(), sessions };
+    sessions.then(
+      (fresh) => {
+        listed = fresh;
+      },
+      () => {}
+    );
+    return listed ? Promise.resolve(listed) : sessions;
   };
 }
 

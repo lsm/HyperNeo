@@ -178,4 +178,30 @@ describe('ACP agent helpers', () => {
     expect(sessions.map((s) => s.sessionId)).toEqual(['a', 'b']);
     expect(cursors).toEqual([undefined, '1']);
   });
+
+  test('reuseAcpSessionList answers from the last listing while a fresh one loads', async () => {
+    let now = 0;
+    let round = 0;
+    let release: () => void = () => {};
+    const list = reuseAcpSessionList(
+      async () => {
+        round++;
+        if (round === 3) throw new Error('agent down');
+        if (round === 2) await new Promise<void>((resolve) => (release = resolve));
+        return [session(`s${round}`, '/repo', 'Work')];
+      },
+      () => now
+    );
+
+    expect((await list()).map((s) => s.sessionId)).toEqual(['s1']);
+    now = 60_000;
+    expect((await list()).map((s) => s.sessionId)).toEqual(['s1']);
+    expect(round).toBe(2);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((await list()).map((s) => s.sessionId)).toEqual(['s2']);
+    now = 120_000;
+    expect((await list()).map((s) => s.sessionId)).toEqual(['s2']);
+    expect(round).toBe(3);
+  });
 });
