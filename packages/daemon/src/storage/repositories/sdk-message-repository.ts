@@ -1948,7 +1948,7 @@ export class SDKMessageRepository {
     const row = this.db
       .prepare(
         `SELECT sdk_message FROM sdk_messages
-          WHERE session_id = ? AND message_type = 'user'
+          WHERE session_id = ? AND message_type = 'user' AND json_valid(sdk_message)
             AND json_extract(sdk_message, '$.inputKind') = 'human'
           ORDER BY timestamp DESC, rowid DESC LIMIT 1`
       )
