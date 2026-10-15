@@ -509,13 +509,17 @@ describe('NeoService direct consultation return', () => {
     expect(receiptRows()).toEqual(before);
     expect(service.consultations.get('check')?.answer).toBe(publication.fullText);
   });
-  test('duplicate orphan producer receipts are ambiguous, not legacy replies', async () => {
+  test('an orphan producer receipt is inconsistent, not a legacy reply, and is not returned', async () => {
     await publish();
     expect(
-      service.publications.append({ ...captured, publicationId: crypto.randomUUID() }).accepted
+      service.publications.append({
+        ...captured,
+        publicationId: crypto.randomUUID(),
+        shortText: 'A later fact.',
+      }).accepted
     ).toBe(true);
     db.getDatabase().prepare('DELETE FROM neo_consultation_publications').run();
-    await expect(service.syncConsultation('check')).rejects.toThrow('Ambiguous');
+    await expect(service.syncConsultation('check')).rejects.toThrow('inconsistent');
     expect(returned()).toEqual({ returned: 0 });
     expect(mailbox()).toEqual([]);
   });

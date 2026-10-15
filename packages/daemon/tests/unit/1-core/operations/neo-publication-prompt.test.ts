@@ -69,7 +69,7 @@ describe('direct human publication prompt', () => {
       const prompt = delivered(projectId);
       expect(prompt).toContain('You publish to the human only for a notification trigger');
       expect(prompt).toContain(
-        'There are no interim or status posts; publish once, with the answer'
+        'There are no interim or status posts, and never repeat yourself: publish the answer, then only a new fact'
       );
       expect(prompt).not.toContain('interim:true');
     }

@@ -265,17 +265,17 @@ export class NeoPublicationRepository {
   }
 
   findByProducer(sessionId: string, messageId: string): NeoPublication | null {
-    const rows = this.db
+    const row = this.db
       .prepare(
         `SELECT ${columns} FROM neo_publications
         WHERE json_extract(payload_json, '$.producerInput.sessionId') = ?
           AND json_extract(payload_json, '$.producerInput.messageId') = ?
           AND json_extract(payload_json, '$.interim') IS NULL
           AND (json_extract(payload_json, '$.corrects') IS NULL
-            OR json_extract(payload_json, '$.triggerId') IS NOT NULL) LIMIT 2`
+            OR json_extract(payload_json, '$.triggerId') IS NOT NULL)
+          ORDER BY sequence LIMIT 1`
       )
-      .all(sessionId, messageId) as Row[];
-    if (rows.length > 1) throw new Error('Ambiguous consultation publications');
-    return rows[0] ? decode(rows[0]) : null;
+      .get(sessionId, messageId) as Row | null;
+    return row ? decode(row) : null;
   }
 }

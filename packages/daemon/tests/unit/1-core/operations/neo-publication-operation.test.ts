@@ -520,6 +520,7 @@ describe('runtime-bound publication operation', () => {
       publish({ ...draft, publicationId: id(5), shortText: 'One more thing.' }, caller())
     ).toMatchObject({ accepted: true, created: false, publication: { publicationId: id(3) } });
     expect(ledger.list(conversationId)).toHaveLength(2);
+    expect(ledger.findByProducer(root.sessionId, ask.messageId)?.publicationId).toBe(id(2));
     prompt(root.sessionId, 'next-ask');
     expect(
       publish({ ...draft, publicationId: id(4) }, caller(root.sessionId, 'next-ask'))
