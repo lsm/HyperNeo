@@ -1,3 +1,4 @@
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { NEO_ASK_MOVED } from '@hyperneo/prompts';
@@ -401,5 +402,34 @@ describe('NeoService.moveAsk', () => {
       originSessionId: 'holder:drivers',
       originMessageId: 'neo-moved:a1',
     });
+  });
+
+  test('a moved-ask note hands the ask over without the human’s publish trigger; a forward keeps it', async () => {
+    service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+    db.createSession(createTestSession('holder:drivers'));
+    db.getSDKMessageRepo().saveSDKMessage(root, {
+      type: 'user',
+      uuid: 'm-a1',
+      session_id: root,
+      parent_tool_use_id: null,
+      inputKind: 'human',
+      message: { role: 'user', content: 'Fix login' },
+    } as unknown as SDKUserMessage);
+    const parent = { sessionId: root, messageId: 'm-a1' };
+    await service.deliverForward('holder:drivers', 'neo-moved:a1', 'Moved.', root, parent, null);
+    await service.deliverForward(
+      'holder:drivers',
+      'neo-forward:m-a1:0',
+      'Forwarded.',
+      root,
+      parent,
+      'continues'
+    );
+    expect(service.inputTrigger({ sessionId: 'holder:drivers', messageId: 'neo-moved:a1' })).toBe(
+      null
+    );
+    expect(
+      service.inputTrigger({ sessionId: 'holder:drivers', messageId: 'neo-forward:m-a1:0' })
+    ).toBe('human:m-a1');
   });
 });

@@ -340,8 +340,10 @@ import {
   coverNeoAskTriggers,
   isNeoAskAnsweredByReply,
   neoReplyOriginKey,
-  neoConsultationTrigger,
-  neoInputTrigger,
+  neoConsultationDelivery,
+  neoDeliveryTrigger,
+  neoHumanTrigger,
+  type NeoDeliveryTrigger,
   NEO_TRIGGER_ACHIEVED_WINDOW_MS,
   NEO_TRIGGER_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
@@ -772,7 +774,8 @@ export class NeoService {
               ),
               neoTriggerNote(ask, trigger, this.lastHumanText()),
               target,
-              neoAskParent(ask)
+              neoAskParent(ask),
+              { id: trigger.triggerId }
             )
           )
           .then(
@@ -882,7 +885,7 @@ export class NeoService {
       getWork: (id) => this.repo.getWork(id),
       getConsultation: (id) => this.consultations.get(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
-      isHumanInput: (input) => this.isHumanInput(input),
+      inputTrigger: (input) => this.inputTrigger(input),
       isTriggerPublished: (conversationId, triggerId, publicationId) =>
         this.publications.hasTrigger(conversationId, triggerId, publicationId),
       replay: (input, caller) => {
@@ -960,10 +963,14 @@ export class NeoService {
       hasNudge: (id, nudgeId) => this.hasDelivery(id, nudgeId),
       recheck: (id) => this.scheduleReplyRecheck(id, directReplies),
       nudge: (id, nudgeId) =>
-        void this.deliver(id, nudgeId, NEO_PUBLISH_NUDGE, id, {
-          sessionId: id,
-          messageId: nudgedMessageId(nudgeId) ?? nudgeId,
-        }).catch((error) => this.log.warn('Publish nudge failed', error)),
+        void this.deliver(
+          id,
+          nudgeId,
+          NEO_PUBLISH_NUDGE,
+          id,
+          { sessionId: id, messageId: nudgedMessageId(nudgeId) ?? nudgeId },
+          'continues'
+        ).catch((error) => this.log.warn('Publish nudge failed', error)),
       append: (input) => this.appendPublication(input),
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),
@@ -1224,9 +1231,7 @@ export class NeoService {
 
   private noteHumanReply(input: NeoPublicationInput): void {
     const human = neoHumanTriggerMessageId(
-      input.triggerId ??
-        neoInputTrigger(input.producerInput.messageId, this.isHumanInput(input.producerInput)) ??
-        undefined
+      input.triggerId ?? this.inputTrigger(input.producerInput) ?? undefined
     );
     if (!human) return;
     const covers = this.triggerCovers.get(input.producerInput.sessionId) ?? new Set<string>();
@@ -2955,6 +2960,7 @@ export class NeoService {
       messages.hasUserUuidPrefixSince(sessionId, NEO_TURN_LIMIT_PREFIX, since)
     );
     if (!plan) return;
+    const interrupted = messages.firstUserUuidBetween(sessionId, plan.sinceAt, plan.untilAt);
     await this.deliverToOrigin(
       sessionId,
       `${NEO_TURN_LIMIT_PREFIX}${plan.resultUuid}`,
@@ -2962,7 +2968,8 @@ export class NeoService {
         this.askRecords.openedBy(sessionId, plan.since, plan.until),
         this.repo.proposedBy(sessionId, plan.since, plan.until)
       ),
-      null
+      interrupted ? { sessionId, messageId: interrupted } : null,
+      'continues'
     );
   }
 
@@ -3104,7 +3111,8 @@ export class NeoService {
           neoCrossProjectReplyId(group),
           `All assigned cross-project owners have returned. Publish one combined answer for this original human ask, covering every reported, failed or cancelled part honestly. Do not consult or dispatch the parts again.\n${JSON.stringify({ humanMessageId: group.askMessageId, parts: JSON.parse(group.partsJson), results: members })}`,
           group.rootSessionId,
-          { sessionId: group.askSessionId, messageId: group.askMessageId }
+          { sessionId: group.askSessionId, messageId: group.askMessageId },
+          'continues'
         ),
       ['return', 'members']
     )
@@ -3153,14 +3161,16 @@ export class NeoService {
           item,
           !!this.crossProjects.forReceipt(item.id),
           this.crossProjects.forReceipt(item.id)?.askMessageId,
-          neoConsultationTrigger(item, (input) => this.isHumanInput(input)) !== null
+          item.originMessageId !== null &&
+            this.parentTrigger(this.consultationParent(item)) !== null
         );
         await this.deliver(
           item.sessionId,
           requestId,
           content,
           item.originSessionId,
-          this.consultationParent(item)
+          this.consultationParent(item),
+          neoConsultationDelivery(item)
         );
         return;
       }
@@ -3196,7 +3206,8 @@ export class NeoService {
         `neo-consult:${id}:reply`,
         content,
         item.sessionId,
-        this.consultationParent(item)
+        this.consultationParent(item),
+        'continues'
       );
     }
     this.consultations.returned(id);
@@ -3593,9 +3604,10 @@ export class NeoService {
     originSessionId: string,
     messageId: string,
     content: string,
-    parent: NeoAskOrigin | null
+    parent: NeoAskOrigin | null,
+    trigger: NeoDeliveryTrigger = null
   ): Promise<void> {
-    return this.deliver(originSessionId, messageId, content, originSessionId, parent);
+    return this.deliver(originSessionId, messageId, content, originSessionId, parent, trigger);
   }
 
   deliverForward(
@@ -3603,9 +3615,10 @@ export class NeoService {
     messageId: string,
     content: string,
     fromSessionId: string,
-    ask: NeoAskOrigin | null
+    ask: NeoAskOrigin | null,
+    trigger: NeoDeliveryTrigger
   ): Promise<void> {
-    return this.deliver(sessionId, messageId, content, fromSessionId, ask);
+    return this.deliver(sessionId, messageId, content, fromSessionId, ask, trigger);
   }
 
   moveAsk(
@@ -3636,22 +3649,40 @@ export class NeoService {
     messageId: string,
     content: string,
     originSessionId: string,
-    parent: NeoAskOrigin | null = null
+    parent: NeoAskOrigin | null = null,
+    trigger: NeoDeliveryTrigger = null
   ): Promise<void> {
     const key = `${sessionId}:${messageId}`;
     const existing = this.deliveries.get(key);
     if (existing) return existing;
     const delivery = Promise.resolve()
-      .then(() => this.stampDelivery({ sessionId, messageId }, parent))
+      .then(() => this.stampDelivery({ sessionId, messageId }, parent, trigger))
       .then(() => this.enqueueDelivery(sessionId, messageId, content, originSessionId))
       .finally(() => this.deliveries.delete(key));
     this.deliveries.set(key, delivery);
     return delivery;
   }
 
-  private stampDelivery(input: NeoAskOrigin, parent: NeoAskOrigin | null): void {
+  private stampDelivery(
+    input: NeoAskOrigin,
+    parent: NeoAskOrigin | null,
+    trigger: NeoDeliveryTrigger
+  ): void {
     const origin = parent ? this.resolveAskOrigin(parent) : null;
-    if (origin) this.inputOrigins.record(input, origin, Date.now());
+    if (!origin) return;
+    const triggerId = neoDeliveryTrigger(trigger, () => this.parentTrigger(parent));
+    this.inputOrigins.record(input, origin, Date.now(), triggerId);
+  }
+
+  inputTrigger(input: NeoAskOrigin): string | null {
+    return (
+      this.inputOrigins.trigger(input.sessionId, input.messageId) ??
+      (this.isHumanInput(input) ? neoHumanTrigger(input.messageId) : null)
+    );
+  }
+
+  private parentTrigger(parent: NeoAskOrigin | null): string | null {
+    return parent ? this.inputTrigger(parent) : null;
   }
 
   private async enqueueDelivery(

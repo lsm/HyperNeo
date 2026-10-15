@@ -210,7 +210,8 @@ describe('neoPrompt edit, correct or reply', () => {
     expect(prompt).toContain('edit it in place with neo.publication.edit');
     expect(prompt).toContain('publish the right one with neo.publication.correct');
     expect(prompt).toContain('that correction is your reply to it, so publish nothing else');
-    expect(prompt).toContain('Find the publicationId with neo.publication.recent');
-    expect(prompt).toContain("never a session's messages or another session's output");
+    expect(prompt).toContain('Read the conversation with neo.publication.recent first');
+    expect(prompt).toContain('any Neo reply in this conversation can be fixed');
+    expect(prompt).toContain("never a session's messages");
   });
 });

@@ -33,6 +33,7 @@ export const NeoPublicationSchema = z
     askSummary: text(300).optional(),
     awaiting: text(500).optional(),
     editedAt: z.string().datetime().optional(),
+    editedBy: text(160).optional(),
     corrects: z.string().uuid().optional(),
     correctedBy: z.string().uuid().optional(),
   })

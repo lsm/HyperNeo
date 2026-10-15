@@ -2781,6 +2781,37 @@ describe('neo.ask operations', () => {
     expect(delivered.mock.calls[0]?.[2]).toContain(`- ask ${askId} "${opening.title}" (open`);
   });
 
+  test('a turn-limit note continues the cut-off turn, so it keeps that turn’s ask and trigger', async () => {
+    const messages = db.getSDKMessageRepo();
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+    messages.saveSDKMessage('root', {
+      type: 'result',
+      subtype: 'success',
+      uuid: 'r1',
+      session_id: 'root',
+    } as unknown as SDKUserMessage);
+    await pause();
+    messages.saveSDKMessage('root', {
+      type: 'user',
+      uuid: 'h1',
+      session_id: 'root',
+      parent_tool_use_id: null,
+      inputKind: 'human',
+      message: { role: 'user', content: 'dev' },
+    } as unknown as SDKUserMessage);
+    await pause();
+    messages.saveSDKMessage('root', {
+      type: 'result',
+      subtype: 'error_max_turns',
+      uuid: 'r2',
+      session_id: 'root',
+    } as unknown as SDKUserMessage);
+    await service.noteTurnLimit('root');
+    const note = { sessionId: 'root', messageId: 'neo-turn-limit:r2' };
+    expect(service.inputTrigger(note)).toBe('human:h1');
+    expect(service.resolveAskOrigin(note)).toEqual({ sessionId: 'root', messageId: 'h1' });
+  });
+
   test('a dropped turn-limit note does not stop the next cut-off turn from getting its own', async () => {
     const results = db.getSDKMessageRepo();
     const pause = () => new Promise((resolve) => setTimeout(resolve, 5));

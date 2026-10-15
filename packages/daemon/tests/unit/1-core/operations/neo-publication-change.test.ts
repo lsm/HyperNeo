@@ -5,7 +5,7 @@ import {
   planNeoCorrectionAnswer,
   requireChangeable,
   requireCorrectable,
-  requireOwnPublication,
+  requireConversationPublication,
 } from '../../../../src/lib/neo/publication-change-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -70,6 +70,7 @@ function setup() {
           sessionId: input.sessionId,
           messageId: `ask-of-${input.messageId}`,
         }),
+        inputTrigger: (input) => (input.messageId === 'm-3' ? `human:${input.messageId}` : null),
         isTriggerPublished: (_conversationId, triggerId) => published.has(triggerId),
         notify: () => notified++,
         noteReply: (publication) => replies.push(publication.publicationId),
@@ -112,20 +113,13 @@ describe('neo.publication.edit', () => {
     }
   });
 
-  test('refuses an unknown id, another session, an RPC caller and an empty edit', async () => {
+  test('refuses an unknown id, an RPC caller and an empty edit', async () => {
     const { db, insert, call, publications } = setup();
     try {
       insert(original);
       expect(
         await call('neo.publication.edit', { publicationId: correction, shortText: 'x' })
       ).toEqual({ accepted: false, reason: 'not_found' });
-      expect(
-        await call(
-          'neo.publication.edit',
-          { publicationId: original, shortText: 'x' },
-          neo(holder.sessionId)
-        )
-      ).toEqual({ accepted: false, reason: 'not_your_publication' });
       expect(
         await call(
           'neo.publication.edit',
@@ -193,13 +187,13 @@ describe('neo.publication.correct', () => {
     }
   });
 
-  test('never corrects another session’s publication', async () => {
+  test('corrects a reply another Neo session published in this conversation', async () => {
     const { db, insert, call } = setup();
     try {
       insert(original, holder.sessionId);
-      expect(await call('neo.publication.correct', corrected)).toEqual({
-        accepted: false,
-        reason: 'not_your_publication',
+      expect(await call('neo.publication.correct', corrected)).toMatchObject({
+        accepted: true,
+        publication: { corrects: original, producerInput: { sessionId: root.sessionId } },
       });
     } finally {
       db.close();
@@ -207,9 +201,9 @@ describe('neo.publication.correct', () => {
   });
 });
 
-describe('requireOwnPublication', () => {
+describe('requireConversationPublication', () => {
   test('a missing publication is not found before ownership is checked', () => {
-    expect(requireOwnPublication({ input: { sessionId: 's' } } as never, null)).toEqual({
+    expect(requireConversationPublication({ input: { sessionId: 's' } } as never, null)).toEqual({
       reason: { accepted: false, reason: 'not_found' },
     });
   });
@@ -294,7 +288,7 @@ describe('planNeoCorrectionAnswer', () => {
 });
 
 describe('neo.publication.recent', () => {
-  test('lists only your own publications, newest first, with their correction links', async () => {
+  test('lists every Neo reply in the conversation, newest first, marking which are yours', async () => {
     const { db, insert, call } = setup();
     try {
       insert(original);
@@ -306,11 +300,23 @@ describe('neo.publication.recent', () => {
         fullText: 'Correction.',
       });
       const listed = (await call('neo.publication.recent', { limit: 5 })) as {
-        publications: { publicationId: string; corrects?: string; correctedBy?: string }[];
+        publications: {
+          publicationId: string;
+          producer: string;
+          yours: boolean;
+          corrects?: string;
+          correctedBy?: string;
+        }[];
       };
-      expect(listed.publications.map((item) => item.publicationId)).toEqual([correction, original]);
+      expect(
+        listed.publications.map((item) => [item.publicationId, item.producer, item.yours])
+      ).toEqual([
+        [correction, root.sessionId, true],
+        [sameTurnReply, holder.sessionId, false],
+        [original, root.sessionId, true],
+      ]);
       expect(listed.publications[0].corrects).toBe(original);
-      expect(listed.publications[1].correctedBy).toBe(correction);
+      expect(listed.publications[2].correctedBy).toBe(correction);
     } finally {
       db.close();
     }
@@ -378,6 +384,27 @@ describe('a correction that answers its turn', () => {
       expect(
         db.prepare("SELECT outcome FROM neo_routing_log WHERE message_id = 'ask-of-m-3'").get()
       ).toEqual({ outcome: 'Correction: PR #12 did not merge.' });
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('neo.publication.edit across sessions', () => {
+  test('a holder can fix the wording of a reply root published, and is recorded as the editor', async () => {
+    const { db, insert, call, publications } = setup();
+    try {
+      insert(original);
+      expect(
+        await call(
+          'neo.publication.edit',
+          { publicationId: original, shortText: 'PR #12 is merged.' },
+          neo(holder.sessionId)
+        )
+      ).toMatchObject({ accepted: true, publication: { editedBy: holder.sessionId } });
+      expect(publications.get(conversation, original)?.producerInput.sessionId).toBe(
+        root.sessionId
+      );
     } finally {
       db.close();
     }
