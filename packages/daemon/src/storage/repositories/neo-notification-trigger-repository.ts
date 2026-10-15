@@ -48,8 +48,9 @@ export class NeoNotificationTriggerRepository {
     return (
       this.db
         .prepare(`SELECT DISTINCT trigger_id AS triggerId FROM neo_notification_triggers
-          WHERE ask_id = ? AND trigger_key = ? AND trigger_id IS NOT NULL`)
-        .all(askId, key) as { triggerId: string }[]
+          WHERE ask_id = ? AND (trigger_key = ? OR trigger_key LIKE ? || ':q%')
+            AND trigger_id IS NOT NULL`)
+        .all(askId, key, key) as { triggerId: string }[]
     ).map((row) => row.triggerId);
   }
 

@@ -149,6 +149,25 @@ describe('trigger keys of an ask', () => {
     expect(keys({ ...ask, doneItems: [item('i1', 'pending'), answer] })).toEqual([]);
   });
 
+  test('a ready answer fires its outcome while a question is open, and answering it fires a new one', () => {
+    const answer = {
+      ...item('i1', 'pending'),
+      state: 'reported' as const,
+      outcomeKind: 'answer' as const,
+    };
+    const question = {
+      ...item('i2', 'pending'),
+      state: 'needs_you' as const,
+      kind: 'decision' as const,
+    };
+    expect(keys({ ...ask, doneItems: [answer, question] })).toEqual([['outcome', 'outcome:2:q1']]);
+    const settled = [
+      { ...answer, state: 'met' as const },
+      { ...question, state: 'met' as const },
+    ];
+    expect(keys({ ...ask, doneItems: settled })).toEqual([['outcome', 'outcome:2']]);
+  });
+
   test('an achieved ask, or one with every item met, is one outcome trigger', () => {
     expect(keys({ ...ask, status: 'achieved' })).toEqual([['outcome', 'outcome:0']]);
     expect(keys({ ...ask, doneItems: [item('i1', 'met'), item('i2', 'met')] })).toEqual([
@@ -222,13 +241,15 @@ describe('neoTriggerRetryStatuses', () => {
 describe('neoHumanTurnOrigin', () => {
   const human = (id: string) => id === 'm1';
 
-  test('a turn acts for the human message it answers, or the one its own continuation carries', () => {
+  test('a turn acts for the human message it answers, the one its own continuation carries, or the one the human’s answer carries', () => {
     expect(neoHumanTurnOrigin('m1', 'human:m1', human)).toBe('m1');
     expect(neoHumanTurnOrigin('neo-turn-limit:human:r1', 'human:m1', human)).toBe('m1');
+    expect(neoHumanTurnOrigin('neo-ask-answer:a1:i2:1', 'human:m1', human)).toBe('m1');
   });
 
   test('a nudge, a plain continuation or a note acts for no human message', () => {
     expect(neoHumanTurnOrigin('neo-nudge:m1', 'human:m1', human)).toBeNull();
+    expect(neoHumanTurnOrigin('neo-ask-ticked:a1:i2:1', 'human:m1', human)).toBeNull();
     expect(neoHumanTurnOrigin('neo-turn-limit:r1', 'human:m1', human)).toBeNull();
     expect(neoHumanTurnOrigin('neo-turn-limit:human:r1', 'idle:a1:x', human)).toBeNull();
     expect(neoHumanTurnOrigin('neo-turn-limit:human:r1', 'human:m9', human)).toBeNull();
@@ -636,6 +657,14 @@ describe('NeoService notification triggers', () => {
     await sweep();
     await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
     expect(mailbox()[0].messageUuid).toMatch(/^neo-trigger:outcome:a1:/);
+  });
+
+  test('an outcome trigger recorded while a question was open is still found once it is answered', () => {
+    const triggers = new NeoNotificationTriggerRepository(db.getDatabase());
+    triggers.record('a1', ['outcome:2:q1'], 'outcome:a1:early', Date.now());
+    triggers.record('a1', ['outcome:1'], 'outcome:a1:stale', Date.now());
+    triggers.record('a1', ['idle:5'], 'idle:a1:x', Date.now());
+    expect(triggers.triggerIdsFor('a1', 'outcome:2')).toEqual(['outcome:a1:early']);
   });
 
   test('seeding at startup marks what is already there as told, without waking Neo', async () => {
