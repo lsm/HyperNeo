@@ -7,6 +7,7 @@ import type {
   NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { projectNeoAskViews } from '../../../../src/lib/neo/ask-views.ts';
+import { busyNeoAskSessions } from '../../../../src/lib/neo/session-ask-links.ts';
 import { neoCardPhase } from '../../../../src/lib/neo/card-phase.ts';
 import { NeoAskViewSchema, NeoCardViewSchema } from '../../../../src/lib/neo/card-view-schema.ts';
 import { type NeoCardViewParts, projectNeoCardViews } from '../../../../src/lib/neo/card-views.ts';
@@ -452,6 +453,61 @@ describe('projectNeoAskViews', () => {
       new Map([['a1', [{ ...linked, status: 'running' as const, kind: null }]]])
     );
     expect(quiet[0]).toMatchObject({ group: 'running', needsYou: false });
+  });
+
+  test('an open ask whose cards all ended says nothing is running, and only then', () => {
+    const input = parts({
+      work: [work('gone', 'cancelled', 's1'), work('live', 'queued'), work('unsent', 'cancelled')],
+      asks: [
+        ask({ workIds: ['gone'] }),
+        ask({ id: 'a2', workIds: ['gone', 'live'] }),
+        ask({ id: 'a3', workIds: ['gone'], doneItems: [item('a', 'met')] }),
+      ],
+    });
+    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
+    expect(views[0]).toMatchObject({
+      group: 'attention',
+      label: 'Nothing running · start again or drop it',
+      idle: true,
+      humanActions: [],
+    });
+    expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
+    expect(views[1]).toMatchObject({ group: 'running', label: 'Working on it' });
+    expect(views[1]).not.toHaveProperty('idle');
+    expect(views[2]).not.toHaveProperty('idle');
+    expect(
+      projectNeoAskViews(
+        [ask({ id: 'a5', workIds: ['unsent'] })],
+        projectNeoCardViews(input),
+        input.prs
+      )[0]
+    ).toMatchObject({ idle: true, label: 'Nothing running · start again or drop it' });
+    const running = {
+      key: 'codex-desktop::t1',
+      title: 'Ship the fix',
+      adapter: 'codex-desktop',
+      status: 'running' as const,
+      kind: null,
+      open: { link: null, remoteLink: null, sessionId: null, daemon: null },
+    };
+    const linked = projectNeoAskViews(
+      [...input.asks, ask({ id: 'a4', workIds: [] })],
+      projectNeoCardViews(input),
+      input.prs,
+      new Map([['a1', [running]]])
+    );
+    expect(linked[0]).toMatchObject({ group: 'running', label: 'Working on it' });
+    expect(linked[0]).not.toHaveProperty('idle');
+    expect(linked[3]).not.toHaveProperty('idle');
+    const muted = projectNeoAskViews(
+      input.asks,
+      projectNeoCardViews(input),
+      input.prs,
+      new Map(),
+      busyNeoAskSessions(new Map([['a1', [running]]]))
+    );
+    expect(muted[0]).toMatchObject({ label: 'Working on it', sessions: [] });
+    expect(muted[0]).not.toHaveProperty('idle');
   });
 
   test('done items count instead of cards when the ask has them', () => {

@@ -183,7 +183,14 @@ export class NeoConsultationRepository {
   }
 
   returnsPublication(conversationId: string, publicationId: string): boolean {
-    return this.publicationOwner(conversationId, publicationId) !== null;
+    const owner = this.publicationOwner(conversationId, publicationId);
+    return owner !== null && !this.isReturned(owner);
+  }
+
+  isReturned(id: string): boolean {
+    return !!this.db
+      .prepare('SELECT 1 FROM neo_consultations WHERE id = ? AND returned = 1')
+      .get(id);
   }
 
   private publicationOwner(conversationId: string, publicationId: string): string | null {

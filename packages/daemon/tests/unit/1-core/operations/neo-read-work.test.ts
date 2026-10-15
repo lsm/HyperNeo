@@ -224,15 +224,19 @@ describe('Neo read-only work cards', () => {
     }
   );
 
-  test('keeps an immutable read target on replay', async () => {
-    await invoke('neo.work.propose', proposal);
-    expect(
-      await invoke('neo.work.propose', {
-        ...proposal,
-        work: { ...target, input: { section: 'changed' } },
-      })
-    ).toMatchObject({ value: { ok: false } });
+  test('a replay returns its read card, and a changed read target is a separate card', async () => {
+    const first = await invoke('neo.work.propose', proposal);
+    expect(await invoke('neo.work.propose', proposal)).toEqual(first);
     expect(read).toHaveBeenCalledTimes(1);
+    const changed = await invoke('neo.work.propose', {
+      ...proposal,
+      work: { ...target, input: { section: 'changed' } },
+    });
+    expect(changed).toMatchObject({ value: { ok: true } });
+    const cardId = (outcome: unknown) =>
+      (outcome as { value: { work: { id: string } } }).value.work.id;
+    expect(cardId(changed)).not.toBe(cardId(first));
+    expect(service.repo.listWork()).toHaveLength(2);
   });
 
   test('coalesces concurrent proposals into one read and one card', async () => {

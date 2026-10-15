@@ -13,22 +13,29 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
+import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
 import { createNeoPublicationTable } from '../../../../src/storage/schema/m288-neo-publications.ts';
 import { createNeoRoutingLogTable } from '../../../../src/storage/schema/m299-neo-routing-log.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const conversation = '10000000-0000-4000-8000-000000000001';
 const original = '20000000-0000-4000-8000-000000000002';
-const correction = '30000000-0000-4000-8000-000000000003';
+const correctionFor = (publicationId: string, turn: string) =>
+  neoDerivedId(`neo.publication.correct:${conversation}:${publicationId}:${turn}`);
+const correction = correctionFor(
+  '20000000-0000-4000-8000-000000000002',
+  'neo:10000000-0000-4000-8000-000000000001:m-2'
+);
+const humanCorrection = correctionFor('20000000-0000-4000-8000-000000000002', 'human:m-3');
 const consultationReply = '50000000-0000-4000-8000-000000000005';
 const sameTurnReply = '60000000-0000-4000-8000-000000000006';
 const root: NeoBinding = { sessionId: `neo:${conversation}`, projectId: null, kind: 'neo' };
 const holder: NeoBinding = { sessionId: 'neo:holder', projectId: 'p1', kind: 'project' };
 
-const neo = (sessionId = root.sessionId): OperationCaller => ({
+const neo = (sessionId = root.sessionId, messageId = 'm-2'): OperationCaller => ({
   source: 'mcp',
   sessionId,
-  neoTurn: { messageId: 'm-2', human: false, isLive: () => true },
+  neoTurn: { messageId, human: false, isLive: () => true },
 });
 
 function setup() {
@@ -141,7 +148,6 @@ describe('neo.publication.edit', () => {
 describe('neo.publication.correct', () => {
   const corrected = {
     publicationId: original,
-    correctionId: correction,
     shortText: 'Correction: PR #12 did not merge.',
     fullText: 'PR #12 is still open; checks failed.',
   };
@@ -169,18 +175,16 @@ describe('neo.publication.correct', () => {
         accepted: true,
         created: false,
       });
+      expect(await call('neo.publication.correct', corrected, neo(root.sessionId, 'm-4'))).toEqual({
+        accepted: false,
+        reason: 'already_corrected',
+      });
       expect(
-        await call('neo.publication.correct', {
-          ...corrected,
-          correctionId: '40000000-0000-4000-8000-000000000004',
-        })
-      ).toEqual({ accepted: false, reason: 'already_corrected' });
-      expect(
-        await call('neo.publication.correct', {
-          ...corrected,
-          publicationId: correction,
-          correctionId: '40000000-0000-4000-8000-000000000004',
-        })
+        await call(
+          'neo.publication.correct',
+          { ...corrected, publicationId: correction },
+          neo(root.sessionId, 'm-4')
+        )
       ).toEqual({ accepted: false, reason: 'already_corrected' });
     } finally {
       db.close();
@@ -231,7 +235,6 @@ describe('requireChangeable', () => {
       expect(
         await call('neo.publication.correct', {
           publicationId: consultationReply,
-          correctionId: correction,
           shortText: 'x',
           fullText: 'y',
         })
@@ -255,7 +258,6 @@ describe('NeoPublicationRepository.findByProducer', () => {
       expect(
         await call('neo.publication.correct', {
           publicationId: original,
-          correctionId: correction,
           shortText: 'Correction.',
           fullText: 'Correction.',
         })
@@ -295,7 +297,6 @@ describe('neo.publication.recent', () => {
       insert(sameTurnReply, holder.sessionId);
       await call('neo.publication.correct', {
         publicationId: original,
-        correctionId: correction,
         shortText: 'Correction.',
         fullText: 'Correction.',
       });
@@ -332,7 +333,6 @@ describe('neo.publication.correct as a reply', () => {
         'neo.publication.correct',
         {
           publicationId: original,
-          correctionId: correction,
           shortText: 'Correction: PR #12 did not merge.',
           fullText: 'PR #12 is still open.',
         },
@@ -373,14 +373,15 @@ describe('a correction that answers its turn', () => {
         'neo.publication.correct',
         {
           publicationId: original,
-          correctionId: correction,
           shortText: 'Correction: PR #12 did not merge.',
           fullText: 'PR #12 is still open.',
         },
         asHuman
       );
-      expect(publications.findByProducer(root.sessionId, 'm-3')?.publicationId).toBe(correction);
-      expect(replies).toEqual([correction]);
+      expect(publications.findByProducer(root.sessionId, 'm-3')?.publicationId).toBe(
+        humanCorrection
+      );
+      expect(replies).toEqual([humanCorrection]);
       expect(
         db.prepare("SELECT outcome FROM neo_routing_log WHERE message_id = 'ask-of-m-3'").get()
       ).toEqual({ outcome: 'Correction: PR #12 did not merge.' });
@@ -408,5 +409,14 @@ describe('neo.publication.edit across sessions', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('neoDerivedId', () => {
+  test('is a stable, valid UUID for one seed and differs for another', () => {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    expect(neoDerivedId('a')).toMatch(uuid);
+    expect(neoDerivedId('a')).toBe(neoDerivedId('a'));
+    expect(neoDerivedId('a')).not.toBe(neoDerivedId('b'));
   });
 });

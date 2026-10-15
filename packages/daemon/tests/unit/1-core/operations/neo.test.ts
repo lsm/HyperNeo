@@ -223,11 +223,14 @@ describe('Neo MVP', () => {
   });
 
   test('real operation pipeline saves with revision protection and reuses durable contexts', async () => {
-    expect(await invoke('neo.project.save', project)).toMatchObject({
+    service.repo.saveProject(project, 0);
+    expect(await invoke('neo.project.save', { ...project, expectedRevision: 1 })).toMatchObject({
       kind: 'completed',
-      value: { ok: true, project: { revision: 1 } },
+      value: { ok: true, project: { revision: 2 } },
     });
-    expect(await invoke('neo.project.save', { ...project, context: 'Lost update' })).toMatchObject({
+    expect(
+      await invoke('neo.project.save', { ...project, expectedRevision: 1, context: 'Lost update' })
+    ).toMatchObject({
       kind: 'completed',
       value: { ok: false },
     });
@@ -305,6 +308,42 @@ describe('Neo MVP', () => {
     }
   });
 
+  test('Neo reads a stale queued card as abandoned, the phase the human sees', async () => {
+    const root = await service.open(null);
+    service.driverTargets.propose(
+      service.repo,
+      {
+        id: 'stale',
+        requestKey: 'stale',
+        projectId: null,
+        originSessionId: root,
+        title: 'Waiting on Codex',
+        instruction: 'Count the files.',
+      },
+      {
+        verb: 'start',
+        adapter: 'codex-desktop',
+        place: { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' },
+      }
+    );
+    service.repo.transitionWork('stale', service.repo.getWork('stale')!, {
+      status: 'queued',
+      sessionId: null,
+    });
+    sqlite.prepare("UPDATE neo_work SET updated_at = 1 WHERE id = 'stale'").run();
+    const read = (await invoke(
+      'neo.snapshot',
+      {},
+      { source: 'mcp', role: 'neo', sessionId: root }
+    )) as {
+      value: { work: Array<{ id: string; status: string; phase?: string }>; omitted?: unknown };
+    };
+    expect(read.value.work).toEqual([
+      expect.objectContaining({ id: 'stale', status: 'queued', phase: 'abandoned' }),
+    ]);
+    expect(read.value.omitted).toBeUndefined();
+  });
+
   test('human snapshots retain a bounded set of older actionable work', async () => {
     service.repo.saveProject({ id: 'book-club', title: 'Book club', summary: '', context: '' }, 0);
     const root = await service.open(null);
@@ -361,11 +400,18 @@ describe('Neo MVP', () => {
       {},
       { source: 'mcp', role: 'neo', sessionId: root }
     )) as {
-      value: { work: Array<{ id: string }> };
+      value: {
+        work: Array<{ id: string; status: string; phase?: string; label?: string }>;
+        omitted?: { work?: number };
+      };
     };
-    expect(agentSnapshot.value.work).toHaveLength(10);
-    expect(agentSnapshot.value.work.some((item) => item.id === oldest.id)).toBe(false);
-    expect(agentSnapshot.value.work.some((item) => item.id === queued.id)).toBe(false);
+    expect(agentSnapshot.value.work).toHaveLength(12);
+    expect(agentSnapshot.value.work.find((item) => item.id === queued.id)).toMatchObject({
+      status: 'queued',
+      phase: 'handed',
+    });
+    expect(agentSnapshot.value.work.find((item) => item.id === oldest.id)?.phase).toBe('proposed');
+    expect(agentSnapshot.value.omitted).toEqual({ work: 40 });
     for (let index = 0; index < 50; index++) {
       const item = service.repo.proposeWork({
         id: `extra-${index}`,
@@ -433,7 +479,7 @@ describe('Neo MVP', () => {
     const work = (await propose())!;
     const long = 'A quiet library room is a possible free venue. '.repeat(40);
     service.repo.transitionWork(work.id, work, { status: 'reported', report: long });
-    await invoke('neo.project.save', project);
+    service.repo.saveProject(project, 0);
     const root = await service.open(null);
     const consultation = service.consultations.reserve({
       id: 'c1',
@@ -525,7 +571,7 @@ describe('Neo MVP', () => {
   });
 
   test('trusts bindings, not a claimed role; project holders cannot read or mutate other contexts', async () => {
-    await invoke('neo.project.save', project);
+    service.repo.saveProject(project, 0);
     const id = await service.open(project.id);
     const caller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: id };
     expect(await invoke('neo.snapshot', { projectId: 'private' }, caller)).toMatchObject({
@@ -656,7 +702,7 @@ describe('Neo MVP', () => {
   test.each([null, project.id])(
     'work origins survive %s MCP retries, successor inputs and returns',
     async (scope) => {
-      await invoke('neo.project.save', project);
+      service.repo.saveProject(project, 0);
       const sessionId = await service.open(scope);
       const attempts = new QueryAttemptRegistry();
       const first = new NeoHolderTurn(db, sessionId, attempts.allocate(), () => {});
@@ -671,7 +717,6 @@ describe('Neo MVP', () => {
       const request = {
         name: 'neo.work.propose',
         input: {
-          requestKey: 'first',
           projectId: scope,
           targetSessionId: 'ordinary',
           title: 'Draft an agenda',
@@ -704,12 +749,12 @@ describe('Neo MVP', () => {
         });
         expect(JSON.parse((await handler(next)(request)).content[0].text)).toMatchObject({
           ok: false,
-          reason: 'This request key belongs to another input.',
+          reason: expect.stringContaining('already holds 1 live card'),
         });
         expect(service.repo.listWork()).toEqual([receipt.work]);
         const independent = {
           ...request,
-          input: { ...request.input, requestKey: 'second', allowBusyTarget: true },
+          input: { ...request.input, allowBusyTarget: true },
         };
         expect(JSON.parse((await handler(next)(independent)).content[0].text)).toMatchObject({
           ok: true,
@@ -1224,7 +1269,7 @@ describe('Neo MVP', () => {
       value: { ok: true, work: { id: own.id, status: 'cancelled' } },
     });
     const work = await propose();
-    await invoke('neo.project.save', project);
+    service.repo.saveProject(project, 0);
     const holder = await service.open(project.id);
     expect(
       await invoke(
@@ -1363,7 +1408,7 @@ describe('Neo MVP', () => {
   });
 
   async function consultation() {
-    await invoke('neo.project.save', project);
+    service.repo.saveProject(project, 0);
     const root = await service.open(null);
     const caller = holderInput(root);
     const input = {
@@ -1381,8 +1426,8 @@ describe('Neo MVP', () => {
   }
 
   test('correlates unrelated root inputs through durable consultation returns', async () => {
-    await invoke('neo.project.save', project);
-    await invoke('neo.project.save', { ...project, id: 'research' });
+    service.repo.saveProject(project, 0);
+    service.repo.saveProject({ ...project, id: 'research' }, 0);
     const root = await service.open(null);
     const caller = (messageId: string): OperationCaller => ({
       ...holderInput(root),
@@ -1431,25 +1476,30 @@ describe('Neo MVP', () => {
     });
   });
 
-  test('a request key cannot borrow another input’s consultation receipt', async () => {
+  test('the same question from another input asks again instead of borrowing the earlier receipt', async () => {
     const { item, caller, holder, input } = await consultation();
     await invoke('neo.project.respond', { id: item.id, answer: 'A result' }, holder);
     const unrelated: OperationCaller = {
       ...caller,
       neoTurn: { messageId: 'ask-B', human: true, isLive: () => true },
     };
-    expect(await invoke('neo.project.consult', input, unrelated)).toMatchObject({
-      value: { ok: false },
+    const again = await invoke('neo.project.consult', input, unrelated);
+    expect(again).toMatchObject({
+      value: { ok: true, consultation: { originMessageId: 'ask-B', answer: null } },
     });
-    expect(service.consultations.list()).toEqual([
-      { ...item, status: 'reported', answer: 'A result' },
-    ]);
-    expect(jobs).toHaveLength(2);
+    expect((again as { value: { consultation: { id: string } } }).value.consultation.id).not.toBe(
+      item.id
+    );
+    expect(service.consultations.get(item.id)).toEqual({
+      ...item,
+      status: 'reported',
+      answer: 'A result',
+    });
   });
 
   test('MCP consultations use the isolated runtime input despite forged provenance', async () => {
-    await invoke('neo.project.save', project);
-    await invoke('neo.project.save', { ...project, id: 'research' });
+    service.repo.saveProject(project, 0);
+    service.repo.saveProject({ ...project, id: 'research' }, 0);
     const root = await service.open(null);
     const attempts = new QueryAttemptRegistry();
     const first = new NeoHolderTurn(db, root, attempts.allocate(), () => {});
@@ -1502,7 +1552,7 @@ describe('Neo MVP', () => {
   });
 
   test('an unbound root cannot create a consultation', async () => {
-    await invoke('neo.project.save', project);
+    service.repo.saveProject(project, 0);
     const root = await service.open(null);
     expect(
       await invoke(
@@ -1521,7 +1571,7 @@ describe('Neo MVP', () => {
   });
 
   test('superseding the input during holder opening prevents reservation and delivery', async () => {
-    await invoke('neo.project.save', project);
+    service.repo.saveProject(project, 0);
     const root = await service.open(null);
     let live = true;
     let opened!: () => void;
@@ -1599,7 +1649,7 @@ describe('Neo MVP', () => {
   });
 
   test('rechecks the immutable input inside receipt persistence before any queue write', async () => {
-    await invoke('neo.project.save', project);
+    service.repo.saveProject(project, 0);
     const root = await service.open(null);
     let checks = 0;
     const source: OperationCaller = {
@@ -1621,7 +1671,7 @@ describe('Neo MVP', () => {
 
   test('admits root consultations only and attributes replies to the exact assigned holder', async () => {
     const { item, caller, holder, input } = await consultation();
-    await invoke('neo.project.save', { ...project, id: 'private' });
+    service.repo.saveProject({ ...project, id: 'private' }, 0);
     const other = await service.open('private');
     service.repo.reserveBinding({ sessionId: 'worker', projectId: project.id, kind: 'worker' });
     for (const denied of [
@@ -1662,18 +1712,17 @@ describe('Neo MVP', () => {
     });
   });
 
-  test('rejects conflicting keys while retaining a separate queued question', async () => {
+  test('queues a changed question separately and refuses an unknown project', async () => {
     const { item, caller, input } = await consultation();
-    for (const change of [{ question: 'Changed question' }, { projectId: 'missing' }]) {
-      expect(await invoke('neo.project.consult', { ...input, ...change }, caller)).toMatchObject({
-        value: { ok: false },
-      });
-    }
+    expect(
+      await invoke('neo.project.consult', { ...input, projectId: 'missing' }, caller)
+    ).toMatchObject({ value: { ok: false } });
     expect(service.consultations.list()).toEqual([item]);
     expect(jobs).toHaveLength(1);
-    expect(
-      await invoke('neo.project.consult', { ...input, requestKey: 'second-question' }, caller)
-    ).toMatchObject({ value: { ok: true, waiter: { status: 'queued' } } });
+    const changed = { ...input, question: 'Changed question' };
+    const queued = await invoke('neo.project.consult', changed, caller);
+    expect(queued).toMatchObject({ value: { ok: true, waiter: { status: 'queued' } } });
+    expect(await invoke('neo.project.consult', changed, caller)).toEqual(queued);
     expect(service.consultations.list()).toEqual([item]);
     expect(jobs).toHaveLength(1);
   });
@@ -1738,16 +1787,31 @@ describe('Neo MVP', () => {
 
   test('root may create a project but only its holder or the human may revise its context', async () => {
     const root = await service.open(null);
-    const caller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: root };
+    const caller: OperationCaller = {
+      source: 'mcp',
+      role: 'neo',
+      sessionId: root,
+      neoTurn: { messageId: 'ask-A', human: true, isLive: () => true },
+    };
     expect(await invoke('neo.project.save', project, caller)).toMatchObject({
-      value: { ok: true },
+      value: { ok: false, reason: expect.stringContaining('Omit id') },
     });
-    const correction = { ...project, expectedRevision: 1, context: 'Host at my home' };
+    const { id: _named, ...fresh } = project;
+    const created = await invoke('neo.project.save', fresh, caller);
+    expect(created).toMatchObject({ value: { ok: true, project: { revision: 1 } } });
+    const id = (created as { value: { project: { id: string } } }).value.project.id;
+    expect(id).not.toBe(project.id);
+    expect(await invoke('neo.project.save', fresh, caller)).toEqual(created);
+    expect(service.repo.listProjects()).toHaveLength(1);
+    const correction = { ...project, id, expectedRevision: 1, context: 'Host at my home' };
     expect(await invoke('neo.project.save', correction, caller)).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('Consult') },
     });
-    expect(service.repo.getProject(project.id)?.context).toBe(project.context);
-    const holder = await service.open(project.id);
+    expect(service.repo.getProject(id)?.context).toBe(project.context);
+    const holder = await service.open(id);
+    expect(await invoke('neo.project.save', fresh, holderInput(holder))).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('own project') },
+    });
     expect(await invoke('neo.project.save', correction, holderInput(holder))).toMatchObject({
       value: { ok: true, project: { context: correction.context } },
     });
@@ -1794,7 +1858,7 @@ describe('Neo MVP', () => {
     });
   });
 
-  test('expires a stuck consultation during recovery and allows a new request with a new key', async () => {
+  test('expires a stuck consultation during recovery and lets a reworded question ask again', async () => {
     const { item, caller, input } = await consultation();
     sqlite
       .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
@@ -1812,7 +1876,11 @@ describe('Neo MVP', () => {
       value: { consultation: { id: item.id, status: 'failed' } },
     });
     expect(
-      await invoke('neo.project.consult', { ...input, requestKey: 'new-attempt' }, caller)
+      await invoke(
+        'neo.project.consult',
+        { ...input, question: `${input.question} Again.` },
+        caller
+      )
     ).toMatchObject({
       value: { ok: true, consultation: { status: 'pending' } },
     });

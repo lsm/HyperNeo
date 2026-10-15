@@ -1,5 +1,6 @@
 import { runMigration366 } from '../../../../src/storage/schema/m366-neo-work-dependencies.ts';
 import { runMigration358 } from '../../../../src/storage/schema/m358-neo-ask-revisions.ts';
+import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
 import { runMigration362 } from '../../../../src/storage/schema/m362-neo-driver-configuration.ts';
 import { runMigration363 } from '../../../../src/storage/schema/m363-neo-work-refusals.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
@@ -338,6 +339,7 @@ describe('real SQLite ask lineage facade', () => {
     runMigration345(mailbox.db);
     runMigration344(mailbox.db);
     runMigration358(mailbox.db);
+    runMigration361(mailbox.db);
     runMigration362(mailbox.db);
     runMigration366(mailbox.db);
     db = {
@@ -560,7 +562,7 @@ describe('real SQLite ask lineage facade', () => {
     const before = unchangedState();
     for (const [caller, count] of [
       [{ source: 'rpc', principal: 'local' }, 100],
-      [{ source: 'mcp', role: 'neo', sessionId: root.sessionId }, 10],
+      [{ source: 'mcp', role: 'neo', sessionId: root.sessionId }, 20],
     ] as [OperationCaller, number][]) {
       const value = await snapshot(caller);
       expect(value.work).toHaveLength(count);

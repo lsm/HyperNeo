@@ -1190,7 +1190,7 @@ export class NeoService {
   private seedTriggers(): void {
     if (this.triggers.isSeeded()) return;
     for (const ask of this.triggerAsks())
-      coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'failed', 'action']);
+      coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'failed', 'idle', 'action']);
     this.triggers.markSeeded(Date.now());
   }
 
@@ -3146,6 +3146,21 @@ export class NeoService {
     await dispatchNeoConsultationWaiter(this, projectId);
   }
 
+  private planConsultationReturn(item: NeoConsultation) {
+    const association = this.consultations.getPublication(item.id);
+    const captured = this.consultations.getPublicationInput(item.id);
+    const publication = association
+      ? this.publications.get(association.conversationId, association.publicationId)
+      : this.publications.findByProducer(item.sessionId, `neo-consult:${item.id}:request`);
+    return planNeoConsultationReturn(
+      item,
+      association,
+      publication,
+      captured?.askOrigin ?? null,
+      captured
+    );
+  }
+
   async syncConsultation(id: string): Promise<void> {
     let item = this.consultations.expire(id);
     if (!item) return;
@@ -3191,18 +3206,9 @@ export class NeoService {
       await this.dispatchConsultationWaiter(item.projectId);
       return;
     }
-    const association = this.consultations.getPublication(id);
-    const captured = this.consultations.getPublicationInput(id);
-    const publication = association
-      ? this.publications.get(association.conversationId, association.publicationId)
-      : this.publications.findByProducer(item.sessionId, requestId);
-    const route = planNeoConsultationReturn(
-      item,
-      association,
-      publication,
-      captured?.askOrigin ?? null,
-      captured
-    );
+    const route = this.consultations.isReturned(id)
+      ? 'returned'
+      : this.planConsultationReturn(item);
     if (route === 'inconsistent')
       throw new Error('Consultation publication return is inconsistent');
     if (route === 'pending') return;
@@ -3680,6 +3686,11 @@ export class NeoService {
     if (!origin) return;
     const triggerId = neoDeliveryTrigger(trigger, () => this.parentTrigger(parent));
     this.inputOrigins.record(input, origin, Date.now(), triggerId);
+  }
+
+  stampContinuation(input: NeoAskOrigin, parent: NeoAskOrigin): void {
+    if (!this.repo.getBindingBySession(input.sessionId)) return;
+    this.stampDelivery(input, parent, 'continues');
   }
 
   inputTrigger(input: NeoAskOrigin): string | null {

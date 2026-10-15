@@ -58,6 +58,24 @@ describe('planNeoGithubQuery', () => {
     });
   });
 
+  test('turns "the last N hours" into a window that ends now, and refuses mixing it with dates', () => {
+    const now = Date.parse('2026-10-15T03:55:00Z');
+    expect(
+      planNeoGithubQuery(
+        NeoGithubQuery.parse({ repo: 'lsm/neo-ios', state: 'merged', withinHours: 6 }),
+        now
+      )
+    ).toMatchObject({
+      value: {
+        query: { since: '2026-10-14T21:55:00.000Z' },
+        search: 'merged:>=2026-10-14T21:55:00.000Z',
+      },
+    });
+    expect(
+      planNeoGithubQuery(NeoGithubQuery.parse({ repo: 'o/r', withinHours: 6, since }), now)
+    ).toMatchObject({ reason: { ok: false, reason: expect.stringContaining('one_window') } });
+  });
+
   test('refuses a merged issue list and an inverted window', () => {
     expect(
       planNeoGithubQuery(NeoGithubQuery.parse({ repo: 'o/r', kind: 'issue', state: 'merged' }))
@@ -75,13 +93,21 @@ describe('presentNeoGithubQuery', () => {
     NeoGithubQuery.parse({ repo: 'lsm/HyperNeo', state: 'merged', since, limit: 2 })
   ) as { value: Parameters<typeof presentNeoGithubQuery>[0] };
 
-  test('orders matches newest first and says when more matched than the limit', () => {
+  test('orders matches newest first, says when more matched than the limit, and reports the window up to the read', () => {
+    const at = '2026-10-15T12:34:00.000Z';
     expect(
       presentNeoGithubQuery(plan.value, {
         data: [pr(1, '2026-10-15T10:05:00Z'), pr(3, '2026-10-15T11:30:00Z'), pr(2, since)],
+        at,
       })
     ).toMatchObject({
-      value: { ok: true, kind: 'list', items: [{ number: 3 }, { number: 1 }], truncated: true },
+      value: {
+        ok: true,
+        kind: 'list',
+        items: [{ number: 3 }, { number: 1 }],
+        truncated: true,
+        window: { by: 'merged', since, until: at },
+      },
     });
   });
 
@@ -95,12 +121,13 @@ describe('presentNeoGithubQuery', () => {
           { ...pr(1, null), updatedAt: '2026-10-15T11:59:00Z' },
           { ...pr(2, null), createdAt: '2026-10-15T09:30:00Z', updatedAt: since },
         ],
+        at: until,
       })
     ).toMatchObject({ value: { items: [{ number: 1 }], truncated: true } });
   });
 
   test('reports an unreadable list instead of an empty one', () => {
-    expect(presentNeoGithubQuery(plan.value, { data: null })).toMatchObject({
+    expect(presentNeoGithubQuery(plan.value, { data: null, at: until })).toMatchObject({
       reason: { ok: false, reason: expect.stringContaining('unreadable') },
     });
   });
@@ -149,8 +176,24 @@ describe('neo.github.read list form', () => {
         { source: 'rpc', principal: 'local' }
       );
       expect(list.mock.calls[0]?.[0]).toContain(`merged:${since}..${until}`);
+      const open = mock(async (_args: string[]) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return [pr(1, new Date().toISOString())];
+      });
+      service.listGithub = open;
+      const latest = (await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.github.read',
+        { repo: 'lsm/HyperNeo', state: 'merged', since },
+        { source: 'rpc', principal: 'local' }
+      )) as {
+        value: { window: { until: string }; items: { mergedAt: string }[] };
+      };
+      expect(Date.parse(latest.value.window.until)).toBeGreaterThanOrEqual(
+        Date.parse(latest.value.items[0]!.mergedAt)
+      );
       expect(result).toMatchObject({
-        value: { ok: true, kind: 'list', truncated: false },
+        value: { ok: true, kind: 'list', truncated: false, window: { by: 'merged', since, until } },
       });
       const items = (result as { value: { items: { number: number; mergedAt: string }[] } }).value
         .items;

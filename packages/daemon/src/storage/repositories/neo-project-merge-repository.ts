@@ -67,6 +67,25 @@ export class NeoProjectMergeRepository {
     );
   }
 
+  allFolders(): { projectId: string; folder: string }[] {
+    return (
+      this.db
+        .prepare("SELECT alias, project_id FROM neo_project_workspaces WHERE alias LIKE 'folder:%'")
+        .all() as { alias: string; project_id: string }[]
+    ).flatMap((row) => {
+      const at = row.alias.indexOf('\u0000');
+      return at > 0 ? [{ projectId: row.project_id, folder: row.alias.slice(at + 1) }] : [];
+    });
+  }
+
+  recordIdentities(fresh: Readonly<Record<string, readonly string[]>>): void {
+    const insert = this.db.prepare(
+      'INSERT OR IGNORE INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
+    );
+    for (const [projectId, identities] of Object.entries(fresh))
+      for (const identity of identities) insert.run(identity, projectId);
+  }
+
   questions(fresh: Readonly<Record<string, readonly string[]>>): NeoProjectQuestion[] {
     const repositories: Record<string, string[]> = {};
     for (const row of this.db
@@ -91,9 +110,25 @@ export class NeoProjectMergeRepository {
       .all() as NeoProject[];
     const identities: Record<string, string[]> = {};
     for (const row of this.db
-      .prepare("SELECT alias, project_id FROM neo_project_workspaces WHERE alias LIKE 'git:%'")
+      .prepare(
+        "SELECT alias, project_id FROM neo_project_workspaces WHERE alias LIKE 'git:%' OR alias LIKE 'repository:%'"
+      )
       .all() as { alias: string; project_id: string }[])
       (identities[row.project_id] ??= []).push(row.alias);
+    const repositories: Record<string, string[]> = {};
+    for (const row of this.db
+      .prepare(
+        "SELECT alias, project_id FROM neo_project_workspaces WHERE alias >= 'repo' AND alias < 'repp'"
+      )
+      .all() as { alias: string; project_id: string }[]) {
+      const repository = row.alias.startsWith('repository:')
+        ? row.alias
+        : row.alias.startsWith('repo:')
+          ? `repository:github.com/${row.alias.slice('repo:'.length).split('\u0000')[0]}`
+          : null;
+      if (repository && !repositories[row.project_id]?.includes(repository))
+        (repositories[row.project_id] ??= []).push(repository);
+    }
     const unavailable = new Set<string>();
     for (const row of this.db
       .prepare(`SELECT b.concern_id AS id FROM neo_session_bindings b
@@ -115,6 +150,7 @@ export class NeoProjectMergeRepository {
     return {
       projects,
       identities,
+      repositories,
       unavailable: [...unavailable],
       retired: (
         this.db.prepare('SELECT source_id FROM neo_project_merges').all() as { source_id: string }[]
