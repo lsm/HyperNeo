@@ -1,6 +1,6 @@
 import type { NeoAskItem, NeoAskSessionView } from '@hyperneo/shared/types/neo-snapshot';
 import type { ComponentChildren } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { neoCardOpenLabel } from './card-view.ts';
@@ -284,6 +284,7 @@ export function NeoAskCard({
   onOpen,
   onOpenSession,
   onExpand,
+  detailFailed = false,
   renderCard,
 }: {
   view: NeoAskView;
@@ -298,10 +299,15 @@ export function NeoAskCard({
   onOpen?: (workId: string) => void;
   onOpenSession?: (sessionId: string, title: string) => void;
   onExpand?: () => void;
+  detailFailed?: boolean;
   renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
   const [open, setOpen] = useState(false);
   const { ask } = view;
+  const summarized = isNeoSummarized(ask);
+  useEffect(() => {
+    if (open && summarized) onExpand?.();
+  }, [open, summarized]);
   const tone =
     view.group === 'attention'
       ? 'attention'
@@ -437,12 +443,20 @@ export function NeoAskCard({
       )}
       {open && (
         <div data-ask-details class="mt-3 space-y-3">
-          {isNeoSummarized(ask) && (
-            <p role="status" class="text-xs text-fg-faint">
-              Loading details…
-            </p>
-          )}
-          <div class="text-sm text-fg-muted" hidden={isNeoSummarized(ask)}>
+          {summarized &&
+            (detailFailed ? (
+              <p role="status" class="text-xs text-fg-faint">
+                Couldn’t load details.{' '}
+                <button type="button" class={neoPlainClass} onClick={() => onExpand?.()}>
+                  Retry
+                </button>
+              </p>
+            ) : (
+              <p role="status" class="text-xs text-fg-faint">
+                Loading details…
+              </p>
+            ))}
+          <div class="text-sm text-fg-muted" hidden={summarized}>
             <p class="text-xs font-medium text-fg-faint">Done when</p>
             {outcomes.length > 0 ? (
               <div class="mt-1.5">
@@ -529,10 +543,7 @@ export function NeoAskCard({
         <button
           type="button"
           aria-expanded={open}
-          onClick={() => {
-            if (!open) onExpand?.();
-            setOpen(!open);
-          }}
+          onClick={() => setOpen(!open)}
           class={neoPlainClass}
         >
           Details
