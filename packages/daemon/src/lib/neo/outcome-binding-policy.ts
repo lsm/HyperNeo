@@ -5,6 +5,9 @@ type Binding = { itemId: string; deliveredBy: string | null };
 type Card = { id: string; dispatched: boolean; released?: boolean };
 type Refusal = { ok: false; reason: string };
 
+const isBindable = (item: NeoAskItem) =>
+  !item.removed && !item.decision && !item.kind && item.check !== 'coding.pr_opened';
+
 function fillIds(
   ask: Pick<NeoAsk, 'doneItems'>,
   bindings: readonly Binding[],
@@ -41,7 +44,7 @@ function requireBindings(ask: NeoAsk | null, bindings: readonly Binding[], cards
     seen.add(binding.itemId);
     const next = binding.deliveredBy;
     if (next !== null && !local.has(next)) return reject('binding_card_not_owned');
-    if (next !== null && item.check === 'coding.pr_opened') return reject('opened_check_unbound');
+    if (next !== null && !isBindable(item)) return reject('opened_check_unbound');
     if ((item.deliveredBy ?? null) !== next) {
       const old = item.deliveredBy ? local.get(item.deliveredBy) : undefined;
       if ((old?.dispatched && !old.released) || (next && local.get(next)?.dispatched))
@@ -98,4 +101,4 @@ function planFold(
   return { items, revision: revision + 1 };
 }
 
-export const neoOutcomeBindingPolicy = { requireBindings, fillIds, planFold };
+export const neoOutcomeBindingPolicy = { isBindable, requireBindings, fillIds, planFold };

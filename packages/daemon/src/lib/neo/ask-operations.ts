@@ -36,6 +36,7 @@ import {
 import { isNeoAskOutcomeItem } from './ask-views.ts';
 import { NeoAskStateViewSchema } from './card-view-schema.ts';
 import { isNeoAnswerItem } from './answer-outcome.ts';
+import { neoOutcomeBindingPolicy } from './outcome-binding-policy.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -393,7 +394,7 @@ export function requireNeoProposalDelivers<T>(
 ): Gate<T> {
   if (!ask || (read.stored && delivers === undefined)) return { value };
   const open = (ask.doneItems ?? []).filter(
-    (item) => !item.removed && !item.decision && !item.kind && item.state !== 'met'
+    (item) => neoOutcomeBindingPolicy.isBindable(item) && item.state !== 'met'
   );
   if (delivers === undefined)
     return open.length
@@ -431,7 +432,7 @@ export function planNeoProposalBindings(
   const ids = input.askId
     ? (input.delivers ?? [])
     : (ask.doneItems ?? [])
-        .filter((item) => !item.removed && !item.decision && !item.kind && !item.deliveredBy)
+        .filter((item) => neoOutcomeBindingPolicy.isBindable(item) && !item.deliveredBy)
         .map((item) => item.id);
   return ids.map((itemId) => ({ itemId, deliveredBy: workId }));
 }

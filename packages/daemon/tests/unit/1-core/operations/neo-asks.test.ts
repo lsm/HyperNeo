@@ -3898,6 +3898,7 @@ describe('requireNeoProposalDelivers', () => {
       item('i3', { deliveredBy: 'gone' }),
       item('i4', { state: 'met' }),
       item('i5', { decision: true }),
+      item('i6', { check: 'coding.pr_opened' }),
     ],
   } as NeoAsk;
   const cards = [
@@ -3919,6 +3920,14 @@ describe('requireNeoProposalDelivers', () => {
     ['an item a queued card delivers', ['i2'], ask, read, false],
     ['a met item', ['i4'], ask, read, false],
     ['a decision item', ['i5'], ask, read, false],
+    ['an item only an open pull request meets', ['i6'], ask, read, false],
+    [
+      'an ask whose only open items cannot be bound',
+      undefined,
+      { ...ask, doneItems: [item('i6', { check: 'coding.pr_opened' })] } as NeoAsk,
+      read,
+      true,
+    ],
   ] as const)('%s', (_label, delivers, target, state, admitted) => {
     const result = requireNeoProposalDelivers(delivers, target, state, 'ok');
     expect('value' in result).toBe(admitted);
