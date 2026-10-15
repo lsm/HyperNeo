@@ -1,3 +1,5 @@
+import { isNeoOngoingPlace } from './project-mirror.ts';
+
 export type NeoProjectFacts = {
   id: string;
   title: string;
@@ -17,12 +19,6 @@ export type NeoProjectCleanup =
   | { action: 'delete'; projectId: string; title: string }
   | { action: 'merge'; projectId: string; title: string; targetId: string }
   | { action: 'archive'; projectId: string; title: string };
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-function isNeoOngoingPlace(work: readonly { lastActivityAt: number }[]): boolean {
-  return new Set(work.map((item) => Math.floor(item.lastActivityAt / DAY_MS))).size > 1;
-}
 
 const repositories = (project: NeoProjectFacts) =>
   project.aliases.filter((alias) => alias.startsWith('repository:'));
