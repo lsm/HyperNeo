@@ -21,6 +21,8 @@ describe('detectNeoReplyLanguage', () => {
     ['修复#12的问题', 'Chinese'],
     ['Why does it fail with 无法连接到服务器 when I start it?', null],
     ['请帮我修一下这个 bug', 'Chinese'],
+    ['Translate this: 现在有一张卡片在运行', null],
+    ['what does 现在有一张卡片在运行 mean?', null],
     ['现在有卡片还在运行吗？', 'Chinese'],
     ['把 lsm/HyperNeo#12 的 CI 修好', 'Chinese'],
     ['このPRを確認して', 'Japanese'],

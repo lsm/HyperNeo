@@ -16,6 +16,9 @@ const count = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 
 const ENGLISH_WORD =
   /\b(?:the|a|an|is|are|was|be|it|to|of|in|on|for|and|or|not|this|that|what|which|who|how|why|when|where|any|all|can|could|please|do|does|did|you|your|we|i|me|my|make|fix|show|check|there|still|now|with)\b/gi;
 
+const ENGLISH_FRAME =
+  /\b(?:the|this|that|these|those|what|which|how|why|does|is|are|mean|means|translate)\b/gi;
+
 export function detectNeoReplyLanguage(text: string): NeoReplyLanguage | null {
   const prose = text
     .slice(0, DETECT_LIMIT)
@@ -27,8 +30,10 @@ export function detectNeoReplyLanguage(text: string): NeoReplyLanguage | null {
   const hangul = count(prose, /[\uac00-\ud7af]/g);
   const cjk = kana + hangul + count(prose, /[\u4e00-\u9fff]/g);
   const words = count(prose, /[A-Za-z]{2,}/g);
-  if (cjk >= 2 && cjk >= 2 * words)
+  if (cjk >= 2 && cjk >= 2 * words) {
+    if (count(prose, ENGLISH_FRAME)) return null;
     return kana >= 2 ? 'Japanese' : hangul >= 2 ? 'Korean' : 'Chinese';
+  }
   if (cjk >= 2 && words < 2 * cjk) return null;
   const english = count(prose, ENGLISH_WORD);
   if (english >= 2 && english * 4 >= words) return 'English';
