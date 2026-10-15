@@ -170,7 +170,7 @@ export function productionRoutePrompt(evalCase: EvalCase): {
   const latest = [...new Set(recent.map((route) => route.projectId ?? 'main'))].map(
     (topic) => recent.find((route) => (route.projectId ?? 'main') === topic) as NeoRoute
   );
-  const context = renderNeoRouteContext(holders, holders, recent, latest, true);
+  const context = renderNeoRouteContext(holders, recent, latest, true);
   const options = [
     ...holders,
     { projectId: NEO_INBOX_ID, sessionId: '', title: 'Inbox', summary: NEO_INBOX_SUMMARY },
