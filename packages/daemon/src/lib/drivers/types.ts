@@ -20,6 +20,7 @@ export const PlaceSchema = z.object({
   name: z.string(),
   codeIdentity: z.string().optional(),
   remotes: z.array(z.string()).optional(),
+  repoName: z.string().optional(),
   toolProject: z.object({ id: z.string(), name: z.string() }).optional(),
 });
 

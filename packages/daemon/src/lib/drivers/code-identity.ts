@@ -1,7 +1,23 @@
+import { basename, dirname } from 'node:path';
 import simpleGit from 'simple-git';
 import type { Place, PlaceGroup } from './types.ts';
 
-type CodeIdentity = Pick<Place, 'codeIdentity' | 'remotes'>;
+type CodeIdentity = Pick<Place, 'codeIdentity' | 'remotes' | 'repoName'>;
+
+export function repoNameFromRemote(remote: string | undefined): string | null {
+  const name = remote
+    ?.trim()
+    .replace(/\/+$/, '')
+    .replace(/\.git$/, '')
+    .split(/[/:]/)
+    .at(-1);
+  return name || null;
+}
+
+export function repoNameFromCommonDir(commonDir: string): string | null {
+  const root = basename(commonDir) === '.git' ? dirname(commonDir) : commonDir;
+  return basename(root).replace(/\.git$/, '') || null;
+}
 
 export async function readCodeIdentity(folder: string): Promise<CodeIdentity> {
   try {
@@ -12,14 +28,19 @@ export async function readCodeIdentity(folder: string): Promise<CodeIdentity> {
         (await git.getRemotes(true)).flatMap(({ refs }) => [refs.fetch, refs.push]).filter(Boolean)
       ),
     ];
-    if (shallow) return remotes.length ? { remotes } : {};
+    const commonDir = (
+      await git.raw(['rev-parse', '--path-format=absolute', '--git-common-dir'])
+    ).trim();
+    const repoName = repoNameFromRemote(remotes[0]) ?? repoNameFromCommonDir(commonDir);
+    const named = repoName ? { repoName } : {};
+    if (shallow) return remotes.length ? { remotes, ...named } : named;
     const roots = (await git.raw(['--no-replace-objects', 'rev-list', '--max-parents=0', 'HEAD']))
       .trim()
       .split(/\s+/)
       .filter((root) => /^[a-f0-9]{40,64}$/.test(root))
       .sort();
-    if (!roots.length) return {};
-    return { codeIdentity: `git:${roots.join(':')}`, remotes };
+    if (!roots.length) return named;
+    return { codeIdentity: `git:${roots.join(':')}`, remotes, ...named };
   } catch {
     return {};
   }

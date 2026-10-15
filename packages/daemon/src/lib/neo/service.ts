@@ -1250,6 +1250,12 @@ export class NeoService {
         coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'action']);
   }
 
+  noteCorrectionReply(publication: NeoPublicationInput): void {
+    if (!publication.triggerId) return;
+    this.spendWaitingReminders(publication.producerInput);
+    this.noteHumanReply(publication);
+  }
+
   private appendPublication(input: NeoPublicationInput) {
     const plan = planNeoSavedRulesAppend(input, this.savedRules, {
       standingRules: neoStandingRules(this.db.getGlobalSettings?.().neo),

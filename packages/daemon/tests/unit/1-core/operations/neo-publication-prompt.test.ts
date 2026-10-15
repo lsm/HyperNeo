@@ -202,3 +202,15 @@ describe('direct human publication prompt', () => {
     }
   });
 });
+
+describe('neoPrompt edit, correct or reply', () => {
+  test('teaches the method by what changes, for a request or a mistake Neo notices', () => {
+    const prompt = neoPrompt(null);
+    expect(prompt).toContain('Choose by what changes, not by how the human phrases it');
+    expect(prompt).toContain('edit it in place with neo.publication.edit');
+    expect(prompt).toContain('publish the right one with neo.publication.correct');
+    expect(prompt).toContain('that correction is your reply to it, so publish nothing else');
+    expect(prompt).toContain('Find the publicationId with neo.publication.recent');
+    expect(prompt).toContain("never a session's messages or another session's output");
+  });
+});

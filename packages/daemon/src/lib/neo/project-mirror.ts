@@ -9,6 +9,7 @@ import { sep } from 'node:path';
 import type { Place, PlaceGroup } from '../drivers/types.ts';
 import { placeKey } from '../drivers/places.ts';
 import { neoFolderPath } from './folder.ts';
+import { repoNameFromRemote } from '../drivers/code-identity.ts';
 import { mergeNeoDuplicateProjects, type NeoProjectMergeInput } from './project-merge.ts';
 
 export interface NeoWorkspaceProject {
@@ -34,6 +35,31 @@ export function isNeoPlumbingFolder(
     /[/\\]Neo[/\\]\.coordinators([/\\]|$)/.test(folder) ||
     local.isTemp(folder) ||
     (here && !local.exists(folder))
+  );
+}
+
+const GENERATED_FOLDER = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$|^[0-9a-f]{8}$|^worktrees$/i;
+
+export function neoWorkspaceTitle(workspaces: readonly Place[], primary: Place): string {
+  const repo = workspaces.flatMap(
+    (place) => place.repoName ?? repoNameFromRemote(place.remotes?.[0]) ?? []
+  )[0];
+  if (repo) return repo;
+  const tool = workspaces.find((place) => place.toolProject)?.toolProject?.name;
+  if (tool) return tool;
+  const readable = (primary.folder ?? '')
+    .split(/[/\\]/)
+    .filter(Boolean)
+    .reverse()
+    .find((segment) => !GENERATED_FOLDER.test(segment));
+  return GENERATED_FOLDER.test(primary.name) && readable ? readable : primary.name;
+}
+
+export function isNeoMirrorTitled(project: { title: string; summary: string }): boolean {
+  const lines = project.summary.split('\n\n');
+  return (
+    lines.includes(`Project: ${project.title}`) &&
+    lines.every((line) => line.startsWith('Project: '))
   );
 }
 
@@ -68,7 +94,7 @@ export function planNeoWorkspaceProjects(
             ]),
           ]),
         ],
-        title: workspaces.find((place) => place.toolProject)?.toolProject?.name ?? primary.name,
+        title: neoWorkspaceTitle(workspaces, primary),
       };
     });
 }
@@ -143,11 +169,18 @@ export function persistNeoWorkspaceProjects(
         return row ? [row.project_id] : [];
       });
       const id = known[0] ?? `project:${crypto.randomUUID()}`;
+      const existing = known.length ? repo.getProject(id) : null;
       if (!known.length) {
         changed = true;
         repo.saveProject(
           { id, title: project.title, summary: `Project: ${project.title}`, context: '' },
           0
+        );
+      } else if (existing && existing.title !== project.title && isNeoMirrorTitled(existing)) {
+        changed = true;
+        repo.saveProject(
+          { ...existing, title: project.title, summary: `Project: ${project.title}` },
+          existing.revision
         );
       }
       for (const alias of project.aliases)
