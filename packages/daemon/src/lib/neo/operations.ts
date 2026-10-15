@@ -271,6 +271,8 @@ const ConsultationResult = z.union([
     replyGuidance: z.string().optional(),
   }),
 ]);
+const NEO_ASK_TOLD_LIMIT = 20;
+const NEO_ASK_TOLD_TEXT = 300;
 const SnapshotOk = z.object({
   ok: z.literal(true),
   sessionId: z.string().nullable(),
@@ -333,6 +335,7 @@ const SnapshotOk = z.object({
         triggerId: z.string().optional(),
       })
     )
+    .max(NEO_ASK_TOLD_LIMIT)
     .optional(),
   moreSettled: z.boolean().optional(),
   omitted: z
@@ -835,10 +838,11 @@ function readNeoAskTold(service: NeoService, ask: NeoAsk): NonNullable<NeoSnapsh
   if (!root?.startsWith('neo:')) return [];
   return service.publications
     .toldForAsk(root.slice(4), ask)
+    .slice(-NEO_ASK_TOLD_LIMIT)
     .map(({ publicationId, createdAt, shortText, triggerId }) => ({
       publicationId,
       at: createdAt,
-      shortText,
+      shortText: shortText.slice(0, NEO_ASK_TOLD_TEXT),
       ...(triggerId ? { triggerId } : {}),
     }));
 }

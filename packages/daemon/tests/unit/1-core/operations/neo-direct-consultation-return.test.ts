@@ -361,6 +361,44 @@ describe('NeoService direct consultation return', () => {
     });
   });
 
+  test('an ask read keeps only the newest told messages, each short', async () => {
+    const opened = service.askRecords.open(
+      {
+        id: 'ask-many',
+        requestKey: 'ask-many',
+        projectId: null,
+        originSessionId: root,
+        originMessageId: ask.messageId,
+        title: 'Many',
+        ask: 'Many',
+        doneWhen: '- many',
+        doneSource: 'human',
+      },
+      [{ text: 'many', check: null }]
+    )!;
+    for (let n = 0; n < 25; n++)
+      service.publications.append({
+        ...draft,
+        publicationId: `40000000-0000-4000-8000-0000000001${String(n).padStart(2, '0')}`,
+        shortText: `${n} ${'x'.repeat(400)}`,
+        fullText: `${n}`,
+        links: [],
+        conversationId,
+        askOrigin: ask,
+        producerInput: ask,
+        triggerId: `outcome:${opened.id}:${n}`,
+      });
+    const read = (await invokeOperation(
+      ops(),
+      'neo.snapshot',
+      { askId: opened.id },
+      rootCaller()
+    )) as { value: { told: { shortText: string }[] } };
+    expect(read.value.told).toHaveLength(20);
+    expect(read.value.told[0].shortText.startsWith('5 ')).toBe(true);
+    expect(read.value.told.every((item) => item.shortText.length <= 300)).toBe(true);
+  });
+
   test('a work review is acted on quietly: its publication is refused and its end settles it without a root reply', async () => {
     db.getDatabase().prepare('DELETE FROM neo_consultations').run();
     prompt(holder, 'holder-human', 'human');
