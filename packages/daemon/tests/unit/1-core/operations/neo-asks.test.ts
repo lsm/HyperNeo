@@ -3870,6 +3870,7 @@ describe('requireNeoProposalDelivers', () => {
     ['an open ask and no delivers', undefined, ask, read, false],
     ['delivers: []', [], ask, read, true],
     ['an unbound open item', ['i1'], ask, read, true],
+    ['the same item twice', ['i1', 'i1'], ask, read, false],
     ['an item a failed card released', ['i3'], ask, read, true],
     ['an item a queued card delivers', ['i2'], ask, read, false],
     ['a met item', ['i4'], ask, read, false],

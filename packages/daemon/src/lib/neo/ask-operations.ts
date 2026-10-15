@@ -403,6 +403,9 @@ export function requireNeoProposalDelivers<T>(
           ),
         }
       : { value };
+  const repeated = delivers.find((id, index) => delivers.indexOf(id) !== index);
+  if (repeated !== undefined)
+    return { reason: fail(`delivers_repeated: ${repeated} is listed twice; name each item once.`) };
   for (const id of delivers) {
     const item = open.find((entry) => entry.id === id);
     if (!item) return { reason: fail(`delivers_unknown: ${id} is not an open item on this ask.`) };
