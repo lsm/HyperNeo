@@ -12,8 +12,9 @@ import {
 } from '../../../../src/lib/neo/admission-wake.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { NEO_WORK_AWAITING_WORKER } from '../../../../src/lib/neo/work-reroute.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { NEO_EDGES_NEED_APPROVAL } from '../../../../src/lib/neo/work-admission.ts';
+import { NEO_WORK_AWAITING_WORKER } from '../../../../src/lib/neo/work-reroute.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -170,8 +171,9 @@ describe('neo.work.start with dependsOn', () => {
     try {
       service.askRecords.approve('ask-b', Date.now(), service.askRecords.get('ask-b')!.revision!);
       expect(await start('b', ['a'], neo)).toMatchObject({
-        value: { ok: false, reason: 'not_approved' },
+        value: { ok: false, reason: NEO_EDGES_NEED_APPROVAL },
       });
+      expect(service.dependencies.edges()).toEqual([{ workId: 'b', prerequisiteId: 'a' }]);
       expect(service.askRecords.get('ask-b')?.approvedAt ?? null).toBeNull();
       expect(service.dependencies.hasStartIntent('b')).toBe(false);
       expect(starts).toHaveLength(0);

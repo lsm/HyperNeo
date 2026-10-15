@@ -349,6 +349,7 @@ describe('Neo existing trusted human work input', () => {
           requestKey: key,
           projectId: null,
           askId: opened.id,
+          delivers: [],
           title: `Fictional ${key}`,
           instruction: 'Use only the existing fictional target.',
           targetSessionId,
