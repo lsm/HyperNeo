@@ -353,6 +353,7 @@ import {
   neoTriggerMessageIds,
   planNeoTriggerRetry,
   shouldRetryNeoTrigger,
+  shouldPreemptNeoTurn,
   neoTriggerWorkProblem,
   NEO_CONSULTATION_PENDING_DETAIL,
   neoTriggerNote,
@@ -3756,6 +3757,26 @@ export class NeoService {
       consulted
     );
     return reason ? { ok: false, reason } : null;
+  }
+
+  async preemptAnsweredTurn(sessionId: string): Promise<void> {
+    const root = this.repo.getBindingForProject(null);
+    if (!root?.sessionId.startsWith('neo:') || !this.repo.getBindingBySession(sessionId)) return;
+    const conversationId = root.sessionId.slice(4);
+    if (
+      !shouldPreemptNeoTurn(
+        this.db.getSession(sessionId)?.processingState,
+        (messageId) => this.inputTrigger({ sessionId, messageId }),
+        (trigger) => !!this.publications.byTrigger(conversationId, trigger)
+      )
+    )
+      return;
+    try {
+      const live = await this.sessions.getSessionForControl(sessionId);
+      await live?.handleInterrupt({ preserveDeliveryJobs: true });
+    } catch (error) {
+      this.log.warn('Answered Neo turn not preempted', error);
+    }
   }
 
   private triggerAnswered(parent: NeoAskOrigin | null): boolean {
