@@ -5,14 +5,19 @@ interface CopyButtonProps {
   text: string;
   label?: string;
   disabled?: boolean;
+  copiedAt?: number;
 }
 
 export function CopyButton({
   text,
   label = 'Copy to clipboard',
   disabled = false,
+  copiedAt,
 }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (copiedAt) setCopied(true);
+  }, [copiedAt]);
   const textRef = useRef(text);
   textRef.current = text;
 

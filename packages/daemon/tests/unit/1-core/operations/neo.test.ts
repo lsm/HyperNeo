@@ -436,7 +436,7 @@ describe('Neo MVP', () => {
     expect(created).toHaveLength(0);
   });
 
-  test('opening returns the snapshot without waiting for work discovery', async () => {
+  test('opening replies before work discovery starts', async () => {
     const finds: unknown[] = [];
     const find = defineOperation({
       name: 'work.find',
@@ -453,6 +453,8 @@ describe('Neo MVP', () => {
     const opened = (await invoke('neo.open')) as { value: { ok: boolean; sessionId: string } };
     expect(opened.value.ok).toBe(true);
     expect(created.map((params) => params.sessionId)).toEqual([opened.value.sessionId]);
+    expect(finds).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(finds).toEqual([{ limit: 50 }]);
   });
 
