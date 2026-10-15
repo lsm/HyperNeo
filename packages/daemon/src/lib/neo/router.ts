@@ -122,7 +122,6 @@ export interface NeoRouterDeps {
   embed(text: string): Promise<Float32Array | null>;
   classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteVerdict>;
   inbox?(): Promise<NeoHolder | null>;
-  newProject?(text: string, key?: string): Promise<NeoHolder | null>;
   inboxRunnable?(): Promise<boolean>;
 }
 
@@ -305,34 +304,18 @@ async function classifyNeoAsk(
   const missed = verdict && typeof verdict === 'object' && 'miss' in verdict ? verdict : null;
   const chosen = decided ? decided.decision : missed ? null : (verdict as NeoRouteAnswer);
   const unheld = decided?.basis === 'new_subject' || decided?.basis === 'matches_project';
-  if (chosen === 'main' && unheld && decided?.projectTitle && deps.newProject) {
-    const existing = holders.filter(
-      (holder) => holder.title.trim().toLowerCase() === decided.projectTitle!.toLowerCase()
-    );
-    const project =
-      existing.length === 1
-        ? existing[0]
-        : existing.length > 1
-          ? null
-          : await deps.newProject(decided.projectTitle);
-    if (project)
-      return {
-        choice: {
-          projectId: project.projectId,
-          sessionId: project.sessionId,
-          signal: classifierSignal(decided.basis),
-          confidence: decided.confidence ?? CLASSIFIER_CONFIDENCE,
-        },
-      };
-  }
-  if (chosen === 'main') return { choice: null, fallback: classifierSignal(decided?.basis) };
+  if (chosen === 'main' && !unheld)
+    return { choice: null, fallback: classifierSignal(decided?.basis) };
   if (!chosen)
     return {
       choice: pickNeoHolder(scores),
       fallback: `classifier-${missed?.miss ?? 'unanswered'}`,
       ...(missed ? { cause: missed.cause } : {}),
     };
-  const holder = chosen.projectId === NEO_INBOX_ID ? await deps.inbox?.() : chosen;
+  const title = decided?.projectTitle?.trim().toLowerCase();
+  const titled = holders.filter((holder) => holder.title.trim().toLowerCase() === title);
+  const target = chosen !== 'main' ? chosen : titled.length === 1 ? titled[0] : INBOX_CHOICE;
+  const holder = target.projectId === NEO_INBOX_ID ? await deps.inbox?.() : target;
   return {
     choice: holder
       ? {
@@ -479,7 +462,7 @@ export async function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise
       facts: () => [],
       recentTurns: () => neoLevelTurns(deps.recentTurns(), holders, parentId),
       projectTurns: () => neoLevelTurns(deps.projectTurns(), holders, parentId),
-      ...(parentId || scopedWorkspace ? { inbox: undefined, newProject: undefined } : {}),
+      ...(parentId || scopedWorkspace ? { inbox: undefined } : {}),
     });
     if (!next.choice) return parentId ? chosen : next;
     if (next.choice.projectId === parentId) return next;
@@ -614,10 +597,6 @@ export function createNeoRouter(
           return { ...INBOX_CHOICE, sessionId };
         }
       : undefined,
-    newProject: openHolder
-      ? (text, key) =>
-          openNeoNewProject(repo, openHolder, neoNewProject(text, key ?? crypto.randomUUID()))
-      : undefined,
     inboxRunnable: async () => {
       if (process.env.NODE_ENV === 'test') return true;
       const binding = repo.getBindingForProject(NEO_INBOX_ID) ?? repo.getBindingForProject(null);
@@ -643,13 +622,5 @@ export function createNeoRouter(
         }
       : undefined,
   };
-  const newProject = deps.newProject;
-  return async (text, requestId) =>
-    wakeNeoRoute(
-      await chooseNeoRoute(text, {
-        ...deps,
-        newProject: newProject && ((ask) => newProject(ask, requestId)),
-      }),
-      holders
-    );
+  return async (text) => wakeNeoRoute(await chooseNeoRoute(text, deps), holders);
 }
