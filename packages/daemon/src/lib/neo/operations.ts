@@ -73,7 +73,11 @@ import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { requireNeoProposal, type NeoProposal } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
-import { createNeoAskForwardOperation, neoForwardedText } from './ask-forward-operation.ts';
+import {
+  createNeoAskForwardOperation,
+  neoForwardedText,
+  neoForwardHop,
+} from './ask-forward-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import {
   mergeNeoDuplicateProjects,
@@ -827,10 +831,12 @@ function isNeoHumanTurn(service: NeoService, caller: OperationCaller): boolean {
   if (!turn?.isLive() || !caller.sessionId) return false;
   return (
     service.db.getSession(caller.sessionId)?.status === 'active' &&
-    hasNeoHumanWorkInput(
-      caller,
-      service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId, neoTurnOrigin(turn))
-    )
+    service.ownsHumanMessage(caller) &&
+    (neoForwardHop(turn.messageId) !== null ||
+      hasNeoHumanWorkInput(
+        caller,
+        service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId, neoTurnOrigin(turn))
+      ))
   );
 }
 

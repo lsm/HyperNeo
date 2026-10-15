@@ -534,9 +534,11 @@ export function requireNeoAskOriginFree(
 
 export type NeoAskNameable = { id: string; title: string; cardIds: string[]; refs: string[] };
 
-export function requireNeoAskHumanTurn(caller: OperationCaller): Gate<OperationCaller> {
-  return caller.source !== 'mcp' ||
-    (caller.neoTurn?.human && !caller.neoTurn.consultationId && caller.neoTurn.isLive())
+export function requireNeoAskHumanTurn(
+  caller: OperationCaller,
+  owns: boolean
+): Gate<OperationCaller> {
+  return caller.source !== 'mcp' || (owns && caller.neoTurn?.isLive())
     ? { value: caller }
     : {
         reason: fail(
@@ -1451,7 +1453,8 @@ export function createNeoAskOperations(
       'input',
       'result:admission'
     )
-    .pipe(requireNeoAskHumanTurn, 'caller', 'result:admission')
+    .pipe((caller: OperationCaller) => service.ownsHumanMessage(caller), 'caller', 'owns')
+    .pipe(requireNeoAskHumanTurn, ['caller', 'owns'], 'result:admission')
     .pipe(
       (input: OpenRequest, caller: OperationCaller) =>
         admitNeoWorkOrigin(
