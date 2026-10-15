@@ -70,6 +70,7 @@ function setup() {
           sessionId: input.sessionId,
           messageId: `ask-of-${input.messageId}`,
         }),
+        inputTrigger: (input) => (input.messageId === 'm-3' ? `human:${input.messageId}` : null),
         isTriggerPublished: (_conversationId, triggerId) => published.has(triggerId),
         notify: () => notified++,
         noteReply: (publication) => replies.push(publication.publicationId),
