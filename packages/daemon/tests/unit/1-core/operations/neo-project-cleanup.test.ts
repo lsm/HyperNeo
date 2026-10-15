@@ -33,13 +33,7 @@ const plan = (projects: NeoProjectFacts[], pinned: string[] = [], mirrored: stri
     mirrored: new Set(mirrored),
   });
 const repo = 'repository:github.com/lsm/app';
-const oneOff = {
-  asks: 1,
-  work: [
-    { lastActivityAt: DAY, ref: null },
-    { lastActivityAt: DAY + 60_000, ref: null },
-  ],
-};
+const oneOff = { asks: 1, work: [{ ref: null }] };
 
 describe('project cleanup plan', () => {
   test('an empty project with a silent holder is deleted unless the mirror would create it again', () => {
@@ -70,7 +64,7 @@ describe('project cleanup plan', () => {
   });
 
   test('a project with no repository merges where most of its cards ran, before any title match', () => {
-    const card = (ref: string) => ({ lastActivityAt: DAY, ref });
+    const card = (ref: string) => ({ ref });
     const ios = project('ios', { createdAt: 2, aliases: [repo, 'work:here\u0000claude\u0000s1'] });
     const web = project('web', {
       title: 'Topic',
@@ -94,26 +88,14 @@ describe('project cleanup plan', () => {
     ).toEqual([{ action: 'merge', projectId: 'topic', title: 'Topic', targetId: 'ios' }]);
   });
 
-  test('a one-off project with no repository and no home is archived; ongoing work, no work, or another machine is kept', () => {
-    expect(plan([project('once', oneOff)])).toEqual([
-      { action: 'archive', projectId: 'once', title: 'once' },
-    ]);
+  test('a project with no repository, content and no home is kept however little it was used', () => {
     expect(
       plan([
+        project('once', oneOff),
         project('notes', { context: 10, holderMessages: 4 }),
-        project('host', { ...oneOff, aliases: ['folder:here2\u0000/x'] }),
+        project('addressed', { asks: 1, routed: 1 }),
       ])
     ).toEqual([]);
-    const twoDays = {
-      asks: 1,
-      work: [
-        { lastActivityAt: DAY, ref: null },
-        { lastActivityAt: 3 * DAY, ref: null },
-      ],
-    };
-    expect(plan([project('days', twoDays), project('addressed', { asks: 1, routed: 1 })])).toEqual(
-      []
-    );
   });
 
   test('another machine is no home', () => {
@@ -122,7 +104,7 @@ describe('project cleanup plan', () => {
         project('away', { title: 'App', aliases: [repo, 'folder:tts\u0000/app'] }),
         project('topic', { title: 'App', ...oneOff }),
       ])
-    ).toEqual([{ action: 'archive', projectId: 'topic', title: 'App' }]);
+    ).toEqual([]);
   });
 
   test('a project the human asked to archive is archived, even with a repository', () => {

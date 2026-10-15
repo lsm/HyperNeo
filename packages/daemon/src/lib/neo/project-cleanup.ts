@@ -1,9 +1,5 @@
 import type { Place, PlaceGroup } from '../drivers/types.ts';
-import {
-  canNeoMirrorCreateProject,
-  isNeoOngoingPlace,
-  planNeoWorkspaceProjects,
-} from './project-mirror.ts';
+import { canNeoMirrorCreateProject, planNeoWorkspaceProjects } from './project-mirror.ts';
 
 export type NeoProjectFacts = {
   id: string;
@@ -13,7 +9,7 @@ export type NeoProjectFacts = {
   context: number;
   asks: number;
   liveAsks: number;
-  work: { lastActivityAt: number; ref: string | null }[];
+  work: { ref: string | null }[];
   liveWork: number;
   routed: number;
   holderMessages: number;
@@ -45,9 +41,6 @@ export function neoMirroredAliases(
 }
 
 const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork > 0;
-
-const isOneOff = (project: NeoProjectFacts) =>
-  project.routed === 0 && project.work.length > 0 && !isNeoOngoingPlace(project.work);
 
 export function neoCleanupFolders(projects: readonly NeoProjectFacts[], machine: string): string[] {
   const local = `folder:${machine}\u0000`;
@@ -110,7 +103,6 @@ export function planNeoProjectCleanup(
           ? []
           : [{ action: 'delete', ...named }];
       const target = home(project, homes);
-      if (target) return [{ action: 'merge', ...named, targetId: target.id }];
-      return isOneOff(project) ? [{ action: 'archive', ...named }] : [];
+      return target ? [{ action: 'merge', ...named, targetId: target.id }] : [];
     });
 }
