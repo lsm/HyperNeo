@@ -2438,9 +2438,15 @@ export function createNeoOperations(service: NeoService) {
         if ('reason' in reserved) return reserved.reason;
         try {
           const result = await propose(input, caller);
-          return 'accepted' in result
-            ? { ok: false as const, reason: result.reason }
-            : withAskView(result);
+          const outcome =
+            'accepted' in result
+              ? { ok: false as const, reason: result.reason }
+              : withAskView(result);
+          if (input.askId) {
+            service.askRecords.recordRefusal(input.askId, outcome.ok ? null : outcome.reason);
+            service.notifyChanged();
+          }
+          return outcome;
         } finally {
           if (reserved.value) adopting.delete(reserved.value);
         }

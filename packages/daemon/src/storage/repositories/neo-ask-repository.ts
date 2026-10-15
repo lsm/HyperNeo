@@ -14,7 +14,7 @@ const askColumns = `id, request_key AS requestKey, concern_id AS projectId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
   revision, approved_revision AS approvedRevision,
   title, ask, done_when AS doneWhen, done_source AS doneSource, pack, approved_at AS approvedAt,
-  approved_continues AS approvedContinues, waiting_item AS waitingItem, status, outcome, evidence,
+  approved_continues AS approvedContinues, waiting_item AS waitingItem, refused, refused_count AS refusedCount, status, outcome, evidence,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt`;
 
 const REOPEN = "status = 'open', outcome = NULL, settled_at = NULL, waiting_item = NULL";
@@ -738,6 +738,14 @@ export class NeoAskRepository {
         ORDER BY updated_at, id`)
       .all() as NeoAskRow[];
     return this.withWork(rows);
+  }
+
+  recordRefusal(id: string, refused: string | null): void {
+    this.db
+      .prepare(
+        'UPDATE neo_asks SET refused = ?, refused_count = CASE WHEN ? IS NULL THEN 0 ELSE refused_count + 1 END WHERE id = ?'
+      )
+      .run(refused, refused, id);
   }
 
   markReminded(ids: readonly string[], at: number): void {

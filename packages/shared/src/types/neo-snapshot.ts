@@ -156,6 +156,8 @@ export interface NeoAsk {
   stalledWorkIds?: string[];
   summarized?: true;
   waitingItem?: string | null;
+  refused?: string | null;
+  refusedCount?: number;
   status: NeoAskStatus;
   outcome: string | null;
   evidence?: string | null;
@@ -292,6 +294,7 @@ export interface NeoAskView {
   settled: boolean;
   needsYou: boolean;
   idle?: true;
+  idleReason?: string;
   done: number;
   total: number;
   workIds: string[];
@@ -315,7 +318,6 @@ export type NeoAskHumanAction =
   | { kind: 'confirm'; itemId: string; step: string }
   | { kind: 'retry'; workId: string }
   | { kind: 'close'; workId: string }
-  | { kind: 'drop' }
   | { kind: 'talk'; workId: string; what: string };
 
 export interface NeoAskAnswer {

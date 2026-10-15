@@ -1,4 +1,5 @@
 import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
+import { NEO_ASK_REFUSAL_BUDGET } from '../../../../src/lib/neo/ask-views.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
@@ -25,6 +26,7 @@ import {
   neoTriggerWatchSessions,
   NEO_TRIGGER_RETRY_MS,
   neoAskTriggerKeys,
+  neoAskIdleLine,
   neoTriggerNote,
   noteNeoAskTrigger,
   planNeoAskTrigger,
@@ -128,13 +130,37 @@ describe('trigger keys of an ask', () => {
   const keys = (target: NeoAsk, read = { view: view(), cards: [card()] }, pending = false) =>
     neoAskTriggerKeys(target, read, work, () => pending).map((key) => [key.kind, key.key]);
 
-  test('an ask with nothing running wakes Neo once per ended card', () => {
+  test('an ask with nothing running wakes Neo once per ended card and once per refused propose', () => {
     const idle = {
-      view: view({ workIds: [], idle: true, humanActions: [{ kind: 'drop' }] }),
+      view: view({ workIds: [], idle: true, humanActions: [] }),
       cards: [card({ phase: 'cancelled' })],
     };
-    expect(keys(ask, idle)).toEqual([['idle', 'idle:500']]);
-    expect(keys({ ...ask, workIds: [] }, idle)).toEqual([['idle', 'idle:10']]);
+    expect(keys(ask, idle)).toEqual([['idle', 'idle:500:0']]);
+    expect(keys({ ...ask, workIds: [] }, idle)).toEqual([['idle', 'idle:10:0']]);
+    expect(keys({ ...ask, workIds: [], refused: 'No adapter.', refusedCount: 2 }, idle)).toEqual([
+      ['idle', 'idle:10:2'],
+    ]);
+  });
+
+  test('an idle ask is never quiet: Neo is told to move the work, then to ask the human', () => {
+    const idle = { view: view({ workIds: [], idle: true, humanActions: [] }), cards: [] };
+    const line = (refusedCount: number) =>
+      neoAskTriggerKeys(
+        {
+          ...ask,
+          workIds: [],
+          refused: 'The claude-code adapter cannot start work.',
+          refusedCount,
+        },
+        idle,
+        work,
+        () => false
+      ).find((key) => key.kind === 'idle')?.line;
+    expect(line(1)).toContain('Get the work moving another way');
+    expect(line(1)).toContain('The claude-code adapter cannot start work.');
+    expect(line(NEO_ASK_REFUSAL_BUDGET)).toContain('Ask the human one concrete question');
+    expect(line(NEO_ASK_REFUSAL_BUDGET)).toContain('where it is stuck');
+    expect(neoAskIdleLine({ refused: null, refusedCount: 0 })).not.toContain('drop');
   });
 
   test('an ask whose answer is reported and every other item met wakes Neo to publish it', () => {

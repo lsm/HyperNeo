@@ -26,7 +26,27 @@ const askScenes: Record<NeoAskStatus, { group: NeoCardGroup; label: string }> = 
 const dropped = (card: NeoCardView) =>
   card.phase === 'cancelled' || (card.phase === 'failed' && card.superseded);
 
-export const NEO_ASK_IDLE_LABEL = 'Nothing running · Neo will propose again, or drop it';
+export const NEO_ASK_IDLE_LABEL = 'Not started · Neo is trying another way';
+
+export const NEO_ASK_REFUSAL_BUDGET = 3;
+
+export function neoAskIdleLabel(
+  refusedCount: number | undefined,
+  idleReason: string | undefined
+): { label: string; stuck: boolean } {
+  return (refusedCount ?? 0) >= NEO_ASK_REFUSAL_BUDGET
+    ? { label: `Needs you · ${idleReason ?? "Couldn't start"}`, stuck: true }
+    : { label: NEO_ASK_IDLE_LABEL, stuck: false };
+}
+
+export function neoAskIdleReason(refused: string | null | undefined): string | undefined {
+  const reason =
+    refused
+      ?.replace(/\s+/g, ' ')
+      .trim()
+      .match(/^.+?[.!?](?=\s|$)/)?.[0] ?? refused;
+  return reason?.trim() ? `Couldn't start: ${reason.trim().replace(/[.!?]$/, '')}` : undefined;
+}
 
 export function isNeoCardInPlay(card: Pick<NeoCardView, 'group' | 'phase'>): boolean {
   return card.group !== 'outcomes' && card.phase !== 'abandoned';
@@ -176,20 +196,22 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
   const humanActions = deriveNeoAskHumanActions(ask, live);
   const idle =
     ask.status === 'open' &&
-    ask.workIds.length > 0 &&
     !needsYou &&
     !index.busy.has(ask.id) &&
     !sessions.some((session) => session.status === 'queued' || session.status === 'running') &&
     !humanActions.length &&
     !live.some(isNeoCardInPlay) &&
     !(counted.length && counted.every((item) => item.state === 'met'));
+  const idleReason = idle ? neoAskIdleReason(ask.refused) : undefined;
+  const idleView = neoAskIdleLabel(ask.refusedCount, idleReason);
   return {
     askId: ask.id,
     group: needsYou || idle ? 'attention' : truth.group,
-    label: needsYou ? 'Needs you' : idle ? NEO_ASK_IDLE_LABEL : truth.label,
+    label: needsYou ? 'Needs you' : idle ? idleView.label : truth.label,
     settled,
-    needsYou,
+    needsYou: needsYou || (idle && idleView.stuck),
     ...(idle ? { idle: true as const } : {}),
+    ...(idleReason ? { idleReason } : {}),
     done: counted.length
       ? counted.filter((item) => item.state === 'met').length
       : doneWorkIds.length,
@@ -201,7 +223,7 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     summary: neoAskViewSummary(ask, live, index.merged),
     sessions,
     answer: neoAskAnswer(ask),
-    humanActions: idle ? [...humanActions, { kind: 'drop' }] : humanActions,
+    humanActions,
   };
 }
 

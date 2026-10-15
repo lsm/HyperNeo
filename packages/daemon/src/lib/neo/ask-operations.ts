@@ -74,6 +74,8 @@ export const NeoAskSchema = z.object({
   stalledWorkIds: z.array(z.string()).optional(),
   summarized: z.literal(true).optional(),
   waitingItem: z.string().nullable().optional(),
+  refused: z.string().nullable().optional(),
+  refusedCount: z.number().int().nonnegative().optional(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
   evidence: z.string().nullable().optional(),

@@ -9,7 +9,7 @@ import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
 import { NEO_HUMAN_TURN_LIMIT_PREFIX } from './turn-limit.ts';
-import { isNeoCardInPlay } from './ask-views.ts';
+import { isNeoCardInPlay, NEO_ASK_REFUSAL_BUDGET } from './ask-views.ts';
 import { isNeoAskAnswerReady } from './answer-outcome.ts';
 
 export const NEO_TRIGGER_PREFIX = 'neo-trigger:';
@@ -188,8 +188,6 @@ export function neoActionTriggerKey(
       );
     case 'confirm':
       return key(`confirm:${action.itemId}`, `step to confirm: ${action.step}`);
-    case 'drop':
-      return key('drop', 'nothing is running; the human can drop the ask');
     case 'talk':
       return key(
         `talk:${action.workId}:${action.what}`,
@@ -206,6 +204,13 @@ export function isNeoCardFailedForGood(card: NeoCardView, pending: boolean): boo
     card.primary.kind !== 'retry' &&
     !pending
   );
+}
+
+export function neoAskIdleLine(ask: Pick<NeoAsk, 'refused' | 'refusedCount'>): string {
+  const refused = ask.refused ? ` The last propose was refused: ${ask.refused}` : '';
+  return (ask.refusedCount ?? 0) >= NEO_ASK_REFUSAL_BUDGET
+    ? `nothing has started after ${ask.refusedCount} refused proposes.${refused} Ask the human one concrete question with neo.ask.question: where it is stuck (propose, start or which adapter), why in plain words, and the options you see.`
+    : `nothing is running for this ask and its outcome is not met. Get the work moving another way (another adapter, place or approach).${refused}`;
 }
 
 export function neoAskOutcomeKey(ask: Pick<NeoAsk, 'doneItems'>): string {
@@ -251,9 +256,9 @@ export function neoAskTriggerKeys(
   const idle: NeoTriggerKey[] = read.view.idle
     ? [
         {
-          key: `idle:${Math.max(ask.createdAt, ...ask.workIds.map((id) => work(id)?.updatedAt ?? 0))}`,
+          key: `idle:${Math.max(ask.createdAt, ...ask.workIds.map((id) => work(id)?.updatedAt ?? 0))}:${ask.refusedCount ?? 0}`,
           kind: 'idle',
-          line: 'nothing is running for this ask and its outcome is not met',
+          line: neoAskIdleLine(ask),
         },
       ]
     : [];
@@ -261,7 +266,7 @@ export function neoAskTriggerKeys(
     ...failed,
     ...idle,
     ...(read.view.humanActions ?? [])
-      .filter((action) => action.kind !== 'close' && action.kind !== 'drop')
+      .filter((action) => action.kind !== 'close')
       .map((action) => neoActionTriggerKey(ask, action, work)),
   ];
 }
