@@ -312,6 +312,38 @@ describe('neo.projects.reorganize', () => {
     expect(logged).toContain('neo reorganize: no project cleanup, the places could not be read');
   });
 
+  test('a holder mid-turn is left out of the plan until a later pass', async () => {
+    const { deps } = runtime([], {}, ['holder:busy', 'retired:busy']);
+    deps.retiredHolders = () => [
+      { projectId: 'old', title: 'Old', sessionId: 'retired:busy', spoke: true },
+      { projectId: 'idle', title: 'Idle', sessionId: 'retired:idle', spoke: true },
+    ];
+    deps.projectFacts = () => [
+      {
+        id: 'named',
+        title: 'Named',
+        createdAt: 1,
+        section: false,
+        context: 1,
+        asks: 0,
+        liveAsks: 0,
+        work: [],
+        liveWork: 0,
+        routed: 0,
+        holderMessages: 0,
+        archived: false,
+        holder: 'holder:busy',
+        aliases: [],
+      },
+    ];
+    expect(await invoke(deps, neoCaller, { archive: ['named'] })).toMatchObject({
+      ok: true,
+      cleanupPlanned: [
+        { action: 'archive', projectId: 'idle', title: 'Idle', sessionId: 'retired:idle' },
+      ],
+    });
+  });
+
   test('apply runs the same plan, logs each step and reports the ones that failed', async () => {
     const { deps, logged, cleaned } = runtime([], {});
     const empty = (id: string) => ({
