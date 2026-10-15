@@ -5,16 +5,22 @@ export type NeoReplyLanguage = 'English' | 'Chinese' | 'Japanese' | 'Korean';
 
 const count = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 0;
 
+const ENGLISH_WORD =
+  /\b(?:the|a|an|is|are|was|be|it|to|of|in|on|for|and|or|not|this|that|what|which|who|how|why|when|where|any|all|can|could|please|do|does|did|you|your|we|i|me|my|make|fix|show|check|there|still|now|with)\b/gi;
+
 export function detectNeoReplyLanguage(text: string): NeoReplyLanguage | null {
-  const prose = text.replace(/https?:\/\/\S+|`[^`]*`/g, ' ');
-  const kana = count(prose, /[぀-ヿ]/g);
-  const hangul = count(prose, /[가-힯]/g);
-  const han = count(prose, /[一-鿿]/g);
+  const prose = text
+    .replace(/```[\s\S]*?```|`[^`]*`/g, ' ')
+    .replace(/\S*(?:[/\\]|\.[A-Za-z]{1,5}\b|#\d)\S*/g, ' ');
+  const kana = count(prose, /[\u3040-\u30ff]/g);
+  const hangul = count(prose, /[\uac00-\ud7af]/g);
+  const han = count(prose, /[\u4e00-\u9fff]/g);
+  if (kana >= 2) return 'Japanese';
+  if (hangul >= 2) return 'Korean';
+  if (han >= 2) return 'Chinese';
   const words = count(prose, /[A-Za-z]{2,}/g);
-  if (kana && kana + han >= words) return 'Japanese';
-  if (hangul && hangul >= words) return 'Korean';
-  if (han && han >= words) return 'Chinese';
-  return words ? 'English' : null;
+  if (!words) return null;
+  return words <= 2 || count(prose, ENGLISH_WORD) * 4 >= words ? 'English' : null;
 }
 
 export function neoPromptText(messages: readonly SDKMessage[]): string {

@@ -17,6 +17,10 @@ describe('detectNeoReplyLanguage', () => {
     ['このPRを確認して', 'Japanese'],
     ['이 PR 확인해 줘', 'Korean'],
     ['https://github.com/lsm/HyperNeo/pull/12', null],
+    ['看一下 packages/daemon/src/lib/neo/reply-language.ts', 'Chinese'],
+    ['```ts\nconst readLanguage = detect(text)\n```\n这段对吗', 'Chinese'],
+    ['Kannst du bitte die Liste der offenen Karten prüfen', null],
+    ['that list is wrong, please correct it', 'English'],
   ] as const)('%j reads as %s', (text, language) => {
     expect(detectNeoReplyLanguage(text)).toBe(language);
   });
