@@ -123,6 +123,15 @@ describe('planNeoAskForward', () => {
     expect(planNeoAskForward({ to: 'main' }, receiver, mainAsk, fromMain, root.sessionId)).toEqual({
       reason: { ok: false, reason: 'forward_limit' },
     });
+    const toMain = [{ fromSessionId: garden.sessionId, toSessionId: root.sessionId }];
+    const mainReceiver = {
+      sessionId: root.sessionId,
+      projectId: null,
+      input: { sessionId: root.sessionId, messageId: 'neo-forward:ask-1:0' },
+    };
+    expect(planNeoAskForward({ to: 'main' }, mainReceiver, ask, toMain, root.sessionId)).toEqual({
+      reason: { ok: false, reason: 'forward_limit' },
+    });
   });
 
   test('only the turn that carries the message itself can forward it, not a consultation or nudge', () => {

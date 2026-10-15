@@ -158,7 +158,8 @@ export function planNeoAskForward(
       ? refuse('same_project')
       : { value: { hop: 0, to: input.to } };
   }
-  if (forwards.length === 1 && forwards[0].fromSessionId === main) return refuse('forward_limit');
+  const viaMain = forwards.some((f) => f.fromSessionId === main || f.toSessionId === main);
+  if (forwards.length === 1 && viaMain) return refuse('forward_limit');
   if (forwards.length === 1) {
     if (
       forwards[0].toSessionId !== holder.sessionId ||
