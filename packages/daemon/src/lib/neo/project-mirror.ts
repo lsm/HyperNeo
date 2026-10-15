@@ -60,12 +60,6 @@ export interface NeoWorkspaceProject {
   title: string;
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-export function isNeoOngoingPlace(work: readonly { lastActivityAt: number }[]): boolean {
-  return new Set(work.map((item) => Math.floor(item.lastActivityAt / DAY_MS))).size > 1;
-}
-
 export function neoRepositoryIdentity(remote: string | undefined): string | null {
   const path = remote
     ?.trim()
