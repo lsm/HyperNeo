@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import superpipe, { type PipelineAPI } from 'superpipe';
 
 export type NeoMessageMenuAction = 'select' | 'copy' | 'share' | 'reply';
 
@@ -9,23 +10,27 @@ const labels: Record<NeoMessageMenuAction, string> = {
   reply: 'Reply',
 };
 
-export function neoMessageMenuActions({
-  hasText,
-  canShare,
-  canReply,
-}: {
-  hasText: boolean;
-  canShare: boolean;
-  canReply: boolean;
-}): NeoMessageMenuAction[] {
-  if (!hasText) return [];
-  return [
-    'select',
-    'copy',
-    ...(canShare ? (['share'] as const) : []),
-    ...(canReply ? (['reply'] as const) : []),
-  ];
+type MenuInput = { hasText: boolean; canShare: boolean; canReply: boolean };
+
+export function requireNeoMessageMenuText(
+  input: MenuInput
+): { value: MenuInput } | { reason: NeoMessageMenuAction[] } {
+  return input.hasText ? { value: input } : { reason: [] };
 }
+
+export function listNeoMessageMenuActions(input: MenuInput): NeoMessageMenuAction[] {
+  const optional: [boolean, NeoMessageMenuAction][] = [
+    [input.canShare, 'share'],
+    [input.canReply, 'reply'],
+  ];
+  return ['select', 'copy', ...optional.filter(([on]) => on).map(([, action]) => action)];
+}
+
+export const neoMessageMenuActions = (superpipe({})('neo-message-menu') as PipelineAPI)
+  .input(['input'])
+  .pipe(requireNeoMessageMenuText, 'input', 'result:actions')
+  .pipe(listNeoMessageMenuActions, 'actions', 'actions')
+  .end('actions') as (input: MenuInput) => NeoMessageMenuAction[];
 
 const LONG_PRESS_MS = 500;
 
@@ -66,15 +71,20 @@ export function NeoMessageMenu({
   actions,
   onPick,
   onClose,
+  returnFocus,
 }: {
   at: { x: number; y: number };
   actions: readonly NeoMessageMenuAction[];
   onPick: (action: NeoMessageMenuAction) => void;
   onClose: () => void;
+  returnFocus?: () => HTMLElement | null;
 }) {
   const menu = useRef<HTMLDivElement>(null);
+  const restore = useRef(returnFocus);
+  restore.current = returnFocus;
   useEffect(() => {
     menu.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    return () => restore.current?.()?.focus({ preventScroll: true });
   }, []);
   useEffect(() => {
     const away = (event: Event) => {
@@ -102,6 +112,19 @@ export function NeoMessageMenu({
         top: `${Math.min(at.y, window.innerHeight - 48 * actions.length - 8)}px`,
       }}
       class="fixed z-50 w-40 overflow-hidden rounded-xl border border-line bg-surface py-1 text-sm shadow-lg"
+      onKeyDown={(event) => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+        const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
+        const index = items.indexOf(event.target as HTMLButtonElement);
+        event.preventDefault();
+        const next =
+          event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? items.length - 1
+              : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+        items[next]?.focus();
+      }}
     >
       {actions.map((action) => (
         <button

@@ -303,6 +303,7 @@ function PublicEntry({
   const [expanded, setExpanded] = useState(false);
   const [copiedAt, setCopiedAt] = useState(0);
   const bubbleText = useRef<HTMLDivElement>(null);
+  const article = useRef<HTMLElement>(null);
   const menu = useNeoMessageMenu();
   const [showReason, setShowReason] = useState(false);
   const [restored, setRestored] = useState(
@@ -330,9 +331,11 @@ function PublicEntry({
       : '';
   return (
     <article
+      ref={article}
+      tabIndex={-1}
       id={anchor || undefined}
       data-public-entry={entry.key}
-      class={`neo-arrive neo-message w-fit break-words ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%] max-md:w-full max-md:max-w-full'}`}
+      class={`neo-arrive neo-message w-fit break-words focus:outline-none ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%] max-md:w-full max-md:max-w-full'}`}
       {...(copyText.trim() ? menu.bind : {})}
     >
       <div
@@ -490,6 +493,7 @@ function PublicEntry({
                 <div
                   data-publication-details
                   class="mt-3 rounded-[10px] bg-fill-soft px-3 py-2 text-sm text-fg-muted"
+                  style={{ '--prose-fg': 'var(--fg-muted)' }}
                 >
                   <MarkdownRenderer
                     content={full}
@@ -582,20 +586,21 @@ function PublicEntry({
             canReply: !!onQuote && !!copyText.trim(),
           })}
           onClose={menu.close}
-          onPick={(action) => {
-            if (action === 'select') {
-              const target = bubbleText.current;
-              if (target) window.getSelection()?.selectAllChildren(target);
-            } else if (action === 'copy') {
-              void copyToClipboard(copyText).then((ok) => {
-                if (ok) setCopiedAt(Date.now());
-              });
-            } else if (action === 'share') {
-              void navigator.share?.({ text: copyText }).catch(() => {});
-            } else {
-              onQuote?.({ author: ask ? 'You' : 'Neo', text: copyText, anchor });
-            }
-          }}
+          returnFocus={() => article.current}
+          onPick={(action) =>
+            ({
+              select: () => {
+                const target = bubbleText.current;
+                if (target) window.getSelection()?.selectAllChildren(target);
+              },
+              copy: () =>
+                void copyToClipboard(copyText).then((ok) => {
+                  if (ok) setCopiedAt(Date.now());
+                }),
+              share: () => void navigator.share?.({ text: copyText }).catch(() => {}),
+              reply: () => onQuote?.({ author: ask ? 'You' : 'Neo', text: copyText, anchor }),
+            })[action]()
+          }
         />
       )}
     </article>

@@ -1,6 +1,12 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from '../NeoMessageMenu.tsx';
+import {
+  listNeoMessageMenuActions,
+  NeoMessageMenu,
+  neoMessageMenuActions,
+  requireNeoMessageMenuText,
+  useNeoMessageMenu,
+} from '../NeoMessageMenu.tsx';
 
 afterEach(() => {
   cleanup();
@@ -55,5 +61,55 @@ describe('useNeoMessageMenu', () => {
     expect(screen.getByRole('menu', { name: 'Message actions' })).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+});
+
+describe('requireNeoMessageMenuText', () => {
+  it('turns away a message with no text', () => {
+    expect(requireNeoMessageMenuText({ hasText: false, canShare: true, canReply: true })).toEqual({
+      reason: [],
+    });
+  });
+});
+
+describe('listNeoMessageMenuActions', () => {
+  it('always offers select and copy, then share and reply when allowed', () => {
+    expect(listNeoMessageMenuActions({ hasText: true, canShare: false, canReply: true })).toEqual([
+      'select',
+      'copy',
+      'reply',
+    ]);
+  });
+});
+
+describe('NeoMessageMenu', () => {
+  it('moves with the arrow keys, Home and End, and returns focus when it closes', () => {
+    const message = document.createElement('div');
+    message.tabIndex = -1;
+    document.body.append(message);
+    const { unmount } = render(
+      <NeoMessageMenu
+        at={{ x: 1, y: 1 }}
+        actions={['select', 'copy', 'reply']}
+        onPick={() => {}}
+        onClose={() => {}}
+        returnFocus={() => message}
+      />
+    );
+    const items = screen.getAllByRole('menuitem');
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(items[0], { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(items[1], { key: 'End' });
+    expect(document.activeElement).toBe(items[2]);
+    fireEvent.keyDown(items[2], { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(items[0], { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(items[2]);
+    fireEvent.keyDown(items[2], { key: 'Home' });
+    expect(document.activeElement).toBe(items[0]);
+    unmount();
+    expect(document.activeElement).toBe(message);
+    message.remove();
   });
 });
