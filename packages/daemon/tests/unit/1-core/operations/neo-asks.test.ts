@@ -60,6 +60,7 @@ import {
 import { neoTurnRequestKey } from '../../../../src/lib/neo/request-key.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { isNeoHumanOwnTurn } from '../../../../src/lib/neo/notification-triggers.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -2871,9 +2872,48 @@ describe('neo.ask operations', () => {
       session_id: 'root',
     } as unknown as SDKUserMessage);
     await service.noteTurnLimit('root');
-    const note = { sessionId: 'root', messageId: 'neo-turn-limit:r2' };
+    const note = { sessionId: 'root', messageId: 'neo-turn-limit:human:r2' };
     expect(service.inputTrigger(note)).toBe('human:h1');
+    expect(isNeoHumanOwnTurn(note.messageId, 'human:h1')).toBe(true);
     expect(service.resolveAskOrigin(note)).toEqual({ sessionId: 'root', messageId: 'h1' });
+  });
+
+  test('a turn-limit note that continues a nudge is not the human’s own turn', async () => {
+    const messages = db.getSDKMessageRepo();
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+    messages.saveSDKMessage('root', {
+      type: 'result',
+      subtype: 'success',
+      uuid: 'r1',
+      session_id: 'root',
+    } as unknown as SDKUserMessage);
+    await pause();
+    messages.saveSDKMessage('root', {
+      type: 'user',
+      uuid: 'neo-nudge:h1',
+      session_id: 'root',
+      parent_tool_use_id: null,
+      inputKind: 'system',
+      message: { role: 'user', content: 'Publish your answer.' },
+    } as unknown as SDKUserMessage);
+    service.inputOrigins.record(
+      { sessionId: 'root', messageId: 'neo-nudge:h1' },
+      { sessionId: 'root', messageId: 'h1' },
+      0,
+      'human:h1'
+    );
+    await pause();
+    messages.saveSDKMessage('root', {
+      type: 'result',
+      subtype: 'error_max_turns',
+      uuid: 'r2',
+      session_id: 'root',
+    } as unknown as SDKUserMessage);
+    const delivered = mock(async (..._args: unknown[]) => {});
+    (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
+    await service.noteTurnLimit('root');
+    expect(delivered.mock.calls[0]?.[1]).toBe('neo-turn-limit:r2');
+    expect(isNeoHumanOwnTurn('neo-turn-limit:r2', 'human:h1')).toBe(false);
   });
 
   test('a restart-recovery note continues the cut-off turn; an unbound session gets no stamp', async () => {

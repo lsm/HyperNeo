@@ -336,7 +336,12 @@ import { NeoSessionWatcher } from './session-watcher.ts';
 import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
 import { readNeoTurnText } from './reply-language.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
-import { NEO_TURN_LIMIT_PREFIX, neoTurnLimitNote, planNeoTurnLimitNote } from './turn-limit.ts';
+import {
+  NEO_HUMAN_TURN_LIMIT_PREFIX,
+  NEO_TURN_LIMIT_PREFIX,
+  neoTurnLimitNote,
+  planNeoTurnLimitNote,
+} from './turn-limit.ts';
 import {
   isNeoDeliveryRetryPending,
   planNeoDeliveryRetry,
@@ -366,6 +371,7 @@ import {
   neoTriggerRetryStatuses,
   shouldPreemptNeoTurn,
   neoTriggerWorkProblem,
+  isNeoHumanOwnTurn,
   NEO_CONSULTATION_PENDING_DETAIL,
   neoTriggerNote,
   noteNeoAskTrigger,
@@ -3075,10 +3081,11 @@ export class NeoService {
     if (!plan) return;
     const interrupted = messages.firstUserUuidBetween(sessionId, plan.sinceAt, plan.untilAt);
     const parent = interrupted ? { sessionId, messageId: interrupted } : null;
+    const own = !!parent && isNeoHumanOwnTurn(parent.messageId, this.parentTrigger(parent));
     if (this.triggerAnswered(parent)) return;
     await this.deliverToOrigin(
       sessionId,
-      `${NEO_TURN_LIMIT_PREFIX}${plan.resultUuid}`,
+      `${own ? NEO_HUMAN_TURN_LIMIT_PREFIX : NEO_TURN_LIMIT_PREFIX}${plan.resultUuid}`,
       neoTurnLimitNote(
         this.askRecords.openedBy(sessionId, plan.since, plan.until),
         this.repo.proposedBy(sessionId, plan.since, plan.until)
@@ -3845,12 +3852,7 @@ export class NeoService {
             messageId: item.originMessageId,
           }) === trigger
       );
-    const reason = neoTriggerWorkProblem(
-      input,
-      trigger,
-      answered?.producerInput ?? null,
-      consulted
-    );
+    const reason = neoTriggerWorkProblem(input.messageId, trigger, !!answered, consulted);
     return reason ? { ok: false, reason } : null;
   }
 

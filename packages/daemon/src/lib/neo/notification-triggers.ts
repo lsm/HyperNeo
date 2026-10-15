@@ -8,6 +8,7 @@ import type {
 import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
+import { NEO_HUMAN_TURN_LIMIT_PREFIX } from './turn-limit.ts';
 import { isNeoCardInPlay } from './ask-views.ts';
 import { isNeoAskAnswerReady } from './answer-outcome.ts';
 
@@ -342,17 +343,22 @@ export function shouldPreemptNeoTurn(
   return !!current && (!current.startsWith(NEO_HUMAN_TRIGGER_PREFIX) || answered(current));
 }
 
+export function isNeoHumanOwnTurn(messageId: string, trigger: string | null): boolean {
+  return (
+    neoHumanTriggerMessageId(trigger ?? undefined) === messageId ||
+    (!!trigger?.startsWith(NEO_HUMAN_TRIGGER_PREFIX) &&
+      messageId.startsWith(NEO_HUMAN_TURN_LIMIT_PREFIX))
+  );
+}
+
 export function neoTriggerWorkProblem(
-  input: { sessionId: string; messageId: string },
+  messageId: string,
   trigger: string | null,
-  answeredBy: { sessionId: string; messageId: string } | null,
+  answered: boolean,
   consulted: boolean
 ): string | null {
   if (!trigger) return null;
-  if (
-    answeredBy &&
-    (answeredBy.sessionId !== input.sessionId || answeredBy.messageId !== input.messageId)
-  )
+  if (answered && !isNeoHumanOwnTurn(messageId, trigger))
     return 'trigger_answered: the human already has the answer for this message. Start no new work for it; only a new human message can.';
   return consulted
     ? 'already_consulted: this holder already returned for this message. Use its answer instead of asking again.'

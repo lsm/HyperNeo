@@ -2,6 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 
 export const NEO_TURN_LIMIT_PREFIX = 'neo-turn-limit:';
+export const NEO_HUMAN_TURN_LIMIT_PREFIX = `${NEO_TURN_LIMIT_PREFIX}human:`;
 
 export type NeoTurnResult = { uuid: string | null; subtype: string | null; timestamp: string };
 
