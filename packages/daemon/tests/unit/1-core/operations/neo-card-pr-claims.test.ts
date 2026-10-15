@@ -22,6 +22,9 @@ import {
   type NeoWorkPrRow,
 } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import { runMigration380 } from '../../../../src/storage/schema/m380-neo-work-follows.ts';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 
 const pull = (n: number) => `https://github.com/lsm/HyperNeo/pull/${n}`;
 const claim = (overrides: Partial<NeoPrClaimRow>): NeoPrClaimRow => ({
@@ -42,17 +45,17 @@ const pr = (n: number, createdAt?: number): NeoWorkPr => ({
 });
 
 describe('planNeoCardPrCandidates', () => {
-  test('marks branch PRs, PRs the brief names, and PRs only the report mentions', () => {
+  test('marks branch PRs, the PR the card follows, and PRs only the report mentions', () => {
     expect(
       planNeoCardPrCandidates({
         report: `Opened ${pull(1)}; see also ${pull(2)} and ${pull(3)}.`,
-        brief: `Address the review on ${pull(2)}.`,
+        follows: pull(2),
         branch: [pull(1).toUpperCase()],
         stored: [{ url: pull(4) }],
       })
     ).toEqual([
-      { url: pull(4), claim: 'mentioned' },
       { url: pull(2), claim: 'named' },
+      { url: pull(4), claim: 'mentioned' },
       { url: pull(1), claim: 'branch' },
       { url: pull(3), claim: 'mentioned' },
     ]);
@@ -60,19 +63,15 @@ describe('planNeoCardPrCandidates', () => {
 });
 
 describe('planNeoCardPrCandidates with resolved refs', () => {
-  test('a PR the brief cites by number is named, one only the report cites is mentioned', () => {
+  test('a PR the report cites by number is mentioned', () => {
     expect(
       planNeoCardPrCandidates({
         report: 'CI on #6440.',
-        brief: 'Address lsm/HyperNeo#6403.',
         branch: [],
         stored: [],
-        refs: { named: [pull(6403)], mentioned: [pull(6440)] },
+        mentioned: [pull(6440)],
       })
-    ).toEqual([
-      { url: pull(6403), claim: 'named' },
-      { url: pull(6440), claim: 'mentioned' },
-    ]);
+    ).toEqual([{ url: pull(6440), claim: 'mentioned' }]);
   });
 });
 
@@ -336,7 +335,6 @@ describe('PRs the worker session opened', () => {
     expect(
       planNeoCardPrCandidates({
         report: `Opened ${pull(9)}.`,
-        brief: 'Fix it.',
         branch: [],
         opened: [pull(7), pull(8), pull(9)],
         stored: [],
@@ -349,7 +347,6 @@ describe('PRs the worker session opened', () => {
     expect(
       planNeoCardPrCandidates({
         report: null,
-        brief: 'Fix it.',
         branch: [],
         opened: [pull(5), pull(6), pull(7)],
         stored: [],
@@ -381,10 +378,10 @@ describe('PRs the worker session opened', () => {
     );
   });
 
-  test('one the brief names stays named, so an old merged one still attaches', () => {
+  test('one the card follows stays named, so an old merged one still attaches', () => {
     const [candidate] = planNeoCardPrCandidates({
       report: null,
-      brief: `Follow up on ${pull(4)}.`,
+      follows: pull(4),
       branch: [],
       opened: [pull(4)],
       stored: [],
@@ -400,6 +397,67 @@ describe('PRs the worker session opened', () => {
     expect(hasNeoUnattachedOpenedPrs([pull(1)], [{ url: pull(1).toUpperCase() }])).toBe(false);
     expect(hasNeoUnattachedOpenedPrs([pull(1), pull(2)], [{ url: pull(1) }])).toBe(true);
     expect(hasNeoUnattachedOpenedPrs([], [])).toBe(false);
+  });
+});
+
+describe('a PR the card follows', () => {
+  const follower = { id: 'follow-up', createdAt: 300 };
+  const opener = {
+    workId: 'opener',
+    urlKey: pull(5).toLowerCase(),
+    claim: 'branch' as const,
+    claimedAt: 100,
+    cardCreatedAt: 100,
+    score: null,
+    scoped: true,
+  };
+
+  test('is kept by a later card while the card that opened it keeps its own claim', () => {
+    const candidates = planNeoCardPrCandidates({
+      report: null,
+      follows: pull(5),
+      branch: [],
+      stored: [],
+    });
+    const owned = planNeoCardPrOwnership(follower, candidates, [opener], 400);
+    expect(owned.map((item) => [item.url, item.claim])).toEqual([[pull(5), 'named']]);
+    expect(keepNeoUnbeatenPrs(follower, owned, [opener]).beaten).toEqual([]);
+    expect(
+      planNeoPrCedes(follower, [opener, { ...opener, workId: follower.id, claim: 'named' }])
+    ).toEqual([]);
+  });
+
+  test('is tracked by its canonical URL, without query or fragment', () => {
+    expect(
+      planNeoCardPrCandidates({
+        report: null,
+        follows: `${pull(5)}/files?tab=files#diff`,
+        branch: [],
+        stored: [],
+      })
+    ).toEqual([{ url: pull(5), claim: 'named' }]);
+  });
+
+  test('is ignored when the followed URL is not a pull request', () => {
+    expect(
+      planNeoCardPrCandidates({
+        report: null,
+        follows: 'https://github.com/lsm/HyperNeo/issues/7049',
+        branch: [],
+        stored: [],
+      })
+    ).toEqual([]);
+  });
+
+  test('never takes a PR from another card through its follow', () => {
+    const followed = { ...opener, workId: 'follow-up', claim: 'named' as const, cardCreatedAt: 50 };
+    const owned = planNeoCardPrOwnership(
+      { id: 'opener', createdAt: 100 },
+      [{ url: pull(5), claim: 'branch' }],
+      [followed],
+      400
+    );
+    expect(owned.map((item) => item.url)).toEqual([pull(5)]);
   });
 });
 
@@ -843,5 +901,58 @@ describe('readNeoCardPrs', () => {
     expect(replaced.map((claims) => claims.map((item) => [item.claim, item.score]))).toEqual([
       [['mentioned', 2]],
     ]);
+  });
+});
+
+describe('runMigration380', () => {
+  test('adds follows once and drops PRs parsed from card text, claims and receipts alike', () => {
+    const db = new Sqlite(':memory:');
+    db.exec(
+      `CREATE TABLE neo_work (id TEXT PRIMARY KEY);
+       CREATE TABLE neo_work_pr_claims (work_id TEXT, url_key TEXT, claim TEXT);
+       CREATE TABLE neo_work_prs (work_id TEXT PRIMARY KEY, prs_json TEXT)`
+    );
+    db.prepare('INSERT INTO neo_work_pr_claims VALUES (?, ?, ?), (?, ?, ?)').run(
+      'a',
+      pull(4).toLowerCase(),
+      'named',
+      'a',
+      pull(5).toLowerCase(),
+      'branch'
+    );
+    db.prepare('INSERT INTO neo_work_prs VALUES (?, ?)').run(
+      'a',
+      JSON.stringify([{ url: pull(4) }, { url: pull(5) }])
+    );
+    runMigration380(db);
+    runMigration380(db);
+    const columns = db.prepare('PRAGMA table_info(neo_work)').all() as { name: string }[];
+    expect(columns.filter((column) => column.name === 'follows')).toHaveLength(1);
+    expect(db.prepare('SELECT claim FROM neo_work_pr_claims').all()).toEqual([{ claim: 'branch' }]);
+    expect(
+      JSON.parse(
+        (db.prepare('SELECT prs_json AS prs FROM neo_work_prs').get() as { prs: string }).prs
+      )
+    ).toEqual([{ url: pull(5) }]);
+  });
+});
+
+describe('NeoRepository.proposeWork', () => {
+  test('stores the PR a card follows', async () => {
+    const db = await createTestDb();
+    try {
+      const work = new NeoRepository(db.getDatabase()).proposeWork({
+        id: 'card',
+        requestKey: 'key',
+        projectId: null,
+        originSessionId: 'neo:root',
+        title: 'Address review on PR 5',
+        instruction: 'Address the review.',
+        follows: pull(5),
+      });
+      expect(work.follows).toBe(pull(5));
+    } finally {
+      db.close();
+    }
   });
 });

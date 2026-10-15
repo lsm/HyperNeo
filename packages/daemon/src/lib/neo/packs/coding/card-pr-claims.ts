@@ -2,7 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoCardPrUrls } from './branch-prs.ts';
 import { extractNeoWorkPrUrls, neoTextRefs } from './work-prs.ts';
-import { githubUrlKey } from '../../../github/parse-pr-url.ts';
+import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 
 export type NeoPrClaim = 'branch' | 'opened' | 'named' | 'mentioned';
 type PrWindow = { start: number; end: number | null };
@@ -34,24 +34,20 @@ const key = githubUrlKey;
 export function planNeoCardPrCandidates(input: {
   window?: PrWindow | null;
   report: string | null;
-  brief: string;
+  follows?: string | null;
   branch: readonly string[];
   opened?: readonly string[];
   stored: readonly { url: string }[];
-  refs?: { named: readonly string[]; mentioned: readonly string[] };
+  mentioned?: readonly string[];
 }): NeoCardPrCandidate[] {
-  const named = new Set(
-    [...extractNeoWorkPrUrls(input.brief), ...(input.refs?.named ?? [])].map(key)
-  );
+  const pr = input.follows ? parsePrUrl(input.follows) : null;
+  const followed = pr ? [`https://${pr.host}/${pr.owner}/${pr.repo}/pull/${pr.number}`] : [];
+  const named = new Set(followed.map(key));
   const onBranch = new Set(input.branch.map(key));
   const opened = new Set((input.opened ?? []).map(key));
   const seen = new Set<string>();
   const listed = neoCardPrUrls(
-    [
-      ...extractNeoWorkPrUrls([input.brief, input.report].filter(Boolean).join('\n'), input.stored),
-      ...(input.refs?.named ?? []),
-      ...(input.refs?.mentioned ?? []),
-    ],
+    [...followed, ...extractNeoWorkPrUrls(input.report, input.stored), ...(input.mentioned ?? [])],
     input.branch
   );
   const known = new Set(listed.map(key));
@@ -85,6 +81,8 @@ type RankedClaim = Pick<NeoPrClaimRow, 'claimedAt' | 'cardCreatedAt' | 'score'> 
 };
 const isRanked = (row: NeoPrClaimRow): row is NeoPrClaimRow & { claim: NeoPrClaim } =>
   row.claim !== 'rejected';
+const competes = (row: NeoPrClaimRow): row is NeoPrClaimRow & { claim: NeoPrClaim } =>
+  isRanked(row) && row.claim !== 'named';
 
 const MATCH_FILLER = new Set([
   'and',
@@ -168,13 +166,14 @@ export function planNeoCardPrOwnership(
       cardCreatedAt: card.createdAt,
       score: prior?.score ?? null,
     };
-    return same.some(
-      (row) =>
-        row.workId !== card.id &&
-        isRanked(row) &&
-        (candidate.scope === undefined || row.scoped || row.claim === 'named') &&
-        beatsNeoPrClaim(row, own)
-    )
+    return claim !== 'named' &&
+      same.some(
+        (row) =>
+          row.workId !== card.id &&
+          competes(row) &&
+          (candidate.scope === undefined || row.scoped) &&
+          beatsNeoPrClaim(row, own)
+      )
       ? []
       : [
           {
@@ -194,12 +193,14 @@ export function keepNeoUnbeatenPrs(
   owned: readonly NeoCardPrOwned[],
   claims: readonly NeoPrClaimRow[]
 ): { owned: NeoCardPrOwned[]; beaten: NeoCardPrOwned[] } {
-  const beaten = owned.filter((item) =>
-    claims
-      .filter((row) => row.workId !== card.id && row.urlKey === key(item.url))
-      .filter(isRanked)
-      .filter((row) => item.scope === undefined || row.scoped || row.claim === 'named')
-      .some((row) => beatsNeoPrClaim(row, { ...item, cardCreatedAt: card.createdAt }))
+  const beaten = owned.filter(
+    (item) =>
+      item.claim !== 'named' &&
+      claims
+        .filter((row) => row.workId !== card.id && row.urlKey === key(item.url))
+        .filter(competes)
+        .filter((row) => item.scope === undefined || row.scoped)
+        .some((row) => beatsNeoPrClaim(row, { ...item, cardCreatedAt: card.createdAt }))
   );
   return { owned: owned.filter((item) => !beaten.includes(item)), beaten };
 }
@@ -208,10 +209,10 @@ export function planNeoPrCedes(
   card: Pick<NeoWork, 'id'>,
   claims: readonly NeoPrClaimRow[]
 ): NeoPrClaimRow[] {
-  const mine = claims.filter((row) => row.workId === card.id).filter(isRanked);
+  const mine = claims.filter((row) => row.workId === card.id).filter(competes);
   return claims
     .filter((row) => row.workId !== card.id)
-    .filter(isRanked)
+    .filter(competes)
     .filter((row) => mine.some((own) => own.urlKey === row.urlKey && beatsNeoPrClaim(own, row)));
 }
 

@@ -1933,9 +1933,7 @@ describe('Neo work with a drivers target', () => {
     });
     const statusCalls = () => calls.filter((call) => call.name === 'work.status').length;
     try {
-      db.getDatabase()
-        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
-        .run(`\nPR: ${url}`, 'work-1');
+      db.getDatabase().prepare('UPDATE neo_work SET follows = ? WHERE id = ?').run(url, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       const reported = service.repo.getWork('work-1')!;
@@ -2007,9 +2005,7 @@ describe('Neo work with a drivers target', () => {
     let now = Date.now();
     const clock = spyOn(Date, 'now').mockImplementation(() => now);
     try {
-      db.getDatabase()
-        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
-        .run(`\nPR: ${url}`, 'work-1');
+      db.getDatabase().prepare('UPDATE neo_work SET follows = ? WHERE id = ?').run(url, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(doneChecks()).toEqual([]);
@@ -2541,9 +2537,7 @@ describe('Neo work with a drivers target', () => {
         expect(service.repo.getWork('work-1')?.status).toBe('reported');
         expect(cwds.length > 0).toBe(evidence === 'local');
         expect(cwds.every((cwd) => cwd === '/actual/checkout')).toBe(true);
-        expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url) ?? []).toEqual(
-          evidence === 'local' ? ['https://github.com/actual/checkout/pull/6651'] : []
-        );
+        expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url) ?? []).toEqual([]);
       } finally {
         db.close();
       }
@@ -2704,9 +2698,7 @@ describe('Neo work with a drivers target', () => {
       },
     });
     try {
-      db.getDatabase()
-        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
-        .run(`\nPR: ${url}`, 'work-1');
+      db.getDatabase().prepare('UPDATE neo_work SET follows = ? WHERE id = ?').run(url, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('reported');
@@ -2752,9 +2744,7 @@ describe('Neo work with a drivers target', () => {
       },
     });
     try {
-      db.getDatabase()
-        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
-        .run(`\nPR: ${url}`, 'work-1');
+      db.getDatabase().prepare('UPDATE neo_work SET follows = ? WHERE id = ?').run(url, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.askRecords.get(opened.id)?.doneItems).toEqual([
@@ -2812,9 +2802,7 @@ describe('Neo work with a drivers target', () => {
       },
     });
     try {
-      db.getDatabase()
-        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
-        .run(`\nPR: ${url}`, 'work-1');
+      db.getDatabase().prepare('UPDATE neo_work SET follows = ? WHERE id = ?').run(url, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.askRecords.get(opened.id)?.doneItems?.map((item) => item.state)).toEqual([
@@ -2970,9 +2958,7 @@ describe('Neo work with a drivers target', () => {
     service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
     Object.assign(service, { deliver: async () => {} });
     try {
-      db.getDatabase()
-        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
-        .run(`\nPR: ${url}`, 'work-1');
+      db.getDatabase().prepare('UPDATE neo_work SET follows = ? WHERE id = ?').run(url, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.askRecords.get(opened.id)).toMatchObject({
@@ -3043,9 +3029,7 @@ describe('Neo work with a drivers target', () => {
       await service.refreshDriverWork();
     };
     try {
-      db.getDatabase()
-        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
-        .run(`\nPR: ${url}`, 'work-1');
+      db.getDatabase().prepare('UPDATE neo_work SET follows = ? WHERE id = ?').run(url, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       service.workPrs.record('work-1', [open], 0);
@@ -3093,9 +3077,7 @@ describe('Neo work with a drivers target', () => {
       await service.refreshDriverWork();
     };
     try {
-      db.getDatabase()
-        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
-        .run(`\nPR: ${url}`, 'work-1');
+      db.getDatabase().prepare('UPDATE neo_work SET follows = ? WHERE id = ?').run(url, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('reported');
@@ -3176,9 +3158,7 @@ describe('Neo work with a drivers target', () => {
       },
     });
     try {
-      db.getDatabase()
-        .prepare('UPDATE neo_work SET instruction = instruction || ? WHERE id = ?')
-        .run(`\nPR: ${url}`, 'work-1');
+      db.getDatabase().prepare('UPDATE neo_work SET follows = ? WHERE id = ?').run(url, 'work-1');
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(reads).toBe(0);
