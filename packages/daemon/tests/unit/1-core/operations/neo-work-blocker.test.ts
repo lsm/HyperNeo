@@ -8,7 +8,11 @@ import {
   NEO_WORK_REPORT_LIMIT,
 } from '../../../../src/lib/neo/work-blocker.ts';
 import { admitNeoWorkReportInput } from '../../../../src/lib/neo/work-report.ts';
-import { driverDoneCheckNote, withWorkGoal } from '../../../../src/lib/neo/driver-work.ts';
+import {
+  driverDoneCheckNote,
+  NEO_WORK_LATER_REPLIES_CUT,
+  withWorkGoal,
+} from '../../../../src/lib/neo/driver-work.ts';
 
 const roundSix = `Implemented and committed as 7536941 on fix/clamp-discount-pct.
 PR creation is blocked by unavailable GitHub authentication.
@@ -41,6 +45,9 @@ describe('readNeoWorkBlocker', () => {
         `Agent: Blocked (needs_human): pick a rule${NEO_WORK_EARLIER_REPORT}Blocked (environment): no DNS`
       )
     ).toEqual({ kind: 'needs_human', what: 'pick a rule' });
+    expect(
+      readNeoWorkBlocker(`Agent: Blocked (environment): no DNS\n\n${NEO_WORK_LATER_REPLIES_CUT}`)
+    ).toEqual({ kind: 'environment', what: 'no DNS' });
     expect(readNeoWorkBlocker('Agent: Blocked (environment): no DNS')).toEqual({
       kind: 'environment',
       what: 'no DNS',

@@ -126,6 +126,7 @@ import {
 } from './direct-reply-fallback.ts';
 import {
   readNeoWorkBlocker,
+  NEO_WORK_REPORT_LIMIT,
   neoEnvironmentMoveNote,
   planNeoEnvironmentMove,
   type NeoEnvironmentMove,
@@ -426,7 +427,6 @@ const dispatchNeoConsultationWaiter = (
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
 const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
-const NEO_WORK_REPORT_LIMIT = 12_000;
 
 type NeoWorkPrCard = {
   ask: NeoAsk | null;

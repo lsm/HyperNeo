@@ -883,7 +883,8 @@ export function readDriverInputAttribution(
   };
 }
 
-const NEO_WORK_LATER_REPLIES_CUT = '(Later replies were not read; this is not the whole exchange.)';
+export const NEO_WORK_LATER_REPLIES_CUT =
+  '(Later replies were not read; this is not the whole exchange.)';
 
 function attributedDriverReport(attribution: {
   replies: readonly WorkExchangeEntry[];

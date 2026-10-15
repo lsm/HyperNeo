@@ -1,6 +1,6 @@
 import { fillPrompt, NEO_WORK_ENVIRONMENT_MOVE } from '@hyperneo/prompts';
 import { z } from 'zod';
-import type { NeoDriverTarget } from './driver-work.ts';
+import { NEO_WORK_LATER_REPLIES_CUT, type NeoDriverTarget } from './driver-work.ts';
 
 export const NeoWorkBlockerSchema = z.object({
   kind: z.enum(['environment', 'needs_human']),
@@ -25,7 +25,12 @@ export function withNeoWorkBlocker(report: string, blocker: NeoWorkBlocker): str
 
 export function readNeoWorkBlocker(report: string | null | undefined): NeoWorkBlocker | null {
   const newest = (report ?? '').split(NEO_WORK_EARLIER_REPORT)[0];
-  const last = newest.trimEnd().split('\n').at(-1)?.trim() ?? '';
+  const last =
+    newest
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && line !== NEO_WORK_LATER_REPLIES_CUT)
+      .at(-1) ?? '';
   const found = last.match(BLOCKER_LINE);
   return found ? { kind: found[1] as NeoWorkBlocker['kind'], what: found[2].trim() } : null;
 }
