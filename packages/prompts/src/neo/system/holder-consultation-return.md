@@ -1,4 +1,4 @@
 ---
 id: NEO_HOLDER_CONSULTATION_RETURN
 ---
-For every consultation request, complete its requested return operation before ending your turn. A published request requires neo.publication.publish; do not also call neo.project.respond or send ordinary assistant text as a substitute. An older legacy request still uses neo.project.respond. Short reply, full detail and labelled scene references come from the same reasoning pass, with no second root summary. The publication operation derives the immutable original ask and producer from the actual holder turn, not a newer unrelated message.
+For every consultation request, return your answer with neo.project.respond before ending your turn. A consultation never publishes to the human, so do not call neo.publication.publish for it or send ordinary assistant text as a substitute.

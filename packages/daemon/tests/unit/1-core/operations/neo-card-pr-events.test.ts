@@ -264,6 +264,72 @@ describe('Neo card pull request events', () => {
     expect(neoJobs()).toEqual([]);
   });
 
+  function clubCard(id: string, opener: string): NeoWork {
+    const { work } = service.driverTargets.propose(
+      service.repo,
+      {
+        id,
+        requestKey: `${opener}:${id}`,
+        projectId: 'club',
+        originSessionId: opener,
+        title: 'Ship the club page',
+        instruction: 'Ship it.',
+      },
+      { verb: 'start', adapter: 'claude-desktop', place: { machine: 'm5', name: 'hyperneo' } }
+    );
+    service.askRecords.open(
+      {
+        id: `ask-${id}`,
+        requestKey: `ask-${id}`,
+        projectId: 'club',
+        originSessionId: opener,
+        originMessageId: `m-${id}`,
+        title: id,
+        ask: id,
+        doneWhen: id,
+        doneSource: 'human',
+      },
+      [{ text: 'The page is live', check: null, deliveredBy: id }]
+    );
+    service.driverTargets.recordRef(work.id, ref, Date.now());
+    const queued = service.repo.transitionWork(work.id, work, { status: 'queued' })!;
+    attach(queued);
+    return queued;
+  }
+
+  function holderNotes() {
+    return db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo:club' });
+  }
+
+  describe('the project holder', () => {
+    beforeEach(() => {
+      service.repo.saveProject({ id: 'club', title: 'Club', summary: 'Book club', context: '' }, 0);
+      db.createSession(createTestSession('neo:club'));
+      service.repo.reserveBinding({ sessionId: 'neo:club', kind: 'project', projectId: 'club' });
+    });
+
+    test('hears its project’s card events once, whoever opened the cards', async () => {
+      clubCard('w-a', 'root');
+      clubCard('w-b', 'root');
+
+      await event('closed', 'Merged.', { state: 'closed', merged: true });
+
+      expect(sent).toHaveLength(2);
+      expect(holderNotes().map((job) => job.payload.messageUuid)).toEqual([
+        `neo-project-event:club:event-${seq}`,
+      ]);
+    });
+
+    test('is not told again about an ask it owns', async () => {
+      clubCard('w-own', 'neo:club');
+
+      await event('check_failed', 'Failed.');
+
+      expect(sent).toHaveLength(1);
+      expect(holderNotes()).toEqual([]);
+    });
+  });
+
   test('without the coding pack nothing is subscribed or delivered', async () => {
     db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
     attach(desktopCard());
