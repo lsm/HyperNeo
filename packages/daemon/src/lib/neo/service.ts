@@ -3470,10 +3470,6 @@ export class NeoService {
     work: NeoWork,
     stored: { prs: readonly NeoWorkPr[] } | null
   ): Promise<NeoCardPrCandidate[]> {
-    const goal = this.workGoals.get(work.id);
-    const brief = [work.title, work.instruction, goal?.goal, goal?.doneWhen]
-      .filter(Boolean)
-      .join('\n');
     const ref = this.driverTargets.readRef(work.id);
     const sent = neoCardSent(this.driverTargets.readSent(work.id), work);
     const outcome =
@@ -3485,26 +3481,21 @@ export class NeoService {
     return planNeoCardPrCandidates({
       window,
       report: work.report,
-      brief,
+      follows: work.follows,
       branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),
       opened: this.cardOpenedPrs.get(work.id) ?? [],
       stored: stored?.prs ?? [],
-      refs: await this.cardPrRefs(work, brief, outcome),
+      mentioned: await this.cardPrRefs(work, outcome),
     });
   }
 
-  private async cardPrRefs(
-    work: NeoWork,
-    brief: string,
-    outcome: OperationOutcome | null
-  ): Promise<{ named: string[]; mentioned: string[] }> {
+  private async cardPrRefs(work: NeoWork, outcome: OperationOutcome | null): Promise<string[]> {
     const ref = this.driverTargets.readRef(work.id);
     const localId = localCodingSessionId(ref);
     const cwd =
       neoWorkRepoCwd(localId ? this.db.getSession(localId) : null) ??
       localCodingExecutionDirectory(ref, outcome, hostname());
     return readCodingCardRefs(
-      brief,
       work.report,
       () => (cwd ? this.readWorkRepo(cwd) : Promise.resolve(null)),
       (refs) => this.readRefStates(refs)

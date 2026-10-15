@@ -225,6 +225,7 @@ const Work = z.object({
   sessionId: z.string().nullable(),
   status: z.enum(['proposed', 'queued', 'reported', 'failed', 'cancelled']),
   report: z.string().nullable(),
+  follows: z.string().nullable().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
 } satisfies ZodShape<NeoWork>);
@@ -448,6 +449,14 @@ const Propose = z.object({
     ),
   supersedes: z.string().min(1).max(160).nullable().optional(),
   allowBusyTarget: z.boolean().optional(),
+  follows: z
+    .string()
+    .url()
+    .max(500)
+    .optional()
+    .describe(
+      'URL of the item this card works on, such as the pull request it continues. The card tracks it alongside what it opens itself, and several cards may follow one item.'
+    ),
 });
 type ProposeRequest = z.infer<typeof Propose> & { requestKey: string };
 const Refused = z.object({ workId: z.string().min(1), what: z.string().trim().min(1).max(500) });

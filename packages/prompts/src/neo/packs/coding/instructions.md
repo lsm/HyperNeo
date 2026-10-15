@@ -72,6 +72,10 @@ Never tick a prerequisite's outcome from a report; the merge ticks it. Changing
 a card's dependsOn later needs the ask approved again, and a card already handed
 to a worker can't gain new prerequisites.
 
+A card that continues an existing pull request passes its URL as follows in
+neo.work.propose; that is how the card tracks it, alongside the pull requests it
+opens itself, and several cards may follow one pull request.
+
 Every request names its project somehow. When the human names a repository,
 prefer a place from work.find whose git remote matches that repository; product
 and folder names can differ, and a standing rule may say where a project lives.
