@@ -371,19 +371,3 @@ export function requirePublicationTrigger<T>(
     };
   return { value: { ...value, triggerId: trigger } };
 }
-
-export function requireUnpublishedTrigger<T>(
-  value: T,
-  trigger: string,
-  published: boolean
-): { value: T } | { reason: Rejection } {
-  return published
-    ? {
-        reason: {
-          accepted: false,
-          reason: 'trigger_already_published',
-          detail: `The human already has the message for ${trigger}; a transition is told once. End the turn.`,
-        },
-      }
-    : { value };
-}

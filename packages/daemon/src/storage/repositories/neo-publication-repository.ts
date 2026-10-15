@@ -1,3 +1,4 @@
+import type { NeoInputOrigin } from '@hyperneo/shared/types/neo-message';
 import type {
   NeoPublication,
   NeoPublicationAppendResult,
@@ -37,13 +38,104 @@ function hasTrigger(
     .get(conversationId, triggerId, publicationId);
 }
 
+const sameInput = (a: NeoInputOrigin, b: NeoInputOrigin) =>
+  a.sessionId === b.sessionId && a.messageId === b.messageId;
+
+const sameAnswer = (a: NeoPublicationInput, b: NeoPublicationInput) =>
+  a.shortText === b.shortText &&
+  a.fullText === b.fullText &&
+  JSON.stringify(a.links) === JSON.stringify(b.links);
+
+export function planNeoTriggerAnswer(
+  prior: NeoPublication,
+  input: NeoPublicationInput,
+  at: string
+): { kind: 'same' } | { kind: 'refused' } | { kind: 'replace'; next: NeoPublicationInput } {
+  if (sameInput(prior.answerInput ?? prior.producerInput, input.producerInput))
+    return sameAnswer(prior, input) ? { kind: 'same' } : { kind: 'refused' };
+  const {
+    sequence: _sequence,
+    createdAt: _createdAt,
+    interim: _interim,
+    corrects: _corrects,
+    correctedBy: _correctedBy,
+    ...stored
+  } = prior;
+  return {
+    kind: 'replace',
+    next: {
+      ...stored,
+      shortText: input.shortText,
+      fullText: input.fullText,
+      links: input.links,
+      askSummary: input.askSummary,
+      awaiting: input.awaiting,
+      editedAt: at,
+      editedBy: input.producerInput.sessionId,
+      answerInput: input.producerInput,
+    },
+  };
+}
+
+function isConsultationReturn(db: Database, publication: NeoPublication): boolean {
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE name = 'neo_consultation_publications' AND type = 'table'"
+      )
+      .get()
+  )
+    return false;
+  return !!db
+    .prepare(
+      'SELECT 1 FROM neo_consultation_publications WHERE conversation_id = ? AND publication_id = ?'
+    )
+    .get(publication.conversationId, publication.publicationId);
+}
+
+function answerTrigger(
+  db: Database,
+  input: NeoPublicationInput
+): NeoPublicationAppendResult | null {
+  if (!input.triggerId) return null;
+  const row = db
+    .prepare(`SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
+      AND json_extract(payload_json, '$.triggerId') = ? AND publication_id <> ?
+      ORDER BY sequence LIMIT 1`)
+    .get(input.conversationId, input.triggerId, input.publicationId) as Row | null;
+  if (!row) return null;
+  const prior = decode(row);
+  if (isConsultationReturn(db, prior))
+    return sameInput(prior.answerInput ?? prior.producerInput, input.producerInput) &&
+      sameAnswer(prior, input)
+      ? { accepted: true, created: false, publication: prior }
+      : { accepted: false, reason: 'trigger_already_published' };
+  const plan = planNeoTriggerAnswer(prior, input, new Date().toISOString());
+  if (plan.kind === 'same') return { accepted: true, created: false, publication: prior };
+  if (plan.kind === 'refused') return { accepted: false, reason: 'trigger_already_published' };
+  const admitted = admitNeoPublication(plan.next);
+  if ('reason' in admitted) return { accepted: false, reason: 'invalid_publication' };
+  db.prepare(
+    'UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?'
+  ).run(JSON.stringify(admitted.value), prior.conversationId, prior.publicationId);
+  return {
+    accepted: true,
+    created: true,
+    publication: decode({ ...row, payloadJson: JSON.stringify(admitted.value) }),
+  };
+}
+
 function appendImmutable(
   db: Database,
   input: NeoPublicationInput,
-  payload: string
+  payload: string,
+  answers = true
 ): NeoPublicationAppendResult {
   return db.transaction((): NeoPublicationAppendResult => {
+    const answered = answers ? answerTrigger(db, input) : null;
+    if (answered) return answered;
     if (
+      !answers &&
       input.triggerId &&
       hasTrigger(db, input.conversationId, input.triggerId, input.publicationId)
     )
@@ -167,7 +259,12 @@ export class NeoPublicationRepository {
         return { accepted: false, reason: 'already_corrected' };
       const admitted = admitNeoPublication({ ...correction, corrects: current.publicationId });
       if ('reason' in admitted) return { accepted: false, reason: 'publication_conflict' };
-      const appended = appendImmutable(this.db, admitted.value, JSON.stringify(admitted.value));
+      const appended = appendImmutable(
+        this.db,
+        admitted.value,
+        JSON.stringify(admitted.value),
+        false
+      );
       if (!appended.accepted || !appended.created)
         return { accepted: false, reason: 'publication_conflict' };
       const { sequence: _sequence, createdAt: _createdAt, ...stored } = current;
@@ -187,10 +284,13 @@ export class NeoPublicationRepository {
 
   private recordReplyOutcome(publication: NeoPublication): void {
     const { askOrigin, shortText, askSummary, awaiting } = publication;
-    new NeoRoutingLogRepository(this.db).recordOutcome(askOrigin.messageId, shortText, Date.now(), {
-      askSummary,
-      awaiting,
-    });
+    new NeoRoutingLogRepository(this.db).recordOutcome(
+      askOrigin.messageId,
+      shortText,
+      Date.now(),
+      { askSummary, awaiting },
+      !!publication.answerInput
+    );
   }
 
   hasTrigger(conversationId: string, triggerId: string, publicationId: string): boolean {

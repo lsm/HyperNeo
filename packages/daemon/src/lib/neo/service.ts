@@ -328,6 +328,7 @@ import {
 } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
+import { createNeoPublicationCommit } from './publication-commit.ts';
 import { NEO_TURN_LIMIT_PREFIX, neoTurnLimitNote, planNeoTurnLimitNote } from './turn-limit.ts';
 import {
   isNeoDeliveryRetryPending,
@@ -512,6 +513,7 @@ export class NeoService {
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
+  private readonly commitPublication: ReturnType<typeof createNeoPublicationCommit>;
   readonly inputOrigins: NeoInputOriginRepository;
   readonly askForwards: NeoAskForwardRepository;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
@@ -886,8 +888,6 @@ export class NeoService {
       getConsultation: (id) => this.consultations.get(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
       inputTrigger: (input) => this.inputTrigger(input),
-      isTriggerPublished: (conversationId, triggerId, publicationId) =>
-        this.publications.hasTrigger(conversationId, triggerId, publicationId),
       replay: (input, caller) => {
         const turn = caller.neoTurn;
         const item = turn?.consultationId ? this.consultations.get(turn.consultationId) : null;
@@ -912,9 +912,9 @@ export class NeoService {
         );
         if (!publication) throw new Error('Committed consultation publication is missing');
         if (
-          publication.producerInput.sessionId !== caller.sessionId ||
-          publication.producerInput.messageId !== turn.messageId ||
-          publication.publicationId !== input.publicationId ||
+          (publication.answerInput ?? publication.producerInput).sessionId !== caller.sessionId ||
+          (publication.answerInput ?? publication.producerInput).messageId !== turn.messageId ||
+          (!publication.answerInput && publication.publicationId !== input.publicationId) ||
           publication.shortText !== input.shortText ||
           publication.fullText !== input.fullText ||
           publication.askSummary !== input.askSummary ||
@@ -925,7 +925,11 @@ export class NeoService {
         notifyPublication();
         return { accepted: true, created: false, publication };
       },
-      append: (input, consultationId) => {
+      append: (input, consultationId) => this.commitPublication(input, consultationId),
+      notify: notifyPublication,
+    });
+    this.commitPublication = createNeoPublicationCommit({
+      commit: (input, consultationId) => {
         const problem = this.crossProjects.publicationProblem(input, consultationId);
         if (problem) return { accepted: false, reason: problem };
         if (!consultationId) return this.appendPublication(input);
@@ -935,12 +939,17 @@ export class NeoService {
           publication: input,
         });
         if (!receipt.accepted) return receipt;
-        const publication = this.publications.get(input.conversationId, input.publicationId);
+        const publication = this.publications.get(
+          receipt.association.conversationId,
+          receipt.association.publicationId
+        );
         if (!publication) throw new Error('Committed consultation publication is missing');
-        if (receipt.created) this.noteHumanReply(input);
         return { accepted: true, created: receipt.created, publication };
       },
-      notify: notifyPublication,
+      published: (input, publication) => {
+        this.noteHumanReply(input);
+        if (publication.answerInput) this.notifyPublicationsChanged(publication.conversationId);
+      },
     });
     this.resolveWorkTarget = createNeoWorkTargetResolver({
       readTarget: (id) => {
@@ -971,7 +980,7 @@ export class NeoService {
           { sessionId: id, messageId: nudgedMessageId(nudgeId) ?? nudgeId },
           'continues'
         ).catch((error) => this.log.warn('Publish nudge failed', error)),
-      append: (input) => this.appendPublication(input),
+      append: (input) => this.commitPublication(input),
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),
     };
@@ -1267,7 +1276,6 @@ export class NeoService {
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
     if (receipt.accepted && receipt.created && !input.interim)
       this.spendWaitingReminders(input.producerInput);
-    if (receipt.accepted && receipt.created) this.noteHumanReply(input);
     return receipt;
   }
 
