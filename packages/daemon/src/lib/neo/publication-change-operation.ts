@@ -55,6 +55,7 @@ export interface NeoPublicationChangeRuntime {
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   isTriggerPublished(conversationId: string, triggerId: string, publicationId: string): boolean;
   notify(conversationId: string): void;
+  noteReply(publication: NeoPublication): void;
 }
 
 export function requireOwnPublication(
@@ -196,7 +197,7 @@ export function createNeoPublicationChangeOperations(
           runtime.isTriggerPublished(owned.publication.conversationId, trigger, input.correctionId),
         runtime.resolveAskOrigin(owned.producer.input)
       );
-      return runtime.publications.correct(owned.publication, {
+      const result = runtime.publications.correct(owned.publication, {
         conversationId: owned.publication.conversationId,
         publicationId: input.correctionId,
         ...answer,
@@ -205,6 +206,9 @@ export function createNeoPublicationChangeOperations(
         fullText: input.fullText,
         links: [],
       });
+      if (result.accepted && result.created && result.publication.triggerId)
+        runtime.noteReply(result.publication);
+      return result;
     }
   );
   const recent = (superpipe({})('neo-publication-recent') as PipelineAPI)

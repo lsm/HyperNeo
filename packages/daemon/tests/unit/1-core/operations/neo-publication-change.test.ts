@@ -57,6 +57,7 @@ function setup() {
       );
   let notified = 0;
   const published = new Set<string>();
+  const replies: string[] = [];
   const registry = createOperationRegistry(
     createNeoPublicationChangeOperations(
       {
@@ -71,6 +72,7 @@ function setup() {
         }),
         isTriggerPublished: (_conversationId, triggerId) => published.has(triggerId),
         notify: () => notified++,
+        noteReply: (publication) => replies.push(publication.publicationId),
       },
       () => new Date('2026-10-14T11:00:00.000Z')
     )
@@ -79,7 +81,7 @@ function setup() {
     const outcome = await invokeOperation(registry, name, input, caller);
     return outcome.kind === 'completed' ? outcome.value : outcome;
   };
-  return { db, publications, insert, call, notified: () => notified, published };
+  return { db, publications, insert, call, notified: () => notified, published, replies };
 }
 
 describe('neo.publication.edit', () => {
@@ -350,7 +352,7 @@ describe('a correction that answers its turn', () => {
   };
 
   test('is the reply of its turn for the fallback and records the routed outcome of the ask', async () => {
-    const { db, publications, insert, call } = setup();
+    const { db, publications, insert, call, replies } = setup();
     try {
       createNeoRoutingLogTable(db);
       db.exec(`ALTER TABLE neo_routing_log ADD COLUMN digested_at INTEGER;
@@ -372,6 +374,7 @@ describe('a correction that answers its turn', () => {
         asHuman
       );
       expect(publications.findByProducer(root.sessionId, 'm-3')?.publicationId).toBe(correction);
+      expect(replies).toEqual([correction]);
       expect(
         db.prepare("SELECT outcome FROM neo_routing_log WHERE message_id = 'ask-of-m-3'").get()
       ).toEqual({ outcome: 'Correction: PR #12 did not merge.' });

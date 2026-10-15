@@ -2067,6 +2067,7 @@ export function createNeoOperations(service: NeoService) {
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
       isTriggerPublished: (conversationId, triggerId, publicationId) =>
         service.publications.hasTrigger(conversationId, triggerId, publicationId),
+      noteReply: (publication) => service.noteCorrectionReply(publication),
       notify: (conversationId) => {
         service.notifyChanged();
         service.notifyPublicationsChanged(conversationId);
