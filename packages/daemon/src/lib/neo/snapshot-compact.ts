@@ -78,7 +78,7 @@ export function summarizeNeoSnapshot<T extends NeoSnapshot>(
     ),
     work,
     cards: snapshot.cards.map((card) =>
-      briefWork.has(card.workId)
+      briefWork.has(card.workId) && FINISHED_PHASES.has(card.phase)
         ? { ...card, goal: null, doneWhen: null, continuedMessage: null }
         : card
     ),

@@ -303,12 +303,12 @@ describe('summarizeNeoSnapshot', () => {
     cards: ['lw', 'dw', 'dq', 'ow'].map((workId) => ({
       ...card,
       workId,
-      phase: 'reported' as const,
+      phase: workId === 'ow' ? ('pr_setback' as const) : ('reported' as const),
     })),
     askViews: views,
   });
 
-  test('marks a settled ask and its finished work as summaries and keeps the views', () => {
+  test('marks a settled ask and its finished work as summaries, keeps the views and an actionable card goal', () => {
     const views = [view('live'), view('done')];
     const result = summarizeNeoSnapshot(snapshot(views), [live, settled, older]);
     expect(result.askViews).toBe(views);
@@ -329,6 +329,6 @@ describe('summarizeNeoSnapshot', () => {
     expect(doneWork.report).toHaveLength(300);
     expect(queuedWork.summarized).toBeUndefined();
     expect(olderWork).toMatchObject({ summarized: true, askId: 'older' });
-    expect(result.cards.map((item) => item.goal)).toEqual([card.goal, null, card.goal, null]);
+    expect(result.cards.map((item) => item.goal)).toEqual([card.goal, null, card.goal, card.goal]);
   });
 });
