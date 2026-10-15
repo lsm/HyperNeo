@@ -1,3 +1,4 @@
+import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
@@ -66,7 +67,7 @@ describe('runtime consultation publication commit', () => {
     invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
       'neo.publication.publish',
-      input,
+      withMintedPublicationId(service, input as { publicationId?: string }),
       who
     );
   const rows = () => ({
@@ -161,20 +162,21 @@ describe('runtime consultation publication commit', () => {
 
   test('service reload preserves the original joint receipt and rejects changed authored content', () => {
     const who = caller();
-    const first = service.publish(draft, who);
+    const first = service.publish(withMintedPublicationId(service, draft), who);
     const committed = rows();
     restart();
-    const retry = service.publish(draft, who);
+    const retry = service.publish(withMintedPublicationId(service, draft), who);
     if (!first.accepted || !retry.accepted) throw new Error('Expected immutable receipts');
     expect(retry).toEqual({ ...first, created: false });
     expect(rows()).toEqual(committed);
     for (const changed of [
       { shortText: 'Changed' },
       { fullText: 'Changed' },
-      { publicationId: '20000000-0000-4000-8000-000000000002' },
       { links: [{ ...draft.links[0], label: 'Changed label' }] },
     ]) {
-      expect(service.publish({ ...draft, ...changed }, who)).toEqual({
+      expect(
+        service.publish(withMintedPublicationId(service, { ...draft, ...changed }), who)
+      ).toEqual({
         accepted: false,
         reason: 'publication_conflict',
       });
@@ -207,7 +209,9 @@ describe('runtime consultation publication commit', () => {
       const action = table === 'neo_consultations' ? 'UPDATE' : 'INSERT';
       db.getDatabase().exec(`CREATE TRIGGER fail_wire BEFORE ${action} ON ${table}
         BEGIN SELECT RAISE(ABORT, 'fictional commit fault'); END`);
-      expect(() => service.publish(draft, who)).toThrow('fictional commit fault');
+      expect(() => service.publish(withMintedPublicationId(service, draft), who)).toThrow(
+        'fictional commit fault'
+      );
       unchanged();
     }
   );
@@ -216,7 +220,7 @@ describe('runtime consultation publication commit', () => {
     const who = caller();
     db.getDatabase().exec(`CREATE TRIGGER lost_wire BEFORE UPDATE ON neo_consultations
       BEGIN SELECT RAISE(IGNORE); END`);
-    expect(service.publish(draft, who)).toEqual({
+    expect(service.publish(withMintedPublicationId(service, draft), who)).toEqual({
       accepted: false,
       reason: 'consultation_settled',
     });
@@ -228,7 +232,10 @@ describe('runtime consultation publication commit', () => {
     event.mockImplementation(() => {
       throw new Error('Fictional listener fault');
     });
-    expect(service.publish(draft, who)).toMatchObject({ accepted: true, created: true });
+    expect(service.publish(withMintedPublicationId(service, draft), who)).toMatchObject({
+      accepted: true,
+      created: true,
+    });
     expect(rows().consultation?.status).toBe('reported');
     expect(rows().association?.publicationId).toBe(draft.publicationId);
     expect(rows().publications).toHaveLength(1);
@@ -237,7 +244,9 @@ describe('runtime consultation publication commit', () => {
   test('direct holder asks keep their own session origin without settling an unrelated consultation', () => {
     prompt(holder, 'holder-human', 'human');
     const who = caller(holder, 'holder-human');
-    expect(service.publish({ ...draft, links: [] }, who)).toMatchObject({
+    expect(
+      service.publish(withMintedPublicationId(service, { ...draft, links: [] }), who)
+    ).toMatchObject({
       accepted: true,
       publication: {
         askOrigin: { sessionId: holder, messageId: 'holder-human' },
@@ -256,7 +265,7 @@ describe('runtime consultation publication commit', () => {
   test('a genuinely timed-out holder turn can replay only its original committed authored tuple', () => {
     vi.useFakeTimers();
     const who = caller();
-    const first = service.publish(draft, who);
+    const first = service.publish(withMintedPublicationId(service, draft), who);
     if (!first.accepted) throw new Error('Expected committed receipt');
     const committed = rows();
     vi.advanceTimersByTime(CONSULTATION_TIMEOUT_MS + 1);
@@ -264,17 +273,14 @@ describe('runtime consultation publication commit', () => {
     restart();
     const sdk = db.getDatabase();
     sdk.prepare('DELETE FROM sdk_messages').run();
-    const retry = service.publish(draft, who);
+    const retry = service.publish(withMintedPublicationId(service, draft), who);
     if (!retry.accepted) throw new Error('Expected durable replay');
     expect(retry).toEqual({ ...first, created: false });
     expect(rows()).toEqual(committed);
-    for (const changed of [
-      { publicationId: crypto.randomUUID() },
-      { shortText: 'Different' },
-      { fullText: 'Different' },
-      { links: [] },
-    ]) {
-      expect(service.publish({ ...draft, ...changed }, who)).toEqual({
+    for (const changed of [{ shortText: 'Different' }, { fullText: 'Different' }, { links: [] }]) {
+      expect(
+        service.publish(withMintedPublicationId(service, { ...draft, ...changed }), who)
+      ).toEqual({
         accepted: false,
         reason: 'publication_conflict',
       });
@@ -287,7 +293,7 @@ describe('runtime consultation publication commit', () => {
     'a committed receipt does not bypass %s ownership',
     (kind) => {
       const who = caller();
-      expect(service.publish(draft, who).accepted).toBe(true);
+      expect(service.publish(withMintedPublicationId(service, draft), who).accepted).toBe(true);
       const before = rows();
       let impostor: OperationCaller = { ...who, neoTurn: { ...who.neoTurn!, isLive: () => false } };
       if (kind === 'rpc') impostor = { ...impostor, source: 'rpc' };
@@ -301,7 +307,9 @@ describe('runtime consultation publication commit', () => {
           .run(holder);
       if (kind === 'root')
         db.getDatabase().prepare('DELETE FROM neo_session_bindings WHERE session_id = ?').run(root);
-      expect(service.publish(draft, impostor).accepted).toBe(false);
+      expect(service.publish(withMintedPublicationId(service, draft), impostor).accepted).toBe(
+        false
+      );
       expect(rows()).toEqual(before);
       expect(event).toHaveBeenCalledTimes(1);
     }
@@ -312,7 +320,7 @@ describe('runtime consultation publication commit', () => {
     const refused = { accepted: false as const, reason: 'publication_conflict' };
     expect(reusePublicationReceipt(draft, refused)).toEqual({ reason: refused });
     const who = caller();
-    const first = service.publish(draft, who);
+    const first = service.publish(withMintedPublicationId(service, draft), who);
     expect(reusePublicationReceipt(draft, first)).toEqual({ reason: first });
   });
 });

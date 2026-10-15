@@ -1,3 +1,4 @@
+import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
@@ -8,6 +9,7 @@ import {
   type NeoSavedRulesNote,
   neoSavedRulesKey,
   planNeoSavedRules,
+  neoSavedRulesReplayKey,
   planNeoSavedRulesAppend,
   planNeoSavedRulesNote,
   withNeoSavedRules,
@@ -106,7 +108,7 @@ describe('planNeoSavedRulesAppend', () => {
   const kept = { standingRules: [rule, 'Keep B.'], stored: false };
   const pending = new Map([[key, { pending: [rule], published: {} }]]);
   const sent = new Map([
-    [key, { pending: ['Keep B.'], published: { [reply.publicationId]: [rule] } }],
+    [key, { pending: ['Keep B.'], published: { [neoSavedRulesReplayKey(reply)]: [rule] } }],
   ]);
   test.each<
     [
@@ -143,7 +145,7 @@ describe('planNeoSavedRulesAppend', () => {
     const plan = planNeoSavedRulesAppend(input, notes, current);
     expect(plan.rules).toEqual(rules);
     expect(plan.keep !== null).toBe(keeps);
-    if (plan.keep) expect(plan.keep.note.published[input.publicationId]).toEqual(rules);
+    if (plan.keep) expect(plan.keep.note.published[neoSavedRulesReplayKey(input)]).toEqual(rules);
   });
 });
 
@@ -233,7 +235,14 @@ describe('Neo reply after a rule save', () => {
   });
 
   const invoke = (name: string, input: unknown, as = caller) =>
-    invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, as);
+    invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      name,
+      name === 'neo.publication.publish'
+        ? withMintedPublicationId(service, input as { publicationId?: string })
+        : input,
+      as
+    );
 
   test('the published reply names the rule this turn saved, and a retry stays identical', async () => {
     db.updateGlobalSettings({ neo: { standingRules: ['Ask before deleting anything.'] } });

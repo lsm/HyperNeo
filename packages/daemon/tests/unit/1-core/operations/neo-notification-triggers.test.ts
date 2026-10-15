@@ -1,3 +1,4 @@
+import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
@@ -613,12 +614,12 @@ describe('NeoService notification triggers', () => {
     await invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
       'neo.publication.publish',
-      {
+      withMintedPublicationId(service, {
         publicationId: '20000000-0000-4000-8000-000000000001',
         shortText: 'Here is the unrelated answer.',
         fullText: 'Here is the unrelated answer.',
         links: [],
-      },
+      }),
       {
         source: 'mcp',
         sessionId: root,
@@ -663,12 +664,12 @@ describe('NeoService notification triggers', () => {
       await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.publication.publish',
-        {
+        withMintedPublicationId(service, {
           publicationId: '20000000-0000-4000-8000-000000000001',
           shortText: 'Ship now? Tap Yes or No.',
           fullText: 'Ship now? Tap Yes or No.',
           links: [],
-        },
+        }),
         caller
       )
     ).toMatchObject({ value: { accepted: true } });

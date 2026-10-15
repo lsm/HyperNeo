@@ -237,6 +237,7 @@ describe('NeoCrossProjectRepository', () => {
       shortText: 'Both finished',
       fullText: 'Both finished',
       links: [],
+      triggerId: `human:${ask.messageId}`,
     };
     expect(groups.publicationProblem(input)).toBe('cross_project_pending');
     for (const member of groups.members(group)) {
@@ -257,9 +258,19 @@ describe('NeoCrossProjectRepository', () => {
       accepted: true,
       created: false,
     });
-    expect(reopened.publicationProblem({ ...input, publicationId: crypto.randomUUID() })).toBe(
-      'cross_project_already_answered'
-    );
+    const retry = { ...input, publicationId: crypto.randomUUID() };
+    expect(reopened.publicationProblem(retry)).toBeNull();
+    expect(reopened.append(retry, undefined, () => ledger.append(retry))).toMatchObject({
+      accepted: true,
+      created: false,
+      publication: { publicationId: input.publicationId },
+    });
+    const changed = { ...retry, shortText: 'A different aggregate.' };
+    expect(reopened.append(changed, undefined, () => ledger.append(changed))).toMatchObject({
+      accepted: false,
+      reason: 'trigger_already_published',
+    });
+    expect(reopened.forAsk(input.askOrigin)?.publicationId).toBe(input.publicationId);
   });
   test('rolls back the group and all queued parts when a membership write fails', () => {
     const sql = db.getDatabase();

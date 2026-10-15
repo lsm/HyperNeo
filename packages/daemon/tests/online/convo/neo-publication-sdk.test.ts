@@ -9,7 +9,6 @@ import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 
 test('real SDK publishes an authored fictional reply through the daemon operation', async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
-  const publicationId = randomUUID();
   const requestId = randomUUID();
   const shortText = 'The fictional moon garden is ready.';
   const fullText = '## Fictional garden\n\nThe moon garden has three blue flowers.';
@@ -65,7 +64,7 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
           name: invoke!.name,
           input: {
             name: 'neo.publication.publish',
-            input: { publicationId, shortText, fullText, links: [] },
+            input: { shortText, fullText, links: [] },
           },
         }
       : { type: 'text', text: 'Fictional execution transcript only.' };
@@ -198,7 +197,7 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
     expect(page.ok).toBe(true);
     expect(page.items, JSON.stringify({ calls, receipts, requests })).toHaveLength(1);
     expect(page.items[0]).toMatchObject({
-      publicationId,
+      publicationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       shortText,
       fullText,
       links: [],
@@ -210,8 +209,16 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
       await new Promise((resolve) => setTimeout(resolve, 100));
     expect(calls).toEqual(['tool_use', 'tool_use', 'text']);
     expect(receipts).toMatchObject([
-      { accepted: true, created: true },
-      { accepted: true, created: false },
+      {
+        accepted: true,
+        created: true,
+        publication: { publicationId: page.items[0].publicationId },
+      },
+      {
+        accepted: true,
+        created: false,
+        publication: { publicationId: page.items[0].publicationId },
+      },
     ]);
     expect((await read()).items).toEqual(page.items);
   } finally {

@@ -74,6 +74,7 @@ describe('runtime-bound publication operation', () => {
   let runtime: Parameters<typeof createNeoPublisher>[0];
   let publish: ReturnType<typeof createNeoPublisher>;
   let notify: ReturnType<typeof vi.fn>;
+  let minted: string | undefined;
   function prompt(sessionId: string, messageId: string, inputKind = 'human') {
     expect(
       mailbox.sdkMessageRepo.saveSDKMessage(sessionId, {
@@ -136,10 +137,12 @@ describe('runtime-bound publication operation', () => {
     });
   }
   function invoke(input: unknown = draft, who: OperationCaller = caller()) {
+    const { publicationId, ...authored } = input as { publicationId?: string };
+    minted = publicationId;
     return invokeOperation(
       createOperationRegistry([createNeoPublicationOperation(publish)]),
       'neo.publication.publish',
-      input,
+      authored,
       who
     );
   }
@@ -186,11 +189,37 @@ describe('runtime-bound publication operation', () => {
         turnText: () => null,
       }),
       inputTrigger,
+      newId: () => {
+        const id = minted ?? crypto.randomUUID();
+        minted = undefined;
+        return id;
+      },
       notify,
     };
-    publish = createNeoPublisher(runtime);
+    const publishRaw = createNeoPublisher(runtime);
+    publish = ((input: unknown, who: OperationCaller) => {
+      const { publicationId, ...authored } = input as { publicationId?: string };
+      if (publicationId !== undefined) minted = publicationId;
+      return publishRaw(authored, who);
+    }) as typeof publishRaw;
   });
   afterEach(() => mailbox.close());
+
+  test('takes no publication id from the model: the daemon mints it', async () => {
+    const registry = createOperationRegistry([createNeoPublicationOperation(publish)]);
+    expect(
+      await invokeOperation(registry, 'neo.publication.publish', draft, caller())
+    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    const { publicationId: _chosen, ...authored } = draft;
+    const result = await invokeOperation(registry, 'neo.publication.publish', authored, caller());
+    expect(result).toMatchObject({ kind: 'completed', value: { accepted: true, created: true } });
+    const minted =
+      result.kind === 'completed'
+        ? (result.value as { publication: { publicationId: string } }).publication.publicationId
+        : '';
+    expect(minted).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ledger.list(conversationId)!.map((item) => item.publicationId)).toEqual([minted]);
+  });
 
   test('registers in the real family and persists authored content with runtime-derived identity', async () => {
     const service = {
@@ -200,7 +229,9 @@ describe('runtime-bound publication operation', () => {
     } as unknown as NeoService;
     const registry = createOperationRegistry(createNeoOperations(service));
     const before = mailbox.sdkRows();
-    const result = await invokeOperation(registry, 'neo.publication.publish', draft, caller());
+    const { publicationId, ...authored } = draft;
+    minted = publicationId;
+    const result = await invokeOperation(registry, 'neo.publication.publish', authored, caller());
     expect(result).toMatchObject({
       kind: 'completed',
       value: {
@@ -665,9 +696,11 @@ describe('runtime-bound publication operation', () => {
       'unknown_ask_origin'
     );
     expect(requirePublicationAsk(admission.value, ask)).toHaveProperty('value.ask', ask);
+    const { publicationId: _publicationId, ...authored } = draft;
+    expect(admitPublicationDraft(authored)).toHaveProperty('value');
     expect(
       admitPublicationDraft({
-        ...draft,
+        ...authored,
         links: Array.from({ length: 17 }, () => ({ label: 'Open', kind: 'project', id: 'a' })),
       })
     ).toHaveProperty('reason.reason', 'invalid_publication');

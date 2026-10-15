@@ -1,3 +1,4 @@
+import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub, Session, SessionConfig } from '@hyperneo/shared';
@@ -154,18 +155,28 @@ describe('published consultation runtime activation', () => {
       role: 'neo' as const,
       neoTurn: turn.identity(),
     };
-    expect(await invokeOperation(registry, 'neo.publication.publish', draft, caller)).toMatchObject(
-      {
-        kind: 'completed',
-        value: { accepted: true, created: true },
-      }
-    );
-    expect(await invokeOperation(registry, 'neo.publication.publish', draft, caller)).toMatchObject(
-      {
-        kind: 'completed',
-        value: { accepted: true, created: false },
-      }
-    );
+    expect(
+      await invokeOperation(
+        registry,
+        'neo.publication.publish',
+        withMintedPublicationId(service, draft),
+        caller
+      )
+    ).toMatchObject({
+      kind: 'completed',
+      value: { accepted: true, created: true },
+    });
+    expect(
+      await invokeOperation(
+        registry,
+        'neo.publication.publish',
+        withMintedPublicationId(service, draft),
+        caller
+      )
+    ).toMatchObject({
+      kind: 'completed',
+      value: { accepted: true, created: false },
+    });
     await service.syncConsultation(item.id);
     expect(service.publications.get(conversationId, draft.publicationId)).toMatchObject({
       ...draft,
