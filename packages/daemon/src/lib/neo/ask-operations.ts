@@ -658,31 +658,26 @@ function requireNeoAskTick(
 
 type NeoOutcomeCard = Pick<NeoWork, 'id' | 'status'>;
 
-export function neoItemCards<T extends NeoOutcomeCard>(
-  item: Pick<NeoAskItem, 'text' | 'deliveredBy'>,
-  evidence: string | null | undefined,
+export function neoItemDependentCards<T extends NeoOutcomeCard>(
+  item: Pick<NeoAskItem, 'deliveredBy'>,
   cards: readonly T[]
 ): T[] {
-  const said = `${item.text}\n${evidence ?? ''}`.toLowerCase();
-  return cards.filter(
-    (card) => card.id === item.deliveredBy || said.includes(card.id.slice(0, 8).toLowerCase())
-  );
+  return item.deliveredBy ? cards.filter((card) => card.id === item.deliveredBy) : [];
 }
 
 export function requireNeoMetReadEvidence<T>(
   caller: OperationCaller,
   state: NeoAskItem['state'],
-  item: Pick<NeoAskItem, 'id' | 'text' | 'deliveredBy'>,
-  evidence: string | undefined,
+  item: Pick<NeoAskItem, 'id' | 'deliveredBy'>,
   cards: readonly NeoOutcomeCard[],
   value: T
 ): Gate<T> {
   if (caller.source !== 'mcp' || state !== 'met') return { value };
-  const unread = neoItemCards(item, evidence, cards).filter((card) => card.status !== 'reported');
+  const unread = neoItemDependentCards(item, cards).filter((card) => card.status !== 'reported');
   return unread.length
     ? {
         reason: fail(
-          `met_unread: ${item.id} depends on ${unread.map((card) => `card ${card.id.slice(0, 8)}, which is ${card.status}`).join(' and ')}, so the daemon has not read its result. Keep the item pending: a proposed or queued card wakes you when it reports, and a failed or cancelled one needs new work.`
+          `met_unread: ${item.id} is delivered by ${unread.map((card) => `card ${card.id.slice(0, 8)}, which is ${card.status}`).join(' and ')}, so the daemon has not read its result. Keep the item pending: a proposed or queued card wakes you when it reports, and a failed or cancelled one needs new work.`
         ),
       }
     : { value };
@@ -1610,8 +1605,7 @@ export function createNeoAskOperations(
         target: { item: NeoAskItem },
         caller: OperationCaller,
         cards: NeoWork[]
-      ) =>
-        requireNeoMetReadEvidence(caller, input.state, target.item, input.evidence, cards, target),
+      ) => requireNeoMetReadEvidence(caller, input.state, target.item, cards, target),
       ['input', 'admission', 'caller', 'cards'],
       'result:admission'
     )

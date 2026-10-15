@@ -1756,16 +1756,14 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true, ask: { status: 'waiting', waitingItem: 'i13' } } });
   });
 
-  test('an item that depends on a card is met only once the daemon has read that card’s report', async () => {
+  test('an item a card delivers is met only once the daemon has read that card’s report', async () => {
     const askId = await openAsk();
     const card = (await propose('card-1', askId)).value!.work!.id;
+    expect(
+      await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: card }] })
+    ).toMatchObject({ value: { ok: true } });
     const tick = () =>
-      invoke('neo.ask.tick', {
-        askId,
-        itemId: 'i1',
-        state: 'met',
-        evidence: `Card ${card.slice(0, 8)} is scoped to it. Work remains proposed.`,
-      });
+      invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met', evidence: 'It is scoped.' });
     expect(await tick()).toMatchObject({
       value: {
         ok: false,
@@ -3812,39 +3810,16 @@ describe('requireNeoMetReadEvidence', () => {
   const human: OperationCaller = { source: 'rpc', principal: 'local' };
   const proposed = { id: '39340a28-f92f-41e9-a541-beb3fc04c3ee', status: 'proposed' as const };
   const reported = { id: '9e1f1cb5-c292-4046-b7d2-f72f662cd3e0', status: 'reported' as const };
-  const item = { id: 'i2', text: 'The guard is implemented and merged.', deliveredBy: null };
+  const bound = (deliveredBy: string | null) => ({ id: 'i2', deliveredBy });
 
   test.each([
-    [
-      'a card bound to the item',
-      { ...item, deliveredBy: proposed.id },
-      'Merged.',
-      neo,
-      'met',
-      false,
-    ],
-    ['a card the evidence names', item, 'Card 39340a28 is scoped to it.', neo, 'met', false],
-    [
-      'a card the item text names',
-      { ...item, text: 'Card 39340a28 merges the guard.' },
-      'Done.',
-      neo,
-      'met',
-      false,
-    ],
-    ['a reported card', item, 'Card 9e1f1cb5 merged it.', neo, 'met', true],
-    ['no card named', item, 'PR #12 merged.', neo, 'met', true],
-    ['a reported tick', item, 'Card 39340a28 says it merged.', neo, 'reported', true],
-    ['the human', item, 'Card 39340a28 is enough.', human, 'met', true],
-  ] as const)('%s', (_label, target, evidence, caller, state, admitted) => {
-    const result = requireNeoMetReadEvidence(
-      caller,
-      state,
-      target,
-      evidence,
-      [proposed, reported],
-      'ok'
-    );
+    ['a proposed card delivers it', bound(proposed.id), neo, 'met', false],
+    ['a reported card delivers it', bound(reported.id), neo, 'met', true],
+    ['no card delivers it', bound(null), neo, 'met', true],
+    ['the tick is reported, not met', bound(proposed.id), neo, 'reported', true],
+    ['the human ticks it', bound(proposed.id), human, 'met', true],
+  ] as const)('%s', (_label, item, caller, state, admitted) => {
+    const result = requireNeoMetReadEvidence(caller, state, item, [proposed, reported], 'ok');
     expect('value' in result).toBe(admitted);
   });
 });
