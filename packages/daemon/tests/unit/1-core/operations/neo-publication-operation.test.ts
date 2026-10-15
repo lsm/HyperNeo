@@ -31,6 +31,7 @@ import {
   requirePublicationTrigger,
 } from '../../../../src/lib/neo/notification-triggers.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import { NeoRoutingLogRepository } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
@@ -382,6 +383,18 @@ describe('runtime-bound publication operation', () => {
   });
 
   test('a later input on the same trigger replaces the interim post in place, marked edited', () => {
+    const routes = new NeoRoutingLogRepository(mailbox.db);
+    routes.record({
+      messageId: ask.messageId,
+      conversationId,
+      askedAt: 0,
+      ask: 'How many merged?',
+      destination: 'main',
+      targetSessionId: root.sessionId,
+      projectId: null,
+      signal: 'embedding',
+      confidence: 1,
+    });
     expect(publish({ ...draft, shortText: 'Checking with the holder.' }, caller())).toMatchObject({
       accepted: true,
       created: true,
@@ -407,6 +420,7 @@ describe('runtime-bound publication operation', () => {
       editedAt: expect.any(String),
     });
     expect(ledger.list(conversationId)).toHaveLength(1);
+    expect(routes.find(ask.messageId)?.outcome).toBe('12');
   });
 
   test.each([

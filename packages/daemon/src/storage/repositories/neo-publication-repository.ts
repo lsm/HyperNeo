@@ -265,10 +265,13 @@ export class NeoPublicationRepository {
 
   private recordReplyOutcome(publication: NeoPublication): void {
     const { askOrigin, shortText, askSummary, awaiting } = publication;
-    new NeoRoutingLogRepository(this.db).recordOutcome(askOrigin.messageId, shortText, Date.now(), {
-      askSummary,
-      awaiting,
-    });
+    new NeoRoutingLogRepository(this.db).recordOutcome(
+      askOrigin.messageId,
+      shortText,
+      Date.now(),
+      { askSummary, awaiting },
+      !!publication.answerInput
+    );
   }
 
   hasTrigger(conversationId: string, triggerId: string, publicationId: string): boolean {
