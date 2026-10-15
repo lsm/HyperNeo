@@ -471,6 +471,9 @@ describe('Neo MVP', () => {
     expect(await invoke('neo.receipt.read', { workId: 'gone' })).toMatchObject({
       value: { ok: false, reason: 'Receipt not found.' },
     });
+    expect(
+      await invoke('neo.receipt.read', { workId: work.id }, { source: 'mcp', sessionId: root })
+    ).toMatchObject({ value: { ok: false, reason: 'This action needs the user.' } });
   });
 
   test('opening a missing project reports a domain rejection instead of an execution fault', async () => {
