@@ -192,6 +192,10 @@ export function isNeoCardFailedForGood(card: NeoCardView, pending: boolean): boo
   );
 }
 
+export function neoAskOutcomeKey(ask: Pick<NeoAsk, 'doneItems'>): string {
+  return `outcome:${(ask.doneItems ?? []).filter((item) => !item.removed).length}`;
+}
+
 export function neoAskTriggerKeys(
   ask: NeoAsk,
   read: NeoAskTriggerRead,
@@ -207,7 +211,7 @@ export function neoAskTriggerKeys(
   if (outcome)
     return [
       {
-        key: `outcome:${items.length}`,
+        key: neoAskOutcomeKey(ask),
         kind: 'outcome',
         line:
           ask.status === 'achieved'

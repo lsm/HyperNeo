@@ -393,7 +393,7 @@ describe('NeoService notification triggers', () => {
     db.close();
   });
 
-  test('a published answer the hook never saw is applied by the next sweep', async () => {
+  test('a published answer the hook never saw is applied by the next sweep, never a stale one', async () => {
     const opened = service.askRecords.open(
       {
         id: 'a1',
@@ -414,6 +414,20 @@ describe('NeoService notification triggers', () => {
       { id: 'i1', state: 'reported', evidence: '42 files', metBy: null },
       Date.now()
     );
+    const internals = service as unknown as {
+      triggers: { record(askId: string, keys: string[], triggerId: string, at: number): void };
+    };
+    internals.triggers.record('a1', ['outcome:0'], 'outcome:a1:stale', Date.now());
+    service.publications.append({
+      conversationId,
+      publicationId: '40000000-0000-4000-8000-000000000002',
+      askOrigin: { sessionId: root, messageId: m0 },
+      producerInput: { sessionId: root, messageId: m0 },
+      shortText: 'An older outcome.',
+      fullText: 'An older outcome.',
+      links: [],
+      triggerId: 'outcome:a1:stale',
+    });
     sweep();
     await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
     const triggerId = mailbox()[0]

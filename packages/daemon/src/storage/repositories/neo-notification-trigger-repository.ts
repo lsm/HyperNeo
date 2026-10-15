@@ -43,13 +43,13 @@ export class NeoNotificationTriggerRepository {
     return rows.length ? { askId: rows[0].askId, keys: rows.map((row) => row.key) } : null;
   }
 
-  outcomeTriggerIds(askId: string): string[] {
+  triggerIdsFor(askId: string, key: string): string[] {
     if (!this.ready()) return [];
     return (
       this.db
         .prepare(`SELECT DISTINCT trigger_id AS triggerId FROM neo_notification_triggers
-          WHERE ask_id = ? AND trigger_key LIKE 'outcome:%' AND trigger_id IS NOT NULL`)
-        .all(askId) as { triggerId: string }[]
+          WHERE ask_id = ? AND trigger_key = ? AND trigger_id IS NOT NULL`)
+        .all(askId, key) as { triggerId: string }[]
     ).map((row) => row.triggerId);
   }
 
