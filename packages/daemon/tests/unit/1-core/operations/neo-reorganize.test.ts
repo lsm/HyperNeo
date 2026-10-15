@@ -202,6 +202,7 @@ describe('neo.projects.reorganize', () => {
     const delivered: { sessionId: string; messageId: string; parent: unknown }[] = [];
     const moves: { askId: string; projectId: string; messageId: string }[] = [];
     const logged: string[] = [];
+    const cleaned: string[] = [];
     const deps: NeoReorganizeRuntime = {
       getBinding: (sessionId) =>
         sessionId === root
@@ -224,18 +225,26 @@ describe('neo.projects.reorganize', () => {
       mergeProjects: async () => ({ merged, asked: [] }),
       projectFacts: () => [],
       machine: () => 'here',
+      cleanup: async (step) => {
+        cleaned.push(step.projectId);
+        if (step.projectId === 'stuck') throw new Error('busy');
+      },
       mirroredAliases: async () => new Set(),
       log: (line) => {
         logged.push(line);
       },
     };
-    return { deps, delivered, moves, logged };
+    return { deps, delivered, moves, logged, cleaned };
   }
-  const invoke = (deps: NeoReorganizeRuntime, caller: OperationCaller = neoCaller) =>
+  const invoke = (
+    deps: NeoReorganizeRuntime,
+    caller: OperationCaller = neoCaller,
+    input: Record<string, unknown> = {}
+  ) =>
     invokeOperation(
       createOperationRegistry([createNeoReorganizeOperation(deps)]),
       'neo.projects.reorganize',
-      {},
+      input,
       caller
     ).then((outcome) => (outcome as { value?: unknown }).value);
 
@@ -248,6 +257,8 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps)).toEqual({
       ok: true,
       cleanupPlanned: [],
+      cleanupApplied: false,
+      cleanupFailed: [],
       merged: [],
       asked: [],
       moved: [{ askId: 'a', projectId: 'drivers' }],
@@ -285,6 +296,7 @@ describe('neo.projects.reorganize', () => {
         liveWork: 0,
         routed: 0,
         holderMessages: 0,
+        archived: false,
         aliases: [],
       },
     ];
@@ -298,11 +310,45 @@ describe('neo.projects.reorganize', () => {
     expect(logged).toContain('neo reorganize: no project cleanup, the places could not be read');
   });
 
+  test('apply runs the same plan, logs each step and reports the ones that failed', async () => {
+    const { deps, logged, cleaned } = runtime([], {});
+    const empty = (id: string) => ({
+      id,
+      title: id,
+      createdAt: 1,
+      section: false,
+      context: 0,
+      asks: 0,
+      liveAsks: 0,
+      work: [],
+      liveWork: 0,
+      routed: 0,
+      holderMessages: 0,
+      archived: false,
+      aliases: [],
+    });
+    deps.projectFacts = () => [empty('empty'), empty('stuck')];
+    expect(await invoke(deps, neoCaller, { apply: true })).toMatchObject({
+      ok: true,
+      cleanupApplied: true,
+      cleanupFailed: [{ projectId: 'stuck', reason: 'Error: busy' }],
+    });
+    expect(cleaned).toEqual(['empty', 'stuck']);
+    expect(logged).toEqual(
+      expect.arrayContaining([
+        'neo reorganize: did delete project empty (empty)',
+        'neo reorganize: could not delete project stuck (stuck): Error: busy',
+      ])
+    );
+  });
+
   test('merges matching projects first and logs each merge', async () => {
     const { deps, logged } = runtime([], {}, [], {}, [{ sourceId: 'web-2', targetId: 'web' }]);
     expect(await invoke(deps)).toEqual({
       ok: true,
       cleanupPlanned: [],
+      cleanupApplied: false,
+      cleanupFailed: [],
       merged: [{ sourceId: 'web-2', targetId: 'web' }],
       asked: [],
       moved: [],
@@ -325,6 +371,8 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps)).toEqual({
       ok: true,
       cleanupPlanned: [],
+      cleanupApplied: false,
+      cleanupFailed: [],
       merged: [],
       asked: [],
       moved: [{ askId: 'a', projectId: 'drivers' }],
@@ -353,6 +401,8 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps)).toEqual({
       ok: true,
       cleanupPlanned: [],
+      cleanupApplied: false,
+      cleanupFailed: [],
       merged: [],
       asked: [],
       moved: [],
@@ -374,6 +424,8 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps)).toEqual({
       ok: true,
       cleanupPlanned: [],
+      cleanupApplied: false,
+      cleanupFailed: [],
       merged: [],
       asked: [],
       moved: [],

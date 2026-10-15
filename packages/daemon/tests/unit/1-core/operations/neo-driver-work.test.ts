@@ -2921,7 +2921,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('reopens a waiting ask once its daemon-ticked item no longer needs the human', async () => {
+  test('a waiting ask whose last item the daemon ticks met settles achieved', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6265';
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
@@ -2963,7 +2963,7 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.askRecords.get(opened.id)).toMatchObject({
-        status: 'open',
+        status: 'achieved',
         doneItems: [expect.objectContaining({ state: 'met', metBy: 'daemon' })],
       });
     } finally {

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 import {
   NEO_REORGANIZE_EVERY_MS,
   NEO_REORGANIZE_IDLE_MS,
@@ -8,6 +7,7 @@ import {
   runNeoNightlyReorganize,
   scheduleNeoNightlyReorganize,
 } from '../../../../src/lib/neo/reorganize-nightly.ts';
+import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const now = 10 * NEO_REORGANIZE_EVERY_MS;
 
@@ -67,6 +67,8 @@ describe('runNeoNightlyReorganize', () => {
           moved: [{ askId: 'a', projectId: 'c' }],
           stayed: [{ askId: 'b', reason: 'stays_main' }],
           cleanupPlanned: [],
+          cleanupApplied: false,
+          cleanupFailed: [],
         };
       },
       log: (line) => lines.push(line),
@@ -92,7 +94,15 @@ describe('runNeoNightlyReorganize', () => {
         lastHumanAt: () => now - 60_000,
         reorganize: async () => {
           runs++;
-          return { merged: [], asked: [], moved: [], stayed: [], cleanupPlanned: [] };
+          return {
+            merged: [],
+            asked: [],
+            moved: [],
+            stayed: [],
+            cleanupPlanned: [],
+            cleanupApplied: false,
+            cleanupFailed: [],
+          };
         },
         log: () => {},
       }

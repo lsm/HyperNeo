@@ -5,6 +5,7 @@ import {
   neoMirroredAliases,
   planNeoProjectCleanup,
 } from '../../../../src/lib/neo/project-cleanup.ts';
+import { createNeoProjectCleanupApply } from '../../../../src/lib/neo/project-cleanup-apply.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
@@ -21,6 +22,7 @@ const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProje
   liveWork: 0,
   routed: 0,
   holderMessages: 0,
+  archived: false,
   aliases: [],
   ...overrides,
 });
@@ -31,13 +33,7 @@ const plan = (projects: NeoProjectFacts[], pinned: string[] = [], mirrored: stri
     mirrored: new Set(mirrored),
   });
 const repo = 'repository:github.com/lsm/app';
-const oneOff = {
-  asks: 1,
-  work: [
-    { lastActivityAt: DAY, ref: null },
-    { lastActivityAt: DAY + 60_000, ref: null },
-  ],
-};
+const oneOff = { asks: 1, work: [{ ref: null }] };
 
 describe('project cleanup plan', () => {
   test('an empty project with a silent holder is deleted unless the mirror would create it again', () => {
@@ -68,7 +64,7 @@ describe('project cleanup plan', () => {
   });
 
   test('a project with no repository merges where most of its cards ran, before any title match', () => {
-    const card = (ref: string) => ({ lastActivityAt: DAY, ref });
+    const card = (ref: string) => ({ ref });
     const ios = project('ios', { createdAt: 2, aliases: [repo, 'work:here\u0000claude\u0000s1'] });
     const web = project('web', {
       title: 'Topic',
@@ -92,26 +88,14 @@ describe('project cleanup plan', () => {
     ).toEqual([{ action: 'merge', projectId: 'topic', title: 'Topic', targetId: 'ios' }]);
   });
 
-  test('a one-off project with no repository and no home is archived; ongoing work, no work, or another machine is kept', () => {
-    expect(plan([project('once', oneOff)])).toEqual([
-      { action: 'archive', projectId: 'once', title: 'once' },
-    ]);
+  test('a project with no repository, content and no home is kept however little it was used', () => {
     expect(
       plan([
+        project('once', oneOff),
         project('notes', { context: 10, holderMessages: 4 }),
-        project('host', { ...oneOff, aliases: ['folder:here2\u0000/x'] }),
+        project('addressed', { asks: 1, routed: 1 }),
       ])
     ).toEqual([]);
-    const twoDays = {
-      asks: 1,
-      work: [
-        { lastActivityAt: DAY, ref: null },
-        { lastActivityAt: 3 * DAY, ref: null },
-      ],
-    };
-    expect(plan([project('days', twoDays), project('addressed', { asks: 1, routed: 1 })])).toEqual(
-      []
-    );
   });
 
   test('another machine is no home', () => {
@@ -120,15 +104,53 @@ describe('project cleanup plan', () => {
         project('away', { title: 'App', aliases: [repo, 'folder:tts\u0000/app'] }),
         project('topic', { title: 'App', ...oneOff }),
       ])
-    ).toEqual([{ action: 'archive', projectId: 'topic', title: 'App' }]);
+    ).toEqual([]);
   });
 
-  test('live, section, pinned and other-machine projects are left alone', () => {
+  test('a project the human asked to archive is archived, even with a repository', () => {
+    expect(
+      planNeoProjectCleanup([project('kept', { aliases: [repo], asks: 1 })], {
+        pinned: new Set(),
+        machine: 'here',
+        mirrored: new Set(),
+        archive: new Set(['kept']),
+      })
+    ).toEqual([{ action: 'archive', projectId: 'kept', title: 'kept' }]);
+  });
+
+  test('an archived or to-be-archived project is no merge home, and a live project is not archived even when asked', () => {
+    expect(
+      plan([
+        project('home', { title: 'App', aliases: [repo], archived: true }),
+        project('topic', { title: 'App', ...oneOff }),
+      ])
+    ).toEqual([]);
+    expect(
+      planNeoProjectCleanup([project('busy', { aliases: [repo], liveWork: 1 })], {
+        pinned: new Set(),
+        machine: 'here',
+        mirrored: new Set(),
+        archive: new Set(['busy']),
+      })
+    ).toEqual([]);
+    expect(
+      planNeoProjectCleanup(
+        [
+          project('home', { title: 'App', aliases: [repo] }),
+          project('topic', { title: 'App', ...oneOff }),
+        ],
+        { pinned: new Set(), machine: 'here', mirrored: new Set(), archive: new Set(['home']) }
+      )
+    ).toEqual([{ action: 'archive', projectId: 'home', title: 'App' }]);
+  });
+
+  test('live, section, already archived, pinned and other-machine projects are left alone', () => {
     expect(
       plan(
         [
           project('live', { ...oneOff, liveAsks: 1 }),
           project('section', { section: true }),
+          project('archived', { ...oneOff, archived: true }),
           project('inbox'),
           project('remote', { ...oneOff, aliases: ['folder:tts\u0000/x'] }),
         ],
@@ -171,6 +193,28 @@ describe('NeoRepository.projectCleanupFacts', () => {
         mirrored: new Set(),
       })
     ).toEqual([{ action: 'delete', projectId: 'child', title: 'Child' }]);
+  });
+
+  test('deleteEmptyProject removes an empty project with its binding and aliases, and refuses one with content', () => {
+    repo.saveProject({ id: 'empty', title: 'Empty', summary: '', context: '' }, 0);
+    repo.saveProject({ id: 'full', title: 'Full', summary: '', context: 'notes' }, 0);
+    const raw = db.getDatabase();
+    raw
+      .prepare(
+        "INSERT INTO neo_session_bindings (session_id, concern_id, kind) VALUES ('holder', 'empty', 'project')"
+      )
+      .run();
+    raw
+      .prepare(
+        "INSERT INTO neo_project_workspaces (alias, project_id) VALUES ('folder:here', 'empty')"
+      )
+      .run();
+    expect(repo.deleteEmptyProject('empty')).toBe('holder');
+    expect(repo.getProject('empty')).toBeNull();
+    expect(repo.getBindingForProject('empty')).toBeNull();
+    expect(raw.prepare('SELECT count(*) AS n FROM neo_project_workspaces').get()).toEqual({ n: 0 });
+    expect(() => repo.deleteEmptyProject('full')).toThrow('the project is no longer empty');
+    expect(repo.getProject('full')).not.toBeNull();
   });
 });
 
@@ -216,5 +260,57 @@ describe('neoCleanupFolders', () => {
         'here'
       )
     ).toEqual(['/a']);
+  });
+});
+
+describe('createNeoProjectCleanupApply', () => {
+  test('delete drops the empty project then its holder; merge is human-approved; archive archives an idle holder', async () => {
+    const calls: unknown[] = [];
+    const project = (id: string) => ({ id, revision: 3 });
+    const apply = createNeoProjectCleanupApply({
+      repo: {
+        deleteEmptyProject: (id: string) => (calls.push(['dropped', id]), 'holder:a'),
+        getBindingForProject: (id: string) => ({ sessionId: `holder:${id}` }),
+        getProject: project,
+        projectMerges: {
+          merge: (input: unknown) => (calls.push(['merge', input]), { ok: true }),
+        },
+      },
+      sessions: {
+        deleteSessionResources: async (id: string, trigger: string) => {
+          calls.push(['deleted', id, trigger]);
+        },
+        getCachedSession: (id: string) =>
+          id === 'holder:busy'
+            ? { getProcessingState: () => ({ status: 'processing' }) }
+            : undefined,
+        archiveSessionResources: async (id: string, trigger: string) => {
+          calls.push(['archived', id, trigger]);
+        },
+      },
+    } as never);
+    await apply({ action: 'delete', projectId: 'a', title: 'A' });
+    await apply({ action: 'merge', projectId: 'b', title: 'B', targetId: 'c' });
+    await apply({ action: 'archive', projectId: 'd', title: 'D' });
+    await expect(apply({ action: 'archive', projectId: 'busy', title: 'Busy' })).rejects.toThrow(
+      'the holder is mid-turn'
+    );
+    expect(calls).toEqual([
+      ['dropped', 'a'],
+      ['deleted', 'holder:a', 'ui_session_delete'],
+      [
+        'merge',
+        {
+          sourceId: 'b',
+          targetId: 'c',
+          sourceRevision: 3,
+          targetRevision: 3,
+          sourceIdentities: [],
+          targetIdentities: [],
+          humanApproved: true,
+        },
+      ],
+      ['archived', 'holder:d', 'ui_session_archive'],
+    ]);
   });
 });
