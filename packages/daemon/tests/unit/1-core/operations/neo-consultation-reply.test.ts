@@ -41,7 +41,7 @@ describe('presentNeoConsultationReply', () => {
           : { ok: true as const, waiter: waiter(status) }
       );
       const result = presentNeoConsultationReply(receipt);
-      expect(result.replyGuidance).toContain('one short acknowledgement');
+      expect(result.replyGuidance).toContain('Publish nothing now');
       expect(result.replyGuidance).toContain('Do not give a preliminary answer');
       expect(result.replyGuidance).toContain('Its attributed answer arrives separately');
       expect(result.replyGuidance).not.toContain(identity.question);
