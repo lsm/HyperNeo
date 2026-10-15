@@ -221,6 +221,7 @@ describe('neo.projects.reorganize', () => {
         moves.push({ askId: item.id, projectId: owner.projectId, messageId: owner.messageId }),
       mergeProjects: async () => ({ merged, asked: [] }),
       projectFacts: () => [],
+      machine: () => 'here',
       log: (line) => {
         logged.push(line);
       },
@@ -273,15 +274,15 @@ describe('neo.projects.reorganize', () => {
         id: 'empty',
         title: 'Empty',
         createdAt: 1,
-        lastActivity: Date.now(),
         section: false,
         context: 0,
         asks: 0,
         liveAsks: 0,
-        work: 0,
+        work: [],
         liveWork: 0,
         routed: 0,
-        workspaces: [],
+        holderMessages: 0,
+        aliases: [],
       },
     ];
     expect(await invoke(deps)).toMatchObject({

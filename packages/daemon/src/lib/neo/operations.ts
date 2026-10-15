@@ -1028,6 +1028,7 @@ export function neoReorganizeRuntime(
       return { merged: [...backfilled, ...merged, ...settled.merged], asked: settled.asked };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
+    machine: () => hostname(),
     log: (line) => service.logReorganize(line),
   };
 }

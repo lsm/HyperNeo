@@ -69,6 +69,7 @@ export interface NeoReorganizeRuntime {
   move(ask: NeoAsk, cards: readonly NeoWork[], owner: Project & { messageId: string }): void;
   mergeProjects(): Promise<{ merged: Merged[]; asked: Merged[] }>;
   projectFacts(): NeoProjectFacts[];
+  machine(): string;
   log(line: string): void;
 }
 
@@ -229,11 +230,10 @@ export function createNeoProjectsReorganizer(
       if ('reason' in result) stayed.push(result);
       else moved.push(result);
     }
-    const cleanupPlanned = planNeoProjectCleanup(
-      runtime.projectFacts(),
-      Date.now(),
-      new Set([NEO_INBOX_ID])
-    );
+    const cleanupPlanned = planNeoProjectCleanup(runtime.projectFacts(), {
+      pinned: new Set([NEO_INBOX_ID]),
+      machine: runtime.machine(),
+    });
     for (const step of cleanupPlanned)
       runtime.log(
         `neo reorganize: would ${step.action} project ${step.projectId} (${step.title})${'targetId' in step ? ` into ${step.targetId}` : ''}`
@@ -256,7 +256,7 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
   return defineOperation({
     name: 'neo.projects.reorganize',
     description:
-      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read are asked about once on main (asked): run this again after the human answers to apply it, and a saved answer is never asked again. Then move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also plans project cleanup and returns it in cleanupPlanned without applying it yet: empty projects to delete, same-title or same-workspace duplicates with content to merge into the older one, and idle projects untouched for 30 days to archive. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
+      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read are asked about once on main (asked): run this again after the human answers to apply it, and a saved answer is never asked again. Then move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also plans project cleanup and returns it in cleanupPlanned without applying it yet: projects sharing a repository merge into the oldest, which is never deleted or archived; a project with no repository is deleted when empty, merged into the repository project with its title or folder, or, when it was a one-off (one day of work and never addressed by the human), has its holder session archived. Projects only on another machine are left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

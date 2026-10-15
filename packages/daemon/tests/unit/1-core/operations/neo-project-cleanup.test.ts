@@ -6,81 +6,84 @@ import {
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
-const now = 1_800_000_000_000;
-const NEO_PROJECT_ARCHIVE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+const DAY = 24 * 60 * 60 * 1000;
 const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProjectFacts => ({
   id,
   title: id,
   createdAt: 1,
-  lastActivity: now,
   section: false,
   context: 0,
   asks: 0,
   liveAsks: 0,
-  work: 0,
+  work: [],
   liveWork: 0,
   routed: 0,
-  workspaces: [],
+  holderMessages: 0,
+  aliases: [],
   ...overrides,
 });
 const plan = (projects: NeoProjectFacts[], pinned: string[] = []) =>
-  planNeoProjectCleanup(projects, now, new Set(pinned));
+  planNeoProjectCleanup(projects, { pinned: new Set(pinned), machine: 'here' });
+const repo = 'repository:github.com/lsm/app';
+const oneOff = { asks: 1, work: [{ lastActivityAt: DAY }, { lastActivityAt: DAY + 60_000 }] };
 
 describe('planNeoProjectCleanup', () => {
-  test('an empty project is deleted', () => {
+  test('an empty project with a silent holder is deleted', () => {
     expect(plan([project('empty')])).toEqual([
       { action: 'delete', projectId: 'empty', title: 'empty' },
     ]);
+    expect(plan([project('spoke', { holderMessages: 1, routed: 1 })])).toEqual([]);
   });
 
-  test('saved context, an ask, work, a routed message or children keep a project from deletion', () => {
-    for (const filled of [
-      { context: 10 },
-      { asks: 1 },
-      { work: 1 },
-      { routed: 1 },
-      { section: true },
-    ])
-      expect(plan([project('p', filled)])).toEqual([]);
+  test('a repository project is never deleted or archived, and duplicates merge into the oldest', () => {
+    const oldest = project('old', { createdAt: 1, aliases: [repo] });
+    const twin = project('twin', { createdAt: 2, ...oneOff, aliases: [repo] });
+    expect(plan([twin, oldest])).toEqual([
+      { action: 'merge', projectId: 'twin', title: 'twin', targetId: 'old' },
+    ]);
+    expect(plan([project('alone', { aliases: [repo] })])).toEqual([]);
   });
 
-  test('a same-title or same-workspace duplicate with content merges into the older one', () => {
-    const older = project('old', { title: 'App', createdAt: 1, asks: 1 });
-    const sameTitle = project('new', { title: ' app ', createdAt: 2, routed: 1 });
-    const sameFolder = project('folder', {
-      title: 'Other',
-      createdAt: 3,
-      work: 1,
-      workspaces: ['/code/app'],
+  test('a project with no repository merges into the repository project with its title or folder', () => {
+    const home = project('home', {
+      title: 'App',
+      createdAt: 5,
+      aliases: [repo, 'folder:here/app'],
     });
-    expect(plan([older, sameTitle, sameFolder])).toEqual([
-      { action: 'merge', projectId: 'new', title: ' app ', targetId: 'old' },
-    ]);
     expect(
-      plan([{ ...older, workspaces: ['/code/app'] }, sameTitle, sameFolder]).map(
-        (step) => 'targetId' in step && step.targetId
+      plan([
+        home,
+        project('titled', { title: ' app ', ...oneOff }),
+        project('foldered', { title: 'Other', ...oneOff, aliases: ['folder:here/app'] }),
+      ])
+    ).toEqual([
+      { action: 'merge', projectId: 'titled', title: ' app ', targetId: 'home' },
+      { action: 'merge', projectId: 'foldered', title: 'Other', targetId: 'home' },
+    ]);
+  });
+
+  test('a one-off project with no repository and no home is archived; ongoing work is kept', () => {
+    expect(plan([project('once', oneOff)])).toEqual([
+      { action: 'archive', projectId: 'once', title: 'once' },
+    ]);
+    const twoDays = { asks: 1, work: [{ lastActivityAt: DAY }, { lastActivityAt: 3 * DAY }] };
+    expect(plan([project('days', twoDays), project('addressed', { asks: 1, routed: 1 })])).toEqual(
+      []
+    );
+  });
+
+  test('live, section, pinned and other-machine projects are left alone', () => {
+    expect(
+      plan(
+        [
+          project('live', { ...oneOff, liveAsks: 1 }),
+          project('section', { section: true }),
+          project('inbox'),
+          project('remote', { ...oneOff, aliases: ['folder:tts/x'] }),
+        ],
+        ['inbox']
       )
-    ).toEqual(['old', 'old']);
-  });
-
-  test('a project with live asks or work is never merged or archived', () => {
-    const older = project('old', { title: 'App', asks: 1 });
-    expect(
-      plan([older, project('new', { title: 'App', createdAt: 2, asks: 1, liveAsks: 1 })])
     ).toEqual([]);
-    expect(plan([project('idle', { work: 1, liveWork: 1, lastActivity: 0 })])).toEqual([]);
-  });
-
-  test('an idle project with content is archived once untouched past the limit', () => {
-    const idle = (lastActivity: number) => project('idle', { asks: 1, lastActivity });
-    expect(plan([idle(now - NEO_PROJECT_ARCHIVE_AFTER_MS - 1)])).toEqual([
-      { action: 'archive', projectId: 'idle', title: 'idle' },
-    ]);
-    expect(plan([idle(now - NEO_PROJECT_ARCHIVE_AFTER_MS + 1)])).toEqual([]);
-  });
-
-  test('a pinned project such as the inbox is left alone', () => {
-    expect(plan([project('inbox')], ['inbox'])).toEqual([]);
   });
 });
 
@@ -105,12 +108,13 @@ describe('NeoRepository.projectCleanupFacts', () => {
       section: false,
       context: 0,
       asks: 0,
-      work: 0,
+      work: [],
       routed: 0,
-      workspaces: [],
+      holderMessages: 0,
+      aliases: [],
     });
-    expect(planNeoProjectCleanup([...facts.values()], Date.now(), new Set())).toEqual([
-      { action: 'delete', projectId: 'child', title: 'Child' },
-    ]);
+    expect(
+      planNeoProjectCleanup([...facts.values()], { pinned: new Set(), machine: 'here' })
+    ).toEqual([{ action: 'delete', projectId: 'child', title: 'Child' }]);
   });
 });

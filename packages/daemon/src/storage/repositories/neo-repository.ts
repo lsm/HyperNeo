@@ -55,25 +55,27 @@ export class NeoRepository {
           (SELECT count(*) FROM neo_asks a WHERE a.concern_id = c.id) AS asks,
           (SELECT count(*) FROM neo_asks a WHERE a.concern_id = c.id
             AND a.status IN ('open', 'waiting', 'blocked')) AS liveAsks,
-          (SELECT count(*) FROM neo_work w WHERE w.concern_id = c.id) AS work,
           (SELECT count(*) FROM neo_work w WHERE w.concern_id = c.id
             AND w.status IN ('proposed', 'queued')) AS liveWork,
           (SELECT count(*) FROM neo_routing_log r WHERE r.concern_id = c.id) AS routed,
-          max(c.updated_at,
-            coalesce((SELECT max(a.updated_at) FROM neo_asks a WHERE a.concern_id = c.id), 0),
-            coalesce((SELECT max(w.updated_at) FROM neo_work w WHERE w.concern_id = c.id), 0),
-            coalesce((SELECT max(r.asked_at) FROM neo_routing_log r WHERE r.concern_id = c.id), 0)
-          ) AS lastActivity
+          (SELECT count(*) FROM neo_session_bindings b JOIN sdk_messages m ON m.session_id = b.session_id
+            WHERE b.kind = 'project' AND b.concern_id = c.id) AS holderMessages
         FROM neo_concerns c
         WHERE c.id NOT IN (SELECT source_id FROM neo_project_merges)`)
-      .all() as (Omit<NeoProjectFacts, 'section' | 'workspaces'> & { section: number })[];
+      .all() as (Omit<NeoProjectFacts, 'section' | 'work' | 'aliases'> & { section: number })[];
+    const work = this.db
+      .prepare('SELECT concern_id AS projectId, updated_at AS lastActivityAt FROM neo_work')
+      .all() as { projectId: string; lastActivityAt: number }[];
     const aliases = this.db
       .prepare('SELECT project_id AS projectId, alias FROM neo_project_workspaces')
       .all() as { projectId: string; alias: string }[];
     return rows.map((row) => ({
       ...row,
       section: !!row.section,
-      workspaces: aliases.filter((entry) => entry.projectId === row.id).map((entry) => entry.alias),
+      work: work
+        .filter((entry) => entry.projectId === row.id)
+        .map((entry) => ({ lastActivityAt: entry.lastActivityAt })),
+      aliases: aliases.filter((entry) => entry.projectId === row.id).map((entry) => entry.alias),
     }));
   }
 
