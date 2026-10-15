@@ -151,6 +151,7 @@ export interface NeoAsk {
   pooled?: boolean;
   approvalSpent?: NeoAskApprovalSpent | null;
   stalledWorkIds?: string[];
+  summarized?: true;
   waitingItem?: string | null;
   status: NeoAskStatus;
   outcome: string | null;
@@ -349,6 +350,11 @@ export interface NeoWaitingOnHuman {
   asks: { id: string; title: string; status: NeoAskStatus; question: string }[];
 }
 
+export interface NeoSnapshotWork extends NeoWork {
+  summarized?: true;
+  askId?: string;
+}
+
 export interface NeoSnapshot {
   ok: true;
   rev?: string;
@@ -359,7 +365,7 @@ export interface NeoSnapshot {
   projectFacts?: { reference: string; projectId?: string | null }[];
   publicAuthorBindings?: { sessionId: string; projectId: string; kind: 'project' }[];
   askForwards?: NeoAskForwardView[];
-  work: NeoWork[];
+  work: NeoSnapshotWork[];
   consultations: NeoConsultation[];
   consultationWaiters?: NeoConsultationWaiter[];
   askOrigins?: NeoReceiptAskOrigin[];
@@ -369,6 +375,7 @@ export interface NeoSnapshot {
   mutedSessions?: string[];
   standingRules?: string[];
   asks?: NeoAsk[];
+  moreSettled?: boolean;
   cards: NeoCardView[];
   sessionLoad?: NeoSessionLoad[];
   askViews: NeoAskView[];

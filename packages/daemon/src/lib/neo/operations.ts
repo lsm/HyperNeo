@@ -89,7 +89,10 @@ import {
   compactNeoSnapshotCards,
   fitNeoSnapshotBudget,
   NEO_MCP_SNAPSHOT_BUDGET,
+  NEO_SNAPSHOT_SETTLED_ASKS,
+  summarizeNeoSnapshot,
 } from './snapshot-compact.ts';
+import { isNeoAskSettled } from './done-check.ts';
 import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import {
   admitNeoWorkOrigin,
@@ -269,7 +272,9 @@ const SnapshotOk = z.object({
     )
     .max(NEO_SNAPSHOT_FORWARDS)
     .optional(),
-  work: z.array(Work),
+  work: z.array(
+    Work.extend({ summarized: z.literal(true).optional(), askId: z.string().optional() })
+  ),
   standingRules: z.array(z.string()).optional(),
   consultations: z.array(Consultation),
   consultationWaiters: z.array(ConsultationWaiter).optional(),
@@ -286,6 +291,7 @@ const SnapshotOk = z.object({
   sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
   asks: z.array(NeoAskSchema).optional(),
+  moreSettled: z.boolean().optional(),
   cards: z.array(NeoCardViewSchema).max(100),
   sessionLoad: z
     .array(z.object({ sessionId: z.string(), liveCards: z.number().int(), busy: z.boolean() }))
@@ -350,6 +356,7 @@ const Scope = z
     askId: z.string().min(1).optional(),
     all: z.boolean().optional(),
     sinceRev: z.string().min(1).max(40).optional(),
+    summaries: z.boolean().optional(),
   })
   .default({});
 const Save = z.object({
@@ -951,13 +958,23 @@ export function createNeoOperations(service: NeoService) {
     });
   }
 
-  function snapshot(caller: OperationCaller, requested?: string, askId?: string) {
-    const built = buildSnapshot(caller, requested, askId);
+  function snapshot(
+    caller: OperationCaller,
+    requested?: string,
+    askId?: string,
+    summaries = false
+  ) {
+    const built = buildSnapshot(caller, requested, askId, summaries);
     return built.ok && caller.source !== 'rpc'
       ? fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET, { focused: !!askId })
       : built;
   }
-  function buildSnapshot(caller: OperationCaller, requested?: string, askId?: string) {
+  function buildSnapshot(
+    caller: OperationCaller,
+    requested: string | undefined,
+    askId: string | undefined,
+    summaries: boolean
+  ) {
     const focus = askId ? service.askRecords.get(askId) : null;
     if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
@@ -992,14 +1009,15 @@ export function createNeoOperations(service: NeoService) {
     const listed = focus
       ? [focus]
       : service.askRecords.list(scope === undefined ? undefined : scope);
+    const summarize = caller.source === 'rpc' && !focus && summaries;
     const asks = projectNeoSnapshotAsks(
       listed,
-      caller.source === 'rpc' ? 50 : 10,
+      caller.source === 'rpc' && !summarize ? 50 : NEO_SNAPSHOT_SETTLED_ASKS,
       Date.now(),
       new Set(workIds.filter((id) => service.isContinueStalled(id)))
     );
     const { workPrs, cards } = projectCards(visibleWork, asks);
-    return {
+    const built = {
       ok: true as const,
       sessionId: service.repo.getBindingForProject(scope ?? null)?.sessionId ?? null,
       waitingOnHuman:
@@ -1053,6 +1071,9 @@ export function createNeoOperations(service: NeoService) {
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
       asks: compact ? compactNeoSnapshotAsks(asks) : asks,
+      ...(summarize
+        ? { moreSettled: listed.filter(isNeoAskSettled).length > NEO_SNAPSHOT_SETTLED_ASKS }
+        : {}),
       cards: compact ? compactNeoSnapshotCards(cards) : cards,
       sessionLoad: readNeoSessionLoad(service.db.getDatabase()).slice(0, 50),
       askViews: projectNeoAskViews(asks, cards, workPrs, unmutedAskSessions()),
@@ -1075,6 +1096,7 @@ export function createNeoOperations(service: NeoService) {
             }
       ),
     };
+    return summarize ? summarizeNeoSnapshot(built, listed) : built;
   }
   const muteSession = (superpipe({})('neo.session.mute') as PipelineAPI)
     .input(['input', 'caller'])
@@ -1210,7 +1232,7 @@ export function createNeoOperations(service: NeoService) {
     (input, caller) => {
       const scope = scopeOf(input, caller);
       const read = neoSnapshotRevision(
-        snapshot(caller, input.projectId, scope.askId),
+        snapshot(caller, input.projectId, scope.askId, input.summaries),
         input.sinceRev,
         scope.scopedTo
       );
@@ -1351,7 +1373,7 @@ export function createNeoOperations(service: NeoService) {
         )
         .catch(() => null);
       const sessionId = await service.open(projectId);
-      return { ...snapshot(caller), sessionId };
+      return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
     }
   );
   const cancelConsultation = path(

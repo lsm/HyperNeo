@@ -3,6 +3,7 @@ import type {
   NeoCardPhase,
   NeoCardView,
   NeoSnapshot,
+  NeoSnapshotWork,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { isNeoAskSettled } from './done-check.ts';
 
@@ -35,6 +36,53 @@ export function compactNeoSnapshotCards(cards: readonly NeoCardView[]): NeoCardV
           continuedMessage: card.continuedMessage?.slice(0, CONTINUED_MESSAGE_LIMIT) ?? null,
         }
   );
+}
+
+export const NEO_SNAPSHOT_SETTLED_ASKS = 10;
+const SUMMARY_TEXT_LIMIT = 300;
+const LIVE_WORK: ReadonlySet<NeoSnapshotWork['status']> = new Set(['proposed', 'queued']);
+
+export function summarizeNeoSnapshot<T extends NeoSnapshot>(
+  snapshot: T,
+  asks: readonly NeoAsk[]
+): T {
+  const brief = new Set(asks.filter(isNeoAskSettled).map((ask) => ask.id));
+  const askOf = new Map(asks.flatMap((ask) => ask.workIds.map((id) => [id, ask.id] as const)));
+  const work = snapshot.work.map((item): NeoSnapshotWork => {
+    const askId = askOf.get(item.id);
+    return askId && brief.has(askId) && !LIVE_WORK.has(item.status)
+      ? {
+          ...item,
+          instruction: '',
+          report: item.report?.slice(0, SUMMARY_TEXT_LIMIT) ?? null,
+          summarized: true,
+          askId,
+        }
+      : item;
+  });
+  const briefWork = new Set(work.flatMap((item) => (item.summarized ? [item.id] : [])));
+  return {
+    ...snapshot,
+    asks: snapshot.asks?.map((ask) =>
+      brief.has(ask.id)
+        ? {
+            ...ask,
+            ask: '',
+            doneWhen: '',
+            doneItems: [],
+            evidence: null,
+            outcome: ask.outcome?.slice(0, SUMMARY_TEXT_LIMIT) ?? null,
+            summarized: true as const,
+          }
+        : ask
+    ),
+    work,
+    cards: snapshot.cards.map((card) =>
+      briefWork.has(card.workId) && FINISHED_PHASES.has(card.phase)
+        ? { ...card, goal: null, doneWhen: null, continuedMessage: null }
+        : card
+    ),
+  };
 }
 
 export const NEO_MCP_SNAPSHOT_BUDGET = 40_000;

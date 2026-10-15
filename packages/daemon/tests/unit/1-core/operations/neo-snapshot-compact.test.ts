@@ -1,9 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import type { NeoAsk, NeoCardView, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import type {
+  NeoAsk,
+  NeoAskView,
+  NeoCardView,
+  NeoSnapshot,
+} from '@hyperneo/shared/types/neo-snapshot';
 import {
   compactNeoSnapshotAsks,
   compactNeoSnapshotCards,
   fitNeoSnapshotBudget,
+  summarizeNeoSnapshot,
 } from '../../../../src/lib/neo/snapshot-compact.ts';
 
 const ask: NeoAsk = {
@@ -242,5 +248,87 @@ describe('fitNeoSnapshotBudget', () => {
     const fitted = fitNeoSnapshotBudget(heavy, 40_000);
     expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(40_000);
     expect(fitted.asks?.[0].doneItems).toHaveLength(12);
+  });
+});
+
+describe('summarizeNeoSnapshot', () => {
+  const item = (id: string, status: 'queued' | 'reported') => ({
+    id,
+    requestKey: id,
+    projectId: null,
+    originSessionId: 'root',
+    originMessageId: null,
+    title: id,
+    instruction: 'i'.repeat(1000),
+    sessionId: null,
+    status,
+    report: status === 'reported' ? 'r'.repeat(3000) : null,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  const view = (askId: string): NeoAskView => ({
+    askId,
+    group: 'outcomes',
+    label: 'Done',
+    settled: true,
+    needsYou: false,
+    done: 1,
+    total: 1,
+    workIds: [],
+    doneWorkIds: [],
+    summary: null,
+  });
+  const live = { ...ask, id: 'live', workIds: ['lw'] };
+  const settled = {
+    ...ask,
+    id: 'done',
+    status: 'achieved' as const,
+    outcome: 'o'.repeat(1000),
+    settledAt: 3,
+    workIds: ['dw', 'dq'],
+  };
+  const older = { ...settled, id: 'older', workIds: ['ow'] };
+  const snapshot = (views: NeoAskView[]): NeoSnapshot => ({
+    ok: true,
+    sessionId: 'neo:root',
+    projects: [],
+    consultations: [],
+    work: [
+      item('lw', 'reported'),
+      item('dw', 'reported'),
+      item('dq', 'queued'),
+      item('ow', 'reported'),
+    ],
+    asks: [live, settled],
+    cards: ['lw', 'dw', 'dq', 'ow'].map((workId) => ({
+      ...card,
+      workId,
+      phase: workId === 'ow' ? ('pr_setback' as const) : ('reported' as const),
+    })),
+    askViews: views,
+  });
+
+  test('marks a settled ask and its finished work as summaries, keeps the views and an actionable card goal', () => {
+    const views = [view('live'), view('done')];
+    const result = summarizeNeoSnapshot(snapshot(views), [live, settled, older]);
+    expect(result.askViews).toBe(views);
+    expect(result.asks?.[0]).toBe(live);
+    expect(result.asks?.[1]).toMatchObject({
+      summarized: true,
+      ask: '',
+      doneWhen: '',
+      doneItems: [],
+      evidence: null,
+      workIds: ['dw', 'dq'],
+    });
+    expect(result.asks?.[1].outcome).toHaveLength(300);
+    const [liveWork, doneWork, queuedWork, olderWork] = result.work;
+    expect(liveWork.summarized).toBeUndefined();
+    expect(liveWork.report).toHaveLength(3000);
+    expect(doneWork).toMatchObject({ summarized: true, askId: 'done', instruction: '' });
+    expect(doneWork.report).toHaveLength(300);
+    expect(queuedWork.summarized).toBeUndefined();
+    expect(olderWork).toMatchObject({ summarized: true, askId: 'older' });
+    expect(result.cards.map((item) => item.goal)).toEqual([card.goal, null, card.goal, card.goal]);
   });
 });

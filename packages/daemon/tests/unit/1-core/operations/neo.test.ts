@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 
 import type { MessageHub } from '@hyperneo/shared';
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import type { HookInput, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
@@ -383,6 +384,49 @@ describe('Neo MVP', () => {
     expect(boundedSnapshot.value.work.some((item) => item.id === 'extra-0')).toBe(true);
     expect(boundedSnapshot.value.work.some((item) => item.id === oldest.id)).toBe(false);
     expect(boundedSnapshot.value.work.some((item) => item.id === queued.id)).toBe(false);
+  });
+
+  test('a human snapshot that asks for summaries sends the newest settled asks as summaries and reads one ask whole', async () => {
+    const asks = Array.from(
+      { length: 12 },
+      (_, index) =>
+        service.askRecords.open({
+          id: `ask-${index}`,
+          requestKey: `k-${index}`,
+          projectId: null,
+          originSessionId: 'root',
+          originMessageId: `m-${index}`,
+          title: `Ask ${index}`,
+          ask: 'Ship it',
+          doneWhen: '- shipped',
+          doneSource: 'human',
+        })!
+    );
+    for (const ask of asks.slice(1))
+      service.askRecords.settle(ask, 'achieved', 'Shipped.', 'merged');
+    const full = (await invoke('neo.snapshot')) as { value: { asks: NeoAsk[] } };
+    expect(full.value.asks).toHaveLength(12);
+    expect(full.value.asks.some((ask) => ask.summarized)).toBe(false);
+    const read = (await invoke('neo.snapshot', { summaries: true })) as {
+      value: { asks: NeoAsk[]; moreSettled: boolean };
+    };
+    expect(read.value.moreSettled).toBe(true);
+    expect(read.value.asks).toHaveLength(11);
+    expect(read.value.asks.find((ask) => ask.id === 'ask-0')).toMatchObject({
+      ask: 'Ship it',
+      doneWhen: '- shipped',
+    });
+    expect(read.value.asks.find((ask) => ask.id === 'ask-0')?.summarized).toBeUndefined();
+    const settled = read.value.asks.filter((ask) => ask.id !== 'ask-0');
+    expect(settled.every((ask) => ask.summarized && ask.doneWhen === '' && ask.ask === '')).toBe(
+      true
+    );
+    const whole = (await invoke('neo.snapshot', { askId: settled[0].id })) as {
+      value: { asks: NeoAsk[]; moreSettled?: boolean };
+    };
+    expect(whole.value.asks[0]).toMatchObject({ ask: 'Ship it', doneWhen: '- shipped' });
+    expect(whole.value.asks[0].summarized).toBeUndefined();
+    expect(whole.value.moreSettled).toBeUndefined();
   });
 
   test('opening a missing project reports a domain rejection instead of an execution fault', async () => {
