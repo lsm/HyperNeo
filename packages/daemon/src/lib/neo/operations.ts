@@ -269,6 +269,8 @@ const ConsultationResult = z.union([
     replyGuidance: z.string().optional(),
   }),
 ]);
+const NEO_ASK_TOLD_LIMIT = 20;
+const NEO_ASK_TOLD_TEXT = 300;
 const SnapshotOk = z.object({
   ok: z.literal(true),
   sessionId: z.string().nullable(),
@@ -322,6 +324,17 @@ const SnapshotOk = z.object({
   sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
   asks: z.array(NeoAskSchema).optional(),
+  told: z
+    .array(
+      z.object({
+        publicationId: z.string(),
+        at: z.string(),
+        shortText: z.string(),
+        triggerId: z.string().optional(),
+      })
+    )
+    .max(NEO_ASK_TOLD_LIMIT)
+    .optional(),
   moreSettled: z.boolean().optional(),
   omitted: z
     .object({ work: z.number().int().optional(), asks: z.number().int().optional() })
@@ -826,6 +839,20 @@ export function requireNeoWorkCloser(
   };
 }
 
+function readNeoAskTold(service: NeoService, ask: NeoAsk): NonNullable<NeoSnapshot['told']> {
+  const root = service.repo.getBindingForProject(null)?.sessionId;
+  if (!root?.startsWith('neo:')) return [];
+  return service.publications
+    .toldForAsk(root.slice(4), ask)
+    .slice(-NEO_ASK_TOLD_LIMIT)
+    .map(({ publicationId, createdAt, shortText, triggerId }) => ({
+      publicationId,
+      at: createdAt,
+      shortText: shortText.slice(0, NEO_ASK_TOLD_TEXT),
+      ...(triggerId ? { triggerId } : {}),
+    }));
+}
+
 function readNeoRuleSource(service: NeoService, caller: OperationCaller): string | null {
   if (caller.source === 'rpc' && caller.principal === 'local') return null;
   if (!caller.sessionId || !caller.neoTurn) return '';
@@ -1206,6 +1233,7 @@ export function createNeoOperations(service: NeoService) {
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
       asks: compact ? compactNeoSnapshotAsks(asks) : asks,
+      ...(focus ? { told: readNeoAskTold(service, focus) } : {}),
       ...(summarize
         ? { moreSettled: listed.filter(isNeoAskSettled).length > NEO_SNAPSHOT_SETTLED_ASKS }
         : {}),
@@ -2401,7 +2429,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable project summaries and execution receipts. Pass projectId to load that project’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests. Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. Each work item carries phase and label, the same card view the human sees: handed means given to a worker but not seen working yet; running means the worker reports it running, and its label says when that is not confirmed; stopped, abandoned, reported, failed and cancelled mean nothing is running. status is only storage, and queued does not mean running. A list that does not hold every item says so in omitted ({work, asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. In a turn that belongs to an ask, the snapshot is scoped to that ask (scopedTo says which) unless you pass askId, projectId or all: true. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+        'Read durable project summaries and execution receipts. Pass projectId to load that project’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests, and told: every message the human actually received for it (read it before saying something was already sent). Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. Each work item carries phase and label, the same card view the human sees: handed means given to a worker but not seen working yet; running means the worker reports it running, and its label says when that is not confirmed; stopped, abandoned, reported, failed and cancelled mean nothing is running. status is only storage, and queued does not mean running. A list that does not hold every item says so in omitted ({work, asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. In a turn that belongs to an ask, the snapshot is scoped to that ask (scopedTo says which) unless you pass askId, projectId or all: true. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },

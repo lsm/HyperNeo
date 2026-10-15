@@ -209,6 +209,13 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitNeoSnapshotBudget(snapshot(5, 5), 10, { focused: true }).consultations).toEqual([]);
   });
 
+  test('a focused read keeps what the human was told even in its last-resort fallbacks', () => {
+    const told = [{ publicationId: 'p1', at: '2026-10-15T00:00:00.000Z', shortText: 'Sent.' }];
+    const big = { ...snapshot(5, 5), told };
+    expect(fitNeoSnapshotBudget(big, 200, { focused: true }).told).toEqual(told);
+    expect(fitNeoSnapshotBudget(big, 10, { focused: true }).told).toEqual(told);
+  });
+
   test('a single-ask read keeps that ask even when it is settled', () => {
     const focused = snapshot(0, 1);
     focused.work = focused.work.map((item) => ({ ...item, report: 'r'.repeat(60_000) }));
