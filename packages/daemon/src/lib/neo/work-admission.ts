@@ -1,4 +1,5 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { isNeoAnswerItem } from './answer-outcome.ts';
 import {
   neoAskApprovalSpent,
   type NeoAsk,
@@ -35,6 +36,7 @@ export interface NeoAdmissionDeps {
 export function neoOutcomeEligibility(registry: ReturnType<typeof buildNeoCheckRegistry>) {
   return (_ask: NeoAsk, item: NeoAskItem): boolean => {
     if (item.metBy === 'human') return true;
+    if (item.metBy === 'daemon' && isNeoAnswerItem(item)) return true;
     if (item.metBy !== 'daemon' || !item.check || !registry.ok) return false;
     const check = registry.resolve(item.check);
     return check.ok && check.value.independent;

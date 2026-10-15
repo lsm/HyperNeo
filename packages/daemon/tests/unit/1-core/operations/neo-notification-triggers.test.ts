@@ -111,6 +111,18 @@ describe('trigger keys of an ask', () => {
     expect(keys({ ...ask, workIds: [] }, idle)).toEqual([['idle', 'idle:10']]);
   });
 
+  test('an ask whose answer is reported and every other item met wakes Neo to publish it', () => {
+    const answer = {
+      ...item('i2', 'pending'),
+      state: 'reported' as const,
+      outcomeKind: 'answer' as const,
+    };
+    expect(keys({ ...ask, doneItems: [item('i1', 'met'), answer] })).toEqual([
+      ['outcome', 'outcome:2'],
+    ]);
+    expect(keys({ ...ask, doneItems: [item('i1', 'pending'), answer] })).toEqual([]);
+  });
+
   test('an achieved ask, or one with every item met, is one outcome trigger', () => {
     expect(keys({ ...ask, status: 'achieved' })).toEqual([['outcome', 'outcome:0']]);
     expect(keys({ ...ask, doneItems: [item('i1', 'met'), item('i2', 'met')] })).toEqual([
@@ -395,6 +407,64 @@ describe('NeoService notification triggers', () => {
     vi.restoreAllMocks();
     service.dispose();
     db.close();
+  });
+
+  test('a published answer the hook never saw is applied by the next sweep, never a stale one', async () => {
+    const opened = service.askRecords.open(
+      {
+        id: 'a1',
+        requestKey: 'k1',
+        projectId: null,
+        originSessionId: root,
+        originMessageId: m0,
+        title: 'Count the files',
+        ask: 'Count the files',
+        doneWhen: '- the count',
+        doneSource: 'human',
+      },
+      [{ text: 'the count', check: null, outcomeKind: 'answer' }]
+    )!;
+    seed();
+    service.askRecords.tickItem(
+      opened.id,
+      { id: 'i1', state: 'reported', evidence: '42 files', metBy: null },
+      Date.now()
+    );
+    const internals = service as unknown as {
+      triggers: { record(askId: string, keys: string[], triggerId: string, at: number): void };
+    };
+    internals.triggers.record('a1', ['outcome:0'], 'outcome:a1:stale', Date.now());
+    service.publications.append({
+      conversationId,
+      publicationId: '40000000-0000-4000-8000-000000000002',
+      askOrigin: { sessionId: root, messageId: m0 },
+      producerInput: { sessionId: root, messageId: m0 },
+      shortText: 'An older outcome.',
+      fullText: 'An older outcome.',
+      links: [],
+      triggerId: 'outcome:a1:stale',
+    });
+    sweep();
+    await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
+    const triggerId = mailbox()[0]
+      .messageUuid.replace(/^neo-trigger:/, '')
+      .replace(/#\d+$/, '');
+    service.publications.append({
+      conversationId,
+      publicationId: '40000000-0000-4000-8000-000000000001',
+      askOrigin: { sessionId: root, messageId: m0 },
+      producerInput: { sessionId: root, messageId: m0 },
+      shortText: '42 files.',
+      fullText: '42 files.',
+      links: [],
+      triggerId,
+    });
+    expect(service.askRecords.get('a1')?.status).toBe('open');
+    await sweep();
+    expect(service.askRecords.get('a1')).toMatchObject({
+      status: 'achieved',
+      doneItems: [{ state: 'met', metBy: 'daemon' }],
+    });
   });
 
   test('every item met wakes Neo with a note naming the outcome trigger, once per transition', async () => {
