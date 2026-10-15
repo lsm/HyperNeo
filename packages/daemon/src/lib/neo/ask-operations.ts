@@ -1045,11 +1045,18 @@ export function neoAnswerCitation(
 }
 
 export function requireNeoAnswerProvenance(
+  input: z.infer<typeof Answer>,
   target: { ask: NeoAsk; item: NeoAskItem },
   caller: OperationCaller,
-  cited: { id: string | null; at: number | null }
+  cited: { id: string | null; at: number | null; text: string }
 ): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
   if (caller.source !== 'mcp') return { value: target };
+  if (!caller.neoTurn?.human || caller.neoTurn.consultationId || !caller.neoTurn.isLive())
+    return {
+      reason: fail(
+        "answer_needs_human_turn: record the human's chat answer only in the live turn their own message started."
+      ),
+    };
   if (!cited.id)
     return {
       reason: fail(
@@ -1062,13 +1069,20 @@ export function requireNeoAnswerProvenance(
         `answer_not_from_human: ${cited.id} is not a message the human sent in this conversation.`
       ),
     };
-  return target.item.addedAt === null || cited.at <= target.item.addedAt
-    ? {
+  if (target.item.addedAt === null || cited.at <= target.item.addedAt)
+    return {
+      reason: fail(
+        `answer_predates_question: ${cited.id} was sent before this question was asked, so it cannot answer it.`
+      ),
+    };
+  const words = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim();
+  return words(cited.text).includes(words(input.choice))
+    ? { value: target }
+    : {
         reason: fail(
-          `answer_predates_question: ${cited.id} was sent before this question was asked, so it cannot answer it.`
+          `answer_not_in_message: "${input.choice}" is not in what the human wrote; pass their own words as the choice.`
         ),
-      }
-    : { value: target };
+      };
 }
 
 export function readNeoAskReply(
@@ -1628,17 +1642,15 @@ export function createNeoAskOperations(
     .pipe(
       (input: z.infer<typeof Answer>, target: { ask: NeoAsk }, caller: OperationCaller) => {
         const id = neoAnswerCitation(input, caller);
-        return {
-          id,
-          at: id
-            ? service.db.getSDKMessageRepo().getHumanPromptTime(target.ask.originSessionId, id)
-            : null,
-        };
+        const prompt = id
+          ? service.db.getSDKMessageRepo().getHumanPrompt(target.ask.originSessionId, id)
+          : null;
+        return { id, at: prompt?.at ?? null, text: prompt?.text ?? '' };
       },
       ['input', 'admission', 'caller'],
       'cited'
     )
-    .pipe(requireNeoAnswerProvenance, ['admission', 'caller', 'cited'], 'result:admission')
+    .pipe(requireNeoAnswerProvenance, ['input', 'admission', 'caller', 'cited'], 'result:admission')
     .pipe(readNeoAskReply, ['input', 'admission'], 'reply')
     .pipe(
       async (
@@ -1973,7 +1985,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.answer',
       description:
-        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met. From the Answer control it is sent to the Neo session that opened the ask, which acts on it. When the human answers in chat instead, Neo records it here in the turn their message started (or passes humanMessageId, the id of an earlier human message that answered it): the daemon accepts it only if that message is the human's own, in this ask's conversation, and sent after the question, so never ask them to repeat it in a control and never open a second ask for it. A question about a step's result (kind action) is answered with one of its own options: the first ticks it met, any other keeps it open.",
+        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met. From the Answer control it is sent to the Neo session that opened the ask, which acts on it. When the human answers in chat instead, Neo records it here in the turn their message started (or passes humanMessageId, the id of an earlier human message that answered it): the daemon accepts it only in the live turn the human's message started, only if that message is the human's own, in this ask's conversation and sent after the question, and only if choice appears in what they wrote (pass their own words), so never ask them to repeat it in a control and never open a second ask for it. A question about a step's result (kind action) is answered with one of its own options: the first ticks it met, any other keeps it open.",
       inputSchema: Answer,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

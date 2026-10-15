@@ -1944,7 +1944,7 @@ export class SDKMessageRepository {
     return messages;
   }
 
-  getHumanPromptTime(sessionId: string, uuid: string): number | null {
+  getHumanPrompt(sessionId: string, uuid: string): { at: number; text: string } | null {
     const rows = this.db
       .prepare(
         `SELECT sdk_message, timestamp FROM sdk_messages
@@ -1953,14 +1953,27 @@ export class SDKMessageRepository {
       )
       .all(sessionId, uuid) as Array<{ sdk_message: string; timestamp: string | number }>;
     for (const row of rows) {
+      let message: { inputKind?: unknown; message?: { content?: unknown } };
       try {
-        if ((JSON.parse(row.sdk_message) as { inputKind?: unknown }).inputKind !== 'human')
-          continue;
+        message = JSON.parse(row.sdk_message);
       } catch {
         continue;
       }
+      if (message.inputKind !== 'human') continue;
       const at = typeof row.timestamp === 'number' ? row.timestamp : Date.parse(row.timestamp);
-      return Number.isFinite(at) ? at : null;
+      if (!Number.isFinite(at)) return null;
+      const content = message.message?.content;
+      const text =
+        typeof content === 'string'
+          ? content
+          : Array.isArray(content)
+            ? content
+                .flatMap((block: { type?: unknown; text?: unknown }) =>
+                  block?.type === 'text' && typeof block.text === 'string' ? [block.text] : []
+                )
+                .join('\n')
+            : '';
+      return { at, text };
     }
     return null;
   }

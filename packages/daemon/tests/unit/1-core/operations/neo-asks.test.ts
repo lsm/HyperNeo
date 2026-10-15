@@ -1849,8 +1849,19 @@ describe('neo.ask operations', () => {
     const delivered = mock(async () => {});
     service.deliverAskAnswer = delivered;
     const answer = { askId, itemId: 'i3', choice: 'dev' };
-    expect(await invoke('neo.ask.answer', answer, { ...neo, neoTurn: undefined })).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('answer_needs_human_message') },
+    const replyTurn: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'reply' } };
+    for (const caller of [
+      { ...neo, neoTurn: undefined },
+      { ...replyTurn, neoTurn: { ...replyTurn.neoTurn!, human: false } },
+      { ...replyTurn, neoTurn: { ...replyTurn.neoTurn!, isLive: () => false } },
+    ])
+      expect(await invoke('neo.ask.answer', answer, caller)).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('answer_needs_human_turn') },
+      });
+    expect(
+      await invoke('neo.ask.answer', { ...answer, choice: 'latest tag' }, replyTurn)
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('answer_not_in_message') },
     });
     for (const [humanMessageId, refusal] of [
       ['injected', 'answer_not_from_human'],
@@ -1862,7 +1873,6 @@ describe('neo.ask operations', () => {
         value: { ok: false, reason: expect.stringContaining(refusal) },
       });
     expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({ state: 'needs_you' });
-    const replyTurn: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'reply' } };
     expect(await invoke('neo.ask.answer', answer, replyTurn)).toMatchObject({
       value: {
         ok: true,
