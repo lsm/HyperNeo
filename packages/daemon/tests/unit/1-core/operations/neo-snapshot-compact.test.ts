@@ -266,7 +266,7 @@ describe('summarizeNeoSnapshot', () => {
     createdAt: 1,
     updatedAt: 1,
   });
-  const view = (askId: string, humanActions: NeoAskView['humanActions'] = []): NeoAskView => ({
+  const view = (askId: string): NeoAskView => ({
     askId,
     group: 'outcomes',
     label: 'Done',
@@ -277,7 +277,6 @@ describe('summarizeNeoSnapshot', () => {
     workIds: [],
     doneWorkIds: [],
     summary: null,
-    humanActions,
   });
   const live = { ...ask, id: 'live', workIds: ['lw'] };
   const settled = {
@@ -331,15 +330,5 @@ describe('summarizeNeoSnapshot', () => {
     expect(queuedWork.summarized).toBeUndefined();
     expect(olderWork).toMatchObject({ summarized: true, askId: 'older' });
     expect(result.cards.map((item) => item.goal)).toEqual([card.goal, null, card.goal, null]);
-  });
-
-  test('keeps a settled ask whole while it still has an action for the human', () => {
-    const result = summarizeNeoSnapshot(
-      snapshot([view('live'), view('done', [{ kind: 'approve', reason: 'expired' }])]),
-      [live, settled]
-    );
-    expect(result.asks?.[1]).toMatchObject({ ask: settled.ask, doneWhen: settled.doneWhen });
-    expect(result.asks?.[1].summarized).toBeUndefined();
-    expect(result.work[1].summarized).toBeUndefined();
   });
 });

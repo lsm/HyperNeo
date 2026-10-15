@@ -46,12 +46,7 @@ export function summarizeNeoSnapshot<T extends NeoSnapshot>(
   snapshot: T,
   asks: readonly NeoAsk[]
 ): T {
-  const acting = new Set(
-    snapshot.askViews.filter((view) => view.humanActions?.length).map((view) => view.askId)
-  );
-  const brief = new Set(
-    asks.filter((ask) => isNeoAskSettled(ask) && !acting.has(ask.id)).map((ask) => ask.id)
-  );
+  const brief = new Set(asks.filter(isNeoAskSettled).map((ask) => ask.id));
   const askOf = new Map(asks.flatMap((ask) => ask.workIds.map((id) => [id, ask.id] as const)));
   const work = snapshot.work.map((item): NeoSnapshotWork => {
     const askId = askOf.get(item.id);
