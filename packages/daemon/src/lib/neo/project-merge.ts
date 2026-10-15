@@ -210,7 +210,8 @@ export function planNeoProjectQuestions(
       );
       if (
         !repository ||
-        repository.startsWith('repo:') ||
+        state.unavailable.includes(source.id) ||
+        state.unavailable.includes(target.id) ||
         (source.parentId ?? null) !== (target.parentId ?? null) ||
         (identities(source.id) && identities(target.id))
       )

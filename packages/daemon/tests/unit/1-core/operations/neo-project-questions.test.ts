@@ -37,19 +37,21 @@ const project = (id: string, extra: Partial<NeoProject> = {}): NeoProject => ({
 });
 
 describe('planNeoProjectQuestions', () => {
-  test('raises no question for siblings sharing a repository: one repository is one project', () => {
+  test('asks only about a pair the repository rule left unmerged, never while either is busy', () => {
+    const state = (unavailable: string[]) => ({
+      projects: [project('web', { createdAt: 1 }), project('web-shallow', { createdAt: 2 })],
+      identities: { web: [identity] },
+      unavailable,
+      retired: [],
+    });
+    const repositories = { web: [repository], 'web-shallow': [repository] };
     expect(
-      planNeoProjectQuestions(
-        {
-          projects: [project('web', { createdAt: 1 }), project('web-shallow', { createdAt: 2 })],
-          identities: { web: [identity] },
-          unavailable: [],
-          retired: [],
-        },
-        {},
-        { web: [repository], 'web-shallow': [repository] }
-      )
-    ).toEqual([]);
+      planNeoProjectQuestions(state([]), {}, repositories).map(({ sourceId, targetId }) => [
+        sourceId,
+        targetId,
+      ])
+    ).toEqual([['web-shallow', 'web']]);
+    expect(planNeoProjectQuestions(state(['web']), {}, repositories)).toEqual([]);
   });
 });
 
@@ -122,6 +124,7 @@ describe('reorganize merge questions on a real store', () => {
   let repo: NeoRepository;
   let asks: NeoAskRepository;
   let logged: string[];
+  const notified: number[] = [];
   const root = 'neo:10000000-0000-4000-8000-000000000001';
   const key = 'neo-project-merge:web\u0000web-shallow';
 
@@ -153,6 +156,7 @@ describe('reorganize merge questions on a real store', () => {
       {
         repo,
         db: { getDatabase: () => db },
+        notifyChanged: () => notified.push(1),
         askRecords: asks,
         logReorganize: (line: string) => logged.push(line),
       } as unknown as NeoService,
@@ -265,6 +269,7 @@ describe('reorganize merge questions on a real store', () => {
     });
     expect(asks.forRequest(key)).toBeNull();
     expect(repo.listProjects().map((item) => item.id)).toEqual(['web']);
+    expect(notified.length).toBeGreaterThan(0);
   });
 
   test('withdraws an earlier open question once the repository rule merges the pair', async () => {

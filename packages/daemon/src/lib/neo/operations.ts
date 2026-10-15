@@ -914,7 +914,7 @@ export function neoReorganizeRuntime(
     mergeProjects: async () => {
       const merges = service.repo.projectMerges;
       const before = new Set(merges.redirects().map((entry) => entry.sourceId));
-      backfillNeoRepositoryIdentities(service.db.getDatabase());
+      if (backfillNeoRepositoryIdentities(service.db.getDatabase())) service.notifyChanged();
       const backfilled = merges
         .redirects()
         .filter((entry) => !before.has(entry.sourceId))
