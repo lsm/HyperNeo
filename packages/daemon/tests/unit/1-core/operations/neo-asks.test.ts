@@ -62,6 +62,7 @@ import {
   neoAskScope,
 } from '../../../../src/lib/neo/operations.ts';
 import { neoTurnRequestKey } from '../../../../src/lib/neo/request-key.ts';
+import { neoAskItemAction } from '../../../../src/lib/neo/ask-views.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { isNeoHumanOwnTurn } from '../../../../src/lib/neo/notification-triggers.ts';
@@ -2403,6 +2404,48 @@ describe('neo.ask operations', () => {
     expect(service.askRecords.get(second)?.workIds).toEqual([other.value!.work!.id]);
     expect(await propose('card-1', first)).toMatchObject({
       value: { ok: true, work: { id: card } },
+    });
+  });
+
+  test('a life-admin confirmation is daemon-ticked, and the human confirms it', async () => {
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'life-admin'] } });
+    const askId = (
+      await invoke('neo.ask.open', {
+        ...opening,
+        pack: 'life-admin',
+        doneItems: [{ text: 'Booking confirmation arrives', check: 'life-admin.confirmed' }],
+      })
+    ).value!.ask!.id;
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i1',
+        state: 'met',
+        evidence: 'The human said it came.',
+      })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('daemon_ticks_check') },
+    });
+    service['writeAskTicks'](service.askRecords.get(askId)!, [
+      { id: 'i1', evidence: 'Confirmation: id=abc' },
+    ]);
+    const reported = service.askRecords.get(askId)!.doneItems![0];
+    expect(reported).toMatchObject({ state: 'reported', evidence: 'Confirmation: id=abc' });
+    expect(neoAskItemAction(reported)).toEqual({
+      kind: 'confirm',
+      itemId: 'i1',
+      step: reported.text,
+    });
+    expect(
+      await invoke(
+        'neo.ask.tick',
+        { askId, itemId: 'i1', state: 'met', evidence: 'Confirmed by the user.' },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(askId)!.doneItems![0]).toMatchObject({
+      state: 'met',
+      metBy: 'human',
     });
   });
 
