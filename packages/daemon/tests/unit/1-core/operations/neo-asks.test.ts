@@ -881,9 +881,9 @@ describe('neo.ask operations', () => {
       value: { ok: false, reason: expect.stringContaining('ask_exists_for_message') },
     });
     expect(await invoke('neo.ask.open', input, nextMessage)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('outcome_check_required') },
+      value: { ok: true },
     });
-    expect(service.askRecords.list()).toHaveLength(1);
+    expect(service.askRecords.list()).toHaveLength(2);
   });
 
   test('retries an unchecked legacy card only when its ask already exists', async () => {
@@ -924,13 +924,11 @@ describe('neo.ask operations', () => {
       },
       input.work
     );
-    for (const retry of [unlinked, { ...input, title: 'New' }]) {
-      expect(await invoke('neo.work.propose', retry)).toMatchObject({
-        value: { ok: false, reason: expect.stringContaining('outcome_check_required') },
-      });
-    }
-    expect(service.repo.listWork()).toHaveLength(2);
-    expect(service.askRecords.list()).toHaveLength(1);
+    expect(await invoke('neo.work.propose', { ...input, title: 'New' })).toMatchObject({
+      value: { ok: true },
+    });
+    expect(service.repo.listWork()).toHaveLength(3);
+    expect(service.askRecords.list()).toHaveLength(2);
   });
 
   test('settle takes askId like the other ask operations, and still publishes its fields', async () => {
@@ -1089,14 +1087,14 @@ describe('neo.ask operations', () => {
   });
 
   test.each([
-    { doneWhen: '- Merged to dev' },
+    { doneWhen: '- no merge or deployment' },
     { doneItems: [{ text: 'PR merged' }] },
     { doneItems: [{ text: 'Deployed', check: 'coding.pr_merged' }] },
-  ])('refuses an unchecked outcome on open without creating an ask: %j', async (change) => {
+  ])('opens an outcome by its check, never by its words: %j', async (change) => {
     expect(await invoke('neo.ask.open', { ...opening, ...change })).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('outcome_check_required') },
+      value: { ok: true },
     });
-    expect(service.askRecords.list()).toEqual([]);
+    expect(service.askRecords.list()).toHaveLength(1);
   });
 
   test('accepts matching checks on open and edit and preserves them during watch-only tracking', async () => {
@@ -1117,28 +1115,27 @@ describe('neo.ask operations', () => {
       { check: 'coding.pr_merged', watch: ['https://github.com/lsm/HyperNeo/pull/42'] },
       { check: 'coding.deployed' },
     ]);
-    const before = service.askRecords.get(askId);
     expect(
       await invoke('neo.ask.edit', {
         askId,
         track: [{ itemId: 'i1', check: 'coding.deployed' }],
       })
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('coding.pr_merged') } });
-    expect(service.askRecords.get(askId)).toEqual(before);
+    ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(askId)?.doneItems?.[0].check).toBe('coding.deployed');
   });
 
-  test('a refused added outcome rolls back the entire edit before any write', async () => {
+  test('an added outcome without a check is kept, whatever its words', async () => {
     const askId = await openAsk();
-    const before = service.askRecords.get(askId);
     expect(
       await invoke('neo.ask.edit', {
         askId,
-        remove: ['i1'],
         add: [{ text: 'PR merged' }],
         track: [{ itemId: 'i2', watch: ['https://github.com/lsm/HyperNeo/pull/42'] }],
       })
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('coding.pr_merged') } });
-    expect(service.askRecords.get(askId)).toEqual(before);
+    ).toMatchObject({ value: { ok: true } });
+    expect(
+      service.askRecords.get(askId)?.doneItems?.find((item) => item.text === 'PR merged')
+    ).toMatchObject({ check: null });
   });
 
   test('leaves untouched legacy outcomes alone but validates changed tracking', async () => {
@@ -1160,14 +1157,12 @@ describe('neo.ask operations', () => {
     expect(service.askRecords.get(askId)!.doneItems!.find((item) => item.id === 'i3')).toEqual(
       legacy
     );
-    const before = service.askRecords.get(askId);
     expect(
       await invoke('neo.ask.edit', {
         askId,
         track: [{ itemId: 'i3', watch: ['https://github.com/lsm/HyperNeo/pull/42'] }],
       })
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('coding.deployed') } });
-    expect(service.askRecords.get(askId)).toEqual(before);
+    ).toMatchObject({ value: { ok: true } });
     expect(
       await invoke('neo.ask.edit', {
         askId,
@@ -1200,7 +1195,6 @@ describe('neo.ask operations', () => {
       expect(
         service.askRecords.get(askId)?.doneItems?.find((item) => item.id === 'i3')
       ).toMatchObject({ check: 'coding.deployed', watch: track[1].watch });
-      const before = service.askRecords.get(askId);
       expect(
         await invoke('neo.ask.edit', {
           askId,
@@ -1209,8 +1203,10 @@ describe('neo.ask operations', () => {
             { itemId: 'i3', check: 'coding.pr_merged' },
           ],
         })
-      ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('coding.deployed') } });
-      expect(service.askRecords.get(askId)).toEqual(before);
+      ).toMatchObject({ value: { ok: true } });
+      expect(
+        service.askRecords.get(askId)?.doneItems?.find((item) => item.id === 'i3')?.check
+      ).toBe('coding.pr_merged');
     }
   );
 
@@ -2293,7 +2289,7 @@ describe('neo.ask operations', () => {
   });
 
   test.each(['PR merged', 'Deployed'])(
-    'refuses unchecked implicit card outcomes before writing: %s',
+    'proposes an implicit card outcome without a check, whatever its words: %s',
     async (text) => {
       const input = {
         requestKey: 'checked-card',
@@ -2302,26 +2298,10 @@ describe('neo.ask operations', () => {
         work: { verb: 'start', adapter: 'claude-desktop', place },
         doneWhen: text,
       };
-      expect(await invoke('neo.work.propose', input)).toMatchObject({
-        value: { ok: false, reason: expect.stringContaining('neo.ask.open') },
-      });
-      expect(service.askRecords.list()).toEqual([]);
-      expect(service.repo.listWork()).toEqual([]);
-      const opened = await invoke('neo.ask.open', {
-        ...opening,
-        doneItems: [
-          {
-            text,
-            check: text === 'Deployed' ? 'coding.deployed' : 'coding.pr_merged',
-          },
-        ],
-      });
-      const askId = opened.value!.ask!.id;
-      expect(await invoke('neo.work.propose', { ...input, askId })).toMatchObject({
-        value: { ok: true },
-      });
+      const proposed = await invoke('neo.work.propose', input);
+      expect(proposed).toMatchObject({ value: { ok: true, ask: { items: [{ text }] } } });
       expect(service.askRecords.list()).toHaveLength(1);
-      expect(service.askRecords.get(askId)?.workIds).toHaveLength(1);
+      expect(service.repo.listWork()).toHaveLength(1);
     }
   );
 
