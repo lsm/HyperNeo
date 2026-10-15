@@ -2190,6 +2190,20 @@ export class SDKMessageRepository {
     }[];
   }
 
+  firstUserUuidBetween(sessionId: string, after: string, until: string): string | null {
+    return (
+      (
+        this.db
+          .prepare(
+            `SELECT sdk_uuid AS uuid FROM sdk_messages
+               WHERE session_id = ? AND message_type = 'user' AND timestamp > ? AND timestamp <= ?
+               ORDER BY timestamp LIMIT 1`
+          )
+          .get(sessionId, after, until) as { uuid: string | null } | undefined
+      )?.uuid ?? null
+    );
+  }
+
   hasUserUuidPrefixSince(sessionId: string, prefix: string, since: string): boolean {
     return !!this.db
       .prepare(

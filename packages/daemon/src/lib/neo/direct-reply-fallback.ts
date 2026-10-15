@@ -3,7 +3,7 @@ import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoNudgeMessageId } from './ask-origin.ts';
-import { neoInputTrigger } from './notification-triggers.ts';
+import { neoHumanTrigger } from './notification-triggers.ts';
 export { NEO_PUBLISH_NUDGE } from '@hyperneo/prompts';
 
 export type NeoTurnReply = {
@@ -117,7 +117,7 @@ function publishDirectReply(
     shortText: reply.text.length > 2000 ? `${reply.text.slice(0, 1999)}…` : reply.text,
     fullText: reply.text.slice(0, 16000),
     links: [],
-    triggerId: neoInputTrigger(reply.ask.requestId, true) ?? undefined,
+    triggerId: neoHumanTrigger(reply.ask.requestId),
   };
   if (!runtime.append(input).accepted) return { skipped: true };
   runtime.notify();
