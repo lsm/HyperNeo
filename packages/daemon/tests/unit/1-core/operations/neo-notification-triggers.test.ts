@@ -12,7 +12,7 @@ import {
   isNeoAskAnsweredByReply,
   isNeoCardFailedForGood,
   neoReplyOriginKey,
-  neoAskTriggerOwner,
+  neoAskTriggerConcern,
   neoTriggerMessageId,
   planNeoTriggerRetry,
   requireNeoTriggerUnheard,
@@ -83,16 +83,17 @@ const item = (id: string, state: 'met' | 'pending') => ({
   addedAt: null,
 });
 
-describe('neoAskTriggerOwner', () => {
+describe('neoAskTriggerConcern', () => {
   const projectAsk = { ...ask, projectId: 'labs' };
-  const holder = (projectId: string | null) => (projectId ? 'neo:holder:labs' : root);
 
-  test('a trigger about an ask goes to the Neo session that opened it, not the project holder', () => {
-    expect(neoAskTriggerOwner(projectAsk, (id) => id === root, holder)).toBe(root);
+  test('a trigger about an ask goes to the coordinator that opened it, not the project holder', () => {
+    expect(neoAskTriggerConcern(projectAsk, { kind: 'neo', projectId: null })).toBeNull();
+    expect(neoAskTriggerConcern(ask, { kind: 'project', projectId: 'other' })).toBe('other');
   });
 
-  test('an ask whose opener is no Neo session falls back to its project holder', () => {
-    expect(neoAskTriggerOwner(projectAsk, () => false, holder)).toBe('neo:holder:labs');
+  test('an ask whose opener is no coordinator falls back to its project holder', () => {
+    expect(neoAskTriggerConcern(projectAsk, null)).toBe('labs');
+    expect(neoAskTriggerConcern(projectAsk, { kind: 'worker', projectId: 'w' })).toBe('labs');
   });
 });
 
@@ -414,14 +415,34 @@ describe('NeoService notification triggers', () => {
     expect(mailbox()).toHaveLength(1);
   });
 
-  test('an opener whose session row is gone gets its note through open(), which recreates it', async () => {
-    const opened = open();
+  test('a root opener whose session row is gone is recreated for the note, not the holder', async () => {
+    service.repo.saveProject({ id: 'labs', title: 'Labs', summary: '', context: '' }, 0);
+    service.repo.reserveBinding({
+      sessionId: 'neo:holder:labs',
+      kind: 'project',
+      projectId: 'labs',
+    });
+    const opened = service.askRecords.open(
+      {
+        id: 'a3',
+        requestKey: 'k3',
+        projectId: 'labs',
+        originSessionId: root,
+        originMessageId: m0,
+        title: 'Fix the composer',
+        ask: 'Fix the composer',
+        doneWhen: '- composer fixed',
+        doneSource: 'human',
+      },
+      [{ text: 'composer fixed', check: null }]
+    )!;
     seed();
     db.getDatabase().prepare('DELETE FROM sessions WHERE id = ?').run(root);
     const reopen = vi.spyOn(service, 'open').mockRejectedValue(new Error('not recreated in test'));
     tickMet(opened);
     await sweep();
     expect(reopen).toHaveBeenCalledWith(null);
+    expect(reopen).not.toHaveBeenCalledWith('labs');
   });
 
   test('a failed note delivery re-arms the sweep, and the retry sends it', async () => {

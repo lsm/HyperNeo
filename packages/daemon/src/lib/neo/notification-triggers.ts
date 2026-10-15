@@ -48,12 +48,11 @@ export interface NeoTriggerSweepDeps {
 
 export const NEO_TRIGGER_ATTEMPTS = 3;
 
-export function neoAskTriggerOwner(
-  ask: Pick<NeoAsk, 'originSessionId' | 'projectId'>,
-  isNeoSession: (sessionId: string) => boolean,
-  projectSession: (projectId: string | null) => string | null
+export function neoAskTriggerConcern(
+  ask: Pick<NeoAsk, 'projectId'>,
+  opener: { kind: string; projectId: string | null } | null
 ): string | null {
-  return isNeoSession(ask.originSessionId) ? ask.originSessionId : projectSession(ask.projectId);
+  return opener && opener.kind !== 'worker' ? opener.projectId : ask.projectId;
 }
 
 export function neoTriggerMessageId(triggerId: string, attempt = 0): string {

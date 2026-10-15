@@ -353,7 +353,7 @@ import {
   neoTriggerMessageIds,
   planNeoTriggerRetry,
   shouldRetryNeoTrigger,
-  neoAskTriggerOwner,
+  neoAskTriggerConcern,
   neoTriggerWorkProblem,
   NEO_CONSULTATION_PENDING_DETAIL,
   neoTriggerNote,
@@ -771,10 +771,7 @@ export class NeoService {
       heard: (ask) => this.heardOutcome(ask),
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
       wake: (ask, trigger) =>
-        (this.isNeoSession(ask.originSessionId)
-          ? Promise.resolve(ask.originSessionId)
-          : this.open(ask.projectId)
-        )
+        this.open(this.triggerConcern(ask))
           .then((target) =>
             this.deliver(
               target,
@@ -1248,16 +1245,12 @@ export class NeoService {
     );
   }
 
-  private isNeoSession(sessionId: string): boolean {
-    return !!this.repo.getBindingBySession(sessionId) && !!this.db.getSession(sessionId);
+  private triggerConcern(ask: NeoAsk): string | null {
+    return neoAskTriggerConcern(ask, this.repo.getBindingBySession(ask.originSessionId));
   }
 
   private triggerOwner(ask: NeoAsk): string | null {
-    return neoAskTriggerOwner(
-      ask,
-      (id) => this.isNeoSession(id),
-      (projectId) => this.repo.getBindingForProject(projectId)?.sessionId ?? null
-    );
+    return this.repo.getBindingForProject(this.triggerConcern(ask))?.sessionId ?? null;
   }
 
   private isTriggerOwnerBusy(ask: NeoAsk): boolean {
