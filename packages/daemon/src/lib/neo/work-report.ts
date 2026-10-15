@@ -3,12 +3,14 @@ import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { DaemonInventoryLink } from '@hyperneo/shared/types/daemon-snapshot';
 import type { OperationCaller } from '../operations/registry.ts';
 import { canonicalNeoWorkResourceRefs, selectNeoWorkResourceRefs } from './work-resource-refs.ts';
+import { withNeoWorkBlocker, type NeoWorkBlocker } from './work-blocker.ts';
 
 export interface NeoWorkReportInput {
   id: string;
   status: 'reported' | 'failed';
   report: string;
   resourceRefs?: DaemonInventoryLink[];
+  blocker?: NeoWorkBlocker;
 }
 type Rejection = {
   accepted: false;
@@ -62,7 +64,11 @@ export function admitNeoWorkReportInput(input: NeoWorkReportInput): Gate<NeoWork
     !['reported', 'failed'].includes(input.status)
   )
     return reject('invalid_report');
-  const value = { id: input.id, status: input.status, report: input.report };
+  const value = {
+    id: input.id,
+    status: input.status,
+    report: input.blocker ? withNeoWorkBlocker(input.report, input.blocker) : input.report,
+  };
   if (input.resourceRefs === undefined) return { value };
   const refs = selectNeoWorkResourceRefs(input.resourceRefs);
   return 'reason' in refs

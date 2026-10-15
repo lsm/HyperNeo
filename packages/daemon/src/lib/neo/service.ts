@@ -125,7 +125,17 @@ import {
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
 import {
+  readNeoWorkBlocker,
+  NEO_WORK_REPORT_LIMIT,
+  neoEnvironmentMoveNote,
+  planNeoEnvironmentMove,
+  type NeoEnvironmentMove,
+  type NeoWorkBlocker,
+} from './work-blocker.ts';
+import {
   driverStartedReport,
+  driverTargetDaemon,
+  readNeoDriverAdapters,
   driverWorkCall,
   driverWorkCaller,
   type DriverSent,
@@ -417,7 +427,6 @@ const dispatchNeoConsultationWaiter = (
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
 const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
-const NEO_WORK_REPORT_LIMIT = 12_000;
 
 type NeoWorkPrCard = {
   ask: NeoAsk | null;
@@ -3384,6 +3393,32 @@ export class NeoService {
     .pipe((work: NeoWork) => this.returnReport(work), 'work')
     .endAsync('recover') as (work: NeoWork) => Promise<unknown>;
 
+  private readonly readEnvironmentMove = (superpipe({})('neo-environment-move') as PipelineAPI)
+    .input(['work'])
+    .pipe((work: NeoWork) => readNeoWorkBlocker(work.report), 'work', 'blocker')
+    .pipe((work: NeoWork) => this.driverTargets.get(work.id), 'work', 'target')
+    .pipe(
+      (work: NeoWork, blocker: NeoWorkBlocker | null, target: NeoDriverTarget | null) =>
+        blocker?.kind === 'environment' && target?.verb === 'start'
+          ? readNeoDriverAdapters(() =>
+              invokeOperation(
+                this.sessions.getOperationRegistry(),
+                'work.adapters',
+                { daemon: driverTargetDaemon(target) },
+                driverWorkCaller(work)
+              )
+            )
+          : null,
+      ['work', 'blocker', 'target'],
+      'adapters'
+    )
+    .pipe(planNeoEnvironmentMove, ['blocker', 'target', 'adapters'], 'result:move')
+    .endAsync('move') as (work: NeoWork) => Promise<NeoEnvironmentMove | null>;
+
+  async environmentMoveNote(work: NeoWork): Promise<string> {
+    return neoEnvironmentMoveNote(await this.readEnvironmentMove(work));
+  }
+
   private async returnReport(work: NeoWork): Promise<void> {
     if (work.status === 'reported' && isNeoWorkClosedDone(work.report)) return;
     if (this.deferToDeliveryRetry(work)) return;
@@ -3416,7 +3451,8 @@ export class NeoService {
     const packLine = packNote
       ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: packNote.id })}${packNote.inPrompt ? '' : `\n${packNote.instructions}`}\n`
       : '';
-    const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote, summary: NEO_WORK_SUMMARY_NOTE })}${packLine}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, projectId: work.projectId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
+    const move = await this.environmentMoveNote(work);
+    const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote, summary: NEO_WORK_SUMMARY_NOTE })}${move}${packLine}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, projectId: work.projectId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
     const messageId = neoWorkReturnMessageId(
       work.id,
       retries,
@@ -3593,13 +3629,15 @@ export class NeoService {
       'options',
       'current'
     )
+    .pipe(async (work: NeoWork) => ({ note: await this.environmentMoveNote(work) }), 'work', 'move')
     .pipe(
       (
         work: NeoWork,
         goal: NeoWorkGoal,
         found: NeoDoneCheckFound,
         options: NeoDoneCheckDelivery,
-        current: { ask: NeoAsk | null }
+        current: { ask: NeoAsk | null },
+        move: { note: string }
       ) => {
         const continued = this.workContinues.get(work.id)?.count ?? 0;
         return {
@@ -3628,11 +3666,12 @@ export class NeoService {
                     this.workPrs.list(current.ask.workIds)
                   )
                 : [],
+              move: move.note,
             }
           ),
         };
       },
-      ['work', 'goal', 'found', 'options', 'current'],
+      ['work', 'goal', 'found', 'options', 'current', 'move'],
       'note'
     )
     .pipe(
