@@ -1,3 +1,4 @@
+import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 import {
   neoConsultationDelivery,
   neoDeliveryTrigger,
@@ -133,7 +134,7 @@ describe('NeoService direct consultation return', () => {
     const outcome = await invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
       'neo.publication.publish',
-      { ...draft, links: [{ ...draft.links[0], id }] },
+      withMintedPublicationId(service, { ...draft, links: [{ ...draft.links[0], id }] }),
       { source: 'mcp', sessionId: holder, role: 'neo', neoTurn: turn.identity() }
     );
     expect(outcome).toMatchObject({ kind: 'completed', value: { accepted: true, created: true } });
@@ -210,12 +211,12 @@ describe('NeoService direct consultation return', () => {
       await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.publication.publish',
-        {
+        withMintedPublicationId(service, {
           publicationId: interimId,
           shortText: 'Checking with the holder; the answer follows.',
           fullText: 'Checking with the holder; the answer follows.',
           links: [],
-        },
+        }),
         { source: 'mcp', sessionId: root, role: 'neo', neoTurn: rootTurn }
       )
     ).toMatchObject({ kind: 'completed', value: { accepted: true, created: true } });
@@ -230,7 +231,7 @@ describe('NeoService direct consultation return', () => {
       await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.publication.publish',
-        { ...draft, links: [{ ...draft.links[0], id: 'check' }] },
+        withMintedPublicationId(service, { ...draft, links: [{ ...draft.links[0], id: 'check' }] }),
         { source: 'mcp', sessionId: holder, role: 'neo', neoTurn: turn.identity() }
       )
     ).toMatchObject({
@@ -260,12 +261,12 @@ describe('NeoService direct consultation return', () => {
       await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.publication.publish',
-        {
+        withMintedPublicationId(service, {
           publicationId: '40000000-0000-4000-8000-000000000002',
           shortText: 'Overwrite attempt.',
           fullText: 'Overwrite attempt.',
           links: [],
-        },
+        }),
         {
           source: 'mcp',
           sessionId: root,
@@ -317,7 +318,7 @@ describe('NeoService direct consultation return', () => {
       await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.publication.publish',
-        { ...draft, links: [] },
+        withMintedPublicationId(service, { ...draft, links: [] }),
         { source: 'mcp', sessionId: holder, role: 'neo', neoTurn: turn.identity() }
       )
     ).toMatchObject({ value: { accepted: false, reason: 'no_trigger' } });

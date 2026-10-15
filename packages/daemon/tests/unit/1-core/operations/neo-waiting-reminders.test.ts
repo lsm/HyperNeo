@@ -1,3 +1,4 @@
+import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
@@ -217,13 +218,13 @@ describe('Neo turns with an ask waiting on the human', () => {
   const reply = (messageId: string, publicationId: string, interim = false) =>
     invoke(
       'neo.publication.publish',
-      {
+      withMintedPublicationId(service, {
         publicationId,
         shortText: interim ? 'Checking.' : 'Done.',
         fullText: interim ? 'Checking.' : 'Done.',
         links: [],
         ...(interim && { interim }),
-      },
+      }),
       human(messageId)
     );
 

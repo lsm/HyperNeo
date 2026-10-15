@@ -45,7 +45,8 @@ export function planNeoSavedRulesAppend(
   if (input.interim) return { rules: [], keep: null };
   const key = neoSavedRulesKey(input.producerInput.sessionId, input.producerInput.messageId);
   const note = notes.get(key);
-  const replay = note?.published[input.publicationId];
+  const id = input.triggerId ?? input.publicationId;
+  const replay = note?.published[id];
   if (replay !== undefined) return { rules: replay, keep: null };
   if (current.stored || !note) return { rules: [], keep: null };
   const rules = note.pending.filter((rule) => current.standingRules.includes(rule));
@@ -54,7 +55,7 @@ export function planNeoSavedRulesAppend(
     rules,
     keep: {
       key,
-      note: { pending: [], published: { ...note.published, [input.publicationId]: rules } },
+      note: { pending: [], published: { ...note.published, [id]: rules } },
       evict: [],
     },
   };

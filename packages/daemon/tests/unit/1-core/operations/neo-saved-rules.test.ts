@@ -1,3 +1,4 @@
+import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
@@ -233,7 +234,14 @@ describe('Neo reply after a rule save', () => {
   });
 
   const invoke = (name: string, input: unknown, as = caller) =>
-    invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, as);
+    invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      name,
+      name === 'neo.publication.publish'
+        ? withMintedPublicationId(service, input as { publicationId?: string })
+        : input,
+      as
+    );
 
   test('the published reply names the rule this turn saved, and a retry stays identical', async () => {
     db.updateGlobalSettings({ neo: { standingRules: ['Ask before deleting anything.'] } });

@@ -33,29 +33,27 @@ describe('published consultation request instructions', () => {
     expect(guidance).toContain('shortText, fullText and labelled Neo scene links together');
     expect(guidance).toContain('current reasoning pass');
     expect(guidance).toContain(
-      'neo.publication.publish {publicationId,shortText,fullText,links,askSummary,awaiting?} once'
+      'neo.publication.publish {shortText,fullText,links,askSummary,awaiting?} once'
     );
     expect(guidance).toContain('do not supply or invent either');
     expect(guidance).toContain('Do not execute work');
     expect(guidance).toContain('call neo.project.respond for this published request');
     expect(guidance).toContain('send the answer to root for another summary');
-    expect(guidance).toContain('fresh UUID');
-    expect(guidance).toContain('retry only the identical payload with the same id');
+    expect(guidance).toContain('The daemon assigns the publication id');
+    expect(guidance).toContain('an identical retry posts nothing new');
     expect(guidance).toContain('A rejected publication is not a returned answer');
     expect(guidance).toContain('Include any genuine question or unresolved uncertainty');
     expect(guidance).toContain('never private paths or raw execution detail');
     const authored = NeoPublicationSchema.pick({
-      publicationId: true,
       shortText: true,
       fullText: true,
       links: true,
     }).parse({
-      publicationId: '30000000-0000-4000-8000-000000000001',
       shortText: 'Plan B is current.',
       fullText: 'The old plan was replaced. External completion is not verified.',
       links: [{ kind: 'consultation', id: item.id, label: 'View comparison' }],
     });
-    expect(Object.keys(authored)).toEqual(['publicationId', 'shortText', 'fullText', 'links']);
+    expect(Object.keys(authored)).toEqual(['shortText', 'fullText', 'links']);
   });
   test('does not publish caller-supplied routing, receipt or authority fields', () => {
     const changed = {
@@ -107,7 +105,7 @@ describe('published consultation coordinator prompt', () => {
         'NEVER execute worker jobs directly',
         'Start work button is the approval to execute',
         'never supply an approval or authority flag',
-        'same authored payload only to retry an identical publication',
+        'The daemon assigns each publication its id and returns it; an identical retry posts nothing new.',
         'The runtime derives the conversation, the original ask and the producer',
         'your own origin is your actual session',
         'Never put a filesystem path, a private resource',
