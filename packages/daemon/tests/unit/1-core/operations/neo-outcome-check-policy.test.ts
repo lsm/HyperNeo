@@ -51,6 +51,9 @@ describe('neoOutcomeCheckPolicy', () => {
       'CI green',
       'Released to users',
       'Tests pass',
+      'PR opened and approved',
+      'PR open and reviewed',
+      'PR open with checks green',
     ]) {
       const result = neoOutcomeCheckPolicy.requireChecks([{ text, check: 'coding.pr_opened' }]);
       if (!('reason' in result)) throw new Error('expected refusal');

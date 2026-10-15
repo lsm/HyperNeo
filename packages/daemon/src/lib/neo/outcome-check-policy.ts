@@ -23,7 +23,8 @@ function requiredCheck(item: Outcome): Check | null {
   return mergesPr || mergesToBranch ? 'coding.pr_merged' : null;
 }
 
-const BEYOND_OPENED = /\b(merg\w*|deploy\w*|releas\w*|ship\w*|land\w*|tested|tests? pass\w*|CI)\b/i;
+const BEYOND_OPENED =
+  /\b(merg\w*|deploy\w*|releas\w*|ship\w*|land\w*|tested|tests?|CI|checks?|green|pass\w*|approv\w*|review\w*|LGTM)\b/i;
 
 function requireOpenedOnly<T extends Outcome>(
   items: readonly T[]
