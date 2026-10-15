@@ -210,6 +210,7 @@ export function planNeoProjectQuestions(
       );
       if (
         !repository ||
+        repository.startsWith('repo:') ||
         (source.parentId ?? null) !== (target.parentId ?? null) ||
         (identities(source.id) && identities(target.id))
       )

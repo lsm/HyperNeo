@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { neoAskAnswerEvidence } from '../../../../src/lib/neo/ask-answer-evidence.ts';
+import { planNeoAskQuestion } from '../../../../src/lib/neo/ask-operations.ts';
 import { neoReorganizeRuntime } from '../../../../src/lib/neo/operations.ts';
 import {
   NEO_PROJECT_SAME,
@@ -36,41 +37,19 @@ const project = (id: string, extra: Partial<NeoProject> = {}): NeoProject => ({
 });
 
 describe('planNeoProjectQuestions', () => {
-  test('asks about siblings sharing a repository when identity cannot settle it, once per project', () => {
-    const questions = planNeoProjectQuestions(
-      {
-        projects: [
-          project('web', { createdAt: 1 }),
-          project('web-shallow', { createdAt: 2 }),
-          project('web-other', { createdAt: 3 }),
-          project('web-known', { createdAt: 4 }),
-          project('web-nested', { createdAt: 5, parentId: 'travel' }),
-          project('notes', { createdAt: 6 }),
-        ],
-        identities: { web: [identity], 'web-known': [`git:${'b'.repeat(40)}`] },
-        unavailable: [],
-        retired: [],
-      },
-      {},
-      {
-        web: [repository],
-        'web-shallow': [repository],
-        'web-other': [repository],
-        'web-known': [repository],
-        'web-nested': [repository],
-        notes: ['repo:lsm/notes'],
-      }
-    );
-    expect(questions.map(({ sourceId, targetId }) => [sourceId, targetId])).toEqual([
-      ['web-shallow', 'web'],
-      ['web-other', 'web'],
-    ]);
-    expect(questions[0]).toMatchObject({
-      key: 'neo-project-merge:web\u0000web-shallow',
-      repository,
-      sourceRevision: 1,
-      targetRevision: 1,
-    });
+  test('raises no question for siblings sharing a repository: one repository is one project', () => {
+    expect(
+      planNeoProjectQuestions(
+        {
+          projects: [project('web', { createdAt: 1 }), project('web-shallow', { createdAt: 2 })],
+          identities: { web: [identity] },
+          unavailable: [],
+          retired: [],
+        },
+        {},
+        { web: [repository], 'web-shallow': [repository] }
+      )
+    ).toEqual([]);
   });
 });
 
@@ -173,6 +152,7 @@ describe('reorganize merge questions on a real store', () => {
     neoReorganizeRuntime(
       {
         repo,
+        db: { getDatabase: () => db },
         askRecords: asks,
         logReorganize: (line: string) => logged.push(line),
       } as unknown as NeoService,
@@ -240,46 +220,63 @@ describe('reorganize merge questions on a real store', () => {
     ).toEqual({ project_id: 'local' });
   });
 
-  test('asks the human once and keeps the question pending across runs', async () => {
-    expect(await runtime().mergeProjects()).toEqual({
-      merged: [],
-      asked: [{ sourceId: 'web-shallow', targetId: 'web' }],
-    });
-    const ask = asks.forRequest(key)!;
-    expect(ask).toMatchObject({ originSessionId: root, projectId: null, status: 'waiting' });
-    expect(ask.doneItems?.find((item) => item.decides === key)).toMatchObject({
-      question: 'Are web-shallow and web the same project? Both point at lsm/web.',
+  const question = (answerWith?: string) => {
+    const opened = asks.open({
+      id: crypto.randomUUID(),
+      requestKey: key,
+      projectId: null,
+      originSessionId: root,
+      originMessageId: null,
+      title: 'web-shallow and web: one project?',
+      ask: 'Are web-shallow and web the same project?',
+      doneWhen: 'The human decided.',
+      doneSource: 'daemon',
+    })!;
+    const item = planNeoAskQuestion(opened, {
+      question: 'Are web-shallow and web the same project?',
       options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
-      state: 'needs_you',
+      decides: key,
     });
-    expect(await runtime().mergeProjects()).toEqual({ merged: [], asked: [] });
+    asks.settle(opened, 'waiting', 'q', 'q', item.id, item);
+    if (answerWith) answer(answerWith);
+  };
+
+  const waiter = (status: 'queued' | 'admitted') =>
+    db
+      .prepare(
+        `INSERT INTO neo_consultation_waiters (id, request_key, concern_id, origin_session_id, origin_message_id, session_id, question, status, created_at)
+        VALUES (?, ?, 'web', ?, 'm', ?, 'q', ?, 1)`
+      )
+      .run(crypto.randomUUID(), crypto.randomUUID(), root, root, status);
+
+  test('a queued consultation keeps a project busy, an admitted one from before does not', async () => {
+    waiter('queued');
+    expect((await runtime().mergeProjects()).merged).toEqual([]);
+    db.prepare("UPDATE neo_consultation_waiters SET status = 'admitted'").run();
+    expect((await runtime().mergeProjects()).merged).toEqual([
+      { sourceId: 'web-shallow', targetId: 'web' },
+    ]);
   });
 
-  test('an answer of the same project merges as human approved, and is never asked again', async () => {
-    await runtime().mergeProjects();
-    answer(NEO_PROJECT_SAME);
+  test('merges siblings sharing a repository without asking', async () => {
     expect(await runtime().mergeProjects()).toEqual({
       merged: [{ sourceId: 'web-shallow', targetId: 'web' }],
       asked: [],
     });
+    expect(asks.forRequest(key)).toBeNull();
     expect(repo.listProjects().map((item) => item.id)).toEqual(['web']);
-    expect(await runtime().mergeProjects()).toEqual({ merged: [], asked: [] });
   });
 
-  test('a dropped question is asked again under a new key', async () => {
-    await runtime().mergeProjects();
-    const first = asks.forRequest(key)!;
-    asks.settle(first, 'abandoned', 'Closed by the user.', 'Closed by the user.');
-    expect(await runtime().mergeProjects()).toEqual({
-      merged: [],
-      asked: [{ sourceId: 'web-shallow', targetId: 'web' }],
-    });
-    expect(asks.forRequest(`${key}#2`)?.status).toBe('waiting');
+  test('withdraws an earlier open question once the repository rule merges the pair', async () => {
+    question();
+    expect((await runtime().mergeProjects()).merged).toEqual([
+      { sourceId: 'web-shallow', targetId: 'web' },
+    ]);
+    expect(asks.forRequest(key)?.status).toBe('abandoned');
   });
 
-  test('an answer to keep them separate is saved and never asked again', async () => {
-    await runtime().mergeProjects();
-    answer(NEO_PROJECT_SEPARATE);
+  test('an answer to keep them separate still keeps them apart', async () => {
+    question(NEO_PROJECT_SEPARATE);
     expect(await runtime().mergeProjects()).toEqual({ merged: [], asked: [] });
     expect(
       repo
@@ -287,6 +284,5 @@ describe('reorganize merge questions on a real store', () => {
         .map((item) => item.id)
         .sort()
     ).toEqual(['web', 'web-shallow']);
-    expect(logged).toEqual([]);
   });
 });
