@@ -2886,6 +2886,39 @@ describe('neo.ask operations', () => {
     expect(service.inputTrigger(loose)).toBeNull();
   });
 
+  test('a cut-off turn whose trigger is already answered gets no turn-limit note', async () => {
+    const messages = db.getSDKMessageRepo();
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+    messages.saveSDKMessage('root', {
+      type: 'result',
+      subtype: 'success',
+      uuid: 'r1',
+      session_id: 'root',
+    } as unknown as SDKUserMessage);
+    await pause();
+    messages.saveSDKMessage('root', {
+      type: 'user',
+      uuid: 'h1',
+      session_id: 'root',
+      parent_tool_use_id: null,
+      inputKind: 'human',
+      message: { role: 'user', content: 'dev' },
+    } as unknown as SDKUserMessage);
+    await pause();
+    messages.saveSDKMessage('root', {
+      type: 'result',
+      subtype: 'error_max_turns',
+      uuid: 'r2',
+      session_id: 'root',
+    } as unknown as SDKUserMessage);
+    service.publications.hasTrigger = (_conversation: string, triggerId: string) =>
+      triggerId === 'human:h1';
+    const delivered = mock(async (..._args: unknown[]) => {});
+    (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
+    await service.noteTurnLimit('root');
+    expect(delivered).not.toHaveBeenCalled();
+  });
+
   test('a dropped turn-limit note does not stop the next cut-off turn from getting its own', async () => {
     const results = db.getSDKMessageRepo();
     const pause = () => new Promise((resolve) => setTimeout(resolve, 5));

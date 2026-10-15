@@ -93,6 +93,36 @@ export function planNeoCorrectionAnswer(
     : { askOrigin: owned.publication.askOrigin };
 }
 
+export function requireNeoNewHumanMessage(
+  owned: Owned,
+  trigger: string | null
+): { value: Owned } | { reason: Rejection } {
+  return trigger?.startsWith('human:') && trigger !== owned.publication.triggerId
+    ? { value: owned }
+    : { reason: { accepted: false, reason: 'answer_closed' } };
+}
+
+export function requireNeoEditable(
+  owned: Owned,
+  text: { shortText?: string; fullText?: string },
+  trigger: string | null
+): { value: Owned } | { reason: Rejection } {
+  const { publication, producer } = owned;
+  if (
+    (text.shortText ?? publication.shortText) === publication.shortText &&
+    (text.fullText ?? publication.fullText) === publication.fullText
+  )
+    return { reason: { accepted: false, reason: 'edit_unchanged' } };
+  const closed = requireNeoNewHumanMessage(owned, trigger);
+  if ('reason' in closed) return closed;
+  const last = publication.answerInput ?? publication.producerInput;
+  return last.sessionId === producer.input.sessionId &&
+    last.messageId === producer.input.messageId &&
+    !!publication.editedAt
+    ? { reason: { accepted: false, reason: 'already_edited' } }
+    : { value: owned };
+}
+
 export function neoCorrectionId(owned: Owned, trigger: string | null): string {
   const { conversationId, publicationId } = owned.publication;
   const turn = trigger ?? `${owned.producer.input.sessionId}:${owned.producer.input.messageId}`;
@@ -105,7 +135,7 @@ function changePipeline(
   name: string,
   schema: z.ZodType,
   runtime: NeoPublicationChangeRuntime,
-  gate: (owned: Owned) => { value: Owned } | { reason: Rejection },
+  gate: (owned: Owned, request: never) => { value: Owned } | { reason: Rejection },
   change: (owned: Owned, input: never) => NeoPublicationChangeResult
 ) {
   return (superpipe({})(name) as PipelineAPI)
@@ -152,7 +182,7 @@ function changePipeline(
       'change',
       'result:change'
     )
-    .pipe(gate, 'change', 'result:change')
+    .pipe(gate, ['change', 'request'], 'result:change')
     .pipe(
       (owned: Owned, request: never) => {
         const result = change(owned, request);
@@ -176,7 +206,8 @@ export function createNeoPublicationChangeOperations(
     'neo-publication-edit',
     EditInput,
     runtime,
-    (owned) => ({ value: owned }),
+    (owned, input: z.infer<typeof EditInput>) =>
+      requireNeoEditable(owned, input, runtime.inputTrigger(owned.producer.input)),
     (owned, input: z.infer<typeof EditInput>) =>
       runtime.publications.edit(
         owned.publication.conversationId,
@@ -186,14 +217,20 @@ export function createNeoPublicationChangeOperations(
           ...(input.fullText !== undefined ? { fullText: input.fullText } : {}),
         },
         now().toISOString(),
-        owned.producer.input.sessionId
+        owned.producer.input.sessionId,
+        owned.producer.input
       )
   );
   const correct = changePipeline(
     'neo-publication-correct',
     CorrectInput,
     runtime,
-    requireCorrectable,
+    (owned: Owned) => {
+      const correctable = requireCorrectable(owned);
+      return 'reason' in correctable
+        ? correctable
+        : requireNeoNewHumanMessage(owned, runtime.inputTrigger(owned.producer.input));
+    },
     (owned, input: z.infer<typeof CorrectInput>) => {
       const trigger = runtime.inputTrigger(owned.producer.input);
       const correctionId = neoCorrectionId(owned, trigger);
@@ -276,7 +313,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.edit',
       description:
-        "Fix the wording of a Neo reply in this conversation in place, by its publicationId, whichever Neo session produced it: to the human they are all Neo's. Use it only for wording: the meaning, facts and anything the human should do must stay the same. The message is marked edited and records you as editedBy. Links, the ask it answers and its trigger never change. Only Neo publications in this conversation can change, never session messages (not_found). A project holder's reply to a consultation cannot change until Neo has received it (consultation_return); after that it is a Neo reply like any other.",
+        "Fix the wording of a Neo reply in this conversation in place, by its publicationId, whichever Neo session produced it: to the human they are all Neo's. Use it only for wording: the meaning, facts and anything the human should do must stay the same. Only in a turn answering a new human message (not the one this reply answered), and once per message per turn; otherwise answer_closed or already_edited, and an edit that changes nothing is edit_unchanged. A later fact that changes an answer goes out as its own outcome or trigger message, never by rewriting a closed answer. The message is marked edited, records you as editedBy, and drops its awaiting question. Links, the ask it answers and its trigger never change. Only Neo publications in this conversation can change, never session messages (not_found). A project holder's reply to a consultation cannot change until Neo has received it (consultation_return); after that it is a Neo reply like any other.",
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: Result,
@@ -285,7 +322,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.correct',
       description:
-        "Correct a Neo reply in this conversation, whichever Neo session produced it, when a fact or an action for the human changed (for example it said a PR merged and it did not). This publishes a separate message labelled as a correction that cites the original by publicationId; it never rewrites what the human already read. Base it on the original's content and fresh evidence, not a guess. The daemon assigns the correction's id and returns it; a retry within the same turn returns the same correction. When this turn answers a human message (or a trigger note) that has no reply yet, the correction is that reply, so do not publish a separate one. Each message takes at most one correction, and a correction cannot be corrected (already_corrected). Only Neo publications in this conversation can be corrected (not_found), and a holder's consultation reply only once Neo has received it (consultation_return). Otherwise it needs no notification trigger.",
+        "Correct a Neo reply in this conversation, whichever Neo session produced it, when a fact or an action for the human changed (for example it said a PR merged and it did not). Only in a turn answering a new human message (not the one this reply answered); otherwise answer_closed, since a later fact goes out as its own outcome or trigger message. This publishes a separate message labelled as a correction that cites the original by publicationId; it never rewrites what the human already read. Base it on the original's content and fresh evidence, not a guess. The daemon assigns the correction's id and returns it; a retry within the same turn returns the same correction. When this turn answers a human message (or a trigger note) that has no reply yet, the correction is that reply, so do not publish a separate one. Each message takes at most one correction, and a correction cannot be corrected (already_corrected). Only Neo publications in this conversation can be corrected (not_found), and a holder's consultation reply only once Neo has received it (consultation_return). Otherwise it needs no notification trigger.",
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: CorrectInput,
       resultSchema: Result,
