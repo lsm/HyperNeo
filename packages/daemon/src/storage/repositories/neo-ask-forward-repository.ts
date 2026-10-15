@@ -51,6 +51,14 @@ export class NeoAskForwardRepository {
     );
   }
 
+  findTo(sessionId: string, askMessageId: string, hop: number): NeoAskOrigin | null {
+    const row = this.db
+      .prepare(`SELECT ask_session_id AS sessionId, ask_message_id AS messageId
+        FROM neo_ask_forwards WHERE to_session_id = ? AND ask_message_id = ? AND hop = ?`)
+      .get(sessionId, askMessageId, hop) as NeoAskOrigin | null | undefined;
+    return row ?? null;
+  }
+
   private withAsk(rows: ForwardRow[]): (NeoAskForward & { ask: NeoAskOrigin })[] {
     return rows.map(({ askSessionId, askMessageId, ...forward }) => ({
       ...forward,

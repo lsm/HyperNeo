@@ -3,6 +3,12 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
 import { neoHumanTurnOrigin } from './notification-triggers.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
+import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
+import {
+  neoForwardedAskMessageId,
+  neoForwardHop,
+  neoTurnOwnsMessage,
+} from './ask-forward-operation.ts';
 
 export class NeoHolderTurn {
   private bound = false;
@@ -44,7 +50,7 @@ export class NeoHolderTurn {
                   message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
               )
         );
-    const human = origin !== null;
+    const human = origin !== null || (!item && this.ownsForward(messageId));
     this.turn = {
       messageId,
       ...(origin && origin !== messageId ? { origin } : {}),
@@ -61,6 +67,17 @@ export class NeoHolderTurn {
       this.timer.unref?.();
     }
     return true;
+  }
+
+  private ownsForward(messageId: string): boolean {
+    const askMessageId = neoForwardedAskMessageId(messageId);
+    const hop = neoForwardHop(messageId);
+    if (askMessageId === null || hop === null) return false;
+    const forwards = new NeoAskForwardRepository(this.db.getDatabase());
+    const ask = forwards.findTo(this.sessionId, askMessageId, hop);
+    return (
+      !!ask && neoTurnOwnsMessage(this.sessionId, { messageId, human: false }, forwards.list(ask))
+    );
   }
 
   identity(): OperationCaller['neoTurn'] {

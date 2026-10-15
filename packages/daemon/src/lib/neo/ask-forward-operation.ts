@@ -85,6 +85,26 @@ export function neoForwardedAskMessageId(messageId: string): string | null {
   return /^neo-forward:(.+):\d+$/.exec(messageId)?.[1] ?? null;
 }
 
+export function neoForwardHop(messageId: string): number | null {
+  const hop = /^neo-forward:.+:(\d+)$/.exec(messageId)?.[1];
+  return hop === undefined ? null : Number(hop);
+}
+
+export function neoTurnOwnsMessage(
+  sessionId: string,
+  turn: { messageId: string; human: boolean; consultationId?: string },
+  forwards: readonly Pick<NeoAskForward, 'hop' | 'toSessionId'>[]
+): boolean {
+  if (turn.consultationId) return false;
+  const last = forwards.reduce<Pick<NeoAskForward, 'hop' | 'toSessionId'> | null>(
+    (latest, forward) => (!latest || forward.hop > latest.hop ? forward : latest),
+    null
+  );
+  const hop = neoForwardHop(turn.messageId);
+  if (hop === null) return turn.human && !last;
+  return !!last && last.hop === hop && last.toSessionId === sessionId;
+}
+
 export function neoForwardMessageId(ask: NeoAskOrigin, hop: number): string {
   return `neo-forward:${ask.messageId}:${hop}`;
 }

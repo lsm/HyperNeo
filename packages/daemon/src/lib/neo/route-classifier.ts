@@ -176,6 +176,18 @@ export function readNeoRouteDecision(
   };
 }
 
+export function neoRouteMiss(raw: string): string {
+  return raw.trim()
+    ? `Neo route model answered without a listed choice: ${neoExcerpt(raw, 300)}`
+    : 'Neo route model returned no text';
+}
+
+function readNeoRouteAnswer(raw: string, candidates: readonly NeoHolder[]): NeoRouteVerdict {
+  const decision = readNeoRouteDecision(raw, candidates);
+  if (!decision) log.error(neoRouteMiss(raw));
+  return decision;
+}
+
 async function askNeoRouteModel(
   text: string,
   candidates: readonly NeoHolder[],
@@ -205,7 +217,7 @@ async function askNeoRouteModel(
         signal: abortController.signal,
       });
       if (!response.ok) throw new Error(`route model returned ${response.status}`);
-      return readNeoRouteDecision(readNeoRouteStream(await response.text()), candidates);
+      return readNeoRouteAnswer(readNeoRouteStream(await response.text()), candidates);
     }
     leanCwd ??= mkdtempSync(join(tmpdir(), 'neo-route-'));
     const raw = await runOneShotModel({
@@ -216,9 +228,9 @@ async function askNeoRouteModel(
       abortController,
       cwd: leanCwd,
     });
-    return raw ? readNeoRouteDecision(raw, candidates) : null;
+    return readNeoRouteAnswer(raw ?? '', candidates);
   } catch (error) {
-    log.warn('Neo route classification failed:', error);
+    log.error('Neo route classification failed:', error);
     return 'failed';
   }
 }

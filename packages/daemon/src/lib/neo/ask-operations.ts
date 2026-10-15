@@ -36,6 +36,7 @@ import {
 import { isNeoAskOutcomeItem } from './ask-views.ts';
 import { NeoAskStateViewSchema } from './card-view-schema.ts';
 import { isNeoAnswerItem } from './answer-outcome.ts';
+import { neoOutcomeBindingPolicy } from './outcome-binding-policy.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -383,6 +384,59 @@ export function requireNeoWorkAskLink<T>(
       };
 }
 
+const NEO_RELEASED_CARD = new Set(['failed', 'cancelled']);
+
+export function requireNeoProposalDelivers<T>(
+  delivers: readonly string[] | undefined,
+  ask: NeoAsk | null,
+  read: { stored: string | null; cards: readonly Pick<NeoWork, 'id' | 'status'>[] },
+  value: T
+): Gate<T> {
+  if (!ask || (read.stored && delivers === undefined)) return { value };
+  const open = (ask.doneItems ?? []).filter(
+    (item) => neoOutcomeBindingPolicy.isBindable(item) && item.state !== 'met'
+  );
+  if (delivers === undefined)
+    return open.length
+      ? {
+          reason: fail(
+            `delivers_required: this ask has open items ${open.map((item) => `${item.id} "${item.text}"`).join('; ')}. Pass delivers with the ids of the items this card delivers, or delivers: [] when it delivers none.`
+          ),
+        }
+      : { value };
+  const repeated = delivers.find((id, index) => delivers.indexOf(id) !== index);
+  if (repeated !== undefined)
+    return { reason: fail(`delivers_repeated: ${repeated} is listed twice; name each item once.`) };
+  for (const id of delivers) {
+    const item = open.find((entry) => entry.id === id);
+    if (!item) return { reason: fail(`delivers_unknown: ${id} is not an open item on this ask.`) };
+    const holder = read.cards.find(
+      (card) => card.id === item.deliveredBy && card.id !== read.stored
+    );
+    if (holder && !NEO_RELEASED_CARD.has(holder.status))
+      return {
+        reason: fail(
+          `delivers_taken: ${id} is delivered by card ${holder.id.slice(0, 8)}, which is ${holder.status}; only a failed or cancelled card releases its items.`
+        ),
+      };
+  }
+  return { value };
+}
+
+export function planNeoProposalBindings(
+  input: { askId?: string; delivers?: readonly string[] },
+  ask: NeoAsk | null,
+  workId: string
+): { itemId: string; deliveredBy: string }[] {
+  if (!ask) return [];
+  const ids = input.askId
+    ? (input.delivers ?? [])
+    : (ask.doneItems ?? [])
+        .filter((item) => neoOutcomeBindingPolicy.isBindable(item) && !item.deliveredBy)
+        .map((item) => item.id);
+  return ids.map((itemId) => ({ itemId, deliveredBy: workId }));
+}
+
 export function planNeoCardAsk(
   input: {
     askId?: string;
@@ -480,9 +534,11 @@ export function requireNeoAskOriginFree(
 
 export type NeoAskNameable = { id: string; title: string; cardIds: string[]; refs: string[] };
 
-export function requireNeoAskHumanTurn(caller: OperationCaller): Gate<OperationCaller> {
-  return caller.source !== 'mcp' ||
-    (caller.neoTurn?.human && !caller.neoTurn.consultationId && caller.neoTurn.isLive())
+export function requireNeoAskHumanTurn(
+  caller: OperationCaller,
+  owns: boolean
+): Gate<OperationCaller> {
+  return caller.source !== 'mcp' || (owns && caller.neoTurn?.isLive())
     ? { value: caller }
     : {
         reason: fail(
@@ -1397,7 +1453,8 @@ export function createNeoAskOperations(
       'input',
       'result:admission'
     )
-    .pipe(requireNeoAskHumanTurn, 'caller', 'result:admission')
+    .pipe((caller: OperationCaller) => service.ownsHumanMessage(caller), 'caller', 'owns')
+    .pipe(requireNeoAskHumanTurn, ['caller', 'owns'], 'result:admission')
     .pipe(
       (input: OpenRequest, caller: OperationCaller) =>
         admitNeoWorkOrigin(

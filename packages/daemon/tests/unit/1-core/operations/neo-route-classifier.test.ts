@@ -4,6 +4,7 @@ import {
   neoRouteEndpoint,
   neoRouteTimeoutMs,
   neoRouteHttpCall,
+  neoRouteMiss,
   readNeoRouteDecision,
   readNeoRouteStream,
 } from '../../../../src/lib/neo/route-classifier.ts';
@@ -142,6 +143,15 @@ describe('readNeoRouteStream', () => {
       'data: not json',
     ].join('\n');
     expect(readNeoRouteStream(stream)).toBe('youtube');
+  });
+});
+
+describe('neoRouteMiss', () => {
+  test('names what the route model said when it chose nothing listed', () => {
+    expect(neoRouteMiss('There is an issue with the selected model.')).toBe(
+      'Neo route model answered without a listed choice: There is an issue with the selected model.'
+    );
+    expect(neoRouteMiss('  ')).toBe('Neo route model returned no text');
   });
 });
 
@@ -338,7 +348,7 @@ describe('chooseNeoRoute with a new subject', () => {
     expect(route.choice).toBeNull();
   });
 
-  test('deduplicates against holders omitted from the capped classifier candidates', async () => {
+  test('sends a new subject to the existing project with that title instead of opening one', async () => {
     let opened = 0;
     const holders = Array.from({ length: 20 }, (_, i) => ({
       ...drivers,
@@ -351,8 +361,7 @@ describe('chooseNeoRoute with a new subject', () => {
         return null;
       }),
       holders: () => holders,
-      classify: async (_text, options) => {
-        expect(options.some((holder) => holder.projectId === 'project-19')).toBe(false);
+      classify: async () => {
         return {
           decision: 'main',
           confidence: 0.8,

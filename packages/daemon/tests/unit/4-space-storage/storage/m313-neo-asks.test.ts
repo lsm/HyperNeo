@@ -291,9 +291,10 @@ describe('NeoAskRepository outcome bindings', () => {
       });
       db.exec('DELETE FROM neo_work_driver_targets');
       expect(asks.bindItems('a1', bindings, 0, 12)).toEqual({ ok: true });
+      expect(asks.get('a1')?.revision).toBe(0);
       db.exec("UPDATE neo_work SET status = 'queued' WHERE id = 'w1'");
-      expect(asks.bindItems('a1', bindings, 1, 13)).toEqual({ ok: true });
-      expect(asks.bindItems('a1', [{ itemId: 'i1', deliveredBy: null }], 1, 14)).toEqual({
+      expect(asks.bindItems('a1', bindings, 0, 13)).toEqual({ ok: true });
+      expect(asks.bindItems('a1', [{ itemId: 'i1', deliveredBy: null }], 0, 14)).toEqual({
         ok: false,
         reason: 'binding_already_dispatched',
       });

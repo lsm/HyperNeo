@@ -4,12 +4,6 @@ import type {
   NeoPublicationInput,
 } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import {
-  flagPublicationLanguage,
-  type NeoPublicationLanguageMismatch,
-  planPublicationLanguage,
-  requirePublicationLanguage,
-} from './publication-language.ts';
 import { requirePublicationNews } from './publication-news.ts';
 
 type Rejection = { accepted: false; reason: string; detail?: string };
@@ -18,7 +12,6 @@ type Receipt = NeoPublicationAppendResult | Rejection;
 export interface NeoPublicationCommitDeps {
   commit(input: NeoPublicationInput, consultationId: string | undefined): Receipt;
   published(input: NeoPublicationInput, publication: NeoPublication): void;
-  turnText(input: NeoPublicationInput): string | null;
 }
 
 export function explainNeoPublicationRefusal(receipt: Receipt): Receipt {
@@ -35,27 +28,12 @@ export function explainNeoPublicationRefusal(receipt: Receipt): Receipt {
 
 export function createNeoPublicationCommit(deps: NeoPublicationCommitDeps) {
   return (superpipe({})('neo-publication-commit') as PipelineAPI)
-    .input(['input', 'consultationId', 'fallback'])
+    .input(['input', 'consultationId'])
     .pipe(
       (input: NeoPublicationInput) => requirePublicationNews(input, input),
       'input',
       'result:receipt'
     )
-    .pipe(
-      (input: NeoPublicationInput) => planPublicationLanguage(input, deps.turnText(input)),
-      'input',
-      'language'
-    )
-    .pipe(
-      (
-        input: NeoPublicationInput,
-        language: NeoPublicationLanguageMismatch | null,
-        fallback: boolean | undefined
-      ) => requirePublicationLanguage(input, language, fallback === true),
-      ['input', 'language', 'fallback'],
-      'result:receipt'
-    )
-    .pipe(flagPublicationLanguage, ['input', 'language'], 'input')
     .pipe(
       (input: NeoPublicationInput, consultationId: string | undefined) =>
         deps.commit(input, consultationId),
@@ -70,9 +48,5 @@ export function createNeoPublicationCommit(deps: NeoPublicationCommitDeps) {
       ['receipt', 'input'],
       'receipt'
     )
-    .end('receipt') as (
-    input: NeoPublicationInput,
-    consultationId?: string,
-    fallback?: boolean
-  ) => Receipt;
+    .end('receipt') as (input: NeoPublicationInput, consultationId?: string) => Receipt;
 }

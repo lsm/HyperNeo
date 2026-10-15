@@ -1,4 +1,4 @@
-import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKAssistantMessage, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { isSDKAssistantMessage } from '@hyperneo/shared/sdk/type-guards';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { KimiProvider } from '../providers/kimi-provider.ts';
@@ -76,19 +76,28 @@ function callOneShotModel(
   return query({ prompt: request.prompt, options });
 }
 
+export function readAssistantReply(
+  message: SDKAssistantMessage,
+  separator = ' '
+): { text: string } | { error: string } {
+  const content = (message.message?.content ?? []) as Array<{ type: string; text?: string }>;
+  const text = content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text ?? '')
+    .join(separator)
+    .trim();
+  return message.error ? { error: text ? `${message.error}: ${text}` : message.error } : { text };
+}
+
 export async function firstAssistantText(
   messages: AsyncIterable<SDKMessage>,
   separator = ' '
 ): Promise<string | null> {
   for await (const message of messages) {
     if (!isSDKAssistantMessage(message)) continue;
-    const content = (message.message?.content ?? []) as Array<{ type: string; text?: string }>;
-    const blocks = content.filter((block) => block.type === 'text');
-    const text = blocks
-      .map((block) => block.text ?? '')
-      .join(separator)
-      .trim();
-    if (text) return text;
+    const reply = readAssistantReply(message, separator);
+    if ('error' in reply) throw new Error(`The model answered with an error: ${reply.error}`);
+    if (reply.text) return reply.text;
   }
   return null;
 }
