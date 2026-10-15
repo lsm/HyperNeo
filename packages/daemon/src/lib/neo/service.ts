@@ -125,11 +125,12 @@ import {
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
 import {
-  classifyNeoWorkerEnvironmentFailure,
+  readNeoWorkBlocker,
   neoEnvironmentMoveNote,
   planNeoEnvironmentMove,
   type NeoEnvironmentMove,
-} from './worker-environment.ts';
+  type NeoWorkBlocker,
+} from './work-blocker.ts';
 import {
   driverStartedReport,
   driverTargetDaemon,
@@ -3394,11 +3395,11 @@ export class NeoService {
 
   private readonly readEnvironmentMove = (superpipe({})('neo-environment-move') as PipelineAPI)
     .input(['work'])
-    .pipe((work: NeoWork) => classifyNeoWorkerEnvironmentFailure(work.report), 'work', 'failure')
+    .pipe((work: NeoWork) => readNeoWorkBlocker(work.report), 'work', 'blocker')
     .pipe((work: NeoWork) => this.driverTargets.get(work.id), 'work', 'target')
     .pipe(
-      (work: NeoWork, failure: string | null, target: NeoDriverTarget | null) =>
-        failure && target?.verb === 'start'
+      (work: NeoWork, blocker: NeoWorkBlocker | null, target: NeoDriverTarget | null) =>
+        blocker?.kind === 'environment' && target?.verb === 'start'
           ? readNeoDriverAdapters(() =>
               invokeOperation(
                 this.sessions.getOperationRegistry(),
@@ -3408,10 +3409,10 @@ export class NeoService {
               )
             )
           : null,
-      ['work', 'failure', 'target'],
+      ['work', 'blocker', 'target'],
       'adapters'
     )
-    .pipe(planNeoEnvironmentMove, ['failure', 'target', 'adapters'], 'result:move')
+    .pipe(planNeoEnvironmentMove, ['blocker', 'target', 'adapters'], 'result:move')
     .endAsync('move') as (work: NeoWork) => Promise<NeoEnvironmentMove | null>;
 
   private async returnReport(work: NeoWork): Promise<void> {

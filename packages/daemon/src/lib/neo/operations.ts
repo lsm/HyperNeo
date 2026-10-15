@@ -1,4 +1,5 @@
 import { neoTurnRequestKey } from './request-key.ts';
+import { NeoWorkBlockerSchema } from './work-blocker.ts';
 import { hostname } from 'node:os';
 import { backfillNeoRepositoryIdentities, planNeoProjectRetitles } from './project-mirror.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
@@ -493,6 +494,7 @@ const WorkReport = z.object({
   status: z.enum(['reported', 'failed']),
   report: z.string().min(1).max(12000),
   resourceRefs: NeoWorkResourceReferences.optional(),
+  blocker: NeoWorkBlockerSchema.optional(),
 });
 const WorkReportResult = z.union([
   z.object({ accepted: z.literal(false), reason: z.string() }),
@@ -2390,7 +2392,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.report',
       description:
-        'Return explicit reported or failed evidence (up to 12,000 characters) for the exact work receipt assigned to this execution session. Optionally include resourceRefs: up to 16 exact {kind,id} references from daemon.snapshot or native operation results, for resources involved in this receipt only. Do not include every task sharing this manager. The actual MCP recipient must match; roles or arguments cannot replace it. Identical retries reuse the report and supplied reference set; settled references cannot change. Reports and references are claims, not independently verified completion.',
+        'Return explicit reported or failed evidence (up to 12,000 characters) for the exact work receipt assigned to this execution session. Optionally include resourceRefs: up to 16 exact {kind,id} references from daemon.snapshot or native operation results, for resources involved in this receipt only. Do not include every task sharing this manager. The actual MCP recipient must match; roles or arguments cannot replace it. Identical retries reuse the report and supplied reference set; settled references cannot change. When you stop blocked, pass blocker {kind, what}: environment when your own machine or tools failed (network, DNS, credentials, a missing tool), needs_human when only the human can decide or act. Reports and references are claims, not independently verified completion.',
       inputSchema: WorkReport,
       resultSchema: WorkReportResult,
       policy: { safetyClass: 'mutate' },

@@ -431,7 +431,7 @@ describe('withWorkGoal', () => {
   test('appends the goal and checklist, and leaves a bare instruction alone', () => {
     const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: '- runs in the simulator' };
     expect(withWorkGoal('Build the chat screen.', goal)).toBe(
-      'Build the chat screen.\n\nNeo routed this to you: do it here, not by handing it to another session or chat.\nWhat the human asked: A full iOS app\nDone when:\n- runs in the simulator\nIf you stop before this is done, say what remains and why.'
+      `Build the chat screen.\n\nNeo routed this to you: do it here, not by handing it to another session or chat.\nWhat the human asked: A full iOS app\nDone when:\n- runs in the simulator\n${NEO_WORK_GOAL_REMAINING}`
     );
     expect(withWorkGoal('Build the chat screen.', null)).toBe('Build the chat screen.');
     const longest = withWorkGoal('i'.repeat(16000), {
