@@ -1,14 +1,14 @@
 import { getDataDir } from '../../lib/data-dir.ts';
-import { createRequire } from 'node:module';
+import { Logger } from '../../lib/logger.ts';
 import { access, constants, mkdir, readFile, rename, unlink } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { withoutAuthorization } from './agent-memory-fetch-options.ts';
 import type { AgentMemoryEmbedder } from './agent-memory-repository.ts';
 
+const log = new Logger('AgentMemory');
 const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
 const GITHUB_RELEASE_BASE = 'https://github.com/lsm/neokai/releases/download/embedding-models-v1';
 const DIMENSIONS = 384;
@@ -65,17 +65,15 @@ export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
           throw new Error('Agent memory embedding model load aborted');
         }
 
-        const { AutoModel, AutoTokenizer } = await loadTransformersWeb();
+        const { AutoModel, AutoTokenizer } = await loadTransformers();
         const [model, tokenizer] = await Promise.all([
-          AutoModel.from_pretrained(MODEL_ID, {
-            dtype: 'q4',
-            device: selectTransformersDevice(),
-          }),
+          AutoModel.from_pretrained(MODEL_ID, { dtype: 'q4', device: 'cpu' }),
           AutoTokenizer.from_pretrained(MODEL_ID),
         ]);
         return { model, tokenizer };
       })().catch((err) => {
         this.initPromise = null;
+        log.error('Embedding model failed to load; embeddings are unavailable:', err);
         throw err;
       });
     }
@@ -97,7 +95,7 @@ export async function prefetchAgentMemoryEmbeddingModel(
 
   const {
     cacheDir,
-    loadTransformers = loadTransformersWeb,
+    loadTransformers: load = loadTransformers,
     logInfo = () => {},
     logError = () => {},
   } = options;
@@ -115,7 +113,7 @@ export async function prefetchAgentMemoryEmbeddingModel(
         return null;
       }
 
-      const transformers = await loadTransformers();
+      const transformers = await load();
       const resolvedCacheDir =
         cacheDir ?? transformers.env.cacheDir ?? DEFAULT_TRANSFORMERS_CACHE_DIR;
       configureTransformersEnv(transformers.env, resolvedCacheDir);
@@ -133,10 +131,7 @@ export async function prefetchAgentMemoryEmbeddingModel(
       logInfo('[AgentMemory] Embedding model not cached, starting background prefetch');
       try {
         const [model, tokenizer] = await Promise.all([
-          transformers.AutoModel.from_pretrained(MODEL_ID, {
-            dtype: 'q4',
-            device: selectTransformersDevice(),
-          }),
+          transformers.AutoModel.from_pretrained(MODEL_ID, { dtype: 'q4', device: 'cpu' }),
           transformers.AutoTokenizer.from_pretrained(MODEL_ID),
         ]);
         logInfo('[AgentMemory] Embedding model prefetch completed');
@@ -185,21 +180,12 @@ export function abortAgentMemoryEmbeddingModelPrefetch(): void {
   prefetchResult = null;
 }
 
-function loadTransformersWeb(): Promise<TransformersModule> {
-  if (!modulePromise) {
-    modulePromise = import(pathToFileURL(transformersWebEntry()).href).then((module) => {
-      const transformers = module as TransformersModule;
-      configureTransformersEnv(transformers.env, DEFAULT_TRANSFORMERS_CACHE_DIR);
-      return transformers;
-    });
-  }
+function loadTransformers(): Promise<TransformersModule> {
+  modulePromise ??= import('@huggingface/transformers').then((transformers) => {
+    configureTransformersEnv(transformers.env, DEFAULT_TRANSFORMERS_CACHE_DIR);
+    return transformers;
+  });
   return modulePromise;
-}
-
-function transformersWebEntry(): string {
-  const require = createRequire(import.meta.url);
-  const nodeEntry = require.resolve('@huggingface/transformers');
-  return join(dirname(dirname(nodeEntry)), 'dist', 'transformers.web.js');
 }
 
 function configureTransformersEnv(env: TransformersModule['env'], cacheDir: string): void {
@@ -253,11 +239,6 @@ function pathJoin(...parts: string[]): string {
     return value;
   });
   return normalized.join('/');
-}
-
-function selectTransformersDevice(): 'webgpu' | 'cpu' {
-  const maybeNavigator = globalThis.navigator as { gpu?: unknown } | undefined;
-  return maybeNavigator?.gpu ? 'webgpu' : 'cpu';
 }
 
 class TransformersFileCache {

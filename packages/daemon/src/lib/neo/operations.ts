@@ -48,12 +48,14 @@ import type {
   NeoConsultationWaiter,
   NeoWork,
 } from '@hyperneo/shared/types/neo-context';
+import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import {
   NEO_WORK_CLOSED_DONE_PREFIX,
   type NeoAsk,
   type NeoCardView,
   type NeoReceiptAskOrigin,
   type NeoWorkPr,
+  type NeoRouteFailure,
   type NeoSnapshot,
   type NeoWaitingOnHuman,
   type NeoWorkResourceReceipt,
@@ -341,6 +343,13 @@ const SnapshotOk = z.object({
         } satisfies ZodShape<NeoWaitingOnHuman['asks'][number]>)
       ),
     } satisfies ZodShape<NeoWaitingOnHuman>)
+    .optional(),
+  routeFailure: z
+    .object({
+      at: z.number(),
+      signal: z.string(),
+      cause: z.string(),
+    } satisfies ZodShape<NeoRouteFailure>)
     .optional(),
   preferences: z
     .object({
@@ -1149,7 +1158,11 @@ export function createNeoOperations(service: NeoService) {
           : undefined,
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
       ...(caller.source === 'rpc'
-        ? { projectRedirects: service.repo.projectMerges.redirects() }
+        ? {
+            projectRedirects: service.repo.projectMerges.redirects(),
+            routeFailure:
+              new NeoRoutingLogRepository(service.db.getDatabase()).latestFailure() ?? undefined,
+          }
         : {}),
       publicAuthorBindings:
         caller.source === 'rpc' ? service.repo.listProjectBindings(scope ?? undefined) : [],

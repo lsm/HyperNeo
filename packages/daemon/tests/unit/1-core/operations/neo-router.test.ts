@@ -187,8 +187,11 @@ describe('askNeoRouteModel', () => {
     return { deps, calls };
   };
 
-  test.each(['timeout', 'failed', null] as const)(
-    'asks once more when the route model gives %s',
+  const timedOut = { miss: 'timeout', cause: 'no answer within 15000 ms' } as const;
+  const failed = { miss: 'failed', cause: 'route model returned 429' } as const;
+
+  test.each([timedOut, failed, null])(
+    'asks once more when the route model gives %o',
     async (first) => {
       const { deps, calls } = answering([first, drivers]);
       expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, deps)).toEqual(drivers);
@@ -200,8 +203,8 @@ describe('askNeoRouteModel', () => {
     const answered = answering(['main']);
     expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, answered.deps)).toBe('main');
     expect(answered.calls).toHaveLength(1);
-    const silent = answering(['timeout', 'failed']);
-    expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, silent.deps)).toBe('failed');
+    const silent = answering([timedOut, failed]);
+    expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, silent.deps)).toBe(failed);
     expect(silent.calls).toHaveLength(2);
   });
 
@@ -394,7 +397,11 @@ describe('neo.message.send with a router', () => {
                     confidence: 0.71,
                   },
                 }
-              : { choice: null, fallback: 'classifier-timeout' };
+              : {
+                  choice: null,
+                  fallback: 'classifier-timeout',
+                  cause: 'no answer within 15000 ms',
+                };
           }
         ),
       ]),
@@ -424,6 +431,11 @@ describe('neo.message.send with a router', () => {
     expect(new NeoRoutingLogRepository(writer).find(ask(2))).toMatchObject({
       destination: 'main',
       signal: 'classifier-timeout',
+      cause: 'no answer within 15000 ms',
+    });
+    expect(new NeoRoutingLogRepository(writer).latestFailure()).toMatchObject({
+      signal: 'classifier-timeout',
+      cause: 'no answer within 15000 ms',
     });
     await send(root.sessionId, ask(3), 'merge the driver PR');
     await send(root.sessionId, ask(3), 'merge the driver PR');

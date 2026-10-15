@@ -15,7 +15,7 @@ import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { NeoRouteChoice, NeoRouted, NeoRouter, NeoRouteSignal } from './router.ts';
+import type { NeoRouted, NeoRouter, NeoRouteSignal } from './router.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 
 const Input = z
@@ -184,17 +184,29 @@ function neoAskText(content: IntakeInput['content']): string {
         .join(' ');
 }
 
-type Routed = { binding: NeoBinding; target: Target; signal: string; confidence: number };
+type Routed = {
+  binding: NeoBinding;
+  target: Target;
+  signal: string;
+  confidence: number;
+  cause?: string;
+};
 
 function applyNeoRoute(
   binding: NeoBinding,
   target: Target,
-  route: NeoRouteChoice | null,
+  routed: NeoRouted,
   repo: NeoRepository,
-  db: Database,
-  fallback = 'opened'
+  db: Database
 ): Routed {
-  const opened = { binding, target, signal: fallback, confidence: 1 };
+  const route = routed.choice;
+  const opened = {
+    binding,
+    target,
+    signal: routed.fallback ?? 'opened',
+    confidence: 1,
+    ...(routed.cause ? { cause: routed.cause } : {}),
+  };
   if (binding.kind !== 'neo' || !route) return opened;
   const holder = repo.getBindingForProject(route.projectId);
   const session = holder ? db.getSession(holder.sessionId) : null;
@@ -202,7 +214,13 @@ function applyNeoRoute(
     holder.sessionId === route.sessionId &&
     session &&
     session.status !== 'archived'
-    ? { binding: holder, target: session, signal: route.signal, confidence: route.confidence }
+    ? {
+        binding: holder,
+        target: session,
+        signal: route.signal,
+        confidence: route.confidence,
+        ...(routed.cause ? { cause: routed.cause } : {}),
+      }
     : opened;
 }
 
@@ -225,6 +243,7 @@ function logNeoRoute(
       projectId: routed.binding.projectId,
       signal: routed.signal,
       confidence: routed.confidence,
+      cause: routed.cause,
     });
   } catch {}
   return receipt;
@@ -402,7 +421,7 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   .pipe(admitNeoIntakeTarget, ['input', 'db', 'repo'], 'result:receipt')
   .pipe(
     (fresh: IntakeTarget, route: NeoRouted, repo: NeoRepository, db: Database): Routed =>
-      applyNeoRoute(fresh.binding, fresh.target, route.choice, repo, db, route.fallback),
+      applyNeoRoute(fresh.binding, fresh.target, route, repo, db),
     ['receipt', 'route', 'repo', 'db'],
     'routed'
   )

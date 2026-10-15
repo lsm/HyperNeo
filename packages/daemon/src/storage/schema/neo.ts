@@ -6,6 +6,7 @@ import { createNeoConsultationPublicationTable } from './m291-neo-consultation-p
 import { createNeoRoutingLogTable } from './m299-neo-routing-log.ts';
 import { addNeoRoutingDigestedColumn } from './m300-neo-routing-digested.ts';
 import { addNeoRoutingTurnNoteColumns } from './m301-neo-routing-turn-notes.ts';
+import { runMigration379 } from './m379-neo-routing-cause.ts';
 
 export function createNeoContextTables(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS neo_concerns (
@@ -54,4 +55,5 @@ export function createNeoTables(db: Database): void {
   createNeoRoutingLogTable(db);
   addNeoRoutingDigestedColumn(db);
   addNeoRoutingTurnNoteColumns(db);
+  runMigration379(db);
 }
