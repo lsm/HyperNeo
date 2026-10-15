@@ -91,10 +91,21 @@ describe('git history workspace discovery', () => {
     const empty = join(dir, 'empty');
     mkdirSync(empty);
     git(empty, 'init');
-    expect(await readCodeIdentity(shallow)).toEqual({ remotes: [`file://${repo}`] });
+    expect(await readCodeIdentity(shallow)).toEqual({
+      remotes: [`file://${repo}`],
+      repoName: 'original',
+    });
     for (const folder of [empty, dir, join(dir, 'missing')]) {
       expect(await readCodeIdentity(folder)).toEqual({});
     }
+  });
+
+  test('names the repository from its remote, or from the main checkout for a worktree without one', async () => {
+    const tree = join(dir, 'f793a97e-2b7e-4088-92a1-2506bde88670');
+    git(repo, 'worktree', 'add', '-b', 'topic', tree);
+    expect((await readCodeIdentity(tree)).repoName).toBe('original');
+    git(repo, 'remote', 'add', 'origin', 'git@github.com:lsm/neokai.git');
+    expect((await readCodeIdentity(tree)).repoName).toBe('neokai');
   });
 
   test('the same remote does not make unrelated histories the same project', async () => {

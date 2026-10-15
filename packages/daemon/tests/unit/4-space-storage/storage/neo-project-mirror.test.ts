@@ -132,6 +132,24 @@ describe('mirrorNeoWorkspaceProjects', () => {
     full.close();
   });
 
+  test('titles a project after its repository, never a generated worktree folder, and keeps a title a human chose', () => {
+    const uuid = 'f793a97e-2b7e-4088-92a1-2506bde88670';
+    const tree = (remotes?: string[]) => {
+      const found = workspace(`/w/neokai/worktrees/${uuid}`, 'laptop', 'git:1');
+      return [{ ...found, place: { ...found.place, name: uuid, remotes } }];
+    };
+    mirrorNeoWorkspaceProjects(db, tree());
+    expect(repo.listProjects().map((project) => project.title)).toEqual(['neokai']);
+    const [first] = repo.listProjects();
+    repo.saveProject({ ...first, title: uuid, summary: `Project: ${uuid}` }, first.revision);
+    expect(mirrorNeoWorkspaceProjects(db, tree(['git@github.com:lsm/HyperNeo.git']))).toBe(true);
+    expect(repo.listProjects().map((project) => project.title)).toEqual(['HyperNeo']);
+    const [named] = repo.listProjects();
+    repo.saveProject({ ...named, title: 'My app' }, named.revision);
+    mirrorNeoWorkspaceProjects(db, tree(['git@github.com:lsm/other.git']));
+    expect(repo.listProjects().map((project) => project.title)).toEqual(['My app']);
+  });
+
   test('does not let a reused folder collapse unrelated repository histories', () => {
     mirrorNeoWorkspaceProjects(db, mergePlaceGroups([workspace('/one')], 50));
     mirrorNeoWorkspaceProjects(
