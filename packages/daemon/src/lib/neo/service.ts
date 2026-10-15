@@ -1247,7 +1247,7 @@ export class NeoService {
   }
 
   private isNeoSession(sessionId: string): boolean {
-    return !!this.repo.getBindingBySession(sessionId);
+    return !!this.repo.getBindingBySession(sessionId) && !!this.db.getSession(sessionId);
   }
 
   private triggerOwner(ask: NeoAsk): string | null {

@@ -414,6 +414,16 @@ describe('NeoService notification triggers', () => {
     expect(mailbox()).toHaveLength(1);
   });
 
+  test('an opener whose session row is gone gets its note through open(), which recreates it', async () => {
+    const opened = open();
+    seed();
+    db.getDatabase().prepare('DELETE FROM sessions WHERE id = ?').run(root);
+    const reopen = vi.spyOn(service, 'open').mockRejectedValue(new Error('not recreated in test'));
+    tickMet(opened);
+    await sweep();
+    expect(reopen).toHaveBeenCalledWith(null);
+  });
+
   test('a failed note delivery re-arms the sweep, and the retry sends it', async () => {
     const opened = open();
     seed();
