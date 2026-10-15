@@ -21,6 +21,7 @@ import { runMigration372 } from '../../../../src/storage/schema/m372-neo-ask-ite
 import { runMigration373 } from '../../../../src/storage/schema/m373-neo-ask-item-decides';
 import { runMigration374 } from '../../../../src/storage/schema/m374-neo-ask-item-because';
 import { runMigration376 } from '../../../../src/storage/schema/m376-neo-ask-item-outcome-kind';
+import { runMigration381 } from '../../../../src/storage/schema/m381-neo-ask-refusal';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -54,6 +55,7 @@ function withAsks() {
     runMigration373,
     runMigration374,
     runMigration376,
+    runMigration381,
   ])
     migrate(db);
   return db;
@@ -103,6 +105,16 @@ describe('NeoAskRepository', () => {
     expect(asks.get('a1')?.workIds).toEqual(['w1', 'w2']);
     expect(asks.list(null).map((ask) => ask.id)).toEqual(['a1']);
     expect(asks.list('other')).toEqual([]);
+  });
+
+  test('counts refused proposes on an ask until one succeeds', () => {
+    const asks = new NeoAskRepository(withAsks());
+    asks.open(input);
+    asks.recordRefusal('a1', 'No adapter can start work.');
+    asks.recordRefusal('a1', 'Still no adapter.');
+    expect(asks.get('a1')).toMatchObject({ refused: 'Still no adapter.', refusedCount: 2 });
+    asks.recordRefusal('a1', null);
+    expect(asks.get('a1')).toMatchObject({ refused: null, refusedCount: 0 });
   });
 
   test('settles only from the expected status, and new work reopens a blocked ask without its old summary', () => {

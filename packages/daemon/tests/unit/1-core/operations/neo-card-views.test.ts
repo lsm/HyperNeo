@@ -6,9 +6,15 @@ import type {
   NeoWorkDriverReceipt,
   NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
-import { projectNeoAskViews } from '../../../../src/lib/neo/ask-views.ts';
+import {
+  NEO_ASK_IDLE_LABEL,
+  NEO_ASK_REFUSAL_BUDGET,
+  projectNeoAskViews,
+} from '../../../../src/lib/neo/ask-views.ts';
 import { busyNeoAskSessions } from '../../../../src/lib/neo/session-ask-links.ts';
 import { neoCardPhase } from '../../../../src/lib/neo/card-phase.ts';
+import { runMigration381 } from '../../../../src/storage/schema/m381-neo-ask-refusal.ts';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import { NeoAskViewSchema, NeoCardViewSchema } from '../../../../src/lib/neo/card-view-schema.ts';
 import { type NeoCardViewParts, projectNeoCardViews } from '../../../../src/lib/neo/card-views.ts';
 import {
@@ -467,9 +473,9 @@ describe('projectNeoAskViews', () => {
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
     expect(views[0]).toMatchObject({
       group: 'attention',
-      label: 'Nothing running · Neo will propose again, or drop it',
+      label: NEO_ASK_IDLE_LABEL,
       idle: true,
-      humanActions: [{ kind: 'drop' }],
+      humanActions: [],
     });
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
     expect(views[1]).toMatchObject({ group: 'running', label: 'Working on it' });
@@ -481,7 +487,7 @@ describe('projectNeoAskViews', () => {
         projectNeoCardViews(input),
         input.prs
       )[0]
-    ).toMatchObject({ idle: true, label: 'Nothing running · Neo will propose again, or drop it' });
+    ).toMatchObject({ idle: true, label: NEO_ASK_IDLE_LABEL });
     const running = {
       key: 'codex-desktop::t1',
       title: 'Ship the fix',
@@ -498,7 +504,7 @@ describe('projectNeoAskViews', () => {
     );
     expect(linked[0]).toMatchObject({ group: 'running', label: 'Working on it' });
     expect(linked[0]).not.toHaveProperty('idle');
-    expect(linked[3]).not.toHaveProperty('idle');
+    expect(linked[3]).toMatchObject({ idle: true, humanActions: [] });
     const muted = projectNeoAskViews(
       input.asks,
       projectNeoCardViews(input),
@@ -508,6 +514,83 @@ describe('projectNeoAskViews', () => {
     );
     expect(muted[0]).toMatchObject({ label: 'Working on it', sessions: [] });
     expect(muted[0]).not.toHaveProperty('idle');
+  });
+
+  test('an open ask that never got a card is idle, and says why its propose was refused', () => {
+    const input = parts({ work: [], asks: [] });
+    const [quiet, refused] = projectNeoAskViews(
+      [
+        ask({ id: 'quiet', doneItems: [item('a', 'pending')] }),
+        ask({
+          id: 'refused',
+          doneItems: [item('a', 'pending')],
+          refused:
+            'The claude-code adapter cannot start work. Adapters that can: hyperneo, codex-desktop.',
+        }),
+      ],
+      projectNeoCardViews(input),
+      input.prs
+    );
+    expect(quiet).toMatchObject({
+      group: 'attention',
+      label: 'Not started · Neo is trying another way',
+      idle: true,
+      humanActions: [],
+    });
+    expect(quiet).not.toHaveProperty('idleReason');
+    expect(refused).toMatchObject({
+      label: 'Not started · Neo is trying another way',
+      idleReason: "Couldn't start: The claude-code adapter cannot start work",
+      humanActions: [],
+    });
+    expect(NeoAskViewSchema.parse(refused)).toEqual(refused);
+    const busy = projectNeoAskViews(
+      [ask({ id: 'refused', refused: 'No adapter.' })],
+      projectNeoCardViews(input),
+      input.prs,
+      new Map(),
+      new Set(['refused'])
+    )[0];
+    expect(busy).not.toHaveProperty('idle');
+    expect(busy.label).toBe('Working on it');
+  });
+
+  test('an idle ask whose proposes were refused up to the budget shows itself to the human', () => {
+    const input = parts({ work: [], asks: [] });
+    const view = (refusedCount: number) =>
+      projectNeoAskViews(
+        [ask({ refused: 'No adapter can start work.', refusedCount })],
+        projectNeoCardViews(input),
+        input.prs
+      )[0];
+    expect(view(NEO_ASK_REFUSAL_BUDGET - 1)).toMatchObject({
+      label: 'Not started · Neo is trying another way',
+      needsYou: false,
+    });
+    expect(view(NEO_ASK_REFUSAL_BUDGET)).toMatchObject({
+      group: 'attention',
+      label: "Needs you · Couldn't start: No adapter can start work",
+      needsYou: true,
+      idle: true,
+      humanActions: [],
+    });
+    const asked = projectNeoAskViews(
+      [
+        ask({
+          status: 'waiting',
+          refused: 'No adapter can start work.',
+          refusedCount: NEO_ASK_REFUSAL_BUDGET,
+          doneItems: [
+            { ...item('q', 'needs_you'), kind: 'decision', options: ['Use Codex', 'Stop'] },
+          ],
+        }),
+      ],
+      projectNeoCardViews(input),
+      input.prs
+    )[0];
+    expect(asked).toMatchObject({ group: 'attention', label: 'Waiting on you' });
+    expect(asked.answer).toMatchObject({ itemId: 'q', options: ['Use Codex', 'Stop'] });
+    expect(asked).not.toHaveProperty('idle');
   });
 
   test('done items count instead of cards when the ask has them', () => {
@@ -674,5 +757,18 @@ describe('projectNeoAskViews', () => {
     const input = parts({ work: [work('w', 'queued')], asks: [ask({ workIds: ['w'] })] });
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
+  });
+});
+
+describe('runMigration381', () => {
+  test('m381 repairs a partly added refusal column pair', () => {
+    const db = new Sqlite(':memory:');
+    db.exec('CREATE TABLE neo_asks (id TEXT PRIMARY KEY, refused TEXT)');
+    runMigration381(db);
+    runMigration381(db);
+    const columns = (db.prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[]).map(
+      (column) => column.name
+    );
+    expect(columns).toEqual(['id', 'refused', 'refused_count']);
   });
 });

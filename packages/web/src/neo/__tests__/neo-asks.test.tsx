@@ -182,6 +182,31 @@ describe('neoAskOpenTarget', () => {
   });
 });
 
+describe('describeNeoAskFromView', () => {
+  it('keeps the daemon label of an idle ask and shows why it could not start', () => {
+    const trying = describeAsk(ask('a', 'open', []), [], {
+      group: 'attention',
+      label: 'Not started · Neo is trying another way',
+      idle: true,
+      idleReason: "Couldn't start: No adapter can start work",
+    });
+    expect(trying.label).toBe('Not started · Neo is trying another way');
+    expect(trying.idleReason).toBe("Couldn't start: No adapter can start work");
+    const stuck = describeAsk(ask('a', 'open', []), [], {
+      group: 'attention',
+      needsYou: true,
+      label: "Needs you · Couldn't start: No adapter can start work",
+      idle: true,
+      idleReason: "Couldn't start: No adapter can start work",
+    });
+    expect(stuck.label).toBe("Needs you · Couldn't start: No adapter can start work");
+    expect(stuck.idleReason).toBeUndefined();
+    const card = render(<NeoAskCard view={trying} />);
+    expect(card.getByText("Couldn't start: No adapter can start work")).toBeTruthy();
+    cleanup();
+  });
+});
+
 describe('NeoAskCard', () => {
   it('lists the linked sessions with their app, state and how to open them', () => {
     const openSession = vi.fn();
@@ -645,19 +670,6 @@ describe('NeoAskCard', () => {
       />
     );
     expect(nothing.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
-  });
-
-  it('puts Drop on the card face only when the daemon offers it for an idle ask', () => {
-    const settle = vi.fn();
-    const idle = describeAsk(ask('a', 'open', []), [], { humanActions: [{ kind: 'drop' }] });
-    const card = render(<NeoAskCard view={idle} onSettle={settle} />);
-    fireEvent.click(card.getByRole('button', { name: 'Drop' }));
-    expect(settle).toHaveBeenCalledExactlyOnceWith('abandoned');
-    cleanup();
-    const busy = render(
-      <NeoAskCard view={describeAsk(ask('a', 'open', []), [])} onSettle={settle} />
-    );
-    expect(busy.queryByRole('button', { name: 'Drop' })).toBeNull();
   });
 
   it('puts Retry on the card face when the daemon offers it for a failed step', () => {
