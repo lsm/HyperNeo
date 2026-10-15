@@ -28,6 +28,7 @@ export function isRepositoryPlace(place: Place): boolean {
 
 function projectKeys(place: Place): string[] {
   if (place.codeIdentity) return [place.codeIdentity];
+  if (place.remotes?.length) return [`remote:${place.remotes[0]}`];
   return place.toolProject && !isRepositoryPlace(place)
     ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`]
     : [];

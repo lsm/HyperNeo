@@ -217,6 +217,17 @@ describe('mergePlaceGroups identity links', () => {
     expect(merged).toHaveLength(2);
   });
 
+  test('shallow checkouts of one remote share a group', () => {
+    const merged = mergePlaceGroups(
+      ['/a', '/b'].map((folder) =>
+        group({ machine: 'c', folder, name: 'repo', remotes: ['file:///srv/repo.git'] })
+      ),
+      20
+    );
+    expect(merged).toHaveLength(1);
+    expect(merged[0].projectId).toBe('remote:file:///srv/repo.git');
+  });
+
   test('a tool project joins its folders that have no repository', () => {
     const toolProject = { id: 'codex:notes', name: 'Notes' };
     const [merged, extra] = mergePlaceGroups(
