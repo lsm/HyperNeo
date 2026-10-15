@@ -367,7 +367,7 @@ export function neoTriggerWorkProblem(trigger: string | null, consulted: boolean
 }
 
 export const NEO_CONSULTATION_PENDING_DETAIL =
-  'A holder you consulted for this message has not returned yet. Its published answer is the reply to the human, so publish nothing now and end the turn.';
+  'A holder you consulted for this message has not returned yet. Its answer comes back to you and you answer the human from it, so publish nothing now and end the turn.';
 
 export function shouldRetryNeoTrigger(
   ask: Pick<NeoAsk, 'status'>,
