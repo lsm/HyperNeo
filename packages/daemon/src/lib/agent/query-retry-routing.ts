@@ -42,6 +42,7 @@ export interface QueryRetryErrorSignal {
   isConversationNotFound: boolean;
   isMessageNotFound: boolean;
   isTransientConnectionError: boolean;
+  isStreamStall?: boolean;
   isRetryableProviderError: boolean;
   isRateLimit: boolean;
   rateLimitHint: LimitRetryHint | null;
@@ -53,6 +54,7 @@ export type QueryRetryRoute =
   | { action: 'startup_timeout_retry'; redeliver: 'consumed' | 'queue' }
   | { action: 'message_not_found_retry' }
   | { action: 'transient_retry' }
+  | { action: 'stream_stall_retry' }
   | { action: 'network_pause' }
   | { action: 'provider_backoff'; nextAttempt: number }
   | { action: 'rate_limit_handoff'; hint: LimitRetryHint }
@@ -120,6 +122,7 @@ export function decideProviderTerminalCategory(
   env: QueryRetryEnvironment
 ): ErrorCategory {
   const raw = signal.rawText.toLowerCase();
+  if (signal.isStreamStall) return ErrorCategory.TIMEOUT;
   if (env.providerFamily === 'provider') {
     if (
       /\b(?:401|403|unauthorized|token expired|token_expired|not authenticated|invalid_api_key)\b/.test(
@@ -156,6 +159,7 @@ export function resolveTerminalMessageHint(
   env: QueryRetryEnvironment
 ): string | undefined {
   if (signal.isStartupTimeout) return 'startup_timeout';
+  if (signal.isStreamStall) return 'stream_stall';
   if (signal.isConversationNotFound) return 'conversation_not_found';
   if (signal.isMessageNotFound) return 'message_not_found';
   if (env.attempt >= env.maxProviderRetries && signal.isRetryableProviderError)
@@ -184,6 +188,12 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
     !limitRecoveryInFlight(env)
   )
     return { action: 'network_pause' };
+  if (
+    errorSignal.isStreamStall &&
+    !isQueryInterrupted(errorSignal, env.lifecycle) &&
+    env.attempt === 0
+  )
+    return { action: 'stream_stall_retry' };
   if (
     errorSignal.isTransientConnectionError &&
     !isQueryInterrupted(errorSignal, env.lifecycle) &&
@@ -403,6 +413,7 @@ function resolveDecision(
     case 'turn_ended_redeliver':
     case 'message_not_found_retry':
     case 'transient_retry':
+    case 'stream_stall_retry':
     case 'provider_backoff':
       return {
         route,

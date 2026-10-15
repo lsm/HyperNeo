@@ -60,6 +60,14 @@ import {
   type SdkStartExitInfo,
 } from './startup-watch-pipeline.ts';
 import {
+  getStreamSilenceTimeoutMs,
+  noteStreamFed,
+  noteStreamMessage,
+  planStreamSilence,
+  STREAM_STALL_ERROR,
+  type StreamSilenceState,
+} from './stream-silence-watch.ts';
+import {
   isRetryableProviderError,
   TRANSIENT_CONNECTION_ERROR_SUBSTRINGS,
 } from './transient-error-patterns.ts';
@@ -94,6 +102,7 @@ type StartupWatchRace =
   | { kind: 'backstop' }
   | { kind: 'drain' }
   | { kind: 'exit' }
+  | { kind: 'silence' }
   | { kind: 'abort' };
 
 const DEFAULT_MAX_PROVIDER_RETRIES = 3;
@@ -404,6 +413,8 @@ export class QueryRunner {
   acceptsPrompt(queryGeneration: number): boolean {
     return this.promptSpentGeneration !== queryGeneration;
   }
+
+  private streamSilence: StreamSilenceState = { lastActivityAt: 0, openTools: [] };
 
   private _lastConsumedUserMessage: {
     uuid: string;
@@ -728,6 +739,8 @@ export class QueryRunner {
 
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
     const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;
+    const silenceThresholdMs = getStreamSilenceTimeoutMs();
+    this.streamSilence = { lastActivityAt: Date.now(), openTools: [] };
 
     let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
     let processExited = false;
@@ -1148,8 +1161,37 @@ export class QueryRunner {
             }
             race.push(backstopPromise.then(() => ({ kind: 'backstop' as const })));
           }
+          const silence = () =>
+            planStreamSilence({
+              state: this.streamSilence,
+              processing: stateManager.getState().status === 'processing',
+              now: Date.now(),
+              thresholdMs: silenceThresholdMs,
+            });
+          let silenceTimer: ReturnType<typeof setTimeout> | undefined;
+          if (firstMessageArrived) {
+            const planned = silence();
+            race.push(
+              new Promise<StartupWatchRace>((resolve) => {
+                silenceTimer = setTimeout(
+                  () => resolve({ kind: 'silence' }),
+                  planned.stalled ? 0 : planned.waitMs
+                );
+              })
+            );
+          }
 
           const winner = await Promise.race(race);
+          clearTimeout(silenceTimer);
+
+          if (winner.kind === 'silence') {
+            const planned = silence();
+            if (!planned.stalled) continue;
+            logger.warn(`Model stream silent for ${planned.silentMs}ms; aborting the request.`);
+            throw new Error(
+              `${STREAM_STALL_ERROR}: no data from the model for ${Math.round(planned.silentMs / 1000)}s`
+            );
+          }
 
           if (winner.kind === 'abort') {
             break;
@@ -1299,6 +1341,7 @@ export class QueryRunner {
           }
 
           let message = result.value as SDKMessage;
+          this.streamSilence = noteStreamMessage(this.streamSilence, message, Date.now());
           if (!firstMessageArrived) {
             startupWatchMessages.push(message);
             const elapsed = Date.now() - queryStartTime;
@@ -1409,6 +1452,7 @@ export class QueryRunner {
       const isTransientConnectionError = TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) =>
         errorMessage.includes(substr)
       );
+      const isStreamStall = errorMessage.includes(STREAM_STALL_ERROR);
 
       const providerId = session.config.provider as string | undefined;
       const isProviderSession = providerId && providerId !== 'anthropic' && providerId !== 'glm';
@@ -1420,6 +1464,7 @@ export class QueryRunner {
         isConversationNotFound,
         isMessageNotFound,
         isTransientConnectionError,
+        isStreamStall,
         isRetryableProviderError: isRetryableProviderError(errorMessage),
         isRateLimit: limitAssessment.isLimit,
         rateLimitHint: limitAssessment.isLimit
@@ -1571,6 +1616,19 @@ export class QueryRunner {
           requeueFedPrompts: true,
         });
       }
+      if (routeDecision.route.action === 'stream_stall_retry') {
+        logger.warn('Retrying a model request that went silent (1 retry).');
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
+          nextAttempt: 1,
+          recoveryState,
+          resetStartupState: true,
+          idleFirst: true,
+          requeueLastConsumedFor: 'model stream stall retry',
+          notice: `⚠️ The model sent nothing for ${Math.round(silenceThresholdMs / 1000)} s. Retrying…`,
+          guardAfterExit: true,
+        });
+      }
+
       if (routeDecision.route.action === 'message_not_found_retry') {
         this.ctx.consumePendingResumeSessionAt?.();
         logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
@@ -2215,6 +2273,7 @@ export class QueryRunner {
           internal: isInternal,
         });
       yield message;
+      this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
       if (holderTurn) return;
     }
@@ -2389,6 +2448,14 @@ export class QueryRunner {
         `(after one automatic retry); concurrent cold-start load is bounded by the startup gate. ` +
         `Try: resending your message, or increase the timeout with ` +
         `HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS (current: ${startupTimeoutMs}ms).`
+      );
+    }
+    if (messageHint === 'stream_stall') {
+      return (
+        `The model stopped sending anything for ${Math.round(getStreamSilenceTimeoutMs() / 1000)} s, ` +
+        `again after one automatic retry, so this turn was stopped. ` +
+        `Try: resending your message, or switching models. The limit is ` +
+        `HYPERNEO_SDK_STREAM_SILENCE_TIMEOUT_MS (current: ${getStreamSilenceTimeoutMs()}ms).`
       );
     }
     if (messageHint === 'conversation_not_found') {

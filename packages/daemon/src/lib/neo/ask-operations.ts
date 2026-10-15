@@ -52,6 +52,7 @@ const CheckKind = z
   .max(200)
   .describe('A check kind registered by a loaded pack.');
 const NEO_ASK_ITEM_KINDS = ['decision', 'action', 'approval', 'wait'] as const;
+const NEO_ASK_ITEM_OUTCOME_KINDS = ['state', 'answer'] as const;
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const NeoAskSchema = z.object({
   revision: z.number().int().nonnegative().optional(),
@@ -97,6 +98,7 @@ export const NeoAskSchema = z.object({
         action: z.string().optional(),
         waitCard: z.string().optional(),
         kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
+        outcomeKind: z.enum(NEO_ASK_ITEM_OUTCOME_KINDS).optional(),
         question: z.string().optional(),
         decides: z.string().optional(),
         because: z
@@ -135,6 +137,12 @@ const Item = z.object({
   text: z.string().trim().min(1).max(300),
   check: CheckKind.nullable().default(null),
   watch: z.array(WatchUrl).min(1).max(10).optional(),
+  outcomeKind: z
+    .enum(NEO_ASK_ITEM_OUTCOME_KINDS)
+    .default('state')
+    .describe(
+      'state: something in the world changes (merged, deployed, fixed, booked); it needs evidence you or the daemon can read. answer: the human asked to know something (a count, a list, an explanation); it is met when you publish the answer to them.'
+    ),
 });
 const Open = z
   .object({
@@ -262,6 +270,22 @@ const requireAskRevision = (input: { expectedRevision: number }, ask: NeoAsk): G
   input.expectedRevision === (ask.revision ?? 0)
     ? { value: ask }
     : { reason: fail('stale_revision: refresh the ask before changing or approving it.') };
+
+export function requireNeoAnswerItemsUnchecked<T>(
+  items: readonly Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'outcomeKind'>[],
+  value: T
+): Gate<T> {
+  const checked = items.find(
+    (item) => item.outcomeKind === 'answer' && (item.check || item.watch?.length)
+  );
+  return checked
+    ? {
+        reason: fail(
+          `answer_checked: "${checked.text}" is an answer outcome, met when you publish the answer to the human, so it carries no check or watch. Make it outcomeKind "state" if the daemon should read it.`
+        ),
+      }
+    : { value };
+}
 
 function requireRegisteredChecks<T>(
   items: readonly { check?: string | null }[],
@@ -753,7 +777,7 @@ export function planNeoAskQuestion(
   const [slot] = planNeoAskEdit(ask, {
     askId: ask.id,
     expectedRevision: ask.revision ?? 0,
-    add: [{ text: input.question, check: null }],
+    add: [{ text: input.question, check: null, outcomeKind: 'state' }],
     remove: [],
     track: [],
     bind: [],
@@ -778,7 +802,7 @@ export function requireNeoAskQuestionRoom<T>(
     {
       askId: ask.id,
       expectedRevision: ask.revision ?? 0,
-      add: [{ text: item.text, check: null }],
+      add: [{ text: item.text, check: null, outcomeKind: 'state' }],
       remove: [],
       track: [],
       bind: [],
@@ -1339,6 +1363,12 @@ export function createNeoAskOperations(
       'result:admission'
     )
     .pipe(
+      (checklist: ReturnType<typeof planNeoAskItems>, origin: NeoWorkOrigin) =>
+        requireNeoAnswerItemsUnchecked(checklist.items, origin),
+      ['checklist', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (
         checklist: ReturnType<typeof planNeoAskItems>,
         origin: NeoWorkOrigin,
@@ -1785,6 +1815,21 @@ export function createNeoAskOperations(
             })),
           ],
           service.checkRegistry(),
+          ask
+        ),
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Edit>, ask: NeoAsk) =>
+        requireNeoAnswerItemsUnchecked(
+          [
+            ...input.add,
+            ...input.track.flatMap((change) => {
+              const item = ask.doneItems?.find((entry) => entry.id === change.itemId);
+              return item ? [{ ...item, check: change.check ?? null, watch: change.watch }] : [];
+            }),
+          ],
           ask
         ),
       ['input', 'admission'],

@@ -331,4 +331,52 @@ describe('summarizeNeoSnapshot', () => {
     expect(olderWork).toMatchObject({ summarized: true, askId: 'older' });
     expect(result.cards.map((item) => item.goal)).toEqual([card.goal, null, card.goal, card.goal]);
   });
+
+  test('summarizes finished work outside any ask without an askId and keeps its card', () => {
+    const input: NeoSnapshot = {
+      ...snapshot([]),
+      work: [item('loose', 'reported'), item('waiting', 'queued')],
+      cards: [{ ...card, workId: 'loose', phase: 'reported' }],
+    };
+    const result = summarizeNeoSnapshot(input, []);
+    const [loose, waiting] = result.work;
+    expect(loose).toMatchObject({ summarized: true, instruction: '' });
+    expect(loose.report).toHaveLength(300);
+    expect('askId' in loose).toBe(false);
+    expect(waiting.summarized).toBeUndefined();
+    expect(result.cards[0].goal).toBe(card.goal);
+  });
+
+  test('summarizes settled consultations and leaves a pending one whole', () => {
+    const consultation = {
+      id: 'c1',
+      requestKey: 'c1',
+      projectId: 'p',
+      originSessionId: 'root',
+      originMessageId: null,
+      sessionId: 'holder',
+      question: 'q'.repeat(1000),
+      status: 'reported' as const,
+      answer: 'a'.repeat(1000),
+      createdAt: 1,
+    };
+    const pending = { ...consultation, id: 'c2', status: 'pending' as const, answer: null };
+    const result = summarizeNeoSnapshot(
+      { ...snapshot([]), consultations: [consultation, pending] },
+      []
+    );
+    expect(result.consultations[0]).toMatchObject({ id: 'c1', summarized: true });
+    expect(result.consultations[0].question).toHaveLength(300);
+    expect(result.consultations[0].answer).toHaveLength(300);
+    expect(result.consultations[1]).toBe(pending);
+  });
+
+  test('never cuts a summary inside a surrogate pair', () => {
+    const report = `${'字'.repeat(299)}😀tail`;
+    const [cut] = summarizeNeoSnapshot(
+      { ...snapshot([]), work: [{ ...item('emoji', 'reported'), report }], cards: [] },
+      []
+    ).work;
+    expect(cut.report).toBe('字'.repeat(299));
+  });
 });

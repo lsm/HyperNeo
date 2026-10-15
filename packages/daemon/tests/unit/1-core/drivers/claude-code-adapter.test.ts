@@ -1,10 +1,19 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildClaudeCodeGroups,
   createClaudeCodeAdapter,
+  shareInFlight,
 } from '../../../../src/lib/drivers/claude-code-adapter';
 import { buildClaudeDesktopGroups } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
@@ -156,6 +165,82 @@ describe('createClaudeCodeAdapter', () => {
     }
   });
 
+  test('finds the folder of a transcript whose first lines carry no cwd', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    try {
+      mkdirSync(join(dir, 'encoded'));
+      writeFileSync(
+        join(dir, 'encoded', 'late.jsonl'),
+        `${JSON.stringify({ type: 'summary', summary: 'x'.repeat(40_000) })}\n${JSON.stringify({ cwd: '/late/project' })}\n`
+      );
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+      });
+      expect(
+        (await adapter.find({ includeClosed: false, limit: 20 })).map((group) => group.place.folder)
+      ).toEqual(['/late/project']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('retries a transcript it could not read instead of hiding its folder', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    const path = join(dir, 'encoded', 'locked.jsonl');
+    try {
+      mkdirSync(join(dir, 'encoded'));
+      writeFileSync(path, `${JSON.stringify({ cwd: '/locked/project' })}\n`);
+      chmodSync(path, 0o000);
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+      });
+      const query = { includeClosed: false, limit: 20 };
+      expect(await adapter.find(query)).toEqual([]);
+      chmodSync(path, 0o644);
+      expect((await adapter.find(query)).map((group) => group.place.folder)).toEqual([
+        '/locked/project',
+      ]);
+      writeFileSync(path, `${JSON.stringify({ cwd: '/moved/project' })}\n`);
+      utimesSync(path, new Date(), new Date(Date.now() + 5_000));
+      chmodSync(path, 0o000);
+      expect(await adapter.find(query)).toEqual([]);
+      chmodSync(path, 0o644);
+      expect((await adapter.find(query)).map((group) => group.place.folder)).toEqual([
+        '/moved/project',
+      ]);
+    } finally {
+      chmodSync(path, 0o644);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('follows a symlinked project folder', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    const real = mkdtempSync(join(tmpdir(), 'claude-real-'));
+    try {
+      writeFileSync(join(real, 'linked.jsonl'), `${JSON.stringify({ cwd: '/linked/project' })}\n`);
+      symlinkSync(real, join(dir, 'encoded'));
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+      });
+      expect(
+        (await adapter.find({ includeClosed: false, limit: 20 })).map((group) => group.place.folder)
+      ).toEqual(['/linked/project']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(real, { recursive: true, force: true });
+    }
+  });
+
   test('only searches when asked for text', async () => {
     const searched: string[] = [];
     const adapter = createClaudeCodeAdapter({
@@ -207,5 +292,23 @@ describe('buildClaudeDesktopGroups with content hits', () => {
         snippets: [{ text: 'heron notes' }],
       },
     ]);
+  });
+});
+
+describe('shareInFlight', () => {
+  test('concurrent calls join one run, and a call after it settles starts another', async () => {
+    let runs = 0;
+    let release: () => void = () => {};
+    const scan = shareInFlight(async () => {
+      runs++;
+      await new Promise<void>((resolve) => (release = resolve));
+      return runs;
+    });
+    const both = Promise.all([scan(), scan()]);
+    release();
+    expect(await both).toEqual([1, 1]);
+    const next = scan();
+    release();
+    expect(await next).toBe(2);
   });
 });
