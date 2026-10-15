@@ -1,3 +1,4 @@
+import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
 import { resolveOperationRegistry } from './registry.ts';
 import { z } from 'zod';
 import { invokeOperation } from './invoke.ts';
@@ -37,7 +38,9 @@ export function createOperationMcpHandler(
         }
       );
       return outcome.kind === 'completed'
-        ? mcpResult(outcome.value)
+        ? mcpResult(
+            parsed.data.name.startsWith('neo.') ? explainNeoRefusal(outcome.value) : outcome.value
+          )
         : mcpResult({ code: outcome.code, message: outcome.message }, true);
     } catch (error) {
       return mcpResult(
