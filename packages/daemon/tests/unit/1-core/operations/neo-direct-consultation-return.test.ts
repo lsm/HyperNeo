@@ -366,6 +366,33 @@ describe('NeoService direct consultation return', () => {
       expect(service.publications.list(conversationId)).toEqual([]);
     }
   );
+  test('a legacy answer already published to the human is marked returned on recovery, never sent to root again', async () => {
+    service.consultations.finish('check', 'reported', draft.fullText);
+    const published = service.publications.append({
+      ...draft,
+      conversationId,
+      askOrigin: ask,
+      producerInput: { sessionId: holder, messageId: 'neo-consult:check:request' },
+      triggerId: `human:${ask.messageId}`,
+    });
+    if (!published.accepted) throw new Error('Expected a publication');
+    db.getDatabase()
+      .prepare(
+        `INSERT INTO neo_consultation_publications
+        (consultation_id, conversation_id, publication_id, answer, payload_json, created_at)
+        VALUES ('check', ?, ?, ?, '{}', ?)`
+      )
+      .run(
+        conversationId,
+        published.publication.publicationId,
+        draft.fullText,
+        published.publication.createdAt
+      );
+    await service.recoverConsultations();
+    expect(returned()).toEqual({ returned: 1 });
+    expect(mailbox()).toEqual([]);
+  });
+
   test('a failed work review’s reply still answers the human message behind the reviewed card', async () => {
     db.getDatabase().prepare('DELETE FROM neo_consultations').run();
     const work = service.repo.proposeWork({

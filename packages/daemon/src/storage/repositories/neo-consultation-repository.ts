@@ -101,6 +101,12 @@ export class NeoConsultationRepository {
     return owner !== null && !this.isReturned(owner);
   }
 
+  wasPublished(id: string): boolean {
+    return !!this.db
+      .prepare('SELECT 1 FROM neo_consultation_publications WHERE consultation_id = ?')
+      .get(id);
+  }
+
   isReturned(id: string): boolean {
     return !!this.db
       .prepare('SELECT 1 FROM neo_consultations WHERE id = ? AND returned = 1')

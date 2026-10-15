@@ -3253,6 +3253,7 @@ export class NeoService {
     if (item.status === 'pending') return;
     if (
       !this.consultations.isReturned(id) &&
+      !this.consultations.wasPublished(id) &&
       !(item.status === 'reported' && item.answer === NEO_WORK_REVIEWED)
     ) {
       const content = neoConsultationReplyContent(item);
