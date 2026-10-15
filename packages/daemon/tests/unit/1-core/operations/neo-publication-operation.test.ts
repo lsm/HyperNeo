@@ -444,14 +444,24 @@ describe('runtime-bound publication operation', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  test.each(['dead'])('refuses %s producer evidence before any append', async (kind) => {
+  test('refuses a dead turn before any append', async () => {
     const who = caller(root.sessionId, 'unrecorded');
-    if (kind === 'system') prompt(root.sessionId, 'unrecorded', 'system');
-    if (kind === 'dead') who.neoTurn!.isLive = () => false;
-    if (kind === 'wrong-session') prompt(holder.sessionId, 'unrecorded');
+    who.neoTurn!.isLive = () => false;
     expect(await invoke(draft, who)).toMatchObject({ value: { accepted: false } });
     expect(ledger.list(conversationId)).toEqual([]);
   });
+
+  test.each(['missing', 'system', 'wrong-session'])(
+    'a live turn with %s input evidence may still tell a new fact, once',
+    async (kind) => {
+      const who = caller(root.sessionId, 'unrecorded');
+      if (kind === 'system') prompt(root.sessionId, 'unrecorded', 'system');
+      if (kind === 'wrong-session') prompt(holder.sessionId, 'unrecorded');
+      expect(await invoke(draft, who)).toMatchObject({ value: { accepted: true, created: true } });
+      expect(await invoke(draft, who)).toMatchObject({ value: { accepted: true, created: false } });
+      expect(ledger.list(conversationId)).toHaveLength(1);
+    }
+  );
 
   test.each(['lifetime', 'input', 'binding', 'root'])(
     'rechecks %s at the synchronous append boundary',

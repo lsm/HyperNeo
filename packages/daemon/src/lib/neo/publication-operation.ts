@@ -34,7 +34,7 @@ type Producer = {
   turn: NonNullable<OperationCaller['neoTurn']>;
 };
 type Proof = Producer & { ask: NeoAskOrigin };
-type Triggered = Proof & { triggerId: string };
+type Triggered = Proof & { triggerId?: string };
 type LinkEvidence = {
   link: NeoPublicationLink;
   exists: boolean;

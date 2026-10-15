@@ -52,12 +52,19 @@ export function findNeoRepeatedPublication(
 }
 
 function repeatOnTrigger(db: Database, input: NeoPublicationInput): NeoPublication | null {
-  if (!input.triggerId) return null;
   const rows = db
     .prepare(`SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
-      AND json_extract(payload_json, '$.triggerId') = ? AND publication_id <> ?
+      AND publication_id <> ? AND (json_extract(payload_json, '$.triggerId') = ?
+        OR (json_extract(payload_json, '$.askOrigin.sessionId') = ?
+          AND json_extract(payload_json, '$.askOrigin.messageId') = ?))
       ORDER BY sequence`)
-    .all(input.conversationId, input.triggerId, input.publicationId) as Row[];
+    .all(
+      input.conversationId,
+      input.publicationId,
+      input.triggerId ?? null,
+      input.askOrigin.sessionId,
+      input.askOrigin.messageId
+    ) as Row[];
   return findNeoRepeatedPublication(rows.map(decode), input);
 }
 

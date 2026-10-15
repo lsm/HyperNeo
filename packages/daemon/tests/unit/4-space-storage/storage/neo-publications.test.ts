@@ -28,6 +28,7 @@ const otherConversation = '10000000-0000-4000-8000-000000000002';
 const next = (number: number): NeoPublicationInput => ({
   ...input,
   publicationId: `20000000-0000-4000-8000-${String(number).padStart(12, '0')}`,
+  shortText: `${input.shortText} (${number})`,
 });
 
 describe('Neo publication ledger', () => {

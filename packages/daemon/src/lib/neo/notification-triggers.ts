@@ -446,7 +446,9 @@ export function requirePublicationTrigger<T>(
       reason: {
         accepted: false,
         reason: 'wrong_trigger',
-        detail: `This turn's trigger is ${trigger}, not ${draft.triggerId}. Publish with triggerId ${trigger}, or omit it.`,
+        detail: trigger
+          ? `This turn's trigger is ${trigger}, not ${draft.triggerId}. Publish with triggerId ${trigger}, or omit it.`
+          : 'This turn has no trigger; omit triggerId.',
       },
     };
   return { value: { ...value, triggerId: trigger ?? undefined } };
