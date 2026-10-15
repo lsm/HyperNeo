@@ -31,6 +31,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.publication.recent',
   'neo.receipt.read',
   'neo.route.correct',
+  'neo.route.failure',
   'neo.rule.save',
   'neo.session.archive',
   'neo.session.mute',

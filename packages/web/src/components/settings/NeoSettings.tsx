@@ -8,6 +8,8 @@ import { connectionState, globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager';
+import { invokeOperation } from '../../lib/operations.ts';
+import { getRelativeTime } from '../../lib/utils.ts';
 import {
   getProviderLabel,
   mapRawModelsToModelInfos,
@@ -49,11 +51,18 @@ export function neoRouteTimeoutOptions(currentMs: number): Array<{ value: string
   }));
 }
 
+type RouteFailure = { at: number; signal: string; cause: string };
+
+export function neoRouteFailureText(failure: RouteFailure, now = Date.now()): string {
+  return `Last routing failure · ${getRelativeTime(failure.at, now)} — ${failure.cause}`;
+}
+
 export function NeoSettings() {
   const routeModel = globalSettings.value?.neo?.routeModel;
   const current = routeModel ? neoRouteModelChoice(routeModel.provider, routeModel.model) : '';
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [saving, setSaving] = useState(false);
+  const [failure, setFailure] = useState<RouteFailure | null>(null);
 
   const isConnected = connectionState.value === 'connected';
   useEffect(() => {
@@ -68,6 +77,11 @@ export function NeoSettings() {
       .catch(() => {
         if (live) setModels([]);
       });
+    invokeOperation<{ failure: RouteFailure | null }>(hub, 'neo.route.failure', {})
+      .then((response) => {
+        if (live) setFailure(response.failure);
+      })
+      .catch(() => {});
     return () => {
       live = false;
     };
@@ -107,10 +121,11 @@ export function NeoSettings() {
           options={neoRouteModelOptions(models, current)}
           disabled={saving}
         />
+        {failure && <p class="mt-2 text-xs text-danger">{neoRouteFailureText(failure)}</p>}
       </SettingsRow>
       <SettingsRow
         label="Routing timeout"
-        description="How long Neo waits for the routing model. If it takes longer, the message is routed by topic similarity instead, which can pick the wrong topic."
+        description="How long Neo waits for the routing model. If it takes longer, the timeout is recorded as a routing failure and the message goes to a clearly matching topic, or stays with Neo."
         layout="stacked"
       >
         <SettingsSelect

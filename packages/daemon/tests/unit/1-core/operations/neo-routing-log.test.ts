@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
+import { createNeoRouteFailureOperation } from '../../../../src/lib/neo/route-failure-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import type { Database } from '../../../../src/storage/database.ts';
@@ -212,6 +213,36 @@ describe('NeoRoutingLogRepository.latestFailure', () => {
       at: 2,
       signal: 'classifier-failed',
       cause: 'route model returned 429',
+    });
+  });
+});
+
+describe('neo.route.failure', () => {
+  test('returns the latest routing failure, or null', async () => {
+    const sqlite = new Sqlite(':memory:');
+    createTables(sqlite);
+    const ops = createOperationRegistry([
+      createNeoRouteFailureOperation({ getDatabase: () => sqlite } as unknown as Database),
+    ]);
+    const read = async () => {
+      const outcome = await invokeOperation(ops, 'neo.route.failure', {}, human);
+      return outcome.kind === 'completed' ? outcome.value : outcome;
+    };
+    expect(await read()).toEqual({ failure: null });
+    new NeoRoutingLogRepository(sqlite).record({
+      messageId: ask(1),
+      conversationId,
+      askedAt: 5,
+      ask: 'which one?',
+      destination: 'main',
+      targetSessionId: root.sessionId,
+      projectId: null,
+      signal: 'classifier-timeout',
+      confidence: 1,
+      cause: 'no answer within 15000 ms',
+    });
+    expect(await read()).toEqual({
+      failure: { at: 5, signal: 'classifier-timeout', cause: 'no answer within 15000 ms' },
     });
   });
 });

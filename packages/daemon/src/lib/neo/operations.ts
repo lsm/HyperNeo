@@ -55,7 +55,6 @@ import {
   type NeoCardView,
   type NeoReceiptAskOrigin,
   type NeoWorkPr,
-  type NeoRouteFailure,
   type NeoSnapshot,
   type NeoWaitingOnHuman,
   type NeoWorkResourceReceipt,
@@ -75,6 +74,10 @@ import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { requireNeoProposal, type NeoProposal } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
+import {
+  createNeoRouteFailureOperation,
+  NeoRouteFailureSchema,
+} from './route-failure-operation.ts';
 import {
   createNeoAskForwardOperation,
   neoForwardedText,
@@ -344,13 +347,7 @@ const SnapshotOk = z.object({
       ),
     } satisfies ZodShape<NeoWaitingOnHuman>)
     .optional(),
-  routeFailure: z
-    .object({
-      at: z.number(),
-      signal: z.string(),
-      cause: z.string(),
-    } satisfies ZodShape<NeoRouteFailure>)
-    .optional(),
+  routeFailure: NeoRouteFailureSchema.optional(),
   preferences: z
     .object({
       model: z.string(),
@@ -1847,26 +1844,6 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: ProposeRequest, origin: NeoWorkOrigin, caller: OperationCaller) => {
-        const planned = planNeoCardAsk(input, origin);
-        const stored = service.repo.workForRequest(`${origin.originSessionId}:${input.requestKey}`);
-        if (stored && service.askRecords.forWork(stored.id)) return { value: caller };
-        const checked = service.outcomeCheckPolicy.requireChecks(
-          planned ? planNeoAskItems(planned).items : []
-        );
-        return 'reason' in checked
-          ? {
-              reason: {
-                ...checked.reason,
-                reason: `${checked.reason.reason} Open a checked ask with neo.ask.open, then pass its askId.`,
-              },
-            }
-          : { value: caller };
-      },
-      ['input', 'origin', 'caller'],
-      'result:admission'
-    )
-    .pipe(
       (input: ProposeRequest, origin: NeoWorkOrigin, target: NeoWorkTarget): NeoProposal => {
         const proposal = {
           ...input,
@@ -2295,6 +2272,7 @@ export function createNeoOperations(service: NeoService) {
       },
     }),
     createNeoRouteCorrectOperation(service.db, service.repo),
+    createNeoRouteFailureOperation(service.db),
     createNeoAskForwardOperation({
       getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
