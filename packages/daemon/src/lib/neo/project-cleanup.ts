@@ -89,15 +89,18 @@ export function planNeoProjectCleanup(
   }
 ): NeoProjectCleanup[] {
   const homes = projects
-    .filter((project) => repositories(project).length && !isElsewhere(project, scope.machine))
+    .filter(
+      (project) =>
+        repositories(project).length && !project.archived && !isElsewhere(project, scope.machine)
+    )
     .sort((a, b) => a.createdAt - b.createdAt);
   return projects
     .filter((project) => !scope.pinned.has(project.id) && !project.section && !project.archived)
     .flatMap((project): NeoProjectCleanup[] => {
       const named = { projectId: project.id, title: project.title };
+      if (isLive(project)) return [];
       if (scope.archive?.has(project.id)) return [{ action: 'archive', ...named }];
-      if (repositories(project).length || isElsewhere(project, scope.machine) || isLive(project))
-        return [];
+      if (repositories(project).length || isElsewhere(project, scope.machine)) return [];
       if (isEmpty(project))
         return project.aliases.some((alias) => scope.mirrored.has(alias))
           ? []

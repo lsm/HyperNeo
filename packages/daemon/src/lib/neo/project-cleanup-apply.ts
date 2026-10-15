@@ -31,7 +31,11 @@ export function createNeoProjectCleanupApply(
     },
     archive: async (step: Step<'archive'>) => {
       const session = holder(step.projectId);
-      if (session) await service.sessions.archiveSessionResources(session, 'ui_session_archive');
+      if (!session) return;
+      const turn = service.sessions.getCachedSession(session)?.getProcessingState().status;
+      if (turn && !['idle', 'interrupted'].includes(turn))
+        throw new Error('the holder is mid-turn');
+      await service.sessions.archiveSessionResources(session, 'ui_session_archive');
     },
   };
   return (step) => (apply[step.action] as (step: NeoProjectCleanup) => Promise<void>)(step);

@@ -118,6 +118,23 @@ describe('project cleanup plan', () => {
     ).toEqual([{ action: 'archive', projectId: 'kept', title: 'kept' }]);
   });
 
+  test('an archived project is no merge home, and a live project is not archived even when asked', () => {
+    expect(
+      plan([
+        project('home', { title: 'App', aliases: [repo], archived: true }),
+        project('topic', { title: 'App', ...oneOff }),
+      ])
+    ).toEqual([]);
+    expect(
+      planNeoProjectCleanup([project('busy', { aliases: [repo], liveWork: 1 })], {
+        pinned: new Set(),
+        machine: 'here',
+        mirrored: new Set(),
+        archive: new Set(['busy']),
+      })
+    ).toEqual([]);
+  });
+
   test('live, section, already archived, pinned and other-machine projects are left alone', () => {
     expect(
       plan(
@@ -238,7 +255,7 @@ describe('neoCleanupFolders', () => {
 });
 
 describe('createNeoProjectCleanupApply', () => {
-  test('delete drops the empty project then its holder; merge is human-approved; archive archives the holder', async () => {
+  test('delete drops the empty project then its holder; merge is human-approved; archive archives an idle holder', async () => {
     const calls: unknown[] = [];
     const project = (id: string) => ({ id, revision: 3 });
     const apply = createNeoProjectCleanupApply({
@@ -254,6 +271,10 @@ describe('createNeoProjectCleanupApply', () => {
         deleteSessionResources: async (id: string, trigger: string) => {
           calls.push(['deleted', id, trigger]);
         },
+        getCachedSession: (id: string) =>
+          id === 'holder:busy'
+            ? { getProcessingState: () => ({ status: 'processing' }) }
+            : undefined,
         archiveSessionResources: async (id: string, trigger: string) => {
           calls.push(['archived', id, trigger]);
         },
@@ -262,6 +283,9 @@ describe('createNeoProjectCleanupApply', () => {
     await apply({ action: 'delete', projectId: 'a', title: 'A' });
     await apply({ action: 'merge', projectId: 'b', title: 'B', targetId: 'c' });
     await apply({ action: 'archive', projectId: 'd', title: 'D' });
+    await expect(apply({ action: 'archive', projectId: 'busy', title: 'Busy' })).rejects.toThrow(
+      'the holder is mid-turn'
+    );
     expect(calls).toEqual([
       ['dropped', 'a'],
       ['deleted', 'holder:a', 'ui_session_delete'],
