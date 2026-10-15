@@ -13,6 +13,7 @@ describe('detectNeoReplyLanguage', () => {
   test.each([
     ["what's open on HyperNeo right now?", 'English'],
     ['dev', null],
+    ['请帮我 fix this bug', 'Chinese'],
     ['Why does it fail with 无法连接到服务器 when I start it?', 'English'],
     ['现在有卡片还在运行吗？', 'Chinese'],
     ['把 lsm/HyperNeo#12 的 CI 修好', 'Chinese'],
@@ -29,7 +30,7 @@ describe('detectNeoReplyLanguage', () => {
 });
 
 describe('readNeoTurnLanguage', () => {
-  test('follows a continuation to the human message it answers, else the latest human message', () => {
+  test('follows a continuation to the human message it answers; only an unresolved input falls back to the latest one', () => {
     const stored: Record<string, SDKMessage[]> = {
       h1: [prompt([{ type: 'text', text: 'that list is wrong, please correct it' }]) as SDKMessage],
     };
@@ -46,6 +47,10 @@ describe('readNeoTurnLanguage', () => {
     expect(readNeoTurnLanguage({ sessionId: 'root', messageId: 'orphan' }, reads)).toBeNull();
     latest = prompt('现在有卡片还在运行吗？') as SDKMessage;
     expect(readNeoTurnLanguage({ sessionId: 'root', messageId: 'orphan' }, reads)).toBe('Chinese');
+    stored.h1 = [prompt('dev') as SDKMessage];
+    expect(
+      readNeoTurnLanguage({ sessionId: 'root', messageId: 'neo-trigger:x' }, reads)
+    ).toBeNull();
   });
 });
 
