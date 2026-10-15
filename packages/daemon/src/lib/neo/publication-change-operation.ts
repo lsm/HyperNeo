@@ -50,7 +50,7 @@ const Result = z.union([
 export interface NeoPublicationChangeRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
-  publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'correct' | 'listByProducer'>;
+  publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'correct' | 'listRecent'>;
   isConsultationReturn(conversationId: string, publicationId: string): boolean;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   isTriggerPublished(conversationId: string, triggerId: string, publicationId: string): boolean;
@@ -58,14 +58,13 @@ export interface NeoPublicationChangeRuntime {
   noteReply(publication: NeoPublication): void;
 }
 
-export function requireOwnPublication(
+export function requireConversationPublication(
   producer: Producer,
   publication: NeoPublication | null
 ): { value: Owned } | { reason: Rejection } {
-  if (!publication) return { reason: { accepted: false, reason: 'not_found' } };
-  return publication.producerInput.sessionId === producer.input.sessionId
+  return publication
     ? { value: { producer, publication } }
-    : { reason: { accepted: false, reason: 'not_your_publication' } };
+    : { reason: { accepted: false, reason: 'not_found' } };
 }
 
 export function requireChangeable(
@@ -128,7 +127,7 @@ function changePipeline(
     )
     .pipe(
       (producer: Producer, request: { publicationId: string }) =>
-        requireOwnPublication(
+        requireConversationPublication(
           producer,
           runtime.publications.get(producer.root.sessionId.slice(4), request.publicationId)
         ),
@@ -180,7 +179,8 @@ export function createNeoPublicationChangeOperations(
           ...(input.shortText !== undefined ? { shortText: input.shortText } : {}),
           ...(input.fullText !== undefined ? { fullText: input.fullText } : {}),
         },
-        now().toISOString()
+        now().toISOString(),
+        owned.producer.input.sessionId
       )
   );
   const correct = changePipeline(
@@ -238,13 +238,16 @@ export function createNeoPublicationChangeOperations(
       (producer: Producer, request: z.infer<typeof RecentInput>) => ({
         accepted: true,
         publications: runtime.publications
-          .listByProducer(producer.root.sessionId.slice(4), producer.input.sessionId, request.limit)
+          .listRecent(producer.root.sessionId.slice(4), request.limit)
           .map((publication) => ({
             publicationId: publication.publicationId,
             createdAt: publication.createdAt,
             shortText: publication.shortText,
             askMessageId: publication.askOrigin.messageId,
+            producer: publication.producerInput.sessionId,
+            yours: publication.producerInput.sessionId === producer.input.sessionId,
             ...(publication.editedAt ? { editedAt: publication.editedAt } : {}),
+            ...(publication.editedBy ? { editedBy: publication.editedBy } : {}),
             ...(publication.corrects ? { corrects: publication.corrects } : {}),
             ...(publication.correctedBy ? { correctedBy: publication.correctedBy } : {}),
           })),
@@ -257,7 +260,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.recent',
       description:
-        "List your own most recent published messages in this conversation, newest first (limit 1-20, default 10), with each publicationId, createdAt, shortText, the human message it answered and any editedAt, corrects or correctedBy. Use it to find the publicationId to edit or correct. It never lists session messages or another session's publications.",
+        'List the most recent published messages in this conversation, newest first (limit 1-20, default 10): every Neo reply the human sees, whichever Neo session produced it. Each has its publicationId, createdAt, shortText, the human message it answered, its producer, whether it is yours, and any editedAt, editedBy, corrects or correctedBy. Read it before fixing an earlier reply, and use its content rather than re-deriving it. It never lists session messages.',
       policy: { safetyClass: 'read', roles: ['neo'] },
       inputSchema: RecentInput,
       resultSchema: z.unknown(),
@@ -266,7 +269,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.edit',
       description:
-        "Fix the wording of one of your own published messages in place, by its publicationId. Use it only for wording: the meaning, facts and anything the human should do must stay the same. The message is marked edited. Links, the ask it answers and its trigger never change. Only the session that published it can edit it; anything else, including session messages and other sessions' output, is refused (not_found, not_your_publication). A project holder's reply to a consultation is the record the consultation returns, so it cannot be changed (consultation_return).",
+        "Fix the wording of a Neo reply in this conversation in place, by its publicationId, whichever Neo session produced it: to the human they are all Neo's. Use it only for wording: the meaning, facts and anything the human should do must stay the same. The message is marked edited and records you as editedBy. Links, the ask it answers and its trigger never change. Only Neo publications in this conversation can change, never session messages (not_found). A project holder's reply to a consultation is the record the consultation returns, so it cannot be changed (consultation_return).",
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: Result,
@@ -275,7 +278,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.correct',
       description:
-        'Correct one of your own published messages when a fact or an action for the human changed (for example it said a PR merged and it did not). This publishes a separate message labelled as a correction that cites the original by publicationId; it never rewrites what the human already read. Pass a new correctionId (reuse it only for identical retries). When this turn answers a human message (or a trigger note) that has no reply yet, the correction is that reply, so do not publish a separate one. Each message takes at most one correction, and a correction cannot be corrected (already_corrected). Only the session that published the original can correct it (not_found, not_your_publication), and a consultation reply cannot be corrected (consultation_return). Otherwise it needs no notification trigger.',
+        "Correct a Neo reply in this conversation, whichever Neo session produced it, when a fact or an action for the human changed (for example it said a PR merged and it did not). This publishes a separate message labelled as a correction that cites the original by publicationId; it never rewrites what the human already read. Base it on the original's content and fresh evidence, not a guess. Pass a new correctionId (reuse it only for identical retries). When this turn answers a human message (or a trigger note) that has no reply yet, the correction is that reply, so do not publish a separate one. Each message takes at most one correction, and a correction cannot be corrected (already_corrected). Only Neo publications in this conversation can be corrected (not_found), and a consultation reply cannot be (consultation_return). Otherwise it needs no notification trigger.",
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: CorrectInput,
       resultSchema: Result,

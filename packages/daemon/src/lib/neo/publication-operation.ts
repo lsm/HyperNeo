@@ -25,6 +25,7 @@ const Draft = NeoPublicationSchema.omit({
   askOrigin: true,
   producerInput: true,
   editedAt: true,
+  editedBy: true,
   corrects: true,
   correctedBy: true,
 });

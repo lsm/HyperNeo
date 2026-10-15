@@ -133,12 +133,13 @@ export class NeoPublicationRepository {
     conversationId: string,
     publicationId: string,
     text: { shortText?: string; fullText?: string },
-    at: string
+    at: string,
+    by: string
   ): NeoPublicationChangeResult {
     const current = this.get(conversationId, publicationId);
     if (!current) return { accepted: false, reason: 'not_found' };
     const { sequence: _sequence, createdAt: _createdAt, ...stored } = current;
-    const next = admitNeoPublication({ ...stored, ...text, editedAt: at });
+    const next = admitNeoPublication({ ...stored, ...text, editedAt: at, editedBy: by });
     if ('reason' in next) return { accepted: false, reason: 'publication_conflict' };
     this.db
       .prepare(
@@ -200,16 +201,15 @@ export class NeoPublicationRepository {
     return readPage({ conversationId, after, limit, before }, this.db);
   }
 
-  listByProducer(conversationId: string, sessionId: string, limit: number): NeoPublication[] {
+  listRecent(conversationId: string, limit: number): NeoPublication[] {
     return (
       this.db
         .prepare(
           `SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
-            AND json_extract(payload_json, '$.producerInput.sessionId') = ?
             AND json_extract(payload_json, '$.interim') IS NULL
           ORDER BY sequence DESC LIMIT ?`
         )
-        .all(conversationId, sessionId, limit) as Row[]
+        .all(conversationId, limit) as Row[]
     ).map(decode);
   }
 
