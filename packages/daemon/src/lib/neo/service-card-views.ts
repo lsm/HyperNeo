@@ -6,6 +6,7 @@ import { projectNeoCardViews } from './card-views.ts';
 import type { NeoAskTriggerRead } from './notification-triggers.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import type { NeoService } from './service.ts';
+import { busyNeoAskSessions, unmutedNeoAskSessions } from './session-ask-links.ts';
 
 function projectNeoServiceCards(
   service: NeoService,
@@ -47,6 +48,16 @@ function projectNeoServiceCards(
 export function readNeoAskTriggerView(service: NeoService, ask: NeoAsk): NeoAskTriggerRead | null {
   const work = ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []);
   const { asks, cards, workPrs } = projectNeoServiceCards(service, [ask], work, 1);
-  const view = projectNeoAskViews(asks, cards, workPrs)[0];
+  const sessions = unmutedNeoAskSessions(
+    service.askSessions,
+    service.db.getGlobalSettings?.().neo?.mutedSessions ?? []
+  );
+  const view = projectNeoAskViews(
+    asks,
+    cards,
+    workPrs,
+    sessions,
+    busyNeoAskSessions(service.askSessions)
+  )[0];
   return view ? { view, cards } : null;
 }

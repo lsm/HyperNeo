@@ -25,19 +25,28 @@ const askScenes: Record<NeoAskStatus, { group: NeoCardGroup; label: string }> = 
 const dropped = (card: NeoCardView) =>
   card.phase === 'cancelled' || (card.phase === 'failed' && card.superseded);
 
+export const NEO_ASK_IDLE_LABEL = 'Nothing running · start again or drop it';
+
+export function isNeoCardInPlay(card: Pick<NeoCardView, 'group' | 'phase'>): boolean {
+  return card.group !== 'outcomes' && card.phase !== 'abandoned';
+}
+
 type AskViewIndex = {
   cards: Map<string, NeoCardView>;
   merged: Map<string, string[]>;
   sessions: ReadonlyMap<string, readonly NeoAskSessionView[]>;
+  busy: ReadonlySet<string>;
 };
 
 export function indexNeoAskViewParts(
   cards: readonly NeoCardView[],
   prs: readonly NeoWorkPrReceipt[],
-  sessions: ReadonlyMap<string, readonly NeoAskSessionView[]> = new Map()
+  sessions: ReadonlyMap<string, readonly NeoAskSessionView[]> = new Map(),
+  busy: ReadonlySet<string> = new Set()
 ): AskViewIndex {
   return {
     sessions,
+    busy,
     cards: new Map(cards.map((card) => [card.workId, card])),
     merged: new Map(
       prs.map((receipt) => [
@@ -162,12 +171,23 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     .filter((card) => card.phase === 'merged' && !card.pr?.setback)
     .map((card) => card.workId);
   const counted = (ask.doneItems ?? []).filter((item) => !item.removed);
+  const humanActions = deriveNeoAskHumanActions(ask, live);
+  const idle =
+    ask.status === 'open' &&
+    ask.workIds.length > 0 &&
+    !needsYou &&
+    !index.busy.has(ask.id) &&
+    !sessions.some((session) => session.status === 'queued' || session.status === 'running') &&
+    !humanActions.length &&
+    !live.some(isNeoCardInPlay) &&
+    !(counted.length && counted.every((item) => item.state === 'met'));
   return {
     askId: ask.id,
-    group: needsYou ? 'attention' : truth.group,
-    label: needsYou ? 'Needs you' : truth.label,
+    group: needsYou || idle ? 'attention' : truth.group,
+    label: needsYou ? 'Needs you' : idle ? NEO_ASK_IDLE_LABEL : truth.label,
     settled,
     needsYou,
+    ...(idle ? { idle: true as const } : {}),
     done: counted.length
       ? counted.filter((item) => item.state === 'met').length
       : doneWorkIds.length,
@@ -179,7 +199,7 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     summary: neoAskViewSummary(ask, live, index.merged),
     sessions,
     answer: neoAskAnswer(ask),
-    humanActions: deriveNeoAskHumanActions(ask, live),
+    humanActions,
   };
 }
 
@@ -188,12 +208,13 @@ export function describeNeoAskViews(asks: readonly NeoAsk[], index: AskViewIndex
 }
 
 export const projectNeoAskViews = (superpipe({})('neo-ask-views') as PipelineAPI)
-  .input(['asks', 'cards', 'prs', 'sessions'])
-  .pipe(indexNeoAskViewParts, ['cards', 'prs', 'sessions'], 'index')
+  .input(['asks', 'cards', 'prs', 'sessions', 'busy'])
+  .pipe(indexNeoAskViewParts, ['cards', 'prs', 'sessions', 'busy'], 'index')
   .pipe(describeNeoAskViews, ['asks', 'index'], 'askViews')
   .end('askViews') as (
   asks: readonly NeoAsk[],
   cards: readonly NeoCardView[],
   prs: readonly NeoWorkPrReceipt[],
-  sessions?: ReadonlyMap<string, readonly NeoAskSessionView[]>
+  sessions?: ReadonlyMap<string, readonly NeoAskSessionView[]>,
+  busy?: ReadonlySet<string>
 ) => NeoAskView[];

@@ -473,7 +473,7 @@ describe('NeoService session ask links', () => {
     expect(notices()).toEqual([
       ['neo.session.notice', expect.objectContaining({ key, kind: 'needs_you' })],
     ]);
-    expect((await askViews())[0]).toMatchObject({ group: 'running', sessions: [] });
+    expect((await askViews())[0]).toMatchObject({ needsYou: false, sessions: [] });
   });
 
   test('muting a linked session that needs the human never posts its held notice', async () => {
@@ -494,6 +494,6 @@ describe('NeoService session ask links', () => {
     await watch('running', now - 2_000, [pr(12)]);
     await watch('needs_you', now - 1_000, [pr(12)]);
     expect(notices()).toEqual([]);
-    expect((await askViews())[0]).toMatchObject({ group: 'running', sessions: [] });
+    expect((await askViews())[0]).toMatchObject({ needsYou: false, sessions: [] });
   });
 });

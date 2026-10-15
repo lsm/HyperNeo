@@ -8,6 +8,7 @@ import type {
 import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
+import { isNeoCardInPlay } from './ask-views.ts';
 
 export const NEO_TRIGGER_PREFIX = 'neo-trigger:';
 export const NEO_HUMAN_TRIGGER_PREFIX = 'human:';
@@ -15,7 +16,7 @@ export const NEO_TRIGGER_SWEEP_MS = 1_000;
 export const NEO_TRIGGER_RETRY_MS = 60_000;
 export const NEO_TRIGGER_ACHIEVED_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-export type NeoTriggerKind = 'outcome' | 'failed' | 'action';
+export type NeoTriggerKind = 'outcome' | 'failed' | 'idle' | 'action';
 export interface NeoTriggerKey {
   key: string;
   kind: NeoTriggerKind;
@@ -114,6 +115,10 @@ export function neoHumanTriggerMessageId(triggerId: string | undefined): string 
 const TRIGGER_WORDS: Record<NeoTriggerKind, { what: string; sentence: string }> = {
   outcome: { what: 'the ask reached its outcome', sentence: 'name the outcome.' },
   failed: { what: 'a card failed with no retry left', sentence: 'say what broke.' },
+  idle: {
+    what: 'nothing is running for the ask and its outcome is not met',
+    sentence: 'first propose new work for it or settle it, then say which you did.',
+  },
   action: { what: 'the ask needs the human', sentence: 'say what is needed from them.' },
 };
 const LAST_HUMAN_LIMIT = 300;
@@ -191,10 +196,6 @@ export function isNeoCardFailedForGood(card: NeoCardView, pending: boolean): boo
   );
 }
 
-export function isNeoCardInPlay(card: Pick<NeoCardView, 'group' | 'phase'>): boolean {
-  return card.group !== 'outcomes' && card.phase !== 'abandoned';
-}
-
 export function neoAskTriggerKeys(
   ask: NeoAsk,
   read: NeoAskTriggerRead,
@@ -223,15 +224,25 @@ export function neoAskTriggerKeys(
         line: `${titled(work(card.workId), card.workId)} failed with no retry left`,
       })
     );
+  const idle: NeoTriggerKey[] = read.view.idle
+    ? [
+        {
+          key: `idle:${Math.max(ask.createdAt, ...ask.workIds.map((id) => work(id)?.updatedAt ?? 0))}`,
+          kind: 'idle',
+          line: 'nothing is running for this ask and its outcome is not met',
+        },
+      ]
+    : [];
   return [
     ...failed,
+    ...idle,
     ...(read.view.humanActions ?? [])
       .filter((action) => action.kind !== 'close')
       .map((action) => neoActionTriggerKey(ask, action, work)),
   ];
 }
 
-const KIND_ORDER: readonly NeoTriggerKind[] = ['outcome', 'failed', 'action'];
+const KIND_ORDER: readonly NeoTriggerKind[] = ['outcome', 'failed', 'idle', 'action'];
 
 export function planNeoAskTrigger(
   ask: Pick<NeoAsk, 'id'>,

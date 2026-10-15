@@ -116,6 +116,7 @@ export const NeoAskViewSchema = z.object({
   label: z.string(),
   settled: z.boolean(),
   needsYou: z.boolean(),
+  idle: z.literal(true).optional(),
   done: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
   workIds: z.array(z.string()),

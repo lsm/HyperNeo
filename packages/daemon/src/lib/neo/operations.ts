@@ -180,7 +180,7 @@ import { planNeoSavedRules } from './saved-rules.ts';
 import { projectNeoCardViews } from './card-views.ts';
 import { NeoAskStateViewSchema, NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
 import { projectNeoAskViews } from './ask-views.ts';
-import { unmutedNeoAskSessions } from './session-ask-links.ts';
+import { busyNeoAskSessions, unmutedNeoAskSessions } from './session-ask-links.ts';
 import { NEO_WORK_FOLLOW_MAX_AGE_MS } from './work-follow.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
@@ -987,7 +987,13 @@ export function createNeoOperations(service: NeoService) {
       new Set(ask.workIds.filter((id) => service.isContinueStalled(id)))
     );
     const { workPrs, cards } = projectCards(work, asks);
-    const [view] = projectNeoAskViews(asks, cards, workPrs, unmutedAskSessions());
+    const [view] = projectNeoAskViews(
+      asks,
+      cards,
+      workPrs,
+      unmutedAskSessions(),
+      busyNeoAskSessions(service.askSessions)
+    );
     return neoWorkAskView(ask, work, view?.humanActions ?? [], cards, workPrs);
   }
   function unmutedAskSessions() {
@@ -1160,7 +1166,13 @@ export function createNeoOperations(service: NeoService) {
         : {}),
       cards: compact ? compactNeoSnapshotCards(cards) : cards,
       sessionLoad: readNeoSessionLoad(service.db.getDatabase()).slice(0, 50),
-      askViews: projectNeoAskViews(asks, cards, workPrs, unmutedAskSessions()),
+      askViews: projectNeoAskViews(
+        asks,
+        cards,
+        workPrs,
+        unmutedAskSessions(),
+        busyNeoAskSessions(service.askSessions)
+      ),
       workResources: visibleWork.map((item) => ({
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,

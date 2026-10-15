@@ -84,6 +84,12 @@ describe('trigger keys of an ask', () => {
   const keys = (target: NeoAsk, read = { view: view(), cards: [card()] }, pending = false) =>
     neoAskTriggerKeys(target, read, work, () => pending).map((key) => [key.kind, key.key]);
 
+  test('an ask with nothing running wakes Neo once per ended card', () => {
+    const idle = { view: view({ workIds: [], idle: true }), cards: [card({ phase: 'cancelled' })] };
+    expect(keys(ask, idle)).toEqual([['idle', 'idle:500']]);
+    expect(keys({ ...ask, workIds: [] }, idle)).toEqual([['idle', 'idle:10']]);
+  });
+
   test('an achieved ask, or one with every item met, is one outcome trigger', () => {
     expect(keys({ ...ask, status: 'achieved' })).toEqual([['outcome', 'outcome:0']]);
     expect(keys({ ...ask, doneItems: [item('i1', 'met'), item('i2', 'met')] })).toEqual([
@@ -291,6 +297,17 @@ describe('neoTriggerNote', () => {
     expect(note).toContain('- the ask is achieved');
     expect(note).toContain('name the outcome.');
     expect(note).toContain('"把输入框修好"');
+  });
+
+  test('an idle trigger asks Neo to restart or settle, never to report a failure', () => {
+    const note = neoTriggerNote(
+      ask,
+      { triggerId: 'idle:a1:x', kind: 'idle', keys: ['idle:500'], lines: ['nothing is running'] },
+      null
+    );
+    expect(note).toContain('nothing is running for the ask and its outcome is not met');
+    expect(note).toContain('propose new work for it or settle it');
+    expect(note).not.toContain('failed');
   });
 });
 
