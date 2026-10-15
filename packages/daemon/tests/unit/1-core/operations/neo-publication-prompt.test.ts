@@ -52,14 +52,13 @@ describe('direct human publication prompt', () => {
   );
   test.each([null, 'research'])('supplies the four authored keys jointly for %s', (projectId) => {
     const prompt = delivered(projectId);
-    expect(prompt).toContain('neo.publication.publish {publicationId, shortText, fullText, links}');
+    expect(prompt).toContain('neo.publication.publish {shortText, fullText, links}');
     const accepted = NeoPublicationSchema.pick({
-      publicationId: true,
       shortText: true,
       fullText: true,
       links: true,
-    }).parse({ ...draft, publicationId: '30000000-0000-4000-8000-000000000001' });
-    for (const key of ['publicationId', 'shortText', 'fullText', 'links']) {
+    }).parse(draft);
+    for (const key of ['shortText', 'fullText', 'links']) {
       expect(prompt).toContain(key);
       expect(accepted).toHaveProperty(key);
     }
@@ -77,7 +76,7 @@ describe('direct human publication prompt', () => {
   );
   test.each([null, 'research'])('requires one call before the turn ends for %s', (projectId) => {
     expect(delivered(projectId)).toContain(
-      'publish that answer with neo.publication.publish {publicationId, shortText, fullText, links} in one call before ending the turn'
+      'publish that answer with neo.publication.publish {shortText, fullText, links} in one call before ending the turn'
     );
   });
   test.each([null, 'research'])(
@@ -96,8 +95,8 @@ describe('direct human publication prompt', () => {
     'restricts publication to identical retries for %s',
     (projectId) => {
       const prompt = delivered(projectId);
-      expect(prompt).toContain('Give publicationId a fresh UUID');
-      expect(prompt).toContain('same authored payload only to retry an identical');
+      expect(prompt).toContain('The daemon assigns each publication its id');
+      expect(prompt).toContain('an identical retry posts nothing new');
     }
   );
   test.each([null, 'research'])(

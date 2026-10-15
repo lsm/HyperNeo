@@ -900,6 +900,7 @@ export class NeoService {
       getConsultation: (id) => this.consultations.get(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
       inputTrigger: (input) => this.inputTrigger(input),
+      newId: () => this.newPublicationId(),
       replay: (input, caller) => {
         const turn = caller.neoTurn;
         const item = turn?.consultationId ? this.consultations.get(turn.consultationId) : null;
@@ -926,7 +927,6 @@ export class NeoService {
         if (
           publication.producerInput.sessionId !== caller.sessionId ||
           publication.producerInput.messageId !== turn.messageId ||
-          publication.publicationId !== input.publicationId ||
           publication.shortText !== input.shortText ||
           publication.fullText !== input.fullText ||
           publication.askSummary !== input.askSummary ||
@@ -3768,6 +3768,10 @@ export class NeoService {
   stampContinuation(input: NeoAskOrigin, parent: NeoAskOrigin): void {
     if (!this.repo.getBindingBySession(input.sessionId)) return;
     this.stampDelivery(input, parent, 'continues');
+  }
+
+  newPublicationId(): string {
+    return crypto.randomUUID();
   }
 
   inputTrigger(input: NeoAskOrigin): string | null {

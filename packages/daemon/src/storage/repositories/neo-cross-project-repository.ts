@@ -128,8 +128,6 @@ export class NeoCrossProjectRepository {
     const group = this.forAsk(input.askOrigin);
     if (!group) return null;
     if (input.producerInput.sessionId !== group.rootSessionId) return 'cross_project_root_only';
-    if (group.publicationId && group.publicationId !== input.publicationId)
-      return 'cross_project_already_answered';
     if (
       !input.interim &&
       (!this.ready(group) || input.producerInput.messageId !== neoCrossProjectReplyId(group))
@@ -152,7 +150,11 @@ export class NeoCrossProjectRepository {
           .prepare(
             'UPDATE neo_cross_project_dispatches SET publication_id = ? WHERE ask_session_id = ? AND ask_message_id = ?'
           )
-          .run(input.publicationId, input.askOrigin.sessionId, input.askOrigin.messageId);
+          .run(
+            receipt.publication.publicationId,
+            input.askOrigin.sessionId,
+            input.askOrigin.messageId
+          );
       return receipt;
     })();
   }

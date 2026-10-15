@@ -1,3 +1,4 @@
+import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -51,7 +52,14 @@ function savePrompt(sessionId: string, id: string) {
   } as SDKUserMessage);
 }
 const invoke = (name: string, input: unknown, caller = rootCaller()) =>
-  invokeOperation(registry, name, input, caller);
+  invokeOperation(
+    registry,
+    name,
+    name === 'neo.publication.publish'
+      ? withMintedPublicationId(service, input as { publicationId?: string })
+      : input,
+    caller
+  );
 
 beforeEach(async () => {
   db = await createTestDb();
@@ -194,7 +202,7 @@ describe('Cross-project runtime', () => {
       )
     ).toMatchObject({
       kind: 'completed',
-      value: { accepted: false, reason: 'cross_project_already_answered' },
+      value: { accepted: false, reason: 'trigger_already_published' },
     });
   });
   test('reuses the same group on retry and refuses changed or incomplete parts', async () => {
