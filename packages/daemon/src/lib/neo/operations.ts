@@ -2314,7 +2314,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.save',
       description:
-        'Create a continuing context only when needed, or update an existing context with revision protection. Never one project per message. To create, omit id and pass expectedRevision 0; the daemon assigns the id and returns it, and a retry returns the same project. To update, pass the id and current revision.',
+        'Create a continuing context only when needed, or update an existing context with revision protection. Never one project per message. To create, omit id and pass expectedRevision 0; the daemon assigns the id and returns it, and a retry of the same call in one Neo turn returns the same project; a call outside a Neo turn always creates a new one. To update, pass the id and current revision.',
       inputSchema: Save,
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true), project: Project })]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
