@@ -41,6 +41,7 @@ export interface NeoTriggerSweepDeps {
   work(id: string): Card | null;
   deliveryRetryPending(workId: string): boolean;
   told(askId: string): Set<string>;
+  heard(ask: NeoAsk): boolean;
   record(askId: string, keys: readonly string[], triggerId: string | null): void;
   wake(ask: NeoAsk, trigger: NeoAskTrigger): Promise<boolean>;
 }
@@ -281,6 +282,25 @@ export function requireNeoTriggerRead(
   return read ? { value: read } : { reason: null };
 }
 
+export function requireNeoTriggerUnheard(
+  ask: NeoAsk,
+  trigger: NeoAskTrigger,
+  deps: Pick<NeoTriggerSweepDeps, 'heard' | 'record'>
+): { value: NeoAskTrigger } | { reason: null } {
+  if (trigger.kind !== 'outcome' || !deps.heard(ask)) return { value: trigger };
+  deps.record(ask.id, trigger.keys, null);
+  return { reason: null };
+}
+
+export function shouldRetryNeoTrigger(
+  ask: Pick<NeoAsk, 'status'>,
+  kind: string,
+  heard: boolean
+): boolean {
+  if (kind === 'outcome') return !heard;
+  return ask.status !== 'achieved' && ask.status !== 'abandoned';
+}
+
 const readKeys = (ask: NeoAsk, read: NeoAskTriggerRead, deps: NeoTriggerSweepDeps) =>
   neoAskTriggerKeys(
     ask,
@@ -300,6 +320,7 @@ export const noteNeoAskTrigger = (superpipe({})('neo-ask-trigger') as PipelineAP
     ['ask', 'keys', 'deps'],
     'result:trigger'
   )
+  .pipe(requireNeoTriggerUnheard, ['ask', 'trigger', 'deps'], 'result:trigger')
   .pipe(
     async (ask: NeoAsk, trigger: NeoAskTrigger, deps: NeoTriggerSweepDeps) => {
       if (!(await deps.wake(ask, trigger))) return null;

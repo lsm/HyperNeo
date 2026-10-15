@@ -226,12 +226,19 @@ export class NeoPublicationRepository {
     publicationId: string,
     text: { shortText?: string; fullText?: string },
     at: string,
-    by: string
+    by: string,
+    input?: NeoInputOrigin
   ): NeoPublicationChangeResult {
     const current = this.get(conversationId, publicationId);
     if (!current) return { accepted: false, reason: 'not_found' };
-    const { sequence: _sequence, createdAt: _createdAt, ...stored } = current;
-    const next = admitNeoPublication({ ...stored, ...text, editedAt: at, editedBy: by });
+    const { sequence: _sequence, createdAt: _createdAt, awaiting: _awaiting, ...stored } = current;
+    const next = admitNeoPublication({
+      ...stored,
+      ...text,
+      editedAt: at,
+      editedBy: by,
+      ...(input ? { answerInput: input } : {}),
+    });
     if ('reason' in next) return { accepted: false, reason: 'publication_conflict' };
     this.db
       .prepare(
@@ -291,6 +298,15 @@ export class NeoPublicationRepository {
       { askSummary, awaiting },
       !!publication.answerInput
     );
+  }
+
+  toldSince(conversationId: string, askOrigin: NeoInputOrigin, since: string): boolean {
+    return !!this.db
+      .prepare(`SELECT 1 FROM neo_publications WHERE conversation_id = ?
+        AND json_extract(payload_json, '$.askOrigin.sessionId') = ?
+        AND json_extract(payload_json, '$.askOrigin.messageId') = ?
+        AND created_at >= ? LIMIT 1`)
+      .get(conversationId, askOrigin.sessionId, askOrigin.messageId, since);
   }
 
   hasTrigger(conversationId: string, triggerId: string, publicationId: string): boolean {
