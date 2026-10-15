@@ -3609,9 +3609,10 @@ export class NeoService {
     messageId: string,
     content: string,
     fromSessionId: string,
-    ask: NeoAskOrigin | null
+    ask: NeoAskOrigin | null,
+    trigger: NeoDeliveryTrigger
   ): Promise<void> {
-    return this.deliver(sessionId, messageId, content, fromSessionId, ask, 'continues');
+    return this.deliver(sessionId, messageId, content, fromSessionId, ask, trigger);
   }
 
   moveAsk(

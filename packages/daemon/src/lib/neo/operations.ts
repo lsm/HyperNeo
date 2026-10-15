@@ -867,7 +867,7 @@ export function neoReorganizeRuntime(
     projectSession: (projectId) => service.repo.getBindingForProject(projectId)?.sessionId ?? null,
     cards: (ask) => ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
     deliver: (sessionId, messageId, content, from, parent) =>
-      service.deliverForward(sessionId, messageId, content, from, parent),
+      service.deliverForward(sessionId, messageId, content, from, parent, null),
     move: (ask, cards, owner) => service.moveAsk(ask, cards, owner),
     mergeProjects: async () => {
       const merges = service.repo.projectMerges;
@@ -2060,7 +2060,7 @@ export function createNeoOperations(service: NeoService) {
       unrecord: (ask, hop) => service.askForwards.remove(ask, hop),
       delivered: (sessionId, messageId) => service.hasDelivery(sessionId, messageId),
       deliver: (sessionId, messageId, content, from, ask) =>
-        service.deliverForward(sessionId, messageId, content, from, ask),
+        service.deliverForward(sessionId, messageId, content, from, ask, 'continues'),
     }),
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationAskReadOperation(service.repo, service.asks, (sessionId, messageId) =>
