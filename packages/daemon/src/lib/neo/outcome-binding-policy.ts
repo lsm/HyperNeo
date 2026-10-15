@@ -2,8 +2,34 @@ import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { neoAskRevisionPolicy } from './ask-revision-policy.ts';
 
 type Binding = { itemId: string; deliveredBy: string | null };
-type Card = { id: string; dispatched: boolean };
+type Card = { id: string; dispatched: boolean; released?: boolean };
 type Refusal = { ok: false; reason: string };
+
+const isBindable = (item: NeoAskItem) =>
+  !item.removed && !item.decision && !item.kind && item.check !== 'coding.pr_opened';
+
+function fillIds(
+  ask: Pick<NeoAsk, 'doneItems'>,
+  bindings: readonly Binding[],
+  cards: readonly Card[]
+): Set<string> {
+  const items = new Map((ask.doneItems ?? []).map((item) => [item.id, item]));
+  const dispatched = new Set(cards.filter((card) => card.dispatched).map((card) => card.id));
+  return new Set(
+    bindings
+      .filter((binding) => {
+        const item = items.get(binding.itemId);
+        return (
+          !!item &&
+          !item.deliveredBy &&
+          item.state === 'pending' &&
+          !!binding.deliveredBy &&
+          !dispatched.has(binding.deliveredBy)
+        );
+      })
+      .map((binding) => binding.itemId)
+  );
+}
 
 function requireBindings(ask: NeoAsk | null, bindings: readonly Binding[], cards: readonly Card[]) {
   const reject = (reason: string): { reason: Refusal } => ({ reason: { ok: false, reason } });
@@ -18,19 +44,24 @@ function requireBindings(ask: NeoAsk | null, bindings: readonly Binding[], cards
     seen.add(binding.itemId);
     const next = binding.deliveredBy;
     if (next !== null && !local.has(next)) return reject('binding_card_not_owned');
-    if (next !== null && item.check === 'coding.pr_opened') return reject('opened_check_unbound');
+    if (next !== null && !isBindable(item)) return reject('opened_check_unbound');
     if ((item.deliveredBy ?? null) !== next) {
-      if ([item.deliveredBy, next].some((id) => id && local.get(id)?.dispatched))
+      const old = item.deliveredBy ? local.get(item.deliveredBy) : undefined;
+      if ((old?.dispatched && !old.released) || (next && local.get(next)?.dispatched))
         return reject('binding_already_dispatched');
     }
   }
   const changes = new Map(bindings.map((binding) => [binding.itemId, binding.deliveredBy]));
-  const after = [...items.values()].map((item) =>
-    changes.has(item.id) ? { ...item, deliveredBy: changes.get(item.id)! } : item
-  );
+  const bind = (item: NeoAskItem) =>
+    changes.has(item.id) ? { ...item, deliveredBy: changes.get(item.id)! } : item;
+  const fills = fillIds(ask, bindings, cards);
+  const after = [...items.values()].map(bind);
   const revision = neoAskRevisionPolicy.planRevision(
     ask.revision ?? 0,
-    { items: [...items.values()], cards: [] },
+    {
+      items: [...items.values()].map((item) => (fills.has(item.id) ? bind(item) : item)),
+      cards: [],
+    },
     { items: after, cards: [] }
   );
   return { value: { ask, bindings, ...revision } };
@@ -70,4 +101,4 @@ function planFold(
   return { items, revision: revision + 1 };
 }
 
-export const neoOutcomeBindingPolicy = { requireBindings, planFold };
+export const neoOutcomeBindingPolicy = { isBindable, requireBindings, fillIds, planFold };

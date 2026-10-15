@@ -26,7 +26,7 @@ import {
   planNeoSnapshotRead,
   rememberNeoSnapshotRead,
 } from './snapshot-read.ts';
-import { neoAdmissionRefusal } from './work-admission.ts';
+import { neoAdmissionRefusal, planNeoStartRefusal } from './work-admission.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { THINKING_LEVELS } from '@hyperneo/shared';
 import { z } from 'zod';
@@ -167,6 +167,8 @@ import {
   planNeoCardAsk,
   projectNeoSnapshotAsks,
   requireNeoWorkAsk,
+  planNeoProposalBindings,
+  requireNeoProposalDelivers,
   requireNeoWorkAskLink,
   requireNeoWorkAskLive,
   requireNeoWorkAskOwner,
@@ -427,6 +429,13 @@ const Propose = z.object({
   goal: z.string().trim().min(1).max(1000).optional(),
   doneWhen: z.string().trim().min(1).max(2000).optional(),
   askId: z.string().min(1).max(160).optional(),
+  delivers: z
+    .array(z.string().min(1).max(40))
+    .max(20)
+    .optional()
+    .describe(
+      'Ids of the open ask items this card delivers; the daemon binds them to the card. Required under an ask with open items; pass [] when the card delivers none.'
+    ),
   supersedes: z.string().min(1).max(160).nullable().optional(),
   allowBusyTarget: z.boolean().optional(),
 });
@@ -1800,6 +1809,25 @@ export function createNeoOperations(service: NeoService) {
     .pipe(requireLiveNeoWorkOrigin, ['origin', 'caller'], 'result:admission')
     .pipe(requireNeoProposalDoneWhen, ['input', 'caller'], 'result:admission')
     .pipe(
+      (input: ProposeRequest, origin: NeoWorkOrigin, ask: NeoAsk | null) => ({
+        stored:
+          service.repo.workForRequest(`${origin.originSessionId}:${input.requestKey}`)?.id ?? null,
+        cards: (ask?.workIds ?? []).flatMap((id) => service.repo.getWork(id) ?? []),
+      }),
+      ['input', 'origin', 'workAsk'],
+      'deliveries'
+    )
+    .pipe(
+      (
+        input: ProposeRequest,
+        ask: NeoAsk | null,
+        read: { stored: string | null; cards: NeoWork[] },
+        caller: OperationCaller
+      ) => requireNeoProposalDelivers(input.delivers, ask, read, caller),
+      ['input', 'workAsk', 'deliveries', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (input: ProposeRequest, origin: NeoWorkOrigin, caller: OperationCaller) => {
         const planned = planNeoCardAsk(input, origin);
         const stored = service.repo.workForRequest(`${origin.originSessionId}:${input.requestKey}`);
@@ -1877,6 +1905,27 @@ export function createNeoOperations(service: NeoService) {
       'askLink'
     )
     .pipe(requireNeoWorkAskLink, ['ask', 'askLink', 'admission'], 'result:admission')
+    .pipe(
+      (
+        input: ProposeRequest,
+        ask: { askId?: string },
+        read: { stored: string | null },
+        receipt: { work: NeoWork }
+      ) => {
+        const owned =
+          ask.askId && (input.askId || !read.stored) ? service.askRecords.get(ask.askId) : null;
+        const bindings = planNeoProposalBindings(input, owned, receipt.work.id);
+        const bound =
+          owned && bindings.length
+            ? service.askRecords.bindItems(owned.id, bindings, owned.revision ?? 0, Date.now())
+            : { ok: true };
+        return bound.ok
+          ? { value: receipt }
+          : { reason: { ok: false, reason: bound.reason ?? 'invalid_outcome_binding' } };
+      },
+      ['input', 'ask', 'deliveries', 'admission'],
+      'result:admission'
+    )
     .pipe(
       (input: ProposeRequest, receipt: { work: NeoWork }) => {
         service.workGoals.record(receipt.work.id, input.goal ?? null, input.doneWhen ?? null);
@@ -1973,24 +2022,35 @@ export function createNeoOperations(service: NeoService) {
       'result:start'
     )
     .pipe(
-      (input: z.infer<typeof StartWork>, work: NeoWork) => {
-        if (!input.dependsOn) return { value: work };
-        const edited = service.editDependencies(work.id, input.dependsOn);
-        return edited.ok
-          ? { value: work }
-          : { reason: { ok: false, reason: edited.reason ?? 'dependency_rejected' } };
-      },
+      (input: z.infer<typeof StartWork>, work: NeoWork) => ({
+        edit: input.dependsOn ? service.editDependencies(work.id, input.dependsOn) : null,
+      }),
       ['input', 'start'],
+      'edges'
+    )
+    .pipe(
+      (edges: { edit: { ok: boolean; reason?: string } | null }, work: NeoWork) =>
+        !edges.edit || edges.edit.ok
+          ? { value: work }
+          : { reason: { ok: false, reason: edges.edit.reason ?? 'dependency_rejected' } },
+      ['edges', 'start'],
       'result:start'
     )
     .pipe(
-      async (work: NeoWork, authority: { approved: boolean }) => {
-        const refused = neoAdmissionRefusal(await service.admitWork(work.id, !authority.approved));
+      async (
+        work: NeoWork,
+        authority: { approved: boolean },
+        edges: { edit: { changed?: boolean } | null }
+      ) => {
+        const refused = planNeoStartRefusal(
+          neoAdmissionRefusal(await service.admitWork(work.id, !authority.approved)),
+          !!edges.edit?.changed
+        );
         return refused
           ? { reason: refused }
           : { value: { ok: true as const, work: service.repo.getWork(work.id)! } };
       },
-      ['start', 'authority'],
+      ['start', 'authority', 'edges'],
       'result:start'
     )
     .endAsync('start') as (

@@ -368,12 +368,22 @@ export class NeoAskRepository {
           item.deliveredBy === undefined ? [] : [{ itemId: item.id, deliveredBy: item.deliveredBy }]
         ),
       ];
+      const fills = this.bindingPolicy.fillIds(before, bindings, this.bindingCards(askId));
       if (bindings.length) this.bindOrThrow(askId, bindings, before.revision ?? 0, at);
       const after = this.get(askId)!;
       const outcomes = (ask: NeoAsk) => (ask.doneItems ?? []).filter((item) => !item.decision);
+      const filled = (ask: NeoAsk) =>
+        outcomes(ask).map((item) =>
+          fills.has(item.id)
+            ? {
+                ...item,
+                deliveredBy: bindings.find((b) => b.itemId === item.id)?.deliveredBy ?? null,
+              }
+            : item
+        );
       const plan = this.revisionPolicy.planRevision(
         before.revision ?? 0,
-        { items: outcomes(before), cards: [] },
+        { items: filled(before), cards: [] },
         { items: outcomes(after), cards: [] }
       );
       const changedBindings = (before.doneItems ?? [])
@@ -408,13 +418,14 @@ export class NeoAskRepository {
   private bindingCards(askId: string) {
     return this.db
       .prepare(`SELECT w.id,
-      (w.status != 'proposed' OR d.started_at IS NOT NULL) AS dispatched
+      (w.status != 'proposed' OR d.started_at IS NOT NULL) AS dispatched,
+      w.status IN ('failed', 'cancelled') AS released
       FROM neo_work w JOIN neo_ask_work a ON a.work_id = w.id
       LEFT JOIN neo_work_driver_targets d ON d.work_id = w.id WHERE a.ask_id = ?`)
       .all(askId)
       .map((row) => {
-        const card = row as { id: string; dispatched: number };
-        return { id: card.id, dispatched: !!card.dispatched };
+        const card = row as { id: string; dispatched: number; released: number };
+        return { id: card.id, dispatched: !!card.dispatched, released: !!card.released };
       });
   }
 
@@ -455,6 +466,11 @@ export class NeoAskRepository {
       )
       .pipe(
         (plan: { invalidateApproval: boolean; revision: number; invalidateItemIds: string[] }) => {
+          const fill = this.db.prepare(`UPDATE neo_ask_items SET delivered_by = ?, updated_at = ?
+          WHERE ask_id = ? AND id = ?`);
+          for (const binding of bindings)
+            if (!plan.invalidateItemIds.includes(binding.itemId))
+              fill.run(binding.deliveredBy, at, askId, binding.itemId);
           if (!plan.invalidateApproval) return { ok: true };
           const write =
             this.db.prepare(`UPDATE neo_ask_items SET delivered_by = ?, state = 'pending',

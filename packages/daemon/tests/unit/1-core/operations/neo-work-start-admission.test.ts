@@ -82,7 +82,7 @@ async function setup(reply: Reply = started, target: NeoDriverTarget = startTarg
       },
       [{ text: `Outcome ${id}`, check: null, deliveredBy: id }]
     );
-    service.askRecords.approve(`ask-${id}`, Date.now(), 1);
+    service.askRecords.approve(`ask-${id}`, Date.now(), 0);
   }
   const start = (id: string, caller = human) =>
     invokeOperation(
@@ -106,7 +106,7 @@ describe('neo.work.start', () => {
     const { db, service, calls, start } = await setup();
     try {
       const edit = service.dependencies.replace(
-        { workId: 'b', dependsOn: ['a'], expectedRevision: 1 },
+        { workId: 'b', dependsOn: ['a'], expectedRevision: 0 },
         new Set(['a', 'b']),
         Date.now()
       );

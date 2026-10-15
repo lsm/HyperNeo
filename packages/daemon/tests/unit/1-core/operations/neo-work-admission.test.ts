@@ -75,10 +75,10 @@ async function setup(reply: (input: unknown) => unknown = () => startedReply) {
       },
       [{ text: `Outcome ${id}`, check: null, deliveredBy: id }]
     );
-    service.askRecords.approve(`ask-${id}`, Date.now(), 1);
+    service.askRecords.approve(`ask-${id}`, Date.now(), 0);
   }
   const edit = service.dependencies.replace(
-    { workId: 'b', dependsOn: ['a'], expectedRevision: 1 },
+    { workId: 'b', dependsOn: ['a'], expectedRevision: 0 },
     new Set(['a', 'b']),
     Date.now()
   );

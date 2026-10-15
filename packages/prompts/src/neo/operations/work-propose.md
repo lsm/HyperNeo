@@ -25,7 +25,7 @@ proposing. Set goal to what the human asked, in their own words, and doneWhen to
 checklist of what finished means; both are sent to the worker with the instruction, so a shorter
 instruction never drops the real goal. Open asks with the outcome checks required by their pack
 before proposing work under their askId; unchecked doneWhen cannot create an ask requiring those
-checks. A retry of the same proposal in this turn returns the same card and keeps its stored ask. When this work replaces a failed or
+checks. Under an ask with open items, pass delivers with the ids of the items this card delivers (the daemon binds them to the card, and a card's items are met only once it reports), or delivers: [] for a card that delivers none, such as a read or a check. A retry of the same proposal in this turn returns the same card and keeps its stored ask. When this work replaces a failed or
 cancelled card, pass supersedes with the id of that card so it shows as replaced; when the
 project has failed or cancelled work from the last three days, the proposal is refused until you
 pass supersedes, using null when it replaces none. A proposal to a session that already holds

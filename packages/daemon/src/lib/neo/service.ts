@@ -1801,9 +1801,9 @@ export class NeoService {
       new Set(this.repo.listWork().map((work) => work.id)),
       now
     );
-    if (edited.ok && edited.revision !== expectedRevision)
-      this.dependencies.clearStartIntent(workId);
-    return edited;
+    const changed = edited.ok && edited.revision !== expectedRevision;
+    if (changed) this.dependencies.clearStartIntent(workId);
+    return { ...edited, changed };
   }
 
   async continueWork(
