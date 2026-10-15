@@ -14,13 +14,12 @@ export function detectNeoReplyLanguage(text: string): NeoReplyLanguage | null {
     .replace(/\S*(?:[/\\]|\.[A-Za-z]{1,5}\b|#\d)\S*/g, ' ');
   const kana = count(prose, /[\u3040-\u30ff]/g);
   const hangul = count(prose, /[\uac00-\ud7af]/g);
-  const han = count(prose, /[\u4e00-\u9fff]/g);
-  if (kana >= 2) return 'Japanese';
-  if (hangul >= 2) return 'Korean';
-  if (han >= 2) return 'Chinese';
+  const cjk = kana + hangul + count(prose, /[\u4e00-\u9fff]/g);
   const words = count(prose, /[A-Za-z]{2,}/g);
-  if (!words) return null;
-  return words <= 2 || count(prose, ENGLISH_WORD) * 4 >= words ? 'English' : null;
+  if (cjk >= 2 && Math.ceil(cjk / 2) >= words)
+    return kana >= 2 ? 'Japanese' : hangul >= 2 ? 'Korean' : 'Chinese';
+  const english = count(prose, ENGLISH_WORD);
+  return english && english * 4 >= words ? 'English' : null;
 }
 
 export function neoPromptText(messages: readonly SDKMessage[]): string {
@@ -46,12 +45,16 @@ export function readNeoTurnLanguage(
   reads: {
     resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
     getPrompts(sessionId: string, messageId: string): SDKMessage[];
+    latestHumanPrompt(sessionId: string): SDKMessage | null;
   }
 ): NeoReplyLanguage | null {
   const origin = reads.resolveAskOrigin(input);
-  return origin
+  const asked = origin
     ? detectNeoReplyLanguage(neoPromptText(reads.getPrompts(origin.sessionId, origin.messageId)))
     : null;
+  if (asked) return asked;
+  const latest = reads.latestHumanPrompt(input.sessionId);
+  return latest ? detectNeoReplyLanguage(neoPromptText([latest])) : null;
 }
 
 export function withNeoReplyLanguage<T extends { message?: { content?: unknown } }>(

@@ -907,6 +907,7 @@ export class QueryRunner {
               resolveAskOrigin: resolveOrigin,
               getPrompts: (id, uuid) =>
                 this.ctx.db.getSDKMessageRepo().getStoredPromptsByUuid(id, uuid),
+              latestHumanPrompt: (id) => this.ctx.db.getSDKMessageRepo().latestHumanPrompt(id),
             }
           );
         queryOptions.mcpServers = {
