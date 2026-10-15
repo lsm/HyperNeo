@@ -11,6 +11,7 @@ import {
   presentNeoGithubQuery,
 } from '../../../../src/lib/neo/packs/coding/github-query.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { operationSignature } from '../../../../src/lib/operations/discovery.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
@@ -24,6 +25,7 @@ const pr = (number: number, mergedAt: string | null) => ({
   url: `https://github.com/lsm/HyperNeo/pull/${number}`,
   state: mergedAt ? 'MERGED' : 'OPEN',
   createdAt: '2026-10-15T09:00:00Z',
+  updatedAt: mergedAt ?? '2026-10-15T09:00:00Z',
   mergedAt,
   closedAt: mergedAt,
 });
@@ -48,7 +50,7 @@ describe('planNeoGithubQuery', () => {
           '--limit',
           '21',
           '--json',
-          'number,title,url,state,createdAt,mergedAt,closedAt',
+          'number,title,url,state,createdAt,updatedAt,mergedAt,closedAt',
           '--search',
           `merged:${since}..${until}`,
         ],
@@ -83,6 +85,20 @@ describe('presentNeoGithubQuery', () => {
     });
   });
 
+  test('orders an updated-time list by when each item was last updated', () => {
+    const updated = planNeoGithubQuery(
+      NeoGithubQuery.parse({ repo: 'lsm/HyperNeo', by: 'updated', since, limit: 1 })
+    ) as { value: Parameters<typeof presentNeoGithubQuery>[0] };
+    expect(
+      presentNeoGithubQuery(updated.value, {
+        data: [
+          { ...pr(1, null), updatedAt: '2026-10-15T11:59:00Z' },
+          { ...pr(2, null), createdAt: '2026-10-15T09:30:00Z', updatedAt: since },
+        ],
+      })
+    ).toMatchObject({ value: { items: [{ number: 1 }], truncated: true } });
+  });
+
   test('reports an unreadable list instead of an empty one', () => {
     expect(presentNeoGithubQuery(plan.value, { data: null })).toMatchObject({
       reason: { ok: false, reason: expect.stringContaining('unreadable') },
@@ -91,6 +107,24 @@ describe('presentNeoGithubQuery', () => {
 });
 
 describe('neo.github.read list form', () => {
+  test("shows both forms' fields in Neo's operation signature", async () => {
+    const db = await createTestDb();
+    try {
+      const service = new NeoService(
+        db,
+        { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
+        { event: mock(() => {}) } as unknown as MessageHub,
+        new InternalEventBus<DaemonInternalEventMap>()
+      );
+      const read = createOperationRegistry(createNeoOperations(service)).get('neo.github.read')!;
+      const signature = operationSignature(read);
+      for (const field of ['url?', 'repo?', 'state?', 'by?', 'since?', 'until?', 'limit?'])
+        expect(signature).toContain(field);
+    } finally {
+      db.close();
+    }
+  });
+
   test('returns every pull request gh finds in the window, with merge times', async () => {
     const db = await createTestDb();
     try {

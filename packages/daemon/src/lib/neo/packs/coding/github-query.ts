@@ -29,6 +29,7 @@ const Item = z.object({
   url: z.string(),
   state: z.string(),
   createdAt: z.string(),
+  updatedAt: z.string(),
   mergedAt: z.string().nullable().default(null),
   closedAt: z.string().nullable().default(null),
 });
@@ -72,8 +73,8 @@ export function planNeoGithubQuery(query: NeoGithubQuery): { value: Plan } | { r
           : '';
   const fields =
     query.kind === 'pr'
-      ? 'number,title,url,state,createdAt,mergedAt,closedAt'
-      : 'number,title,url,state,createdAt,closedAt';
+      ? 'number,title,url,state,createdAt,updatedAt,mergedAt,closedAt'
+      : 'number,title,url,state,createdAt,updatedAt,closedAt';
   return {
     value: {
       query,
@@ -111,8 +112,13 @@ export function presentNeoGithubQuery(
     };
   const at = (item: z.infer<typeof Item>) =>
     Date.parse(
-      (plan.by === 'merged' ? item.mergedAt : plan.by === 'closed' ? item.closedAt : null) ??
-        item.createdAt
+      (plan.by === 'merged'
+        ? item.mergedAt
+        : plan.by === 'closed'
+          ? item.closedAt
+          : plan.by === 'updated'
+            ? item.updatedAt
+            : null) ?? item.createdAt
     );
   const items = [...parsed.data].sort((a, b) => at(b) - at(a));
   return {
