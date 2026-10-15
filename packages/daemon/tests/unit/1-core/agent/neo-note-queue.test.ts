@@ -112,6 +112,7 @@ describe('neoNoteSubject', () => {
     expect(neoNoteSubject('w1:needs-you:5')).toEqual({ kind: 'card', id: 'w1' });
     expect(neoNoteSubject('neo-card-pr:w1:abc')).toEqual({ kind: 'card', id: 'w1' });
     expect(neoNoteSubject('neo-ask-evidence:a1:x')).toEqual({ kind: 'ask', id: 'a1' });
+    expect(neoNoteSubject('neo-trigger:idle:a1:x')).toEqual({ kind: 'ask', id: 'a1' });
     expect(neoNoteSubject('neo-ask-answer:a1:i1:5')).toBeNull();
     expect(neoNoteSubject('neo-nudge:m1')).toBeNull();
   });
