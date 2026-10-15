@@ -32,7 +32,6 @@ describe('Neo project hierarchy controls', () => {
         refresh={refresh}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
     expect(screen.getByLabelText('Path for Section').textContent).toBe('Product › Repo › Section');
     const root = screen.getByLabelText('Move Product under') as HTMLSelectElement;
     expect([...root.options].map((option) => option.value)).toEqual(['']);
@@ -51,7 +50,6 @@ describe('Neo project hierarchy controls', () => {
     render(
       <NeoProjectTree projects={[project('Root'), project('Child', 'Root')]} refresh={refresh} />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
     fireEvent.change(screen.getByLabelText('Move Child under'), { target: { value: '' } });
     expect((await screen.findByRole('alert')).textContent).toBe('superseded');
     expect(refresh).not.toHaveBeenCalled();
@@ -61,7 +59,6 @@ describe('Neo project hierarchy controls', () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     render(<NeoProjectTree projects={[project('Repo')]} refresh={refresh} />);
     expect(api.request).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
     fireEvent.change(screen.getByLabelText('Parent project'), { target: { value: 'Repo' } });
     fireEvent.input(screen.getByLabelText('GitHub epic URL'), {
       target: { value: 'https://github.com/lsm/HyperNeo/issues/6756' },
