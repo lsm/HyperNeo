@@ -352,6 +352,7 @@ import {
   neoTriggerMessageId,
   neoTriggerMessageIds,
   planNeoTriggerRetry,
+  shouldRetryNeoTrigger,
   neoTriggerNote,
   noteNeoAskTrigger,
   type NeoTriggerSweepDeps,
@@ -764,6 +765,7 @@ export class NeoService {
       work: (id) => this.repo.getWork(id),
       deliveryRetryPending: (id) => isNeoDeliveryRetryPending(this.db.getJobQueueRepo(), id),
       told: (askId) => this.triggers.told(askId),
+      heard: (ask) => this.heardOutcome(ask),
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
       wake: (ask, trigger) =>
         this.open(ask.projectId)
@@ -1204,12 +1206,27 @@ export class NeoService {
       const ask = this.askRecords.get(askId);
       const target = ask ? this.repo.getBindingForProject(ask.projectId)?.sessionId : null;
       if (!ask || !target || this.isTriggerOwnerBusy(ask)) continue;
+      if (!shouldRetryNeoTrigger(ask, triggerId.split(':')[0], this.heardOutcome(ask))) continue;
       const plan = planNeoTriggerRetry(
         this.publications.hasTrigger(conversationId, triggerId, ''),
         this.triggers.noteStatuses(target, neoTriggerMessageIds(triggerId))
       );
       if (plan === 'retry') this.triggers.forget(askId, triggerId);
     }
+  }
+
+  private heardOutcome(ask: NeoAsk): boolean {
+    const root = this.repo.getBindingForProject(null);
+    return (
+      !!ask.settledAt &&
+      !!ask.originMessageId &&
+      !!root?.sessionId.startsWith('neo:') &&
+      this.publications.toldSince(
+        root.sessionId.slice(4),
+        { sessionId: ask.originSessionId, messageId: ask.originMessageId },
+        new Date(ask.settledAt).toISOString()
+      )
+    );
   }
 
   private isTriggerOwnerBusy(ask: NeoAsk): boolean {
@@ -2969,6 +2986,8 @@ export class NeoService {
     );
     if (!plan) return;
     const interrupted = messages.firstUserUuidBetween(sessionId, plan.sinceAt, plan.untilAt);
+    const parent = interrupted ? { sessionId, messageId: interrupted } : null;
+    if (this.triggerAnswered(parent)) return;
     await this.deliverToOrigin(
       sessionId,
       `${NEO_TURN_LIMIT_PREFIX}${plan.resultUuid}`,
@@ -2976,7 +2995,7 @@ export class NeoService {
         this.askRecords.openedBy(sessionId, plan.since, plan.until),
         this.repo.proposedBy(sessionId, plan.since, plan.until)
       ),
-      interrupted ? { sessionId, messageId: interrupted } : null,
+      parent,
       'continues'
     );
   }
@@ -3697,6 +3716,14 @@ export class NeoService {
     return (
       this.inputOrigins.trigger(input.sessionId, input.messageId) ??
       (this.isHumanInput(input) ? neoHumanTrigger(input.messageId) : null)
+    );
+  }
+
+  private triggerAnswered(parent: NeoAskOrigin | null): boolean {
+    const trigger = this.parentTrigger(parent);
+    const root = this.repo.getBindingForProject(null);
+    return (
+      !!trigger && !!root && this.publications.hasTrigger(root.sessionId.slice(4), trigger, '')
     );
   }
 

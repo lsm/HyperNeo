@@ -14,6 +14,8 @@ import {
   neoReplyOriginKey,
   neoTriggerMessageId,
   planNeoTriggerRetry,
+  requireNeoTriggerUnheard,
+  shouldRetryNeoTrigger,
   NEO_TRIGGER_RETRY_MS,
   neoAskTriggerKeys,
   neoTriggerNote,
@@ -213,6 +215,7 @@ describe('noteNeoAskTrigger', () => {
       work,
       deliveryRetryPending: () => false,
       told: (askId) => new Set(told.get(askId)),
+      heard: () => false,
       record: (askId, keys) => told.set(askId, new Set([...(told.get(askId) ?? []), ...keys])),
       wake: async (_ask, trigger) => {
         wakes.push(trigger);
@@ -587,5 +590,37 @@ describe('NeoService notification triggers', () => {
     sweep();
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(mailbox()).toEqual([]);
+  });
+});
+
+describe('requireNeoTriggerUnheard', () => {
+  const trigger = (kind: 'outcome' | 'idle') => ({
+    triggerId: `${kind}:a1:x`,
+    kind,
+    keys: [`${kind}:1`],
+    lines: [],
+  });
+  test('an outcome the human already heard is covered, not delivered', () => {
+    const recorded: unknown[] = [];
+    const deps = { heard: () => true, record: (...args: unknown[]) => recorded.push(args) };
+    expect(requireNeoTriggerUnheard({ id: 'a1' } as never, trigger('outcome'), deps)).toEqual({
+      reason: null,
+    });
+    expect(recorded).toEqual([['a1', ['outcome:1'], null]]);
+    expect(requireNeoTriggerUnheard({ id: 'a1' } as never, trigger('idle'), deps)).toMatchObject({
+      value: { kind: 'idle' },
+    });
+  });
+});
+
+describe('shouldRetryNeoTrigger', () => {
+  test.each([
+    ['open', 'idle', false, true],
+    ['achieved', 'idle', false, false],
+    ['abandoned', 'action', false, false],
+    ['achieved', 'outcome', false, true],
+    ['achieved', 'outcome', true, false],
+  ] as const)('ask %s, %s trigger, heard %s: retry %s', (status, kind, heard, retry) => {
+    expect(shouldRetryNeoTrigger({ status }, kind, heard)).toBe(retry);
   });
 });
