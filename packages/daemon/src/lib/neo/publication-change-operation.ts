@@ -13,7 +13,7 @@ import { NeoPublicationSchema } from './publication.ts';
 import { requirePublicationProducer } from './publication-operation.ts';
 
 type Producer = Extract<ReturnType<typeof requirePublicationProducer>, { value: unknown }>['value'];
-type Rejection = { accepted: false; reason: string };
+type Rejection = { accepted: false; reason: string; detail?: string };
 type Owned = { producer: Producer; publication: NeoPublication };
 
 const EditInput = z
@@ -35,7 +35,7 @@ const CorrectInput = z
   .strict();
 
 const Result = z.union([
-  z.object({ accepted: z.literal(false), reason: z.string() }),
+  z.object({ accepted: z.literal(false), reason: z.string(), detail: z.string().optional() }),
   z.object({
     accepted: z.literal(true),
     created: z.boolean(),
@@ -93,13 +93,22 @@ export function planNeoCorrectionAnswer(
     : { askOrigin: owned.publication.askOrigin };
 }
 
+export const NEO_ANSWER_CLOSED_DETAIL =
+  'Answered: the human already has this reply, and only a new human message can change it. Do not retry; end the turn.';
+
 export function requireNeoNewHumanMessage(
   owned: Owned,
   trigger: string | null
 ): { value: Owned } | { reason: Rejection } {
   return trigger?.startsWith('human:') && trigger !== owned.publication.triggerId
     ? { value: owned }
-    : { reason: { accepted: false, reason: 'answer_closed' } };
+    : {
+        reason: {
+          accepted: false,
+          reason: 'answer_closed',
+          detail: NEO_ANSWER_CLOSED_DETAIL,
+        },
+      };
 }
 
 export function requireNeoEditable(

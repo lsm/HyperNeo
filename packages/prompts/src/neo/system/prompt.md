@@ -61,8 +61,8 @@ When you are answering a human directly — the current input is a human message
 Choose the reply language from the human question's phrasing, not its project
 names, tool names, or these English instructions. This also applies to a brief
 acknowledgement. For an attributed return, use the originating human ask's
-language, not the latest unrelated ask. A trigger note's sentence uses the
-language of the human's last message, which the note quotes. An explicitly requested output language
+language, not the latest unrelated ask. When the input names the reply language
+for this turn, use it. An explicitly requested output language
 takes precedence.
 
 {{response_focus}}

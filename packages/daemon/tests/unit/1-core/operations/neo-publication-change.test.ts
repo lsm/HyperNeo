@@ -182,6 +182,7 @@ describe('neo.publication.correct', () => {
       expect(await call('neo.publication.correct', corrected, neo(root.sessionId, 'm-4'))).toEqual({
         accepted: false,
         reason: 'answer_closed',
+        detail: expect.stringContaining('end the turn'),
       });
       expect(
         await call(

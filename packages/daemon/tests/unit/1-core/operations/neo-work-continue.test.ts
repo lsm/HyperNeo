@@ -600,7 +600,7 @@ describe('neo.work.continue', () => {
     ).toMatchObject({ value: { ok: true } });
     expect(service.workWakes.get(work.id)).toMatchObject({ stalled: 0 });
     expect(service.isContinueStalled(work.id)).toBe(false);
-    expect(await actions()).toEqual([]);
+    expect(await actions()).toEqual([{ kind: 'drop' }]);
     expect(await invoke({ id: work.id, message: 'Go on.' }, neo)).toMatchObject({
       value: { ok: true },
     });

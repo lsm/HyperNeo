@@ -122,21 +122,13 @@ const TRIGGER_WORDS: Record<NeoTriggerKind, { what: string; sentence: string }> 
   },
   action: { what: 'the ask needs the human', sentence: 'say what is needed from them.' },
 };
-const LAST_HUMAN_LIMIT = 300;
-
-export function neoTriggerNote(
-  ask: Pick<NeoAsk, 'id' | 'title'>,
-  trigger: NeoAskTrigger,
-  lastHuman: string | null
-): string {
-  const quoted = lastHuman?.trim().slice(0, LAST_HUMAN_LIMIT);
+export function neoTriggerNote(ask: Pick<NeoAsk, 'id' | 'title'>, trigger: NeoAskTrigger): string {
   return fillPrompt(NEO_TRIGGER_NOTE, {
     triggerId: trigger.triggerId,
     askId: ask.id,
     title: ask.title,
     lines: trigger.lines.map((line) => `- ${line}`).join('\n'),
     ...TRIGGER_WORDS[trigger.kind],
-    lastHuman: quoted ? JSON.stringify(quoted) : "(none yet; use the ask's language)",
   });
 }
 
@@ -179,6 +171,8 @@ export function neoActionTriggerKey(
       );
     case 'confirm':
       return key(`confirm:${action.itemId}`, `step to confirm: ${action.step}`);
+    case 'drop':
+      return key('drop', 'nothing is running; the human can drop the ask');
     case 'talk':
       return key(
         `talk:${action.workId}:${action.what}`,
@@ -238,7 +232,7 @@ export function neoAskTriggerKeys(
     ...failed,
     ...idle,
     ...(read.view.humanActions ?? [])
-      .filter((action) => action.kind !== 'close')
+      .filter((action) => action.kind !== 'close' && action.kind !== 'drop')
       .map((action) => neoActionTriggerKey(ask, action, work)),
   ];
 }
