@@ -13,6 +13,7 @@ const SESSIONS_PER_PLACE = 20;
 const RECENT_MS = 2 * 60_000;
 const LIST_REUSE_MS = 60_000;
 const LIST_PAGES = 10;
+const LIST_HORIZON_MS = 90 * 24 * 60 * 60_000;
 const LIST_TIMEOUT_MS = 10_000;
 const LIST_OVERALL_TIMEOUT_MS = 15_000;
 const TITLE_LIMIT = 80;
@@ -104,10 +105,11 @@ export function acpSessionTitle(title: string | null | undefined): string {
   return flat.slice(0, TITLE_LIMIT) || 'Untitled session';
 }
 
-async function readAcpSessionPages(
-  client: AcpClient,
+export async function readAcpSessionPages(
+  client: Pick<AcpClient, 'initialize' | 'canListSessions' | 'listSessions'>,
   agent: Pick<AcpAgentSpec, 'sessionFolder'>,
-  cwd: string
+  cwd: string,
+  since: number
 ): Promise<AcpAgentSession[]> {
   await client.initialize();
   if (!client.canListSessions()) return [];
@@ -125,7 +127,8 @@ async function readAcpSessionPages(
         updatedAt: session.updatedAt ? Date.parse(session.updatedAt) || 0 : 0,
       });
     cursor = result.nextCursor;
-    if (!cursor) break;
+    const oldest = sessions.at(-1)?.updatedAt;
+    if (!cursor || (oldest && oldest < since)) break;
   }
   return sessions;
 }
@@ -134,7 +137,8 @@ export async function listAcpAgentSessions(
   command: string,
   agent: Pick<AcpAgentSpec, 'args' | 'sessionFolder'>,
   cwd = homedir(),
-  overallTimeoutMs = LIST_OVERALL_TIMEOUT_MS
+  overallTimeoutMs = LIST_OVERALL_TIMEOUT_MS,
+  now = Date.now()
 ): Promise<AcpAgentSession[]> {
   const client = new AcpClient({
     command,
@@ -152,7 +156,10 @@ export async function listAcpAgentSessions(
     );
   });
   try {
-    return await Promise.race([readAcpSessionPages(client, agent, cwd), timedOut]);
+    return await Promise.race([
+      readAcpSessionPages(client, agent, cwd, now - LIST_HORIZON_MS),
+      timedOut,
+    ]);
   } finally {
     clearTimeout(timer);
     await client.close();
@@ -164,10 +171,19 @@ export function reuseAcpSessionList(
   now: () => number
 ): () => Promise<readonly AcpAgentSession[]> {
   let last: { at: number; sessions: Promise<readonly AcpAgentSession[]> } | null = null;
+  let listed: readonly AcpAgentSession[] | null = null;
   return () => {
-    if (last && now() - last.at < LIST_REUSE_MS) return last.sessions;
-    last = { at: now(), sessions: list() };
-    return last.sessions;
+    if (last && now() - last.at < LIST_REUSE_MS)
+      return listed ? Promise.resolve(listed) : last.sessions;
+    const sessions = list();
+    last = { at: now(), sessions };
+    sessions.then(
+      (fresh) => {
+        listed = fresh;
+      },
+      () => {}
+    );
+    return listed ? Promise.resolve(listed) : sessions;
   };
 }
 

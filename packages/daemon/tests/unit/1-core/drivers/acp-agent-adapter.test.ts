@@ -11,6 +11,7 @@ import {
   createAcpAgentAdapter,
   findAcpAgentBinary,
   gitWorktreeProject,
+  readAcpSessionPages,
   reuseAcpSessionList,
 } from '../../../../src/lib/drivers/acp-agent-adapter';
 
@@ -149,5 +150,58 @@ describe('ACP agent helpers', () => {
     expect(await list()).toHaveLength(1);
     await list();
     expect(calls).toBe(2);
+  });
+
+  test('readAcpSessionPages stops paging once a page reaches sessions older than the horizon', async () => {
+    const at = (day: number) => new Date(day * 86_400_000).toISOString();
+    const pages = [
+      {
+        sessions: [{ sessionId: 'a', cwd: '/r', title: 'A', updatedAt: at(100) }],
+        nextCursor: '1',
+      },
+      { sessions: [{ sessionId: 'b', cwd: '/r', title: 'B', updatedAt: at(40) }], nextCursor: '2' },
+      {
+        sessions: [{ sessionId: 'c', cwd: '/r', title: 'C', updatedAt: at(10) }],
+        nextCursor: null,
+      },
+    ];
+    const cursors: (string | undefined)[] = [];
+    const client = {
+      initialize: async () => ({}) as never,
+      canListSessions: () => true,
+      listSessions: async (params: { cursor?: string } = {}) => {
+        cursors.push(params.cursor);
+        return pages[Number(params.cursor ?? 0)];
+      },
+    };
+    const sessions = await readAcpSessionPages(client, {}, '/home', 50 * 86_400_000);
+    expect(sessions.map((s) => s.sessionId)).toEqual(['a', 'b']);
+    expect(cursors).toEqual([undefined, '1']);
+  });
+
+  test('reuseAcpSessionList answers from the last listing while a fresh one loads', async () => {
+    let now = 0;
+    let round = 0;
+    let release: () => void = () => {};
+    const list = reuseAcpSessionList(
+      async () => {
+        round++;
+        if (round === 3) throw new Error('agent down');
+        if (round === 2) await new Promise<void>((resolve) => (release = resolve));
+        return [session(`s${round}`, '/repo', 'Work')];
+      },
+      () => now
+    );
+
+    expect((await list()).map((s) => s.sessionId)).toEqual(['s1']);
+    now = 60_000;
+    expect((await list()).map((s) => s.sessionId)).toEqual(['s1']);
+    expect(round).toBe(2);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((await list()).map((s) => s.sessionId)).toEqual(['s2']);
+    now = 120_000;
+    expect((await list()).map((s) => s.sessionId)).toEqual(['s2']);
+    expect(round).toBe(3);
   });
 });

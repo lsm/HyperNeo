@@ -112,8 +112,9 @@ async function open() {
   render(<NeoLive />);
   const input = await screen.findByRole('textbox', { name: 'Message Neo' });
   await waitFor(() =>
-    expect(request.mock.calls.some((call) => call[1]?.name === 'neo.snapshot')).toBe(true)
+    expect(request.mock.calls.some((call) => call[0] === 'session.get')).toBe(true)
   );
+  await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   return input;
 }
 function submit(text?: string) {

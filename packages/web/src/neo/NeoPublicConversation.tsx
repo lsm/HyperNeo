@@ -283,8 +283,10 @@ function PublicEntry({
   forwarders,
   onQuote,
   status,
+  loaded,
 }: {
   entry: NeoPublicEntry;
+  loaded?: ReadonlySet<string>;
   status?: NeoMessageStatus;
   projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
@@ -340,6 +342,43 @@ function PublicEntry({
             {time.label}
           </time>
         )}
+        {publication?.corrects &&
+          (loaded?.has(publication.corrects) ? (
+            <a
+              data-publication-correction
+              href={`#${neoMessageAnchor(publication.conversationId, `publication-${publication.corrects}`)}`}
+              class="text-[11px] font-medium text-warning hover:underline"
+            >
+              Correction of an earlier reply
+            </a>
+          ) : (
+            <span data-publication-correction class="text-[11px] font-medium text-warning">
+              Correction of an earlier reply
+            </span>
+          ))}
+        {publication?.editedAt && (
+          <span
+            data-publication-edited
+            title={`Edited ${new Date(publication.editedAt).toLocaleString()}`}
+            class="text-[11px] text-fg-faint"
+          >
+            edited
+          </span>
+        )}
+        {publication?.correctedBy &&
+          (loaded?.has(publication.correctedBy) ? (
+            <a
+              data-publication-corrected
+              href={`#${neoMessageAnchor(publication.conversationId, `publication-${publication.correctedBy}`)}`}
+              class="text-[11px] text-warning hover:underline"
+            >
+              Corrected below
+            </a>
+          ) : (
+            <span data-publication-corrected class="text-[11px] text-warning">
+              Corrected below
+            </span>
+          ))}
         {ask && !undelivered && (
           <span
             role="img"
@@ -624,6 +663,11 @@ export function NeoPublicConversation({
   onRetry?: () => void;
   onLoadEarlier?: () => void;
 }) {
+  const loaded = new Set(
+    conversation.entries.flatMap((entry) =>
+      entry.kind === 'publication' ? [entry.publication.publicationId] : []
+    )
+  );
   return (
     <div class="space-y-6" aria-label="Public conversation">
       {conversation.status !== 'ready' && (
@@ -667,6 +711,7 @@ export function NeoPublicConversation({
             forwarders={forwarders}
             onQuote={onQuote}
             status={entry.kind === 'ask' ? statuses?.get(entry.ask.requestId) : undefined}
+            loaded={loaded}
           />
         )
       )}

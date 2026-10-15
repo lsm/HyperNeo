@@ -2,6 +2,7 @@ import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_PROBE_REQUEST_TIMEOUT_MS = 4000;
+const CONNECT_FAILURE_MEMORY_MS = 60_000;
 
 interface RemoteConnection {
   readonly hub: MessageHub;
@@ -43,12 +44,17 @@ export class RemoteDaemonRegistry {
   private readonly urls = new Map<string, string>();
   private persist: ((attachments: DaemonAttachment[]) => void) | null = null;
   private readonly attempts = new Map<string, RemoteAttempt>();
+  private readonly connectFailures = new Map<string, { at: number; reason: string }>();
   private readonly connectTimeoutMs: number;
   private readonly probeRequestTimeoutMs: number;
+  private readonly now: () => number;
 
-  constructor(options: { connectTimeoutMs?: number; probeRequestTimeoutMs?: number } = {}) {
+  constructor(
+    options: { connectTimeoutMs?: number; probeRequestTimeoutMs?: number; now?: () => number } = {}
+  ) {
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.probeRequestTimeoutMs = options.probeRequestTimeoutMs ?? DEFAULT_PROBE_REQUEST_TIMEOUT_MS;
+    this.now = options.now ?? Date.now;
   }
 
   restore(
@@ -81,8 +87,14 @@ export class RemoteDaemonRegistry {
     if (existing) return existing;
     const attempt = this.createAttempt(url);
     this.attempts.set(daemonId, attempt);
-    attempt.connection.catch(() => {
-      if (this.attempts.get(daemonId) === attempt) this.attempts.delete(daemonId);
+    attempt.connection.catch((error: unknown) => {
+      if (this.attempts.get(daemonId) === attempt) {
+        this.attempts.delete(daemonId);
+        this.connectFailures.set(daemonId, {
+          at: this.now(),
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
       attempt.hub.cleanup();
       void attempt.transport.close();
     });
@@ -117,6 +129,7 @@ export class RemoteDaemonRegistry {
   }
 
   forget(daemonId: string): void {
+    this.connectFailures.delete(daemonId);
     const attempt = this.attempts.get(daemonId);
     if (!attempt) return;
     this.discard(daemonId, attempt);
@@ -144,6 +157,9 @@ export class RemoteDaemonRegistry {
   ): Promise<unknown> => {
     const url = this.urls.get(daemonId);
     if (url === undefined) throw new Error(`No attached daemon: ${daemonId}`);
+    const failed = this.connectFailures.get(daemonId);
+    if (failed && this.now() - failed.at < CONNECT_FAILURE_MEMORY_MS)
+      throw new Error(`${failed.reason} (not retried for ${CONNECT_FAILURE_MEMORY_MS / 1000}s)`);
     const attempt = this.open(daemonId, url);
     const connection = await attempt.connection;
     try {

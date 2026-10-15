@@ -1362,16 +1362,18 @@ export function createNeoOperations(service: NeoService) {
         : null;
       if (projectId && !service.repo.getProject(projectId))
         return { ok: false as const, reason: 'Project not found.' };
-      await invokeOperation(
-        service.sessions.getOperationRegistry(),
-        'work.find',
-        { limit: 50 },
-        caller
-      );
-      return {
-        ...snapshot(caller, undefined, undefined, input.summaries),
-        sessionId: await service.open(projectId),
-      };
+      void Promise.resolve()
+        .then(() =>
+          invokeOperation(
+            service.sessions.getOperationRegistry(),
+            'work.find',
+            { limit: 50 },
+            caller
+          )
+        )
+        .catch(() => null);
+      const sessionId = await service.open(projectId);
+      return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
     }
   );
   const cancelConsultation = path(
@@ -2016,7 +2018,10 @@ export function createNeoOperations(service: NeoService) {
       publications: service.publications,
       isConsultationReturn: (conversationId, publicationId) =>
         service.consultations.returnsPublication(conversationId, publicationId),
-      notify: () => service.notifyChanged(),
+      notify: (conversationId) => {
+        service.notifyChanged();
+        service.notifyPublicationsChanged(conversationId);
+      },
     }),
     createNeoRouteCorrectOperation(service.db, service.repo),
     createNeoAskForwardOperation({

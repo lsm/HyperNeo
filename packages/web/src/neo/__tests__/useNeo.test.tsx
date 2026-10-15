@@ -4,6 +4,7 @@ import { useNeo } from '../useNeo.ts';
 
 const request = vi.hoisted(() => vi.fn());
 const neoEvents = vi.hoisted(() => ({ changed: null as (() => void) | null }));
+const selectGate = vi.hoisted(() => ({ wait: null as Promise<void> | null }));
 vi.mock('../../lib/connection-manager.ts', () => ({
   connectionManager: {
     getHub: async () => ({
@@ -20,7 +21,9 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 }));
 vi.mock('../../lib/session-store.ts', () => ({
   SessionStore: class {
-    async select() {}
+    async select() {
+      await selectGate.wait;
+    }
     async destroy() {}
   },
 }));
@@ -28,6 +31,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   neoEvents.changed = null;
+  selectGate.wait = null;
 });
 
 function ViewProbe() {
@@ -36,6 +40,7 @@ function ViewProbe() {
     <>
       <button onClick={() => void neo.open()}>Open Neo</button>
       <p>Overview work: {neo.snapshot?.work.map((item) => item.id).join(',') ?? 'loading'}</p>
+      <p>Session: {neo.sessionId ?? 'none'}</p>
       <p>
         Board work:{' '}
         {neo
@@ -83,15 +88,15 @@ describe('useNeo intake client', () => {
 });
 
 describe('useNeo root conversation', () => {
-  it('opens and refreshes only the root snapshot', async () => {
+  it('shows the snapshot neo.open returns without reading it again, then refreshes on change', async () => {
     let version = 'global';
-    request.mockImplementation(async (_method: string, { name }: { name: string }) => ({
+    request.mockImplementation(async () => ({
       ok: true,
       sessionId: 'root',
       projects: [],
       work: [
         {
-          id: name === 'neo.open' ? 'unused' : version,
+          id: version,
           requestKey: version,
           projectId: null,
           originSessionId: 'root',
@@ -108,6 +113,7 @@ describe('useNeo root conversation', () => {
     render(<ViewProbe />);
     await waitFor(() => expect(screen.getByText('Overview work: global')).toBeTruthy());
     expect(screen.getByText('Board work: global')).toBeTruthy();
+    expect(request.mock.calls.filter(([, call]) => call.name === 'neo.snapshot')).toHaveLength(0);
     version = 'refreshed';
     act(() => neoEvents.changed?.());
     await waitFor(() => expect(screen.getByText('Overview work: refreshed')).toBeTruthy());
@@ -118,6 +124,37 @@ describe('useNeo root conversation', () => {
     expect(screen.getByText('Board work: refreshed')).toBeTruthy();
     for (const [, call] of request.mock.calls) expect(call.input).toEqual({});
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+  it('shows the opened snapshot while the conversation is still loading', async () => {
+    let release = () => {};
+    selectGate.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    request.mockImplementation(async () => ({
+      ok: true,
+      sessionId: 'root',
+      projects: [],
+      work: [
+        {
+          id: 'first',
+          requestKey: 'first',
+          projectId: null,
+          originSessionId: 'root',
+          sessionId: 'first',
+          title: 'first',
+          instruction: 'Do this',
+          status: 'queued',
+          report: null,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    }));
+    render(<ViewProbe />);
+    await waitFor(() => expect(screen.getByText('Overview work: first')).toBeTruthy());
+    expect(screen.getByText('Session: none')).toBeTruthy();
+    act(() => release());
+    await waitFor(() => expect(screen.getByText('Session: root')).toBeTruthy());
   });
 });
 
