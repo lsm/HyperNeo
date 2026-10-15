@@ -2,13 +2,15 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { basename } from 'node:path';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import { claudeTranscriptCwd, isTempCwd } from './claude-feed.ts';
-import { listFeedFiles, readFeedHead } from './work-feed.ts';
+import { listFeedFilesAsync, readFeedPrefix } from './work-feed.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { mergePlaceGroups, withChatEvidence } from './places.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
 
 const SESSIONS_PER_PLACE = 10;
 const TITLE_CHARS = 80;
+const CWD_PREFIX_BYTES = 16 * 1024;
+const HEAD_READS_AT_ONCE = 32;
 
 export interface ClaudeCodeAdapterDeps {
   projectsDir?: string;
@@ -26,24 +28,33 @@ interface ClaudeFolder {
 
 type FolderCache = Map<string, { at: number; record: ClaudeFolder | null }>;
 
-export function readClaudeCodeFolders(root: string, cache: FolderCache): ClaudeFolder[] {
-  const files = listFeedFiles(root, Date.now() - 90 * 24 * 60 * 60_000, 2);
+async function readClaudeFolder(path: string, at: number): Promise<ClaudeFolder | null> {
+  try {
+    const folder =
+      claudeTranscriptCwd(await readFeedPrefix(path, CWD_PREFIX_BYTES)) ||
+      claudeTranscriptCwd(await readFeedPrefix(path));
+    return folder ? { sessionId: basename(path, '.jsonl'), folder, at } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function readClaudeCodeFolders(
+  root: string,
+  cache: FolderCache
+): Promise<ClaudeFolder[]> {
+  const files = await listFeedFilesAsync(root, Date.now() - 90 * 24 * 60 * 60_000, 2);
   const paths = new Set(files.map((file) => file.path));
   for (const path of cache.keys()) if (!paths.has(path)) cache.delete(path);
-  return files.flatMap((file) => {
-    const known = cache.get(file.path);
-    if (known?.at === file.mtime) return known.record ? [known.record] : [];
-    try {
-      const folder = claudeTranscriptCwd(readFeedHead(file.path));
-      const record = folder
-        ? { sessionId: basename(file.path, '.jsonl'), folder, at: file.mtime }
-        : null;
-      cache.set(file.path, { at: file.mtime, record });
-      return record ? [record] : [];
-    } catch {
-      return [];
-    }
-  });
+  const stale = files.filter((file) => cache.get(file.path)?.at !== file.mtime);
+  for (let start = 0; start < stale.length; start += HEAD_READS_AT_ONCE) {
+    const batch = stale.slice(start, start + HEAD_READS_AT_ONCE);
+    const records = await Promise.all(batch.map((file) => readClaudeFolder(file.path, file.mtime)));
+    batch.forEach((file, index) =>
+      cache.set(file.path, { at: file.mtime, record: records[index] })
+    );
+  }
+  return files.flatMap((file) => cache.get(file.path)?.record ?? []);
 }
 
 function sessionTitle(chat: WorkChatMatch): string {
@@ -124,8 +135,8 @@ const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI
   .pipe((deps: ClaudeCodeAdapterDeps) => deps.desktopSessions(), 'deps', 'desktop')
   .pipe((deps: ClaudeCodeAdapterDeps) => deps.ownedSessions?.() ?? new Set(), 'deps', 'owned')
   .pipe(
-    (deps: ClaudeCodeAdapterDeps, cache: FolderCache) =>
-      deps.projectsDir ? readClaudeCodeFolders(deps.projectsDir, cache) : [],
+    async (deps: ClaudeCodeAdapterDeps, cache: FolderCache) =>
+      deps.projectsDir ? await readClaudeCodeFolders(deps.projectsDir, cache) : [],
     ['deps', 'cache'],
     'folders'
   )

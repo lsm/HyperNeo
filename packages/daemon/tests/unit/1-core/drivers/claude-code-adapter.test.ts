@@ -156,6 +156,28 @@ describe('createClaudeCodeAdapter', () => {
     }
   });
 
+  test('finds the folder of a transcript whose first lines carry no cwd', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
+    try {
+      mkdirSync(join(dir, 'encoded'));
+      writeFileSync(
+        join(dir, 'encoded', 'late.jsonl'),
+        `${JSON.stringify({ type: 'summary', summary: 'x'.repeat(40_000) })}\n${JSON.stringify({ cwd: '/late/project' })}\n`
+      );
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+      });
+      expect(
+        (await adapter.find({ includeClosed: false, limit: 20 })).map((group) => group.place.folder)
+      ).toEqual(['/late/project']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('only searches when asked for text', async () => {
     const searched: string[] = [];
     const adapter = createClaudeCodeAdapter({
