@@ -1,3 +1,4 @@
+import { neoTurnRequestKey } from './request-key.ts';
 import { hostname } from 'node:os';
 import { planNeoProjectRetitles } from './project-mirror.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
@@ -193,6 +194,7 @@ const Project = z.object({
   parentId: z.string().nullable().optional(),
   epicUrl: z.string().nullable().optional(),
   workspaceAliases: z.array(z.string()).optional(),
+  repository: z.string().optional(),
   revision: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -238,10 +240,10 @@ const ConsultationWaiter = z.object({
 } satisfies ZodShape<NeoConsultationWaiter>);
 const Consult = z.object({
   projectId: z.string().min(1),
-  requestKey: z.string().min(1).max(160),
   question: z.string().trim().min(1).max(8000),
 });
 const Respond = z.object({ id: z.string().min(1), answer: z.string().trim().min(1).max(4000) });
+type ConsultRequest = z.infer<typeof Consult> & { requestKey: string };
 const ConsultationResult = z.union([
   Failure,
   z.object({
@@ -380,14 +382,33 @@ const Scope = z
   })
   .default({});
 const Save = z.object({
-  id: z.string().min(1).max(100),
+  id: z.string().min(1).max(100).optional(),
   title: z.string().trim().min(1).max(160),
   summary: z.string().max(1000),
   context: z.string().max(16000),
   expectedRevision: z.number().int().min(0),
 });
+type SaveRequest = z.infer<typeof Save>;
+
+export function requireNeoProjectSaveId(
+  input: Pick<SaveRequest, 'id' | 'expectedRevision'>,
+  holder: boolean,
+  caller: OperationCaller
+): { value: OperationCaller } | { reason: z.infer<typeof Failure> } {
+  if (input.id && input.expectedRevision === 0)
+    return {
+      reason: {
+        ok: false,
+        reason: 'Omit id to create a project; the daemon assigns its id and returns it.',
+      },
+    };
+  if (!input.id && holder)
+    return { reason: { ok: false, reason: 'A context holder saves only its own project id.' } };
+  if (!input.id && input.expectedRevision > 0)
+    return { reason: { ok: false, reason: 'Pass the id of the project you are updating.' } };
+  return { value: caller };
+}
 const Propose = z.object({
-  requestKey: z.string().min(1).max(160),
   projectId: z.string().min(1).nullable().default(null),
   title: z.string().trim().min(1).max(160),
   instruction: z.string().trim().min(1).max(16000),
@@ -406,6 +427,7 @@ const Propose = z.object({
   supersedes: z.string().min(1).max(160).nullable().optional(),
   allowBusyTarget: z.boolean().optional(),
 });
+type ProposeRequest = z.infer<typeof Propose> & { requestKey: string };
 const Refused = z.object({ workId: z.string().min(1), what: z.string().trim().min(1).max(500) });
 const WorkId = z.object({ id: z.string().min(1) });
 const ReceiptRead = z.union([
@@ -499,7 +521,7 @@ export function presentNeoConsultationReply(
 }
 
 export function requireNeoConsultationReceipt(
-  input: z.infer<typeof Consult>,
+  input: ConsultRequest,
   item: NeoConsultation | NeoConsultationWaiter | null,
   origin: NeoConsultationOrigin,
   sessionId: string
@@ -1040,6 +1062,7 @@ export function createNeoOperations(service: NeoService) {
     const projects = service.repo
       .listProjects()
       .filter((item) => (focus ? item.id === focus.projectId : !scope || item.id === scope));
+    const repositories = service.repo.repositories();
     const work = focus
       ? focus.workIds.flatMap((id) => service.repo.getWork(id) ?? [])
       : service.repo.listWork(scope === undefined ? undefined : scope);
@@ -1112,6 +1135,7 @@ export function createNeoOperations(service: NeoService) {
       projects: projects.map((item) => ({
         ...item,
         ...(item.epicUrl ? { workspaceAliases: service.repo.workspaceAliases(item.id) } : {}),
+        ...(repositories.get(item.id) ? { repository: repositories.get(item.id) } : {}),
         context: detailed ? item.context : '',
       })),
       consultations: consultations.map((item) =>
@@ -1323,14 +1347,14 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Consult>, root: NeoConsultationOrigin) =>
+      (input: ConsultRequest, root: NeoConsultationOrigin) =>
         service.repo.getProject(input.projectId)
           ? { value: root }
           : { reason: { ok: false, reason: 'Project not found.' } },
       ['input', 'admission'],
       'result:admission'
     )
-    .pipe((input: z.infer<typeof Consult>) => service.open(input.projectId), 'input', 'sessionId')
+    .pipe((input: ConsultRequest) => service.open(input.projectId), 'input', 'sessionId')
     .pipe(
       (origin: NeoConsultationOrigin, caller: OperationCaller) =>
         requireLiveNeoConsultationOrigin(origin, caller.neoTurn),
@@ -1338,7 +1362,7 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Consult>, root: NeoConsultationOrigin, sessionId: string) =>
+      (input: ConsultRequest, root: NeoConsultationOrigin, sessionId: string) =>
         service.consultations.find(root.originSessionId, input.requestKey) ??
         service.consultationWaiters.find(root.originSessionId, input.requestKey) ??
         service.consultationWaiters.enqueue({
@@ -1370,7 +1394,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(presentNeoConsultationReply, 'admission', 'admission')
     .endAsync('admission') as (
-    input: z.infer<typeof Consult>,
+    input: ConsultRequest,
     caller: OperationCaller
   ) => Promise<z.infer<typeof ConsultationResult>>;
   const respond = (superpipe({})('neo.project.respond') as PipelineAPI)
@@ -1467,48 +1491,97 @@ export function createNeoOperations(service: NeoService) {
       return { ok: true as const, consultation: service.consultations.get(id)! };
     }
   );
-  const save = path(
-    'neo.project.save',
-    (input: z.infer<typeof Save>) => input.id,
-    (input, caller) => {
-      const holder =
-        caller.source === 'mcp' &&
-        caller.sessionId &&
-        service.repo.getBindingBySession(caller.sessionId)?.kind === 'project';
-      const turn = caller.neoTurn;
-      if (holder && (!turn?.isLive() || (!turn.human && !turn.consultationId)))
-        return { ok: false as const, reason: 'A live holder input is required to save context.' };
-      const project =
-        holder && turn?.consultationId
+  const isHolder = (caller: OperationCaller) =>
+    caller.source === 'mcp' &&
+    !!caller.sessionId &&
+    service.repo.getBindingBySession(caller.sessionId)?.kind === 'project';
+  const save = (superpipe({})('neo.project.save') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: SaveRequest, caller: OperationCaller) =>
+        admitNeoCaller(service, caller, 'neo.project.save', input.id),
+      ['input', 'caller'],
+      'result:admission'
+    )
+    .pipe(
+      (input: SaveRequest, caller: OperationCaller) =>
+        requireNeoProjectSaveId(input, isHolder(caller), caller),
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: SaveRequest, caller: OperationCaller) => {
+        const turn = caller.neoTurn;
+        return isHolder(caller) && (!turn?.isLive() || (!turn.human && !turn.consultationId))
+          ? {
+              reason: {
+                ok: false as const,
+                reason: 'A live holder input is required to save context.',
+              },
+            }
+          : { value: caller };
+      },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: SaveRequest, caller: OperationCaller) => ({
+        ...input,
+        id: input.id ?? neoTurnRequestKey(caller, 'neo.project.save', input),
+      }),
+      ['input', 'admission'],
+      'request'
+    )
+    .pipe(
+      (input: SaveRequest, request: SaveRequest & { id: string }, caller: OperationCaller) => {
+        const created = input.id ? null : service.repo.getProject(request.id);
+        return created ? { reason: { ok: true as const, project: created } } : { value: caller };
+      },
+      ['input', 'request', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: SaveRequest & { id: string }, caller: OperationCaller) => {
+        const turn = caller.neoTurn;
+        const consultation = isHolder(caller) && turn?.consultationId;
+        const project = consultation
           ? service.repo.saveConsultationContext(
               input,
               input.expectedRevision,
-              turn.consultationId,
+              consultation,
               caller.sessionId!
             )
           : service.repo.saveProject(input, input.expectedRevision);
-      return project
-        ? { ok: true as const, project }
-        : {
-            ok: false as const,
-            reason:
-              holder && turn?.consultationId
+        return project
+          ? { ok: true as const, project }
+          : {
+              ok: false as const,
+              reason: consultation
                 ? 'superseded: this request cannot save context. Return the uncertainty to Neo; a fresh consultation is required.'
                 : 'superseded: read the current project before saving again',
-          };
-    }
-  );
+            };
+      },
+      ['request', 'admission'],
+      'admission'
+    )
+    .endAsync('admission') as (
+    input: SaveRequest,
+    caller: OperationCaller
+  ) => Promise<
+    | z.infer<typeof Failure>
+    | { ok: true; project: NonNullable<ReturnType<NeoService['repo']['getProject']>> }
+  >;
   const propose = (superpipe({})('neo.work.propose') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+      (input: ProposeRequest, caller: OperationCaller) =>
         admitNeoCaller(service, caller, 'neo.work.propose', input.projectId),
       ['input', 'caller'],
       'result:admission'
     )
     .pipe(requireNeoExecutionChoice, ['input', 'admission'], 'result:admission')
     .pipe(
-      (input: z.infer<typeof Propose>, caller: OperationCaller) => {
+      (input: ProposeRequest, caller: OperationCaller) => {
         if (input.work?.verb !== 'read') return { value: caller };
         const checked = requireNeoReadOperation(
           input.work,
@@ -1520,7 +1593,7 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>) => {
+      (input: ProposeRequest) => {
         const sessionId = ownedLookupSessionId(input);
         return {
           ref: sessionId ? spaceWorkRefForSession(service.db.getDatabase(), sessionId) : null,
@@ -1531,7 +1604,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(adoptOwnedNeoTarget, ['input', 'owned'], 'input')
     .pipe(
-      async (input: z.infer<typeof Propose>, caller: OperationCaller) => {
+      async (input: ProposeRequest, caller: OperationCaller) => {
         const id = ownedLookupSessionId(input);
         if (!id?.startsWith('local_')) return input;
         const outcome = await Promise.resolve()
@@ -1550,7 +1623,7 @@ export function createNeoOperations(service: NeoService) {
       'input'
     )
     .pipe(
-      ({ work }: z.infer<typeof Propose>, caller: OperationCaller) =>
+      ({ work }: ProposeRequest, caller: OperationCaller) =>
         work && work.verb !== 'read'
           ? readNeoDriverAdapters(() =>
               invokeOperation(
@@ -1566,7 +1639,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (
-        input: z.infer<typeof Propose>,
+        input: ProposeRequest,
         adapters: Parameters<typeof requireNeoDriverVerb>[1],
         caller: OperationCaller
       ) => requireNeoDriverVerb(input.work, adapters, caller),
@@ -1574,27 +1647,24 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+      (input: ProposeRequest, caller: OperationCaller) =>
         requireNeoTrackedAdoption(input.work, service.followedCardRefs(Date.now()), caller),
       ['input', 'admission'],
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>) => readNeoStartFolder(input.work, existsSync),
+      (input: ProposeRequest) => readNeoStartFolder(input.work, existsSync),
       'input',
       'startFolder'
     )
     .pipe(
-      (
-        input: z.infer<typeof Propose>,
-        found: { exists: boolean | null },
-        caller: OperationCaller
-      ) => requireNeoStartFolder(input.work, found, caller),
+      (input: ProposeRequest, found: { exists: boolean | null }, caller: OperationCaller) =>
+        requireNeoStartFolder(input.work, found, caller),
       ['input', 'startFolder', 'admission'],
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+      (input: ProposeRequest, caller: OperationCaller) =>
         input.projectId && !service.repo.getProject(input.projectId)
           ? { reason: { ok: false, reason: 'Project not found.' } }
           : { value: caller },
@@ -1602,8 +1672,7 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>) =>
-        input.askId ? service.askRecords.get(input.askId) : null,
+      (input: ProposeRequest) => (input.askId ? service.askRecords.get(input.askId) : null),
       'input',
       'workAsk'
     )
@@ -1611,7 +1680,7 @@ export function createNeoOperations(service: NeoService) {
     .pipe(requireNeoWorkAskOwner, ['workAsk', 'input', 'admission'], 'result:admission')
     .pipe(requireNeoWorkAskLive, ['workAsk', 'input', 'admission'], 'result:admission')
     .pipe(
-      (input: z.infer<typeof Propose>) => {
+      (input: ProposeRequest) => {
         const works = input.supersedes === undefined ? service.repo.listWork(input.projectId) : [];
         const superseded = new Set(
           service.workSupersessions.list(works.map((work) => work.id)).map((row) => row.workId)
@@ -1625,7 +1694,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (
-        input: z.infer<typeof Propose>,
+        input: ProposeRequest,
         supersede: { candidates: { id: string; title: string }[] },
         caller: OperationCaller
       ) => requireNeoWorkSupersedeDecision(input, supersede.candidates, caller),
@@ -1633,7 +1702,7 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+      (input: ProposeRequest, caller: OperationCaller) =>
         requireNeoWorkSupersedable(
           input,
           input.supersedes ? service.repo.getWork(input.supersedes) : null,
@@ -1643,7 +1712,7 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+      (input: ProposeRequest, caller: OperationCaller) =>
         admitNeoWorkOrigin(
           caller,
           caller.sessionId ?? service.repo.getBindingForProject(input.projectId)?.sessionId
@@ -1653,7 +1722,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe((origin: NeoWorkOrigin) => origin, 'admission', 'origin')
     .pipe(
-      (input: z.infer<typeof Propose>, origin: NeoWorkOrigin) => {
+      (input: ProposeRequest, origin: NeoWorkOrigin) => {
         const requestKey = `${origin.originSessionId}:${input.requestKey}`;
         const db = service.db.getDatabase();
         return requireIdleNeoTarget(
@@ -1667,7 +1736,7 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>) => ({
+      (input: ProposeRequest) => ({
         id: crypto.randomUUID(),
         targetSessionId: input.targetSessionId ?? null,
         agent: input.targetAgent,
@@ -1694,7 +1763,7 @@ export function createNeoOperations(service: NeoService) {
     .pipe(requireLiveNeoWorkOrigin, ['origin', 'caller'], 'result:admission')
     .pipe(requireNeoProposalDoneWhen, ['input', 'caller'], 'result:admission')
     .pipe(
-      (input: z.infer<typeof Propose>, origin: NeoWorkOrigin, caller: OperationCaller) => {
+      (input: ProposeRequest, origin: NeoWorkOrigin, caller: OperationCaller) => {
         const planned = planNeoCardAsk(input, origin);
         const stored = service.repo.workForRequest(`${origin.originSessionId}:${input.requestKey}`);
         if (stored && service.askRecords.forWork(stored.id)) return { value: caller };
@@ -1714,11 +1783,7 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (
-        input: z.infer<typeof Propose>,
-        origin: NeoWorkOrigin,
-        target: NeoWorkTarget
-      ): NeoProposal => {
+      (input: ProposeRequest, origin: NeoWorkOrigin, target: NeoWorkTarget): NeoProposal => {
         const proposal = {
           ...input,
           ...origin,
@@ -1740,14 +1805,14 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(requireNeoProposal, ['target', 'origin', 'proposal'], 'result:admission')
     .pipe(
-      (input: z.infer<typeof Propose>, receipt: { work: NeoWork }) => {
+      (input: ProposeRequest, receipt: { work: NeoWork }) => {
         if (input.supersedes)
           service.workSupersessions.record(input.supersedes, receipt.work.id, Date.now());
       },
       ['input', 'admission']
     )
     .pipe(
-      (input: z.infer<typeof Propose>, origin: NeoWorkOrigin, receipt: { work: NeoWork }) => {
+      (input: ProposeRequest, origin: NeoWorkOrigin, receipt: { work: NeoWork }) => {
         const planned = planNeoCardAsk(input, origin);
         const filed = service.askRecords.forWork(receipt.work.id);
         const opened =
@@ -1776,7 +1841,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(requireNeoWorkAskLink, ['ask', 'askLink', 'admission'], 'result:admission')
     .pipe(
-      (input: z.infer<typeof Propose>, receipt: { work: NeoWork }) => {
+      (input: ProposeRequest, receipt: { work: NeoWork }) => {
         service.workGoals.record(receipt.work.id, input.goal ?? null, input.doneWhen ?? null);
         return true;
       },
@@ -1784,11 +1849,7 @@ export function createNeoOperations(service: NeoService) {
       'goalRecorded'
     )
     .pipe(
-      async (
-        input: z.infer<typeof Propose>,
-        ask: { askId?: string },
-        receipt: { work: NeoWork }
-      ) => {
+      async (input: ProposeRequest, ask: { askId?: string }, receipt: { work: NeoWork }) => {
         if (input.work?.verb === 'read') {
           await service.start(receipt.work.id);
           receipt.work = service.repo.getWork(receipt.work.id)!;
@@ -1822,7 +1883,7 @@ export function createNeoOperations(service: NeoService) {
       ['input', 'ask', 'admission']
     )
     .endAsync('admission') as (
-    input: z.infer<typeof Propose>,
+    input: ProposeRequest,
     caller: OperationCaller
   ) => Promise<
     | z.infer<typeof WorkResult>
@@ -2155,11 +2216,18 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.consult',
       description:
-        'Ask a context holder a bounded question from the current root input. Returns a correlated durable receipt; the answer arrives asynchronously. Reuse requestKey only for retries of this input; use a new key for another ask.',
+        'Ask a context holder a bounded question from the current root input. Returns a correlated durable receipt; the answer arrives asynchronously. The daemon keys it to this turn, so a retry of the same question returns the same consultation.',
       inputSchema: Consult,
       resultSchema: ConsultationResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: consult,
+      execute: (input, caller) =>
+        consult(
+          {
+            ...input,
+            requestKey: neoTurnRequestKey(caller, 'neo.project.consult', input),
+          },
+          caller
+        ),
     }),
     defineOperation({
       name: 'neo.project.respond',
@@ -2217,7 +2285,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.github.read',
       description:
-        'Read GitHub as it is now. With {url}, one pull request or issue: a pull request returns its state (OPEN, MERGED or CLOSED), checks (passing, failing, pending or none), review verdict on its current head (approved, changes_requested or none), merge blockers and title; an issue returns its state, how it closed (completed, not_planned or duplicate), the merged pull request that closed it, and its parent issue. With {repo: "owner/name", kind: "pr" or "issue", state: "open", "merged", "closed" or "all", by: "created", "updated", "merged" or "closed", since, until (ISO times), limit}, a list: every match in that window with number, title, url, state, createdAt, updatedAt, mergedAt and closedAt, newest first, and truncated when more matched than limit. by defaults to merged for state merged, closed for closed, otherwise created. Use the list for any question about what happened in a time range ("which PRs merged in the last 2 hours") instead of guessing numbers and reading them one by one. Read-only.',
+        'Read GitHub as it is now. With {url}, one pull request or issue: a pull request returns its state (OPEN, MERGED or CLOSED), checks (passing, failing, pending or none), review verdict on its current head (approved, changes_requested or none), merge blockers and title; an issue returns its state, how it closed (completed, not_planned or duplicate), the merged pull request that closed it, and its parent issue. With {repo: "owner/name", kind: "pr" or "issue", state: "open", "merged", "closed" or "all", by: "created", "updated", "merged" or "closed", since, until (ISO times) or withinHours (the last N hours up to now), limit}, a list: every match in that window with number, title, url, state, createdAt, updatedAt, mergedAt and closedAt, newest first, truncated when more matched than limit, and window {by, since, until} saying what the read covered (until is the read time when you leave it out, so leave it out for "recently" or "last N hours"). by defaults to merged for state merged, closed for closed, otherwise created. Use the list for any question about what happened in a time range ("which PRs merged in the last 2 hours") instead of guessing numbers and reading them one by one. Read-only.',
       inputSchema: GithubRead,
       resultSchema: z.union([NeoGithubReadResult, NeoGithubQueryResult]),
       policy: { safetyClass: 'read', roles: ['neo'] },
@@ -2244,7 +2312,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.save',
       description:
-        'Create a continuing context only when needed, or update an existing context with revision protection. Never one project per message.',
+        'Create a continuing context only when needed, or update an existing context with revision protection. Never one project per message. To create, omit id and pass expectedRevision 0; the daemon assigns the id and returns it, and a retry of the same call in one Neo turn returns the same project; a call outside a Neo turn always creates a new one. To update, pass the id and current revision.',
       inputSchema: Save,
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true), project: Project })]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -2256,7 +2324,11 @@ export function createNeoOperations(service: NeoService) {
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => {
+      execute: async (proposal, caller) => {
+        const input = {
+          ...proposal,
+          requestKey: neoTurnRequestKey(caller, 'neo.work.propose', proposal),
+        };
         const reserved = reserveNeoAdoption(adopting, input.work);
         if ('reason' in reserved) return reserved.reason;
         try {

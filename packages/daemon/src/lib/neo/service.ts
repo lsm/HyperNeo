@@ -3138,6 +3138,21 @@ export class NeoService {
     await dispatchNeoConsultationWaiter(this, projectId);
   }
 
+  private planConsultationReturn(item: NeoConsultation) {
+    const association = this.consultations.getPublication(item.id);
+    const captured = this.consultations.getPublicationInput(item.id);
+    const publication = association
+      ? this.publications.get(association.conversationId, association.publicationId)
+      : this.publications.findByProducer(item.sessionId, `neo-consult:${item.id}:request`);
+    return planNeoConsultationReturn(
+      item,
+      association,
+      publication,
+      captured?.askOrigin ?? null,
+      captured
+    );
+  }
+
   async syncConsultation(id: string): Promise<void> {
     let item = this.consultations.expire(id);
     if (!item) return;
@@ -3183,18 +3198,9 @@ export class NeoService {
       await this.dispatchConsultationWaiter(item.projectId);
       return;
     }
-    const association = this.consultations.getPublication(id);
-    const captured = this.consultations.getPublicationInput(id);
-    const publication = association
-      ? this.publications.get(association.conversationId, association.publicationId)
-      : this.publications.findByProducer(item.sessionId, requestId);
-    const route = planNeoConsultationReturn(
-      item,
-      association,
-      publication,
-      captured?.askOrigin ?? null,
-      captured
-    );
+    const route = this.consultations.isReturned(id)
+      ? 'returned'
+      : this.planConsultationReturn(item);
     if (route === 'inconsistent')
       throw new Error('Consultation publication return is inconsistent');
     if (route === 'pending') return;

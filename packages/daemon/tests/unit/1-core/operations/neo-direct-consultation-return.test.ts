@@ -308,6 +308,30 @@ describe('NeoService direct consultation return', () => {
     expect(returned()).toEqual({ returned: 0 });
     expect(mailbox()).toEqual([]);
   });
+  test('once the holder reply has returned, root can fix it like any other Neo reply', async () => {
+    await publish();
+    prompt(root, 'fix-it', 'human');
+    const turn = new NeoHolderTurn(db, root, { isLive: () => true }, () => {});
+    turns.push(turn);
+    expect(turn.bind('fix-it')).toBe(true);
+    const edit = () =>
+      invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.publication.edit',
+        { publicationId: draft.publicationId, shortText: 'Shorter.' },
+        { source: 'mcp', sessionId: root, role: 'neo', neoTurn: turn.identity() }
+      );
+    expect(await edit()).toMatchObject({
+      value: { accepted: false, reason: 'consultation_return' },
+    });
+    await service.syncConsultation('check');
+    expect(returned()).toEqual({ returned: 1 });
+    expect(await edit()).toMatchObject({
+      value: { accepted: true, publication: { shortText: 'Shorter.', editedBy: root } },
+    });
+    await service.syncConsultation('check');
+    expect(mailbox()).toEqual([]);
+  });
   test('the actual idle event completes the published return without adding a mailbox job', async () => {
     await publish();
     await events.publish('session.updated', {

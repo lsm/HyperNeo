@@ -90,21 +90,20 @@ describe('Neo existing chat work', () => {
       caller
     );
   }
-  function input(requestKey = 'A', targetSessionId: string | null = 'project') {
+  function input(name = 'A', targetSessionId: string | null = 'project') {
     return {
-      requestKey,
       targetSessionId,
-      title: `Work ${requestKey}`,
+      title: `Work ${name}`,
       instruction: 'Draft a bounded answer. Do not send, publish or modify files.',
       doneWhen: '- answer drafted',
       allowBusyTarget: true,
     };
   }
-  async function propose(requestKey = 'A', targetSessionId = 'project'): Promise<NeoWork> {
+  async function propose(name = 'A', targetSessionId = 'project'): Promise<NeoWork> {
     const result = await invoke(
       'neo.work.propose',
-      input(requestKey, targetSessionId),
-      source(`ask-${requestKey}`)
+      input(name, targetSessionId),
+      source(`ask-${name}`)
     );
     expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
     return (result as { value: { work: NeoWork } }).value.work;
@@ -204,17 +203,18 @@ describe('Neo existing chat work', () => {
     });
   });
 
-  test('a re-proposal refused for another target leaves the existing work without a goal', async () => {
-    await propose('R', 'project');
+  test('a re-proposal for another target is a separate card and leaves the existing work without a goal', async () => {
+    const first = await propose('R', 'project');
     expect(
       await invoke(
         'neo.work.propose',
         { ...input('R', 'ordinary'), goal: 'Something else entirely' },
         source('ask-R')
       )
-    ).toMatchObject({ value: { ok: false } });
+    ).toMatchObject({ value: { ok: true } });
     const snapshot = (await invoke('neo.snapshot', {})) as { value: NeoSnapshot };
-    expect(snapshot.value.cards.map((card) => card.goal)).toEqual([null]);
+    expect(snapshot.value.cards.find((card) => card.workId === first.id)?.goal).toBe(null);
+    expect(snapshot.value.cards).toHaveLength(2);
   });
 
   test.each([
@@ -335,23 +335,26 @@ describe('Neo existing chat work', () => {
     ).toMatchObject({ value: (first as { value: unknown }).value });
   });
 
-  test('request retries cannot change the chosen target or input lineage', async () => {
+  test('a request retry returns its card, and another target or input is a separate card', async () => {
     const work = await propose();
     expect(await invoke('neo.work.propose', input(), source('ask-A'))).toMatchObject({
       value: { work },
     });
-    expect(await invoke('neo.work.propose', input('A', 'ordinary'), source('ask-A'))).toMatchObject(
-      {
-        value: { ok: false, reason: 'This request key belongs to another execution target.' },
-      }
-    );
     expect(await invoke('neo.work.propose', input('A', null), source('ask-A'))).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('no standalone scratch session') },
     });
-    expect(await invoke('neo.work.propose', input(), source('ask-B'))).toMatchObject({
-      value: { ok: false, reason: 'This request key belongs to another input.' },
-    });
-    expect(service.repo.listWork()).toEqual([work]);
+    for (const [request, from] of [
+      [input('A', 'ordinary'), 'ask-A'],
+      [input(), 'ask-B'],
+    ] as const) {
+      const other = (await invoke('neo.work.propose', request, source(from))) as {
+        value: { ok: boolean; work: NeoWork };
+      };
+      expect(other.value).toMatchObject({ ok: true, work: { originMessageId: from } });
+      expect(other.value.work.id).not.toBe(work.id);
+    }
+    expect(service.repo.getWork(work.id)).toEqual(work);
+    expect(service.repo.listWork()).toHaveLength(3);
     expect(jobs('project')).toEqual([]);
   });
 
@@ -582,9 +585,7 @@ describe('Neo existing chat work', () => {
       });
       const returned = jobs('root', work.id);
       expect(returned).toHaveLength(1);
-      expect(content(returned[0])).toContain(
-        `"originMessageId":"ask-${work.requestKey.split(':').at(-1)}"`
-      );
+      expect(content(returned[0])).toContain(`"originMessageId":"${work.originMessageId}"`);
       expect(content(returned[0])).toContain(`Evidence ${work.title}`);
     }
     expect(jobs('root')).toHaveLength(2);

@@ -31,11 +31,11 @@ describe('planNeoTurnLimitNote', () => {
 describe('neoTurnLimitNote', () => {
   test('lists what the cut-off turn created so it is continued, not reopened', () => {
     const note = neoTurnLimitNote(
-      [{ id: 'da9506d1', title: 'Fix settle-path', requestKey: 'root:guard', status: 'open' }],
-      [{ id: 'w1', title: 'Guard it', requestKey: 'root:guard-card', status: 'proposed' }]
+      [{ id: 'da9506d1', title: 'Fix settle-path', status: 'open' }],
+      [{ id: 'w1', title: 'Guard it', status: 'proposed' }]
     );
-    expect(note).toContain('- ask da9506d1 "Fix settle-path" (open, requestKey root:guard)');
-    expect(note).toContain('- card w1 "Guard it" (proposed, requestKey root:guard-card)');
-    expect(note).toContain('never open or propose them again under a new requestKey');
+    expect(note).toContain('- ask da9506d1 "Fix settle-path" (open)');
+    expect(note).toContain('- card w1 "Guard it" (proposed)');
+    expect(note).toContain('never open or propose them again.');
   });
 });

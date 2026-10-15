@@ -78,6 +78,30 @@ export class NeoRepository {
     return row as NeoProject | null;
   }
 
+  repositories(): Map<string, string> {
+    const canonical = new Map<string, string>();
+    const legacy = new Map<string, Set<string>>();
+    for (const row of this.db
+      .prepare(
+        "SELECT alias, project_id FROM neo_project_workspaces WHERE alias >= 'repo' AND alias < 'repp'"
+      )
+      .all() as { alias: string; project_id: string }[]) {
+      if (row.alias.startsWith('repository:'))
+        canonical.set(
+          row.project_id,
+          row.alias.slice('repository:'.length).replace(/^github\.com\//, '')
+        );
+      else if (row.alias.startsWith('repo:'))
+        legacy
+          .set(row.project_id, legacy.get(row.project_id) ?? new Set())
+          .get(row.project_id)!
+          .add(row.alias.slice('repo:'.length).split('\u0000')[0]);
+    }
+    for (const [projectId, names] of legacy)
+      if (!canonical.has(projectId) && names.size === 1) canonical.set(projectId, [...names][0]);
+    return canonical;
+  }
+
   workspaceAliases(id: string, projects = this.listProjects()): string[] {
     for (const project of neoProjectPath(projects, id).reverse()) {
       const rows = this.db

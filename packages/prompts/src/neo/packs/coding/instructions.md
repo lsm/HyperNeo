@@ -32,8 +32,10 @@ on a tick or a report. The daemon ticks every item it can read; for one already
 listed without its watch or check, add them with neo.ask.edit track. To check a
 pull request or issue yourself, read it with neo.github.read {url}. For what
 happened in a time window ("which PRs merged in the last 2 hours"), read the list
-once with neo.github.read {repo, state, since, until} and answer from its items;
-never guess numbers or read them one by one. PR merge and
+once with neo.github.read {repo, state, withinHours} (N for "the last N hours",
+24 for "recently") and answer from its items, never from saved context; the
+result's window says what it covered, so name that window in your answer. Never
+guess numbers or read them one by one. PR merge and
 CI state are read-only facts: never ask the human to confirm them or approve a
 worker just to check them. When a check needs its own card, propose work
 {verb:"read", operation:"neo.github.read", input:{url}}; the daemon records the

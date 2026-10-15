@@ -4514,7 +4514,7 @@ describe('readDriverSettlement', () => {
 });
 
 describe('neo.work.propose with a drivers target', () => {
-  test('keeps a request key bound to its drivers target', async () => {
+  test('a retried drivers proposal returns its card, and another target is a separate card', async () => {
     const db = await createTestDb();
     const service = new NeoService(
       db,
@@ -4535,7 +4535,6 @@ describe('neo.work.propose with a drivers target', () => {
         createOperationRegistry(createNeoOperations(service)),
         'neo.work.propose',
         {
-          requestKey: 'font',
           title: work.title,
           instruction: work.instruction,
           doneWhen: '- font raised',
@@ -4544,15 +4543,20 @@ describe('neo.work.propose with a drivers target', () => {
         neo
       );
     try {
+      const first = (await propose({ work: sendTarget })) as {
+        kind: string;
+        value: { ok: boolean; work: { id: string } };
+      };
+      expect(first).toMatchObject({ kind: 'completed', value: { ok: true } });
       expect(await propose({ work: sendTarget })).toMatchObject({
-        kind: 'completed',
-        value: { ok: true },
+        value: { ok: true, work: { id: first.value.work.id } },
       });
-      expect(await propose({ work: sendTarget })).toMatchObject({ value: { ok: true } });
-      expect(await propose({ targetSessionId: 'other' })).toMatchObject({
-        value: { ok: false },
-      });
-      expect(await propose({ work: startTarget })).toMatchObject({ value: { ok: false } });
+      const other = (await propose({ work: startTarget })) as {
+        value: { ok: boolean; work: { id: string } };
+      };
+      expect(other).toMatchObject({ value: { ok: true } });
+      expect(other.value.work.id).not.toBe(first.value.work.id);
+      expect(service.repo.listWork()).toHaveLength(2);
     } finally {
       service.dispose();
       db.close();

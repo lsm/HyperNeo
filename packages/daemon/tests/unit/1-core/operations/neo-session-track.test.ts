@@ -259,14 +259,13 @@ describe('neo.session.track', () => {
     );
     expect(adopted).toMatchObject({ value: { ok: true } });
     expect(service.driverTargets.adoptedRefs(0)).toEqual([ref]);
-    const propose = async (requestKey: string, target: { adapter: string; id: string }) => {
+    const propose = async (label: string, target: { adapter: string; id: string }) => {
       const proposed = await invokeOperation(
         registry,
         'neo.work.propose',
         {
-          requestKey,
           title: 'Finish the write-up',
-          instruction: 'Write up the findings.',
+          instruction: `Write up the findings (${label}).`,
           goal: 'A finished write-up',
           doneWhen: '- the write-up is in the thread',
           work: { verb: 'send', ref: target },
