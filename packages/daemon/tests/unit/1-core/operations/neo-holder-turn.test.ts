@@ -8,7 +8,9 @@ import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consult
 import { runMigration280 } from '../../../../src/storage/schema/m280-neo-context-write-grants.ts';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
+import { runMigration339 } from '../../../../src/storage/schema/m339-neo-input-origins.ts';
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
+import { runMigration377 } from '../../../../src/storage/schema/m377-neo-input-origin-trigger.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
@@ -38,7 +40,9 @@ describe('Neo isolated holder turns', () => {
     runMigration280(sqlite);
     runMigration282(sqlite);
     runMigration283(sqlite);
+    runMigration339(sqlite);
     runMigration340(sqlite);
+    runMigration377(sqlite);
     db = {
       getDatabase: () => sqlite,
       getSDKMessageRepo: () => ({
@@ -251,6 +255,16 @@ describe('Neo isolated holder turns', () => {
     expect((await save(note, { expectedRevision: 2 })).content).toEqual([
       expect.objectContaining({ text: expect.stringContaining('"ok":false') }),
     ]);
+    service.inputOrigins.record(
+      { sessionId: 'neo:holder', messageId: 'neo-turn-limit:r1' },
+      { sessionId: 'neo:holder', messageId: 'neo-project-event:club:event-1' },
+      Date.now()
+    );
+    const resumed = turn();
+    resumed.bind('neo-turn-limit:r1');
+    expect(
+      (await save(resumed, { expectedRevision: 2, context: 'PR #93 merged; deployed' })).content
+    ).toEqual([expect.objectContaining({ text: expect.stringContaining('"ok":true') })]);
   });
 
   test('deadline abort releases a stuck SDK iterator without waiting for its cleanup', async () => {

@@ -1575,8 +1575,13 @@ export function createNeoOperations(service: NeoService) {
     .pipe(
       (input: SaveRequest, caller: OperationCaller) => {
         const turn = caller.neoTurn;
+        const origin =
+          turn && caller.sessionId
+            ? service.resolveAskOrigin({ sessionId: caller.sessionId, messageId: turn.messageId })
+            : null;
         return isHolder(caller) &&
-          (!turn?.isLive() || (!turn.human && !turn.consultationId && !isNeoProjectEventTurn(turn)))
+          (!turn?.isLive() ||
+            (!turn.human && !turn.consultationId && !isNeoProjectEventTurn(origin ?? turn)))
           ? {
               reason: {
                 ok: false as const,
