@@ -203,6 +203,79 @@ describe('NeoService direct consultation return', () => {
     expect(mailbox()).toEqual([]);
     expect(receiptRows()).toEqual(before);
   });
+  test('the holder’s answer replaces Neo’s earlier “checking” post and the consultation still returns', async () => {
+    const interimId = '40000000-0000-4000-8000-000000000001';
+    const rootTurn = { messageId: ask.messageId, human: true, isLive: () => true };
+    expect(
+      await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.publication.publish',
+        {
+          publicationId: interimId,
+          shortText: 'Checking with the holder; the answer follows.',
+          fullText: 'Checking with the holder; the answer follows.',
+          links: [],
+        },
+        { source: 'mcp', sessionId: root, role: 'neo', neoTurn: rootTurn }
+      )
+    ).toMatchObject({ kind: 'completed', value: { accepted: true, created: true } });
+    const messageId = 'neo-consult:check:request';
+    prompt(holder, messageId, 'system');
+    stampRequest('check');
+    const turn = new NeoHolderTurn(db, holder, { isLive: () => true }, () => {});
+    turns.push(turn);
+    expect(turn.bind(messageId)).toBe(true);
+    const changed = vi.spyOn(service, 'notifyPublicationsChanged');
+    expect(
+      await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.publication.publish',
+        { ...draft, links: [{ ...draft.links[0], id: 'check' }] },
+        { source: 'mcp', sessionId: holder, role: 'neo', neoTurn: turn.identity() }
+      )
+    ).toMatchObject({
+      kind: 'completed',
+      value: { accepted: true, created: true, publication: { publicationId: interimId } },
+    });
+    expect(changed).toHaveBeenCalledWith(conversationId);
+    expect(service.publications.list(conversationId)).toEqual([
+      expect.objectContaining({
+        publicationId: interimId,
+        shortText: draft.shortText,
+        answerInput: { sessionId: holder, messageId },
+        editedAt: expect.any(String),
+      }),
+    ]);
+    await service.syncConsultation('check');
+    expect(returned()).toEqual({ returned: 1 });
+    expect(mailbox()).toEqual([]);
+    prompt(root, 'neo-nudge:later', 'system');
+    service.inputOrigins.record(
+      { sessionId: root, messageId: 'neo-nudge:later' },
+      ask,
+      0,
+      `human:${ask.messageId}`
+    );
+    expect(
+      await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.publication.publish',
+        {
+          publicationId: '40000000-0000-4000-8000-000000000002',
+          shortText: 'Overwrite attempt.',
+          fullText: 'Overwrite attempt.',
+          links: [],
+        },
+        {
+          source: 'mcp',
+          sessionId: root,
+          role: 'neo',
+          neoTurn: { messageId: 'neo-nudge:later', human: false, isLive: () => true },
+        }
+      )
+    ).toMatchObject({ value: { accepted: false, reason: 'trigger_already_published' } });
+    expect(service.publications.list(conversationId)?.[0].shortText).toBe(draft.shortText);
+  });
   test('reload and recovery need only the immutable receipt, not removed SDK history or a recaptured ask', async () => {
     await publish();
     const before = receiptRows();

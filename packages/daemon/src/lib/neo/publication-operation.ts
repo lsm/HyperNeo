@@ -11,8 +11,7 @@ import type { NeoAskOrigin } from './ask-origin.ts';
 import { NeoPublicationSchema } from './publication.ts';
 import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
-import { requirePublicationNews } from './publication-news.ts';
-import { requirePublicationTrigger, requireUnpublishedTrigger } from './notification-triggers.ts';
+import { requirePublicationTrigger } from './notification-triggers.ts';
 
 const Draft = NeoPublicationSchema.omit({
   conversationId: true,
@@ -20,6 +19,7 @@ const Draft = NeoPublicationSchema.omit({
   producerInput: true,
   editedAt: true,
   editedBy: true,
+  answerInput: true,
   corrects: true,
   correctedBy: true,
 });
@@ -51,7 +51,6 @@ interface NeoPublicationRuntime {
   append(input: NeoPublicationInput, consultationId?: string): Receipt;
   replay?(input: Draft, caller: OperationCaller): Receipt | null;
   inputTrigger(input: NeoAskOrigin): string | null;
-  isTriggerPublished(conversationId: string, triggerId: string, publicationId: string): boolean;
   notify(): void;
 }
 
@@ -219,21 +218,6 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe((proof: Proof) => runtime.inputTrigger(proof.input), 'publication', 'trigger')
     .pipe(requirePublicationTrigger, ['publication', 'draft', 'trigger'], 'result:publication')
     .pipe(
-      (proof: Triggered, draft: Draft) =>
-        requireUnpublishedTrigger(
-          proof,
-          proof.triggerId,
-          runtime.isTriggerPublished(
-            proof.root.sessionId.slice(4),
-            proof.triggerId,
-            draft.publicationId
-          )
-        ),
-      ['publication', 'draft'],
-      'result:publication'
-    )
-    .pipe(requirePublicationNews, ['publication', 'draft'], 'result:publication')
-    .pipe(
       (draft: Draft, proof: Triggered) =>
         runtime.append(
           {
@@ -266,7 +250,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Publish the one message a notification trigger allows: the reply to the human message this turn answers, or the sentence a daemon trigger note asks for (an ask outcome, what the human must do, or what broke). Write it in the reply language this turn names. Pass the note\'s triggerId, or omit it; the runtime derives the trigger from this turn and supplies the human ask and producer. Every other publication is refused with a reason: no trigger, a trigger already published, an interim status post, or a bare acknowledgement ("收到", "got it"). When refused, end the turn. Reuse publicationId only for identical retries. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
+      'Publish the one message a notification trigger allows: the reply to the human message this turn answers, or the sentence a daemon trigger note asks for (an ask outcome, what the human must do, or what broke). Write it in the reply language this turn names. Pass the note\'s triggerId, or omit it; the runtime derives the trigger from this turn and supplies the human ask and producer. A trigger has one message: a later input that continues it (a returned consultation, a nudge, a turn-limit continuation) replaces the earlier message in place, shown as edited, but one turn cannot post twice. Every other publication is refused with a reason: no trigger, a trigger this turn already published, an interim status post, or a bare acknowledgement ("收到", "got it"). When refused, end the turn. Reuse publicationId only for identical retries. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: z.union([
