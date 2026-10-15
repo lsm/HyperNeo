@@ -4,6 +4,15 @@ export function isNeoSummarized(item: object): boolean {
   return 'summarized' in item && item.summarized === true;
 }
 
+export function neoAskDetailKey(snapshot: NeoSnapshot | null, askId: string): string {
+  const ask = snapshot?.asks?.find((item) => item.id === askId);
+  const ids = new Set(ask?.workIds ?? []);
+  const statuses = (snapshot?.work ?? [])
+    .filter((item) => ids.has(item.id))
+    .map((item) => `${item.id}=${item.status}`);
+  return [askId, ask?.revision ?? '', ...statuses].join('\n');
+}
+
 export function mergeNeoAskDetails(
   snapshot: NeoSnapshot | null,
   details: ReadonlyMap<string, NeoSnapshot>

@@ -14,7 +14,7 @@ import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
 import { projectNeoPublicConversation } from './public-conversation.ts';
 import { projectNeoPublicHolderConversation } from './public-holder-conversation.ts';
-import { mergeNeoAskDetails } from './neo-ask-detail.ts';
+import { mergeNeoAskDetails, neoAskDetailKey } from './neo-ask-detail.ts';
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
@@ -26,6 +26,8 @@ export function useNeo() {
   const [received, setSnapshot] = useState<NeoSnapshot | null>(null);
   const [askDetails, setAskDetails] = useState<ReadonlyMap<string, NeoSnapshot>>(new Map());
   const askDetailReads = useRef(new Set<string>());
+  const latest = useRef(received);
+  latest.current = received;
   const snapshot = useMemo(() => mergeNeoAskDetails(received, askDetails), [received, askDetails]);
   const publications = useNeoPublications(snapshot?.sessionId ?? null);
   const asks = useNeoConversationAsks(snapshot?.sessionId ?? null);
@@ -122,9 +124,10 @@ export function useNeo() {
   );
 
   async function loadAskDetail(askId: string) {
-    if (askDetailReads.current.has(askId)) return;
+    const key = neoAskDetailKey(latest.current, askId);
+    if (askDetailReads.current.has(key)) return;
     const reads = askDetailReads.current;
-    reads.add(askId);
+    reads.add(key);
     try {
       const hub = await connectionManager.getHub();
       const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', { askId });
@@ -132,7 +135,7 @@ export function useNeo() {
       if (alive.current && reads === askDetailReads.current)
         setAskDetails((current) => new Map(current).set(askId, result));
     } catch {
-      reads.delete(askId);
+      reads.delete(key);
     }
   }
 

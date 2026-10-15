@@ -222,12 +222,13 @@ function DetailProbe() {
 }
 
 describe('useNeo ask detail', () => {
-  it('reads a summarized ask once and shows its full fields', async () => {
+  it('reads a summarized ask once per revision and shows its full fields', async () => {
+    let revision = 2;
     const ask = (doneWhen: string, summarized?: true) => ({
       id: 'a',
       title: 'Ask a',
       doneWhen,
-      revision: 2,
+      revision,
       workIds: [],
       ...(summarized ? { summarized } : {}),
     });
@@ -246,8 +247,16 @@ describe('useNeo ask detail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
     fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
     await waitFor(() => expect(screen.getByText('Done when: Merged to dev')).toBeTruthy());
-    expect(
-      request.mock.calls.filter(([, call]) => call.name === 'neo.snapshot' && call.input.askId)
-    ).toEqual([['operation.invoke', { name: 'neo.snapshot', input: { askId: 'a' } }]]);
+    const detailReads = () =>
+      request.mock.calls.filter(([, call]) => call.name === 'neo.snapshot' && call.input.askId);
+    expect(detailReads()).toEqual([
+      ['operation.invoke', { name: 'neo.snapshot', input: { askId: 'a' } }],
+    ]);
+    revision = 3;
+    act(() => neoEvents.changed?.());
+    await waitFor(() => expect(screen.getByText('Done when: summarized')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Load detail' }));
+    await waitFor(() => expect(screen.getByText('Done when: Merged to dev')).toBeTruthy());
+    expect(detailReads()).toHaveLength(2);
   });
 });
