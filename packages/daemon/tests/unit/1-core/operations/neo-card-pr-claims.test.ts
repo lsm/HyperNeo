@@ -427,6 +427,17 @@ describe('a PR the card follows', () => {
     ).toEqual([]);
   });
 
+  test('is ignored when the followed URL is not a pull request', () => {
+    expect(
+      planNeoCardPrCandidates({
+        report: null,
+        follows: 'https://github.com/lsm/HyperNeo/issues/7049',
+        branch: [],
+        stored: [],
+      })
+    ).toEqual([]);
+  });
+
   test('never takes a PR from another card through its follow', () => {
     const followed = { ...opener, workId: 'follow-up', claim: 'named' as const, cardCreatedAt: 50 };
     const owned = planNeoCardPrOwnership(

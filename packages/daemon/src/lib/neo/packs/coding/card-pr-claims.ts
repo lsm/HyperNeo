@@ -2,7 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoCardPrUrls } from './branch-prs.ts';
 import { extractNeoWorkPrUrls, neoTextRefs } from './work-prs.ts';
-import { githubUrlKey } from '../../../github/parse-pr-url.ts';
+import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 
 export type NeoPrClaim = 'branch' | 'opened' | 'named' | 'mentioned';
 type PrWindow = { start: number; end: number | null };
@@ -40,7 +40,7 @@ export function planNeoCardPrCandidates(input: {
   stored: readonly { url: string }[];
   mentioned?: readonly string[];
 }): NeoCardPrCandidate[] {
-  const followed = input.follows ? [input.follows] : [];
+  const followed = input.follows && parsePrUrl(input.follows) ? [input.follows] : [];
   const named = new Set(followed.map(key));
   const onBranch = new Set(input.branch.map(key));
   const opened = new Set((input.opened ?? []).map(key));
