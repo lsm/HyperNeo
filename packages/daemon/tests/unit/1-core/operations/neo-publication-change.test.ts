@@ -6,6 +6,7 @@ import {
   requireChangeable,
   requireCorrectable,
   requireConversationPublication,
+  requireEditableLater,
 } from '../../../../src/lib/neo/publication-change-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -92,6 +93,21 @@ function setup() {
   return { db, publications, insert, call, notified: () => notified, published, replies };
 }
 
+describe('requireEditableLater', () => {
+  test('refuses only the turn that produced the publication', () => {
+    const publication = {
+      producerInput: { sessionId: 'neo:a', messageId: 'm-1' },
+    } as never;
+    const owned = (sessionId: string, messageId: string) =>
+      ({ producer: { input: { sessionId, messageId } }, publication }) as never;
+    expect(requireEditableLater(owned('neo:a', 'm-1'))).toEqual({
+      reason: { accepted: false, reason: 'same_turn' },
+    });
+    for (const later of [owned('neo:a', 'm-2'), owned('neo:b', 'm-1')])
+      expect(requireEditableLater(later)).toEqual({ value: later });
+  });
+});
+
 describe('neo.publication.edit', () => {
   test('fixes the wording in place and marks it edited, keeping links and trigger', async () => {
     const { db, publications, insert, call, notified } = setup();
@@ -115,6 +131,27 @@ describe('neo.publication.edit', () => {
       });
       expect(publications.get(conversation, original)?.editedAt).toBe('2026-10-14T11:00:00.000Z');
       expect(notified()).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a reply cannot be edited in the turn that published it, but it can be corrected', async () => {
+    const { db, insert, call, publications } = setup();
+    try {
+      insert(original);
+      const sameTurn = neo(root.sessionId, 'm-1');
+      expect(
+        await call('neo.publication.edit', { publicationId: original, shortText: 'x' }, sameTurn)
+      ).toEqual({ accepted: false, reason: 'same_turn' });
+      expect(publications.get(conversation, original)?.editedAt).toBeUndefined();
+      expect(
+        await call(
+          'neo.publication.correct',
+          { publicationId: original, shortText: 'PR #12 is open.', fullText: 'PR #12 is open.' },
+          sameTurn
+        )
+      ).toMatchObject({ accepted: true, created: true });
     } finally {
       db.close();
     }

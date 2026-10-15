@@ -76,6 +76,14 @@ export function requireChangeable(
     : { value: owned };
 }
 
+export function requireEditableLater(owned: Owned): { value: Owned } | { reason: Rejection } {
+  const { producerInput } = owned.publication;
+  return producerInput.sessionId === owned.producer.input.sessionId &&
+    producerInput.messageId === owned.producer.input.messageId
+    ? { reason: { accepted: false, reason: 'same_turn' } }
+    : { value: owned };
+}
+
 export function requireCorrectable(owned: Owned): { value: Owned } | { reason: Rejection } {
   return owned.publication.corrects
     ? { reason: { accepted: false, reason: 'already_corrected' } }
@@ -176,7 +184,7 @@ export function createNeoPublicationChangeOperations(
     'neo-publication-edit',
     EditInput,
     runtime,
-    (owned) => ({ value: owned }),
+    requireEditableLater,
     (owned, input: z.infer<typeof EditInput>) =>
       runtime.publications.edit(
         owned.publication.conversationId,
@@ -276,7 +284,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.edit',
       description:
-        "Fix the wording of a Neo reply in this conversation in place, by its publicationId, whichever Neo session produced it: to the human they are all Neo's. Use it only for wording: the meaning, facts and anything the human should do must stay the same. The message is marked edited and records you as editedBy. Links, the ask it answers and its trigger never change. Only Neo publications in this conversation can change, never session messages (not_found). A project holder's reply to a consultation cannot change until Neo has received it (consultation_return); after that it is a Neo reply like any other.",
+        "Fix the wording of a Neo reply in this conversation in place, by its publicationId, whichever Neo session produced it: to the human they are all Neo's. Use it only for wording: the meaning, facts and anything the human should do must stay the same. The message is marked edited and records you as editedBy. Links, the ask it answers and its trigger never change. Only Neo publications in this conversation can change, never session messages (not_found). A reply published in this same turn cannot be edited (same_turn): it is already what the human read, so if its facts were wrong, correct it. A project holder's reply to a consultation cannot change until Neo has received it (consultation_return); after that it is a Neo reply like any other.",
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: Result,
