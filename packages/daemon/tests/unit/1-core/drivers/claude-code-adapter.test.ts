@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import {
   buildClaudeCodeGroups,
   createClaudeCodeAdapter,
+  shareInFlight,
 } from '../../../../src/lib/drivers/claude-code-adapter';
 import { buildClaudeDesktopGroups } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
@@ -283,5 +284,23 @@ describe('buildClaudeDesktopGroups with content hits', () => {
         snippets: [{ text: 'heron notes' }],
       },
     ]);
+  });
+});
+
+describe('shareInFlight', () => {
+  test('concurrent calls join one run, and a call after it settles starts another', async () => {
+    let runs = 0;
+    let release: () => void = () => {};
+    const scan = shareInFlight(async () => {
+      runs++;
+      await new Promise<void>((resolve) => (release = resolve));
+      return runs;
+    });
+    const both = Promise.all([scan(), scan()]);
+    release();
+    expect(await both).toEqual([1, 1]);
+    const next = scan();
+    release();
+    expect(await next).toBe(2);
   });
 });

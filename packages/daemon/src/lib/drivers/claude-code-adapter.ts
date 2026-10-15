@@ -61,6 +61,16 @@ export async function readClaudeCodeFolders(
   return files.flatMap((file) => cache.get(file.path)?.record ?? []);
 }
 
+export function shareInFlight<T>(run: () => Promise<T>): () => Promise<T> {
+  let running: Promise<T> | null = null;
+  return () => {
+    running ??= run().finally(() => {
+      running = null;
+    });
+    return running;
+  };
+}
+
 function sessionTitle(chat: WorkChatMatch): string {
   const text = (chat.snippets.find((snippet) => snippet.role === 'user') ?? chat.snippets[0])?.text;
   const flat = (text ?? '').replace(/\s+/g, ' ').trim();
@@ -128,7 +138,7 @@ export function buildClaudeCodeGroups(
 }
 
 const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI)
-  .input(['query', 'deps', 'cache'])
+  .input(['query', 'deps', 'scan'])
   .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(
     async (query: FindQuery, deps: ClaudeCodeAdapterDeps) =>
@@ -138,12 +148,7 @@ const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI
   )
   .pipe((deps: ClaudeCodeAdapterDeps) => deps.desktopSessions(), 'deps', 'desktop')
   .pipe((deps: ClaudeCodeAdapterDeps) => deps.ownedSessions?.() ?? new Set(), 'deps', 'owned')
-  .pipe(
-    async (deps: ClaudeCodeAdapterDeps, cache: FolderCache) =>
-      deps.projectsDir ? await readClaudeCodeFolders(deps.projectsDir, cache) : [],
-    ['deps', 'cache'],
-    'folders'
-  )
+  .pipe((scan: () => Promise<ClaudeFolder[]>) => scan(), 'scan', 'folders')
   .pipe(
     (
       chats: WorkChatMatch[],
@@ -159,14 +164,18 @@ const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI
   .endAsync('groups') as (
   query: FindQuery,
   deps: ClaudeCodeAdapterDeps,
-  cache: FolderCache
+  scan: () => Promise<ClaudeFolder[]>
 ) => Promise<PlaceGroup[]>;
 
 export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapter {
   const cache: FolderCache = new Map();
+  const projectsDir = deps.projectsDir;
+  const scan = projectsDir
+    ? shareInFlight(() => readClaudeCodeFolders(projectsDir, cache))
+    : async () => [];
   return {
     id: 'claude-code',
     capabilities: ['find'],
-    find: (query) => runClaudeCodeFind(query, deps, cache),
+    find: (query) => runClaudeCodeFind(query, deps, scan),
   };
 }
