@@ -1880,18 +1880,10 @@ export function createNeoAskOperations(
     )
     .pipe(requireNeoAskWritten, 'approved', 'result:admission')
     .pipe(
-      (receipt: AskReceipt) =>
-        receipt.ask.workIds.filter(
-          (id) =>
-            service.repo.getWork(id)?.status === 'proposed' &&
-            service.resolveWorkTarget(id).accepted
-        ),
+      (receipt: AskReceipt) => service.startApprovedWork(receipt.ask.workIds),
       'admission',
-      'startable'
+      'started'
     )
-    .pipe(async (startable: string[]) => {
-      await Promise.allSettled(startable.map((id) => service.admitWork(id, false)));
-    }, 'startable')
     .endAsync('admission') as (
     input: z.infer<typeof Approve>,
     caller: OperationCaller

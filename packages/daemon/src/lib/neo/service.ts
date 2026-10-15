@@ -1666,6 +1666,13 @@ export class NeoService {
     });
   }
 
+  async startApprovedWork(workIds: readonly string[]): Promise<void> {
+    const startable = workIds.filter(
+      (id) => this.repo.getWork(id)?.status === 'proposed' && this.resolveWorkTarget(id).accepted
+    );
+    await Promise.allSettled(startable.map((id) => this.admitWork(id, false)));
+  }
+
   async admitWork(id: string, authorized: boolean, now = Date.now()) {
     const admitted = await admitNeoWork(id, authorized, now, {
       bootedAt: this.bootedAt,

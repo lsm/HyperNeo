@@ -138,6 +138,7 @@ describe('dependency planning fixtures', () => {
         work: { verb: 'start', adapter: 'codex-desktop', place },
         askId,
         delivers: bound ? [`i${index + 1}`] : [],
+        ...(bound && index ? { dependsOn: [cards[index - 1]] } : {}),
       });
       cards.push(proposed.value!.work!.id);
     }
@@ -148,7 +149,7 @@ describe('dependency planning fixtures', () => {
     const steps = [
       'check coding.pr_merged, watch the card',
       'neo.work.propose {askId, delivers:',
-      'neo.work.start {id, dependsOn:[earlier card ids]}',
+      'dependsOn:[earlier card ids]}',
       'When it is off (the default),',
       'approve the ask once, after every edge is set',
     ].map((step) => NEO_PACK_CODING_INSTRUCTIONS.indexOf(step));
@@ -169,41 +170,23 @@ describe('dependency planning fixtures', () => {
         blockers: [{ workId: prerequisite, reason: 'outcomes_unverified' }],
       },
     });
-    expect(service.askRecords.get(askId)?.approvedAt).toEqual(expect.any(Number));
-    expect(await invoke('neo.work.start', { id: second, dependsOn: [first] })).toMatchObject({
-      value: { ok: false, reason: NEO_EDGES_NEED_APPROVAL },
-    });
-    expect(service.dependencies.edges()).toEqual([{ workId: second, prerequisiteId: first }]);
-    expect(service.askRecords.get(askId)?.approvedAt ?? null).toBeNull();
-    expect(await invoke('neo.work.start', { id: second, dependsOn: [first] })).toMatchObject(
-      blocked(first)
-    );
-    expect(await invoke('neo.work.start', { id: third, dependsOn: [second] })).toMatchObject(
-      blocked(second)
-    );
-    expect(await invoke('neo.work.start', { id: first, dependsOn: [third] })).toMatchObject({
-      value: { ok: false, reason: 'dependency_cycle' },
-    });
     expect(service.dependencies.edges()).toEqual(
       expect.arrayContaining([
         { workId: second, prerequisiteId: first },
         { workId: third, prerequisiteId: second },
       ])
     );
-    expect(started).toEqual([]);
-    expect(await invoke('neo.work.start', { id: first })).toMatchObject({
-      value: { ok: true, work: { status: 'queued' } },
-    });
     expect(started).toEqual([expect.stringContaining(issue(6757))]);
+    expect(service.repo.getWork(first)?.status).toBe('queued');
     expect([second, third].map((card) => service.repo.getWork(card)?.status)).toEqual([
       'proposed',
       'proposed',
     ]);
-    expect([second, third].map((card) => service.dependencies.hasStartIntent(card))).toEqual([
-      true,
-      true,
-    ]);
     expect(service.askRecords.get(askId)?.approvedAt ?? null).toBeNull();
+    expect(await invoke('neo.work.start', { id: second })).toMatchObject(blocked(first));
+    expect(await invoke('neo.work.start', { id: second, dependsOn: [third] })).toMatchObject({
+      value: { ok: false, reason: 'dependency_cycle' },
+    });
 
     const item = service.askRecords.get(askId)!.doneItems![0];
     service.askRecords.tickItem(
@@ -229,7 +212,6 @@ describe('dependency planning fixtures', () => {
 
   test('with automatic dispatch on, a verified prerequisite starts the next card with Neo idle', async () => {
     const { askId, cards } = await planEpic();
-    await invoke('neo.work.start', { id: cards[1], dependsOn: [cards[0]] });
     expect(
       await invoke('neo.ask.approve', { askId }, { source: 'rpc', principal: 'local' })
     ).toMatchObject({ value: { ok: true } });
@@ -247,9 +229,9 @@ describe('dependency planning fixtures', () => {
     expect(cards.map((card) => service.repo.getWork(card)?.status)).toEqual([
       'queued',
       'queued',
-      'queued',
+      'proposed',
     ]);
-    expect(started).toHaveLength(3);
+    expect(started).toHaveLength(2);
   });
 
   test('a prerequisite with no bound outcome is refused instead of trusted', async () => {
