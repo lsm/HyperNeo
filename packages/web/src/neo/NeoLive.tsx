@@ -478,7 +478,7 @@ export function NeoLive() {
           aria-label="Settings and connection"
           aria-expanded={drawerOpen}
           aria-haspopup="dialog"
-          class="neo-float-link"
+          class="neo-glass-button"
         >
           <svg
             viewBox="0 0 102 176"
@@ -497,7 +497,7 @@ export function NeoLive() {
             aria-label={`Your work${attentionCount ? `, ${attentionCount} need your attention` : ''}`}
             aria-expanded={scenesOpen}
             onClick={() => setScenesOpen(true)}
-            class="neo-float-link relative"
+            class="neo-glass-button relative"
           >
             <NeoIcon name="context" />
             {attentionCount > 0 && (

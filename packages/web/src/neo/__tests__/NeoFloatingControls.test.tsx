@@ -197,4 +197,20 @@ describe('Neo floating controls', () => {
     expect(css).toMatch(/\.neo-float-link\s*\{[^}]*min-height: 44px;\s*min-width: 44px;/);
     expect(css).toContain('padding-top: 68px');
   });
+
+  it('draws the logo and work buttons as 44px round glass with a press state in both themes', () => {
+    renderLive();
+    const logo = within(banner()).getByRole('button', { name: 'Settings and connection' });
+    expect(logo.className).toContain('neo-glass-button');
+    const css = readFileSync('src/neo/neo.css', 'utf8');
+    const glass = css.match(/\.neo-glass-button\s*\{([^}]*)\}/)?.[1] ?? '';
+    expect(glass).toContain('width: 44px');
+    expect(glass).toContain('border-radius: 9999px');
+    expect(glass).toContain('backdrop-filter: blur(20px) saturate(180%)');
+    expect(glass).toMatch(/--neo-glass-fill: light-dark\(/);
+    expect(css).toMatch(/\.neo-glass-button:active\s*\{[^}]*transform: scale\(0\.94\)/);
+    expect(css).toMatch(
+      /@supports not \(backdrop-filter: blur\(1px\)\)\s*\{[^}]*\.neo-glass-button/
+    );
+  });
 });
