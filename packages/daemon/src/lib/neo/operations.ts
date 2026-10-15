@@ -2174,7 +2174,7 @@ export function createNeoOperations(service: NeoService) {
       service.repo,
       (sessionId) => {
         service.notifyChanged();
-        void service.preemptAnsweredTurn(sessionId);
+        void service.preemptForHumanMessage(sessionId);
       },
       router
     ),

@@ -327,7 +327,7 @@ export function shouldPreemptNeoTurn(
   }
   if (state?.status !== 'processing' || typeof state.messageId !== 'string') return false;
   const current = trigger(state.messageId);
-  return !!current && answered(current);
+  return !!current && (!current.startsWith(NEO_HUMAN_TRIGGER_PREFIX) || answered(current));
 }
 
 export function neoTriggerWorkProblem(
