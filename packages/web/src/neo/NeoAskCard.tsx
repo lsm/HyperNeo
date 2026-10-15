@@ -326,6 +326,7 @@ export function NeoAskCard({
   const itemActions = neoAskItemActions(view);
   const canApprove = view.humanActions.some((action) => action.kind === 'start');
   const approveAgain = view.humanActions.some((action) => action.kind === 'approve');
+  const canDrop = view.humanActions.some((action) => action.kind === 'drop');
   const retries = view.humanActions.flatMap((action) => {
     if (action.kind !== 'retry') return [];
     const scene = view.scenes.find((item) => item.ref.id === action.workId);
@@ -542,6 +543,17 @@ export function NeoAskCard({
             onClick={onApprove}
           >
             Approve all steps
+          </button>
+        )}
+        {canDrop && onSettle && (
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            disabled={disabled}
+            title="Nothing is running for this ask. Drop it, or wait for Neo to propose new work."
+            onClick={() => onSettle('abandoned')}
+          >
+            Drop
           </button>
         )}
         <span class="flex-1" />

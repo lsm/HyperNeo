@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -24,8 +24,8 @@ if (targetArg && !ALL_TARGETS.includes(targetArg)) {
 
 const targets = targetArg ? [targetArg] : ALL_TARGETS;
 
-function run(cmd: string) {
-  execSync(cmd, { cwd: ROOT, stdio: 'inherit' });
+function bun(args: string[], cwd = ROOT) {
+  execFileSync(process.execPath, args, { cwd, stdio: 'inherit' });
 }
 
 function outputFileForTarget(target: string, binaryName = 'hyperneo'): string {
@@ -42,10 +42,10 @@ function verifyBundledDependency(outputPath: string, needle: string): void {
 }
 
 console.log('Step 1: Building web frontend...\n');
-run('cd packages/web && bun run build');
+bun(['run', 'build'], join(ROOT, 'packages', 'web'));
 
 console.log('\nStep 2: Generating embedded assets...\n');
-run('bun run scripts/generate-embedded-assets.ts');
+bun(['run', 'scripts/generate-embedded-assets.ts']);
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
 
@@ -63,17 +63,22 @@ function readBuildCommit(): string {
 
 const buildCommit = readBuildCommit();
 const defineBuildCommit = /^[0-9a-f]{40}$/.test(buildCommit)
-  ? `--define 'process.env.HYPERNEO_BUILD_COMMIT="${buildCommit}"'`
-  : '';
+  ? ['--define', `process.env.HYPERNEO_BUILD_COMMIT="${buildCommit}"`]
+  : [];
 console.log(`Build commit: ${buildCommit || 'unknown'}`);
 
 for (const target of targets) {
   const outputPath = outputFileForTarget(target);
 
   console.log(`\nStep 3: Compiling binary for ${target}...`);
-  run(
-    `bun build --compile --target=${target} ${defineBuildCommit} --outfile=${outputPath} packages/cli/prod-entry.ts`
-  );
+  bun([
+    'build',
+    '--compile',
+    `--target=${target}`,
+    ...defineBuildCommit,
+    `--outfile=${outputPath}`,
+    'packages/cli/prod-entry.ts',
+  ]);
   console.log(`  -> ${outputPath}`);
 
   console.log('  Verifying Copilot SDK bundle markers...');
@@ -83,9 +88,14 @@ for (const target of targets) {
   if (!target.includes('windows')) {
     const daemonOutputPath = outputFileForTarget(target, 'hyperneod');
     console.log(`  Compiling standalone daemon binary for ${target}...`);
-    run(
-      `bun build --compile --target=${target} ${defineBuildCommit} --outfile=${daemonOutputPath} packages/cli/daemon-entry.ts`
-    );
+    bun([
+      'build',
+      '--compile',
+      `--target=${target}`,
+      ...defineBuildCommit,
+      `--outfile=${daemonOutputPath}`,
+      'packages/cli/daemon-entry.ts',
+    ]);
     console.log(`  -> ${daemonOutputPath}`);
 
     verifyBundledDependency(daemonOutputPath, '@github/copilot-sdk');

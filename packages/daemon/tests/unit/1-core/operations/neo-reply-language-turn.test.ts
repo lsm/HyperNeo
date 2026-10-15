@@ -81,6 +81,25 @@ describe('isNeoReplyLanguageInput', () => {
   });
 });
 
+describe('readNeoTurnLanguage for a human input', () => {
+  test('a human message decides its own turn even when it continues an older ask', () => {
+    const stored: Record<string, SDKMessage[]> = {
+      h0: [{ ...prompt('把输入框修好'), inputKind: 'human' } as unknown as SDKMessage],
+      h1: [{ ...prompt('ship it when ready'), inputKind: 'human' } as unknown as SDKMessage],
+    };
+    expect(
+      readNeoTurnLanguage(
+        { sessionId: 'root', messageId: 'h1' },
+        {
+          resolveAskOrigin: () => ({ sessionId: 'root', messageId: 'h0' }),
+          getPrompts: (_sessionId, messageId) => stored[messageId] ?? [],
+          latestHumanPrompt: () => null,
+        }
+      )
+    ).toBe('English');
+  });
+});
+
 describe('withNeoReplyLanguage', () => {
   test('appends the turn language to text and block prompts, and leaves others alone', () => {
     const text = withNeoReplyLanguage(prompt('现在有卡片还在运行吗？'), 'Chinese');
