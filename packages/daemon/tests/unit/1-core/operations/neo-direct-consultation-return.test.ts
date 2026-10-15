@@ -163,6 +163,21 @@ describe('NeoService direct consultation return', () => {
         rootCaller()
       )
     ).toMatchObject({ value: { accepted: false, reason: 'consultation_pending' } });
+    prompt(root, 'note-without-trigger', 'system');
+    service.inputOrigins.record(
+      { sessionId: root, messageId: 'note-without-trigger' },
+      ask,
+      0,
+      null
+    );
+    expect(
+      await invokeOperation(
+        ops(),
+        'neo.publication.publish',
+        withMintedPublicationId(service, { ...interim, shortText: 'A note fact.' }),
+        rootCaller('note-without-trigger', false)
+      )
+    ).toMatchObject({ value: { accepted: false, reason: 'consultation_pending' } });
     expect(service.publications.list(conversationId)).toEqual([]);
     await respond();
     expect(
