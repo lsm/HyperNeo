@@ -20,6 +20,7 @@ const Draft = NeoPublicationSchema.omit({
   editedAt: true,
   editedBy: true,
   answerInput: true,
+  languageMismatch: true,
   corrects: true,
   correctedBy: true,
 });
