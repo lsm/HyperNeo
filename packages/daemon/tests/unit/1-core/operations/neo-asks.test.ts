@@ -44,6 +44,8 @@ import {
   requireNeoWorkAskOwner,
   requireNeoWorkAskLink,
   neoAskTitleNamedIn,
+  planNeoProposalBindings,
+  requireNeoProposalDelivers,
 } from '../../../../src/lib/neo/ask-operations.ts';
 import {
   driverDoneCheckNote,
@@ -190,6 +192,7 @@ describe('neo.ask operations', () => {
       instruction: `Fix the login bug (${requestKey}).`,
       work: { verb: 'start', adapter: 'claude-desktop', place },
       askId,
+      delivers: [],
     });
   }
 
@@ -604,6 +607,43 @@ describe('neo.ask operations', () => {
     expect(answered.verifiedDefinitionHash).toBe(
       service.askRecords.revisionPolicy.definitionHash(answered)
     );
+  });
+
+  test('a card proposed under an ask names the items it delivers, and binding it keeps the approval', async () => {
+    const askId = await openAsk();
+    const approved = service.askRecords.get(askId)!;
+    const card = (input: { requestKey: string; delivers?: string[]; supersedes?: string }) =>
+      invoke('neo.work.propose', {
+        title: 'Fix it',
+        instruction: `Fix the login bug (${input.requestKey}).`,
+        work: { verb: 'start', adapter: 'claude-desktop', place },
+        askId,
+        ...input,
+      });
+    expect(await card({ requestKey: 'card-1' })).toMatchObject({
+      value: {
+        ok: false,
+        reason: expect.stringContaining('i1 "implementation ready"; i2 "CI green"'),
+      },
+    });
+    expect(service.repo.listWork()).toEqual([]);
+    const first = (await card({ requestKey: 'card-1', delivers: ['i1'] })).value!.work!.id;
+    const bound = service.askRecords.get(askId)!;
+    expect(bound.doneItems?.map((item) => item.deliveredBy ?? null)).toEqual([first, null]);
+    expect([bound.revision, bound.approvedAt]).toEqual([approved.revision, approved.approvedAt]);
+    expect(await card({ requestKey: 'card-2', delivers: ['i1'] })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('delivers_taken') },
+    });
+    expect(await card({ requestKey: 'card-3', delivers: ['i9'] })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('delivers_unknown') },
+    });
+    await invoke('neo.work.cancel', { id: first });
+    const retry = (await card({ requestKey: 'card-2', delivers: ['i1'], supersedes: first })).value!
+      .work!.id;
+    expect(service.askRecords.get(askId)?.doneItems?.[0].deliveredBy).toBe(retry);
+    expect(await card({ requestKey: 'card-4', delivers: [], supersedes: first })).toMatchObject({
+      value: { ok: true },
+    });
   });
 
   test('an ask opened in a turn the human sent is approved, so its cards start without Start', async () => {
@@ -2254,9 +2294,9 @@ describe('neo.ask operations', () => {
         ],
       });
       const askId = opened.value!.ask!.id;
-      expect(await invoke('neo.work.propose', { ...input, askId })).toMatchObject({
-        value: { ok: true },
-      });
+      expect(await invoke('neo.work.propose', { ...input, askId, delivers: ['i1'] })).toMatchObject(
+        { value: { ok: true } }
+      );
       expect(service.askRecords.list()).toHaveLength(1);
       expect(service.askRecords.get(askId)?.workIds).toHaveLength(1);
     }
@@ -3777,6 +3817,60 @@ describe('neoWorkDoneGoal', () => {
       doneWhen: ask.doneWhen,
     });
     expect(neoWorkDoneGoal('w', null, null)).toBe(null);
+  });
+});
+
+describe('requireNeoProposalDelivers', () => {
+  const item = (id: string, extra: Partial<NeoAskItem> = {}) =>
+    ({ id, text: `outcome ${id}`, state: 'pending', removed: false, ...extra }) as NeoAskItem;
+  const ask = {
+    id: 'a1',
+    doneItems: [
+      item('i1'),
+      item('i2', { deliveredBy: 'live' }),
+      item('i3', { deliveredBy: 'gone' }),
+      item('i4', { state: 'met' }),
+      item('i5', { decision: true }),
+    ],
+  } as NeoAsk;
+  const cards = [
+    { id: 'live', status: 'queued' as const },
+    { id: 'gone', status: 'failed' as const },
+  ];
+  const read = { replay: false, cards };
+
+  test.each([
+    ['no ask', undefined, null, read, true],
+    ['a retry of the same proposal', undefined, ask, { ...read, replay: true }, true],
+    ['an open ask and no delivers', undefined, ask, read, false],
+    ['delivers: []', [], ask, read, true],
+    ['an unbound open item', ['i1'], ask, read, true],
+    ['an item a failed card released', ['i3'], ask, read, true],
+    ['an item a queued card delivers', ['i2'], ask, read, false],
+    ['a met item', ['i4'], ask, read, false],
+    ['a decision item', ['i5'], ask, read, false],
+  ] as const)('%s', (_label, delivers, target, state, admitted) => {
+    const result = requireNeoProposalDelivers(delivers, target, state, 'ok');
+    expect('value' in result).toBe(admitted);
+  });
+});
+
+describe('planNeoProposalBindings', () => {
+  const ask = {
+    id: 'a1',
+    doneItems: [
+      { id: 'i1', text: 'a', state: 'pending', removed: false },
+      { id: 'i2', text: 'b', state: 'pending', removed: false, deliveredBy: 'old' },
+      { id: 'i3', text: 'c', state: 'pending', removed: false, decision: true },
+    ],
+  } as NeoAsk;
+
+  test('binds what the card declares under a named ask, and every unbound outcome of its own ask', () => {
+    expect(planNeoProposalBindings({ askId: 'a1', delivers: ['i2'] }, ask, 'w1')).toEqual([
+      { itemId: 'i2', deliveredBy: 'w1' },
+    ]);
+    expect(planNeoProposalBindings({}, ask, 'w1')).toEqual([{ itemId: 'i1', deliveredBy: 'w1' }]);
+    expect(planNeoProposalBindings({ askId: 'a1' }, null, 'w1')).toEqual([]);
   });
 });
 

@@ -383,6 +383,54 @@ export function requireNeoWorkAskLink<T>(
       };
 }
 
+const NEO_RELEASED_CARD = new Set(['failed', 'cancelled']);
+
+export function requireNeoProposalDelivers<T>(
+  delivers: readonly string[] | undefined,
+  ask: NeoAsk | null,
+  read: { replay: boolean; cards: readonly Pick<NeoWork, 'id' | 'status'>[] },
+  value: T
+): Gate<T> {
+  if (!ask || read.replay) return { value };
+  const open = (ask.doneItems ?? []).filter(
+    (item) => !item.removed && !item.decision && !item.kind && item.state !== 'met'
+  );
+  if (delivers === undefined)
+    return open.length
+      ? {
+          reason: fail(
+            `delivers_required: this ask has open items ${open.map((item) => `${item.id} "${item.text}"`).join('; ')}. Pass delivers with the ids of the items this card delivers, or delivers: [] when it delivers none.`
+          ),
+        }
+      : { value };
+  for (const id of delivers) {
+    const item = open.find((entry) => entry.id === id);
+    if (!item) return { reason: fail(`delivers_unknown: ${id} is not an open item on this ask.`) };
+    const holder = read.cards.find((card) => card.id === item.deliveredBy);
+    if (holder && !NEO_RELEASED_CARD.has(holder.status))
+      return {
+        reason: fail(
+          `delivers_taken: ${id} is delivered by card ${holder.id.slice(0, 8)}, which is ${holder.status}; only a failed or cancelled card releases its items.`
+        ),
+      };
+  }
+  return { value };
+}
+
+export function planNeoProposalBindings(
+  input: { askId?: string; delivers?: readonly string[] },
+  ask: NeoAsk | null,
+  workId: string
+): { itemId: string; deliveredBy: string }[] {
+  if (!ask) return [];
+  const ids = input.askId
+    ? (input.delivers ?? [])
+    : (ask.doneItems ?? [])
+        .filter((item) => !item.removed && !item.decision && !item.kind && !item.deliveredBy)
+        .map((item) => item.id);
+  return ids.map((itemId) => ({ itemId, deliveredBy: workId }));
+}
+
 export function planNeoCardAsk(
   input: {
     askId?: string;

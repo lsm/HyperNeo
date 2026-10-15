@@ -14,6 +14,7 @@ import {
 } from '../../../../src/lib/neo/admission-wake.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { NEO_EDGES_NEED_APPROVAL } from '../../../../src/lib/neo/work-admission.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -114,7 +115,7 @@ describe('dependency planning fixtures', () => {
     )) as Reply;
   }
 
-  async function planEpic() {
+  async function planEpic(bound = true) {
     const opened = await invoke('neo.ask.open', {
       requestKey: 'avatars-epic',
       title: 'Avatars epic',
@@ -129,13 +130,14 @@ describe('dependency planning fixtures', () => {
     });
     const askId = opened.value!.ask!.id;
     const cards: string[] = [];
-    for (const n of stages) {
+    for (const [index, n] of stages.entries()) {
       const proposed = await invoke('neo.work.propose', {
         requestKey: `stage-${n}`,
         title: `Close lsm/HyperNeo#${n}`,
         instruction: `Implement ${issue(n)} and merge it to dev.`,
         work: { verb: 'start', adapter: 'codex-desktop', place },
         askId,
+        delivers: bound ? [`i${index + 1}`] : [],
       });
       cards.push(proposed.value!.work!.id);
     }
@@ -158,12 +160,9 @@ describe('dependency planning fixtures', () => {
   test('a staged epic plan is valid before any pull request exists', async () => {
     const { askId, cards } = await planEpic();
     const [first, second, third] = cards;
-    expect(
-      await invoke('neo.ask.edit', {
-        askId,
-        bind: cards.map((card, i) => ({ itemId: `i${i + 1}`, deliveredBy: card })),
-      })
-    ).toMatchObject({ value: { ok: true } });
+    expect(service.askRecords.get(askId)?.doneItems?.map((item) => item.deliveredBy)).toEqual(
+      cards
+    );
     const blocked = (prerequisite: string) => ({
       value: {
         ok: false,
@@ -171,6 +170,12 @@ describe('dependency planning fixtures', () => {
         blockers: [{ workId: prerequisite, reason: 'outcomes_unverified' }],
       },
     });
+    expect(service.askRecords.get(askId)?.approvedAt).toEqual(expect.any(Number));
+    expect(await invoke('neo.work.start', { id: second, dependsOn: [first] })).toMatchObject({
+      value: { ok: false, reason: NEO_EDGES_NEED_APPROVAL },
+    });
+    expect(service.dependencies.edges()).toEqual([{ workId: second, prerequisiteId: first }]);
+    expect(service.askRecords.get(askId)?.approvedAt ?? null).toBeNull();
     expect(await invoke('neo.work.start', { id: second, dependsOn: [first] })).toMatchObject(
       blocked(first)
     );
@@ -225,12 +230,10 @@ describe('dependency planning fixtures', () => {
 
   test('with automatic dispatch on, a verified prerequisite starts the next card with Neo idle', async () => {
     const { askId, cards } = await planEpic();
-    await invoke('neo.ask.edit', {
-      askId,
-      bind: cards.map((card, i) => ({ itemId: `i${i + 1}`, deliveredBy: card })),
-    });
     await invoke('neo.work.start', { id: cards[1], dependsOn: [cards[0]] });
-    await invoke('neo.work.start', { id: cards[0] });
+    expect(
+      await invoke('neo.ask.approve', { askId }, { source: 'rpc', principal: 'local' })
+    ).toMatchObject({ value: { ok: true } });
     db.updateGlobalSettings({ neo: { autoDispatch: true } });
     const item = service.askRecords.get(askId)!.doneItems![0];
     service.askRecords.tickItem(
@@ -242,12 +245,16 @@ describe('dependency planning fixtures', () => {
     );
     for (const job of db.getJobQueueRepo().dequeue(NEO_WORK_ADMISSION_WAKE, 10))
       await runNeoAdmissionWake(job, service);
-    expect(service.repo.getWork(cards[1])?.status).toBe('queued');
-    expect(started).toHaveLength(2);
+    expect(cards.map((card) => service.repo.getWork(card)?.status)).toEqual([
+      'queued',
+      'queued',
+      'queued',
+    ]);
+    expect(started).toHaveLength(3);
   });
 
   test('a prerequisite with no bound outcome is refused instead of trusted', async () => {
-    const { cards } = await planEpic();
+    const { cards } = await planEpic(false);
     expect(await invoke('neo.work.start', { id: cards[1], dependsOn: [cards[0]] })).toMatchObject({
       value: { ok: false, reason: 'dependency_outcomes_missing' },
     });

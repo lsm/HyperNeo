@@ -43,7 +43,7 @@ describe('NeoDependencyRepository', () => {
         },
         [{ text: `Outcome ${id}`, check: null, deliveredBy: id }]
       );
-      asks.approve(`ask-${id}`, 10, 1);
+      asks.approve(`ask-${id}`, 10, 0);
     }
   });
   afterEach(() => db.close());
@@ -55,10 +55,10 @@ describe('NeoDependencyRepository', () => {
 
   test('late cross-ask edges invalidate only the dependent approval and survive repository recreation', () => {
     const prerequisite = asks.get('ask-a');
-    expect(replace('b', ['a'])).toEqual({ ok: true, revision: 2 });
+    expect(replace('b', ['a'])).toEqual({ ok: true, revision: 1 });
     expect(asks.get('ask-a')).toEqual(prerequisite);
     expect(asks.get('ask-b')).toMatchObject({
-      revision: 2,
+      revision: 1,
       approvedAt: null,
       approvedRevision: null,
     });
@@ -66,12 +66,12 @@ describe('NeoDependencyRepository', () => {
       { workId: 'b', prerequisiteId: 'a' },
     ]);
     expect(changed).toHaveBeenCalledTimes(1);
-    asks.approve('ask-b', 30, 2);
+    asks.approve('ask-b', 30, 1);
     const approved = asks.get('ask-b');
-    expect(replace('b', ['a'])).toEqual({ ok: true, revision: 2 });
+    expect(replace('b', ['a'])).toEqual({ ok: true, revision: 1 });
     expect(asks.get('ask-b')).toEqual(approved);
     expect(changed).toHaveBeenCalledTimes(1);
-    expect(replace('b', [])).toEqual({ ok: true, revision: 3 });
+    expect(replace('b', [])).toEqual({ ok: true, revision: 2 });
     expect(graph.edges()).toEqual([]);
     expect(asks.get('ask-a')).toEqual(prerequisite);
   });
@@ -90,7 +90,7 @@ describe('NeoDependencyRepository', () => {
     const before = asks.get('ask-a');
     expect(replace('b', ['c', 'a'])).toEqual({ ok: true, revision: revision + 1 });
     expect(asks.get('ask-a')).toEqual(before);
-    expect(asks.get('ask-c')).toMatchObject({ revision: 1, approvedRevision: 1 });
+    expect(asks.get('ask-c')).toMatchObject({ revision: 0, approvedRevision: 0 });
   });
 
   test('rejects missing, invisible, duplicate, self and cyclic edges without partial writes', () => {
@@ -107,9 +107,9 @@ describe('NeoDependencyRepository', () => {
       expect(replace(id, [...deps])).toEqual({ ok: false, reason });
     }
     expect(
-      graph.replace({ workId: 'a', dependsOn: ['c'], expectedRevision: 1 }, new Set(['a']), 20)
+      graph.replace({ workId: 'a', dependsOn: ['c'], expectedRevision: 0 }, new Set(['a']), 20)
     ).toEqual({ ok: false, reason: 'dependency_not_visible' });
-    expect(replace('b', [], 1)).toEqual({ ok: false, reason: 'stale_ask_revision' });
+    expect(replace('b', [], 0)).toEqual({ ok: false, reason: 'stale_ask_revision' });
     expect(asks.list()).toEqual(before);
     expect(graph.edges()).toEqual(edges);
   });
@@ -143,7 +143,7 @@ describe('NeoDependencyRepository', () => {
   test('post-dispatch material edits are refused but identical edges are idempotent', () => {
     replace('b', ['a']);
     work.transitionWork('b', work.getWork('b')!, { status: 'queued' });
-    expect(replace('b', ['a'])).toEqual({ ok: true, revision: 2 });
+    expect(replace('b', ['a'])).toEqual({ ok: true, revision: 1 });
     expect(replace('b', ['c'])).toEqual({ ok: false, reason: 'dependency_already_dispatched' });
     expect(graph.edges()).toEqual([{ workId: 'b', prerequisiteId: 'a' }]);
   });
@@ -197,7 +197,7 @@ describe('NeoDependencyRepository', () => {
         remove: [],
       },
       31,
-      1
+      0
     );
     expect(graph.blockers('b', () => true)).toEqual([
       { workId: 'a', reason: 'outcomes_unverified', itemIds: ['i2'] },
