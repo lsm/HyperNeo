@@ -31,6 +31,7 @@ const CHECKING_VERB =
 const CHECKING_PROMISE =
   /(?:后|再|就)(?:直接)?(?:发给|发|告诉|回复|整理给|给)你|get back to you|once i have|when i have|then (?:i'll|i will) (?:send|tell|report|share)/i;
 const CHECKING_MAX_CHARS = 120;
+const CARRIES_ANSWER = /[:：]\s*\S{2,}/;
 
 type Draft = { shortText: string; fullText: string };
 type Rejection = { accepted: false; reason: string; detail: string };
@@ -55,6 +56,7 @@ export function requirePublicationNews<T>(
     };
   const checking = (text: string) =>
     text.length <= CHECKING_MAX_CHARS &&
+    !CARRIES_ANSWER.test(text) &&
     (CHECKING_LEAD.test(text.trim()) || (CHECKING_VERB.test(text) && CHECKING_PROMISE.test(text)));
   if (checking(draft.shortText) && checking(draft.fullText))
     return {

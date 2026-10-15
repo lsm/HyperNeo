@@ -655,6 +655,9 @@ describe('requirePublicationNews', () => {
     '我确认了，#12 已合并。',
     '我先确认好了：两张卡在等你。',
     'PR #12 已开，合并后告诉你。',
+    "Let me check what's open: Slice 1 and Slice 6.",
+    '我先核对一下：两张卡在等你。',
+    '我再给你确认一下范围：Slice 1 到 Slice 6',
     '看起来 Slice 6 还在等你决定。',
     'Checked: two cards are waiting on you.',
   ])('keeps the answer %s', (text) => {
