@@ -12,6 +12,7 @@ import {
 } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { isNeoAnswerItem } from './answer-outcome.ts';
+import { neoAskApprovalRefusal } from './work-admission.ts';
 
 const NEO_ASK_SUMMARY_LIMIT = 160;
 
@@ -146,9 +147,9 @@ export function neoAskItemAction(item: NeoAskItem): NeoAskHumanAction | null {
   };
 }
 
-export function neoCardHumanAction(card: NeoCardView): NeoAskHumanAction | null {
+export function neoCardHumanAction(card: NeoCardView, approved: boolean): NeoAskHumanAction | null {
   if (card.talk) return { kind: 'talk', workId: card.workId, what: card.talk };
-  if (card.phase === 'proposed') return { kind: 'start', workId: card.workId };
+  if (card.phase === 'proposed') return approved ? null : { kind: 'start', workId: card.workId };
   if (card.primary.kind === 'retry') return { kind: 'retry', workId: card.workId };
   if (card.primary.kind === 'close') return { kind: 'close', workId: card.workId };
   return null;
@@ -169,8 +170,9 @@ export function deriveNeoAskHumanActions(
   live: readonly NeoCardView[]
 ): NeoAskHumanAction[] {
   if (ask.status === 'achieved' || ask.status === 'abandoned') return [];
+  const approved = neoAskApprovalRefusal(ask, ask.approvalSpent) === null;
   return [
-    ...live.flatMap((card) => neoCardHumanAction(card) ?? []),
+    ...live.flatMap((card) => neoCardHumanAction(card, approved) ?? []),
     ...neoAskApproveAction(ask, live),
     ...(ask.doneItems ?? []).flatMap((item) => neoAskItemAction(item) ?? []),
   ];

@@ -338,7 +338,7 @@ describe('Neo existing trusted human work input', () => {
     });
   });
 
-  test('approving an ask starts its proposed cards; a card that cannot start stays proposed', async () => {
+  test('approving an ask starts its proposed cards; one that cannot start stays proposed, with no Start for the human', async () => {
     storeInput();
     const first = await propose(caller());
     const opened = service.askRecords.forWork(first.id)!;
@@ -393,7 +393,7 @@ describe('Neo existing trusted human work input', () => {
     };
     expect(
       snapshot.value.askViews.find((view) => view.askId === opened.id)?.humanActions
-    ).toContainEqual({ kind: 'start', workId: stuck.id });
+    ).not.toContainEqual({ kind: 'start', workId: stuck.id });
   });
 
   test.each(['system', 'internal_compaction', 'missing'])(

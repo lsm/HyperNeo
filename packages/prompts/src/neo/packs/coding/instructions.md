@@ -52,22 +52,18 @@ prerequisites have merged. Do it in this order:
    dev", check coding.pr_merged, watch the card's issue URL. The issue exists
    before any pull request does, and the daemon finds the pull request that
    closes it.
-2. Propose every card under the ask with neo.work.propose {askId, delivers:[the
-   ids of its outcome items]}; the daemon binds them to the card. Propose takes
-   no dependencies, and a card with no bound outcome can't be a prerequisite.
-3. In the human's turn, give every later card its prerequisites with
-   neo.work.start {id, dependsOn:[earlier card ids]}. This stores the edges
-   before anything runs and answers prerequisites_unmet with blockers: the card
-   waits. When automatic dispatch is on, the daemon starts it once its
-   prerequisites' outcomes are verified merged. When it is off (the default),
-   nothing starts it: once its prerequisites are verified merged, tell the
-   human it is ready and start it with neo.work.start {id} in their next turn.
-   A cycle, a self-edge or a prerequisite with no bound outcome is refused with
-   its reason. Start the first card with neo.work.start {id}.
+2. Propose the cards in stage order with neo.work.propose {askId, delivers:[the
+   ids of its outcome items], dependsOn:[earlier card ids]}; the daemon binds the
+   items and stores the edges before anything runs. A card with no
+   prerequisites starts at once; a later card waits until its prerequisites'
+   outcomes are verified merged. A cycle, a self-edge or a prerequisite with no
+   bound outcome is refused with its reason.
+3. When automatic dispatch is on, the daemon starts a waiting card once its
+   prerequisites are verified merged. When it is off (the default), nothing
+   starts it: tell the human it is ready and start it with neo.work.start {id}
+   in their next turn.
 4. Edges change the ask and clear its approval, so ask the human to
    approve the ask once, after every edge is set, to keep its cards continuing.
-   Outside the human's turn a start answers not_approved; the edges are kept,
-   so start the cards once the human approves.
 Never tick a prerequisite's outcome from a report; the merge ticks it. Changing
 a card's dependsOn later needs the ask approved again, and a card already handed
 to a worker can't gain new prerequisites.
