@@ -14,6 +14,7 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { createNeoPublicationTable } from '../../../../src/storage/schema/m288-neo-publications.ts';
+import { createNeoRoutingLogTable } from '../../../../src/storage/schema/m299-neo-routing-log.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const conversation = '10000000-0000-4000-8000-000000000001';
@@ -335,6 +336,45 @@ describe('neo.publication.correct as a reply', () => {
       )) as { publication: { triggerId?: string; askOrigin: { messageId: string } } };
       expect(result.publication.triggerId).toBe('human:m-3');
       expect(result.publication.askOrigin.messageId).toBe('ask-of-m-3');
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('a correction that answers its turn', () => {
+  const asHuman: OperationCaller = {
+    source: 'mcp',
+    sessionId: root.sessionId,
+    neoTurn: { messageId: 'm-3', human: true, isLive: () => true },
+  };
+
+  test('is the reply of its turn for the fallback and records the routed outcome of the ask', async () => {
+    const { db, publications, insert, call } = setup();
+    try {
+      createNeoRoutingLogTable(db);
+      db.exec(`ALTER TABLE neo_routing_log ADD COLUMN digested_at INTEGER;
+        ALTER TABLE neo_routing_log ADD COLUMN ask_summary TEXT;
+        ALTER TABLE neo_routing_log ADD COLUMN awaiting TEXT`);
+      db.prepare(
+        `INSERT INTO neo_routing_log (message_id, conversation_id, asked_at, ask, destination, signal)
+          VALUES ('ask-of-m-3', ?, 1, 'Fix that reply', 'main', 'test')`
+      ).run(conversation);
+      insert(original);
+      await call(
+        'neo.publication.correct',
+        {
+          publicationId: original,
+          correctionId: correction,
+          shortText: 'Correction: PR #12 did not merge.',
+          fullText: 'PR #12 is still open.',
+        },
+        asHuman
+      );
+      expect(publications.findByProducer(root.sessionId, 'm-3')?.publicationId).toBe(correction);
+      expect(
+        db.prepare("SELECT outcome FROM neo_routing_log WHERE message_id = 'ask-of-m-3'").get()
+      ).toEqual({ outcome: 'Correction: PR #12 did not merge.' });
     } finally {
       db.close();
     }

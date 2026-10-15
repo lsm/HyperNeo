@@ -116,15 +116,7 @@ export class NeoPublicationRepository {
   append(input: unknown): NeoPublicationAppendResult {
     const result = append(input, this.db);
     if (result === 'invalid_publication') return { accepted: false, reason: result };
-    if (result.accepted && !result.publication.interim) {
-      const { askOrigin, shortText, askSummary, awaiting } = result.publication;
-      new NeoRoutingLogRepository(this.db).recordOutcome(
-        askOrigin.messageId,
-        shortText,
-        Date.now(),
-        { askSummary, awaiting }
-      );
-    }
+    if (result.accepted && !result.publication.interim) this.recordReplyOutcome(result.publication);
     return result;
   }
 
@@ -187,8 +179,17 @@ export class NeoPublicationRepository {
           current.conversationId,
           current.publicationId
         );
+      if (appended.publication.triggerId) this.recordReplyOutcome(appended.publication);
       return appended;
     })();
+  }
+
+  private recordReplyOutcome(publication: NeoPublication): void {
+    const { askOrigin, shortText, askSummary, awaiting } = publication;
+    new NeoRoutingLogRepository(this.db).recordOutcome(askOrigin.messageId, shortText, Date.now(), {
+      askSummary,
+      awaiting,
+    });
   }
 
   hasTrigger(conversationId: string, triggerId: string, publicationId: string): boolean {
@@ -219,7 +220,8 @@ export class NeoPublicationRepository {
         WHERE json_extract(payload_json, '$.producerInput.sessionId') = ?
           AND json_extract(payload_json, '$.producerInput.messageId') = ?
           AND json_extract(payload_json, '$.interim') IS NULL
-          AND json_extract(payload_json, '$.corrects') IS NULL LIMIT 2`
+          AND (json_extract(payload_json, '$.corrects') IS NULL
+            OR json_extract(payload_json, '$.triggerId') IS NOT NULL) LIMIT 2`
       )
       .all(sessionId, messageId) as Row[];
     if (rows.length > 1) throw new Error('Ambiguous consultation publications');
