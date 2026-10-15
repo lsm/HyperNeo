@@ -9,6 +9,7 @@ export type NeoReplyLanguage =
   | `the language of ${string}`;
 
 const SAMPLE_LIMIT = 60;
+const DETECT_LIMIT = 2000;
 
 const count = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 0;
 
@@ -17,8 +18,11 @@ const ENGLISH_WORD =
 
 export function detectNeoReplyLanguage(text: string): NeoReplyLanguage | null {
   const prose = text
+    .slice(0, DETECT_LIMIT)
     .replace(/```[\s\S]*?```|`[^`]*`/g, ' ')
-    .replace(/\S*(?:[/\\]|\.[A-Za-z]{1,5}\b|#\d)\S*/g, ' ');
+    .split(/\s+/)
+    .filter((token) => !/^[\x21-\x7e]+$/.test(token) || !/[/\\]|\.[A-Za-z]{1,5}\b|#\d/.test(token))
+    .join(' ');
   const kana = count(prose, /[\u3040-\u30ff]/g);
   const hangul = count(prose, /[\uac00-\ud7af]/g);
   const cjk = kana + hangul + count(prose, /[\u4e00-\u9fff]/g);

@@ -15,6 +15,7 @@ describe('detectNeoReplyLanguage', () => {
     ["what's open on HyperNeo right now?", 'English'],
     ['dev', null],
     ['请帮我 fix this bug', 'Chinese'],
+    ['修复#12的问题', 'Chinese'],
     ['Why does it fail with 无法连接到服务器 when I start it?', 'English'],
     ['现在有卡片还在运行吗？', 'Chinese'],
     ['把 lsm/HyperNeo#12 的 CI 修好', 'Chinese'],
@@ -30,6 +31,14 @@ describe('detectNeoReplyLanguage', () => {
     ['that list is wrong, please correct it', 'English'],
   ] as const)('%j reads as %s', (text, language) => {
     expect(detectNeoReplyLanguage(text)).toBe(language);
+  });
+});
+
+describe('detectNeoReplyLanguage on a long paste', () => {
+  test('reads only the head of a long spaceless paragraph, quickly', () => {
+    const started = performance.now();
+    expect(detectNeoReplyLanguage(`${'中'.repeat(100_000)}/a.ts`)).toBe('Chinese');
+    expect(performance.now() - started).toBeLessThan(200);
   });
 });
 
