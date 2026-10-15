@@ -80,20 +80,27 @@ export class NeoRoutingLogRepository {
       );
   }
 
-  recordOutcome(messageId: string, outcome: string, at: number, notes: NeoTurnNotes = {}): void {
+  recordOutcome(
+    messageId: string,
+    outcome: string,
+    at: number,
+    notes: NeoTurnNotes = {},
+    replace = false
+  ): void {
     if (!this.ready()) return;
     const answered = this.db
       .prepare(
         `UPDATE neo_routing_log SET outcome = ?, outcome_at = ?, digested_at = NULL,
            ask_summary = ?, awaiting = ?
-          WHERE message_id = ? AND outcome IS NULL RETURNING id, destination`
+          WHERE message_id = ? AND (outcome IS NULL OR ?) RETURNING id, destination`
       )
       .get(
         clip(outcome),
         at,
         notes.askSummary ? clip(notes.askSummary) : null,
         notes.awaiting ? clip(notes.awaiting) : null,
-        messageId
+        messageId,
+        replace ? 1 : 0
       ) as { id: number; destination: string } | null;
     if (answered?.destination !== 'main') return;
     this.db

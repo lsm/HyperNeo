@@ -96,7 +96,7 @@ describe('published consultation coordinator prompt', () => {
       'public conversation directly; never re-summarize it or publish a second copy'
     );
     expect(root).toContain('synthesize only an older legacy return and stop');
-    expect(root).toContain('acknowledge briefly, then end your turn');
+    expect(root).toContain('publish nothing and end your turn');
     expect(root).toContain('Do not poll, fabricate its answer, or start execution');
   });
   test.each([null, 'fictional'])(
