@@ -199,6 +199,19 @@ export class NeoPublicationRepository {
     return readPage({ conversationId, after, limit, before }, this.db);
   }
 
+  listByProducer(conversationId: string, sessionId: string, limit: number): NeoPublication[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
+            AND json_extract(payload_json, '$.producerInput.sessionId') = ?
+            AND json_extract(payload_json, '$.interim') IS NULL
+          ORDER BY sequence DESC LIMIT ?`
+        )
+        .all(conversationId, sessionId, limit) as Row[]
+    ).map(decode);
+  }
+
   findByProducer(sessionId: string, messageId: string): NeoPublication | null {
     const rows = this.db
       .prepare(

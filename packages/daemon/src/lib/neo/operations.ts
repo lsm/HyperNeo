@@ -2022,6 +2022,9 @@ export function createNeoOperations(service: NeoService) {
       publications: service.publications,
       isConsultationReturn: (conversationId, publicationId) =>
         service.consultations.returnsPublication(conversationId, publicationId),
+      resolveAskOrigin: (input) => service.resolveAskOrigin(input),
+      isTriggerPublished: (conversationId, triggerId, publicationId) =>
+        service.publications.hasTrigger(conversationId, triggerId, publicationId),
       notify: (conversationId) => {
         service.notifyChanged();
         service.notifyPublicationsChanged(conversationId);
