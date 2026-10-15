@@ -155,36 +155,38 @@ describe('neo.publication.correct', () => {
   };
 
   test('publishes one labelled correction that cites the original, and retries reuse it', async () => {
-    const { db, publications, insert, call } = setup();
+    const { db, publications, insert, call, published } = setup();
     try {
       insert(original);
-      expect(await call('neo.publication.correct', corrected)).toMatchObject({
+      published.add('human:m-3');
+      const human = neo(root.sessionId, 'm-3');
+      expect(await call('neo.publication.correct', corrected, human)).toMatchObject({
         accepted: true,
         created: true,
         publication: {
-          publicationId: correction,
+          publicationId: humanCorrection,
           corrects: original,
           askOrigin: { sessionId: root.sessionId, messageId: 'm-1' },
-          producerInput: { sessionId: root.sessionId, messageId: 'm-2' },
+          producerInput: { sessionId: root.sessionId, messageId: 'm-3' },
         },
       });
       expect(publications.get(conversation, original)).toMatchObject({
-        correctedBy: correction,
+        correctedBy: humanCorrection,
         shortText: 'PR #12 merged.',
       });
-      expect(publications.get(conversation, correction)?.triggerId).toBeUndefined();
-      expect(await call('neo.publication.correct', corrected)).toMatchObject({
+      expect(publications.get(conversation, humanCorrection)?.triggerId).toBeUndefined();
+      expect(await call('neo.publication.correct', corrected, human)).toMatchObject({
         accepted: true,
         created: false,
       });
       expect(await call('neo.publication.correct', corrected, neo(root.sessionId, 'm-4'))).toEqual({
         accepted: false,
-        reason: 'already_corrected',
+        reason: 'answer_closed',
       });
       expect(
         await call(
           'neo.publication.correct',
-          { ...corrected, publicationId: correction },
+          { ...corrected, publicationId: humanCorrection },
           neo(root.sessionId, 'm-4')
         )
       ).toEqual({ accepted: false, reason: 'already_corrected' });
@@ -197,7 +199,9 @@ describe('neo.publication.correct', () => {
     const { db, insert, call } = setup();
     try {
       insert(original, holder.sessionId);
-      expect(await call('neo.publication.correct', corrected)).toMatchObject({
+      expect(
+        await call('neo.publication.correct', corrected, neo(root.sessionId, 'm-3'))
+      ).toMatchObject({
         accepted: true,
         publication: { corrects: original, producerInput: { sessionId: root.sessionId } },
       });
@@ -249,22 +253,23 @@ describe('requireChangeable', () => {
 
 describe('NeoPublicationRepository.findByProducer', () => {
   test('a correction made in the same turn as a reply does not make the turn ambiguous', async () => {
-    const { db, publications, insert, call } = setup();
+    const { db, publications, insert, call, published } = setup();
     try {
       insert(original);
+      published.add('human:m-3');
       insert(sameTurnReply);
       db.prepare(
-        `UPDATE neo_publications SET payload_json = json_set(payload_json, '$.producerInput.messageId', 'm-2')
+        `UPDATE neo_publications SET payload_json = json_set(payload_json, '$.producerInput.messageId', 'm-3')
           WHERE publication_id = ?`
       ).run(sameTurnReply);
       expect(
-        await call('neo.publication.correct', {
-          publicationId: original,
-          shortText: 'Correction.',
-          fullText: 'Correction.',
-        })
+        await call(
+          'neo.publication.correct',
+          { publicationId: original, shortText: 'Correction.', fullText: 'Correction.' },
+          neo(root.sessionId, 'm-3')
+        )
       ).toMatchObject({ accepted: true });
-      expect(publications.findByProducer(root.sessionId, 'm-2')?.publicationId).toBe(sameTurnReply);
+      expect(publications.findByProducer(root.sessionId, 'm-3')?.publicationId).toBe(sameTurnReply);
     } finally {
       db.close();
     }
@@ -293,15 +298,16 @@ describe('planNeoCorrectionAnswer', () => {
 
 describe('neo.publication.recent', () => {
   test('lists every Neo reply in the conversation, newest first, marking which are yours', async () => {
-    const { db, insert, call } = setup();
+    const { db, insert, call, published } = setup();
     try {
       insert(original);
       insert(sameTurnReply, holder.sessionId);
-      await call('neo.publication.correct', {
-        publicationId: original,
-        shortText: 'Correction.',
-        fullText: 'Correction.',
-      });
+      published.add('human:m-3');
+      await call(
+        'neo.publication.correct',
+        { publicationId: original, shortText: 'Correction.', fullText: 'Correction.' },
+        neo(root.sessionId, 'm-3')
+      );
       const listed = (await call('neo.publication.recent', { limit: 5 })) as {
         publications: {
           publicationId: string;
@@ -314,12 +320,12 @@ describe('neo.publication.recent', () => {
       expect(
         listed.publications.map((item) => [item.publicationId, item.producer, item.yours])
       ).toEqual([
-        [correction, root.sessionId, true],
+        [humanCorrection, root.sessionId, true],
         [sameTurnReply, holder.sessionId, false],
         [original, root.sessionId, true],
       ]);
       expect(listed.publications[0].corrects).toBe(original);
-      expect(listed.publications[2].correctedBy).toBe(correction);
+      expect(listed.publications[2].correctedBy).toBe(humanCorrection);
     } finally {
       db.close();
     }
@@ -439,29 +445,25 @@ describe('requireNeoEditable', () => {
       'ok'
     );
   });
-  test('a turn may change its own trigger’s message once, and nothing else', () => {
+  test('an answered message changes only from a new human message', () => {
     const turn = 'neo-trigger:outcome:a:x';
     expect(reason(requireNeoEditable(owned(turn), { shortText: 'Fixed.' }, 'outcome:a:x'))).toBe(
-      'ok'
+      'answer_closed'
     );
+    expect(reason(requireNeoEditable(owned('n'), { shortText: 'X.' }, 'idle:a:y'))).toBe(
+      'answer_closed'
+    );
+    expect(reason(requireNeoEditable(owned('n'), { shortText: 'X.' }, null))).toBe('answer_closed');
     expect(
       reason(
         requireNeoEditable(
-          owned(turn, {
-            editedAt: '2026-10-14T11:00:00.000Z',
-            answerInput: { sessionId: root.sessionId, messageId: turn },
-          }),
-          { shortText: 'Again.' },
-          'outcome:a:x'
+          owned('m-1', { triggerId: 'human:m-1' }),
+          { shortText: 'X.' },
+          'human:m-1'
         )
       )
-    ).toBe('already_edited');
-    expect(reason(requireNeoEditable(owned('n'), { shortText: 'X.' }, 'idle:a:y'))).toBe(
-      'edit_needs_trigger'
-    );
-    expect(reason(requireNeoEditable(owned('n'), { shortText: 'X.' }, null))).toBe(
-      'edit_needs_trigger'
-    );
+    ).toBe('answer_closed');
+    expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'X.' }, 'human:m-9'))).toBe('ok');
   });
   test('a continuation carrying the human trigger edits a message once, not again', () => {
     const turn = 'neo-turn-limit:r2';

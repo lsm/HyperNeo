@@ -33,7 +33,7 @@ describe('one Neo publication path', () => {
     const service = readFileSync(join(SRC, 'lib/neo/service.ts'), 'utf8');
     const commit = service.slice(
       service.indexOf('this.commitPublication = createNeoPublicationCommit('),
-      service.indexOf('published: (input, publication) =>')
+      service.indexOf('published: (input) =>')
     );
     expect(commit).toContain('this.appendPublication(input)');
     expect(commit).toContain('settleWithPublication(');

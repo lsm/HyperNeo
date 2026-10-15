@@ -21,7 +21,7 @@ export function explainNeoPublicationRefusal(receipt: Receipt): Receipt {
     ? {
         ...receipt,
         detail:
-          'This turn already gave the human the message for its trigger. A later input that continues the trigger replaces that message; this one cannot post again. End the turn.',
+          'The human already has the answer for this trigger; its first answer closes it. A later fact goes out as its own outcome or trigger message. End the turn.',
       }
     : receipt;
 }
