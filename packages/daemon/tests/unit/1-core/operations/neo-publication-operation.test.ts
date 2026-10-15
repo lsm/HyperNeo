@@ -785,7 +785,8 @@ describe('findNeoRepeatedPublication', () => {
     ).toBe(prior);
   });
 
-  test('a message with any new text is a new fact', () => {
+  test('a message with any new text or a new question for the human is a new fact', () => {
+    expect(findNeoRepeatedPublication([prior], { ...input, awaiting: 'Merge it now?' })).toBeNull();
     expect(
       findNeoRepeatedPublication([prior], { ...input, fullText: 'Merged #12; CI green.' })
     ).toBeNull();

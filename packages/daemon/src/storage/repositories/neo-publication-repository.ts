@@ -41,6 +41,7 @@ function hasTrigger(
 const sameAnswer = (a: NeoPublicationInput, b: NeoPublicationInput) =>
   a.shortText === b.shortText &&
   a.fullText === b.fullText &&
+  a.awaiting === b.awaiting &&
   JSON.stringify(a.links) === JSON.stringify(b.links);
 
 export function findNeoRepeatedPublication(
