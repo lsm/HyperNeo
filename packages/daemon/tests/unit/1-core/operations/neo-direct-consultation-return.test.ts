@@ -204,52 +204,55 @@ describe('NeoService direct consultation return', () => {
     expect(mailbox()).toEqual([]);
     expect(receiptRows()).toEqual(before);
   });
-  test('the holder’s answer replaces Neo’s earlier “checking” post and the consultation still returns', async () => {
-    const interimId = '40000000-0000-4000-8000-000000000001';
-    const rootTurn = { messageId: ask.messageId, human: true, isLive: () => true };
-    expect(
-      await invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
-        'neo.publication.publish',
-        withMintedPublicationId(service, {
-          publicationId: interimId,
-          shortText: 'Checking with the holder; the answer follows.',
-          fullText: 'Checking with the holder; the answer follows.',
-          links: [],
-        }),
-        { source: 'mcp', sessionId: root, role: 'neo', neoTurn: rootTurn }
-      )
-    ).toMatchObject({ kind: 'completed', value: { accepted: true, created: true } });
-    const messageId = 'neo-consult:check:request';
+  const ops = () => createOperationRegistry(createNeoOperations(service));
+  const rootCaller = (messageId = ask.messageId, human = true) => ({
+    source: 'mcp' as const,
+    sessionId: root,
+    role: 'neo' as const,
+    neoTurn: { messageId, human, isLive: () => true },
+  });
+  const holderPublish = async (id: string, publicationId = draft.publicationId) => {
+    const messageId = `neo-consult:${id}:request`;
     prompt(holder, messageId, 'system');
-    stampRequest('check');
+    stampRequest(id);
     const turn = new NeoHolderTurn(db, holder, { isLive: () => true }, () => {});
     turns.push(turn);
     expect(turn.bind(messageId)).toBe(true);
-    const changed = vi.spyOn(service, 'notifyPublicationsChanged');
+    return invokeOperation(
+      ops(),
+      'neo.publication.publish',
+      withMintedPublicationId(service, {
+        ...draft,
+        publicationId,
+        links: [{ ...draft.links[0], id }],
+      }),
+      { source: 'mcp', sessionId: holder, role: 'neo', neoTurn: turn.identity() }
+    );
+  };
+  const interim = {
+    publicationId: '40000000-0000-4000-8000-000000000001',
+    shortText: 'Checking with the holder; the answer follows.',
+    fullText: 'Checking with the holder; the answer follows.',
+    links: [],
+  };
+
+  test('A: root cannot post a placeholder while the holder it consulted has not returned', async () => {
     expect(
       await invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
+        ops(),
         'neo.publication.publish',
-        withMintedPublicationId(service, { ...draft, links: [{ ...draft.links[0], id: 'check' }] }),
-        { source: 'mcp', sessionId: holder, role: 'neo', neoTurn: turn.identity() }
+        withMintedPublicationId(service, interim),
+        rootCaller()
       )
-    ).toMatchObject({
-      kind: 'completed',
-      value: { accepted: true, created: true, publication: { publicationId: interimId } },
+    ).toMatchObject({ value: { accepted: false, reason: 'consultation_pending' } });
+    expect(service.publications.list(conversationId)).toEqual([]);
+    expect(await holderPublish('check')).toMatchObject({
+      value: { accepted: true, created: true, publication: { shortText: draft.shortText } },
     });
-    expect(changed).toHaveBeenCalledWith(conversationId);
-    expect(service.publications.list(conversationId)).toEqual([
-      expect.objectContaining({
-        publicationId: interimId,
-        shortText: draft.shortText,
-        answerInput: { sessionId: holder, messageId },
-        editedAt: expect.any(String),
-      }),
-    ]);
-    await service.syncConsultation('check');
-    expect(returned()).toEqual({ returned: 1 });
-    expect(mailbox()).toEqual([]);
+  });
+
+  test('B and C: the holder’s answer closes the message; no later post, edit or new consultation', async () => {
+    await holderPublish('check');
     prompt(root, 'neo-nudge:later', 'system');
     service.inputOrigins.record(
       { sessionId: root, messageId: 'neo-nudge:later' },
@@ -257,26 +260,71 @@ describe('NeoService direct consultation return', () => {
       0,
       `human:${ask.messageId}`
     );
+    const later = rootCaller('neo-nudge:later', false);
     expect(
       await invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
+        ops(),
         'neo.publication.publish',
-        withMintedPublicationId(service, {
-          publicationId: '40000000-0000-4000-8000-000000000002',
-          shortText: 'Overwrite attempt.',
-          fullText: 'Overwrite attempt.',
-          links: [],
-        }),
-        {
-          source: 'mcp',
-          sessionId: root,
-          role: 'neo',
-          neoTurn: { messageId: 'neo-nudge:later', human: false, isLive: () => true },
-        }
+        withMintedPublicationId(service, { ...interim, shortText: 'Overwrite.' }),
+        later
       )
     ).toMatchObject({ value: { accepted: false, reason: 'trigger_already_published' } });
-    expect(service.publications.list(conversationId)?.[0].shortText).toBe(draft.shortText);
+    expect(
+      await invokeOperation(
+        ops(),
+        'neo.publication.edit',
+        { publicationId: draft.publicationId, shortText: 'Overwrite.' },
+        later
+      )
+    ).toMatchObject({ value: { accepted: false } });
+    expect(
+      await invokeOperation(
+        ops(),
+        'neo.project.consult',
+        { projectId: 'fictional', question: 'Again?' },
+        later
+      )
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('trigger_answered') } });
+    expect(service.publications.list(conversationId)?.map((item) => item.shortText)).toEqual([
+      draft.shortText,
+    ]);
   });
+
+  test('C: a holder that already returned for this message is not consulted again', async () => {
+    service.consultations.finish('check', 'reported', 'Legacy answer');
+    expect(
+      await invokeOperation(
+        ops(),
+        'neo.project.consult',
+        { projectId: 'fictional', question: 'Again?' },
+        rootCaller()
+      )
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('already_consulted') } });
+  });
+
+  test('E: a return that lands on an answered message settles quietly and publishes nothing', async () => {
+    const answered = service.publications.append({
+      ...interim,
+      shortText: 'Root answered first.',
+      fullText: 'Root answered first.',
+      conversationId,
+      askOrigin: ask,
+      producerInput: ask,
+      triggerId: `human:${ask.messageId}`,
+    });
+    expect(answered).toMatchObject({ accepted: true, created: true });
+    expect(await holderPublish('check')).toMatchObject({
+      value: {
+        accepted: true,
+        created: false,
+        publication: { publicationId: interim.publicationId, shortText: 'Root answered first.' },
+      },
+    });
+    expect(service.consultations.get('check')).toMatchObject({ status: 'reported' });
+    expect(returned('check')).toEqual({ returned: 1 });
+    expect(service.publications.list(conversationId)).toHaveLength(1);
+  });
+
   test('reload and recovery need only the immutable receipt, not removed SDK history or a recaptured ask', async () => {
     await publish();
     const before = receiptRows();
