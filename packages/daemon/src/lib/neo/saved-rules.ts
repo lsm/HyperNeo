@@ -1,4 +1,5 @@
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import { NEO_STANDING_RULES_MAX } from '@hyperneo/shared/types/settings';
 import { nudgedMessageId } from './ask-origin.ts';
 
 export function neoSavedRulesKey(sessionId: string, messageId: string): string {
@@ -62,6 +63,43 @@ export function planNeoSavedRulesAppend(
 
 export function planNeoSavedRules(before: readonly string[], after: readonly string[]): string[] {
   return after.filter((rule) => !before.includes(rule));
+}
+
+type NeoRuleRefusal = { reason: { ok: false; reason: string } };
+const refuseRule = (reason: string): NeoRuleRefusal => ({ reason: { ok: false, reason } });
+
+export function planNeoRuleEdit(
+  current: readonly string[],
+  edit: { add?: readonly string[]; remove?: readonly string[] }
+): { value: string[] } | NeoRuleRefusal {
+  const add = edit.add ?? [];
+  const remove = edit.remove ?? [];
+  if (!add.length && !remove.length) return refuseRule('Name a rule to add or remove.');
+  const missing = remove.find((rule) => !current.includes(rule));
+  if (missing !== undefined)
+    return refuseRule(
+      `"${missing}" is not a saved rule. Remove a rule by its exact text from neo.snapshot standingRules.`
+    );
+  const kept = current.filter((rule) => !remove.includes(rule));
+  const rules = [...kept, ...[...new Set(add)].filter((rule) => !kept.includes(rule))];
+  return rules.length > NEO_STANDING_RULES_MAX
+    ? refuseRule(`At most ${NEO_STANDING_RULES_MAX} rules are kept; remove one first.`)
+    : { value: rules };
+}
+
+const quoteForm = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
+
+export function requireNeoRuleCitation<T>(
+  value: T,
+  from: string | undefined,
+  humanText: string | null
+): { value: T } | NeoRuleRefusal {
+  if (humanText === null) return { value };
+  return from && quoteForm(humanText).includes(quoteForm(from))
+    ? { value }
+    : refuseRule(
+        'Save a rule only from the human’s own words: pass from with the part of their message this turn that states it, quoted exactly.'
+      );
 }
 
 const clip = (value: string, max: number) =>
