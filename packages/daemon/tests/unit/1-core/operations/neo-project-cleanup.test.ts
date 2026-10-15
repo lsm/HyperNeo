@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
-  isNeoOngoingPlace,
   type NeoProjectFacts,
   neoCleanupFolders,
   neoMirroredAliases,
@@ -93,26 +92,14 @@ describe('project cleanup plan', () => {
     ).toEqual([{ action: 'merge', projectId: 'topic', title: 'Topic', targetId: 'ios' }]);
   });
 
-  test('a one-off project with no repository and no home is archived; ongoing work, no work, or another machine is kept', () => {
-    expect(plan([project('once', oneOff)])).toEqual([
-      { action: 'archive', projectId: 'once', title: 'once' },
-    ]);
+  test('a project with content, no repository and no home is kept however little it was used', () => {
     expect(
       plan([
+        project('once', oneOff),
         project('notes', { context: 10, holderMessages: 4 }),
-        project('host', { ...oneOff, aliases: ['folder:here2\u0000/x'] }),
+        project('addressed', { asks: 1, routed: 1 }),
       ])
     ).toEqual([]);
-    const twoDays = {
-      asks: 1,
-      work: [
-        { lastActivityAt: DAY, ref: null },
-        { lastActivityAt: 3 * DAY, ref: null },
-      ],
-    };
-    expect(plan([project('days', twoDays), project('addressed', { asks: 1, routed: 1 })])).toEqual(
-      []
-    );
   });
 
   test('another machine is no home', () => {
@@ -121,7 +108,7 @@ describe('project cleanup plan', () => {
         project('away', { title: 'App', aliases: [repo, 'folder:tts\u0000/app'] }),
         project('topic', { title: 'App', ...oneOff }),
       ])
-    ).toEqual([{ action: 'archive', projectId: 'topic', title: 'App' }]);
+    ).toEqual([]);
   });
 
   test('live, section, pinned and other-machine projects are left alone', () => {
@@ -217,16 +204,5 @@ describe('neoCleanupFolders', () => {
         'here'
       )
     ).toEqual(['/a']);
-  });
-});
-
-describe('isNeoOngoingPlace', () => {
-  test('counts work on more than one day as ongoing, and one day of work as a one-off', () => {
-    const day = 24 * 60 * 60 * 1000;
-    expect(isNeoOngoingPlace([])).toBe(false);
-    expect(isNeoOngoingPlace([{ lastActivityAt: day + 1 }, { lastActivityAt: day + 5_000 }])).toBe(
-      false
-    );
-    expect(isNeoOngoingPlace([{ lastActivityAt: day }, { lastActivityAt: 3 * day }])).toBe(true);
   });
 });

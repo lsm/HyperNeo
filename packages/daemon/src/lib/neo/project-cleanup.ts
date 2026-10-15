@@ -39,16 +39,7 @@ export function neoMirroredAliases(
   );
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-export function isNeoOngoingPlace(work: readonly { lastActivityAt: number }[]): boolean {
-  return new Set(work.map((item) => Math.floor(item.lastActivityAt / DAY_MS))).size > 1;
-}
-
 const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork > 0;
-
-const isOneOff = (project: NeoProjectFacts) =>
-  project.routed === 0 && project.work.length > 0 && !isNeoOngoingPlace(project.work);
 
 export function neoCleanupFolders(projects: readonly NeoProjectFacts[], machine: string): string[] {
   const local = `folder:${machine}\u0000`;
@@ -105,7 +96,6 @@ export function planNeoProjectCleanup(
           ? []
           : [{ action: 'delete', ...named }];
       const target = home(project, homes);
-      if (target) return [{ action: 'merge', ...named, targetId: target.id }];
-      return isOneOff(project) ? [{ action: 'archive', ...named }] : [];
+      return target ? [{ action: 'merge', ...named, targetId: target.id }] : [];
     });
 }
