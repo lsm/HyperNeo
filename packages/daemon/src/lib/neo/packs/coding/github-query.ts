@@ -156,8 +156,8 @@ export const queryNeoGithub = (superpipe({})('neo-github-query') as PipelineAPI)
   .pipe(planNeoGithubQuery, 'query', 'result:query')
   .pipe(
     async (list: NeoGithubLister, plan: Plan) => {
-      const at = new Date().toISOString();
-      return { data: await list(plan.args), at };
+      const data = await list(plan.args);
+      return { data, at: new Date().toISOString() };
     },
     ['list', 'query'],
     'listed'

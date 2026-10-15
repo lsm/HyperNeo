@@ -158,6 +158,22 @@ describe('neo.github.read list form', () => {
         { source: 'rpc', principal: 'local' }
       );
       expect(list.mock.calls[0]?.[0]).toContain(`merged:${since}..${until}`);
+      const open = mock(async (_args: string[]) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return [pr(1, new Date().toISOString())];
+      });
+      service.listGithub = open;
+      const latest = (await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.github.read',
+        { repo: 'lsm/HyperNeo', state: 'merged', since },
+        { source: 'rpc', principal: 'local' }
+      )) as {
+        value: { window: { until: string }; items: { mergedAt: string }[] };
+      };
+      expect(Date.parse(latest.value.window.until)).toBeGreaterThanOrEqual(
+        Date.parse(latest.value.items[0]!.mergedAt)
+      );
       expect(result).toMatchObject({
         value: { ok: true, kind: 'list', truncated: false, window: { by: 'merged', since, until } },
       });
