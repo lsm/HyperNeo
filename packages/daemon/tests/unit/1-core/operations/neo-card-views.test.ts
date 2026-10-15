@@ -474,6 +474,23 @@ describe('projectNeoAskViews', () => {
     expect(views[1]).toMatchObject({ group: 'running', label: 'Working on it' });
     expect(views[1]).not.toHaveProperty('idle');
     expect(views[2]).not.toHaveProperty('idle');
+    const running = {
+      key: 'codex-desktop::t1',
+      title: 'Ship the fix',
+      adapter: 'codex-desktop',
+      status: 'running' as const,
+      kind: null,
+      open: { link: null, remoteLink: null, sessionId: null, daemon: null },
+    };
+    const linked = projectNeoAskViews(
+      [...input.asks, ask({ id: 'a4', workIds: [] })],
+      projectNeoCardViews(input),
+      input.prs,
+      new Map([['a1', [running]]])
+    );
+    expect(linked[0]).toMatchObject({ group: 'running', label: 'Working on it' });
+    expect(linked[0]).not.toHaveProperty('idle');
+    expect(linked[3]).not.toHaveProperty('idle');
   });
 
   test('done items count instead of cards when the ask has them', () => {
