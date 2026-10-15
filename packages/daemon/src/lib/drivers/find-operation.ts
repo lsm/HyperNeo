@@ -148,6 +148,13 @@ export async function findRemotely(input: FindInput, deps: FindWorkDeps): Promis
   );
 }
 
+export function askRemotely(
+  input: FindInput,
+  deps: FindWorkDeps
+): { pending: Promise<SourceOutcome> } {
+  return { pending: findRemotely(input, deps) };
+}
+
 function clampTitle(work: PlaceGroup['work'][number]): PlaceGroup['work'][number] {
   return work.title.length > TITLE_BUDGET_CHARS
     ? { ...work, title: `${work.title.slice(0, TITLE_BUDGET_CHARS)}…` }
@@ -214,6 +221,7 @@ const runFindWork = (superpipe({})('find-work') as PipelineAPI)
   .input(['input', 'deps', 'budget'])
   .pipe(selectFindAdapters, ['input', 'deps'], 'adapters')
   .pipe(toFindQuery, 'input', 'query')
+  .pipe(askRemotely, ['input', 'deps'], 'asked')
   .pipe(findLocally, ['adapters', 'query'], 'local')
   .pipe(
     async (local: SourceOutcome, input: FindInput) => ({
@@ -225,7 +233,7 @@ const runFindWork = (superpipe({})('find-work') as PipelineAPI)
     ['local', 'input'],
     'local'
   )
-  .pipe(findRemotely, ['input', 'deps'], 'remote')
+  .pipe((asked: { pending: Promise<SourceOutcome> }) => asked.pending, 'asked', 'remote')
   .pipe(combineFindResults, ['local', 'remote', 'input', 'budget'], 'result')
   .pipe(
     (result: FindResult, deps: FindWorkDeps) => {
