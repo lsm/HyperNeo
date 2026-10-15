@@ -340,6 +340,9 @@ describe('createNeoProjectCleanupApply', () => {
     await expect(
       apply({ action: 'drop', projectId: 'f', title: 'F', sessionId: 'spoke' })
     ).rejects.toThrow('the holder has spoken');
+    await expect(
+      apply({ action: 'drop', projectId: 'g', title: 'G', sessionId: 'holder:busy' })
+    ).rejects.toThrow('the holder is mid-turn');
     expect(calls).toEqual([
       ['dropped', 'a'],
       ['deleted', 'holder:a', 'ui_session_delete'],
