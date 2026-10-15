@@ -210,6 +210,17 @@ describe('durable public conversation presentation', () => {
     );
   });
 
+  it('leaves the native menu alone on a message with no text to copy', () => {
+    const { container } = render(
+      <NeoPublicConversation conversation={conversation([ask({ content: [photo] })], [])} />
+    );
+    fireEvent.contextMenu(container.querySelector('[data-public-entry]')!, {
+      clientX: 1,
+      clientY: 1,
+    });
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
   it('opens only work references through the owning callback, never as native actions', () => {
     const open = vi.fn();
     render(<NeoPublicConversation conversation={conversation()} onOpenScene={open} />);

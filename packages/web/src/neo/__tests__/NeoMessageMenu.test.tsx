@@ -8,14 +8,18 @@ afterEach(() => {
 });
 
 describe('neoMessageMenuActions', () => {
-  it('offers Share only where the browser can share, and Reply only where replies work', () => {
-    expect(neoMessageMenuActions({ canShare: true, canReply: true })).toEqual([
+  it('offers nothing for a message with no text, Share only where the browser can share, and Reply only where replies work', () => {
+    expect(neoMessageMenuActions({ hasText: true, canShare: true, canReply: true })).toEqual([
       'select',
       'copy',
       'share',
       'reply',
     ]);
-    expect(neoMessageMenuActions({ canShare: false, canReply: false })).toEqual(['select', 'copy']);
+    expect(neoMessageMenuActions({ hasText: true, canShare: false, canReply: false })).toEqual([
+      'select',
+      'copy',
+    ]);
+    expect(neoMessageMenuActions({ hasText: false, canShare: true, canReply: true })).toEqual([]);
   });
 });
 

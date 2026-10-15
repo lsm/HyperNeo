@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
 export type NeoMessageMenuAction = 'select' | 'copy' | 'share' | 'reply';
 
@@ -10,12 +10,15 @@ const labels: Record<NeoMessageMenuAction, string> = {
 };
 
 export function neoMessageMenuActions({
+  hasText,
   canShare,
   canReply,
 }: {
+  hasText: boolean;
   canShare: boolean;
   canReply: boolean;
 }): NeoMessageMenuAction[] {
+  if (!hasText) return [];
   return [
     'select',
     'copy',
@@ -34,9 +37,10 @@ export function useNeoMessageMenu() {
     timer.current = null;
   };
   useEffect(() => cancel, []);
+  const close = useCallback(() => setAt(null), []);
   return {
     at,
-    close: () => setAt(null),
+    close,
     bind: {
       onContextMenu: (event: MouseEvent) => {
         event.preventDefault();
@@ -71,6 +75,8 @@ export function NeoMessageMenu({
   const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     menu.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  }, []);
+  useEffect(() => {
     const away = (event: Event) => {
       if (!menu.current?.contains(event.target as Node)) onClose();
     };

@@ -333,7 +333,7 @@ function PublicEntry({
       id={anchor || undefined}
       data-public-entry={entry.key}
       class={`neo-arrive neo-message w-fit break-words ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%] max-md:w-full max-md:max-w-full'}`}
-      {...menu.bind}
+      {...(copyText.trim() ? menu.bind : {})}
     >
       <div
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${ask ? 'justify-end' : ''}`}
@@ -573,10 +573,11 @@ function PublicEntry({
           </button>
         )}
       </div>
-      {menu.at && (
+      {menu.at && !!copyText.trim() && (
         <NeoMessageMenu
           at={menu.at}
           actions={neoMessageMenuActions({
+            hasText: !!copyText.trim(),
             canShare: typeof navigator !== 'undefined' && typeof navigator.share === 'function',
             canReply: !!onQuote && !!copyText.trim(),
           })}
