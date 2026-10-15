@@ -29,6 +29,11 @@ describe('isNeoAskAnswerReady', () => {
     expect(isNeoAskAnswerReady(ask([item('i1', 'pending'), answer]))).toBe(false);
     expect(isNeoAskAnswerReady(ask([item('i1', 'met')]))).toBe(false);
   });
+
+  test('an open question does not hold back a ready answer', () => {
+    const question = item('i3', 'needs_you', { kind: 'decision', options: ['Yes', 'No'] });
+    expect(isNeoAskAnswerReady(ask([item('i1', 'met'), answer, question]))).toBe(true);
+  });
 });
 
 describe('planNeoAnswerPublished', () => {
@@ -38,6 +43,11 @@ describe('planNeoAnswerPublished', () => {
       settle: true,
     });
     expect(planNeoAnswerPublished(ask([item('i1', 'pending'), answer]), 'p1')?.settle).toBe(false);
+    const question = item('i3', 'needs_you', { kind: 'decision', options: ['Yes', 'No'] });
+    expect(planNeoAnswerPublished(ask([item('i1', 'met'), answer, question]), 'p1')).toEqual({
+      ticks: [{ item: answer, evidence: 'Answered the human in publication p1.' }],
+      settle: false,
+    });
     expect(planNeoAnswerPublished(ask([answer], 'achieved'), 'p1')).toBeNull();
     expect(planNeoAnswerPublished(ask([item('i1', 'reported')]), 'p1')).toBeNull();
   });
