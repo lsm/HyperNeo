@@ -25,7 +25,8 @@ import {
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import { planNeoAnswerPublished } from './answer-outcome.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import {
   isNeoWorkClosedDone,
@@ -948,6 +949,7 @@ export class NeoService {
       },
       published: (input, publication) => {
         this.noteHumanReply(input);
+        this.notePublishedAnswer(publication);
         if (publication.answerInput) this.notifyPublicationsChanged(publication.conversationId);
       },
     });
@@ -1236,6 +1238,42 @@ export class NeoService {
         .join('\n')
         .trim() || null
     );
+  }
+
+  private notePublishedAnswer(publication: NeoPublication): void {
+    const triggerId = publication.triggerId;
+    if (!triggerId) return;
+    const traced = this.triggers.trigger(triggerId);
+    const outcome = traced?.keys.some((key) => key.startsWith('outcome:'))
+      ? this.askRecords.get(traced.askId)
+      : null;
+    const human =
+      neoHumanTriggerMessageId(triggerId) === publication.askOrigin.messageId
+        ? this.askRecords.liveForOrigin(
+            publication.askOrigin.sessionId,
+            publication.askOrigin.messageId
+          )
+        : null;
+    for (const ask of new Set([outcome, human].filter((ask) => ask !== null))) {
+      const plan = planNeoAnswerPublished(ask, publication.publicationId);
+      if (!plan) continue;
+      for (const { item, evidence } of plan.ticks)
+        this.askRecords.tickItem(
+          ask.id,
+          { ...item, state: 'met', evidence, metBy: 'daemon' },
+          Date.now(),
+          item,
+          true
+        );
+      const ticked = this.askRecords.get(ask.id);
+      if (plan.settle && ticked)
+        this.askRecords.settle(
+          ticked,
+          'achieved',
+          publication.shortText,
+          `Answered the human in publication ${publication.publicationId}.`
+        );
+    }
   }
 
   private noteHumanReply(input: NeoPublicationInput): void {

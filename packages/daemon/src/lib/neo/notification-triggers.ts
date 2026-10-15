@@ -9,6 +9,7 @@ import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
 import { isNeoCardInPlay } from './ask-views.ts';
+import { isNeoAskAnswerReady } from './answer-outcome.ts';
 
 export const NEO_TRIGGER_PREFIX = 'neo-trigger:';
 export const NEO_HUMAN_TRIGGER_PREFIX = 'human:';
@@ -203,14 +204,22 @@ export function neoAskTriggerKeys(
   pending: (workId: string) => boolean
 ): NeoTriggerKey[] {
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
+  const answer = isNeoAskAnswerReady(ask);
   const outcome =
-    ask.status === 'achieved' || (items.length > 0 && items.every((item) => item.state === 'met'));
+    ask.status === 'achieved' ||
+    answer ||
+    (items.length > 0 && items.every((item) => item.state === 'met'));
   if (outcome)
     return [
       {
         key: `outcome:${items.length}`,
         kind: 'outcome',
-        line: ask.status === 'achieved' ? 'the ask is achieved' : 'every item of the ask is met',
+        line:
+          ask.status === 'achieved'
+            ? 'the ask is achieved'
+            : answer
+              ? 'the answer is ready: publish it for this trigger and the daemon completes the ask'
+              : 'every item of the ask is met',
       },
     ];
   if (ask.status === 'abandoned') return [];

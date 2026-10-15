@@ -33,6 +33,16 @@ export class NeoNotificationTriggerRepository {
     })();
   }
 
+  trigger(triggerId: string): { askId: string; keys: string[] } | null {
+    if (!this.ready()) return null;
+    const rows = this.db
+      .prepare(
+        'SELECT ask_id AS askId, trigger_key AS key FROM neo_notification_triggers WHERE trigger_id = ?'
+      )
+      .all(triggerId) as { askId: string; key: string }[];
+    return rows.length ? { askId: rows[0].askId, keys: rows.map((row) => row.key) } : null;
+  }
+
   pending(since: number): { askId: string; triggerId: string }[] {
     if (!this.ready()) return [];
     return this.db

@@ -11,6 +11,7 @@ import {
   type NeoWorkPrReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { isNeoAnswerItem } from './answer-outcome.ts';
 
 const NEO_ASK_SUMMARY_LIMIT = 160;
 
@@ -104,7 +105,8 @@ export function isNeoAskOutcomeItem(
 
 export function neoAskItemAction(item: NeoAskItem): NeoAskHumanAction | null {
   if (item.removed) return null;
-  if (item.state === 'reported') return { kind: 'confirm', itemId: item.id, step: item.text };
+  if (item.state === 'reported')
+    return isNeoAnswerItem(item) ? null : { kind: 'confirm', itemId: item.id, step: item.text };
   if (isNeoAskOutcomeItem(item))
     return {
       kind: 'answer',

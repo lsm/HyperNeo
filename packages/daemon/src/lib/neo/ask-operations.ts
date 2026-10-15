@@ -35,6 +35,7 @@ import {
 } from './needs-you.ts';
 import { isNeoAskOutcomeItem } from './ask-views.ts';
 import { NeoAskStateViewSchema } from './card-view-schema.ts';
+import { isNeoAnswerItem } from './answer-outcome.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -633,8 +634,16 @@ function requireNeoAskTick(
         'needs_you_removed: ask the human with neo.ask.question {askId, question, decides, options, kind}. A decision is its own item, so never tick an outcome item needs_you; keep it pending.'
       ),
     };
+  if (caller.source === 'mcp' && input.state === 'met' && isNeoAnswerItem(item))
+    return {
+      reason: fail(
+        'answer_unpublished: an answer item is met when the answer reaches the human. Tick it reported with the result; the daemon then wakes you to publish the answer and ticks it met when you do.'
+      ),
+    };
   const path =
-    caller.source === 'mcp' && input.state !== 'pending' ? neoDaemonTickPath(item) : null;
+    caller.source === 'mcp' && input.state !== 'pending' && !isNeoAnswerItem(item)
+      ? neoDaemonTickPath(item)
+      : null;
   if (path) return { reason: fail(NEO_DAEMON_TICK_REFUSALS[path]) };
   if (caller.source === 'mcp' && input.state === 'met' && isNeoAgentWord(input.evidence))
     return {
@@ -1188,7 +1197,7 @@ export function planNeoAskTickStatus(
     items.find((item) => item.state === 'needs_you') ??
     (items.some((item) => item.state === 'pending')
       ? undefined
-      : items.find((item) => item.state === 'reported'));
+      : items.find((item) => item.state === 'reported' && !isNeoAnswerItem(item)));
   if (asked)
     return ask.status === 'waiting' && ask.waitingItem === asked.id
       ? { status: 'unchanged' }
@@ -1573,12 +1582,14 @@ export function createNeoAskOperations(
         target: { ask: NeoAsk; item: NeoAskItem },
         caller: OperationCaller
       ) =>
-        requireNeoReportedReadable(
-          caller,
-          input.state,
-          { text: target.item.text, context: input.evidence },
-          target
-        ),
+        isNeoAnswerItem(target.item)
+          ? { value: target }
+          : requireNeoReportedReadable(
+              caller,
+              input.state,
+              { text: target.item.text, context: input.evidence },
+              target
+            ),
       ['input', 'admission', 'caller'],
       'result:admission'
     )

@@ -90,6 +90,18 @@ describe('trigger keys of an ask', () => {
     expect(keys({ ...ask, workIds: [] }, idle)).toEqual([['idle', 'idle:10']]);
   });
 
+  test('an ask whose answer is reported and every other item met wakes Neo to publish it', () => {
+    const answer = {
+      ...item('i2', 'pending'),
+      state: 'reported' as const,
+      outcomeKind: 'answer' as const,
+    };
+    expect(keys({ ...ask, doneItems: [item('i1', 'met'), answer] })).toEqual([
+      ['outcome', 'outcome:2'],
+    ]);
+    expect(keys({ ...ask, doneItems: [item('i1', 'pending'), answer] })).toEqual([]);
+  });
+
   test('an achieved ask, or one with every item met, is one outcome trigger', () => {
     expect(keys({ ...ask, status: 'achieved' })).toEqual([['outcome', 'outcome:0']]);
     expect(keys({ ...ask, doneItems: [item('i1', 'met'), item('i2', 'met')] })).toEqual([
