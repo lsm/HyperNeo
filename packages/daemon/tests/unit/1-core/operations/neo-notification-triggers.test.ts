@@ -454,7 +454,7 @@ describe('neoTriggerNote', () => {
     expect(note).not.toContain('language');
   });
 
-  test('an idle trigger asks Neo to restart or settle, never to report a failure', () => {
+  test('an idle trigger asks Neo to move the work or ask the human, never to settle or report a failure', () => {
     const note = neoTriggerNote(ask, {
       triggerId: 'idle:a1:x',
       kind: 'idle',
@@ -462,7 +462,9 @@ describe('neoTriggerNote', () => {
       lines: ['nothing is running'],
     });
     expect(note).toContain('nothing is running for the ask and its outcome is not met');
-    expect(note).toContain('propose new work for it or settle it');
+    expect(note).toContain('get the work moving another way');
+    expect(note).toContain('ask the human its question with neo.ask.question');
+    expect(note).not.toContain('settle');
     expect(note).not.toContain('failed');
   });
 });

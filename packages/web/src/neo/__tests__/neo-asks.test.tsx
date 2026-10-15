@@ -182,6 +182,31 @@ describe('neoAskOpenTarget', () => {
   });
 });
 
+describe('describeNeoAskFromView', () => {
+  it('keeps the daemon label of an idle ask and shows why it could not start', () => {
+    const trying = describeAsk(ask('a', 'open', []), [], {
+      group: 'attention',
+      label: 'Not started · Neo is trying another way',
+      idle: true,
+      idleReason: "Couldn't start: No adapter can start work",
+    });
+    expect(trying.label).toBe('Not started · Neo is trying another way');
+    expect(trying.idleReason).toBe("Couldn't start: No adapter can start work");
+    const stuck = describeAsk(ask('a', 'open', []), [], {
+      group: 'attention',
+      needsYou: true,
+      label: "Needs you · Couldn't start: No adapter can start work",
+      idle: true,
+      idleReason: "Couldn't start: No adapter can start work",
+    });
+    expect(stuck.label).toBe("Needs you · Couldn't start: No adapter can start work");
+    expect(stuck.idleReason).toBeUndefined();
+    const card = render(<NeoAskCard view={trying} />);
+    expect(card.getByText("Couldn't start: No adapter can start work")).toBeTruthy();
+    cleanup();
+  });
+});
+
 describe('NeoAskCard', () => {
   it('lists the linked sessions with their app, state and how to open them', () => {
     const openSession = vi.fn();

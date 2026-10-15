@@ -593,17 +593,6 @@ describe('projectNeoAskViews', () => {
     expect(asked).not.toHaveProperty('idle');
   });
 
-  test('m381 repairs a partly added refusal column pair', () => {
-    const db = new Sqlite(':memory:');
-    db.exec('CREATE TABLE neo_asks (id TEXT PRIMARY KEY, refused TEXT)');
-    runMigration381(db);
-    runMigration381(db);
-    const columns = (db.prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[]).map(
-      (column) => column.name
-    );
-    expect(columns).toEqual(['id', 'refused', 'refused_count']);
-  });
-
   test('done items count instead of cards when the ask has them', () => {
     const input = parts({
       work: [work('w', 'queued')],
@@ -768,5 +757,18 @@ describe('projectNeoAskViews', () => {
     const input = parts({ work: [work('w', 'queued')], asks: [ask({ workIds: ['w'] })] });
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
+  });
+});
+
+describe('runMigration381', () => {
+  test('m381 repairs a partly added refusal column pair', () => {
+    const db = new Sqlite(':memory:');
+    db.exec('CREATE TABLE neo_asks (id TEXT PRIMARY KEY, refused TEXT)');
+    runMigration381(db);
+    runMigration381(db);
+    const columns = (db.prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[]).map(
+      (column) => column.name
+    );
+    expect(columns).toEqual(['id', 'refused', 'refused_count']);
   });
 });

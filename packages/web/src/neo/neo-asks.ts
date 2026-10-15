@@ -24,6 +24,7 @@ export type NeoAskView = {
   readonly sessions: readonly NeoAskSessionView[];
   readonly answer: NeoAskAnswer | null;
   readonly humanActions: readonly NeoAskHumanAction[];
+  readonly idleReason?: string;
 };
 
 export type NeoAskOpenTarget = {
@@ -66,7 +67,7 @@ export function describeNeoAskFromView(
   return {
     ask,
     group: needsYou ? 'attention' : published.group,
-    label: needsYou ? NEO_ASK_NEEDS_YOU_LABEL : published.label,
+    label: needsYou && !published.idle ? NEO_ASK_NEEDS_YOU_LABEL : published.label,
     settled: published.settled,
     done: published.done,
     doneIds: new Set(published.doneWorkIds),
@@ -77,6 +78,9 @@ export function describeNeoAskFromView(
     sessions: published.sessions ?? [],
     answer: published.answer ?? null,
     humanActions: published.settled ? [] : (published.humanActions ?? []),
+    ...(published.idleReason && !published.label.includes(published.idleReason)
+      ? { idleReason: published.idleReason }
+      : {}),
   };
 }
 
