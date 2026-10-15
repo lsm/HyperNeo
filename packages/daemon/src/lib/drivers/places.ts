@@ -22,9 +22,15 @@ function bestScore(group: PlaceGroup): number {
   return Math.max(-1, ...group.work.map((work) => work.score ?? -1));
 }
 
+export function isRepositoryPlace(place: Place): boolean {
+  return !!(place.codeIdentity || place.repoName || place.remotes?.length);
+}
+
 function projectKeys(place: Place): string[] {
   if (place.codeIdentity) return [place.codeIdentity];
-  return place.toolProject ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`] : [];
+  return place.toolProject && !isRepositoryPlace(place)
+    ? [`tool:${place.daemon ?? place.machine}:${place.toolProject.id}`]
+    : [];
 }
 
 function workspaceLocations(places: readonly Place[]): Place[] {

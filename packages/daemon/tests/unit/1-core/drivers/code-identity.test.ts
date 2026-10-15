@@ -197,6 +197,26 @@ describe('mergePlaceGroups identity links', () => {
     }
   });
 
+  test('a tool project does not join shallow checkouts of different repositories', () => {
+    const toolProject = { id: 'codex:shallow', name: 'Shallow' };
+    const merged = mergePlaceGroups(
+      ['one', 'two'].map((name) =>
+        group(
+          {
+            machine: 'c',
+            folder: `/shallow/${name}`,
+            name,
+            remotes: [`git@github.com:lsm/${name}.git`],
+            toolProject,
+          },
+          'codex-desktop'
+        )
+      ),
+      20
+    );
+    expect(merged).toHaveLength(2);
+  });
+
   test('a tool project joins its folders that have no repository', () => {
     const toolProject = { id: 'codex:notes', name: 'Notes' };
     const [merged, extra] = mergePlaceGroups(
