@@ -149,7 +149,7 @@ describe('trigger keys of an ask', () => {
     expect(keys({ ...ask, doneItems: [item('i1', 'pending'), answer] })).toEqual([]);
   });
 
-  test('a ready answer fires its outcome trigger while a question is still open', () => {
+  test('a ready answer fires its outcome while a question is open, and answering it fires a new one', () => {
     const answer = {
       ...item('i1', 'pending'),
       state: 'reported' as const,
@@ -160,7 +160,12 @@ describe('trigger keys of an ask', () => {
       state: 'needs_you' as const,
       kind: 'decision' as const,
     };
-    expect(keys({ ...ask, doneItems: [answer, question] })).toEqual([['outcome', 'outcome:2']]);
+    expect(keys({ ...ask, doneItems: [answer, question] })).toEqual([['outcome', 'outcome:2:q1']]);
+    const settled = [
+      { ...answer, state: 'met' as const },
+      { ...question, state: 'met' as const },
+    ];
+    expect(keys({ ...ask, doneItems: settled })).toEqual([['outcome', 'outcome:2']]);
   });
 
   test('an achieved ask, or one with every item met, is one outcome trigger', () => {
