@@ -2169,7 +2169,15 @@ export function createNeoOperations(service: NeoService) {
   return [
     ...createNeoProjectTreeOperations(service.repo),
     createNeoCrossProjectOperation(service),
-    createNeoIntakeOperation(service.db, service.repo, service.notifyChanged, router),
+    createNeoIntakeOperation(
+      service.db,
+      service.repo,
+      (sessionId) => {
+        service.notifyChanged();
+        void service.preemptAnsweredTurn(sessionId);
+      },
+      router
+    ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, router)),
     createNeoPublicationOperation(service.publish),
     ...createNeoPublicationChangeOperations({
