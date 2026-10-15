@@ -65,7 +65,11 @@ import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-c
 import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
 import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
-import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
+import {
+  planNeoAskTickStatus,
+  planNeoAskWorkStops,
+  writeNeoAskTickStatus,
+} from './ask-operations.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import {
@@ -1266,12 +1270,17 @@ export class NeoService {
           true
         );
       const ticked = this.askRecords.get(ask.id);
-      if (plan.settle && ticked)
-        this.askRecords.settle(
-          ticked,
-          'achieved',
-          publication.shortText,
-          `Answered the human in publication ${publication.publicationId}.`
+      if (!plan.settle || !ticked) continue;
+      this.askRecords.settle(
+        ticked,
+        'achieved',
+        publication.shortText,
+        `Answered the human in publication ${publication.publicationId}.`
+      );
+      const works = ticked.workIds.flatMap((id) => this.repo.getWork(id) ?? []);
+      for (const stop of planNeoAskWorkStops(works, 'achieved'))
+        void this.close(stop.id, stop.close).catch((error) =>
+          this.log.warn(`Closing card ${stop.id} after its answer was published failed`, error)
         );
     }
   }

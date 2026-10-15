@@ -2809,6 +2809,7 @@ describe('neo.ask operations', () => {
       })
     ).toMatchObject({ value: { ok: true } });
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', waitingItem: null });
+    const spare = (await propose('spare-card', askId)).value!.work!.id;
     const internals = service as unknown as {
       triggers: { record(askId: string, keys: string[], triggerId: string, at: number): void };
       notePublishedAnswer(publication: unknown): void;
@@ -2832,6 +2833,8 @@ describe('neo.ask operations', () => {
       outcome: 'There are 42 .md files.',
       doneItems: [{ id: 'i1', state: 'met', metBy: 'daemon' }],
     });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(service.repo.getWork(spare)?.status).toBe('cancelled');
   });
 
   test('a turn-limit note continues the cut-off turn, so it keeps that turn’s ask and trigger', async () => {
