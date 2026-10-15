@@ -350,8 +350,12 @@ describe('chooseNeoRoute with a new subject', () => {
     const failing = async (): Promise<null> => {
       throw new Error('holder open failed');
     };
-    for (const inbox of [undefined, failing])
-      expect(await chooseNeoRoute('Plan the garden', { ...base(), inbox })).toEqual({
+    for (const deps of [
+      { ...base(), inbox: undefined },
+      { ...base(), inbox: failing },
+      { ...base(), inboxRunnable: async () => false },
+    ])
+      expect(await chooseNeoRoute('Plan the garden', deps)).toEqual({
         choice: null,
         fallback: 'inbox-unavailable',
       });
