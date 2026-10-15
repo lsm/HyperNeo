@@ -23,7 +23,9 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { requirePublicationNews } from '../../../../src/lib/neo/publication-news.ts';
 import {
-  neoInputTrigger,
+  type NeoDeliveryTrigger,
+  neoDeliveryTrigger,
+  neoHumanTrigger,
   neoTriggerMessageId,
   requirePublicationTrigger,
 } from '../../../../src/lib/neo/notification-triggers.ts';
@@ -84,6 +86,21 @@ describe('runtime-bound publication operation', () => {
     ).toBe(true);
   }
   const stamps = new Map<string, NeoAskOrigin>();
+  const triggers = new Map<string, string | null>();
+  const key = (input: NeoAskOrigin) => `${input.sessionId}\0${input.messageId}`;
+  const isHuman = (input: NeoAskOrigin) =>
+    mailbox.sdkMessageRepo
+      .getStoredPromptsByUuid(input.sessionId, input.messageId)
+      .some((message) => 'inputKind' in message && message.inputKind === 'human');
+  const inputTrigger = (input: NeoAskOrigin): string | null =>
+    triggers.get(key(input)) ?? (isHuman(input) ? neoHumanTrigger(input.messageId) : null);
+  function stamp(input: NeoAskOrigin, parent: NeoAskOrigin, trigger: NeoDeliveryTrigger) {
+    stamps.set(key(input), parent);
+    triggers.set(
+      key(input),
+      neoDeliveryTrigger(trigger, () => inputTrigger(parent))
+    );
+  }
   function consultation(
     id = 'consult:1',
     messageId = ask.messageId,
@@ -99,10 +116,11 @@ describe('runtime-bound publication operation', () => {
       sessionId,
       question: 'Compare fictional sources',
     })!;
-    stamps.set(`${sessionId}\0neo-consult:${id}:request`, {
-      sessionId: root.sessionId,
-      messageId,
-    });
+    stamp(
+      { sessionId, messageId: `neo-consult:${id}:request` },
+      { sessionId: root.sessionId, messageId },
+      'continues'
+    );
     return item;
   }
   function work(id = 'work:1', messageId = ask.messageId, projectId = 'a') {
@@ -126,6 +144,7 @@ describe('runtime-bound publication operation', () => {
   }
   beforeEach(() => {
     stamps.clear();
+    triggers.clear();
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
     runMigration279(mailbox.db);
@@ -161,10 +180,7 @@ describe('runtime-bound publication operation', () => {
       getConsultation: (id) => consultations.get(id),
       resolveAskOrigin: resolve,
       append: (input) => ledger.append(input),
-      isHumanInput: (input) =>
-        mailbox.sdkMessageRepo
-          .getStoredPromptsByUuid(input.sessionId, input.messageId)
-          .some((message) => 'inputKind' in message && message.inputKind === 'human'),
+      inputTrigger,
       isTriggerPublished: (conversationId, triggerId, publicationId) =>
         ledger.hasTrigger(conversationId, triggerId, publicationId),
       notify,
@@ -232,7 +248,7 @@ describe('runtime-bound publication operation', () => {
     const item = work();
     repo.transitionWork(item.id, item, { status: 'reported', report: 'Reported context only' });
     prompt(root.sessionId, item.id, 'system');
-    stamps.set(`${root.sessionId}\0${item.id}`, ask);
+    stamp({ sessionId: root.sessionId, messageId: item.id }, ask, null);
     expect(await invoke(draft, caller(root.sessionId, item.id, false))).toMatchObject({
       value: {
         accepted: false,
@@ -248,7 +264,7 @@ describe('runtime-bound publication operation', () => {
     const triggerId = 'outcome:ask-1:abc';
     const note = neoTriggerMessageId(triggerId);
     prompt(root.sessionId, note, 'system');
-    stamps.set(`${root.sessionId}\0${note}`, ask);
+    stamp({ sessionId: root.sessionId, messageId: note }, ask, { id: triggerId });
     expect(publish({ ...draft, triggerId }, caller(root.sessionId, note, false))).toMatchObject({
       accepted: true,
       publication: { triggerId, producerInput: { sessionId: root.sessionId, messageId: note } },
@@ -275,7 +291,7 @@ describe('runtime-bound publication operation', () => {
   test('a cross-project return answers the human message that started it, once', () => {
     const reply = 'neo-cross-project:group-1:reply';
     prompt(root.sessionId, reply, 'system');
-    stamps.set(`${root.sessionId}\0${reply}`, ask);
+    stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
     expect(publish(draft, caller(root.sessionId, reply, false))).toMatchObject({
       accepted: true,
       publication: { triggerId: `human:${ask.messageId}` },
@@ -288,7 +304,7 @@ describe('runtime-bound publication operation', () => {
   test('a returned consultation answers the human message that asked it, but not a note', () => {
     const reply = 'neo-consult:consult:1:reply';
     prompt(root.sessionId, reply, 'system');
-    stamps.set(`${root.sessionId}\0${reply}`, ask);
+    stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
     expect(publish(draft, caller(root.sessionId, reply, false))).toMatchObject({
       accepted: true,
       publication: { triggerId: `human:${ask.messageId}` },
@@ -296,7 +312,11 @@ describe('runtime-bound publication operation', () => {
     const noted = 'neo-consult:consult:2:reply';
     prompt(root.sessionId, 'note-1', 'system');
     prompt(root.sessionId, noted, 'system');
-    stamps.set(`${root.sessionId}\0${noted}`, { sessionId: root.sessionId, messageId: 'note-1' });
+    stamp(
+      { sessionId: root.sessionId, messageId: noted },
+      { sessionId: root.sessionId, messageId: 'note-1' },
+      'continues'
+    );
     expect(
       publish(
         { ...draft, publicationId: '20000000-0000-4000-8000-000000000004' },
@@ -324,7 +344,7 @@ describe('runtime-bound publication operation', () => {
   test('a publish nudge answers the human message it nudges, under that message’s trigger', () => {
     const nudge = `neo-nudge:${ask.messageId}`;
     prompt(root.sessionId, nudge, 'system');
-    stamps.set(`${root.sessionId}\0${nudge}`, ask);
+    stamp({ sessionId: root.sessionId, messageId: nudge }, ask, 'continues');
     expect(publish(draft, caller(root.sessionId, nudge, false))).toMatchObject({
       accepted: true,
       publication: { triggerId: `human:${ask.messageId}` },
@@ -451,7 +471,7 @@ describe('runtime-bound publication operation', () => {
     const triggerId = 'outcome:ask-1:abc';
     const note = `neo-trigger:${triggerId}`;
     prompt(root.sessionId, note, 'system');
-    stamps.set(`${root.sessionId}\0${note}`, ask);
+    stamp({ sessionId: root.sessionId, messageId: note }, ask, { id: triggerId });
     const who = {
       ...caller(root.sessionId, note),
       neoTurn: { ...caller().neoTurn, messageId: note },
@@ -640,17 +660,15 @@ describe('requirePublicationNews', () => {
   });
 });
 
-describe('neoInputTrigger', () => {
+describe('neoDeliveryTrigger', () => {
   test.each([
-    ['m1', true, 'human:m1'],
-    ['m1', false, null],
-    ['neo-trigger:action:a:1', false, 'action:a:1'],
-    ['neo-nudge:m1', false, 'human:m1'],
-    ['neo-forward:m1:0', false, 'human:m1'],
-    ['neo-nudge:neo-forward:m1:0', false, 'human:m1'],
-    ['work-1:done-check:0', false, null],
-  ] as const)('maps input %s (human %s) to trigger %s', (messageId, human, trigger) => {
-    expect(neoInputTrigger(messageId, human)).toBe(trigger);
+    ['continues', 'human:m1', 'human:m1'],
+    ['continues', 'outcome:a:1', 'outcome:a:1'],
+    ['continues', null, null],
+    [{ id: 'action:a:1' }, 'human:m1', 'action:a:1'],
+    [null, 'human:m1', null],
+  ] as const)('a %j delivery under parent trigger %s carries %s', (trigger, parent, expected) => {
+    expect(neoDeliveryTrigger(trigger, () => parent)).toBe(expected);
   });
 });
 

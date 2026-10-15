@@ -8,7 +8,6 @@ import { z } from 'zod';
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
-import { neoInputTrigger } from './notification-triggers.ts';
 import { NeoPublicationSchema } from './publication.ts';
 import { requirePublicationProducer } from './publication-operation.ts';
 
@@ -53,6 +52,7 @@ export interface NeoPublicationChangeRuntime {
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'correct' | 'listRecent'>;
   isConsultationReturn(conversationId: string, publicationId: string): boolean;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
+  inputTrigger(input: NeoAskOrigin): string | null;
   isTriggerPublished(conversationId: string, triggerId: string, publicationId: string): boolean;
   notify(conversationId: string): void;
   noteReply(publication: NeoPublication): void;
@@ -189,7 +189,7 @@ export function createNeoPublicationChangeOperations(
     runtime,
     requireCorrectable,
     (owned, input: z.infer<typeof CorrectInput>) => {
-      const trigger = neoInputTrigger(owned.producer.turn.messageId, owned.producer.turn.human);
+      const trigger = runtime.inputTrigger(owned.producer.input);
       const answer = planNeoCorrectionAnswer(
         owned,
         trigger,

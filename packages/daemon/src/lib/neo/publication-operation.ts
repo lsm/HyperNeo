@@ -12,13 +12,7 @@ import { NeoPublicationSchema } from './publication.ts';
 import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { requirePublicationNews } from './publication-news.ts';
-import {
-  NEO_HUMAN_TRIGGER_PREFIX,
-  neoConsultationTrigger,
-  neoInputTrigger,
-  requirePublicationTrigger,
-  requireUnpublishedTrigger,
-} from './notification-triggers.ts';
+import { requirePublicationTrigger, requireUnpublishedTrigger } from './notification-triggers.ts';
 
 const Draft = NeoPublicationSchema.omit({
   conversationId: true,
@@ -56,27 +50,10 @@ interface NeoPublicationRuntime {
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   append(input: NeoPublicationInput, consultationId?: string): Receipt;
   replay?(input: Draft, caller: OperationCaller): Receipt | null;
-  isHumanInput(input: NeoAskOrigin): boolean;
+  inputTrigger(input: NeoAskOrigin): string | null;
   isTriggerPublished(conversationId: string, triggerId: string, publicationId: string): boolean;
   notify(): void;
 }
-
-export function neoPublicationTrigger(
-  proof: Proof,
-  consultation: NeoConsultation | null,
-  isHumanInput: (input: NeoAskOrigin) => boolean
-): string | null {
-  if (proof.turn.consultationId) return neoConsultationTrigger(consultation, isHumanInput);
-  if (
-    CROSS_PROJECT_REPLY.test(proof.input.messageId) ||
-    (CONSULTATION_REPLY.test(proof.input.messageId) && isHumanInput(proof.ask))
-  )
-    return `${NEO_HUMAN_TRIGGER_PREFIX}${proof.ask.messageId}`;
-  return neoInputTrigger(proof.input.messageId, proof.turn.human);
-}
-
-const CROSS_PROJECT_REPLY = /^neo-cross-project:.+:reply$/;
-const CONSULTATION_REPLY = /^neo-consult:.+:reply$/;
 
 export function reusePublicationReceipt(
   draft: Draft,
@@ -239,16 +216,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       ['publication', 'caller'],
       'result:publication'
     )
-    .pipe(
-      (proof: Proof) =>
-        neoPublicationTrigger(
-          proof,
-          proof.turn.consultationId ? runtime.getConsultation(proof.turn.consultationId) : null,
-          (input) => runtime.isHumanInput(input)
-        ),
-      'publication',
-      'trigger'
-    )
+    .pipe((proof: Proof) => runtime.inputTrigger(proof.input), 'publication', 'trigger')
     .pipe(requirePublicationTrigger, ['publication', 'draft', 'trigger'], 'result:publication')
     .pipe(
       (proof: Triggered, draft: Draft) =>

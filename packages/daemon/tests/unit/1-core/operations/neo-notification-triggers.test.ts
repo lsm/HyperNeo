@@ -11,7 +11,6 @@ import {
   coverNeoAskTriggers,
   isNeoAskAnsweredByReply,
   isNeoCardFailedForGood,
-  neoInputTrigger,
   neoReplyOriginKey,
   neoTriggerMessageId,
   planNeoTriggerRetry,
@@ -160,7 +159,6 @@ describe('planNeoTriggerRetry', () => {
 describe('neoTriggerMessageId', () => {
   test('a retried note keeps its trigger id', () => {
     expect(neoTriggerMessageId('outcome:a1:x', 1)).toBe('neo-trigger:outcome:a1:x#2');
-    expect(neoInputTrigger(neoTriggerMessageId('outcome:a1:x', 1), false)).toBe('outcome:a1:x');
   });
 });
 

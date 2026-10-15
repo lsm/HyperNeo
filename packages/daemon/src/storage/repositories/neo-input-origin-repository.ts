@@ -23,13 +23,26 @@ export class NeoInputOriginRepository {
     );
   }
 
-  record(input: Origin, origin: Origin, at: number): void {
+  trigger(sessionId: string, messageId: string): string | null {
+    if (!this.hasTable()) return null;
+    return (
+      (
+        this.db
+          .prepare(
+            'SELECT trigger_id AS triggerId FROM neo_input_origins WHERE session_id = ? AND message_id = ?'
+          )
+          .get(sessionId, messageId) as { triggerId: string | null } | undefined
+      )?.triggerId ?? null
+    );
+  }
+
+  record(input: Origin, origin: Origin, at: number, triggerId: string | null = null): void {
     if (!this.hasTable()) return;
     this.db
       .prepare(
-        `INSERT INTO neo_input_origins(session_id, message_id, origin_session_id, origin_message_id, stamped_at)
-         VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id, message_id) DO NOTHING`
+        `INSERT INTO neo_input_origins(session_id, message_id, origin_session_id, origin_message_id, stamped_at, trigger_id)
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(session_id, message_id) DO NOTHING`
       )
-      .run(input.sessionId, input.messageId, origin.sessionId, origin.messageId, at);
+      .run(input.sessionId, input.messageId, origin.sessionId, origin.messageId, at, triggerId);
   }
 }
