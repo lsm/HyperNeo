@@ -19,6 +19,7 @@ export const NeoGithubQuery = z.object({
   by: z.enum(['created', 'updated', 'merged', 'closed']).optional(),
   since: When.optional(),
   until: When.optional(),
+  withinHours: z.number().int().min(1).max(720).optional(),
   limit: z.number().int().min(1).max(100).default(50),
 });
 export type NeoGithubQuery = z.infer<typeof NeoGithubQuery>;
@@ -55,7 +56,20 @@ export type NeoGithubQueryResult = z.infer<typeof NeoGithubQueryResult>;
 type By = 'created' | 'updated' | 'merged' | 'closed';
 type Plan = { query: NeoGithubQuery; by: By; search: string; args: string[] };
 
-export function planNeoGithubQuery(query: NeoGithubQuery): { value: Plan } | { reason: Failure } {
+export function planNeoGithubQuery(
+  input: NeoGithubQuery,
+  now = Date.now()
+): { value: Plan } | { reason: Failure } {
+  if (input.withinHours && (input.since || input.until))
+    return {
+      reason: {
+        ok: false,
+        reason: 'one_window: pass withinHours alone, or since and until, not both.',
+      },
+    };
+  const query = input.withinHours
+    ? { ...input, since: new Date(now - input.withinHours * 3_600_000).toISOString() }
+    : input;
   const by: By =
     query.by ??
     (query.state === 'merged' ? 'merged' : query.state === 'closed' ? 'closed' : 'created');

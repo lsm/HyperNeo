@@ -58,6 +58,24 @@ describe('planNeoGithubQuery', () => {
     });
   });
 
+  test('turns "the last N hours" into a window that ends now, and refuses mixing it with dates', () => {
+    const now = Date.parse('2026-10-15T03:55:00Z');
+    expect(
+      planNeoGithubQuery(
+        NeoGithubQuery.parse({ repo: 'lsm/neo-ios', state: 'merged', withinHours: 6 }),
+        now
+      )
+    ).toMatchObject({
+      value: {
+        query: { since: '2026-10-14T21:55:00.000Z' },
+        search: 'merged:>=2026-10-14T21:55:00.000Z',
+      },
+    });
+    expect(
+      planNeoGithubQuery(NeoGithubQuery.parse({ repo: 'o/r', withinHours: 6, since }), now)
+    ).toMatchObject({ reason: { ok: false, reason: expect.stringContaining('one_window') } });
+  });
+
   test('refuses a merged issue list and an inverted window', () => {
     expect(
       planNeoGithubQuery(NeoGithubQuery.parse({ repo: 'o/r', kind: 'issue', state: 'merged' }))
