@@ -14,7 +14,9 @@ import {
 } from './project-cleanup.ts';
 import { NEO_INBOX_ID, type NeoRouted } from './router.ts';
 
-const Input = z.object({}).default({});
+const Input = z
+  .object({ apply: z.boolean().optional(), archive: z.array(z.string()).optional() })
+  .default({});
 const Stayed = z.object({
   askId: z.string(),
   reason: z.enum([
@@ -43,6 +45,8 @@ const Result = z.union([
         targetId: z.string().optional(),
       })
     ),
+    cleanupApplied: z.boolean(),
+    cleanupFailed: z.array(z.object({ projectId: z.string(), reason: z.string() })),
   }),
 ]);
 type Stay = z.infer<typeof Stayed>;
@@ -71,6 +75,7 @@ export interface NeoReorganizeRuntime {
   mergeProjects(): Promise<{ merged: Merged[]; asked: Merged[] }>;
   projectFacts(): NeoProjectFacts[];
   machine(): string;
+  cleanup(step: NeoProjectCleanup): Promise<void>;
   mirroredAliases(folders: readonly string[]): Promise<ReadonlySet<string> | null>;
   log(line: string): void;
 }
@@ -188,11 +193,13 @@ export type NeoReorganized = {
   moved: Moved[];
   stayed: Stay[];
   cleanupPlanned: NeoProjectCleanup[];
+  cleanupApplied: boolean;
+  cleanupFailed: { projectId: string; reason: string }[];
 };
 
 export function createNeoProjectsReorganizer(
   runtime: NeoReorganizeRuntime
-): () => Promise<NeoReorganized> {
+): (cleanup?: { apply?: boolean; archive?: readonly string[] }) => Promise<NeoReorganized> {
   const sourceStatus = (ask: NeoAsk): string | null => {
     const sessionId = ask.projectId === null ? null : runtime.projectSession(ask.projectId);
     return sessionId === null ? null : runtime.sessionStatus(sessionId);
@@ -222,11 +229,20 @@ export function createNeoProjectsReorganizer(
     )
     .endAsync('move') as (ask: NeoAsk, root: string) => Promise<Moved | Stay>;
 
-  return async () => {
+  return async ({ apply = false, archive = [] } = {}) => {
     const root = runtime.rootSessionId();
     const moved: Moved[] = [];
     const stayed: Stay[] = [];
-    if (!root) return { merged: [], asked: [], moved, stayed, cleanupPlanned: [] };
+    if (!root)
+      return {
+        merged: [],
+        asked: [],
+        moved,
+        stayed,
+        cleanupPlanned: [],
+        cleanupApplied: apply,
+        cleanupFailed: [],
+      };
     const mirrored = await runtime.mirroredAliases(
       neoCleanupFolders(runtime.projectFacts(), runtime.machine())
     );
@@ -249,34 +265,50 @@ export function createNeoProjectsReorganizer(
           pinned: new Set([NEO_INBOX_ID]),
           machine: runtime.machine(),
           mirrored,
+          archive: new Set(archive),
         })
       : [];
-    for (const step of cleanupPlanned)
-      runtime.log(
-        `neo reorganize: would ${step.action} project ${step.projectId} (${step.title})${'targetId' in step ? ` into ${step.targetId}` : ''}`
+    const cleanupFailed: { projectId: string; reason: string }[] = [];
+    for (const step of cleanupPlanned) {
+      const line = `${step.action} project ${step.projectId} (${step.title})${'targetId' in step ? ` into ${step.targetId}` : ''}`;
+      if (!apply) {
+        runtime.log(`neo reorganize: would ${line}`);
+        continue;
+      }
+      const reason = await runtime.cleanup(step).then(
+        () => null,
+        (error: unknown) => String(error)
       );
-    return { merged, asked, moved, stayed, cleanupPlanned };
+      if (reason) cleanupFailed.push({ projectId: step.projectId, reason });
+      runtime.log(
+        reason ? `neo reorganize: could not ${line}: ${reason}` : `neo reorganize: did ${line}`
+      );
+    }
+    return { merged, asked, moved, stayed, cleanupPlanned, cleanupApplied: apply, cleanupFailed };
   };
 }
 
 export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
   const reorganizeProjects = createNeoProjectsReorganizer(runtime);
-  const reorganize = async (caller: OperationCaller): Promise<Outcome> => {
+  const reorganize = async (
+    cleanup: z.infer<typeof Input>,
+    caller: OperationCaller
+  ): Promise<Outcome> => {
     const admitted = admitNeoReorganizer(
       caller,
       caller.sessionId ? runtime.getBinding(caller.sessionId) : null
     );
     if ('reason' in admitted) return admitted.reason;
-    return { ok: true, ...(await reorganizeProjects()) };
+    return { ok: true, ...(await reorganizeProjects(cleanup)) };
   };
 
   return defineOperation({
     name: 'neo.projects.reorganize',
     description:
-      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read are asked about once on main (asked): run this again after the human answers to apply it, and a saved answer is never asked again. Then move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also plans project cleanup and returns it in cleanupPlanned without applying it yet: projects sharing a repository merge into the oldest, which is never deleted or archived; a project with no repository is deleted when empty and the mirror would not create it again (its places are not a repository and not ongoing), merged into the repository project with its title or folder, or, when it was a one-off (one day of work and never addressed by the human), has its holder session archived. Projects only on another machine are left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
+      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read are asked about once on main (asked): run this again after the human answers to apply it, and a saved answer is never asked again. Then move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also plans project cleanup and returns it in cleanupPlanned, and applies it only with apply: true (the daily pass only plans); archive names projects the human asked to archive: projects sharing a repository merge into the oldest, which is never deleted or archived; a project with no repository is deleted when empty and the mirror would not create it again (its places are not a repository and not ongoing), merged into the repository project with its title or folder, or, when it was a one-off (one day of work and never addressed by the human), has its holder session archived. Projects only on another machine are left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: (_input, caller) => reorganize(caller),
+    execute: (input, caller) => reorganize(input, caller),
   });
 }

@@ -17,6 +17,7 @@ export type NeoProjectFacts = {
   liveWork: number;
   routed: number;
   holderMessages: number;
+  archived: boolean;
   aliases: readonly string[];
 };
 
@@ -87,15 +88,21 @@ function home(
 
 export function planNeoProjectCleanup(
   projects: readonly NeoProjectFacts[],
-  scope: { pinned: ReadonlySet<string>; machine: string; mirrored: ReadonlySet<string> }
+  scope: {
+    pinned: ReadonlySet<string>;
+    machine: string;
+    mirrored: ReadonlySet<string>;
+    archive?: ReadonlySet<string>;
+  }
 ): NeoProjectCleanup[] {
   const homes = projects
     .filter((project) => repositories(project).length && !isElsewhere(project, scope.machine))
     .sort((a, b) => a.createdAt - b.createdAt);
   return projects
-    .filter((project) => !scope.pinned.has(project.id) && !project.section)
+    .filter((project) => !scope.pinned.has(project.id) && !project.section && !project.archived)
     .flatMap((project): NeoProjectCleanup[] => {
       const named = { projectId: project.id, title: project.title };
+      if (scope.archive?.has(project.id)) return [{ action: 'archive', ...named }];
       if (repositories(project).length || isElsewhere(project, scope.machine) || isLive(project))
         return [];
       if (isEmpty(project))

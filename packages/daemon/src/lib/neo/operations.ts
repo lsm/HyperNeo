@@ -10,6 +10,7 @@ import { neoFolderPath } from './folder.ts';
 import { isTempCwd } from '../drivers/claude-feed.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { neoMirroredAliases } from './project-cleanup.ts';
+import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
 import { readNeoProjectFacts } from './project-route-facts.ts';
 import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
@@ -1044,6 +1045,7 @@ export function neoReorganizeRuntime(
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
     machine: () => hostname(),
+    cleanup: createNeoProjectCleanupApply(service),
     mirroredAliases: async (folders) => {
       const caller = {
         source: 'internal' as const,

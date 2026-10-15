@@ -59,10 +59,15 @@ export class NeoRepository {
             AND w.status IN ('proposed', 'queued')) AS liveWork,
           (SELECT count(*) FROM neo_routing_log r WHERE r.concern_id = c.id) AS routed,
           (SELECT count(*) FROM neo_session_bindings b JOIN sdk_messages m ON m.session_id = b.session_id
-            WHERE b.kind = 'project' AND b.concern_id = c.id) AS holderMessages
+            WHERE b.kind = 'project' AND b.concern_id = c.id) AS holderMessages,
+          EXISTS (SELECT 1 FROM neo_session_bindings b JOIN sessions s ON s.id = b.session_id
+            WHERE b.kind = 'project' AND b.concern_id = c.id AND s.status = 'archived') AS archived
         FROM neo_concerns c
         WHERE c.id NOT IN (SELECT source_id FROM neo_project_merges)`)
-      .all() as (Omit<NeoProjectFacts, 'section' | 'work' | 'aliases'> & { section: number })[];
+      .all() as (Omit<NeoProjectFacts, 'section' | 'archived' | 'work' | 'aliases'> & {
+      section: number;
+      archived: number;
+    })[];
     const work = this.db
       .prepare(`SELECT w.concern_id AS projectId, w.updated_at AS lastActivityAt,
           json_extract(t.ref, '$.adapter') || char(0) || json_extract(t.ref, '$.id') AS ref
@@ -74,11 +79,35 @@ export class NeoRepository {
     return rows.map((row) => ({
       ...row,
       section: !!row.section,
+      archived: !!row.archived,
       work: work
         .filter((entry) => entry.projectId === row.id)
         .map((entry) => ({ lastActivityAt: entry.lastActivityAt, ref: entry.ref })),
       aliases: aliases.filter((entry) => entry.projectId === row.id).map((entry) => entry.alias),
     }));
+  }
+
+  deleteEmptyProject(projectId: string): string | null {
+    return this.db.transaction(() => {
+      const empty = this.db
+        .prepare(`SELECT 1 FROM neo_concerns c WHERE c.id = ? AND length(c.context) = 0
+          AND c.epic_url IS NULL
+          AND NOT EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM neo_asks a WHERE a.concern_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM neo_work w WHERE w.concern_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM neo_routing_log r WHERE r.concern_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM neo_session_bindings b JOIN sdk_messages m
+            ON m.session_id = b.session_id WHERE b.kind = 'project' AND b.concern_id = c.id)`)
+        .get(projectId);
+      if (!empty) throw new Error('the project is no longer empty');
+      const holder = this.getBindingForProject(projectId)?.sessionId ?? null;
+      this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
+      this.db
+        .prepare("DELETE FROM neo_session_bindings WHERE concern_id = ? AND kind = 'project'")
+        .run(projectId);
+      this.db.prepare('DELETE FROM neo_concerns WHERE id = ?').run(projectId);
+      return holder;
+    })();
   }
 
   listProjectTitles(): Array<{ id: string; title: string }> {

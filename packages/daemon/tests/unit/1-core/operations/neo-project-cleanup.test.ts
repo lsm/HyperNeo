@@ -5,6 +5,7 @@ import {
   neoMirroredAliases,
   planNeoProjectCleanup,
 } from '../../../../src/lib/neo/project-cleanup.ts';
+import { createNeoProjectCleanupApply } from '../../../../src/lib/neo/project-cleanup-apply.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
@@ -21,6 +22,7 @@ const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProje
   liveWork: 0,
   routed: 0,
   holderMessages: 0,
+  archived: false,
   aliases: [],
   ...overrides,
 });
@@ -123,12 +125,24 @@ describe('project cleanup plan', () => {
     ).toEqual([{ action: 'archive', projectId: 'topic', title: 'App' }]);
   });
 
-  test('live, section, pinned and other-machine projects are left alone', () => {
+  test('a project the human asked to archive is archived, even with a repository', () => {
+    expect(
+      planNeoProjectCleanup([project('kept', { aliases: [repo], asks: 1 })], {
+        pinned: new Set(),
+        machine: 'here',
+        mirrored: new Set(),
+        archive: new Set(['kept']),
+      })
+    ).toEqual([{ action: 'archive', projectId: 'kept', title: 'kept' }]);
+  });
+
+  test('live, section, already archived, pinned and other-machine projects are left alone', () => {
     expect(
       plan(
         [
           project('live', { ...oneOff, liveAsks: 1 }),
           project('section', { section: true }),
+          project('archived', { ...oneOff, archived: true }),
           project('inbox'),
           project('remote', { ...oneOff, aliases: ['folder:tts\u0000/x'] }),
         ],
@@ -171,6 +185,28 @@ describe('NeoRepository.projectCleanupFacts', () => {
         mirrored: new Set(),
       })
     ).toEqual([{ action: 'delete', projectId: 'child', title: 'Child' }]);
+  });
+
+  test('deleteEmptyProject removes an empty project with its binding and aliases, and refuses one with content', () => {
+    repo.saveProject({ id: 'empty', title: 'Empty', summary: '', context: '' }, 0);
+    repo.saveProject({ id: 'full', title: 'Full', summary: '', context: 'notes' }, 0);
+    const raw = db.getDatabase();
+    raw
+      .prepare(
+        "INSERT INTO neo_session_bindings (session_id, concern_id, kind) VALUES ('holder', 'empty', 'project')"
+      )
+      .run();
+    raw
+      .prepare(
+        "INSERT INTO neo_project_workspaces (alias, project_id) VALUES ('folder:here', 'empty')"
+      )
+      .run();
+    expect(repo.deleteEmptyProject('empty')).toBe('holder');
+    expect(repo.getProject('empty')).toBeNull();
+    expect(repo.getBindingForProject('empty')).toBeNull();
+    expect(raw.prepare('SELECT count(*) AS n FROM neo_project_workspaces').get()).toEqual({ n: 0 });
+    expect(() => repo.deleteEmptyProject('full')).toThrow('the project is no longer empty');
+    expect(repo.getProject('full')).not.toBeNull();
   });
 });
 
@@ -216,5 +252,50 @@ describe('neoCleanupFolders', () => {
         'here'
       )
     ).toEqual(['/a']);
+  });
+});
+
+describe('createNeoProjectCleanupApply', () => {
+  test('delete drops the empty project then its holder; merge is human-approved; archive archives the holder', async () => {
+    const calls: unknown[] = [];
+    const project = (id: string) => ({ id, revision: 3 });
+    const apply = createNeoProjectCleanupApply({
+      repo: {
+        deleteEmptyProject: (id: string) => (calls.push(['dropped', id]), 'holder:a'),
+        getBindingForProject: (id: string) => ({ sessionId: `holder:${id}` }),
+        getProject: project,
+        projectMerges: {
+          merge: (input: unknown) => (calls.push(['merge', input]), { ok: true }),
+        },
+      },
+      sessions: {
+        deleteSessionResources: async (id: string, trigger: string) => {
+          calls.push(['deleted', id, trigger]);
+        },
+        archiveSessionResources: async (id: string, trigger: string) => {
+          calls.push(['archived', id, trigger]);
+        },
+      },
+    } as never);
+    await apply({ action: 'delete', projectId: 'a', title: 'A' });
+    await apply({ action: 'merge', projectId: 'b', title: 'B', targetId: 'c' });
+    await apply({ action: 'archive', projectId: 'd', title: 'D' });
+    expect(calls).toEqual([
+      ['dropped', 'a'],
+      ['deleted', 'holder:a', 'ui_session_delete'],
+      [
+        'merge',
+        {
+          sourceId: 'b',
+          targetId: 'c',
+          sourceRevision: 3,
+          targetRevision: 3,
+          sourceIdentities: [],
+          targetIdentities: [],
+          humanApproved: true,
+        },
+      ],
+      ['archived', 'holder:d', 'ui_session_archive'],
+    ]);
   });
 });
