@@ -2624,7 +2624,8 @@ export class NeoService {
       ask.originSessionId,
       neoAskAnswerMessageId(ask.id, item.id, Date.now()),
       neoAskAnswerNote(ask, item, choice, met),
-      neoAskParent(ask)
+      neoAskParent(ask),
+      'continues'
     );
   }
 
