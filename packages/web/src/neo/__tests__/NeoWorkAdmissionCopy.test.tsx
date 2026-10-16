@@ -27,67 +27,62 @@ afterEach(() => {
 });
 
 describe('Neo empty-conversation admission guidance', () => {
-  it.each([false, true])(
-    'distinguishes clear instructions from proposals in public=%s',
-    (publicMode) => {
-      const sessionId = 'neo:10000000-0000-4000-8000-000000000001';
-      const snapshot = {
-        ok: true,
-        sessionId,
-        projects: [
-          {
-            id: 'garden',
-            title: 'Fictional garden',
-            summary: 'S',
-            context: 'C',
-            revision: 1,
-            createdAt: 1,
-            updatedAt: 1,
-          },
-        ],
-        work: [],
-        consultations: [],
-      };
-      const act = vi.fn();
-      useNeoMock.mockReturnValue({
-        sessionId,
-        snapshot,
-        viewPublicConversation: publicMode
-          ? {
-              conversationId: sessionId.slice(4),
-              status: 'ready',
-              entries: [],
-              hasEarlier: false,
-              hasMore: false,
-            }
-          : undefined,
-        error: null,
-        setError: vi.fn(),
-        open: vi.fn(),
-        act,
-        busyWork: null,
-        asks: { retry: vi.fn() },
-        publications: { refresh: vi.fn() },
-        store: {
-          sessionInfo: signal({ metadata: {} }),
-          sdkMessages: signal([]),
-          messagesLoaded: signal(true),
-          activeSessionId: signal(sessionId),
-          loadErrorKind: signal(null),
-          agentState: signal({ status: 'idle' }),
-          error: signal(null),
-          hasMoreMessages: signal(false),
-          isWorking: signal(false),
+  it.each([false, true])('describes the question approval path in public=%s', (publicMode) => {
+    const sessionId = 'neo:10000000-0000-4000-8000-000000000001';
+    const snapshot = {
+      ok: true,
+      sessionId,
+      projects: [
+        {
+          id: 'garden',
+          title: 'Fictional garden',
+          summary: 'S',
+          context: 'C',
+          revision: 1,
+          createdAt: 1,
+          updatedAt: 1,
         },
-      });
-      render(<NeoLive />);
-      expect(screen.getByText(/A clear work request can start work/).textContent).toContain(
-        'Proposal-only requests wait for their Start work button.'
-      );
-      expect(screen.queryByText(/Work starts when you approve its card/)).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Start work', exact: true })).toBeNull();
-      expect(act).not.toHaveBeenCalled();
-      expect(screen.getByRole('heading', { name: 'A little less on your mind.' })).toBeTruthy();
-    }
-  );
+      ],
+      work: [],
+      consultations: [],
+    };
+    const act = vi.fn();
+    useNeoMock.mockReturnValue({
+      sessionId,
+      snapshot,
+      viewPublicConversation: publicMode
+        ? {
+            conversationId: sessionId.slice(4),
+            status: 'ready',
+            entries: [],
+            hasEarlier: false,
+            hasMore: false,
+          }
+        : undefined,
+      error: null,
+      setError: vi.fn(),
+      open: vi.fn(),
+      act,
+      busyWork: null,
+      asks: { retry: vi.fn() },
+      publications: { refresh: vi.fn() },
+      store: {
+        sessionInfo: signal({ metadata: {} }),
+        sdkMessages: signal([]),
+        messagesLoaded: signal(true),
+        activeSessionId: signal(sessionId),
+        loadErrorKind: signal(null),
+        agentState: signal({ status: 'idle' }),
+        error: signal(null),
+        hasMoreMessages: signal(false),
+        isWorking: signal(false),
+      },
+    });
+    render(<NeoLive />);
+    expect(screen.getByText('Proposed work waits for your answer to its question.')).toBeTruthy();
+    expect(screen.queryByText(/Work starts when you approve its card/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start work', exact: true })).toBeNull();
+    expect(act).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'A little less on your mind.' })).toBeTruthy();
+  });
 });

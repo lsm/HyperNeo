@@ -429,6 +429,78 @@ describe('grouped card start question', () => {
     expect(starts).toEqual([]);
   });
 
+  test.each(['先不做', '开始'])(
+    'a proposal without askId receives its own %s decision',
+    async (choice) => {
+      const result = await invoke('neo.work.propose', {
+        title: 'Loose proposal',
+        instruction: 'Do this step',
+        goal: 'Original goal',
+        doneWhen: 'Original outcome',
+        work: target,
+      });
+      expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
+      const work = service.repo.listWork().find((entry) => entry.title === 'Loose proposal')!;
+      const ask = service.askRecords.forWork(work.id)!;
+      expect(ask).toMatchObject({
+        ask: 'Original goal',
+        doneWhen: 'Original outcome',
+        doneSource: 'proposal',
+        workIds: [work.id],
+      });
+      const question = ask.doneItems!.find((item) => item.state === 'needs_you')!;
+      expect(question).toMatchObject({ question: '开始这 1 步？', options: ['先不做', '开始'] });
+      await service.start(work.id);
+      expect(starts).toEqual([]);
+      expect(
+        await invoke('neo.ask.answer', {
+          askId: ask.id,
+          itemId: question.id,
+          choice,
+          expectedRevision: ask.revision,
+        })
+      ).toMatchObject({ value: { ok: true } });
+      expect(service.repo.getWork(work.id)?.status).toBe(
+        choice === '开始' ? 'queued' : 'cancelled'
+      );
+      expect(starts).toEqual(choice === '开始' ? ['Loose proposal'] : []);
+    }
+  );
+
+  test('recovery creates one durable question for a legacy loose proposal', async () => {
+    service.driverTargets.propose(
+      service.repo,
+      {
+        id: 'legacy-loose',
+        requestKey: 'legacy-loose',
+        projectId: null,
+        originSessionId: root,
+        originMessageId: 'human',
+        title: 'Legacy proposal',
+        instruction: 'Original instruction',
+      },
+      target
+    );
+    expect(service.askRecords.forWork('legacy-loose')).toBeNull();
+    await service.recover();
+    const ask = service.askRecords.forWork('legacy-loose')!;
+    const question = ask.doneItems!.find((item) => item.state === 'needs_you')!;
+    expect(question).toMatchObject({ question: '开始这 1 步？', options: ['先不做', '开始'] });
+    await service.start('legacy-loose');
+    expect(starts).toEqual([]);
+    await service.recover();
+    expect(service.askRecords.forWork('legacy-loose')).toEqual(ask);
+    expect(
+      await invoke('neo.ask.answer', {
+        askId: ask.id,
+        itemId: question.id,
+        choice: '开始',
+        expectedRevision: ask.revision,
+      })
+    ).toMatchObject({ value: { ok: true } });
+    expect(starts).toEqual(['Legacy proposal']);
+  });
+
   test('the real proposal operation creates a question before any start', async () => {
     expect(
       await invoke('neo.work.propose', {

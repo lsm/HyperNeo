@@ -69,7 +69,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo MVP controls', () => {
-  it('proposals require an explicit Start and cancellation is a separate action', () => {
+  it('proposals show their brief without work-card decision buttons', () => {
     const action = vi.fn();
     render(
       <NeoWorkCard
@@ -82,19 +82,16 @@ describe('Neo MVP controls', () => {
     );
     expect(action).not.toHaveBeenCalled();
     expect(screen.getByText(work.instruction)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
-    expect(action).toHaveBeenCalledWith('work', 'start');
-    fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
-    expect(action).toHaveBeenCalledWith('work', 'cancel');
+    expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
   });
-  it('disables duplicate work actions and leaves a returned report to the work chat', () => {
+  it('shows no work-card decision controls while busy and leaves reports to the work chat', () => {
     const action = vi.fn();
     const view = render(
       <NeoWorkCard work={work} card={testCard(work)} busy disabled={false} onAction={action} />
     );
-    expect((screen.getByRole('button', { name: 'Starting…' }) as HTMLButtonElement).disabled).toBe(
-      true
-    );
+    expect(screen.queryByRole('button', { name: 'Starting…' })).toBeNull();
+    expect(action).not.toHaveBeenCalled();
     view.rerender(
       <NeoWorkCard
         work={{
@@ -119,7 +116,7 @@ describe('Neo MVP controls', () => {
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.queryByText('A draft, not a booking.')).toBeNull();
   });
-  it('starts existing-chat work and offers no stop control once it is handed off', () => {
+  it('shows existing-chat work status with stop only in its menu', () => {
     const action = vi.fn();
     const view = render(
       <NeoWorkCard
@@ -130,8 +127,7 @@ describe('Neo MVP controls', () => {
         onAction={action}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
-    expect(action).toHaveBeenCalledWith(work.id, 'start');
+    expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
     view.rerender(
       <NeoWorkCard
         work={{
@@ -155,7 +151,7 @@ describe('Neo MVP controls', () => {
     expect(
       screen.queryAllByRole('button').map((button) => button.getAttribute('aria-label'))
     ).toEqual(['Card actions']);
-    expect(action).toHaveBeenCalledTimes(1);
+    expect(action).not.toHaveBeenCalled();
     view.rerender(
       <NeoWorkCard
         work={{
