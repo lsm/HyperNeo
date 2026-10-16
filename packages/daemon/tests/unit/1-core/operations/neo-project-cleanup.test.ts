@@ -164,6 +164,12 @@ describe('project cleanup plan', () => {
     ]);
   });
 
+  test('an empty project only on another machine is deleted, since the mirror ignores attached daemons', () => {
+    expect(plan([project('remote', { aliases: ['folder:tts\u0000/x'] })])).toEqual([
+      { action: 'delete', projectId: 'remote', title: 'remote' },
+    ]);
+  });
+
   test('live, section, already archived, pinned and other-machine projects are left alone', () => {
     expect(
       plan(

@@ -124,11 +124,12 @@ export function planNeoProjectCleanup(
       if (isLive(project)) return [];
       if (scope.archive?.has(project.id))
         return project.holder ? [{ action: 'archive', ...named, sessionId: project.holder }] : [];
-      if (repositories(project).length || isElsewhere(project, scope.machine)) return [];
+      if (repositories(project).length) return [];
       if (isEmpty(project))
         return project.aliases.some((alias) => scope.mirrored.has(alias))
           ? []
           : [{ action: 'delete', ...named }];
+      if (isElsewhere(project, scope.machine)) return [];
       const target = home(project, homes);
       return target ? [{ action: 'merge', ...named, targetId: target.id }] : [];
     });
