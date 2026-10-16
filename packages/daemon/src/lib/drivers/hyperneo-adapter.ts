@@ -27,6 +27,7 @@ import type {
   WorkStarted,
   WorkStatus,
   WorkSummary,
+  WorkWithdrawal,
 } from './types.ts';
 import { readSessionInputEvidence } from './space-input-evidence.ts';
 import {
@@ -77,6 +78,11 @@ export interface HyperneoSessionRow {
 
 export interface HyperneoSessionControl {
   archive?: WorkAdapter['archive'];
+  withdraw?: (
+    sessionId: string,
+    queuedSubmissionId: string,
+    from: string
+  ) => Promise<Result<WorkWithdrawal>>;
   create(workspacePath: string, title: string, model?: string): Promise<string>;
   resolveModel(model: string): Promise<string | null>;
   model(sessionId: string): string | null;
@@ -669,6 +675,22 @@ const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
   deliveryMode?: MailboxDeliveryMode
 ) => Promise<Result<WorkDelivery>>;
 
+const runHyperneoWithdraw = (superpipe({})('hyperneo-withdraw-work') as PipelineAPI)
+  .input(['ref', 'queuedSubmissionId', 'context', 'deps'])
+  .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
+  .pipe(
+    (row: HyperneoSessionRow, id: string, context: WorkCallContext, deps: HyperneoAdapterDeps) =>
+      deps.sessions.withdraw!(row.id, id, context.from),
+    ['outcome', 'queuedSubmissionId', 'context', 'deps'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  queuedSubmissionId: string,
+  context: WorkCallContext,
+  deps: HyperneoAdapterDeps
+) => Promise<Result<WorkWithdrawal>>;
+
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
     id: 'hyperneo',
@@ -680,6 +702,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       'queue',
       'status',
       'stop',
+      ...(deps.sessions.withdraw ? ['withdraw' as const] : []),
       ...(deps.sessions.archive ? ['archive' as const] : []),
     ],
     find: async (query) =>
@@ -691,6 +714,9 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
     start: (request, context) => runHyperneoStart(request, context, deps),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
     queue: (ref, message, context) => runHyperneoSend(ref, message, context, deps, 'defer'),
+    withdraw: deps.sessions.withdraw
+      ? (ref, id, context) => runHyperneoWithdraw(ref, id, context, deps)
+      : undefined,
     status: async (ref, since, receipt) => runHyperneoStatus(ref, deps, since, receipt),
     stop: async (ref) => runHyperneoStop(ref, deps),
     archive: async (ref, admit) => {

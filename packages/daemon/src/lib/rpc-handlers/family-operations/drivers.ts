@@ -1,4 +1,5 @@
 import { sleep } from '../../utils/sleep.ts';
+import { withdrawOwnedInput } from '../../drivers/owned-input-withdrawal.ts';
 import {
   workStartPreparation,
   type WorkExecutionPreparer,
@@ -124,8 +125,30 @@ async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
 }
 
 export function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
-  const { sessionManager, internalEventBus } = context.deps;
+  const { sessionManager, internalEventBus, db, jobQueue } = context.deps;
   return {
+    withdraw: (sessionId, id, from) =>
+      withdrawOwnedInput(sessionId, id, from, {
+        jobs: jobQueue,
+        transaction: (effect) => db.getDatabase().transaction(effect)(),
+        messageId: (target, uuid) => db.getSDKMessageRepo().findMessageIdByUuid(target, uuid),
+        removeDeferred: async (target, messageDbId, commit) => {
+          const session = sessionManager.getCachedSession(target);
+          if (session)
+            return (await session.revokePendingDelivery(messageDbId, 'remove', 'deferred', commit))
+              .changed;
+          const removed = db.getDatabase().transaction(() => {
+            const row = db.deletePendingUserMessage(target, messageDbId, 'deferred');
+            if (row?.uuid) commit();
+            return row;
+          })();
+          if (!removed?.uuid) return false;
+          jobQueue.cancelDelivery(target, removed.uuid);
+          db.notifyChange?.('sdk_messages', { sessionId: target });
+          db.notifyChange?.('job_queue', { sessionId: target });
+          return true;
+        },
+      }),
     archive: async (ref, admit) => {
       const session = sessionManager.getSessionFromDB(ref.id);
       if (!session) return reject('not_found', 'The session is gone.');

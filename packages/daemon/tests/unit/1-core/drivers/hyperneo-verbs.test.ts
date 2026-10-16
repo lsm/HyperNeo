@@ -10,10 +10,11 @@ import type { ArchiveAdmission } from '../../../../src/lib/drivers/types';
 import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
-function control(db: Database, events: string[]) {
+function control(db: Database, events: string[], withdraw?: HyperneoSessionControl['withdraw']) {
   let selectedModel = 'gpt-6-luna';
   return {
     sessions: {
+      ...(withdraw ? { withdraw } : {}),
       resolveModel: async (model: string) =>
         model === 'GLM 5.3' ? 'glm-5.3' : ['glm-5.3', 'gpt-6-luna'].includes(model) ? model : null,
       create: async (workspacePath: string, title: string, model?: string) => {
@@ -114,7 +115,10 @@ describe('hyperneo adapter send and status', () => {
 
   afterEach(() => db.close());
 
-  function adapter(prepareExecution?: WorkExecutionPreparer) {
+  function adapter(
+    prepareExecution?: WorkExecutionPreparer,
+    withdraw?: HyperneoSessionControl['withdraw']
+  ) {
     return createHyperneoAdapter({
       prepareExecution,
       db: () => db,
@@ -130,11 +134,41 @@ describe('hyperneo adapter send and status', () => {
         });
         return outcome;
       },
-      ...control(db, events),
+      ...control(db, events, withdraw),
     });
   }
 
   const ref = (id: string) => ({ adapter: 'hyperneo', id });
+
+  test('withdraw is advertised only when an owned controller is available', async () => {
+    expect(adapter().capabilities).not.toContain('withdraw');
+    expect(adapter().withdraw).toBeUndefined();
+    const seen: string[][] = [];
+    const driver = adapter(undefined, async (...args) => {
+      seen.push(args);
+      return { ok: true, value: { queuedSubmissionId: args[1], withdrawn: true } };
+    });
+    expect(driver.capabilities).toContain('withdraw');
+    expect(
+      await driver.withdraw!(ref('busy'), 'mailbox-entry', {
+        from: 'session:sender',
+        caller: { source: 'internal' },
+      })
+    ).toEqual({ ok: true, value: { queuedSubmissionId: 'mailbox-entry', withdrawn: true } });
+    expect(seen).toEqual([['busy', 'mailbox-entry', 'session:sender']]);
+  });
+
+  test.each(['space', 'missing'])('withdraw never reaches a controller for %s', async (id) => {
+    const driver = adapter(undefined, async () => {
+      throw new Error('must not run');
+    });
+    expect(
+      await driver.withdraw!(ref(id), 'mailbox-entry', {
+        from: 'session:sender',
+        caller: { source: 'internal' },
+      })
+    ).toMatchObject({ ok: false, reason: 'not_found' });
+  });
 
   test.each(['idle', 'busy'])(
     'queue defers the input with its receipt for an owned %s session',
