@@ -83,6 +83,27 @@ async function call(
 }
 
 describe('work verb operations', () => {
+  test('keeps delivery facts in driver result schemas', () => {
+    for (const fact of [{ queuedSubmissionId: 'q1' }, { steeredIntoTurnId: 't1' }]) {
+      const result = { ok: true, value: { delivered: false, ...fact } };
+      expect(SendWorkResultSchema.parse(result)).toEqual(result);
+    }
+  });
+
+  test('operation discovery omits direct driver capabilities without routes', async () => {
+    const adapter: WorkAdapter = {
+      ...desktop,
+      capabilities: ['find', 'send', 'steer', 'queue', 'withdraw'],
+    };
+    expect(
+      await call('work.adapters', {}, undefined, { source: 'rpc', principal: 'local' }, [adapter])
+    ).toEqual({
+      ok: true,
+      value: [{ id: adapter.id, capabilities: ['find', 'send'] }],
+    });
+    expect(adapter.capabilities).toContain('steer');
+  });
+
   test('runs each verb on the adapter named by the ref', async () => {
     expect(
       await call('work.send', { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi' })

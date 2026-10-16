@@ -19,8 +19,9 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedRuntimeSession } from '../../helpers/seed-runtime-session.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
@@ -28,6 +29,7 @@ function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createTables(db);
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
@@ -224,6 +226,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
   });
 
   function saveAssistantMessage(sessionId: string, content: unknown[], stopReason: string | null) {
+    seedRuntimeSession(db, sessionId);
     sdkMessageRepo.saveSDKMessage(sessionId, {
       type: 'assistant',
       session_id: sessionId,
@@ -243,9 +246,10 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
   }
 
   function saveSystemMessage(sessionId: string, timestamp: string) {
+    seedRuntimeSession(db, sessionId);
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
-			 VALUES (?, ?, 'system', ?, ?, 'consumed', 'sdk', 1, 0)`
+			 VALUES (?, ?, 'system', ?, ?, 'consumed', NULL, 1, 0)`
     ).run(
       `${sessionId}-system-${timestamp}`,
       sessionId,

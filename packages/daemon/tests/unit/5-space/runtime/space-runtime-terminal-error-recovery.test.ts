@@ -12,8 +12,9 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedRuntimeSession } from '../../helpers/seed-runtime-session.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
@@ -21,6 +22,7 @@ function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createTables(db);
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (
 			id TEXT PRIMARY KEY,
@@ -203,9 +205,10 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     }
     if (opts.recoveryIntercepted) message.recovery_intercepted = 1;
     const ts = new Date(Date.now() - (opts.minutesAgo ?? 0) * 60_000).toISOString();
+    seedRuntimeSession(db, sessionId);
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
-       VALUES (?, ?, 'result', ?, ?, ?, 'consumed', 'sdk', 1, 1)`
+       VALUES (?, ?, 'result', ?, ?, ?, 'consumed', NULL, 1, 1)`
     ).run(id, sessionId, opts.subtype, JSON.stringify(message), ts);
   }
 
@@ -1045,6 +1048,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._injected).toHaveLength(1);
 
     db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(SESSION);
+    seedRuntimeSession(db, SESSION);
     sdkMessageRepo.saveSDKMessage(SESSION, {
       type: 'assistant',
       message: {
