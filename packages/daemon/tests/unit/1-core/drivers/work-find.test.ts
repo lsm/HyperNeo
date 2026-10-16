@@ -89,6 +89,15 @@ describe('combineFindResults', () => {
         new Set(['laptop\u0000/focus/app'])
       ).places.map((place) => place.place.folder)
     ).toEqual(['/focus/app', '/qa/3']);
+    expect(
+      combineFindResults(
+        local,
+        remote,
+        { ...input, id: 'claude-code-101' },
+        undefined,
+        new Set(['laptop\u0000/focus/app'])
+      ).places.map((place) => place.place.folder)
+    ).toEqual(['/qa/1']);
   });
 });
 

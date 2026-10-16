@@ -265,7 +265,7 @@ export function combineFindResults(
   const merged = keepFindId(
     ownPlacesFirst(
       mergePlaceGroups([...local.groups, ...remote.groups], Number.MAX_SAFE_INTEGER),
-      own
+      input.id ? new Set() : own
     ).slice(0, input.id ? 51 : input.limit + 1),
     input.id
   );
