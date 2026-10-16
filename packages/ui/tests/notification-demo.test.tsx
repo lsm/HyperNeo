@@ -14,10 +14,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+async function openNotification() {
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /^Show / }));
+  });
+}
+
 describe('NotificationWithAvatar', () => {
-  it('renders the notification content when component mounts', async () => {
+  it('renders the notification content when opened', async () => {
     render(<NotificationWithAvatar />);
-    await act(async () => {});
+    await openNotification();
 
     expect(screen.getByText('Emilia Gates')).toBeTruthy();
 
@@ -26,7 +32,7 @@ describe('NotificationWithAvatar', () => {
 
   it('renders avatar image from correct URL', async () => {
     render(<NotificationWithAvatar />);
-    await act(async () => {});
+    await openNotification();
 
     const img = screen.getByRole('img');
     expect(img).toBeTruthy();
@@ -35,7 +41,7 @@ describe('NotificationWithAvatar', () => {
 
   it('has a Reply button', async () => {
     render(<NotificationWithAvatar />);
-    await act(async () => {});
+    await openNotification();
 
     const replyBtn = screen.getByRole('button', { name: 'Reply' });
     expect(replyBtn).toBeTruthy();
@@ -43,7 +49,7 @@ describe('NotificationWithAvatar', () => {
 
   it('hides notification when Reply button is clicked', async () => {
     render(<NotificationWithAvatar />);
-    await act(async () => {});
+    await openNotification();
 
     expect(screen.getByText('Emilia Gates')).toBeTruthy();
 
@@ -64,9 +70,9 @@ describe('NotificationWithAvatar', () => {
 });
 
 describe('NotificationWithSplitButtons', () => {
-  it('renders the notification content when component mounts', async () => {
+  it('renders the notification content when opened', async () => {
     render(<NotificationWithSplitButtons />);
-    await act(async () => {});
+    await openNotification();
 
     expect(screen.getByText('Receive notifications')).toBeTruthy();
 
@@ -75,7 +81,7 @@ describe('NotificationWithSplitButtons', () => {
 
   it('has a Reply button', async () => {
     render(<NotificationWithSplitButtons />);
-    await act(async () => {});
+    await openNotification();
 
     const replyBtn = screen.getByRole('button', { name: 'Reply' });
     expect(replyBtn).toBeTruthy();
@@ -83,7 +89,7 @@ describe('NotificationWithSplitButtons', () => {
 
   it('has a "Don\'t allow" button', async () => {
     render(<NotificationWithSplitButtons />);
-    await act(async () => {});
+    await openNotification();
 
     const dismissBtn = screen.getByRole('button', { name: "Don't allow" });
     expect(dismissBtn).toBeTruthy();
@@ -91,7 +97,7 @@ describe('NotificationWithSplitButtons', () => {
 
   it('hides notification when Reply button is clicked', async () => {
     render(<NotificationWithSplitButtons />);
-    await act(async () => {});
+    await openNotification();
 
     expect(screen.getByText('Receive notifications')).toBeTruthy();
 
@@ -104,7 +110,7 @@ describe('NotificationWithSplitButtons', () => {
 
   it('hides notification when "Don\'t allow" button is clicked', async () => {
     render(<NotificationWithSplitButtons />);
-    await act(async () => {});
+    await openNotification();
 
     expect(screen.getByText('Receive notifications')).toBeTruthy();
 
@@ -125,9 +131,9 @@ describe('NotificationWithSplitButtons', () => {
 });
 
 describe('Notification dismiss behavior', () => {
-  it('can re-show avatar notification after dismissing', async () => {
+  it('can re-show split-button notification after dismissing', async () => {
     render(<NotificationWithSplitButtons />);
-    await act(async () => {});
+    await openNotification();
 
     expect(screen.getByText('Receive notifications')).toBeTruthy();
 
@@ -146,9 +152,9 @@ describe('Notification dismiss behavior', () => {
 });
 
 describe('SimpleIconNotification', () => {
-  it('renders the notification content when component mounts', async () => {
+  it('renders the notification content when opened', async () => {
     render(<SimpleIconNotification />);
-    await act(async () => {});
+    await openNotification();
 
     expect(screen.getByText('Successfully saved!')).toBeTruthy();
 
@@ -157,7 +163,7 @@ describe('SimpleIconNotification', () => {
 
   it('has a close button', async () => {
     render(<SimpleIconNotification />);
-    await act(async () => {});
+    await openNotification();
 
     const closeBtn = screen.getByRole('button', { name: 'Close' });
     expect(closeBtn).toBeTruthy();
@@ -173,16 +179,16 @@ describe('SimpleIconNotification', () => {
 });
 
 describe('CondensedNotification', () => {
-  it('renders the notification content when component mounts', async () => {
+  it('renders the notification content when opened', async () => {
     render(<CondensedNotification />);
-    await act(async () => {});
+    await openNotification();
 
     expect(screen.getByText('Discussion archived')).toBeTruthy();
   });
 
   it('has an Undo button', async () => {
     render(<CondensedNotification />);
-    await act(async () => {});
+    await openNotification();
 
     const undoBtn = screen.getByRole('button', { name: 'Undo' });
     expect(undoBtn).toBeTruthy();
@@ -190,7 +196,7 @@ describe('CondensedNotification', () => {
 
   it('has a close button', async () => {
     render(<CondensedNotification />);
-    await act(async () => {});
+    await openNotification();
 
     const closeBtn = screen.getByRole('button', { name: 'Close' });
     expect(closeBtn).toBeTruthy();
@@ -206,16 +212,16 @@ describe('CondensedNotification', () => {
 });
 
 describe('NotificationWithActionsBelow', () => {
-  it('renders the notification content when component mounts', async () => {
+  it('renders the notification content when opened', async () => {
     render(<NotificationWithActionsBelow />);
-    await act(async () => {});
+    await openNotification();
 
     expect(screen.getByText('Discussion moved')).toBeTruthy();
   });
 
   it('has Undo and Dismiss action buttons', async () => {
     render(<NotificationWithActionsBelow />);
-    await act(async () => {});
+    await openNotification();
 
     const undoBtn = screen.getByRole('button', { name: 'Undo' });
     const dismissBtn = screen.getByRole('button', { name: 'Dismiss' });
@@ -225,7 +231,7 @@ describe('NotificationWithActionsBelow', () => {
 
   it('has a close button', async () => {
     render(<NotificationWithActionsBelow />);
-    await act(async () => {});
+    await openNotification();
 
     const closeBtn = screen.getByRole('button', { name: 'Close' });
     expect(closeBtn).toBeTruthy();
@@ -241,9 +247,9 @@ describe('NotificationWithActionsBelow', () => {
 });
 
 describe('NotificationWithButtonsBelow', () => {
-  it('renders the notification content when component mounts', async () => {
+  it('renders the notification content when opened', async () => {
     render(<NotificationWithButtonsBelow />);
-    await act(async () => {});
+    await openNotification();
 
     expect(screen.getByText('Emilia Gates')).toBeTruthy();
 
@@ -252,7 +258,7 @@ describe('NotificationWithButtonsBelow', () => {
 
   it('has Accept and Decline buttons', async () => {
     render(<NotificationWithButtonsBelow />);
-    await act(async () => {});
+    await openNotification();
 
     const acceptBtn = screen.getByRole('button', { name: 'Accept' });
     const declineBtn = screen.getByRole('button', { name: 'Decline' });
@@ -262,7 +268,7 @@ describe('NotificationWithButtonsBelow', () => {
 
   it('has avatar image', async () => {
     render(<NotificationWithButtonsBelow />);
-    await act(async () => {});
+    await openNotification();
 
     const img = screen.getByRole('img');
     expect(img).toBeTruthy();

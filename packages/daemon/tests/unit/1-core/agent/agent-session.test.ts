@@ -2309,6 +2309,55 @@ describe('AgentSession', () => {
       expect(cancelDeliverySpy).toHaveBeenCalledWith(mockSession.id, 'uuid-1');
     });
 
+    it('revokePendingDelivery can require a still-deferred input before cancelling delivery', async () => {
+      const deletePendingSpy = mock(() => null);
+      const cancelDeliverySpy = mock(() => false);
+      mockDb.deletePendingUserMessage = deletePendingSpy;
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
+
+      expect(await agentSession.revokePendingDelivery('db-1', 'remove', 'deferred')).toEqual({
+        changed: false,
+      });
+      expect(deletePendingSpy).toHaveBeenCalledWith(mockSession.id, 'db-1', 'deferred');
+      expect(cancelDeliverySpy).not.toHaveBeenCalled();
+    });
+
+    it('revokePendingDelivery commits a withdrawal before asynchronous cleanup', async () => {
+      let transactionActive = false;
+      let committed = false;
+      mockDb.getDatabase = mock(
+        () =>
+          ({
+            transaction: (effect: () => unknown) => () => {
+              transactionActive = true;
+              try {
+                return effect();
+              } finally {
+                transactionActive = false;
+              }
+            },
+          }) as never
+      );
+      mockDb.deletePendingUserMessage = mock(() => ({
+        dbId: 'db-1',
+        uuid: 'uuid-1',
+        status: 'deferred' as const,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: mock(() => false) }));
+      agentSession.stateManager.clearQueuedIfOwnedBy = mock(async () => {
+        expect(committed).toBe(true);
+        throw new Error('cleanup interrupted');
+      });
+      await expect(
+        agentSession.revokePendingDelivery('db-1', 'remove', 'deferred', () => {
+          expect(transactionActive).toBe(true);
+          committed = true;
+        })
+      ).rejects.toThrow('cleanup interrupted');
+      expect(committed).toBe(true);
+      expect(transactionActive).toBe(false);
+    });
+
     it('revokePendingDelivery notifies the delivery feeds after defer+cancel (#862 review P2)', async () => {
       const deferSpy = mock(() => ({ dbId: 'db-1', uuid: 'uuid-1' }));
       const cancelDeliverySpy = mock(() => true);
