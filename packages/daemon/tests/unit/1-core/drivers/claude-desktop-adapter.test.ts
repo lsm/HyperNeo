@@ -712,12 +712,12 @@ describe('claude-desktop adapter against the app session records', () => {
 });
 
 describe('readLiveClaudeSessions', () => {
-  function spawnWith(stdout: string): SpawnFn {
+  function spawnWith(stdout: string, code = 0): SpawnFn {
     return () => ({
       stdout: new Response(stdout).body,
       stderr: null,
-      exited: Promise.resolve(0),
-      exitCode: 0,
+      exited: Promise.resolve(code),
+      exitCode: code,
       kill: () => {},
     });
   }
@@ -725,9 +725,10 @@ describe('readLiveClaudeSessions', () => {
   test('reads the live sessions claude agents reports', async () => {
     expect(
       await readLiveClaudeSessions(
-        spawnWith('[{"pid":1,"sessionId":"cli-a1","status":"busy","name":"x"}]')
+        spawnWith('[{"pid":1,"sessionId":"cli-a1","status":"busy","name":"x"}]'),
+        '/missing-claude-registrations'
       )
-    ).toEqual([{ sessionId: 'cli-a1', status: 'busy', name: 'x' }]);
+    ).toEqual([{ pid: 1, sessionId: 'cli-a1', status: 'busy', name: 'x', owner: 'unknown' }]);
   });
 
   test('skips entries without a session or status instead of failing the whole list', async () => {
@@ -746,15 +747,17 @@ describe('readLiveClaudeSessions', () => {
               status: 'busy',
             },
           ])
-        )
+        ),
+        '/missing-claude-registrations'
       )
     ).toEqual([
-      { sessionId: 'cli-a1', status: 'idle', name: undefined },
-      { sessionId: 'cli-b2', status: 'busy', name: 'Neo iOS app' },
+      { pid: 1, sessionId: 'cli-a1', status: 'idle', name: undefined, owner: 'unknown' },
+      { pid: 4, sessionId: 'cli-b2', status: 'busy', name: 'Neo iOS app', owner: 'unknown' },
     ]);
   });
 
   test('fails when the CLI is missing or its output is unreadable', async () => {
+    await expect(readLiveClaudeSessions(spawnWith('[]', 1))).rejects.toThrow('exited with 1');
     await expect(readLiveClaudeSessions(spawnWith('Usage: claude'))).rejects.toThrow();
     await expect(readLiveClaudeSessions(spawnWith('{"sessions":[]}'))).rejects.toThrow(
       'unknown shape'
