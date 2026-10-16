@@ -753,6 +753,31 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       await expect(initializing).rejects.toThrow('closed before connecting');
     });
 
+    it('rejects a pending initialize when closed during a reconnect backoff', async () => {
+      global.WebSocket = vi.fn(function () {
+        const ws = new MockWebSocket('ws://localhost:9999', false);
+        setTimeout(() => {
+          ws.readyState = MockWebSocket.CLOSED;
+          ws.onclose?.(new CloseEvent('close'));
+        }, 5);
+        return ws as unknown as WebSocket;
+      }) as unknown as typeof WebSocket;
+
+      transport = new WebSocketClientTransport({
+        url: 'ws://localhost:9999',
+        autoReconnect: true,
+        maxReconnectAttempts: 5,
+        reconnectDelay: 10_000,
+      });
+
+      const initializing = transport.initialize();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(transport.getState()).toBe('disconnected');
+      await transport.close();
+
+      await expect(initializing).rejects.toThrow('closed before connecting');
+    });
+
     it('retries at once, then backs off with full jitter up to the cap', () => {
       expect(reconnectDelayFor(1, 500, 30_000, () => 1)).toBe(0);
       expect(reconnectDelayFor(2, 500, 30_000, () => 1)).toBe(500);

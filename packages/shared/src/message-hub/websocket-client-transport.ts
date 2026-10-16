@@ -59,6 +59,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   private messageHandlers: Set<(message: HubMessage) => void> = new Set();
   private connectionHandlers: Set<ConnectionStateHandler> = new Set();
+  private pendingInitializeAborts: Set<(error: Error) => void> = new Set();
 
   private readonly maxOutboundMessageSize = 32 * 1024 * 1024;
   private readonly maxInboundMessageSize = 40 * 1024 * 1024;
@@ -87,14 +88,14 @@ export class WebSocketClientTransport implements IMessageTransport {
         if (state === 'connected') settle();
         else if (state === 'failed')
           settle(new Error(`WebSocket to ${this.url} failed to connect`));
-        else if (this.closed)
-          settle(new Error(`WebSocket to ${this.url} closed before connecting`));
       });
       const settle = (error?: Error) => {
         off();
+        this.pendingInitializeAborts.delete(settle);
         if (error) reject(error);
         else resolve();
       };
+      this.pendingInitializeAborts.add(settle);
       this.connect().then(
         () => {
           if (this.isReady()) settle();
@@ -232,6 +233,9 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   async close(): Promise<void> {
     this.closed = true;
+    for (const abort of this.pendingInitializeAborts) {
+      abort(new Error(`WebSocket to ${this.url} closed before connecting`));
+    }
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
