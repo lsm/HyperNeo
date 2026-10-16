@@ -1,3 +1,4 @@
+import baselineSchema from './baseline-v041.json' with { type: 'json' };
 import { runMigration370 } from './m370-neo-project-merges.ts';
 import { runMigration371 } from './m371-neo-work-admission-claims.ts';
 import { runMigration372 } from './m372-neo-ask-item-removed-reason.ts';
@@ -220,30 +221,6 @@ export function runMigrations(
     rewriteMigrationKeys.add(key);
     runMarkedMigration(db, key, migration, ensureBackup);
   };
-
-  run(migrationMarkerKey(1), () => runMigration1(db));
-
-  run(migrationMarkerKey(2), () => runMigration2(db));
-
-  run(migrationMarkerKey(3), () => runMigration3(db));
-
-  run(migrationMarkerKey(4), () => runMigration4(db));
-
-  run(migrationMarkerKey(5), () => runMigration5(db));
-
-  run(migrationMarkerKey(6), () => runMigration6(db));
-
-  run(migrationMarkerKey(7), () => runMigration7(db));
-
-  run(migrationMarkerKey(8), () => runMigration8(db));
-
-  rewrite(migrationMarkerKey(9), () => runMigration9(db));
-
-  run(migrationMarkerKey(10), () => runMigration10(db));
-
-  run(migrationMarkerKey(11), () => runMigration11(db));
-
-  run(migrationMarkerKey(12), () => runMigration12(db));
 
   rewrite(migrationMarkerKey(13), () => runMigration13(db));
 
@@ -888,49 +865,27 @@ function runMarkedMigration(
 }
 
 function seedHistoricalMigrationMarkers(db: BunDatabase): void {
-  if (hasMigrationMarker(db, migrationMarkerKey(1))) return;
-
-  const alreadyRanMigration155 = hasMigrationMarker(db, 'm154_legacy_long_horizon_agent_data');
-  const alreadyRanMigration157 = hasMigrationMarker(
-    db,
-    'm157_archive_terminal_space_task_worker_sessions'
-  );
-  const hasBaselineSchema = hasCurrentBaselineSchema(db);
-  const currentThrough =
-    alreadyRanMigration157 && hasBaselineSchema ? 157 : hasBaselineSchema ? 156 : 0;
-
-  if (currentThrough === 0) return;
-
-  for (let version = 1; version <= currentThrough; version++) {
-    if (version === 155 && !alreadyRanMigration155) continue;
-    markMigration(db, migrationMarkerKey(version));
-  }
-  markMigration(db, 'migration_room_cleanup');
+  if (db.prepare('SELECT 1 FROM migration_markers LIMIT 1').get() || hasExistingDatabaseSchema(db))
+    return;
+  db.transaction(() => {
+    for (const sql of baselineSchema) db.exec(sql);
+    for (let version = 1; version <= 238; version++) markMigration(db, migrationMarkerKey(version));
+    markMigration(db, 'migration_room_cleanup');
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO external_event_extension_configs
+       (source, globally_enabled, capabilities_json, secrets_ref, settings_json, created_at, updated_at)
+       VALUES ('github', 1, '{"webhooks":true,"polling":false,"rpcConfig":true}', NULL, '{}', ?, ?)`
+    ).run(now, now);
+  })();
 }
 
-function hasCurrentBaselineSchema(db: BunDatabase): boolean {
-  return (
-    tableExists(db, 'sessions') &&
-    tableHasColumn(db, 'sessions', 'acp_session_id') &&
-    tableHasColumn(db, 'sessions', 'status') &&
-    tableHasColumn(db, 'sessions', 'type') &&
-    tableHasColumn(db, 'sessions', 'session_context') &&
-    tableHasColumn(db, 'sessions', 'archived_at') &&
-    tableExists(db, 'spaces') &&
-    tableExists(db, 'space_long_horizon_agents') &&
-    tableExists(db, 'space_tasks') &&
-    tableHasColumn(db, 'space_tasks', 'status') &&
-    tableHasColumn(db, 'space_tasks', 'task_agent_session_id') &&
-    tableExists(db, 'space_workflows') &&
-    tableExists(db, 'space_workflow_runs') &&
-    tableHasColumn(db, 'space_workflow_runs', 'status') &&
-    tableExists(db, 'node_executions') &&
-    tableHasColumn(db, 'node_executions', 'workflow_run_id') &&
-    tableHasColumn(db, 'node_executions', 'status') &&
-    tableHasColumn(db, 'node_executions', 'completed_at') &&
-    tableHasColumn(db, 'node_executions', 'updated_at') &&
-    tableHasColumn(db, 'node_executions', 'created_at')
-  );
+function hasExistingDatabaseSchema(db: BunDatabase): boolean {
+  return !!db
+    .prepare(
+      `SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' AND name != 'migration_markers' LIMIT 1`
+    )
+    .get();
 }
 
 export function runMigration94(db: BunDatabase): void {
@@ -994,231 +949,6 @@ export function runMigration97(db: BunDatabase): void {
 		  WHERE template_name IS NULL
 		    AND name IN (${placeholders})`
   ).run(...BUILT_IN_NAMES);
-}
-
-function runMigration1(db: BunDatabase): void {
-  if (!tableExists(db, 'auth_config')) {
-    return;
-  }
-  try {
-    db.prepare(`SELECT oauth_token_encrypted FROM auth_config LIMIT 1`).all();
-  } catch {
-    db.exec(`ALTER TABLE auth_config ADD COLUMN oauth_token_encrypted TEXT`);
-  }
-}
-
-function runMigration2(db: BunDatabase): void {
-  try {
-    db.prepare(`SELECT 1 FROM messages LIMIT 1`).all();
-    db.exec(`DROP TABLE IF EXISTS tool_calls`);
-    db.exec(`DROP TABLE IF EXISTS messages`);
-    db.exec(`DROP INDEX IF EXISTS idx_messages_session`);
-    db.exec(`DROP INDEX IF EXISTS idx_tool_calls_message`);
-  } catch {}
-}
-
-function runMigration3(db: BunDatabase): void {
-  if (!tableExists(db, 'sessions')) {
-    return;
-  }
-  try {
-    db.prepare(`SELECT is_worktree FROM sessions LIMIT 1`).all();
-  } catch {
-    db.exec(`ALTER TABLE sessions ADD COLUMN is_worktree INTEGER DEFAULT 0`);
-    db.exec(`ALTER TABLE sessions ADD COLUMN worktree_path TEXT`);
-    db.exec(`ALTER TABLE sessions ADD COLUMN main_repo_path TEXT`);
-    db.exec(`ALTER TABLE sessions ADD COLUMN worktree_branch TEXT`);
-  }
-}
-
-function runMigration4(db: BunDatabase): void {
-  if (!tableExists(db, 'sessions')) {
-    return;
-  }
-  try {
-    db.prepare(`SELECT git_branch FROM sessions LIMIT 1`).all();
-  } catch {
-    db.exec(`ALTER TABLE sessions ADD COLUMN git_branch TEXT`);
-  }
-}
-
-function runMigration5(db: BunDatabase): void {
-  if (!tableExists(db, 'sessions')) {
-    return;
-  }
-  try {
-    db.prepare(`SELECT sdk_session_id FROM sessions LIMIT 1`).all();
-  } catch {
-    db.exec(`ALTER TABLE sessions ADD COLUMN sdk_session_id TEXT`);
-  }
-}
-
-function runMigration6(db: BunDatabase): void {
-  if (!tableExists(db, 'sessions')) {
-    return;
-  }
-  try {
-    db.prepare(`SELECT available_commands FROM sessions LIMIT 1`).all();
-  } catch {
-    db.exec(`ALTER TABLE sessions ADD COLUMN available_commands TEXT`);
-  }
-}
-
-function runMigration7(db: BunDatabase): void {
-  if (!tableExists(db, 'sessions')) {
-    return;
-  }
-  try {
-    db.prepare(`SELECT processing_state FROM sessions LIMIT 1`).all();
-  } catch {
-    db.exec(`ALTER TABLE sessions ADD COLUMN processing_state TEXT`);
-  }
-}
-
-function runMigration8(db: BunDatabase): void {
-  if (!tableExists(db, 'sessions')) {
-    return;
-  }
-  try {
-    db.prepare(`SELECT archived_at FROM sessions LIMIT 1`).all();
-  } catch {
-    db.exec(`ALTER TABLE sessions ADD COLUMN archived_at TEXT`);
-  }
-}
-
-function runMigration9(db: BunDatabase): void {
-  if (!tableExists(db, 'sessions')) {
-    return;
-  }
-  try {
-    const testId = '__migration_test_archived_status__';
-    db.prepare(
-      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      testId,
-      'Test',
-      '/tmp',
-      new Date().toISOString(),
-      new Date().toISOString(),
-      'archived',
-      '{}',
-      '{}',
-      0,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null
-    );
-    db.prepare(`DELETE FROM sessions WHERE id = ?`).run(testId);
-  } catch {
-    db.exec('PRAGMA foreign_keys = OFF');
-
-    try {
-      db.exec(`
-				-- Create new table with updated CHECK constraint
-				CREATE TABLE sessions_new (
-					id TEXT PRIMARY KEY,
-					title TEXT NOT NULL,
-					workspace_path TEXT NOT NULL,
-					created_at TEXT NOT NULL,
-					last_active_at TEXT NOT NULL,
-					status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived')),
-					config TEXT NOT NULL,
-					metadata TEXT NOT NULL,
-					is_worktree INTEGER DEFAULT 0,
-					worktree_path TEXT,
-					main_repo_path TEXT,
-					worktree_branch TEXT,
-					git_branch TEXT,
-					sdk_session_id TEXT,
-					available_commands TEXT,
-					processing_state TEXT,
-					archived_at TEXT
-				);
-
-				-- Copy all data from old table to new table
-				INSERT INTO sessions_new
-				SELECT id, title, workspace_path, created_at, last_active_at, status, config, metadata,
-					   is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch,
-					   sdk_session_id, available_commands, processing_state, archived_at
-				FROM sessions;
-
-				-- Drop old table (safe now that foreign_keys is OFF)
-				DROP TABLE sessions;
-
-				-- Rename new table to original name
-				ALTER TABLE sessions_new RENAME TO sessions;
-			`);
-    } finally {
-      db.exec('PRAGMA foreign_keys = ON');
-    }
-  }
-}
-
-function runMigration10(db: BunDatabase): void {
-  if (!tableExists(db, 'sdk_messages')) {
-    return;
-  }
-  try {
-    db.prepare(`SELECT send_status FROM sdk_messages LIMIT 1`).all();
-  } catch {
-    db.exec(
-      `ALTER TABLE sdk_messages ADD COLUMN send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent'))`
-    );
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status ON sdk_messages(session_id, send_status)`
-    );
-  }
-}
-
-function runMigration11(db: BunDatabase): void {
-  if (!tableExists(db, 'sessions')) {
-    return;
-  }
-  try {
-    db.prepare(`SELECT parent_id FROM sessions LIMIT 1`).all();
-  } catch {
-    db.exec(`ALTER TABLE sessions ADD COLUMN parent_id TEXT`);
-    db.exec(`ALTER TABLE sessions ADD COLUMN labels TEXT`);
-    db.exec(`ALTER TABLE sessions ADD COLUMN sub_session_order INTEGER DEFAULT 0`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id)`);
-  }
-}
-
-export function runMigration12(db: BunDatabase): void {
-  if (!tableExists(db, 'global_settings')) {
-    return;
-  }
-  try {
-    const row = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as
-      | { settings: string }
-      | undefined;
-
-    if (!row) {
-      db.exec(`
-        INSERT INTO global_settings (id, settings, updated_at)
-        VALUES (1, '{"autoScroll":true}', datetime('now'))
-      `);
-      return;
-    }
-
-    const settings = JSON.parse(row.settings) as Record<string, unknown>;
-
-    if (settings.autoScroll === undefined) {
-      settings.autoScroll = true;
-      db.exec(`
-        UPDATE global_settings
-        SET settings = '${JSON.stringify(settings).replace(/'/g, "''")}',
-            updated_at = datetime('now')
-        WHERE id = 1
-      `);
-    }
-  } catch {}
 }
 
 function runMigration13(db: BunDatabase): void {

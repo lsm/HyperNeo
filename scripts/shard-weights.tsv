@@ -248,10 +248,10 @@
 5	packages/daemon/tests/unit/1-core/operations/neo-binding-roles.test.ts
 36	packages/daemon/tests/unit/1-core/operations/neo-branch-prs.test.ts
 2905	packages/daemon/tests/unit/1-core/operations/neo-busy-consultation.test.ts
+1644	packages/daemon/tests/unit/1-core/operations/neo-card-attention.test.ts
 4	packages/daemon/tests/unit/1-core/operations/neo-card-check.test.ts
 1107	packages/daemon/tests/unit/1-core/operations/neo-card-pr-claims.test.ts
 2735	packages/daemon/tests/unit/1-core/operations/neo-card-pr-events.test.ts
-1644	packages/daemon/tests/unit/1-core/operations/neo-card-attention.test.ts
 32	packages/daemon/tests/unit/1-core/operations/neo-card-views.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-card-wake.test.ts
 18	packages/daemon/tests/unit/1-core/operations/neo-catch-up.test.ts
@@ -268,7 +268,6 @@
 8	packages/daemon/tests/unit/1-core/operations/neo-coordinator-cwd.test.ts
 1152	packages/daemon/tests/unit/1-core/operations/neo-daemon-ticks.test.ts
 4937	packages/daemon/tests/unit/1-core/operations/neo-direct-consultation-return.test.ts
-3806	packages/daemon/tests/unit/1-core/operations/neo-direct-reply-fallback.test.ts
 8	packages/daemon/tests/unit/1-core/operations/neo-done-check.test.ts
 491	packages/daemon/tests/unit/1-core/operations/neo-draft-recover.test.ts
 9	packages/daemon/tests/unit/1-core/operations/neo-driver-refresh.test.ts
@@ -323,7 +322,6 @@
 609	packages/daemon/tests/unit/1-core/operations/neo-snapshot-resources.test.ts
 117	packages/daemon/tests/unit/1-core/operations/neo-tail-page-read.test.ts
 2718	packages/daemon/tests/unit/1-core/operations/neo-terminal-error-result.test.ts
-4	packages/daemon/tests/unit/1-core/operations/neo-turn-limit.test.ts
 644	packages/daemon/tests/unit/1-core/operations/neo-waiting-reminders.test.ts
 331	packages/daemon/tests/unit/1-core/operations/neo-watch-checks.test.ts
 9	packages/daemon/tests/unit/1-core/operations/neo-work-close.test.ts
@@ -667,7 +665,6 @@
 5296	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-104_test.ts
 1249	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-106_test.ts
 6	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-112_test.ts
-26	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-12_test.ts
 4664	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-122_test.ts
 4264	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-124_test.ts
 393	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-126_test.ts

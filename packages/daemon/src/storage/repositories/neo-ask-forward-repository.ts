@@ -24,30 +24,12 @@ export class NeoAskForwardRepository {
       .all(ask.sessionId, ask.messageId) as NeoAskForward[];
   }
 
-  listFrom(sessionId: string, askMessageId: string): (NeoAskForward & { ask: NeoAskOrigin })[] {
-    return this.withAsk(
-      this.db
-        .prepare(`SELECT ${columns}, ask_session_id AS askSessionId, ask_message_id AS askMessageId
-          FROM neo_ask_forwards WHERE from_session_id = ? AND ask_message_id = ? ORDER BY hop`)
-        .all(sessionId, askMessageId) as ForwardRow[]
-    );
-  }
-
   listRecent(limit: number): (NeoAskForward & { ask: NeoAskOrigin })[] {
     return this.withAsk(
       this.db
         .prepare(`SELECT ${columns}, ask_session_id AS askSessionId, ask_message_id AS askMessageId
           FROM neo_ask_forwards ORDER BY forwarded_at DESC LIMIT ?`)
         .all(limit) as ForwardRow[]
-    );
-  }
-
-  listTo(sessionId: string, limit: number): (NeoAskForward & { ask: NeoAskOrigin })[] {
-    return this.withAsk(
-      this.db
-        .prepare(`SELECT ${columns}, ask_session_id AS askSessionId, ask_message_id AS askMessageId
-          FROM neo_ask_forwards WHERE to_session_id = ? ORDER BY forwarded_at DESC LIMIT ?`)
-        .all(sessionId, limit) as ForwardRow[]
     );
   }
 

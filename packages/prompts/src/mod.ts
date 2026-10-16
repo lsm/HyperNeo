@@ -60,7 +60,6 @@ import mdneoConsultationSettledReported from './neo/consultation/settled-reporte
 import mdneoConsultationSettledStopped from './neo/consultation/settled-stopped.md' with {
   type: 'text',
 };
-import mdneoPublishNudge from './neo/publish-nudge.md' with { type: 'text' };
 import mdneoAskForwarded from './neo/ask-forwarded.md' with { type: 'text' };
 import mdneoRecentConversation from './neo/recent-conversation.md' with { type: 'text' };
 import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text' };
@@ -238,7 +237,7 @@ import mdmessagingReplyToTask from './messaging/reply-to-task.md' with { type: '
 import mdspaceOperationsDoorListing from './space/operations-door-listing.md' with { type: 'text' };
 import { buildPromptRegistry } from './loader.ts';
 import mdneoCapabilities from './neo/capabilities.md' with { type: 'text' };
-import mdneoResponseFocus from './neo/response-focus.md' with { type: 'text' };
+import mdneoSpeakingPolicy from './neo/speaking-policy.md' with { type: 'text' };
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
 };
@@ -354,7 +353,7 @@ const registry: Record<string, string> = {
   'github/router-system-prompt.md': mdgithubRouterSystemPrompt,
   'github/security-system-prompt.md': mdgithubSecuritySystemPrompt,
   'neo/capabilities.md': mdneoCapabilities,
-  'neo/response-focus.md': mdneoResponseFocus,
+  'neo/speaking-policy.md': mdneoSpeakingPolicy,
   'neo/catch-up.md': mdneoCatchUp,
   'neo/consultation/receipt-closed.md': mdneoConsultationReceiptClosed,
   'neo/consultation/receipt-pending.md': mdneoConsultationReceiptPending,
@@ -365,7 +364,6 @@ const registry: Record<string, string> = {
   'neo/consultation/settled-reported.md': mdneoConsultationSettledReported,
   'neo/consultation/settled-stopped.md': mdneoConsultationSettledStopped,
   'neo/consultation/settled.md': mdneoConsultationSettled,
-  'neo/publish-nudge.md': mdneoPublishNudge,
   'neo/ask-forwarded.md': mdneoAskForwarded,
   'neo/recent-conversation.md': mdneoRecentConversation,
   'neo/route-classifier.md': mdneoRouteClassifier,
@@ -545,7 +543,7 @@ export const {
   GITHUB_ROUTER_SYSTEM_PROMPT,
   GITHUB_SECURITY_SYSTEM_PROMPT,
   NEO_CAPABILITIES_BRIEFING,
-  NEO_RESPONSE_FOCUS_BRIEFING,
+  NEO_SPEAKING_POLICY,
   NEO_DONE_CHECK_STEPS,
   NEO_CATCH_UP_HEADER,
   NEO_CONSULTATION_RECEIPT_CLOSED,
@@ -559,7 +557,6 @@ export const {
   NEO_CONSULTATION_SETTLED,
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
-  NEO_PUBLISH_NUDGE,
   NEO_ASK_FORWARDED,
   NEO_RECENT_CONVERSATION_HEADER,
   NEO_ROUTE_PROMPT,

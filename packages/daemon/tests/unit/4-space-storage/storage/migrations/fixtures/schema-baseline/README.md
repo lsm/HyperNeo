@@ -34,3 +34,15 @@ from #7202. This immutable legacy reference lets the test compare fresh
 creation by the code under test, legacy creation on current dev, and the
 v0.41.0 schema upgraded by the code under test. All three must match again
 after a second startup.
+
+The production `storage/schema/baseline-v041.json` is a serialized SQL catalogue
+from this same `v0.41.0.sql` fixture: load the fixture into an in-memory SQLite
+database, select `sql` from `sqlite_schema` with the capture ordering above,
+and omit the `migration_markers` table (the runner creates it) and FTS shadow
+tables (SQLite creates them). Serialize one complete SQL statement per JSON
+array element, preserving its original whitespace. The baseline test checks
+this exact catalogue against the fixture and compares the full schema at the
+first post-baseline migration, before migration 239 runs. There are 230 schema
+statements; no user rows or migration-marker inserts are embedded in the asset.
+The baseline initializer separately preserves the fresh GitHub extension default;
+other singleton defaults are still supplied by `createTables` as before.

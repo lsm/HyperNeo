@@ -202,17 +202,6 @@ export class NeoAskRepository {
     return row ? this.withWork([row])[0] : null;
   }
 
-  openedBy(originSessionId: string, since: number, until: number): NeoAsk[] {
-    const rows = this.db
-      .prepare(
-        `SELECT ${askColumns} FROM neo_asks
-          WHERE origin_session_id = ? AND created_at > ? AND created_at <= ?
-          ORDER BY created_at, id`
-      )
-      .all(originSessionId, since, until) as NeoAskRow[];
-    return this.withWork(rows);
-  }
-
   listLive(): NeoAsk[] {
     const rows = this.db
       .prepare(

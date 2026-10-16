@@ -104,7 +104,7 @@ import {
   settleNeoProjectQuestions,
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
-import { neoSessionStatus } from './direct-reply-fallback.ts';
+import { neoSessionStatus } from './session-status.ts';
 import {
   createNeoRouter,
   type NeoRouter,
@@ -2447,6 +2447,7 @@ export function createNeoOperations(service: NeoService) {
       isConsultationReturn: (conversationId, publicationId) =>
         service.consultations.returnsPublication(conversationId, publicationId),
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
+      resolveHumanAskOrigin: (input) => service.resolveHumanAskOrigin(input),
       notify: (conversationId) => {
         service.notifyChanged();
         service.notifyPublicationsChanged(conversationId);
@@ -2529,7 +2530,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.respond',
       description:
-        'Return a concise answer to the root Neo for a consultation assigned to this context holder. A consultation that is already settled returns its recorded answer with replyGuidance; the new answer is not recorded and nothing more is sent.',
+        'Record an answer to the root Neo for a consultation assigned to this context holder. A consultation that is already settled returns its recorded answer with replyGuidance; the new answer is not recorded and nothing more is sent.',
       inputSchema: Respond,
       resultSchema: ConsultationResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

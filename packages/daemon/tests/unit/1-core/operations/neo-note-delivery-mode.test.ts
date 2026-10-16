@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { neoNoteDeliveryMode } from '../../../../src/lib/neo/direct-reply-fallback.ts';
+import { neoNoteDeliveryMode } from '../../../../src/lib/neo/session-status.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   InternalEventBus,
