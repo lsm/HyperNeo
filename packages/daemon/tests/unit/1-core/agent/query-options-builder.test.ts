@@ -1947,8 +1947,8 @@ describe('QueryOptionsBuilder', () => {
 
   describe('tools configuration', () => {
     it.each([
-      ['neo', null, neoCoordinatorNativeTools(null)],
-      ['project', 'saas', neoCoordinatorNativeTools('saas')],
+      ['neo', null, neoCoordinatorNativeTools()],
+      ['project', 'saas', neoCoordinatorNativeTools()],
       ['worker', 'saas', ['AskUserQuestion']],
     ] as const)(
       'uses the persisted %s binding for resumed prompts and native questions',
@@ -1985,9 +1985,9 @@ describe('QueryOptionsBuilder', () => {
           expect(options.model).toBe('default');
           expect(options.maxTurns).toBe(Infinity);
           expect(options.tools).toEqual([...tools]);
-          expect(options.allowedTools?.includes('AskUserQuestion')).toBe(kind !== 'neo');
+          expect(options.allowedTools?.includes('AskUserQuestion')).toBe(kind === 'worker');
           if (kind !== 'worker') {
-            expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
+            expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools());
             expect(options.permissionMode).toBe('dontAsk');
             expect(options.systemPrompt).toEqual({
               type: 'custom',

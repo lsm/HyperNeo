@@ -213,8 +213,8 @@ describe('Neo MVP', () => {
     expect(created).toHaveLength(1);
     expect(created[0].config).toMatchObject({
       permissionMode: 'dontAsk',
-      sdkToolsPreset: neoCoordinatorNativeTools(null),
-      allowedTools: neoCoordinatorAllowedTools(null),
+      sdkToolsPreset: neoCoordinatorNativeTools(),
+      allowedTools: neoCoordinatorAllowedTools(),
     });
     expect(created[0]).toMatchObject({ workspacePath: neoFolderPath(), detectGit: false });
     expect(service.repo.listProjects()).toEqual([]);
@@ -238,8 +238,8 @@ describe('Neo MVP', () => {
     const id = await service.open(project.id);
     expect(await service.open(project.id)).toBe(id);
     expect(created[0].config).toMatchObject({
-      sdkToolsPreset: neoCoordinatorNativeTools(project.id),
-      allowedTools: neoCoordinatorAllowedTools(project.id),
+      sdkToolsPreset: neoCoordinatorNativeTools(),
+      allowedTools: neoCoordinatorAllowedTools(),
     });
     expect(await invoke('neo.snapshot')).toMatchObject({
       value: { projects: [{ context: project.context }] },
@@ -1427,10 +1427,10 @@ describe('Neo MVP', () => {
       agents: { coder: { description: 'work', prompt: 'work' } },
     };
     restrictNeoQuery(options, null, 'neo:runtime-test');
-    expect(options.tools).toEqual(neoCoordinatorNativeTools(null));
+    expect(options.tools).toEqual(neoCoordinatorNativeTools());
     expect(options.additionalDirectories).toEqual([homedir()]);
     expect(options.mcpServers).toEqual({ 'hyperneo-operations': operationServer });
-    expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(null));
+    expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools());
     expect(options.plugins).toEqual([]);
     expect(options.settingSources).toEqual([]);
     expect(options.agent).toBeUndefined();

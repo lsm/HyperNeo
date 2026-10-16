@@ -1576,9 +1576,9 @@ export class NeoService {
         detectGit: false,
         config: {
           systemPrompt: neoPrompt(projectId, this.packBriefs()),
-          sdkToolsPreset: neoCoordinatorNativeTools(projectId),
+          sdkToolsPreset: neoCoordinatorNativeTools(),
           permissionMode: 'dontAsk',
-          allowedTools: neoCoordinatorAllowedTools(projectId),
+          allowedTools: neoCoordinatorAllowedTools(),
           maxTurns: 32,
           ...(preference
             ? {
