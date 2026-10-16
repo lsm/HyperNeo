@@ -1,9 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import {
-  buildActiveTurnSummariesFromRows,
-  mapActiveTurnEntryRow,
-} from '../../../../src/lib/rpc-handlers/activity-preview';
-import { buildActiveTurnSummariesFromRows as fromFacade } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { mapActiveTurnEntryRow } from '../../../../src/lib/rpc-handlers/activity-preview';
 
 type Row = Record<string, unknown>;
 
@@ -36,12 +32,6 @@ function previewOf(toolName: string, input: Row): string {
   };
   return (mapped.entry as { preview?: string })?.preview ?? '<no-entry>';
 }
-
-describe('activity-preview facade re-export', () => {
-  test('buildActiveTurnSummariesFromRows is re-exported from live-query-handlers', () => {
-    expect(fromFacade).toBe(buildActiveTurnSummariesFromRows);
-  });
-});
 
 describe('mapActiveTurnEntryRow: tool_use previews', () => {
   test('Bash prefers description over command', () => {
@@ -318,39 +308,5 @@ describe('mapActiveTurnEntryRow: toolInput parsing & id fallback', () => {
       })
     ) as { id: string };
     expect(mapped.id).toBe('s9:2:r9:4');
-  });
-});
-
-describe('buildActiveTurnSummariesFromRows: aggregation', () => {
-  test('groups rows by sessionId preserving row order and turnIndex', () => {
-    const summaries = buildActiveTurnSummariesFromRows([
-      row({ sessionId: 'a', turnIndex: 1, blockType: 'text', textValue: 'first' }),
-      row({ sessionId: 'a', turnIndex: 1, blockType: 'text', textValue: 'second' }),
-      row({ sessionId: 'b', turnIndex: 3, blockType: '__user_message', textValue: 'hi' }),
-    ]);
-    expect(summaries).toHaveLength(2);
-    expect(summaries[0]).toMatchObject({ sessionId: 'a', turnIndex: 1 });
-    expect((summaries[0].entries[0] as { text: string }).text).toBe('first');
-    expect((summaries[0].entries[1] as { text: string }).text).toBe('second');
-    expect(summaries[1]).toMatchObject({ sessionId: 'b', turnIndex: 3 });
-  });
-
-  test('rows without a string sessionId are skipped', () => {
-    const summaries = buildActiveTurnSummariesFromRows([
-      row({ sessionId: undefined, blockType: 'text', textValue: 'nope' }),
-      row({ sessionId: 'a', blockType: 'text', textValue: 'yes' }),
-    ]);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0].sessionId).toBe('a');
-  });
-
-  test('empty text/thinking rows are dropped mid-aggregation', () => {
-    const summaries = buildActiveTurnSummariesFromRows([
-      row({ sessionId: 'a', blockType: 'text', textValue: '   ' }),
-      row({ sessionId: 'a', blockType: 'thinking', thinkingValue: '' }),
-      row({ sessionId: 'a', blockType: 'text', textValue: 'kept' }),
-    ]);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0].entries).toHaveLength(1);
   });
 });

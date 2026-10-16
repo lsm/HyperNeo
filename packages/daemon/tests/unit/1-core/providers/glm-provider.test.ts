@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
 import { PROVIDER_DISCOVERY_CACHE_TTL_MS } from '../../../../src/lib/providers/shared/discovery-cache';
 import {
-  recordProviderFailure,
+  classifyProviderFailure,
+  recordClassifiedProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 
@@ -86,7 +87,10 @@ describe('GlmProvider', () => {
 
     it('reports a credential failure as unauthenticated with the failure message', async () => {
       process.env.GLM_API_KEY = 'invalid-key';
-      recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
+      recordClassifiedProviderFailure(
+        'glm',
+        classifyProviderFailure(new Error('Z.ai API key rejected (HTTP 401)'))
+      );
 
       const status = await provider.getAuthStatus();
 
@@ -100,7 +104,10 @@ describe('GlmProvider', () => {
 
     it('reports a transient failure as authenticated but degraded', async () => {
       process.env.GLM_API_KEY = 'test-key';
-      recordProviderFailure('glm', new Error('Z.ai probe timed out after 5000ms'));
+      recordClassifiedProviderFailure(
+        'glm',
+        classifyProviderFailure(new Error('Z.ai probe timed out after 5000ms'))
+      );
 
       const status = await provider.getAuthStatus();
 
@@ -120,7 +127,10 @@ describe('GlmProvider', () => {
       provider = new GlmProvider(process.env, fetchImpl);
 
       await expect(provider.getModels()).rejects.toThrow('Z.ai API key rejected (HTTP 401)');
-      recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
+      recordClassifiedProviderFailure(
+        'glm',
+        classifyProviderFailure(new Error('Z.ai API key rejected (HTTP 401)'))
+      );
 
       const status = await provider.getAuthStatus();
 

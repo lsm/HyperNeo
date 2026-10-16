@@ -19,7 +19,6 @@ import { deriveWorkerDisallowedTools } from './tool-policy.ts';
 
 export type { CustomAgentConfig, SlotOverrides, TaskMessageContext } from './custom-agent-types.ts';
 export {
-  buildCustomAgentSystemPrompt,
   expandPrompt,
   resolveCustomAgentPrompt,
 } from './custom-agent-prompt.ts';

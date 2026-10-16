@@ -9,7 +9,6 @@ import {
 import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector.ts';
 import type { Predicate } from './predicate.ts';
 
-const PR_READY_LABEL = 'PR is not ready for Review';
 const PR_MERGED_LABEL = 'PR is not merged';
 const CODEX_LABEL = 'codex review bot approval missing';
 
@@ -34,43 +33,6 @@ function resolvePrUrlParams(ctx: HookExecutorContext): Record<string, unknown> {
     (ctx.rawParams ? readPrUrl(ctx.rawParams) : undefined) ??
     (typeof ctx.hookLocalState?.pr_url === 'string' ? ctx.hookLocalState.pr_url : undefined);
   return prUrl ? { prUrl } : {};
-}
-
-const PR_READY_PASS: Predicate = {
-  all: [
-    { eq: ['state', 'OPEN'] },
-    { eq: ['mergeable', 'MERGEABLE'] },
-    {
-      any: [
-        { eq: ['mergeStateStatus', 'CLEAN'] },
-        { eq: ['mergeStateStatus', 'HAS_HOOKS'] },
-        { eq: ['mergeStateStatus', 'BLOCKED'] },
-      ],
-    },
-    { empty: 'unresolvedThreadUrls' },
-  ],
-};
-
-const PR_READY_PENDING: Predicate = {
-  any: [{ eq: ['mergeable', 'UNKNOWN'] }, { eq: ['mergeStateStatus', 'UNKNOWN'] }],
-};
-
-export function createPrReadyValidatorV2(
-  spawnImpl: SpawnFn = spawnProcess
-): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
-  registerGithubConnector(spawnImpl);
-  const config: ExternalStateValidatorConfig = {
-    connector: GITHUB_CONNECTOR_ID,
-    op: 'getPrReadiness',
-    pass: PR_READY_PASS,
-    pending: PR_READY_PENDING,
-    params: resolvePrUrlParams,
-    label: PR_READY_LABEL,
-    dataProjection: (data) => ({
-      pr_url: typeof data.url === 'string' ? data.url : undefined,
-    }),
-  };
-  return createExternalStateValidator(config);
 }
 
 export function createPrMergedValidator(
