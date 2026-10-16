@@ -726,7 +726,7 @@ describe('neo.work.continue', () => {
       value: { ok: false },
     });
     expect(await invoke({ id: 'missing', message: 'Go on.' })).toMatchObject({
-      value: { ok: false, reason: 'work_not_found' },
+      value: { ok: false, reason: expect.stringContaining('work_not_found: no card has that id.') },
     });
     expect(sent).toEqual([]);
   });

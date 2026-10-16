@@ -1,4 +1,5 @@
 import { neoTurnRequestKey } from './request-key.ts';
+import { neoKnownIds } from './known-ids.ts';
 import { NeoWorkBlockerSchema } from './work-blocker.ts';
 import { hostname } from 'node:os';
 import {
@@ -194,6 +195,7 @@ import {
   requireNeoWorkAskLink,
   requireNeoWorkAskLive,
   requireNeoWorkAskOwner,
+  neoAsksOpenedBy,
 } from './ask-operations.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import { neoWaitingOnHuman } from './waiting-reminders.ts';
@@ -272,6 +274,8 @@ const Consult = z.object({
 });
 const Respond = z.object({ id: z.string().min(1), answer: z.string().trim().min(1).max(4000) });
 type ConsultRequest = z.infer<typeof Consult> & { requestKey: string };
+const NEO_CONSULTATION_SETTLED =
+  'Already settled: Neo has this consultation’s recorded answer above, so nothing more is sent. End the turn.';
 const ConsultationResult = z.union([
   Failure,
   z.object({
@@ -1569,7 +1573,7 @@ export function createNeoOperations(service: NeoService) {
       (input: z.infer<typeof Respond>, item: z.infer<typeof Consultation>) =>
         item.status === 'pending' || (item.status === 'reported' && item.answer === input.answer)
           ? { value: item }
-          : { reason: { ok: false, reason: 'This consultation is already settled.' } },
+          : { reason: { ok: true, consultation: item, replyGuidance: NEO_CONSULTATION_SETTLED } },
       ['input', 'admission'],
       'result:admission'
     )
@@ -1577,9 +1581,9 @@ export function createNeoOperations(service: NeoService) {
       async (input: z.infer<typeof Respond>, item: z.infer<typeof Consultation>) => {
         const saved = service.consultations.finish(item.id, 'reported', input.answer)!;
         await service.syncConsultation(saved.id);
-        if (saved.status !== 'reported' || saved.answer !== input.answer)
-          return { ok: false as const, reason: 'This consultation is already settled.' };
-        return { ok: true as const, consultation: saved };
+        return saved.status !== 'reported' || saved.answer !== input.answer
+          ? { ok: true as const, consultation: saved, replyGuidance: NEO_CONSULTATION_SETTLED }
+          : { ok: true as const, consultation: saved };
       },
       ['input', 'admission'],
       'admission'
@@ -1831,7 +1835,17 @@ export function createNeoOperations(service: NeoService) {
       'workAsk'
     )
     .pipe(requireNeoWorkAsk, ['workAsk', 'input', 'admission'], 'result:admission')
-    .pipe(requireNeoWorkAskOwner, ['workAsk', 'input', 'admission'], 'result:admission')
+    .pipe(
+      (workAsk: NeoAsk | null, input: ProposeRequest, caller: OperationCaller) =>
+        requireNeoWorkAskOwner(
+          workAsk,
+          input,
+          caller,
+          neoAsksOpenedBy(service.askRecords.listLive(), caller)
+        ),
+      ['workAsk', 'input', 'admission'],
+      'result:admission'
+    )
     .pipe(requireNeoWorkAskLive, ['workAsk', 'input', 'admission'], 'result:admission')
     .pipe(
       (input: ProposeRequest) => {
@@ -2142,12 +2156,24 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof StartWork>,
     caller: OperationCaller
   ) => Promise<z.infer<typeof WorkResult> | Rejection>;
+  const workNotFound = (caller: OperationCaller) => ({
+    ok: false as const,
+    reason: `work_not_found: no card has that id. ${neoKnownIds(
+      'cards on your live asks',
+      neoAsksOpenedBy(service.askRecords.listLive(), caller).flatMap((ask) =>
+        ask.workIds.flatMap((id) => {
+          const work = service.repo.getWork(id);
+          return work ? [{ id: work.id, title: work.title }] : [];
+        })
+      )
+    )}`,
+  });
   const continueWork = path(
     'neo.work.continue',
     (_input: z.infer<typeof Continue>) => undefined,
     async ({ id, message }, caller) => {
       const work = service.repo.getWork(id);
-      if (!work) return { ok: false as const, reason: 'work_not_found' };
+      if (!work) return workNotFound(caller);
       const humanTurn = isNeoHumanTurn(service, caller);
       const admission = requireNeoWorkContinuation(work, caller, humanTurn);
       if ('reason' in admission) return admission.reason;
@@ -2173,9 +2199,9 @@ export function createNeoOperations(service: NeoService) {
       'found'
     )
     .pipe(
-      (found: NeoWorkRetryFound) =>
-        found.work ? { value: found.work } : { reason: { ok: false, reason: 'work_not_found' } },
-      'found',
+      (found: NeoWorkRetryFound, caller: OperationCaller) =>
+        found.work ? { value: found.work } : { reason: workNotFound(caller) },
+      ['found', 'caller'],
       'result:retry'
     )
     .pipe((caller: OperationCaller) => isNeoHumanTurn(service, caller), 'caller', 'humanTurn')
@@ -2215,11 +2241,11 @@ export function createNeoOperations(service: NeoService) {
       'result:refused'
     )
     .pipe(
-      ({ workId }: z.infer<typeof Refused>) => {
+      ({ workId }: z.infer<typeof Refused>, caller: OperationCaller) => {
         const work = service.repo.getWork(workId);
-        return work ? { value: work } : { reason: { ok: false, reason: 'work_not_found' } };
+        return work ? { value: work } : { reason: workNotFound(caller) };
       },
-      'input',
+      ['input', 'caller'],
       'result:refused'
     )
     .pipe(
@@ -2267,8 +2293,10 @@ export function createNeoOperations(service: NeoService) {
     'neo.work.close',
     (_input: z.infer<typeof Close>) => undefined,
     async ({ id, outcome, reason }, caller) => {
+      const work = service.repo.getWork(id);
+      if (!work) return workNotFound(caller);
       const closer = requireNeoWorkCloser(
-        service.repo.getWork(id),
+        work,
         caller,
         isNeoHumanTurn(service, caller),
         outcome,
@@ -2282,7 +2310,7 @@ export function createNeoOperations(service: NeoService) {
     (_input: z.infer<typeof WorkId>) => undefined,
     async ({ id }, caller) => {
       const work = service.repo.getWork(id);
-      if (!work) return { ok: false as const, reason: 'work_not_found' };
+      if (!work) return workNotFound(caller);
       const admission = requireNeoWorkCancellation(work, caller);
       if ('reason' in admission) return admission.reason;
       if (work.status !== 'cancelled') await service.cancel(id);
@@ -2433,7 +2461,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.respond',
       description:
-        'Return a concise answer to the root Neo for a consultation assigned to this context holder.',
+        'Return a concise answer to the root Neo for a consultation assigned to this context holder. A consultation that is already settled returns its recorded answer with replyGuidance; nothing more is sent, so end the turn.',
       inputSchema: Respond,
       resultSchema: ConsultationResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

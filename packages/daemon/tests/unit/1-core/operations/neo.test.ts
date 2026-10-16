@@ -1269,7 +1269,7 @@ describe('Neo MVP', () => {
     });
     expect(await invoke('neo.work.cancel', { id: 'missing' })).toMatchObject({
       kind: 'completed',
-      value: { ok: false, reason: 'work_not_found' },
+      value: { ok: false, reason: expect.stringContaining('work_not_found: no card has that id.') },
     });
     expect(service.repo.getWork(reported.id)?.status).toBe('reported');
     expect(service.repo.getWork(failed.id)?.status).toBe('failed');
@@ -1666,7 +1666,9 @@ describe('Neo MVP', () => {
     expect(service.consultations.unsettled()).toEqual([]);
     expect(
       await invoke('neo.project.respond', { id: item.id, answer: 'Overwrite' }, holder)
-    ).toMatchObject({ value: { ok: false } });
+    ).toMatchObject({
+      value: { ok: true, replyGuidance: expect.stringContaining('Already settled') },
+    });
     expect(service.consultations.get(item.id)?.answer).toBe(answer);
     expect(created).toHaveLength(2);
   });
@@ -1793,7 +1795,10 @@ describe('Neo MVP', () => {
       expect(jobs).toHaveLength(2);
       expect(
         await invoke('neo.project.respond', { id: item.id, answer: 'Late reply' }, holder)
-      ).toMatchObject({ value: { ok: false } });
+      ).toMatchObject({
+        value: { ok: true, replyGuidance: expect.stringContaining('Already settled') },
+      });
+      expect(jobs).toHaveLength(2);
     }
   );
 
@@ -1874,7 +1879,7 @@ describe('Neo MVP', () => {
     expect(
       await invoke('neo.project.respond', { id: item.id, answer: 'Late' }, holder)
     ).toMatchObject({
-      value: { ok: false },
+      value: { ok: true, replyGuidance: expect.stringContaining('Already settled') },
     });
     expect(await invoke('neo.project.cancel', { id: 'missing' })).toMatchObject({
       value: { ok: false },
@@ -1918,7 +1923,7 @@ describe('Neo MVP', () => {
     expect(
       await invoke('neo.project.respond', { id: item.id, answer: 'Too late' }, holder)
     ).toMatchObject({
-      value: { ok: false },
+      value: { ok: true, replyGuidance: expect.stringContaining('Already settled') },
     });
     expect(service.consultations.get(item.id)?.answer).toBe(CONSULTATION_EXPIRED);
     expect(JSON.stringify(jobs[1])).toContain(CONSULTATION_EXPIRED);
