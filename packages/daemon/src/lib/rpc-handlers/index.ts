@@ -46,6 +46,7 @@ import { ensureNeoProject, fileNeoSessions } from '../neo/folder.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoOperations, neoReorganizeRuntime } from '../neo/operations.ts';
 import { createNeoProjectsReorganizer } from '../neo/reorganize-operation.ts';
+import { neoHealthDigest } from '../neo/health-digest.ts';
 import {
   NEO_REORGANIZE_IDLE_MS,
   NEO_TOPICS_REORGANIZE_NIGHTLY,
@@ -1696,7 +1697,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     runNeoNightlyReorganize(job, deps.jobQueue, {
       now: () => Date.now(),
       lastHumanAt: () => routingLog.recent(1)[0]?.askedAt ?? null,
-      reorganize: () => reorganizeTopics({ apply: 'contentless' }),
+      reorganize: () => reorganizeTopics({ apply: 'unattended' }),
+      digest: async (run, since) => {
+        const root = neoService.repo.getBindingForProject(null)?.sessionId;
+        if (root)
+          await neoService.deliverForward(
+            root,
+            `neo-health-digest:${Date.now()}`,
+            neoHealthDigest(neoService.repo.healthFacts(since), run, since),
+            root,
+            null,
+            null
+          );
+      },
       log: (line) => neoService.logReorganize(line),
     })
   );

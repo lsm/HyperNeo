@@ -3,11 +3,18 @@ import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import type { ExternalEvent } from '../../external-events/types.ts';
 import { isNeoAskLive } from '../done-check.ts';
 import { combineNeoEvidenceReads, type NeoEvidence, type NeoEvidenceRead } from '../evidence.ts';
+import { buildNeoCheckRegistry } from './check-registry.ts';
 import { CODING_PACK_BRIEF } from './coding/pack.ts';
 import { requireNeoWorkPrRefresh } from './coding/work-prs.ts';
 import { LIFE_ADMIN_PACK_BRIEF } from './life-admin/pack.ts';
-import type { NeoPack, NeoPackBrief, NeoPackCheck, NeoPackFragment } from './types.ts';
-import { buildNeoCheckRegistry } from './check-registry.ts';
+import type {
+  NeoPack,
+  NeoPackBrief,
+  NeoPackCardAttention,
+  NeoPackCardFacts,
+  NeoPackCheck,
+  NeoPackFragment,
+} from './types.ts';
 
 export const NEO_DEFAULT_PACKS = ['coding'];
 
@@ -121,6 +128,37 @@ export function neoPackFragment(
   if (!id) return null;
   const instructions = installed.find((pack) => pack.id === id)?.instructions(ask ?? null) ?? null;
   return instructions ? { id, instructions } : null;
+}
+
+export function neoPackCardFacts(
+  packs: readonly NeoPack[],
+  workId: string,
+  stale: boolean
+): NeoPackCardFacts | null {
+  const facts = packs.flatMap((pack) => pack.cardFacts?.(workId, stale) ?? []);
+  return facts.length
+    ? {
+        text: facts.map((fact) => fact.text).join(' '),
+        data: Object.assign({}, ...facts.map((fact) => fact.data)),
+      }
+    : null;
+}
+
+export function neoPackCardAttention(
+  packs: readonly NeoPack[],
+  workId: string
+): NeoPackCardAttention {
+  const reads = packs.flatMap((pack) => pack.cardAttention?.(workId) ?? []);
+  const told = reads.flatMap((read) => read.attention ?? []);
+  return {
+    attention: told.length
+      ? {
+          signature: told.map((item) => item.signature).join('\n'),
+          facts: told.map((item) => item.facts).join('\n'),
+        }
+      : null,
+    pending: reads.some((read) => read.pending),
+  };
 }
 
 export function neoPacks(input: {

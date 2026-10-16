@@ -7,7 +7,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { hashString32 } from '../runtime-hash.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
 import {
-  isNeoContentlessCleanup,
+  isNeoUnattendedCleanup,
   type NeoProjectCleanup,
   type NeoProjectFacts,
   type NeoRetiredHolder,
@@ -80,6 +80,7 @@ export interface NeoReorganizeRuntime {
   machine(): string;
   retiredHolders(): NeoRetiredHolder[];
   cleanup(step: NeoProjectCleanup): Promise<void>;
+  askMerge(step: NeoProjectCleanup): Promise<string>;
   mirroredAliases(folders: readonly string[]): Promise<ReadonlySet<string> | null>;
   log(line: string): void;
 }
@@ -204,7 +205,7 @@ export type NeoReorganized = {
 export function createNeoProjectsReorganizer(
   runtime: NeoReorganizeRuntime
 ): (cleanup?: {
-  apply?: boolean | 'contentless';
+  apply?: boolean | 'unattended';
   archive?: readonly string[];
 }) => Promise<NeoReorganized> {
   const sourceStatus = (ask: NeoAsk): string | null => {
@@ -293,7 +294,11 @@ export function createNeoProjectsReorganizer(
     let cleanupRan = false;
     for (const step of cleanupPlanned) {
       const line = `${step.action} project ${step.projectId} (${step.title})${'targetId' in step ? ` into ${step.targetId}` : ''}${'sessionId' in step ? ` holder ${step.sessionId}` : ''}`;
-      if (!apply || (apply === 'contentless' && !isNeoContentlessCleanup(step))) {
+      if (apply === 'unattended' && !isNeoUnattendedCleanup(step)) {
+        runtime.log(`neo reorganize: ${await runtime.askMerge(step)} about ${line}`);
+        continue;
+      }
+      if (!apply) {
         runtime.log(`neo reorganize: would ${line}`);
         continue;
       }
@@ -336,7 +341,7 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
   return defineOperation({
     name: 'neo.projects.reorganize',
     description:
-      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read are asked about once on main (asked): run this again after the human answers to apply it, and a saved answer is never asked again. Then move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also plans project cleanup and returns it in cleanupPlanned; it applies it only with apply: true, and the daily pass applies only the steps that touch no content (deleting an empty project, dropping a holder that never spoke) and leaves the rest planned. Repository projects are left to the merge above. A project with no repository is deleted when empty and the mirror would not create it again, merged into the repository project where most of its cards ran (else one with its title), and otherwise kept. Projects named in archive, as the human asked, have their holder session archived; history stays. When a project is merged away, its holder session is deleted if it never spoke and archived if it has history; a holder mid-turn waits for a later pass. A project only on another machine is deleted when empty and otherwise left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
+      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read are asked about once on main (asked): run this again after the human answers to apply it, and a saved answer is never asked again. Then move each live ask into the project it belongs to: main’s asks into their projects, and a project’s off-project asks into the right project, an existing one or a new project and avatar the daemon creates. The ask and its cards are handed to that project’s avatar with a note, and replies still resolve to the human’s original message. Asks waiting on the human or blocked on them, asks that changed while routing, one-off asks, asks the router keeps where they are, and asks whose current or target avatar is mid-turn are left in place. Nothing is shown to the human; every move is logged. It also plans project cleanup and returns it in cleanupPlanned; it applies it only with apply: true, and the daily pass applies every step except merges on its own and asks the human about each merge once, applying it after they say the two are one project. Repository projects are left to the merge above. A project with no repository is deleted when empty and the mirror would not create it again, merged into the repository project where most of its cards ran (else one with its title), and otherwise kept. Projects named in archive, as the human asked, have their holder session archived; history stays. When a project is merged away, its holder session is deleted if it never spoke and archived if it has history; a holder mid-turn waits for a later pass. A project only on another machine is deleted when empty and otherwise left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo or the human only.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

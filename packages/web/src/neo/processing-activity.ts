@@ -2,6 +2,14 @@ import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoPublicEntry } from './public-conversation.ts';
 
+export const NEO_BUSY_WORDS = ['Neo is working…', 'Syncing…', 'Preparing a reply…', 'Busy on it…'];
+const NEO_RETRY_WORDS = ['Waiting to retry…'];
+
+export function neoBusyWords(progress: string | null, awaiting: boolean): readonly string[] | null {
+  if (progress === 'Neo is waiting to retry…') return NEO_RETRY_WORDS;
+  return progress || awaiting ? NEO_BUSY_WORDS : null;
+}
+
 export function neoAwaitingReply(entries: readonly NeoPublicEntry[]): boolean {
   const origin = (value: { sessionId: string; messageId: string }) =>
     `${value.sessionId}\n${value.messageId}`;

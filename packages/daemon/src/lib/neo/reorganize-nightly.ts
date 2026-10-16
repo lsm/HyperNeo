@@ -1,6 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import { isNeoContentlessCleanup } from './project-cleanup.ts';
+import { isNeoUnattendedCleanup } from './project-cleanup.ts';
 import type { NeoReorganized } from './reorganize-operation.ts';
 
 export const NEO_TOPICS_REORGANIZE_NIGHTLY = 'neo.projects.reorganize.nightly';
@@ -11,6 +11,7 @@ export interface NeoNightlyReorganizeDeps {
   now(): number;
   lastHumanAt(): number | null;
   reorganize(): Promise<NeoReorganized>;
+  digest(run: NeoReorganized, since: number): Promise<void>;
   log(line: string): void;
 }
 
@@ -72,15 +73,17 @@ export const runNeoNightlyReorganize = (
   )
   .pipe(requireNeoNightlyDue, 'plan', 'result:result')
   .pipe(
-    async (deps: NeoNightlyReorganizeDeps): Promise<NightlyResult> => {
-      const { merged, moved, stayed, cleanupPlanned, cleanupFailed } = await deps.reorganize();
-      const cleaned = cleanupPlanned.filter(isNeoContentlessCleanup).length - cleanupFailed.length;
+    async (job: Job, deps: NeoNightlyReorganizeDeps): Promise<NightlyResult> => {
+      const run = await deps.reorganize();
+      const { merged, moved, stayed, cleanupPlanned, cleanupFailed } = run;
+      const cleaned = cleanupPlanned.filter(isNeoUnattendedCleanup).length - cleanupFailed.length;
       deps.log(
-        `neo reorganize: nightly run merged ${merged.length} project(s), moved ${moved.length} ask(s), left ${stayed.length} with main, cleaned up ${cleaned} empty project(s) or holder(s), left ${cleanupPlanned.length - cleaned - cleanupFailed.length} cleanup step(s) for the human`
+        `neo reorganize: nightly run merged ${merged.length} project(s), moved ${moved.length} ask(s), left ${stayed.length} with main, applied ${cleaned} cleanup step(s), asked the human about ${cleanupPlanned.length - cleaned - cleanupFailed.length} merge(s)`
       );
+      await deps.digest(run, readLastRunAt(job) ?? deps.now() - NEO_REORGANIZE_EVERY_MS);
       return { ran: true, moved: moved.length, stayed: stayed.length };
     },
-    'deps',
+    ['job', 'deps'],
     'result'
   )
   .endAsync('result') as (

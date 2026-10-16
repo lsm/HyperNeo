@@ -1,7 +1,9 @@
 import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
 import {
+  NEO_BUSY_WORDS,
   neoAwaitingReply,
+  neoBusyWords,
   projectNeoProcessingActivity,
   scopeNeoProcessingAsk,
   scopeNeoProcessingStatus,
@@ -105,10 +107,17 @@ describe('Neo processing activity selector', () => {
       label: 'Neo is getting ready…',
       messageId: 'ask-A',
     });
-    expect(select()).toEqual({ label: 'Neo is working on a reply…', messageId: 'ask-A' });
+    expect(select()).toEqual({
+      label: 'Neo is working on a reply…',
+      messageId: 'ask-A',
+    });
     expect(
       select({
-        sessionState: state({ status: 'processing', messageId: 'ask-A', phase: 'initializing' }),
+        sessionState: state({
+          status: 'processing',
+          messageId: 'ask-A',
+          phase: 'initializing',
+        }),
       })
     ).toEqual({ label: 'Neo is getting ready…', messageId: 'ask-A' });
     expect(select({ sessionState: state(cooldown()) })).toEqual({
@@ -135,7 +144,10 @@ describe('Neo processing activity selector', () => {
     ['native session mismatch', { sessionState: state(processing(), 'other') }],
     ['native error', { sessionState: sessionError }],
   ])('keeps %s status generic', (_name, overrides) => {
-    expect(select(overrides)).toEqual({ label: 'Neo is working on a reply…', messageId: null });
+    expect(select(overrides)).toEqual({
+      label: 'Neo is working on a reply…',
+      messageId: null,
+    });
   });
 
   it.each<[string, Overrides]>([
@@ -146,7 +158,10 @@ describe('Neo processing activity selector', () => {
     ['cross-view input', { messages: [ask('ask-A', { sessionId: 'other' })] }],
     ['tool child', { messages: [ask('ask-A', { parentToolUseId: 'tool' })] }],
   ])('keeps %s origin generic', (_name, overrides) => {
-    expect(select(overrides)).toEqual({ label: 'Neo is working on a reply…', messageId: null });
+    expect(select(overrides)).toEqual({
+      label: 'Neo is working on a reply…',
+      messageId: null,
+    });
   });
 
   it('keeps a message without an exact input ID generic', () => {
@@ -164,7 +179,11 @@ describe('Neo processing activity selector', () => {
 
   it('does not scope status to a blank session ID', () => {
     expect(
-      select({ sessionId: '  ', activeSessionId: '  ', sessionState: state(processing(), '  ') })
+      select({
+        sessionId: '  ',
+        activeSessionId: '  ',
+        sessionState: state(processing(), '  '),
+      })
     ).toEqual({ label: 'Neo is working on a reply…', messageId: null });
   });
 });
@@ -262,7 +281,9 @@ describe('scopeNeoProcessingAsk', () => {
   const activity = { label: 'Neo is working on a reply…', messageId: 'ask-A' };
 
   it('retains one exact top-level human input', () => {
-    expect(scopeNeoProcessingAsk(activity, 'neo', [ask('ask-A')])).toEqual({ value: activity });
+    expect(scopeNeoProcessingAsk(activity, 'neo', [ask('ask-A')])).toEqual({
+      value: activity,
+    });
   });
 
   it.each<[string, string | null, readonly ChatMessage[]]>([
@@ -328,7 +349,10 @@ describe('neoAwaitingReply', () => {
       ({
         kind: 'ask',
         key: messageId,
-        ask: { askOrigin: { sessionId: 'holder', messageId }, delivery: { state: 'failed' } },
+        ask: {
+          askOrigin: { sessionId: 'holder', messageId },
+          delivery: { state: 'failed' },
+        },
       }) as never;
     expect(neoAwaitingReply([lost('A')])).toBe(false);
     expect(neoAwaitingReply([ask('A'), reply('A'), lost('B')])).toBe(false);
@@ -338,5 +362,14 @@ describe('neoAwaitingReply', () => {
   it('keeps waiting for a newer ask when an earlier ask is answered after it', () => {
     expect(neoAwaitingReply([ask('A'), reply('A', true), ask('B'), reply('A')])).toBe(true);
     expect(neoAwaitingReply([ask('A'), ask('B'), reply('A'), reply('B')])).toBe(false);
+  });
+});
+
+describe('neoBusyWords', () => {
+  it('cycles the busy words while a turn runs or a message waits, and says retry in a cooldown', () => {
+    expect(neoBusyWords(null, false)).toBeNull();
+    expect(neoBusyWords(null, true)).toBe(NEO_BUSY_WORDS);
+    expect(neoBusyWords('Neo is getting ready…', false)).toBe(NEO_BUSY_WORDS);
+    expect(neoBusyWords('Neo is waiting to retry…', true)).toEqual(['Waiting to retry…']);
   });
 });

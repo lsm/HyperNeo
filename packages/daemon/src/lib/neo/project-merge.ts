@@ -1,7 +1,7 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { readNeoAskAnswerChoice } from './ask-answer-evidence.ts';
 
 export interface NeoProjectMergeInput {
@@ -175,7 +175,10 @@ export function mergeNeoDuplicateProjects(
 export const NEO_PROJECT_SAME = 'Same project';
 export const NEO_PROJECT_SEPARATE = 'Keep separate';
 
-export type NeoProjectQuestion = NeoProjectMergeInput & { key: string; repository: string };
+export type NeoProjectQuestion = NeoProjectMergeInput & { key: string } & (
+    | { repository: string }
+    | { why: string }
+  );
 
 export function planNeoProjectQuestions(
   state: NeoProjectMergeState,

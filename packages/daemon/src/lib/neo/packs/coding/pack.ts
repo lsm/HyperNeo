@@ -1,57 +1,58 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
-import { prepareCodingExecution } from './prepare-execution.ts';
-import { readCodingPrerequisiteBase } from './prerequisite-base.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ExternalEvent } from '../../../external-events/types.ts';
+import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 import type { NeoEvidence } from '../../evidence.ts';
 import type { NeoPack, NeoPackBrief, NeoPackCheck } from '../types.ts';
 import {
-  neoAskReportRefs,
+  type NeoRefStateReader,
   neoAskCardRefs,
   neoAskRefNews,
-  type NeoRefStateReader,
+  neoAskReportRefs,
 } from './ask-prs.ts';
-import {
-  readNeoIssueTicks,
-  CODING_CHECK_ISSUE_FILED,
-  CODING_CHECK_ISSUE_SUB_ISSUE,
-  CODING_CHECK_ISSUE_CLOSED,
-} from './issue-checks.ts';
-import { neoCardPrTopics, routeNeoCardPrEvent } from './card-pr-events.ts';
-import {
-  CODING_CHECK_PR_MERGED,
-  readNeoWatchEventTicks,
-  readNeoWatchTicks,
-  neoWatchTopics,
-} from './watch-checks.ts';
-import {
-  readNeoDeployTicks,
-  CODING_CHECK_DEPLOYED,
-  type NeoDeployReader,
-} from './deploy-checks.ts';
-import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
-import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
+import { neoCardPrAttention, neoCardPrFacts } from './card-facts.ts';
 import {
   keepNeoCardPrReads,
   keepNeoUnbeatenPrs,
-  planNeoCardPrOwnership,
-  planNeoPrCedes,
-  scoreNeoCardPrs,
   type NeoCardPrCandidate,
   type NeoCardPrOwned,
   type NeoPrClaimRow,
+  planNeoCardPrOwnership,
+  planNeoPrCedes,
+  scoreNeoCardPrs,
 } from './card-pr-claims.ts';
-import superpipe, { type PipelineAPI } from 'superpipe';
-import { githubUrlKey } from '../../../github/parse-pr-url.ts';
+import { neoCardPrTopics, routeNeoCardPrEvent } from './card-pr-events.ts';
+import {
+  CODING_CHECK_DEPLOYED,
+  type NeoDeployReader,
+  readNeoDeployTicks,
+} from './deploy-checks.ts';
+import {
+  CODING_CHECK_ISSUE_CLOSED,
+  CODING_CHECK_ISSUE_FILED,
+  CODING_CHECK_ISSUE_SUB_ISSUE,
+  readNeoIssueTicks,
+} from './issue-checks.ts';
+import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
+import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
+import { prepareCodingExecution } from './prepare-execution.ts';
+import { readCodingPrerequisiteBase } from './prerequisite-base.ts';
+import {
+  CODING_CHECK_PR_MERGED,
+  neoWatchTopics,
+  readNeoWatchEventTicks,
+  readNeoWatchTicks,
+} from './watch-checks.ts';
 import {
   extractNeoWorkPrUrls,
   isNeoWorkPrEvidenceOpened,
   mergeNeoWorkPrReads,
+  type NeoWorkPrReader,
   neoAskPrEvidence,
   neoWorkPrEvidence,
   shouldReadNeoWorkPrs,
-  type NeoWorkPrReader,
 } from './work-prs.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
@@ -284,6 +285,9 @@ export function createCodingPack(
     ],
     externalTopics: (work: NeoWork) => neoCardPrTopics(deps.workPrs.get(work.id)?.prs ?? []),
     routeExternalEvent: routeNeoCardPrEvent,
+    cardFacts: (workId: string, stale: boolean) =>
+      neoCardPrFacts(deps.workPrs.get(workId)?.prs, stale),
+    cardAttention: (workId: string) => neoCardPrAttention(deps.workPrs.get(workId)?.prs ?? []),
     readEvidence: async (work: NeoWork, changedAt?: number | null) => {
       const stored = deps.workPrs.get(work.id);
       const { row, ok } = await readNeoCardPrs(
