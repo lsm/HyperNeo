@@ -54,7 +54,6 @@
 10	packages/daemon/tests/unit/1-core/agent/flag-settings-file.test.ts
 5	packages/daemon/tests/unit/1-core/agent/handler-outcome-routing.test.ts
 7	packages/daemon/tests/unit/1-core/agent/idle-waiter-admission-pipeline.test.ts
-7	packages/daemon/tests/unit/1-core/agent/inject-context-reset-gates.test.ts
 1434	packages/daemon/tests/unit/1-core/agent/interrupt-handler.test.ts
 14	packages/daemon/tests/unit/1-core/agent/limit-error-classifier.test.ts
 219	packages/daemon/tests/unit/1-core/agent/limit-error-llm-classifier.test.ts
@@ -116,7 +115,6 @@
 11	packages/daemon/tests/unit/1-core/agent/startup-watch-pipeline.test.ts
 14237	packages/daemon/tests/unit/1-core/agent/task-notification-requery.test.ts
 10	packages/daemon/tests/unit/1-core/agent/transient-error-patterns.test.ts
-6	packages/daemon/tests/unit/1-core/agent/turn-end-flush-context-reset-gates.test.ts
 7	packages/daemon/tests/unit/1-core/agent/turn-end-pipeline.test.ts
 7	packages/daemon/tests/unit/1-core/agent/turn-end-routing.test.ts
 86	packages/daemon/tests/unit/1-core/agent/usage-accounting-invariants.test.ts

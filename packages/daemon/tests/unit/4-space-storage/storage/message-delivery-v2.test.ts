@@ -7,7 +7,6 @@ import {
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
   flattenDeliveryText,
-  isRetryableErrorResultSubtype,
   isTerminalTurnError,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliverySession,
@@ -965,18 +964,5 @@ describe('isTerminalTurnError — auth failures dead-letter immediately (Codex #
     expect(isTerminalTurnError({ recoverable: true, category: 'system' })).toBe(false);
     expect(isTerminalTurnError({ recoverable: true, category: 'connection' })).toBe(false);
     expect(isTerminalTurnError({ recoverable: true })).toBe(false);
-  });
-});
-
-describe('isRetryableErrorResultSubtype — persisted error-result classification', () => {
-  it('transient execution failures and turn-cap exhaustion retry', () => {
-    expect(isRetryableErrorResultSubtype('error_during_execution')).toBe(true);
-    expect(isRetryableErrorResultSubtype('error_max_turns')).toBe(true);
-  });
-
-  it('cost / structured-output exhaustion dead-letter (retrying repeats spend)', () => {
-    expect(isRetryableErrorResultSubtype('error_max_budget_usd')).toBe(false);
-    expect(isRetryableErrorResultSubtype('error_max_structured_output_retries')).toBe(false);
-    expect(isRetryableErrorResultSubtype(null)).toBe(false);
   });
 });
