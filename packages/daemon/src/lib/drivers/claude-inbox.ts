@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, lstat } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { chmod, lstat, unlink } from 'node:fs/promises';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
@@ -117,6 +118,22 @@ async function requirePrivatePath(path: string, kind: 'directory' | 'socket'): P
     throw new Error(`Claude inbox ${kind} is not private and owned by this user.`);
 }
 
+export async function removeOwnedClaudeInboxPath(path: string, bound: Stats): Promise<void> {
+  try {
+    const entry = await lstat(path);
+    if (
+      entry.isSocket() &&
+      entry.dev === bound.dev &&
+      entry.ino === bound.ino &&
+      entry.uid === bound.uid
+    )
+      await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+}
+
 function writeClaudeFrame(path: string, frame: string, connections: Set<Socket>): Promise<void> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(path);
@@ -205,10 +222,13 @@ export async function openClaudeInbox(
     server.once('error', reject);
     server.listen(path, resolve);
   });
+  let bound: Stats | undefined;
   try {
+    bound = await lstat(path);
     await chmod(path, 0o600);
   } catch (error) {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (bound) await removeOwnedClaudeInboxPath(path, bound);
     throw error;
   }
   return {
@@ -240,6 +260,7 @@ export async function openClaudeInbox(
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
+      if (bound) await removeOwnedClaudeInboxPath(path, bound);
     },
   };
 }

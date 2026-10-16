@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, rename, rm, symlink } from 'node:fs/promises';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import { join } from 'node:path';
 import {
@@ -9,12 +9,47 @@ import {
   type ClaudeInboxEvent,
   type ClaudeInboxTarget,
   openClaudeInbox,
+  removeOwnedClaudeInboxPath,
 } from '../../../../src/lib/drivers/claude-inbox';
 
 const submission = () => ({
   messageId: randomUUID(),
   inputId: randomUUID(),
   text: '调查 "文件"\n再汇报',
+});
+
+describe('removeOwnedClaudeInboxPath', () => {
+  test.each([false, true])(
+    'removes only the captured leftover inode (replaced: %s)',
+    async (replace) => {
+      const dir = await mkdtemp('/tmp/hn-inbox-cleanup-');
+      const original = join(dir, 'bound.sock');
+      const leftover = join(dir, 'leftover.sock');
+      const server = createServer();
+      let replacement: Server | undefined;
+      try {
+        await new Promise<void>((resolve) => server.listen(original, resolve));
+        const bound = await lstat(original);
+        await rename(original, leftover);
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        if (replace) {
+          await rename(leftover, join(dir, 'saved.sock'));
+          replacement = createServer();
+          await new Promise<void>((resolve) => replacement?.listen(leftover, resolve));
+        }
+        await removeOwnedClaudeInboxPath(leftover, bound);
+        if (replace) expect((await lstat(leftover)).isSocket()).toBe(true);
+        else {
+          await expect(lstat(leftover)).rejects.toThrow();
+          await removeOwnedClaudeInboxPath(leftover, bound);
+        }
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        if (replacement) await new Promise<void>((resolve) => replacement?.close(() => resolve()));
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+  );
 });
 const target: ClaudeInboxTarget = {
   sessionId: randomUUID(),
