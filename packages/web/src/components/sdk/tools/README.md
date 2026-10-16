@@ -203,8 +203,6 @@ Old components have been refactored:
 **Before:** Inline JSX
 **After:** Uses `AuthStatusCard`
 
-Legacy code is marked with `@deprecated` and can be removed after testing.
-
 ## Mobile Responsiveness
 
 Use the `compact` variant for mobile displays:
