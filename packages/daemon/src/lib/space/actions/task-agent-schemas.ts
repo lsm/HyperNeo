@@ -49,5 +49,3 @@ export const MarkCompleteSchema = z
     ).optional(),
   })
   .strict();
-
-export type MarkCompleteInput = z.infer<typeof MarkCompleteSchema>;
