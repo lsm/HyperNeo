@@ -2,9 +2,10 @@ import {
   fillPrompt,
   NEO_CARD_PR_ATTENTION,
   NEO_WORK_DONE_CHECK_PRS_LIVE,
+  NEO_WORK_DONE_CHECK_PRS_MERGEABLE,
   NEO_WORK_DONE_CHECK_PRS_STALE,
 } from '@hyperneo/prompts';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { type NeoWorkPr, neoWorkPrVerdict } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoPackCardAttention, NeoPackCardFacts } from '../types.ts';
 
 function needsOf(pr: NeoWorkPr): string[] {
@@ -33,13 +34,24 @@ export function neoCardPrAttention(prs: readonly NeoWorkPr[]): NeoPackCardAttent
   };
 }
 
+const isNeoPrMergeable = (pr: NeoWorkPr): boolean =>
+  pr.state === 'OPEN' && neoWorkPrVerdict(pr) === 'ready' && !pr.blockers?.length;
+
+function prsText(prs: readonly NeoWorkPr[], stale: boolean): string {
+  if (stale) return NEO_WORK_DONE_CHECK_PRS_STALE;
+  const urls = prs.filter(isNeoPrMergeable).map((pr) => pr.url);
+  return urls.length
+    ? `${NEO_WORK_DONE_CHECK_PRS_LIVE} ${fillPrompt(NEO_WORK_DONE_CHECK_PRS_MERGEABLE, { urls: urls.join(', ') })}`
+    : NEO_WORK_DONE_CHECK_PRS_LIVE;
+}
+
 export function neoCardPrFacts(
   prs: readonly NeoWorkPr[] | undefined,
   stale: boolean
 ): NeoPackCardFacts | null {
   return prs
     ? {
-        text: stale ? NEO_WORK_DONE_CHECK_PRS_STALE : NEO_WORK_DONE_CHECK_PRS_LIVE,
+        text: prsText(prs, stale),
         data: {
           prs: prs.map(({ url, state, checks, review, blockers }) => ({
             url,
