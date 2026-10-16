@@ -1,3 +1,4 @@
+import { ChevronDownGlyph, ChevronUpGlyph, CloseGlyph } from '../icons/common-glyphs.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { FallbackModelEntry, ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -30,35 +31,34 @@ interface RawModelEntry {
 
 function ChevronUpIcon() {
   return (
-    <svg class="w-4 h-4 text-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
-    </svg>
+    <ChevronUpGlyph
+      class="w-4 h-4 text-fg-muted"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    />
   );
 }
 
 function ChevronDownIcon() {
   return (
-    <svg class="w-4 h-4 text-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-    </svg>
+    <ChevronDownGlyph
+      class="w-4 h-4 text-fg-muted"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    />
   );
 }
 
 function XIcon({ class: cls }: { class?: string }) {
   return (
-    <svg
+    <CloseGlyph
       class={cls ?? 'w-4 h-4 text-fg-muted'}
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
-    >
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width="2"
-        d="M6 18L18 6M6 6l12 12"
-      />
-    </svg>
+    />
   );
 }
 

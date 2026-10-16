@@ -1,3 +1,4 @@
+import { ChevronLeftGlyph, CloseGlyph } from '../../icons/common-glyphs.tsx';
 import type { WorkflowChannel } from '@hyperneo/shared';
 import { ChannelEdgeConfigPanel } from './ChannelEdgeConfigPanel';
 
@@ -133,14 +134,12 @@ export function ChannelRelationConfigPanel({
               class="mt-0.5 p-1 rounded text-fg-muted hover:text-fg-soft hover:bg-fill-strong transition-colors flex-shrink-0"
               title="Back"
             >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M15 19l-7-7 7-7"
-                />
-              </svg>
+              <ChevronLeftGlyph
+                class="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              />
             </button>
           )}
           <div class="min-w-0">
@@ -154,14 +153,7 @@ export function ChannelRelationConfigPanel({
           class="p-1 rounded text-fg-muted hover:text-fg-soft hover:bg-fill-strong transition-colors flex-shrink-0"
           title="Close panel"
         >
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
+          <CloseGlyph class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
         </button>
       </div>
 

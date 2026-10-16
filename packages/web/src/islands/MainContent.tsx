@@ -1,3 +1,4 @@
+import { CheckGlyph, ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import type { ComponentChildren } from 'preact';
 import { lazy, Suspense } from 'preact/compat';
 import { useState, useEffect } from 'preact/hooks';
@@ -213,19 +214,12 @@ function SpacesHome() {
           ) : !hasContent ? (
             <div class="flat-surface overflow-hidden rounded-2xl">
               <div class="flex items-center gap-2.5 px-4 py-3 text-sm text-fg-faint">
-                <svg
+                <CheckGlyph
                   class="w-4 h-4 text-success flex-shrink-0"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
+                />
                 All quiet — no active work across your spaces
               </div>
               <div class="divide-y divide-line border-t border-line">
@@ -252,19 +246,12 @@ function SpacesHome() {
                     <span class="text-sm text-fg-muted group-hover:text-fg transition-colors truncate flex-1">
                       {space.name}
                     </span>
-                    <svg
+                    <ChevronRightGlyph
                       class="w-3.5 h-3.5 text-fg-faint group-hover:text-fg-soft flex-shrink-0 transition-colors"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width={2}
-                        d="M9 5l7 7-7 7"
-                      />
-                    </svg>
+                    />
                   </button>
                 ))}
               </div>
