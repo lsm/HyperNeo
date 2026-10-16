@@ -8,10 +8,7 @@ import { Database as DaemonDatabase } from '../../../../src/storage/database.ts'
 import { createTables } from '../../../../src/storage/schema/index.ts';
 import { runMigration290 } from '../../../../src/storage/schema/m290-session-incarnations.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
-import {
-  getAccessibleTableNames,
-  getExcludedTableNames,
-} from '../../../../src/lib/db-query/scope-config.ts';
+import { getAccessibleTableNames, getExcludedTableNames } from '../../../helpers/db-query-scope.ts';
 
 function session(id = 'fictional-session'): Session {
   return {

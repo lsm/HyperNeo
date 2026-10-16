@@ -11,10 +11,7 @@ import { Database as DaemonDatabase } from '../../../../src/storage/database.ts'
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration289 } from '../../../../src/storage/schema/m289-neo-conversation-asks.ts';
-import {
-  getAccessibleTableNames,
-  getExcludedTableNames,
-} from '../../../../src/lib/db-query/scope-config.ts';
+import { getAccessibleTableNames, getExcludedTableNames } from '../../../helpers/db-query-scope.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';

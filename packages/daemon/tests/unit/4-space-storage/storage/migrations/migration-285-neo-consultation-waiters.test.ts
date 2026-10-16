@@ -10,7 +10,7 @@ import { NeoConsultationWaiterRepository } from '../../../../../src/storage/repo
 import {
   getAccessibleTableNames,
   getExcludedTableNames,
-} from '../../../../../src/lib/db-query/scope-config.ts';
+} from '../../../../helpers/db-query-scope.ts';
 
 describe('migration 285 consultation waiters', () => {
   test('is additive and repeatable without touching active receipts or their revision grants', () => {
