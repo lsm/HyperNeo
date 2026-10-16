@@ -63,7 +63,7 @@ describe('readNeoNamedRepositoryFacts', () => {
     'git@github.com:lsm/HyperNeo.git',
   ])('recognizes a known repository in %s', (text) => {
     expect(selectNeoNamedRouteFacts(readNeoNamedRepositoryFacts(text, projects))).toEqual([
-      { reference: text, projectId: 'coding', projectOnly: true },
+      { reference: text, projectId: 'coding' },
     ]);
   });
   test.each([
@@ -125,6 +125,16 @@ describe('chooseNeoRoute explicit identity', () => {
       expect(runtime.classify).not.toHaveBeenCalled();
     }
   );
+  test('an explicitly named repository stays with its owner ahead of child affinity', async () => {
+    const runtime = deps();
+    const holders = [coding, { ...other, parentId: coding.projectId }];
+    expect(
+      (await chooseNeoRoute('lsm/HyperNeo', { ...runtime, holders: () => holders })).choice
+    ).toMatchObject({ projectId: coding.projectId, signal: 'facts' });
+    expect(runtime.embed).not.toHaveBeenCalled();
+    expect(runtime.classify).not.toHaveBeenCalled();
+  });
+
   test('preserves exact record ownership ahead of incidental project words', async () => {
     expect(
       (

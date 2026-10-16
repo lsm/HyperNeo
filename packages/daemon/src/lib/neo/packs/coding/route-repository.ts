@@ -19,7 +19,7 @@ export function readNeoNamedRepositoryFacts(
     return [...text.matchAll(pattern)].map((match) => ({
       start: match.index,
       end: match.index + match[0].length,
-      fact: { reference: match[0], projectId, projectOnly: true as const },
+      fact: { reference: match[0], projectId },
     }));
   });
 }
