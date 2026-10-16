@@ -1,14 +1,12 @@
 import {
   fillPrompt,
-  NEO_WORK_DONE_CHECK,
   NEO_WORK_BLOCKER,
+  NEO_WORK_DONE_CHECK,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
   NEO_WORK_DONE_CHECK_ASK_NEXT,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
   NEO_WORK_DONE_CHECK_BUDGET,
   NEO_WORK_DONE_CHECK_CONTINUE,
-  NEO_WORK_DONE_CHECK_PRS_LIVE,
-  NEO_WORK_DONE_CHECK_PRS_STALE,
   NEO_WORK_GOAL,
   NEO_WORK_GOAL_ASKED,
   NEO_WORK_GOAL_DONE_WHEN,
@@ -27,41 +25,41 @@ import {
   NEO_WORK_STUCK_CHECK,
   NEO_WORK_SUMMARY_NOTE,
 } from '@hyperneo/prompts';
-import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
-  neoAskApprovalSpent,
-  neoWorkPrVerdict,
   NEO_WORK_STALLED_CONTINUES,
+  type NeoAsk,
   type NeoWorkContinue,
   type NeoWorkGoal,
-  type NeoAsk,
   type NeoWorkPr,
+  neoAskApprovalSpent,
+  neoWorkPrVerdict,
 } from '@hyperneo/shared/types/neo-snapshot';
+import { z } from 'zod';
+import { workStartConfiguration } from '../drivers/start-configuration.ts';
 import {
   PlaceSchema,
-  WorkDeliverySchema,
-  WorkExchangeEntrySchema,
-  WorkInputEvidenceSchema,
-  WorkInputSchema,
-  WorkRefSchema,
-  WorkStatusSchema,
-  WorkInputReceiptSchema,
-  type WorkExchangeEntry,
   type WorkDelivery,
+  WorkDeliverySchema,
+  type WorkExchangeEntry,
+  WorkExchangeEntrySchema,
   type WorkInput,
+  WorkInputEvidenceSchema,
+  WorkInputReceiptSchema,
+  WorkInputSchema,
   type WorkRef,
+  WorkRefSchema,
   type WorkStatus,
+  WorkStatusSchema,
 } from '../drivers/types.ts';
-import type { NeoPackFragment } from './packs/types.ts';
-import { hashString32 } from '../runtime-hash.ts';
 import { WORK_MESSAGE_MAX, WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import { awaitingNeoWorker } from './work-reroute.ts';
-import { workStartConfiguration } from '../drivers/start-configuration.ts';
+import { hashString32 } from '../runtime-hash.ts';
+import type { NeoPackCardFacts, NeoPackFragment } from './packs/types.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
+import { awaitingNeoWorker } from './work-reroute.ts';
 
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   NeoReadWorkTarget,
@@ -631,16 +629,6 @@ export function neoNoteCards(cards: readonly NeoAskCard[]) {
   });
 }
 
-export function neoNotePrs(prs: readonly NeoWorkPr[]) {
-  return prs.map(({ url, state, checks, review, blockers }) => ({
-    url,
-    state,
-    checks,
-    review,
-    ...(blockers?.length ? { blockers } : {}),
-  }));
-}
-
 export function driverDoneCheckNote(
   work: Pick<NeoWork, 'id' | 'title' | 'report' | 'originSessionId'>,
   goal: NeoWorkGoal,
@@ -648,27 +636,20 @@ export function driverDoneCheckNote(
   budget: string | null,
   {
     stalled = 0,
-    prs,
-    stale = false,
+    facts = null,
     ask,
     pack = null,
     cards = [],
     move = '',
   }: {
     stalled?: number;
-    prs?: readonly NeoWorkPr[];
-    stale?: boolean;
+    facts?: NeoPackCardFacts | null;
     ask?: NeoAsk | null;
     pack?: NeoPackFragment | null;
     cards?: readonly NeoAskCard[];
     move?: string;
   } = {}
 ): string {
-  const live = !prs
-    ? ''
-    : stale
-      ? ` ${NEO_WORK_DONE_CHECK_PRS_STALE}`
-      : ` ${NEO_WORK_DONE_CHECK_PRS_LIVE}`;
   const owned = !!ask && ask.originSessionId === work.originSessionId;
   const summary = owned ? NEO_WORK_DONE_CHECK_ASK_NEXT : NEO_WORK_SUMMARY_NOTE;
   const next = budget
@@ -688,7 +669,7 @@ export function driverDoneCheckNote(
   const items = owned && ask ? neoNoteChecklist(ask) : [];
   const restates = (doneWhen: string | null | undefined) =>
     !!ask && items.length > 0 && isNeoDoneWhenRestated(doneWhen ?? '', ask);
-  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}${move}${packNote}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, ...(restates(goal.doneWhen) ? {} : { doneWhen: goal.doneWhen }), continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs: neoNotePrs(prs) } : {}), ...(ask ? { ask: { id: ask.id, ...(restates(ask.doneWhen) ? {} : { doneWhen: ask.doneWhen }), status: ask.status, ...(owned ? { cards: neoNoteCards(cards), items } : {}) } } : {}) })}`;
+  return `${fillPrompt(NEO_WORK_DONE_CHECK, { facts: facts ? ` ${facts.text}` : '', ask: owner, next })}${move}${packNote}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, ...(restates(goal.doneWhen) ? {} : { doneWhen: goal.doneWhen }), continued, report: work.report?.slice(0, 12000) ?? null, ...facts?.data, ...(ask ? { ask: { id: ask.id, ...(restates(ask.doneWhen) ? {} : { doneWhen: ask.doneWhen }), status: ask.status, ...(owned ? { cards: neoNoteCards(cards), items } : {}) } } : {}) })}`;
 }
 
 export function neoWorkDoneGoal(

@@ -1,4 +1,4 @@
 ---
 id: NEO_WORK_DONE_CHECK_PRS_LIVE
 ---
-prs is the live state of its pull requests, read by the daemon: trust it over the report. If a pull request only waits on CI or a review, do nothing; the daemon tells you again when it changes. A pull request's blockers are what its branch rules say stops the merge (unsigned commits, unresolved threads, missing approvals, behind or conflicting with its base): when a merge is refused, name those to the human, or have the working session fix them, and never guess another cause.
+prs is the live state of its pull requests, read by the daemon; it is newer than the report. A pull request that waits on CI or a review is read again and reported when it changes. A pull request's blockers are what its branch rules say stop the merge: unsigned commits, unresolved threads, missing approvals, or being behind or in conflict with its base.

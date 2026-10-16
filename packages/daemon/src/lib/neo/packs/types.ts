@@ -1,6 +1,6 @@
-import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
+import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
 import type { ExternalEvent } from '../../external-events/types.ts';
 import type { NeoEvidence, NeoEvidenceRead } from '../evidence.ts';
 
@@ -31,6 +31,16 @@ export interface NeoPackFragment {
   inPrompt?: boolean;
 }
 
+export interface NeoPackCardFacts {
+  text: string;
+  data: Record<string, unknown>;
+}
+
+export interface NeoPackCardAttention {
+  attention: { signature: string; facts: string } | null;
+  pending: boolean;
+}
+
 export interface NeoPack extends NeoPackBrief {
   prepareExecution?: NeoExecutionPreparation;
   prerequisiteParameters?(
@@ -41,6 +51,8 @@ export interface NeoPack extends NeoPackBrief {
   instructions(ask: NeoAsk | null): string | null;
   readEvidence?(work: NeoWork, changedAt?: number | null): Promise<NeoEvidenceRead | null>;
   reportEvidence?(work: NeoWork): NeoEvidence[];
+  cardFacts?(workId: string, stale: boolean): NeoPackCardFacts | null;
+  cardAttention?(workId: string): NeoPackCardAttention;
   askCardEvidence?(ask: NeoAsk, works: readonly NeoWork[]): NeoEvidence[];
   readAskEvidence?(ask: NeoAsk): Promise<NeoEvidence[]>;
   readAskTicks?(
