@@ -115,12 +115,14 @@ describe('Neo card pull request events', () => {
   let publisher: ExternalEventService;
   let sent: { ref: unknown; message: string }[];
   let watched: string[];
+  let sendFails = false;
 
   beforeEach(async () => {
     db = await createTestDb();
     for (const id of ['root', 'native']) db.createSession(createTestSession(id));
     sent = [];
     watched = [];
+    sendFails = false;
     const registry = createOperationRegistry([
       defineOperation({
         name: 'work.send',
@@ -130,7 +132,9 @@ describe('Neo card pull request events', () => {
         policy: { safetyClass: 'mutate' },
         execute: async (input: { ref: unknown; message: string }) => {
           sent.push(input);
-          return { ok: true, value: { delivered: true } };
+          return sendFails
+            ? { ok: false, reason: 'unreachable' }
+            : { ok: true, value: { delivered: true } };
         },
       }),
     ]);
@@ -491,6 +495,15 @@ describe('Neo card pull request events', () => {
     expect(service['cardPrRelays'].get(work.id)).not.toBeNull();
     await service['relayCardPr'](work.id);
     expect(sent).toHaveLength(1);
+  });
+
+  test('a PR state the worker never received is still relayed', async () => {
+    const work = desktopCard();
+    service.workPrs.record(work.id, [{ ...open, checks: 'failing' }], Date.now());
+    service.followCardTopics(work.id);
+    sendFails = true;
+    await event('check_failed', 'Check failed: lint');
+    expect(service['cardPrRelays'].get(work.id)).toBeNull();
   });
 
   test("a finished card neither follows its pull request nor covers the session's own subscription", async () => {
