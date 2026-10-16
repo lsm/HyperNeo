@@ -126,6 +126,7 @@ const AskResult = z.union([
     ask: NeoAskSchema,
     view: NeoAskStateViewSchema.nullable().optional(),
     packBriefing: z.string().optional(),
+    note: z.string().optional(),
   }),
 ]);
 const WatchUrl = z
@@ -661,12 +662,13 @@ function requireNeoAskChecklistMet(
     : { value: ask };
 }
 
-const NEO_DAEMON_TICK_REFUSALS: Record<NeoDaemonTickPath, string> = {
-  check:
-    'daemon_ticks_check: the daemon ticks this item itself from what it reads (GitHub, and for coding.deployed the commit each daemon runs). Keep it pending; an agent’s word or your tick never makes it met.',
+const NEO_DAEMON_TICKS: Record<NeoDaemonTickPath, string> = {
+  check: 'the daemon ticks it itself from what it reads',
   watch:
-    'daemon_ticks_watched: the daemon ticks this item itself once every watched pull request has merged and every watched issue has closed. Keep it pending.',
+    'the daemon ticks it itself once every watched pull request has merged and every watched issue has closed',
 };
+
+type NeoDaemonTicked = { ok: true; ask: NeoAsk; note: string };
 
 const NEO_AGENT_WORD =
   /\b(agent|session|worker)(['’]s)? (report|says|said|claims?|reports|reported)\b|\breported by\b|\baccording to the (agent|session|worker)\b|\bnot (independently )?(readable|verifiable|verified|checkable)\b|\b(can(no|')t|unable to) (verify|check|read)\b/i;
@@ -678,7 +680,7 @@ function requireNeoAskTick(
   input: z.infer<typeof Tick>,
   ask: NeoAsk,
   caller: OperationCaller
-): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
+): { value: { ask: NeoAsk; item: NeoAskItem } } | { reason: Rejection | NeoDaemonTicked } {
   const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
   if (!item)
     return {
@@ -702,7 +704,14 @@ function requireNeoAskTick(
     caller.source === 'mcp' && input.state !== 'pending' && !isNeoAnswerItem(item)
       ? neoDaemonTickPath(item)
       : null;
-  if (path) return { reason: fail(NEO_DAEMON_TICK_REFUSALS[path]) };
+  if (path)
+    return {
+      reason: {
+        ok: true,
+        ask,
+        note: `${item.id} is ${item.state}: ${NEO_DAEMON_TICKS[path]}, so this tick changed nothing.`,
+      },
+    };
   if (caller.source === 'mcp' && input.state === 'met' && isNeoAgentWord(input.evidence))
     return {
       reason: fail(
@@ -2135,7 +2144,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.tick',
       description:
-        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, only for an item the daemon cannot read (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but nobody can read it (a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), or back to pending. met and reported are refused for an item with a check or watch: the daemon ticks it, and only its check decides that, never its words. needs_you is refused: a decision or a check only the human can make is its own item, asked with neo.ask.question. met is refused for an item a card delivers (deliveredBy) until that card has reported. Only the Neo session that opened the ask or the user can tick it.",
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, only for an item the daemon cannot read (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but nobody can read it (a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), or back to pending. An item with a check or watch, a card-bound merge included, is ticked by the daemon from what it reads: ticking it met or reported returns the item unchanged with a note saying so. needs_you is refused: a decision or a check only the human can make is its own item, asked with neo.ask.question. met is refused for an item a card delivers (deliveredBy) until that card has reported. Only the Neo session that opened the ask or the user can tick it.",
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

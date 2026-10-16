@@ -10,7 +10,9 @@ import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import {
   codingCardBase,
   judgeNeoWatchTicks,
+  neoItemWatchUrls,
   neoWatchRefs,
+  neoWatchTopics,
   readNeoWatchEventTicks,
   readNeoWatchTicks,
 } from '../../../../src/lib/neo/packs/coding/watch-checks.ts';
@@ -186,6 +188,23 @@ describe('judgeNeoWatchTicks for coding.pr_merged', () => {
     expect(judgeNeoWatchTicks(watched, [prState(4, 'MERGED')])).toEqual([]);
   });
 
+  test("a card-bound outcome without a watch watches its card's recorded PRs", () => {
+    const cardPrs = (workId: string) =>
+      workId === 'card-a' ? [{ url: pull(9), state: 'MERGED' as const }] : [];
+    expect(neoItemWatchUrls(item('i1', [], bound), cardPrs)).toEqual([pull(9)]);
+    expect(neoItemWatchUrls(item('i1', [pull(4)], bound), cardPrs)).toEqual([pull(4)]);
+    expect(neoItemWatchUrls(item('i1', [], { deliveredBy: 'card-a' }), cardPrs)).toEqual([]);
+    const watched = ask([item('i1', [], bound)]);
+    expect(neoWatchRefs(watched, cardPrs)).toEqual([{ owner: 'lsm', repo: 'HyperNeo', number: 9 }]);
+    expect(neoWatchTopics(watched, cardPrs)).toHaveLength(1);
+    expect(
+      judgeNeoWatchTicks(watched, [base(prState(9, 'MERGED'), 'dev')], () => null, cardPrs)
+    ).toEqual([{ id: 'i1', evidence: `Watched: ${pull(9)} merged into dev` }]);
+    expect(
+      judgeNeoWatchTicks(watched, [base(prState(9, 'MERGED'), 'feature')], () => null, cardPrs)
+    ).toEqual([]);
+  });
+
   test('a merge event without its base ticks an unbound outcome but not a bound one', async () => {
     const watched = ask([item('i1', [pull(4)], merged), item('i2', [pull(4)], bound)]);
     const event = {
@@ -249,6 +268,23 @@ describe('neoWatchRefs', () => {
   });
 });
 
+describe('readNeoWatchTicks for a card-bound merge', () => {
+  test("reads at once when the card's PR is first recorded merged, then throttles again", async () => {
+    const bound = item('i1', [], { check: 'coding.pr_merged', deliveredBy: 'card-a' });
+    const watched = ask([bound], 'a-card-merge');
+    let recorded: 'OPEN' | 'MERGED' = 'OPEN';
+    const cardPrs = () => [{ url: pull(9), state: recorded }];
+    const read = vi.fn(async () => [{ ...prState(9, recorded), base: 'dev', defaultBase: 'dev' }]);
+    expect(await readNeoWatchTicks(watched, read, 10_000, undefined, cardPrs)).toEqual([]);
+    recorded = 'MERGED';
+    expect(await readNeoWatchTicks(watched, read, 11_000, undefined, cardPrs)).toEqual([
+      { id: 'i1', evidence: `Watched: ${pull(9)} merged into dev` },
+    ]);
+    expect(await readNeoWatchTicks(watched, read, 12_000, undefined, cardPrs)).toEqual([]);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('readNeoAskPackTicks', () => {
   test('reads watch ticks from every pack, also on an ask under another pack', async () => {
     const pack = (id: string, extra: Partial<NeoPack>): NeoPack =>
@@ -283,6 +319,26 @@ describe('readNeoAskPackTicks', () => {
       { id: 'i2', evidence: 'watched' },
     ]);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  test("keeps the owning pack's watch tick for an item it checks without a watch", async () => {
+    const coding = {
+      id: 'coding',
+      describe: 'coding',
+      instructions: () => null,
+      checks: { 'coding.pr_merged': () => ({ reason: 'watch_required' }) },
+      readAskWatchTicks: async () => [{ id: 'i1', evidence: 'merged' }],
+    } as unknown as NeoPack;
+    const life = {
+      id: 'life-admin',
+      describe: 'life',
+      instructions: () => null,
+      readAskWatchTicks: async () => [{ id: 'i1', evidence: 'foreign' }],
+    } as unknown as NeoPack;
+    const current = ask([item('i1', [], { check: 'coding.pr_merged', deliveredBy: 'card-a' })]);
+    expect(await readNeoAskPackTicks([coding, life], current, [], vi.fn())).toEqual([
+      { id: 'i1', evidence: 'merged' },
+    ]);
   });
 
   test('dispatches only declared readers and filters unsupported and foreign ticks', async () => {
@@ -506,6 +562,58 @@ describe('refreshDriverWork watch ticks', () => {
       ),
       evidence: `Watched: ${pull(67, 'lsm/neo-ios')} merged; ${pull(6647)} merged`,
     });
+  });
+
+  test("a card-bound merge item settles the ask in the sweep that reads the card's PR merged", async () => {
+    const card = service.repo.proposeWork({
+      id: 'card-merge',
+      requestKey: 'k-card-merge',
+      projectId: null,
+      originSessionId: 'neo:root',
+      originMessageId: 'm0',
+      title: 'Fix the login bug',
+      instruction: 'Fix it and open a PR.',
+    })!;
+    const opened = service.askRecords.open(
+      {
+        id: 'a-card-merge',
+        requestKey: 'k-a-card-merge',
+        projectId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'm0',
+        title: 'Fix the login bug',
+        ask: 'Fix the login bug',
+        doneWhen: '- merged',
+        doneSource: 'human',
+      },
+      [{ text: 'fix merged', check: 'coding.pr_merged', deliveredBy: card.id }]
+    )!;
+    const queued = service.repo.transitionWork(card.id, card, {
+      status: 'queued',
+      sessionId: 'w1',
+    })!;
+    service.repo.transitionWork(card.id, queued, {
+      status: 'reported',
+      report: `Merged ${pull(7200)}`,
+    });
+    service.workPrs.record(
+      card.id,
+      [{ url: pull(7200), state: 'MERGED', checks: 'passing', review: 'approved' }],
+      Date.now()
+    );
+    const read = vi.fn(async () => [
+      { ...prState(7200, 'MERGED'), base: 'dev', defaultBase: 'dev' },
+    ]);
+    service.readRefStates = read;
+    Object.assign(service, { deliver: async () => {}, refreshWorkPrs: async () => {} });
+    await service.refreshDriverWork();
+    expect(service.askRecords.get(opened.id)).toMatchObject({
+      status: 'achieved',
+      doneItems: [
+        { state: 'met', metBy: 'daemon', evidence: `Watched: ${pull(7200)} merged into dev` },
+      ],
+    });
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   test('does not verify a changed watch definition from an in-flight read', async () => {
