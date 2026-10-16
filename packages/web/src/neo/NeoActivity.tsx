@@ -41,37 +41,31 @@ export function NeoActivity({
   scenes,
   projects,
   enabled,
-  reply,
+  busy,
   redirects,
 }: {
   redirects?: NeoSnapshot['projectRedirects'];
   scenes: readonly NeoScene[];
   projects: readonly Project[];
   enabled: boolean;
-  reply?: string | null;
+  busy?: readonly string[] | null;
 }) {
-  const items = reply
-    ? [{ key: 'neo-reply', text: reply }]
-    : enabled
-      ? projectActivity(scenes, projects, redirects)
-      : [];
-  const [activeKey, setActiveKey] = useState<string | null>(null);
-  const fingerprint = JSON.stringify(items);
-  const current = items.find((item) => item.key === activeKey) ?? items[0];
+  const [tick, setTick] = useState(0);
+  const items = [
+    ...(busy?.length ? [{ key: 'neo-busy', text: busy[tick % busy.length] }] : []),
+    ...(enabled ? projectActivity(scenes, projects, redirects) : []),
+  ];
+  const fingerprint = JSON.stringify(items.map((item) => item.key));
+  const current = items.length ? items[Math.floor(tick / 2) % items.length] : undefined;
   useEffect(() => {
-    if (items.length < 2) return;
+    setTick(0);
+    if (items.length < 2 && (busy?.length ?? 0) < 2) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
-      setActiveKey((previous) => {
-        const index = Math.max(
-          0,
-          items.findIndex((item) => item.key === previous)
-        );
-        return items[(index + 1) % items.length].key;
-      });
-    }, 6000);
+      setTick((previous) => previous + 1);
+    }, 3000);
     return () => window.clearInterval(timer);
-  }, [fingerprint]);
+  }, [fingerprint, busy]);
   return (
     <div
       class="neo-activity"
@@ -85,7 +79,7 @@ export function NeoActivity({
         {current?.text ?? ''}
       </span>
       <span class="neo-activity-count" aria-hidden="true">
-        {items.length > 1 ? `${items.indexOf(current) + 1}/${items.length}` : ''}
+        {items.length > 1 && current ? `${items.indexOf(current) + 1}/${items.length}` : ''}
       </span>
     </div>
   );

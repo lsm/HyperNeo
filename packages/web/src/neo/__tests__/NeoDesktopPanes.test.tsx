@@ -134,7 +134,9 @@ describe('Neo desktop panes', () => {
     const list = screen.getByRole('region', { name: 'Work scenes' });
     expect(chat.parentElement).toBe(main);
     expect(list.parentElement).toBe(main);
-    const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
+    const draft = screen.getByRole('textbox', {
+      name: 'Draft',
+    }) as HTMLTextAreaElement;
     fireEvent.input(draft, { target: { value: 'Keep my fictional draft' } });
     fireEvent.click(screen.getByRole('button', { name: 'Open chat for Fictional result' }));
     expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('result-session');
@@ -156,8 +158,14 @@ describe('Neo desktop panes', () => {
     const { container, model } = mount();
     const main = container.querySelector('main')!;
     const chat = container.querySelector('.neo-chat-rail')!;
-    Object.defineProperties(chat, { scrollHeight: { value: 1200 }, clientHeight: { value: 400 } });
-    Object.defineProperties(main, { scrollHeight: { value: 2000 }, clientHeight: { value: 500 } });
+    Object.defineProperties(chat, {
+      scrollHeight: { value: 1200 },
+      clientHeight: { value: 400 },
+    });
+    Object.defineProperties(main, {
+      scrollHeight: { value: 2000 },
+      clientHeight: { value: 500 },
+    });
     act(() => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -215,7 +223,7 @@ describe('Neo desktop panes', () => {
     act(() => withAsk('loading'));
     expect(line().hidden).toBe(true);
     act(() => withAsk('ready'));
-    expect(line().textContent).toContain('Neo is working on a reply…');
+    expect(line().textContent).toContain('Neo is working…');
   });
 
   it('shows one working line for an unanswered ask, but not while Neo waits on you', () => {
@@ -236,27 +244,38 @@ describe('Neo desktop panes', () => {
         },
       };
     });
-    expect(line().textContent).toContain('Neo is working on a reply…');
+    expect(line().textContent).toContain('Neo is working…');
     act(() => {
       model.value = {
         ...model.value,
-        viewPublicConversation: { ...model.value.viewPublicConversation!, status: 'loading' },
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          status: 'loading',
+        },
       };
     });
-    expect(line().textContent).toContain('Neo is working on a reply…');
+    expect(line().textContent).toContain('Neo is working…');
     act(() => {
       model.value = {
         ...model.value,
-        viewPublicConversation: { ...model.value.viewPublicConversation!, status: 'unavailable' },
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          status: 'unavailable',
+        },
       };
     });
     expect(line().hidden).toBe(true);
     act(() => {
       model.value = {
         ...model.value,
-        viewPublicConversation: { ...model.value.viewPublicConversation!, status: 'ready' },
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          status: 'ready',
+        },
       };
-      model.value.store.agentState.value = { status: 'waiting_for_input' } as never;
+      model.value.store.agentState.value = {
+        status: 'waiting_for_input',
+      } as never;
     });
     expect(line().hidden).toBe(true);
     act(() => {
@@ -327,8 +346,14 @@ describe('Neo desktop panes', () => {
     const { container, model } = mount();
     const main = container.querySelector('main')!;
     const chat = container.querySelector('.neo-chat-rail')!;
-    Object.defineProperties(chat, { scrollHeight: { value: 1200 }, clientHeight: { value: 400 } });
-    Object.defineProperties(main, { scrollHeight: { value: 2000 }, clientHeight: { value: 500 } });
+    Object.defineProperties(chat, {
+      scrollHeight: { value: 1200 },
+      clientHeight: { value: 400 },
+    });
+    Object.defineProperties(main, {
+      scrollHeight: { value: 2000 },
+      clientHeight: { value: 500 },
+    });
     const view = model.value.snapshot;
     act(() => {
       model.value = { ...model.value, snapshot: { ...view, work: [] } };
