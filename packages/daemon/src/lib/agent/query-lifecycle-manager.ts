@@ -14,7 +14,7 @@ import { Logger } from '../logger.ts';
 import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery.ts';
-import { isNeoProjectSession, sessionSdkPath } from '../neo/session-policy.ts';
+import { sessionSdkPath } from '../neo/session-policy.ts';
 import {
   validateAndRepairSDKSession,
   findSDKSessionFileGlobally,
@@ -165,7 +165,6 @@ export class QueryLifecycleManager {
 
   private validateAndRepairWithMigration(): boolean {
     const { session, db } = this.ctx;
-    if (isNeoProjectSession(db, session.id)) return true;
     if (!session.sdkSessionId) return false;
 
     const fileFound = this.ensureSDKSessionFileMigrated();

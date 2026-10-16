@@ -103,7 +103,7 @@ describe('Neo turn publication view', () => {
     new NeoPublicationRepository(db.getDatabase()).append(input);
   };
   const shown = (fresh = false) =>
-    (readNeoPublicationView(db, holder, fresh) ?? '')
+    (readNeoPublicationView(db, holder, fresh).note ?? '')
       .split('\n')
       .filter((line) => line.startsWith('- '))
       .map((line) => line.split(': ').at(-1));
@@ -151,7 +151,7 @@ describe('Neo turn publication view', () => {
     ]);
   });
 
-  test('replays round 13: a holder turn runs in a fresh context, so it sees what an earlier turn was already shown', () => {
+  test('a fresh context sees what an earlier context was already shown', () => {
     publish();
     expect(shown(true)).toEqual(['Reply 1.']);
     publish();

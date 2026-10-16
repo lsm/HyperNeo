@@ -44,7 +44,11 @@ import {
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
-import { neoCoordinatorBinding, readNeoProjectSnapshot } from '../neo/session-policy.ts';
+import {
+  neoCoordinatorBinding,
+  neoQueryContext,
+  readNeoProjectSnapshot,
+} from '../neo/session-policy.ts';
 import { createNeoAskOriginResolver, isNeoFoldableNote } from '../neo/ask-origin.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
@@ -363,8 +367,15 @@ export class AgentSession
     ));
   }
 
-  getNeoProjectSnapshot(): Promise<string> {
-    return readNeoProjectSnapshot(this.resolveOperationRegistry(), this.session.id);
+  async getNeoFreshContext(): Promise<string> {
+    const binding = neoCoordinatorBinding(this.db, this.session.id);
+    if (binding?.kind !== 'project') return '';
+    return [
+      neoQueryContext(binding, this.db),
+      await readNeoProjectSnapshot(this.resolveOperationRegistry(), this.session.id),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   createNeoTurnMcpServer(

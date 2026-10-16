@@ -1973,7 +1973,6 @@ describe('QueryOptionsBuilder', () => {
           mockSession.config.permissionMode = 'acceptEdits';
           const resumedBuilder = new QueryOptionsBuilder({
             ...mockContext,
-            getNeoProjectSnapshot: async () => 'Current project snapshot',
             db: {
               ...mockContext.db!,
               getDatabase: () => sqlite,
@@ -1981,7 +1980,7 @@ describe('QueryOptionsBuilder', () => {
             getOperationMcpServer: () => ({ type: 'stdio', command: 'operations' }),
           });
           const options = resumedBuilder.addSessionStateOptions(await resumedBuilder.build());
-          expect(options.resume).toBe(kind === 'project' ? undefined : mockSession.sdkSessionId);
+          expect(options.resume).toBe(mockSession.sdkSessionId);
           expect(options.model).toBe('default');
           expect(options.maxTurns).toBe(Infinity);
           expect(options.tools).toEqual([...tools]);
@@ -1991,8 +1990,7 @@ describe('QueryOptionsBuilder', () => {
             expect(options.permissionMode).toBe('dontAsk');
             expect(options.systemPrompt).toEqual({
               type: 'custom',
-              prompt:
-                neoPrompt(projectId) + (kind === 'project' ? '\n\nCurrent project snapshot' : ''),
+              prompt: neoPrompt(projectId),
               snapshot: false,
             });
           } else {

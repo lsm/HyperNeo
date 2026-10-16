@@ -344,6 +344,7 @@ export interface QueryRunnerContext {
   createNeoTurnMcpServer?: (
     getTurn: () => OperationCaller['neoTurn']
   ) => NonNullable<Options['mcpServers']>[string];
+  getNeoFreshContext?(): Promise<string>;
   readonly session: Session;
   readonly db: Database;
   readonly messageHub: MessageHub;
@@ -2277,8 +2278,10 @@ export class QueryRunner {
           internal: isInternal,
         });
       const viewed = !!holderTurn && !isInternal;
-      yield viewed
-        ? withNeoPublicationView(message, readNeoPublicationView(this.ctx.db, session.id, fresh))
+      const view = viewed ? readNeoPublicationView(this.ctx.db, session.id, fresh) : null;
+      const state = view?.reset ? await this.ctx.getNeoFreshContext?.() : '';
+      yield view
+        ? withNeoPublicationView(message, [state, view.note].filter(Boolean).join('\n\n') || null)
         : message;
       if (viewed) fresh = false;
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
