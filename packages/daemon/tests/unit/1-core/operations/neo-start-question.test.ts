@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { readNeoAskAnswerChoice } from '../../../../src/lib/neo/ask-answer-evidence.ts';
@@ -87,6 +88,7 @@ describe('grouped card start question', () => {
   afterEach(() => {
     service.dispose();
     db.close();
+    vi.restoreAllMocks();
   });
   const current = () => service.askRecords.get('ask')!;
   const questions = () =>
@@ -152,6 +154,8 @@ describe('grouped card start question', () => {
   });
 
   test('projects exact step identities and titles through the snapshot schema', () => {
+    let proposalAt = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => proposalAt++);
     for (const id of ['one', 'two', 'three']) propose(id);
     const [view] = projectNeoAskViews([current()], [], []);
     expect(NeoAskViewSchema.parse(view).humanActions).toEqual([
