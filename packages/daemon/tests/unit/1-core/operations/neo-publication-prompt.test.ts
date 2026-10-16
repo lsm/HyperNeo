@@ -30,6 +30,7 @@ describe('Neo speaking policy delivery', () => {
       restrictNeoQuery(options, projectId);
       const prompt = (options.systemPrompt as { prompt: string }).prompt;
       expect(prompt).toBe(neoPrompt(projectId));
+      expect(prompt).toContain('Read the conversation with neo.conversation.read');
       expect(prompt.split(policy)).toHaveLength(2);
       expect(prompt).not.toContain('Stored old protocol');
       expect(prompt).not.toContain('there are no interim or status posts');

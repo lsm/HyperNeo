@@ -73,7 +73,7 @@ const ImageRefSchema = z
   })
   .strict();
 
-const RefAsk = z.object({
+export const NeoConversationAskPageSchema = z.object({
   conversationId: z.uuid(),
   requestId: z.uuid(),
   askOrigin: z.object({ sessionId: z.string(), messageId: z.uuid() }),
@@ -198,7 +198,7 @@ export function createNeoConversationAskReadOperation(
       z.object({
         ok: z.literal(true),
         conversationId: z.uuid(),
-        items: z.array(z.union([StoredAsk, RefAsk])).max(100),
+        items: z.array(z.union([StoredAsk, NeoConversationAskPageSchema])).max(100),
         nextAfter: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       }),
     ]),

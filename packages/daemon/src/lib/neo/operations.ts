@@ -115,6 +115,8 @@ import {
 import { createNeoInboxPromoteOperation } from './inbox-promote-operation.ts';
 import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
+import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
+import { NeoConversationReader } from '../../storage/repositories/neo-conversation-reader.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
 import {
   createNeoConversationAskReadOperation,
@@ -2469,6 +2471,10 @@ export function createNeoOperations(service: NeoService) {
         service.deliverForward(sessionId, messageId, content, from, ask, 'continues'),
     }),
     createNeoPublicationReadOperation(service.repo, service.publications),
+    createNeoConversationReadOperation(
+      service.repo,
+      new NeoConversationReader(service.db.getDatabase())
+    ),
     createNeoConversationAskReadOperation(service.repo, service.asks, (sessionId, messageId) =>
       service.db.getSDKMessageRepo().getUserSendStatus(sessionId, messageId)
     ),

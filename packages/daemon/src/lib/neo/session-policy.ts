@@ -9,7 +9,6 @@ import type { OperationRegistry } from '../operations/registry.ts';
 import { getDataDir } from '../data-dir.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
-import { readNeoCatchUp, readNeoHolderView } from './catch-up.ts';
 import { neoFolderPath } from './folder.ts';
 import { neoSecretReadRules, neoToolGuard } from './look-up-guard.ts';
 import { neoSettingsPackBriefs } from './packs/index.ts';
@@ -51,12 +50,6 @@ export function neoCoordinatorBinding(
     )
     .get(sessionId) as NeoBinding | null;
   return row ?? null;
-}
-
-export function neoQueryContext(binding: NeoBinding, db: Database | undefined): string {
-  const neoDb = db?.getDatabase();
-  if (!neoDb) return '';
-  return binding.kind === 'neo' ? readNeoCatchUp(neoDb) : readNeoHolderView(neoDb);
 }
 
 function renderNeoProjectSnapshot(outcome: OperationOutcome): string {
@@ -111,7 +104,6 @@ export function restrictNeoQuery(
   options: Options,
   projectId: string | null = null,
   sessionId?: string,
-  catchUp = '',
   packs: readonly NeoPackBrief[] = neoSettingsPackBriefs()
 ): void {
   if (sessionId) {
@@ -121,7 +113,7 @@ export function restrictNeoQuery(
   const prompt = neoPrompt(projectId, packs);
   options.systemPrompt = {
     type: 'custom',
-    prompt: catchUp ? `${prompt}\n\n${catchUp}` : prompt,
+    prompt,
     snapshot: false,
   };
   delete options.maxTurns;
