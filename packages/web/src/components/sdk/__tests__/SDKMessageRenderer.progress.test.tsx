@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
-import { SDKToolProgressMessage } from '../SDKToolProgressMessage';
+import { SDKMessageRenderer } from '../SDKMessageRenderer';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
@@ -24,25 +24,25 @@ function createToolProgressMessage(
   };
 }
 
-describe('SDKToolProgressMessage', () => {
+describe('SDKMessageRenderer', () => {
   describe('Basic Rendering', () => {
     it('should render tool name', () => {
       const message = createToolProgressMessage('Read', 2.5);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Read');
     });
 
     it('should render elapsed time', () => {
       const message = createToolProgressMessage('Write', 5.0);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('5');
     });
 
     it('should render with ToolProgressCard component', () => {
       const message = createToolProgressMessage('Bash', 1.5);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Bash');
     });
@@ -51,56 +51,56 @@ describe('SDKToolProgressMessage', () => {
   describe('Different Tool Types', () => {
     it('should render Read tool', () => {
       const message = createToolProgressMessage('Read', 1.0);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Read');
     });
 
     it('should render Write tool', () => {
       const message = createToolProgressMessage('Write', 2.0);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Write');
     });
 
     it('should render Edit tool', () => {
       const message = createToolProgressMessage('Edit', 3.0);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Edit');
     });
 
     it('should render Bash tool', () => {
       const message = createToolProgressMessage('Bash', 10.0);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Bash');
     });
 
     it('should render Glob tool', () => {
       const message = createToolProgressMessage('Glob', 0.5);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Glob');
     });
 
     it('should render Grep tool', () => {
       const message = createToolProgressMessage('Grep', 1.5);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Grep');
     });
 
     it('should render Task tool', () => {
       const message = createToolProgressMessage('Task', 30.0);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Task');
     });
 
     it('should render MCP tool', () => {
       const message = createToolProgressMessage('mcp__filesystem__read', 2.0);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('read');
     });
@@ -109,21 +109,21 @@ describe('SDKToolProgressMessage', () => {
   describe('Elapsed Time Display', () => {
     it('should show fractional seconds', () => {
       const message = createToolProgressMessage('Read', 2.5);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toMatch(/2\.5|2\.50/);
     });
 
     it('should handle zero elapsed time', () => {
       const message = createToolProgressMessage('Read', 0);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Read');
     });
 
     it('should handle long elapsed time', () => {
       const message = createToolProgressMessage('Bash', 120.5);
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Bash');
       expect(container.textContent).toMatch(/2m|120/);
@@ -136,7 +136,11 @@ describe('SDKToolProgressMessage', () => {
       const toolInput = { file_path: '/test/file.txt' };
 
       const { container } = render(
-        <SDKToolProgressMessage message={message} toolInput={toolInput} />
+        <SDKMessageRenderer
+          message={message}
+          showSubagentMessages
+          toolInputsMap={new Map([[message.tool_use_id, toolInput]])}
+        />
       );
 
       expect(container.textContent).toContain('Read');
@@ -147,7 +151,11 @@ describe('SDKToolProgressMessage', () => {
       const toolInput = { file_path: '/path/to/output.txt', content: 'Hello' };
 
       const { container } = render(
-        <SDKToolProgressMessage message={message} toolInput={toolInput} />
+        <SDKMessageRenderer
+          message={message}
+          showSubagentMessages
+          toolInputsMap={new Map([[message.tool_use_id, toolInput]])}
+        />
       );
 
       expect(container.textContent).toContain('Write');
@@ -158,7 +166,11 @@ describe('SDKToolProgressMessage', () => {
       const toolInput = { command: 'npm install' };
 
       const { container } = render(
-        <SDKToolProgressMessage message={message} toolInput={toolInput} />
+        <SDKMessageRenderer
+          message={message}
+          showSubagentMessages
+          toolInputsMap={new Map([[message.tool_use_id, toolInput]])}
+        />
       );
 
       expect(container.textContent).toContain('Bash');
@@ -167,7 +179,7 @@ describe('SDKToolProgressMessage', () => {
     it('should handle undefined tool input', () => {
       const message = createToolProgressMessage('Read', 1.0);
 
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Read');
     });
@@ -177,7 +189,7 @@ describe('SDKToolProgressMessage', () => {
     it('should pass parent_tool_use_id to ToolProgressCard', () => {
       const message = createToolProgressMessage('Read', 1.0, 'toolu_parent456');
 
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Read');
     });
@@ -185,7 +197,7 @@ describe('SDKToolProgressMessage', () => {
     it('should handle null parent_tool_use_id', () => {
       const message = createToolProgressMessage('Write', 2.0, null);
 
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.textContent).toContain('Write');
     });
@@ -195,7 +207,7 @@ describe('SDKToolProgressMessage', () => {
     it('should use default variant', () => {
       const message = createToolProgressMessage('Read', 1.0);
 
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.querySelector('div')).toBeTruthy();
     });
@@ -205,7 +217,7 @@ describe('SDKToolProgressMessage', () => {
     it('should render with spinner/loading indicator', () => {
       const message = createToolProgressMessage('Read', 1.0);
 
-      const { container } = render(<SDKToolProgressMessage message={message} />);
+      const { container } = render(<SDKMessageRenderer message={message} showSubagentMessages />);
 
       expect(container.innerHTML.length).toBeGreaterThan(0);
     });
