@@ -1,3 +1,4 @@
+import { CloseGlyph } from '../icons/common-glyphs.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentMemoryEntry } from '@hyperneo/shared';
 import { Button } from '../ui/Button';
@@ -285,14 +286,7 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
                 class="absolute right-3 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-faint transition hover:text-fg-soft"
                 aria-label="Clear search"
               >
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
+                <CloseGlyph class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
               </button>
             )}
           </div>

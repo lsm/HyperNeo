@@ -1,3 +1,4 @@
+import { CheckGlyph, CloseGlyph } from './icons/common-glyphs.tsx';
 import { useState, useCallback, useEffect, useMemo } from 'preact/hooks';
 import type {
   PendingUserQuestion,
@@ -246,31 +247,24 @@ export function QuestionPrompt({
   const getHeaderIcon = () => {
     if (resolvedState === 'submitted') {
       return (
-        <svg
+        <CheckGlyph
           class={cn('w-4 h-4 flex-shrink-0', questionColors.submitted.iconColor)}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-        </svg>
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+        />
       );
     }
     if (resolvedState === 'cancelled') {
       return (
-        <svg
+        <CloseGlyph
           class={cn('w-4 h-4 flex-shrink-0', questionColors.cancelled.iconColor)}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M6 18L18 6M6 6l12 12"
-          />
-        </svg>
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+        />
       );
     }
     return (
@@ -486,19 +480,17 @@ export function QuestionPrompt({
                         )}
                       >
                         {isSelected && (
-                          <svg
+                          <CheckGlyph
                             class="w-3 h-3 text-accent-fg"
                             fill="none"
                             viewBox="0 0 24 24"
                             stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={3}
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
+                            pathProps={{
+                              strokeLinecap: 'round',
+                              strokeLinejoin: 'round',
+                              strokeWidth: 3,
+                            }}
+                          />
                         )}
                       </div>
                     )}

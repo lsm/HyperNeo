@@ -1,3 +1,4 @@
+import { ChevronLeftGlyph } from './icons/common-glyphs.tsx';
 import { useState, useEffect } from 'preact/hooks';
 import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
@@ -204,14 +205,12 @@ export function WorkspaceSelector({
                     title="Back to recent workspaces"
                     class="p-2 rounded-lg bg-fill-strong hover:bg-line-strong text-fg-muted hover:text-fg border border-line-strong transition-colors shrink-0"
                   >
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width={2}
-                        d="M15 19l-7-7 7-7"
-                      />
-                    </svg>
+                    <ChevronLeftGlyph
+                      class="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    />
                   </button>
                 )}
               </div>

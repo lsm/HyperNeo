@@ -1,3 +1,4 @@
+import { CheckGlyph, ChevronDownGlyph } from './icons/common-glyphs.tsx';
 import { useState } from 'preact/hooks';
 import type { GitBranchesResponse } from '@hyperneo/shared';
 import { Dropdown, type DropdownMenuItem } from './ui/Dropdown.tsx';
@@ -26,14 +27,12 @@ const CHIP_CLASS =
 
 function Chevron() {
   return (
-    <svg
+    <ChevronDownGlyph
       class="w-3 h-3 flex-shrink-0 text-fg-faint"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
-    >
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M19 9l-7 7-7-7" />
-    </svg>
+    />
   );
 }
 
@@ -195,19 +194,12 @@ export function WorkspaceChips({
                     >
                       <span class="truncate">{branch}</span>
                       {branch === baseBranch && (
-                        <svg
+                        <CheckGlyph
                           class="w-3.5 h-3.5 flex-shrink-0 text-accent"
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width={2}
-                            d="M5 13l4 4L19 7"
-                          />
-                        </svg>
+                        />
                       )}
                     </button>
                   ))

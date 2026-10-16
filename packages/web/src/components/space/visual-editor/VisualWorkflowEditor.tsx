@@ -1,3 +1,4 @@
+import { ChevronDownGlyph, ChevronLeftGlyph } from '../../icons/common-glyphs.tsx';
 import { useEffect, useState, useMemo, useCallback, useRef } from 'preact/hooks';
 import type {
   SpaceWorkflow,
@@ -1010,14 +1011,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
             title="Back"
             data-testid="back-button"
           >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
+            <ChevronLeftGlyph
+              class="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            />
           </button>
           <div class="min-w-0 flex-1">
             <div class="flex min-w-0 items-center gap-2">
@@ -1272,19 +1271,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
                   />
                 </svg>
                 From Template
-                <svg
+                <ChevronDownGlyph
                   class={`w-3 h-3 transition-transform ${showTemplates ? 'rotate-180' : ''}`}
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M19 9l-7 7-7-7"
-                  />
-                </svg>
+                />
               </button>
 
               {showTemplates && (

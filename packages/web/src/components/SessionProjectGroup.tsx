@@ -1,3 +1,4 @@
+import { CloseGlyph } from './icons/common-glyphs.tsx';
 import type { Session } from '@hyperneo/shared';
 import { SessionConversationGroup } from './SessionConversationGroup.tsx';
 
@@ -88,14 +89,7 @@ export function SessionProjectGroup({
             aria-label={`Remove project ${name}`}
             class="opacity-100 sm:opacity-0 sm:group-hover/project:opacity-100 group-focus-within/project:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 mr-1 p-1 rounded text-fg-faint hover:text-danger hover:bg-fill transition-colors"
           >
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+            <CloseGlyph class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
           </button>
         )}
       </div>

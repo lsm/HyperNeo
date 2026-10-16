@@ -1,3 +1,4 @@
+import { CloseGlyph } from '../icons/common-glyphs.tsx';
 import type { AgentModelPoolEntry, ModelInfo, ThinkingLevel } from '@hyperneo/shared';
 import { THINKING_LEVEL_LABELS, getThinkingOptionsForProvider } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
@@ -184,14 +185,7 @@ export function ModelPoolEditor({
                 class="text-fg-muted hover:text-danger transition-colors flex-shrink-0"
                 title="Remove pool entry"
               >
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
+                <CloseGlyph class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
               </button>
             </div>
           ))}

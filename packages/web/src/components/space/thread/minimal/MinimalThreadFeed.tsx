@@ -1,3 +1,4 @@
+import { ChevronRightGlyph } from '../../../icons/common-glyphs.tsx';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import type { ActiveTurnSummary } from '@hyperneo/shared';
@@ -692,15 +693,13 @@ function TaskKickoffTurn({ turn }: { turn: TaskKickoffFeedTurn }) {
         onClick={() => setExpanded((open) => !open)}
         data-testid="minimal-thread-task-kickoff"
       >
-        <svg
+        <ChevronRightGlyph
           class={`h-3 w-3 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
           aria-hidden="true"
-        >
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M9 5l7 7-7 7" />
-        </svg>
+        />
         <span class="truncate">
           {undelivered ? 'Task for' : 'Task sent to'} <span style={{ color }}>{turn.agent}</span>
         </span>

@@ -1,3 +1,4 @@
+import { ChevronRightGlyph } from './icons/common-glyphs.tsx';
 import { useSignal, useComputed } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
@@ -78,14 +79,12 @@ function GroupHeader({
         onClick={onToggleOpen}
         aria-expanded={isOpen}
       >
-        <svg
+        <ChevronRightGlyph
           class={`w-3.5 h-3.5 text-fg-faint transition-transform ${isOpen ? 'rotate-90' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
-        >
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M9 5l7 7-7 7" />
-        </svg>
+        />
         <span class="text-sm font-medium text-fg-soft">{title}</span>
         <span class="text-xs text-fg-faint">({itemCount})</span>
       </button>
@@ -452,19 +451,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                   }}
                   aria-expanded={runtimeMcpGroupOpen.value}
                 >
-                  <svg
+                  <ChevronRightGlyph
                     class={`w-3.5 h-3.5 text-fg-faint transition-transform ${runtimeMcpGroupOpen.value ? 'rotate-90' : ''}`}
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width={2}
-                      d="M9 5l7 7-7 7"
-                    />
-                  </svg>
+                  />
                   <span class="text-sm font-medium text-fg-soft">Agent Runtime Tools</span>
                   <span class="text-xs text-fg-faint">({runtimeMcpServers.value.length})</span>
                 </button>
@@ -614,19 +606,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
             </>
           ) : (
             <div class="flex items-center gap-2 py-1">
-              <svg
+              <ChevronRightGlyph
                 class="w-3.5 h-3.5 text-fg-faint"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
+              />
               <span class="text-sm font-medium text-fg-faint">Skills</span>
               <span class="text-xs text-gray-700">(none configured)</span>
             </div>
@@ -738,19 +723,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
             </>
           ) : (
             <div class="flex items-center gap-2 py-1">
-              <svg
+              <ChevronRightGlyph
                 class="w-3.5 h-3.5 text-fg-faint"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
+              />
               <span class="text-sm font-medium text-fg-faint">MCP Servers</span>
               <span class="text-xs text-gray-700">(none configured)</span>
             </div>
@@ -768,19 +746,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
             }}
             aria-expanded={advancedOpen.value}
           >
-            <svg
+            <ChevronRightGlyph
               class={`w-3.5 h-3.5 text-fg-faint transition-transform ${advancedOpen.value ? 'rotate-90' : ''}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M9 5l7 7-7 7"
-              />
-            </svg>
+            />
             <span class="text-sm font-medium text-fg-faint">Advanced</span>
           </button>
 

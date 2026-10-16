@@ -1,3 +1,4 @@
+import { CheckGlyph } from '../icons/common-glyphs.tsx';
 import { useState } from 'preact/hooks';
 import type { HyperNeoActionMessage } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
@@ -15,19 +16,12 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
     const label = message.chosenOption === 'start_fresh' ? 'Start Fresh Session' : 'Leave as Is';
     return (
       <div class="flex items-start gap-2 px-3 py-2 mb-4 rounded border border-line bg-surface-raised opacity-60">
-        <svg
+        <CheckGlyph
           class="w-3.5 h-3.5 mt-0.5 shrink-0 text-fg-faint"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M5 13l4 4L19 7"
-          />
-        </svg>
+        />
         <p class="text-xs text-fg-muted">
           Session choice resolved: <span class="font-medium">{label}</span>
         </p>

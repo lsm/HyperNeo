@@ -1,3 +1,4 @@
+import { CheckGlyph, ChevronDownGlyph, CloseGlyph } from '../icons/common-glyphs.tsx';
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import type {
@@ -295,14 +296,13 @@ function MemoryRecallMessage({ message }: { message: SDKMemoryRecallMessage }) {
           <span class="font-semibold">Memory recalled</span>
           <span class="text-xs opacity-80">({message.memories.length} items)</span>
         </div>
-        <svg
+        <ChevronDownGlyph
           class={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+        />
       </button>
 
       {isExpanded && (
@@ -428,14 +428,13 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
             </span>
           </div>
         </div>
-        <svg
+        <ChevronDownGlyph
           class={`w-4 h-4 text-cat-indigo transition-transform ${showDetails ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+        />
       </button>
 
       {showDetails && (
@@ -548,15 +547,14 @@ function HookRunningCard({
   return (
     <div class="my-2 flex items-center gap-2 rounded-lg border border-line bg-surface-raised p-2 text-sm">
       {completed ? (
-        <svg
+        <CheckGlyph
           class="h-4 w-4 flex-shrink-0 text-fg-muted"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
           aria-label="hook finished"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-        </svg>
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+        />
       ) : (
         <svg
           class="h-4 w-4 flex-shrink-0 animate-spin text-fg-muted"
@@ -638,33 +636,21 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
 
           <div class="flex items-center gap-2 flex-shrink-0">
             {message.exit_code !== undefined && message.exit_code !== 0 && (
-              <svg
+              <CloseGlyph
                 class="w-4 h-4 text-danger"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
+                pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+              />
             )}
-            <svg
+            <ChevronDownGlyph
               class={`w-5 h-5 transition-transform ${colors.iconColor} ${isExpanded ? 'rotate-180' : ''}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 9l-7 7-7-7"
-              />
-            </svg>
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+            />
           </div>
         </button>
 
@@ -739,19 +725,13 @@ function CompactBoundaryMessage({
           </div>
 
           <div class="flex items-center gap-2 flex-shrink-0">
-            <svg
+            <ChevronDownGlyph
               class={`w-5 h-5 transition-transform ${colors.iconColor} ${isExpanded ? 'rotate-180' : ''}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 9l-7 7-7-7"
-              />
-            </svg>
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+            />
           </div>
         </button>
 
