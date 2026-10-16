@@ -4166,7 +4166,9 @@ describe('driverDoneCheckNote', () => {
       ask: { ...ask, pack: 'coding' },
       pack: { id: 'coding', instructions: NEO_PACK_CODING_INSTRUCTIONS },
     });
-    expect(noted).toContain('This ask works under the coding pack.');
+    expect(noted).toContain(
+      'This ask works under the coding pack; neo.pack.read {id} returns its guidance.'
+    );
     expect(noted).not.toContain(NEO_PACK_CODING_INSTRUCTIONS);
     expect(driverDoneCheckNote(work, goal, 0, null, { ask, pack: null })).not.toContain(
       'This ask works under'
