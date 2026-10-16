@@ -31,6 +31,7 @@ import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { ChildProcess } from 'node:child_process';
 import type { Database } from '../../storage/database.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
+import { OperationRefusalRepository } from '../../storage/repositories/operation-refusal-repository.ts';
 import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
 import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
@@ -363,9 +364,15 @@ export class AgentSession
   getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
     return (this.operationMcpServer ??= createOperationMcpServer(
       () => this.resolveOperationRegistry(),
-      () => resolveCallerIdentity(this.callerScopeResolver, this.session.id)
+      () => resolveCallerIdentity(this.callerScopeResolver, this.session.id),
+      '',
+      this.recordOperationRefusal
     ));
   }
+
+  private readonly recordOperationRefusal = (
+    refusal: Parameters<OperationRefusalRepository['record']>[0]
+  ) => new OperationRefusalRepository(this.db.getDatabase()).record(refusal, this.session.id);
 
   async getNeoFreshContext(): Promise<string> {
     const binding = neoCoordinatorBinding(this.db, this.session.id);
@@ -387,7 +394,8 @@ export class AgentSession
         ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
         neoTurn: getTurn(),
       }),
-      describeOperationSignatures(this.resolveOperationRegistry(), NEO_CORE_OPERATIONS)
+      describeOperationSignatures(this.resolveOperationRegistry(), NEO_CORE_OPERATIONS),
+      this.recordOperationRefusal
     );
   }
 

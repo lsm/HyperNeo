@@ -1,7 +1,7 @@
 import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
 import { resolveOperationRegistry } from './registry.ts';
 import { z } from 'zod';
-import { invokeOperation } from './invoke.ts';
+import { invokeOperation, type OperationOutcome } from './invoke.ts';
 import type { CallerIdentity } from './caller.ts';
 import type { OperationRegistrySource } from './registry.ts';
 
@@ -17,9 +17,26 @@ function mcpResult(value: unknown, isError = false) {
   };
 }
 
+export type OperationRefusal = { operation: string; reason: string };
+
+export function operationRefusal(
+  operation: string,
+  outcome: OperationOutcome
+): OperationRefusal | null {
+  if (outcome.kind === 'failed') return { operation, reason: outcome.code };
+  const value = outcome.value as { ok?: unknown; accepted?: unknown; reason?: unknown } | null;
+  return value &&
+    typeof value === 'object' &&
+    (value.ok === false || value.accepted === false) &&
+    typeof value.reason === 'string'
+    ? { operation, reason: value.reason }
+    : null;
+}
+
 export function createOperationMcpHandler(
   registry: OperationRegistrySource,
-  resolveCaller: () => CallerIdentity | Promise<CallerIdentity>
+  resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
+  recordRefusal: (refusal: OperationRefusal) => void = () => {}
 ) {
   return async (args: unknown) => {
     const parsed = OperationMcpInvocationSchema.safeParse(args);
@@ -37,6 +54,8 @@ export function createOperationMcpHandler(
           source: 'mcp',
         }
       );
+      const refusal = operationRefusal(parsed.data.name, outcome);
+      if (refusal) recordRefusal(refusal);
       return outcome.kind === 'completed'
         ? mcpResult(
             parsed.data.name.startsWith('neo.') ? explainNeoRefusal(outcome.value) : outcome.value
