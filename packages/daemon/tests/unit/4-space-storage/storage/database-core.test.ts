@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   utimesSync,
@@ -327,6 +328,12 @@ describe('DatabaseCore', () => {
 
     const seedWalData = (db: RawDatabase): void => {
       db.exec('PRAGMA journal_mode = WAL');
+      db.exec(
+        readFileSync(
+          new URL('./migrations/fixtures/schema-baseline/v0.41.0.sql', import.meta.url),
+          'utf8'
+        )
+      );
       db.exec('CREATE TABLE backup_probe (id INTEGER PRIMARY KEY, value TEXT)');
       db.exec("INSERT INTO backup_probe (value) VALUES ('pre-migration')");
     };
@@ -469,7 +476,7 @@ describe('DatabaseCore', () => {
         ]);
         expect(
           backup
-            .prepare(`SELECT COUNT(*) as count FROM migration_markers WHERE key = 'migration_001'`)
+            .prepare(`SELECT COUNT(*) as count FROM migration_markers WHERE key = 'migration_239'`)
             .get()
         ).toEqual({ count: 0 });
       } finally {
@@ -521,6 +528,12 @@ describe('DatabaseCore', () => {
       seedWalData(raw);
       raw.exec('BEGIN');
       raw.prepare('SELECT COUNT(*) as c FROM backup_probe').get();
+      const writer = new RawDatabase(dbPath);
+      try {
+        writer.exec('CREATE TABLE pending_backup_probe (id INTEGER PRIMARY KEY)');
+      } finally {
+        writer.close();
+      }
 
       configureLogger({ level: LogLevel.INFO });
       const strategies: string[] = [];

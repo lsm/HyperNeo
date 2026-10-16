@@ -73,10 +73,15 @@ function insertSession(db: Database, id: string, type: string): void {
 }
 
 describe('database schema equivalence', () => {
-  test('fresh and upgraded v0.41.0 databases have identical full schemas', () => {
+  test('fresh, legacy dev and upgraded v0.41.0 databases have identical full schemas', () => {
     const fresh = new Database(':memory:');
     const upgraded = new Database(':memory:');
+    const legacyDev = new Database(':memory:');
     try {
+      legacyDev.exec(
+        readFileSync(new URL('./fixtures/schema-baseline/dev-383.sql', import.meta.url), 'utf8')
+      );
+      const legacySchema = fullSchema(legacyDev);
       fresh.exec('PRAGMA foreign_keys = ON');
       upgraded.exec('PRAGMA foreign_keys = ON');
       upgraded.exec(
@@ -84,13 +89,16 @@ describe('database schema equivalence', () => {
       );
       migrate(fresh);
       migrate(upgraded);
-      expect(fullSchema(fresh)).toEqual(fullSchema(upgraded));
+      expect(fullSchema(fresh)).toEqual(legacySchema);
+      expect(fullSchema(upgraded)).toEqual(legacySchema);
       migrate(fresh);
       migrate(upgraded);
-      expect(fullSchema(fresh)).toEqual(fullSchema(upgraded));
+      expect(fullSchema(fresh)).toEqual(legacySchema);
+      expect(fullSchema(upgraded)).toEqual(legacySchema);
     } finally {
       fresh.close();
       upgraded.close();
+      legacyDev.close();
     }
   });
 
