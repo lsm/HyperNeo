@@ -250,6 +250,23 @@ describe('Neo MVP', () => {
     ).toMatchObject({ value: { projects: [{ context: '' }] } });
   });
 
+  test('a holder session title follows its project title', async () => {
+    service.repo.saveProject(project, 0);
+    const id = await service.open(project.id);
+    const titles = new Map([[id, 'Neo · an old name']]);
+    Object.assign(db, {
+      getSession: (sessionId: string) =>
+        active.has(sessionId) ? { id: sessionId, title: titles.get(sessionId) } : null,
+    });
+    Object.assign(sessions, {
+      updateSession: async (sessionId: string, updates: { title: string }) => {
+        titles.set(sessionId, updates.title);
+      },
+    });
+    await invoke('neo.project.save', { ...project, title: 'Renamed', expectedRevision: 1 });
+    expect(titles.get(id)).toBe('Neo · Renamed');
+  });
+
   test('standing rules start empty, the human adds them, and Neo cannot without a human turn', async () => {
     expect(await invoke('neo.snapshot')).toMatchObject({ value: { standingRules: [] } });
     const root = await service.open(null);

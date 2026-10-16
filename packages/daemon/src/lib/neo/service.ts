@@ -1,3 +1,4 @@
+import { neoHolderTitle, planNeoHolderTitles } from './holder-title.ts';
 import { NeoDependencyRepository } from '../../storage/repositories/neo-dependency-repository.ts';
 import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
 import { runNeoReadWork } from './read-work.ts';
@@ -791,6 +792,7 @@ export class NeoService {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
       this.scheduleTriggerSweep();
+      this.alignHolderTitles();
     };
     this.notifyPublicationsChanged = (conversationId) => {
       hub.event('neo.publications.changed', { conversationId });
@@ -1413,6 +1415,28 @@ export class NeoService {
     }
   }
 
+  private alignHolderTitles(): void {
+    if (!this.repo) return;
+    const fixes = planNeoHolderTitles(
+      this.repo.listProjectTitles().flatMap((project) => {
+        const binding = this.repo.getBindingForProject(project.id);
+        return binding
+          ? [
+              {
+                sessionId: binding.sessionId,
+                projectTitle: project.title,
+                sessionTitle: this.db.getSession(binding.sessionId)?.title,
+              },
+            ]
+          : [];
+      })
+    );
+    for (const fix of fixes)
+      void this.sessions
+        .updateSession(fix.sessionId, { title: fix.title })
+        .catch((error) => this.log.warn(`Neo holder ${fix.sessionId} keeps its title: ${error}`));
+  }
+
   private async alignModelPreference(sessionId: string): Promise<void> {
     const preference = this.modelPreference();
     const config = this.db.getSession(sessionId)?.config;
@@ -1521,7 +1545,7 @@ export class NeoService {
       await this.sessions.createSession({
         sessionId: binding.sessionId,
         parentSessionId: rootSession ? root : undefined,
-        title: project ? `Neo · ${project.title}` : 'Neo',
+        title: project ? neoHolderTitle(project.title) : 'Neo',
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {
