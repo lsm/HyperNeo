@@ -215,6 +215,38 @@ describe('neo.ask operations', () => {
     });
   }
 
+  test('a question the daemon withdraws after the last met item still lets the ask settle', async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const askId = (
+        await invoke('neo.ask.open', {
+          ...opening,
+          doneWhen: undefined,
+          doneItems: [{ text: 'NOTICE file added', check: null }],
+        })
+      ).value!.ask!.id;
+      await invoke('neo.ask.question', {
+        askId,
+        question: 'Which wording?',
+        options: ['Short', 'Long'],
+        kind: 'decision',
+      });
+      now += 1;
+      await invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met', evidence: 'added' });
+      now += 1;
+      service.askRecords.editItems(
+        askId,
+        { add: [], remove: ['i2'], removedReason: 'No longer needed: the card moved on' },
+        now
+      );
+      service.writeAskStatus(service.askRecords.get(askId)!);
+      expect(service.askRecords.get(askId)?.status).toBe('achieved');
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test('removing the pending item left after a met one does not settle the ask; a later met tick does', async () => {
     let now = 1_000;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);

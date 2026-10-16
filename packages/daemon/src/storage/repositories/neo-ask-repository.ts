@@ -170,7 +170,7 @@ export class NeoAskRepository {
     return this.db
       .prepare(
         `SELECT COALESCE(MAX(CASE WHEN removed = 0 AND state = 'met' THEN updated_at END), 0) AS metAt,
-          COALESCE(MAX(CASE WHEN removed = 1 THEN updated_at END), 0) AS removedAt
+          COALESCE(MAX(CASE WHEN removed = 1 AND decision = 0 THEN updated_at END), 0) AS removedAt
           FROM neo_ask_items WHERE ask_id = ?`
       )
       .get(askId) as { metAt: number; removedAt: number };
