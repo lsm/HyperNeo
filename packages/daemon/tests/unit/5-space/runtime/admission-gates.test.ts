@@ -2,16 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import type { NodeExecution, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service';
 import {
-  buildQueueKey,
   evaluateRequeueTaskLifecycle,
-  hasAnyExecutionForTarget,
-  hasTerminalExecutionForTarget,
   isPublishedExternalEventExpired,
   isQueuedExternalEventExpired,
   isWorkflowTargetOwnedBySpace,
   prepareExternalEventTask,
   resolveCurrentQueueableOrActiveExecution,
-  resolveLiveDeliveryTarget,
   resolveSubscriptionTarget,
 } from '../../../../src/lib/external-events/admission-gates';
 
@@ -146,58 +142,6 @@ describe('resolveSubscriptionTarget', () => {
   });
 });
 
-describe('resolveLiveDeliveryTarget', () => {
-  test('returns null when there is no live session', () => {
-    const executions = [makeExecution({ agentSessionId: null })];
-    const target = {
-      workflowRunId: 'run-1',
-      taskId: 'task-1',
-      nodeId: 'node-1',
-      agentName: 'coder',
-    };
-    expect(resolveLiveDeliveryTarget(executions, target)).toBeNull();
-  });
-
-  test('returns target with session id when live', () => {
-    const executions = [makeExecution({ agentSessionId: 'session-2', status: 'idle' })];
-    const target = {
-      workflowRunId: 'run-1',
-      taskId: 'task-1',
-      nodeId: 'node-1',
-      agentName: 'coder',
-    };
-    const result = resolveLiveDeliveryTarget(executions, target);
-    expect(result?.sessionId).toBe('session-2');
-  });
-
-  test('returns null instead of borrowing a session from a foreign run or node', () => {
-    const executions = [
-      makeExecution({ workflowRunId: 'run-2', agentSessionId: 'session-x', status: 'idle' }),
-      makeExecution({ workflowNodeId: 'node-2', agentSessionId: 'session-y', status: 'idle' }),
-    ];
-    const target = {
-      workflowRunId: 'run-1',
-      taskId: 'task-1',
-      nodeId: 'node-1',
-      agentName: 'coder',
-    };
-    expect(resolveLiveDeliveryTarget(executions, target)).toBeNull();
-  });
-});
-
-describe('hasTerminalExecutionForTarget and hasAnyExecutionForTarget', () => {
-  test('detects cancelled execution as terminal', () => {
-    const executions = [makeExecution({ status: 'cancelled' })];
-    expect(hasTerminalExecutionForTarget(executions, { agentName: 'coder' })).toBe(true);
-  });
-
-  test('detects any execution for the agent', () => {
-    const executions = [makeExecution({ agentName: 'other' })];
-    expect(hasAnyExecutionForTarget(executions, { agentName: 'coder' })).toBe(false);
-    expect(hasAnyExecutionForTarget([makeExecution()], { agentName: 'coder' })).toBe(true);
-  });
-});
-
 describe('isWorkflowTargetOwnedBySpace', () => {
   test('returns true when task and run belong to the same space and each other', () => {
     expect(isWorkflowTargetOwnedBySpace(makeTask(), makeRun(), 'space-1')).toBe(true);
@@ -308,17 +252,5 @@ describe('isPublishedExternalEventExpired and isQueuedExternalEventExpired', () 
   test('uses default ttl when omitted', () => {
     const now = 1_700_000_000_000;
     expect(isQueuedExternalEventExpired(now - 300_001, now)).toBe(true);
-  });
-});
-
-describe('buildQueueKey', () => {
-  test('builds stable json queue key', () => {
-    const target = {
-      workflowRunId: 'run-1',
-      taskId: 'task-1',
-      nodeId: 'node-1',
-      agentName: 'coder',
-    };
-    expect(buildQueueKey(target)).toBe(JSON.stringify(['run-1', 'task-1', 'node-1', 'coder']));
   });
 });

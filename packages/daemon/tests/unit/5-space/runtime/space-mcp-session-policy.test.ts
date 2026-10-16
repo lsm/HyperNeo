@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import type { NodeExecution, Session, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
 import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import {
-  missingMcpServers,
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionRole,
   spaceWorkflowWorkerRequiredMcpServers,
@@ -450,14 +449,6 @@ describe('SpaceMcpSessionRole', () => {
   test('accepts universal_read as a union member with no dispatchable actions', () => {
     const role: SpaceMcpSessionRole = 'universal_read';
     expect(role).toBe('universal_read');
-  });
-});
-
-describe('missingMcpServers', () => {
-  test('returns only required servers missing from the MCP map', () => {
-    expect(
-      missingMcpServers({ 'other-server': {} }, spaceWorkflowWorkerRequiredMcpServers())
-    ).toEqual([...spaceWorkflowWorkerRequiredMcpServers()]);
   });
 });
 

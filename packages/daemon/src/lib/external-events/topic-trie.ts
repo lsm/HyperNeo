@@ -1,5 +1,3 @@
-import type { NodeExecutionStatus } from '@hyperneo/shared';
-
 export class TopicTrie<T> {
   private root = new TrieNode<T>();
 
@@ -145,10 +143,4 @@ class TrieNode<T> {
   exactChildren: Map<string, TrieNode<T>> = new Map();
   globChildren: Map<string, TrieNode<T>> = new Map();
   values?: T[];
-}
-
-const NON_RECEIVING_STATES: ReadonlySet<NodeExecutionStatus> = new Set(['cancelled']);
-
-export function isReceivingStatus(status: NodeExecutionStatus): boolean {
-  return !NON_RECEIVING_STATES.has(status);
 }

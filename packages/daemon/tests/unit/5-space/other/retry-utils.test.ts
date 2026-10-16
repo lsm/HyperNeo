@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { retryWithBackoff, parseRetryAfter } from '../../../../src/lib/utils/retry-utils.ts';
+import { retryWithBackoff } from '../../../../src/lib/utils/retry-utils.ts';
 import { MAX_NETWORK_RETRIES } from '../../../../src/lib/space/runtime/constants.ts';
 
 function makeFlaky(failCount: number, result = 'ok'): () => Promise<string> {
@@ -123,55 +123,5 @@ describe('retryWithBackoff', () => {
       retryWithBackoff(fn, { delaysMs: Array(MAX_NETWORK_RETRIES).fill(0) })
     ).rejects.toThrow('fail');
     expect(callCount).toBe(MAX_NETWORK_RETRIES + 1);
-  });
-});
-
-describe('parseRetryAfter', () => {
-  test('returns null when header is absent', () => {
-    expect(parseRetryAfter({})).toBeNull();
-    expect(parseRetryAfter({ 'content-type': 'application/json' })).toBeNull();
-  });
-
-  test('parses integer seconds (lowercase key)', () => {
-    const ms = parseRetryAfter({ 'retry-after': '30' });
-    expect(ms).toBe(30_000);
-  });
-
-  test('parses integer seconds (title-case key)', () => {
-    const ms = parseRetryAfter({ 'Retry-After': '60' });
-    expect(ms).toBe(60_000);
-  });
-
-  test('parses zero seconds', () => {
-    const ms = parseRetryAfter({ 'retry-after': '0' });
-    expect(ms).toBe(0);
-  });
-
-  test('parses HTTP date string and returns ms until that date', () => {
-    const futureDate = new Date(Date.now() + 10_000).toUTCString();
-    const ms = parseRetryAfter({ 'retry-after': futureDate });
-    expect(ms).toBeGreaterThan(0);
-    expect(ms).toBeLessThanOrEqual(10_000 + 100);
-  });
-
-  test('returns 0 for past HTTP date (not negative)', () => {
-    const pastDate = new Date(Date.now() - 5_000).toUTCString();
-    const ms = parseRetryAfter({ 'retry-after': pastDate });
-    expect(ms).toBe(0);
-  });
-
-  test('handles array-valued header (takes first element)', () => {
-    const ms = parseRetryAfter({ 'retry-after': ['45', '90'] });
-    expect(ms).toBe(45_000);
-  });
-
-  test('returns null for unparseable values', () => {
-    expect(parseRetryAfter({ 'retry-after': 'definitely-not-valid' })).toBeNull();
-    expect(parseRetryAfter({ 'retry-after': '' })).toBeNull();
-  });
-
-  test('lowercase key takes precedence when both cases present', () => {
-    const ms = parseRetryAfter({ 'retry-after': '10', 'Retry-After': '20' });
-    expect(ms).toBeGreaterThan(0);
   });
 });
