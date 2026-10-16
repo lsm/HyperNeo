@@ -142,3 +142,6 @@ export function planNeoProjectCleanup(
     });
   return [...steps, ...retired];
 }
+
+export const isNeoContentlessCleanup = (step: NeoProjectCleanup) =>
+  step.action === 'delete' || step.action === 'drop';

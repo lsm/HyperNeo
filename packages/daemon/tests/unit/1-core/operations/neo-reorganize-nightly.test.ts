@@ -66,7 +66,10 @@ describe('runNeoNightlyReorganize', () => {
           asked: [],
           moved: [{ askId: 'a', projectId: 'c' }],
           stayed: [{ askId: 'b', reason: 'stays_main' }],
-          cleanupPlanned: [],
+          cleanupPlanned: [
+            { action: 'drop', projectId: 'p', title: 'P', sessionId: 's' },
+            { action: 'merge', projectId: 'q', title: 'Q', targetId: 'r' },
+          ],
           cleanupApplied: false,
           cleanupFailed: [],
         };
@@ -77,7 +80,7 @@ describe('runNeoNightlyReorganize', () => {
     expect(result).toEqual({ ran: true, moved: 1, stayed: 1 });
     expect(runs).toBe(1);
     expect(lines).toEqual([
-      'neo reorganize: nightly run merged 1 project(s), moved 1 ask(s), left 1 with main',
+      'neo reorganize: nightly run merged 1 project(s), moved 1 ask(s), left 1 with main, cleaned up 1 empty project(s) or holder(s), left 1 cleanup step(s) for the human',
     ]);
     expect(pending()).toHaveLength(1);
     expect(pending()[0].payload).toEqual({ scope: 'neo', lastRunAt: now });

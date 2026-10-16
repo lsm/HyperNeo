@@ -1696,7 +1696,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     runNeoNightlyReorganize(job, deps.jobQueue, {
       now: () => Date.now(),
       lastHumanAt: () => routingLog.recent(1)[0]?.askedAt ?? null,
-      reorganize: reorganizeTopics,
+      reorganize: () => reorganizeTopics({ apply: 'contentless' }),
       log: (line) => neoService.logReorganize(line),
     })
   );
