@@ -108,16 +108,12 @@ describe('current human work guidance', () => {
         prompt: neoPrompt(projectId),
         snapshot: false,
       });
-      expect(query.tools).toEqual(neoCoordinatorNativeTools(projectId));
-      expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
+      expect(query.tools).toEqual(neoCoordinatorNativeTools());
+      expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools());
       expect(query.settingSources).toEqual([]);
       expect(query.model).toBe('fixture-model');
       expect(query.maxTurns).toBe(17);
-      expect(neoPrompt(projectId)).toContain(
-        projectId
-          ? 'Do not call AskUserQuestion during a consultation'
-          : 'Native question cards are not available to root Neo'
-      );
+      expect(neoPrompt(projectId)).not.toContain('AskUserQuestion');
     }
   );
 });

@@ -42,9 +42,9 @@ describe('direct human publication prompt', () => {
       const operations = { type: 'stdio' as const, command: 'fixture-operations' };
       expect(query.model).toBe('fixture-model');
       expect(query.maxTurns).toBe(17);
-      expect(query.tools).toEqual(neoCoordinatorNativeTools(projectId));
+      expect(query.tools).toEqual(neoCoordinatorNativeTools());
       expect(query.mcpServers).toEqual({ 'hyperneo-operations': operations });
-      expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
+      expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools());
       expect(query.settingSources).toEqual([]);
       expect(query.plugins).toEqual([]);
       expect(query.agents).toEqual({});
@@ -191,7 +191,7 @@ describe('direct human publication prompt', () => {
     expect(holder).toContain('context holder for project "research"');
     expect(holder).toContain('Use the consultationId from that request, not a work id');
     expect(holder).toContain('If a save is rejected as superseded, do not reread and retry it');
-    expect(holder).toContain('Do not call AskUserQuestion during a consultation');
+    expect(holder).not.toContain('AskUserQuestion');
     for (const prompt of [root, holder]) {
       expect(prompt).toContain(
         'Inspect existing execution resources through their discovered read operations'

@@ -142,9 +142,7 @@ describe('consultation runtime', () => {
       const sessionId = await service.open(projectId);
       expect(createSession).toHaveBeenCalledTimes(1);
       expect(db.getSession(sessionId)?.config.systemPrompt).toBe(neoPrompt(projectId));
-      expect(db.getSession(sessionId)?.config.allowedTools).toEqual(
-        neoCoordinatorAllowedTools(projectId)
-      );
+      expect(db.getSession(sessionId)?.config.allowedTools).toEqual(neoCoordinatorAllowedTools());
     }
   );
 
@@ -219,11 +217,11 @@ describe('consultation runtime', () => {
             prompt: expect.stringContaining('"title":"Plans"'),
           });
         expect(options.permissionMode).toBe('dontAsk');
-        expect(options.tools).toEqual(neoCoordinatorNativeTools(projectId));
+        expect(options.tools).toEqual(neoCoordinatorNativeTools());
         expect(options.plugins).toEqual([]);
         expect(options.settingSources).toEqual([]);
         expect(options.agents).toEqual({});
-        expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
+        expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools());
         const rebuilt = await new QueryOptionsBuilder(agent).build();
         expect(rebuilt.systemPrompt).toEqual(options.systemPrompt);
       }
