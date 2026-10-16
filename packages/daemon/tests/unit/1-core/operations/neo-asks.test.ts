@@ -98,6 +98,8 @@ const opening = {
   doneSource: 'human',
 };
 
+const metLast = { cardLive: false, changes: { metAt: 2, removedAt: 1 } };
+
 describe('isNeoTurnAskReadable', () => {
   test('root reads any turn ask, a holder only its own project, anyone else none', () => {
     expect(isNeoTurnAskReadable({ kind: 'neo', projectId: null }, { projectId: 'club' })).toBe(
@@ -212,6 +214,60 @@ describe('neo.ask operations', () => {
       delivers: [],
     });
   }
+
+  test('removing the pending item left after a met one does not settle the ask; a later met tick does', async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const two = [
+        { text: 'Notice wording chosen', check: null },
+        { text: 'NOTICE file added', check: null },
+        { text: 'README links it', check: null },
+      ];
+      const askId = (
+        await invoke('neo.ask.open', { ...opening, doneWhen: undefined, doneItems: two })
+      ).value!.ask!.id;
+      const tick = (itemId: string) =>
+        invoke('neo.ask.tick', { askId, itemId, state: 'met', evidence: `${itemId} done` });
+      now += 1;
+      await tick('i1');
+      now += 1;
+      humanSays('Never mind, drop the NOTICE file.');
+      await invoke('neo.ask.edit', {
+        askId,
+        remove: ['i2'],
+        humanSaid: 'Never mind, drop the NOTICE file.',
+      });
+      now += 1;
+      await tick('i3');
+      expect(service.askRecords.get(askId)?.status).toBe('achieved');
+      const dropped = (
+        await invoke('neo.ask.open', {
+          ...opening,
+          requestKey: 'dropped',
+          doneWhen: undefined,
+          doneItems: two.slice(0, 2),
+        })
+      ).value!.ask!.id;
+      now += 1;
+      await invoke('neo.ask.tick', {
+        askId: dropped,
+        itemId: 'i1',
+        state: 'met',
+        evidence: 'chosen',
+      });
+      now += 1;
+      await invoke('neo.ask.edit', {
+        askId: dropped,
+        remove: ['i2'],
+        humanSaid: 'Never mind, drop the NOTICE file.',
+      });
+      expect(service.askRecords.get(dropped)?.doneItems?.[1]?.removed).toBe(true);
+      expect(service.askRecords.get(dropped)?.status).toBe('open');
+    } finally {
+      clock.mockRestore();
+    }
+  });
 
   test('an item records whether it is an answer or a state outcome, and an answer carries no check', async () => {
     const opened = await invoke('neo.ask.open', {
@@ -1934,10 +1990,16 @@ describe('neo.ask operations', () => {
     });
     const ask = { status: 'open', waitingItem: null } as unknown as NeoAsk;
     expect(
-      planNeoAskTickStatus({ ...ask, doneItems: [item('i1', 'reported'), item('i2', 'pending')] })
+      planNeoAskTickStatus(
+        { ...ask, doneItems: [item('i1', 'reported'), item('i2', 'pending')] },
+        metLast
+      )
     ).toEqual({ status: 'unchanged' });
     expect(
-      planNeoAskTickStatus({ ...ask, doneItems: [item('i1', 'reported'), item('i2', 'met')] })
+      planNeoAskTickStatus(
+        { ...ask, doneItems: [item('i1', 'reported'), item('i2', 'met')] },
+        metLast
+      )
     ).toEqual({ status: 'waiting', outcome: 'Confirm: i1', item: 'i1' });
   });
 
@@ -3903,16 +3965,14 @@ describe('planNeoAskTickStatus', () => {
       { status: 'unchanged' },
     ],
   ])('%s', (_label, overrides, plan) => {
-    expect(planNeoAskTickStatus({ ...ask, ...overrides }, { met: true, cardLive: false })).toEqual(
-      plan
-    );
+    expect(planNeoAskTickStatus({ ...ask, ...overrides }, metLast)).toEqual(plan);
   });
 
-  test('removing the last pending item never settles the ask achieved', () => {
+  test('a removal after the last met item never settles the ask achieved', () => {
     expect(
       planNeoAskTickStatus(
         { ...ask, doneItems: [item('i1', 'pending', true), item('i2', 'met')] },
-        { met: false, cardLive: false }
+        { cardLive: false, changes: { metAt: 1, removedAt: 2 } }
       )
     ).toEqual({ status: 'unchanged' });
   });

@@ -1314,7 +1314,7 @@ export class NeoService {
           true
         );
       const ticked = this.askRecords.get(ask.id);
-      if (ticked) this.writeAskStatus(ticked, true, publication.shortText);
+      if (ticked) this.writeAskStatus(ticked, publication.shortText);
     }
   }
 
@@ -2226,7 +2226,7 @@ export class NeoService {
     }
     this.forgetUnfollowedAskTopics();
     for (const ask of this.askRecords.listLive()) {
-      this.writeAskStatus(ask, false);
+      this.writeAskStatus(ask);
       this.followAskTopics(ask);
       try {
         this.runAskPackTicks(ask.id);
@@ -3247,7 +3247,7 @@ export class NeoService {
           );
     const ticked = this.askRecords.get(ask.id);
     if (ticked && neoAskReopensAfterClear(ticked)) this.askRecords.reopen(ticked);
-    else if (ticked) this.writeAskStatus(ticked, false);
+    else if (ticked) this.writeAskStatus(ticked);
     if (!this.db.getSession(ask.originSessionId)) return;
     await this.deliverToOrigin(
       ask.originSessionId,
@@ -3558,30 +3558,23 @@ export class NeoService {
   private writeAskTicks(ask: NeoAsk, ticks: readonly { id: string; evidence: string }[]): NeoAsk {
     const registry = this.checkRegistry();
     if (!registry.ok) return this.askRecords.get(ask.id) ?? ask;
-    const writes = ticks.flatMap((tick) => {
+    for (const tick of ticks) {
       const item = ask.doneItems?.find((item) => item.id === tick.id);
       const entry = item?.check ? registry.resolve(item.check) : null;
-      if (!item || (entry && !entry.ok)) return [];
+      if (!item || (entry && !entry.ok)) continue;
       const write = neoPackTickWrite(item, entry?.ok ? entry.value : null, tick.evidence);
-      if (!write) return [];
-      this.askRecords.tickItem(ask.id, write, Date.now(), item, write.state === 'met');
-      return [write];
-    });
+      if (write) this.askRecords.tickItem(ask.id, write, Date.now(), item, write.state === 'met');
+    }
     const ticked = ticks.length ? this.askRecords.get(ask.id) : null;
-    return ticked
-      ? this.writeAskStatus(
-          ticked,
-          writes.some((write) => write.state === 'met')
-        )
-      : ask;
+    return ticked ? this.writeAskStatus(ticked) : ask;
   }
 
-  writeAskStatus(ask: NeoAsk, met: boolean, outcome?: string): NeoAsk {
+  writeAskStatus(ask: NeoAsk, outcome?: string): NeoAsk {
     const cards = ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []);
     const plan = planNeoAskTickStatus(ask, {
-      met,
       cardLive: neoAskLiveOutcomeCards(ask, cards).length > 0,
       outcome,
+      changes: this.askRecords.itemChanges(ask.id),
     });
     const written = writeNeoAskTickStatus(this.askRecords, ask, plan);
     if (plan.status === 'achieved' && written)

@@ -1306,7 +1306,7 @@ export function planNeoAskEdit(
 
 export function planNeoAskTickStatus(
   ask: NeoAsk,
-  settle: { met: boolean; cardLive: boolean; outcome?: string } = { met: false, cardLive: false }
+  settle: { cardLive: boolean; outcome?: string; changes: { metAt: number; removedAt: number } }
 ):
   | { status: 'achieved'; outcome: string; evidence: string }
   | { status: 'waiting'; outcome: string; item: string }
@@ -1316,7 +1316,7 @@ export function planNeoAskTickStatus(
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
   const held = ask.status === 'waiting' && !ask.waitingItem;
   if (
-    settle.met &&
+    settle.changes.metAt > settle.changes.removedAt &&
     !held &&
     !settle.cardLive &&
     items.length &&
@@ -1460,10 +1460,7 @@ export function createNeoAskOperations(
     name: string,
     verb: string
   ) => NeoAsk | Rejection;
-  const replanAsk = (receipt: AskReceipt) => ({ ask: service.writeAskStatus(receipt.ask, false) });
-  const replanMetAsk = (receipt: AskReceipt) => ({
-    ask: service.writeAskStatus(receipt.ask, true),
-  });
+  const replanAsk = (receipt: AskReceipt) => ({ ask: service.writeAskStatus(receipt.ask) });
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -1786,7 +1783,7 @@ export function createNeoAskOperations(
       'ticked'
     )
     .pipe(requireNeoAskWritten, 'ticked', 'result:admission')
-    .pipe(replanMetAsk, 'admission', 'written')
+    .pipe(replanAsk, 'admission', 'written')
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
     .pipe(
       async (input: z.infer<typeof Tick>, receipt: AskReceipt, wakes: boolean) => {
@@ -1860,7 +1857,7 @@ export function createNeoAskOperations(
       'answered'
     )
     .pipe(requireNeoAskWritten, 'answered', 'result:admission')
-    .pipe(replanMetAsk, 'admission', 'written')
+    .pipe(replanAsk, 'admission', 'written')
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
     .endAsync('admission') as (
     input: z.infer<typeof Answer>,

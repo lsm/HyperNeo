@@ -166,6 +166,16 @@ export class NeoAskRepository {
     return row ? this.withWork([row])[0] : null;
   }
 
+  itemChanges(askId: string): { metAt: number; removedAt: number } {
+    return this.db
+      .prepare(
+        `SELECT COALESCE(MAX(CASE WHEN removed = 0 AND state = 'met' THEN updated_at END), 0) AS metAt,
+          COALESCE(MAX(CASE WHEN removed = 1 THEN updated_at END), 0) AS removedAt
+          FROM neo_ask_items WHERE ask_id = ?`
+      )
+      .get(askId) as { metAt: number; removedAt: number };
+  }
+
   forRequest(requestKey: string): NeoAsk | null {
     const row = this.db.prepare('SELECT id FROM neo_asks WHERE request_key = ?').get(requestKey) as
       | { id: string }
