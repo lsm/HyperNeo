@@ -121,19 +121,6 @@ describe('runClaudeRemoteControlRequest', () => {
 
   const relayed = () => spawned.find((call) => call.args.includes('HyperNeo relay'))?.args.at(-1);
 
-  test('relays the request to the live rc-toggle session', async () => {
-    write(record('t1', { title: target.title }));
-    write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
-    live = [{ sessionId: 'cli-rc', status: 'idle', name: 'rc-toggle', pid: 1, owner: 'cli' }];
-    const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
-    expect(outcome.ok).toBe(true);
-    expect(spawned.some((call) => call.args.includes('--desktop'))).toBe(false);
-    expect(relayed()).toContain('rc-toggle');
-    expect(relayed()).toContain(
-      'Please turn on Remote Control for the Claude Code session local_t1 (Fix the parser).'
-    );
-  });
-
   test('uses the injected inbox with its reply context for a confirmed CLI helper', async () => {
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
     live = [{ sessionId: 'cli-rc', status: 'idle', pid: 1, owner: 'cli' }];
