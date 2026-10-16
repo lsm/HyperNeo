@@ -1,3 +1,4 @@
+import { isRecord } from '../record.ts';
 import { getSdkResultOriginKind, type SDKMessage } from '@hyperneo/shared/sdk';
 
 export type LastMessageClassification =
@@ -75,8 +76,4 @@ export function isHollowTaskNotificationResult(message: SDKMessage): boolean {
   const outputTokens =
     isRecord(usage) && typeof usage.output_tokens === 'number' ? usage.output_tokens : 0;
   return inputTokens === 0 && outputTokens === 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
 }

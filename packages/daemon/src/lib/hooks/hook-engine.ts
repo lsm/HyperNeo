@@ -1,3 +1,4 @@
+import { isRecord } from '../record.ts';
 import type {
   WorkflowHook,
   WorkflowHookResult,
@@ -86,10 +87,6 @@ export interface HookEngineConfig {
   getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
   notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
   onHookStateUpdated?: (hookId: string, hookState: WorkflowHookStateSnapshot) => void;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 const log = new Logger('hook-engine');
