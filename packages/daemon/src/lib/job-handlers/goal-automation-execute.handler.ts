@@ -1,17 +1,38 @@
+import {
+  requireAutomationGoal,
+  requireActiveAutomationGoal,
+  requireAutomationScope,
+  requireAutomationEvidence,
+  requireEnabledAutomation,
+  requireAutomationThreshold,
+  requireNoActiveAutomationReview,
+  requireUnlockedAutomation,
+} from './goal-automation-execute-admission.ts';
+import type {
+  GoalAutomationExternalEventSnapshot,
+  GoalAutomationExecutePayload,
+  GoalAutomationExecuteResult,
+  AutomationGoal,
+  AutomationScope,
+  AutomationSkip,
+  AutomationFacts,
+} from './goal-automation-execute-admission.ts';
+export type {
+  GoalAutomationExternalEventSnapshot,
+  GoalAutomationExecutePayload,
+  GoalAutomationExecuteResult,
+} from './goal-automation-execute-admission.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { uniqueJobMatchPayload } from '../goals/automation-job-payload.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { EvidenceRef, GoalEvolutionAutomationTriggerKind, SpaceTask } from '@hyperneo/shared';
+import type { EvidenceRef, SpaceTask } from '@hyperneo/shared';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
 import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository.ts';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { EvolutionEpisodeService } from '../evolution/episode-service.ts';
-import {
-  readAutomationPolicyForScope,
-  readCompletedTaskThreshold,
-} from '../goals/automation-policy.ts';
+import { readAutomationPolicyForScope } from '../goals/automation-policy.ts';
 import {
   maxCompletedTaskTimestamp,
   maxEvidenceCursor,
@@ -29,29 +50,6 @@ function automationLockKey(payload: GoalAutomationExecutePayload): string {
   return `${payload.goalId}:${payload.scopeId}:${payload.triggerKind}`;
 }
 
-export interface GoalAutomationExternalEventSnapshot {
-  source: string;
-  topic: string;
-  summary: string;
-  externalUrl?: string;
-  payload: Record<string, unknown>;
-  occurredAt: number;
-  ingestedAt: number;
-}
-
-export interface GoalAutomationExecutePayload extends Record<string, unknown> {
-  goalId: string;
-  scopeId: string;
-  triggerKind: GoalEvolutionAutomationTriggerKind;
-  triggerKey: string;
-  reason: 'task_completed' | 'self_nag' | 'external_event';
-  taskId?: string;
-  scheduleId?: string;
-  externalEventId?: string;
-  externalEvent?: GoalAutomationExternalEventSnapshot;
-  activeReviewRequeueCount?: number;
-}
-
 export interface GoalAutomationExecuteDeps {
   db?: BunDatabase;
   goalRepo: SpaceGoalRepository;
@@ -63,24 +61,6 @@ export interface GoalAutomationExecuteDeps {
     publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
   };
   jobQueue?: Pick<JobQueueRepository, 'enqueueUniquePending'>;
-}
-
-export interface GoalAutomationExecuteResult extends Record<string, unknown> {
-  goalId: string;
-  scopeId: string;
-  episodeId: string | null;
-  reviewTaskId: string | null;
-  evidenceCount: number;
-  skipped: boolean;
-  skipReason?:
-    | 'missing_goal'
-    | 'inactive_goal'
-    | 'missing_scope'
-    | 'no_evidence'
-    | 'below_threshold'
-    | 'active_review'
-    | 'disabled';
-  requeued?: boolean;
 }
 
 export async function handleGoalAutomationExecute(
@@ -207,32 +187,6 @@ export async function handleGoalAutomationExecute(
   }
 }
 
-type AutomationGoal = NonNullable<ReturnType<SpaceGoalRepository['getById']>>;
-type AutomationScope = NonNullable<ReturnType<EvolutionRepository['getScope']>>;
-type AutomationSkip = {
-  skipReason: NonNullable<GoalAutomationExecuteResult['skipReason']>;
-  evidenceCount?: number;
-};
-type AutomationFacts = ReturnType<typeof readAutomationEvidence>;
-type AutomationGate<T> = { value: T } | { reason: AutomationSkip };
-
-export function requireAutomationGoal(goal: AutomationGoal | null): AutomationGate<AutomationGoal> {
-  return goal ? { value: goal } : { reason: { skipReason: 'missing_goal' } };
-}
-
-export function requireActiveAutomationGoal(goal: AutomationGoal): AutomationGate<AutomationGoal> {
-  return goal.status === 'active' ? { value: goal } : { reason: { skipReason: 'inactive_goal' } };
-}
-
-export function requireAutomationScope(
-  scope: AutomationScope | null,
-  goal: AutomationGoal
-): AutomationGate<AutomationScope> {
-  return scope && scope.spaceGoalId === goal.id && scope.spaceId === goal.spaceId
-    ? { value: scope }
-    : { reason: { skipReason: 'missing_scope' } };
-}
-
 function readAutomationEvidence(
   deps: GoalAutomationExecuteDeps,
   payload: GoalAutomationExecutePayload,
@@ -260,57 +214,6 @@ function readAutomationEvidence(
   const evidence = dueEvidence.slice(0, maxEvidence);
   const triggerEvidence = findTriggerEvidence(dueEvidence, payload);
   return { goal, scope, policy, maxEvidence, dueEvidence, evidence, triggerEvidence };
-}
-
-export function requireAutomationEvidence(facts: AutomationFacts): AutomationGate<AutomationFacts> {
-  return facts.evidence.length ? { value: facts } : { reason: { skipReason: 'no_evidence' } };
-}
-
-export function requireEnabledAutomation(
-  facts: AutomationFacts,
-  payload: GoalAutomationExecutePayload
-): AutomationGate<AutomationFacts> {
-  return payload.triggerKind === 'completed_task_threshold' &&
-    facts.goal.type !== 'recurring' &&
-    facts.policy.completedTaskThreshold === undefined
-    ? { reason: { skipReason: 'disabled' } }
-    : { value: facts };
-}
-
-export function requireAutomationThreshold(
-  facts: AutomationFacts,
-  payload: GoalAutomationExecutePayload
-): AutomationGate<AutomationFacts> {
-  if (payload.triggerKind !== 'completed_task_threshold') return { value: facts };
-  const threshold = readCompletedTaskThreshold(facts.policy);
-  const completedTaskIds = new Set(
-    facts.dueEvidence
-      .filter((item) => item.kind === 'task_result' && item.sourceId !== null)
-      .map((item) => item.sourceId as string)
-  );
-  return !threshold || completedTaskIds.size < threshold
-    ? { reason: { skipReason: 'below_threshold', evidenceCount: facts.dueEvidence.length } }
-    : { value: facts };
-}
-
-export function requireNoActiveAutomationReview(
-  facts: AutomationFacts,
-  payload: GoalAutomationExecutePayload,
-  activeReview: SpaceTask | null
-): AutomationGate<AutomationFacts> {
-  return payload.triggerKind === 'completed_task_threshold' && activeReview
-    ? { reason: { skipReason: 'active_review', evidenceCount: facts.dueEvidence.length } }
-    : { value: facts };
-}
-
-export function requireUnlockedAutomation(
-  facts: AutomationFacts,
-  payload: GoalAutomationExecutePayload,
-  locked: boolean
-): AutomationGate<AutomationFacts> {
-  return payload.triggerKind === 'completed_task_threshold' && locked
-    ? { reason: { skipReason: 'active_review', evidenceCount: facts.dueEvidence.length } }
-    : { value: facts };
 }
 
 function newestCursor<
