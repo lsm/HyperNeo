@@ -48,10 +48,14 @@ function StepRow({
   scene,
   done,
   control,
+  todos,
+  cards,
 }: {
   scene: NeoScene;
   done: boolean;
   control?: ComponentChildren;
+  todos: readonly NeoAskItem[];
+  cards?: NeoSceneCards;
 }) {
   const glyph = stepGlyph(scene, done);
   const title = scene.receipt.kind === 'work' ? scene.receipt.title : scene.label;
@@ -64,12 +68,18 @@ function StepRow({
       <span aria-hidden="true" class={`w-3 shrink-0 text-center text-xs ${glyph.color}`}>
         {glyph.mark}
       </span>
-      <span class="min-w-0 flex-1">
+      <div class="min-w-0 flex-1">
         <span class="line-clamp-2 break-words" title={title}>
           {title}
         </span>
         <span class="block break-words text-xs text-fg-faint">{scene.label}</span>
-      </span>
+        <Checklist
+          items={todos}
+          step={{ id: scene.ref.id, title }}
+          label={`做完 = ${title}`}
+          cards={cards}
+        />
+      </div>
       {control}
     </div>
   );
@@ -156,7 +166,17 @@ const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> =
   pending: { mark: '○', color: 'text-fg-faint' },
 };
 
-function ItemRow({ item, waitingForPr }: { item: NeoAskItem; waitingForPr?: boolean }) {
+function ItemRow({
+  item,
+  waitingForPr,
+  goal,
+  progress,
+}: {
+  item: NeoAskItem;
+  waitingForPr?: boolean;
+  goal?: boolean;
+  progress?: string;
+}) {
   const glyph = itemGlyphs[item.state];
   const tags = [
     item.removed && 'removed',
@@ -176,10 +196,12 @@ function ItemRow({ item, waitingForPr }: { item: NeoAskItem; waitingForPr?: bool
         <span
           class={`break-words ${item.removed ? 'text-fg-faint line-through' : item.state === 'met' ? 'text-fg-muted' : 'text-fg'}`}
         >
+          {goal && <span class="text-fg-faint">做完 = </span>}
           {item.text}
         </span>
         {tags.length > 0 && <span class="ml-2 text-xs text-fg-faint">{tags.join(' · ')}</span>}
         {waitingForPr && <span class="block text-xs text-fg-faint">等 PR 开出来</span>}
+        {progress && <span class="block text-xs text-fg-faint">{progress}</span>}
         {item.removed && item.removedReason && (
           <span class="block break-words text-xs text-fg-faint">{item.removedReason}</span>
         )}
@@ -197,17 +219,27 @@ function Checklist({
   items,
   label,
   cards,
+  step,
 }: {
   items: readonly NeoAskItem[];
   label: string;
   cards?: NeoSceneCards;
+  step?: { id: string; title: string };
 }) {
+  const listed = step ? items.filter((item) => item.deliveredBy === step.id) : items;
+  if (!listed.length) return null;
   return (
     <ul aria-label={label} class="space-y-1.5">
-      {items.map((item) => (
+      {listed.map((item) => (
         <ItemRow
           key={item.id}
           item={item}
+          goal={!!step}
+          progress={
+            item.state !== 'met' && item.check === 'coding.pr_merged'
+              ? cards?.get(item.deliveredBy ?? '')?.pr?.label
+              : undefined
+          }
           waitingForPr={
             !item.removed &&
             item.state !== 'met' &&
@@ -227,13 +259,20 @@ function ActionRow({
   onReply,
   onAnswer,
   disabled,
+  outcomes,
+  cards,
 }: {
   action: NeoAskItemAction;
   reply: NeoQuote;
   onReply?: (quote: NeoQuote) => void;
   onAnswer?: (itemId: string, choice: string) => void;
   disabled?: boolean;
+  outcomes: readonly NeoAskItem[];
+  cards?: NeoSceneCards;
 }) {
+  const todos = (step: { id: string; title: string }) => (
+    <Checklist items={outcomes} label={`做完 = ${step.title}`} step={step} cards={cards} />
+  );
   return (
     <li id={reply.anchor} data-ask-item={action.itemId} class="min-w-0 text-sm">
       <p class="break-words font-medium text-fg">{action.question}</p>
@@ -242,10 +281,12 @@ function ActionRow({
           {action.steps.map((step) => (
             <li key={step.id} data-question-step={step.id} class="break-words">
               {step.title}
+              {todos(step)}
             </li>
           ))}
         </ol>
       )}
+      {action.steps?.length === 1 && todos(action.steps[0])}
       {action.options.length > 0 ? (
         <div class="mt-2 flex flex-wrap justify-end gap-2">
           {action.options.map((option, index) => (
@@ -331,6 +372,10 @@ export function NeoAskCard({
       !questioned.has(scene.ref.id)
   );
   const outcomes = view.items.filter((item) => !isNeoAskQuestionItem(item));
+  const visibleSteps = new Set([...scenes.map((scene) => scene.ref.id), ...questioned]);
+  const unassigned = outcomes.filter(
+    (item) => !item.deliveredBy || !visibleSteps.has(item.deliveredBy)
+  );
   const questions = view.items.filter((item) => isNeoAskQuestionItem(item) && item.state === 'met');
   const openControl = (scene: NeoScene) => {
     const target = neoAskOpenTarget({ ...view, scenes: [scene] }, cards);
@@ -401,21 +446,13 @@ export function NeoAskCard({
                 onReply={onReply}
                 onAnswer={onAnswer}
                 disabled={disabled}
+                outcomes={outcomes}
+                cards={cards}
               />
             ))}
           </ul>
         </div>
       )}
-      <div class="mt-3 text-sm text-fg-muted" hidden={summarized}>
-        <p class="text-xs font-medium text-fg-faint">Todos</p>
-        {outcomes.length > 0 ? (
-          <div class="mt-1.5">
-            <Checklist items={outcomes} label="Todos" cards={cards} />
-          </div>
-        ) : (
-          <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
-        )}
-      </div>
       {scenes.length > 0 && (
         <div class="mt-3 space-y-2 border-l-2 border-line pl-3">
           {scenes.map((scene) => (
@@ -424,8 +461,20 @@ export function NeoAskCard({
               scene={scene}
               done={view.doneIds.has(scene.ref.id)}
               control={openControl(scene)}
+              todos={outcomes}
+              cards={cards}
             />
           ))}
+        </div>
+      )}
+      {!summarized && (unassigned.length > 0 || !view.items.length) && (
+        <div class="mt-3 text-sm text-fg-muted">
+          <p class="text-xs font-medium text-fg-faint">还要</p>
+          {unassigned.length > 0 ? (
+            <Checklist items={unassigned} label="还要" cards={cards} />
+          ) : (
+            <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
+          )}
         </div>
       )}
       {view.sessions.length > 0 && (
