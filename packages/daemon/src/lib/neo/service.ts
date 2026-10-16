@@ -263,7 +263,6 @@ import {
   neoTriggerNote,
   neoTriggerRetryStatuses,
   neoTriggerWatchSessions,
-  neoTriggerWorkProblem,
   noteNeoAskTrigger,
   planNeoSettledReports,
   planNeoTriggerRetry,
@@ -3369,7 +3368,7 @@ export class NeoService {
   }
 
   async syncConsultation(id: string): Promise<void> {
-    let item = this.consultations.expire(id);
+    let item = this.consultations.get(id);
     if (!item) return;
     const messages = this.db.getSDKMessageRepo();
     const requestId = `neo-consult:${id}:request`;
@@ -3977,27 +3976,16 @@ export class NeoService {
     });
   }
 
-  triggerWorkProblem(
-    caller: OperationCaller,
-    projectId?: string
-  ): { ok: false; reason: string } | null {
-    if (!caller.sessionId || !caller.neoTurn) return null;
-    const input = { sessionId: caller.sessionId, messageId: caller.neoTurn.messageId };
-    const trigger = this.inputTrigger(input);
-    const consulted =
-      !!trigger &&
-      !!projectId &&
-      this.consultations.list(projectId).some(
-        (item) =>
-          item.status === 'reported' &&
-          !!item.originMessageId &&
-          this.inputTrigger({
-            sessionId: item.originSessionId,
-            messageId: item.originMessageId,
-          }) === trigger
-      );
-    const reason = neoTriggerWorkProblem(trigger, consulted);
-    return reason ? { ok: false, reason } : null;
+  consultationFor(origin: NeoAskOrigin, projectId: string): NeoConsultation | null {
+    const ask = this.resolveAskOrigin(origin) ?? origin;
+    return (
+      this.consultations.startedBy(origin.sessionId, projectId).find((item) => {
+        if (!item.originMessageId) return false;
+        const input = { sessionId: item.originSessionId, messageId: item.originMessageId };
+        const previous = this.resolveAskOrigin(input) ?? input;
+        return previous.sessionId === ask.sessionId && previous.messageId === ask.messageId;
+      }) ?? null
+    );
   }
 
   async preemptForHumanMessage(sessionId: string): Promise<void> {

@@ -2,10 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import type { NeoConsultation } from '@hyperneo/shared/types/neo-context';
 import { neoConsultationReplyContent } from '../../../../src/lib/neo/consultation-reply-content.ts';
-import {
-  CONSULTATION_EXPIRED,
-  CONSULTATION_STOPPED,
-} from '../../../../src/lib/neo/consultation-policy.ts';
+import { CONSULTATION_STOPPED } from '../../../../src/lib/neo/consultation-policy.ts';
 
 const item: NeoConsultation = Object.freeze({
   id: 'consult-A',
@@ -94,19 +91,17 @@ describe('Neo consultation reply content', () => {
   });
 
   test('a reported answer mentioning a timeout is not reclassified as failure', () => {
-    const { payload } = readReply({ ...item, answer: CONSULTATION_EXPIRED });
+    const { payload } = readReply({ ...item, answer: 'A legacy timeout reason' });
     expect(payload.status).toBe('reported');
     expect(payload.replyGuidance).toContain('The holder answered');
     expect(payload.replyGuidance).not.toContain('timed out');
   });
 
-  test('a genuine timeout receives timeout guidance, not a denial', () => {
-    const { payload } = readReply({ ...item, status: 'failed', answer: CONSULTATION_EXPIRED });
+  test('a legacy timeout reason is readable without an active expiry policy', () => {
+    const { payload } = readReply({ ...item, status: 'failed', answer: 'A legacy timeout reason' });
     expect(payload.status).toBe('failed');
-    expect(payload.answer).toBe(CONSULTATION_EXPIRED);
-    expect(payload.replyGuidance).toContain('This context check timed out.');
-    expect(payload.replyGuidance).not.toContain('did not time out');
-    expect(payload.replyGuidance).toContain('Execution was not stopped or undone.');
+    expect(payload.answer).toBe('A legacy timeout reason');
+    expect(payload.replyGuidance).toContain('its recorded reason is below');
   });
 
   test('only the exact user-stop reason receives user-stop guidance', () => {
