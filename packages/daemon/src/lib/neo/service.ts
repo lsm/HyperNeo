@@ -2305,7 +2305,7 @@ export class NeoService {
   private readonly relayCardPr = (superpipe({})('neo-card-pr-relay') as PipelineAPI)
     .input(['workId'])
     .pipe((workId: string) => this.repo.getWork(workId), 'workId', 'work')
-    .pipe((workId: string) => neoPackCardAttention(this.packs(), workId), 'workId', 'read')
+    .pipe((workId: string) => neoPackCardAttention(this.installedPacks(), workId), 'workId', 'read')
     .pipe(
       (workId: string, read: NeoPackCardAttention) => {
         if (!read.attention && !read.pending) this.cardPrRelays.clear(workId);
@@ -3649,7 +3649,7 @@ export class NeoService {
             this.continueBudget(work, Date.now()),
             {
               stalled: this.stalledWakes(work.id),
-              facts: neoPackCardFacts(this.packs(), work.id, options.stale ?? false),
+              facts: neoPackCardFacts(this.installedPacks(), work.id, options.stale ?? false),
               ask: current.ask,
               pack: this.askPackFragment(current.ask),
               cards: current.ask
