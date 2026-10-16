@@ -123,9 +123,7 @@ export function planNeoProjectCleanup(
       const named = { projectId: project.id, title: project.title };
       if (isLive(project)) return [];
       if (scope.archive?.has(project.id))
-        return project.holder && idle(project.holder)
-          ? [{ action: 'archive', ...named, sessionId: project.holder }]
-          : [];
+        return project.holder ? [{ action: 'archive', ...named, sessionId: project.holder }] : [];
       if (repositories(project).length || isElsewhere(project, scope.machine)) return [];
       if (isEmpty(project))
         return project.aliases.some((alias) => scope.mirrored.has(alias))

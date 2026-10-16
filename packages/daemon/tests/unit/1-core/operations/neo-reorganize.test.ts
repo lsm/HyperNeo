@@ -312,7 +312,7 @@ describe('neo.projects.reorganize', () => {
     expect(logged).toContain('neo reorganize: no project cleanup, the places could not be read');
   });
 
-  test('a holder mid-turn is left out of the plan until a later pass', async () => {
+  test('a merged holder mid-turn waits for a later pass; a human-named archive is still planned', async () => {
     const { deps } = runtime([], {}, ['holder:busy', 'retired:busy']);
     deps.retiredHolders = () => [
       { projectId: 'old', title: 'Old', sessionId: 'retired:busy', spoke: true },
@@ -339,6 +339,7 @@ describe('neo.projects.reorganize', () => {
     expect(await invoke(deps, neoCaller, { archive: ['named'] })).toMatchObject({
       ok: true,
       cleanupPlanned: [
+        { action: 'archive', projectId: 'named', title: 'Named', sessionId: 'holder:busy' },
         { action: 'archive', projectId: 'idle', title: 'Idle', sessionId: 'retired:idle' },
       ],
     });
