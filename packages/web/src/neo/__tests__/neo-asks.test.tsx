@@ -227,7 +227,7 @@ describe('NeoAskCard', () => {
         {
           key: 'local',
           title: 'Review the docs',
-          adapter: 'hyperneo',
+          adapter: 'hyperneo-sessions',
           status: 'failed',
           kind: 'failed',
           open: { link: '/session/s1', remoteLink: null, sessionId: 's1', daemon: null },

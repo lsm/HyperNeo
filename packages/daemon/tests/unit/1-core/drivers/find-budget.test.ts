@@ -13,9 +13,9 @@ function place(name: string, titles: string[]): PlaceGroup {
     lastActivityAt: titles.length,
     openCount: titles.length,
     archivedCount: 0,
-    adapters: ['hyperneo'],
+    adapters: ['hyperneo-sessions'],
     work: titles.map((title, index) => ({
-      ref: { adapter: 'hyperneo', id: `${name}-${index}` },
+      ref: { adapter: 'hyperneo-sessions', id: `${name}-${index}` },
       title,
       place: where,
       status: 'running',

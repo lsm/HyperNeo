@@ -2,9 +2,9 @@ import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
-  createHyperneoAdapter,
-  type HyperneoSessionControl,
-} from '../../../../src/lib/drivers/hyperneo-adapter';
+  createHyperNeoSessionsAdapter,
+  type HyperNeoSessionsControl,
+} from '../../../../src/lib/drivers/hyperneo-sessions-adapter';
 import { ModelUnavailableError } from '../../../../src/lib/session/session-lifecycle';
 import type { ArchiveAdmission } from '../../../../src/lib/drivers/types';
 import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
@@ -109,7 +109,7 @@ describe('hyperneo adapter send and status', () => {
   afterEach(() => db.close());
 
   function adapter(prepareExecution?: WorkExecutionPreparer) {
-    return createHyperneoAdapter({
+    return createHyperNeoSessionsAdapter({
       prepareExecution,
       db: () => db,
       machine: 'imac',
@@ -122,7 +122,7 @@ describe('hyperneo adapter send and status', () => {
     });
   }
 
-  const ref = (id: string) => ({ adapter: 'hyperneo', id });
+  const ref = (id: string) => ({ adapter: 'hyperneo-sessions', id });
 
   test('creates the native session in the prepared directory without another worktree choice', async () => {
     const driver = adapter(async () => ({
@@ -471,9 +471,9 @@ describe('hyperneo adapter start and stop', () => {
 
   afterEach(() => db.close());
 
-  function adapter(overrides: Partial<HyperneoSessionControl> = {}) {
+  function adapter(overrides: Partial<HyperNeoSessionsControl> = {}) {
     const controls = control(db, events);
-    return createHyperneoAdapter({
+    return createHyperNeoSessionsAdapter({
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -502,7 +502,7 @@ describe('hyperneo adapter start and stop', () => {
     expect(result).toMatchObject({
       ok: true,
       value: {
-        ref: { adapter: 'hyperneo', id: 'new' },
+        ref: { adapter: 'hyperneo-sessions', id: 'new' },
         title: 'font size',
         status: 'queued',
         model: 'gpt-6-luna',
@@ -596,7 +596,7 @@ describe('hyperneo adapter start and stop', () => {
     db.exec(
       `UPDATE sessions SET processing_state = '{"status":"rate_limit_cooldown"}' WHERE id = 'idle'`
     );
-    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'idle' }, from)).toEqual({
+    expect(await adapter().stop?.({ adapter: 'hyperneo-sessions', id: 'idle' }, from)).toEqual({
       ok: true,
       value: { stopped: true },
     });
@@ -604,11 +604,11 @@ describe('hyperneo adapter start and stop', () => {
   });
 
   test('stop interrupts a running session and leaves an idle one alone', async () => {
-    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'busy' }, from)).toEqual({
+    expect(await adapter().stop?.({ adapter: 'hyperneo-sessions', id: 'busy' }, from)).toEqual({
       ok: true,
       value: { stopped: true },
     });
-    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'idle' }, from)).toEqual({
+    expect(await adapter().stop?.({ adapter: 'hyperneo-sessions', id: 'idle' }, from)).toEqual({
       ok: true,
       value: { stopped: false },
     });

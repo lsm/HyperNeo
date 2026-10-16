@@ -7,7 +7,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
-import { skipSpaceQuery } from './hyperneo-adapter.ts';
+import { skipSpaceQuery } from './hyperneo-sessions-adapter.ts';
 import { withChatEvidence } from './places.ts';
 import type {
   FindQuery,

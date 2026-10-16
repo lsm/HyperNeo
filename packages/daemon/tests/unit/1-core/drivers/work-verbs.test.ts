@@ -28,12 +28,12 @@ function summary(adapter: string, id: string): WorkSummary {
 let origin = 'chat';
 
 const hyperneo: WorkAdapter = {
-  id: 'hyperneo',
+  id: 'hyperneo-sessions',
   capabilities: ['find', 'start', 'send', 'status', 'stop'],
   find: () => [],
   start: async (request) => ({
     ok: true,
-    value: { ...summary('hyperneo', 's1'), title: request.title },
+    value: { ...summary('hyperneo-sessions', 's1'), title: request.title },
   }),
   send: async (ref, _message, context) =>
     ref.id === 'gone' || context.from !== origin
@@ -42,7 +42,7 @@ const hyperneo: WorkAdapter = {
   status: async (ref, since) => ({
     ok: true,
     value: {
-      ...summary('hyperneo', ref.id),
+      ...summary('hyperneo-sessions', ref.id),
       lastReply: since === undefined ? 'done' : `done since ${since}`,
     },
   }),
@@ -106,21 +106,28 @@ describe('work verb operations', () => {
 
   test('runs each verb on the adapter named by the ref', async () => {
     expect(
-      await call('work.send', { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi' })
+      await call('work.send', { ref: { adapter: 'hyperneo-sessions', id: 's1' }, message: 'hi' })
     ).toEqual({
       ok: true,
       value: { delivered: true },
     });
-    expect(await call('work.status', { ref: { adapter: 'hyperneo', id: 's1' } })).toMatchObject({
+    expect(
+      await call('work.status', { ref: { adapter: 'hyperneo-sessions', id: 's1' } })
+    ).toMatchObject({
       ok: true,
       value: { ref: { id: 's1' }, lastReply: 'done' },
     });
-    expect(await call('work.stop', { ref: { adapter: 'hyperneo', id: 's1' } })).toEqual({
+    expect(await call('work.stop', { ref: { adapter: 'hyperneo-sessions', id: 's1' } })).toEqual({
       ok: true,
       value: { stopped: true },
     });
     expect(
-      await call('work.start', { adapter: 'hyperneo', place, title: 'font size', message: 'go' })
+      await call('work.start', {
+        adapter: 'hyperneo-sessions',
+        place,
+        title: 'font size',
+        message: 'go',
+      })
     ).toMatchObject({ ok: true, value: { title: 'font size' } });
   });
 
@@ -175,7 +182,7 @@ describe('work verb operations', () => {
       supportsStartEffort: true,
       start: async (request) => {
         received.push(request);
-        return { ok: true, value: summary('hyperneo', 's1') };
+        return { ok: true, value: summary('hyperneo-sessions', 's1') };
       },
     };
     const preparation = {
@@ -213,7 +220,7 @@ describe('work verb operations', () => {
         supportsStartPreparation: support === 'remote' ? true : support,
         start: async () => {
           starts++;
-          return { ok: true, value: summary('hyperneo', 's1') };
+          return { ok: true, value: summary('hyperneo-sessions', 's1') };
         },
       };
       expect(
@@ -228,7 +235,7 @@ describe('work verb operations', () => {
           },
           async () => {
             forwards++;
-            return { ok: true, value: summary('hyperneo', 's1') };
+            return { ok: true, value: summary('hyperneo-sessions', 's1') };
           },
           undefined,
           [adapter]
@@ -284,7 +291,7 @@ describe('work verb operations', () => {
         supportsStartEffort,
         start: async () => {
           starts++;
-          return { ok: true, value: summary('hyperneo', 's1') };
+          return { ok: true, value: summary('hyperneo-sessions', 's1') };
         },
       };
       expect(
@@ -378,7 +385,7 @@ describe('work verb operations', () => {
       supportsStartEffort: true,
       start: async () => {
         starts++;
-        return { ok: true, value: summary('hyperneo', 's1') };
+        return { ok: true, value: summary('hyperneo-sessions', 's1') };
       },
     };
     for (const effort of [' ', 'x'.repeat(101), 42]) {
@@ -406,7 +413,7 @@ describe('work verb operations', () => {
     expect(
       await call(
         'work.send',
-        { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi' },
+        { ref: { adapter: 'hyperneo-sessions', id: 's1' }, message: 'hi' },
         undefined,
         { source: 'mcp', sessionId: 'neo:root' }
       )
@@ -418,7 +425,7 @@ describe('work verb operations', () => {
     const forwarded: unknown[] = [];
     await call(
       'work.send',
-      { ref: { adapter: 'hyperneo', daemon: 'laptop', id: 's9' }, message: 'hi' },
+      { ref: { adapter: 'hyperneo-sessions', daemon: 'laptop', id: 's9' }, message: 'hi' },
       async (_daemonId, _name, input) => {
         forwarded.push(input);
         return { ok: true, value: { delivered: true } };
@@ -427,13 +434,17 @@ describe('work verb operations', () => {
     );
     expect(forwarded).toEqual([
       {
-        ref: { adapter: 'hyperneo', id: 's9' },
+        ref: { adapter: 'hyperneo-sessions', id: 's9' },
         message: 'hi',
         from: 'daemon:imac::session:neo%3Aroot',
       },
     ]);
     origin = 'session:neo%3Aroot';
-    const relayed = { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi', from: origin };
+    const relayed = {
+      ref: { adapter: 'hyperneo-sessions', id: 's1' },
+      message: 'hi',
+      from: origin,
+    };
     expect(await call('work.send', relayed)).toEqual({ ok: true, value: { delivered: true } });
     origin = 'chat';
     expect(await call('work.send', { ...relayed, from: 'not an address' })).toEqual({
@@ -450,7 +461,7 @@ describe('work verb operations', () => {
 
   test('passes the adapter rejection through', async () => {
     expect(
-      await call('work.send', { ref: { adapter: 'hyperneo', id: 'gone' }, message: 'hi' })
+      await call('work.send', { ref: { adapter: 'hyperneo-sessions', id: 'gone' }, message: 'hi' })
     ).toEqual({ ok: false, reason: 'not_open', detail: 'archived' });
   });
 
@@ -464,7 +475,7 @@ describe('work verb operations', () => {
     expect(await call('work.adapters', {})).toEqual({
       ok: true,
       value: [
-        { id: 'hyperneo', capabilities: ['find', 'start', 'send', 'status', 'stop'] },
+        { id: 'hyperneo-sessions', capabilities: ['find', 'start', 'send', 'status', 'stop'] },
         { id: 'claude-desktop', capabilities: ['find', 'send'] },
       ],
     });
@@ -502,7 +513,7 @@ describe('work verb operations', () => {
               exchangeCut: false,
             }
           : { receipt, state };
-      const ref = { adapter: 'hyperneo', id: 's1' };
+      const ref = { adapter: 'hyperneo-sessions', id: 's1' };
       const result = {
         ok: true as const,
         value: {
@@ -550,12 +561,12 @@ describe('work verb operations', () => {
   test('receipt queries keep legacy status replies explicitly without input evidence', async () => {
     const receipt = { executionId: 'execution', inputId: 'input' };
     for (const ref of [
-      { adapter: 'hyperneo', id: 's1' },
-      { adapter: 'hyperneo', id: 's1', daemon: 'laptop' },
+      { adapter: 'hyperneo-sessions', id: 's1' },
+      { adapter: 'hyperneo-sessions', id: 's1', daemon: 'laptop' },
     ]) {
       const result = await call('work.status', { ref, receipt }, async () => ({
         ok: true,
-        value: summary('hyperneo', 's1'),
+        value: summary('hyperneo-sessions', 's1'),
       }));
       expect(result).toMatchObject({ ok: true, value: { ref } });
       expect((result as { value: WorkDetail }).value.inputEvidence).toBeUndefined();
@@ -563,7 +574,7 @@ describe('work verb operations', () => {
   });
 
   test('rejects malformed receipt queries before calling a driver', async () => {
-    const ref = { adapter: 'hyperneo', id: 's1' };
+    const ref = { adapter: 'hyperneo-sessions', id: 's1' };
     for (const receipt of [null, {}, { executionId: 's1', inputId: '' }]) {
       expect(WorkStatusInputSchema.safeParse({ ref, receipt }).success).toBe(false);
       let calls = 0;
@@ -573,7 +584,7 @@ describe('work verb operations', () => {
             ...hyperneo,
             status: async () => {
               calls++;
-              return { ok: true, value: summary('hyperneo', 's1') };
+              return { ok: true, value: summary('hyperneo-sessions', 's1') };
             },
           },
         ])
@@ -591,13 +602,13 @@ describe('work verb operations', () => {
       { receipt: { ...receipt, inputId: '' }, state: 'unavailable' },
       { receipt, state: 'observed', exchange: Array(41).fill(entry), exchangeCut: true },
     ]) {
-      const result = { ok: true, value: { ...summary('hyperneo', 's1'), inputEvidence } };
+      const result = { ok: true, value: { ...summary('hyperneo-sessions', 's1'), inputEvidence } };
       expect(WorkStatusResultSchema.safeParse(result).success).toBe(false);
       expect(
         await call(
           'work.status',
           {
-            ref: { adapter: 'hyperneo', id: 's1', daemon: 'laptop' },
+            ref: { adapter: 'hyperneo-sessions', id: 's1', daemon: 'laptop' },
             receipt,
           },
           async () => result
@@ -608,7 +619,7 @@ describe('work verb operations', () => {
 
   test('passes since to the adapter or the daemon that owns the work', async () => {
     expect(
-      await call('work.status', { ref: { adapter: 'hyperneo', id: 's1' }, since: 5 })
+      await call('work.status', { ref: { adapter: 'hyperneo-sessions', id: 's1' }, since: 5 })
     ).toMatchObject({ ok: true, value: { lastReply: 'done since 5' } });
     const calls: unknown[] = [];
     await call(
@@ -668,7 +679,12 @@ describe('work verb operations', () => {
     const timeouts: unknown[] = [];
     const result = await call(
       'work.start',
-      { adapter: 'hyperneo', place: { ...place, daemon: 'laptop' }, title: 't', message: 'm' },
+      {
+        adapter: 'hyperneo-sessions',
+        place: { ...place, daemon: 'laptop' },
+        title: 't',
+        message: 'm',
+      },
       async (_daemonId, _name, _input, options) => {
         timeouts.push(options);
         throw new Error('Request timeout');
@@ -704,7 +720,7 @@ describe('work verb operations', () => {
       forwarded++;
       return { ok: true, value: { stopped: true } };
     };
-    const ref = { adapter: 'space', daemon: 'laptop', id: 't1' };
+    const ref = { adapter: 'hyperneo-spaces', daemon: 'laptop', id: 't1' };
     expect(
       await call('work.stop', { ref }, invoke, {
         source: 'mcp',

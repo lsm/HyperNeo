@@ -25,9 +25,9 @@ const worktree = {
 
 describe('localCodingSessionId', () => {
   test('admits only a local HyperNeo identity for local Git evidence', () => {
-    expect(localCodingSessionId({ adapter: 'hyperneo', id: 'same-id' })).toBe('same-id');
+    expect(localCodingSessionId({ adapter: 'hyperneo-sessions', id: 'same-id' })).toBe('same-id');
     expect(
-      localCodingSessionId({ adapter: 'hyperneo', id: 'same-id', daemon: 'other-host' })
+      localCodingSessionId({ adapter: 'hyperneo-sessions', id: 'same-id', daemon: 'other-host' })
     ).toBeNull();
     expect(localCodingSessionId({ adapter: 'codex-desktop', id: 'same-id' })).toBeNull();
     expect(localCodingSessionId(null)).toBeNull();
@@ -73,7 +73,7 @@ describe('localCodingExecutionDirectory', () => {
       localCodingExecutionDirectory({ ...ref, daemon: 'remote' }, reply(detail), 'local')
     ).toBeNull();
     expect(
-      localCodingExecutionDirectory({ ...ref, adapter: 'space' }, reply(detail), 'local')
+      localCodingExecutionDirectory({ ...ref, adapter: 'hyperneo-spaces' }, reply(detail), 'local')
     ).toBeNull();
     expect(localCodingExecutionDirectory(null, reply(detail), 'local')).toBeNull();
     expect(localCodingExecutionDirectory(ref, null, 'local')).toBeNull();

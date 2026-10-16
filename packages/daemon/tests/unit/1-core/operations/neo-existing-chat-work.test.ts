@@ -244,7 +244,7 @@ describe('Neo existing chat work', () => {
     expect(reply.value.ok).toBe(true);
     expect(service.driverTargets.get(reply.value.work.id)).toEqual({
       verb: 'send',
-      ref: { adapter: 'space', id: 'agent:manager-a' },
+      ref: { adapter: 'hyperneo-spaces', id: 'agent:manager-a' },
     });
   });
 

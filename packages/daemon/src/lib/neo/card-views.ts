@@ -167,7 +167,7 @@ export function neoCardOpenTarget(
 ): NeoCardOpenTarget {
   const link = neoCardSessionLink(driver);
   const local =
-    driver?.adapter === 'hyperneo' && !driver.daemon
+    driver?.adapter === 'hyperneo-sessions' && !driver.daemon
       ? link?.match(/^\/session\/([A-Za-z0-9-]+)$/)?.[1]
       : undefined;
   return {
@@ -187,7 +187,7 @@ export function neoSessionOpenTarget(session: {
   return {
     link: neoCardSessionLink({ link: session.link ?? null, daemon }),
     remoteLink: session.remoteLink ?? null,
-    sessionId: session.ref.adapter === 'hyperneo' && !daemon ? session.ref.id : null,
+    sessionId: session.ref.adapter === 'hyperneo-sessions' && !daemon ? session.ref.id : null,
     daemon,
   };
 }

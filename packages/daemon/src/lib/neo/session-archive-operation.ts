@@ -49,7 +49,7 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
       targets.readRef(work.id) ??
       (target && 'ref' in target ? target.ref : null) ??
       (!target && (work.sessionId || work.targetSessionId)
-        ? { adapter: 'hyperneo', id: (work.sessionId || work.targetSessionId)! }
+        ? { adapter: 'hyperneo-sessions', id: (work.sessionId || work.targetSessionId)! }
         : null);
     return held && neoWorkerRefKey(held) === neoWorkerRefKey(ref);
   });

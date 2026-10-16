@@ -6,7 +6,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { AcpClient } from '../acp/acp-client.ts';
 import { buildAcpSafeEnv } from '../acp/acp-command.ts';
 import { isTempCwd } from './claude-feed.ts';
-import { skipSpaceQuery } from './hyperneo-adapter.ts';
+import { skipSpaceQuery } from './hyperneo-sessions-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
 
 const SESSIONS_PER_PLACE = 20;

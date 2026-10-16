@@ -3,11 +3,11 @@ import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import {
-  hyperneoWorkStatus,
-  readHyperneoInputs,
-  readHyperneoExchange,
-  readHyperneoLastResult,
-} from './hyperneo-adapter.ts';
+  hyperNeoSessionsWorkStatus,
+  readHyperNeoSessionsInputs,
+  readHyperNeoSessionsExchange,
+  readHyperNeoSessionsLastResult,
+} from './hyperneo-sessions-adapter.ts';
 import { withExchange, workEntryTime } from './work-messages.ts';
 import { readSpaceInputEvidence } from './space-input-evidence.ts';
 import { withChatEvidence } from './places.ts';
@@ -32,7 +32,7 @@ const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approve
 const TASKS_PER_SPACE = 20;
 const AGENT_REF = 'agent:';
 
-export interface SpacePlaceRow {
+export interface HyperNeoSpacesPlaceRow {
   id: string;
   name: string;
   folder: string;
@@ -42,7 +42,7 @@ export interface SpacePlaceRow {
   lastActiveAt: number;
 }
 
-export interface SpaceTaskRow {
+export interface HyperNeoSpacesTaskRow {
   id: string;
   spaceId: string;
   taskNumber: number;
@@ -51,7 +51,7 @@ export interface SpaceTaskRow {
   updatedAt: number;
 }
 
-export interface SpaceTaskDetailRow extends SpaceTaskRow {
+export interface HyperNeoSpacesTaskDetailRow extends HyperNeoSpacesTaskRow {
   spaceName: string;
   completedAt: number | null;
   result: string | null;
@@ -59,7 +59,7 @@ export interface SpaceTaskDetailRow extends SpaceTaskRow {
   blockReason: string | null;
 }
 
-export interface SpaceAgentRow {
+export interface HyperNeoSpacesAgentRow {
   id: string;
   spaceId: string;
   handle: string;
@@ -70,13 +70,13 @@ export interface SpaceAgentRow {
   processing: string | null;
 }
 
-export interface SpaceTaskNode {
+export interface HyperNeoSpacesTaskNode {
   agentName: string;
   workflowNodeId: string;
   agentSessionId: string | null;
 }
 
-export interface SpaceTaskControl {
+export interface HyperNeoSpacesTaskControl {
   create(
     spaceId: string,
     title: string,
@@ -89,22 +89,22 @@ export interface SpaceTaskControl {
   ): Promise<{ cancelled: true } | { reason: string }>;
   message(
     taskId: string,
-    node: SpaceTaskNode,
+    node: HyperNeoSpacesTaskNode,
     message: string,
     fromHuman: boolean
   ): Promise<WorkDelivery | { reason: string }>;
   messageAgent(
-    agent: Pick<SpaceAgentRow, 'id' | 'spaceId'>,
+    agent: Pick<HyperNeoSpacesAgentRow, 'id' | 'spaceId'>,
     message: string,
     context: WorkCallContext
   ): Promise<{ accepted: true } | { reason: string }>;
 }
 
-export interface SpaceAdapterDeps {
+export interface HyperNeoSpacesAdapterDeps {
   db: () => BunDatabase;
   machine: string;
   searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
-  tasks: SpaceTaskControl;
+  tasks: HyperNeoSpacesTaskControl;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -117,7 +117,7 @@ export function spaceTaskWorkStatus(status: string): WorkStatus {
   return 'queued';
 }
 
-export function readSpacePlaces(db: BunDatabase): SpacePlaceRow[] {
+export function readSpacePlaces(db: BunDatabase): HyperNeoSpacesPlaceRow[] {
   return db
     .prepare(
       `SELECT s.id, s.name, s.workspace_path AS folder,
@@ -127,7 +127,7 @@ export function readSpacePlaces(db: BunDatabase): SpacePlaceRow[] {
          MAX(s.updated_at, COALESCE((SELECT MAX(t.updated_at) FROM space_tasks t WHERE t.space_id = s.id), 0)) AS lastActiveAt
          FROM spaces s`
     )
-    .all() as SpacePlaceRow[];
+    .all() as HyperNeoSpacesPlaceRow[];
 }
 
 export function readSpaceTasks(
@@ -135,7 +135,7 @@ export function readSpaceTasks(
   includeClosed: boolean,
   text: string | undefined,
   matchedIds: ReadonlySet<string>
-): SpaceTaskRow[] {
+): HyperNeoSpacesTaskRow[] {
   const pattern = text ? `%${text.toLowerCase().replace(/[\\%_]/g, '\\$&')}%` : null;
   return db
     .prepare(
@@ -155,22 +155,26 @@ export function readSpaceTasks(
         WHERE rank <= ${TASKS_PER_SPACE}
        ORDER BY updatedAt DESC`
     )
-    .all(includeClosed ? 1 : 0, pattern, JSON.stringify([...matchedIds])) as SpaceTaskRow[];
+    .all(
+      includeClosed ? 1 : 0,
+      pattern,
+      JSON.stringify([...matchedIds])
+    ) as HyperNeoSpacesTaskRow[];
 }
 
 export function spaceAgentWorkStatus(
-  agent: Pick<SpaceAgentRow, 'status' | 'processing'>
+  agent: Pick<HyperNeoSpacesAgentRow, 'status' | 'processing'>
 ): WorkStatus {
   if (agent.status === 'archived' || agent.status === 'disabled') return 'stopped';
   if (agent.status === 'paused') return 'needs_you';
-  return hyperneoWorkStatus('active', agent.processing);
+  return hyperNeoSessionsWorkStatus('active', agent.processing);
 }
 
 export function readSpaceAgents(
   db: BunDatabase,
   includeClosed: boolean,
   id?: string
-): SpaceAgentRow[] {
+): HyperNeoSpacesAgentRow[] {
   const rows = db
     .prepare(
       `SELECT a.id, a.space_id AS spaceId, a.handle, a.display_name AS displayName, a.status,
@@ -182,7 +186,7 @@ export function readSpaceAgents(
 `
     )
     .all(includeClosed ? 1 : 0, id ?? null) as Array<
-    SpaceAgentRow & { sessionActiveAt: string | null }
+    HyperNeoSpacesAgentRow & { sessionActiveAt: string | null }
   >;
   return rows
     .map(({ sessionActiveAt, ...agent }) => {
@@ -194,9 +198,13 @@ export function readSpaceAgents(
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-function toAgentWork(agent: SpaceAgentRow, spaceName: string, machine: string): WorkSummary {
+function toAgentWork(
+  agent: HyperNeoSpacesAgentRow,
+  spaceName: string,
+  machine: string
+): WorkSummary {
   return {
-    ref: { adapter: 'space', id: `${AGENT_REF}${agent.id}` },
+    ref: { adapter: 'hyperneo-spaces', id: `${AGENT_REF}${agent.id}` },
     title: `@${agent.handle} ${agent.displayName}`,
     place: { machine, spaceId: agent.spaceId, name: spaceName },
     status: spaceAgentWorkStatus(agent),
@@ -206,12 +214,12 @@ function toAgentWork(agent: SpaceAgentRow, spaceName: string, machine: string): 
 }
 
 function toWork(
-  task: SpaceTaskRow,
-  space: Pick<SpacePlaceRow, 'id' | 'name'>,
+  task: HyperNeoSpacesTaskRow,
+  space: Pick<HyperNeoSpacesPlaceRow, 'id' | 'name'>,
   machine: string
 ): WorkSummary {
   return {
-    ref: { adapter: 'space', id: task.id },
+    ref: { adapter: 'hyperneo-spaces', id: task.id },
     title: `#${task.taskNumber} ${task.title}`,
     place: { machine, spaceId: space.id, name: space.name },
     status: spaceTaskWorkStatus(task.status),
@@ -221,12 +229,12 @@ function toWork(
 }
 
 export function buildSpaceGroups(
-  spaces: readonly SpacePlaceRow[],
-  tasks: readonly SpaceTaskRow[],
+  spaces: readonly HyperNeoSpacesPlaceRow[],
+  tasks: readonly HyperNeoSpacesTaskRow[],
   query: FindQuery,
-  deps: Pick<SpaceAdapterDeps, 'machine'>,
+  deps: Pick<HyperNeoSpacesAdapterDeps, 'machine'>,
   matched: ReadonlyMap<string, WorkChatMatch>,
-  agents: readonly SpaceAgentRow[] = []
+  agents: readonly HyperNeoSpacesAgentRow[] = []
 ): PlaceGroup[] {
   const text = query.text?.toLowerCase();
   return spaces
@@ -269,22 +277,22 @@ export function buildSpaceGroups(
           lastActivityAt: space.lastActiveAt,
           openCount: space.openCount,
           archivedCount: space.archivedCount,
-          adapters: ['space'],
+          adapters: ['hyperneo-spaces'],
           work,
         },
       ];
     });
 }
 
-export function loadSpacePlaces(deps: SpaceAdapterDeps): SpacePlaceRow[] {
+export function loadSpacePlaces(deps: HyperNeoSpacesAdapterDeps): HyperNeoSpacesPlaceRow[] {
   return readSpacePlaces(deps.db());
 }
 
 export function loadSpaceTasks(
   query: FindQuery,
-  deps: SpaceAdapterDeps,
+  deps: HyperNeoSpacesAdapterDeps,
   matched: ReadonlyMap<string, WorkChatMatch>
-): SpaceTaskRow[] {
+): HyperNeoSpacesTaskRow[] {
   return readSpaceTasks(deps.db(), query.includeClosed, query.text, new Set(matched.keys()));
 }
 
@@ -294,7 +302,10 @@ export function matchSpaceTasks(
   return matchChatsBy(chats, (chat) => chat.taskId ?? chat.sessionId);
 }
 
-export function loadSpaceAgents(query: FindQuery, deps: SpaceAdapterDeps): SpaceAgentRow[] {
+export function loadSpaceAgents(
+  query: FindQuery,
+  deps: HyperNeoSpacesAdapterDeps
+): HyperNeoSpacesAgentRow[] {
   return readSpaceAgents(deps.db(), query.includeClosed);
 }
 
@@ -307,7 +318,7 @@ const runSpaceFind = (superpipe({})('space-find-work') as PipelineAPI)
   .pipe(buildSpaceGroups, ['spaces', 'tasks', 'query', 'deps', 'matched', 'agents'], 'groups')
   .end('groups') as (
   query: FindQuery,
-  deps: SpaceAdapterDeps,
+  deps: HyperNeoSpacesAdapterDeps,
   chats: readonly WorkChatMatch[]
 ) => PlaceGroup[];
 
@@ -323,7 +334,7 @@ export function taskOperationRejection(value: unknown): string | null {
   return [record.reason, record.detail].filter((part) => typeof part === 'string').join(': ');
 }
 
-export function readSpaceTask(db: BunDatabase, id: string): SpaceTaskDetailRow | null {
+export function readSpaceTask(db: BunDatabase, id: string): HyperNeoSpacesTaskDetailRow | null {
   const row = db
     .prepare(
       `SELECT t.id, t.space_id AS spaceId, t.task_number AS taskNumber, t.title, t.status,
@@ -331,11 +342,11 @@ export function readSpaceTask(db: BunDatabase, id: string): SpaceTaskDetailRow |
          t.block_reason AS blockReason, s.name AS spaceName
          FROM space_tasks t JOIN spaces s ON s.id = t.space_id WHERE t.id = ?`
     )
-    .get(id) as SpaceTaskDetailRow | null | undefined;
+    .get(id) as HyperNeoSpacesTaskDetailRow | null | undefined;
   return row ?? null;
 }
 
-function describeTask(task: SpaceTaskDetailRow, machine: string): WorkDetail {
+function describeTask(task: HyperNeoSpacesTaskDetailRow, machine: string): WorkDetail {
   const work = toWork(task, { id: task.spaceId, name: task.spaceName }, machine);
   const lastReply = task.result ?? task.reportedSummary ?? task.blockReason;
   return lastReply
@@ -349,7 +360,10 @@ function describeTask(task: SpaceTaskDetailRow, machine: string): WorkDetail {
     : work;
 }
 
-export function requireSpaceTask(ref: WorkRef, deps: SpaceAdapterDeps): Gate<SpaceTaskDetailRow> {
+export function requireSpaceTask(
+  ref: WorkRef,
+  deps: HyperNeoSpacesAdapterDeps
+): Gate<HyperNeoSpacesTaskDetailRow> {
   const task = readSpaceTask(deps.db(), ref.id);
   return task ? { value: task } : { reason: reject('not_found', `No Space task ${ref.id}.`) };
 }
@@ -375,8 +389,8 @@ export function readSpaceStartReceipt(
 }
 
 export function reportSpaceTask(
-  task: SpaceTaskDetailRow,
-  deps: SpaceAdapterDeps
+  task: HyperNeoSpacesTaskDetailRow,
+  deps: HyperNeoSpacesAdapterDeps
 ): Result<WorkDetail> {
   const startReceipt = readSpaceStartReceipt(deps.db(), task.id);
   return {
@@ -398,7 +412,10 @@ function admitSpaceStartConfiguration(request: StartRequest): Gate<StartRequest>
     : { value: request };
 }
 
-export function requireTaskSpace(request: StartRequest, deps: SpaceAdapterDeps): Gate<string> {
+export function requireTaskSpace(
+  request: StartRequest,
+  deps: HyperNeoSpacesAdapterDeps
+): Gate<string> {
   const { place } = request;
   if (!place.spaceId)
     return { reason: reject('invalid_place', 'Name a Space to start a task in.') };
@@ -411,7 +428,7 @@ export async function createSpaceTask(
   spaceId: string,
   request: StartRequest,
   context: WorkCallContext,
-  deps: SpaceAdapterDeps
+  deps: HyperNeoSpacesAdapterDeps
 ): Promise<Result<WorkSummary>> {
   const created = await deps.tasks.create(spaceId, request.title, request.message, context.caller);
   if ('reason' in created) return reject('invalid_place', created.reason);
@@ -422,9 +439,9 @@ export async function createSpaceTask(
 }
 
 export async function cancelSpaceTask(
-  task: SpaceTaskDetailRow,
+  task: HyperNeoSpacesTaskDetailRow,
   context: WorkCallContext,
-  deps: SpaceAdapterDeps
+  deps: HyperNeoSpacesAdapterDeps
 ): Promise<Result<{ stopped: boolean }>> {
   const status = spaceTaskWorkStatus(task.status);
   if (task.status === 'draft' || status === 'done' || status === 'stopped') {
@@ -444,13 +461,13 @@ const runSpaceStart = (superpipe({})('space-start-work') as PipelineAPI)
   .endAsync('outcome') as (
   request: StartRequest,
   context: WorkCallContext,
-  deps: SpaceAdapterDeps
+  deps: HyperNeoSpacesAdapterDeps
 ) => Promise<Result<WorkSummary>>;
 
 export function requireTaskMessenger(
-  task: SpaceTaskDetailRow,
+  task: HyperNeoSpacesTaskDetailRow,
   context: WorkCallContext
-): Gate<SpaceTaskDetailRow> {
+): Gate<HyperNeoSpacesTaskDetailRow> {
   const { caller } = context;
   if (caller.source === 'mcp' && caller.role !== 'neo') {
     return {
@@ -473,10 +490,10 @@ export function spaceWorkRefForSession(db: BunDatabase, sessionId: string): Work
         WHERE n.agent_session_id = ?1`
     )
     .all(sessionId, AGENT_REF) as Array<{ id: string }>;
-  return rows.length === 1 ? { adapter: 'space', id: rows[0].id } : null;
+  return rows.length === 1 ? { adapter: 'hyperneo-spaces', id: rows[0].id } : null;
 }
 
-export function readActiveNode(db: BunDatabase, taskId: string): SpaceTaskNode | null {
+export function readActiveNode(db: BunDatabase, taskId: string): HyperNeoSpacesTaskNode | null {
   const row = db
     .prepare(
       `SELECT n.agent_name AS agentName, n.workflow_node_id AS workflowNodeId,
@@ -487,15 +504,15 @@ export function readActiveNode(db: BunDatabase, taskId: string): SpaceTaskNode |
         ORDER BY COALESCE(n.last_activity_at, n.updated_at) DESC
         LIMIT 1`
     )
-    .get(taskId) as SpaceTaskNode | null | undefined;
+    .get(taskId) as HyperNeoSpacesTaskNode | null | undefined;
   return row ?? null;
 }
 
 export async function messageSpaceTask(
-  task: SpaceTaskDetailRow,
+  task: HyperNeoSpacesTaskDetailRow,
   message: string,
   context: WorkCallContext,
-  deps: SpaceAdapterDeps
+  deps: HyperNeoSpacesAdapterDeps
 ): Promise<Result<WorkDelivery>> {
   const node = readActiveNode(deps.db(), task.id);
   if (!node) {
@@ -517,10 +534,13 @@ const runSpaceSend = (superpipe({})('space-send-work') as PipelineAPI)
   ref: WorkRef,
   message: string,
   context: WorkCallContext,
-  deps: SpaceAdapterDeps
+  deps: HyperNeoSpacesAdapterDeps
 ) => Promise<Result<WorkDelivery>>;
 
-export function reportSpaceAgent(ref: WorkRef, deps: SpaceAdapterDeps): Result<WorkDetail> | null {
+export function reportSpaceAgent(
+  ref: WorkRef,
+  deps: HyperNeoSpacesAdapterDeps
+): Result<WorkDetail> | null {
   if (!ref.id.startsWith(AGENT_REF)) return null;
   const agent = readSpaceAgents(deps.db(), true, ref.id.slice(AGENT_REF.length))[0];
   if (!agent) return reject('not_found', `No Space agent ${ref.id}.`);
@@ -535,7 +555,7 @@ const runSpaceStatus = (superpipe({})('space-work-status') as PipelineAPI)
   .input(['ref', 'deps'])
   .pipe(requireSpaceTask, ['ref', 'deps'], 'result:outcome')
   .pipe(reportSpaceTask, ['outcome', 'deps'], 'outcome')
-  .end('outcome') as (ref: WorkRef, deps: SpaceAdapterDeps) => Result<WorkDetail>;
+  .end('outcome') as (ref: WorkRef, deps: HyperNeoSpacesAdapterDeps) => Result<WorkDetail>;
 
 const runSpaceStop = (superpipe({})('space-stop-work') as PipelineAPI)
   .input(['ref', 'context', 'deps'])
@@ -544,14 +564,14 @@ const runSpaceStop = (superpipe({})('space-stop-work') as PipelineAPI)
   .endAsync('outcome') as (
   ref: WorkRef,
   context: WorkCallContext,
-  deps: SpaceAdapterDeps
+  deps: HyperNeoSpacesAdapterDeps
 ) => Promise<Result<{ stopped: boolean }>>;
 
 export function requireSpaceAgentRecipient(
   ref: WorkRef,
   context: WorkCallContext,
-  deps: SpaceAdapterDeps
-): Gate<SpaceAgentRow> {
+  deps: HyperNeoSpacesAdapterDeps
+): Gate<HyperNeoSpacesAgentRow> {
   const agent = readSpaceAgents(deps.db(), true, ref.id.slice(AGENT_REF.length))[0];
   if (!agent) return { reason: reject('not_found', `No Space agent ${ref.id}.`) };
   if (context.caller.source === 'mcp' && context.caller.role !== 'neo') {
@@ -563,10 +583,10 @@ export function requireSpaceAgentRecipient(
 }
 
 export async function messageSpaceAgent(
-  agent: SpaceAgentRow,
+  agent: HyperNeoSpacesAgentRow,
   message: string,
   context: WorkCallContext,
-  deps: SpaceAdapterDeps
+  deps: HyperNeoSpacesAdapterDeps
 ): Promise<Result<{ delivered: boolean }>> {
   const sent = await deps.tasks.messageAgent(agent, message, context);
   return 'reason' in sent
@@ -582,12 +602,12 @@ const runSpaceAgentSend = (superpipe({})('space-agent-send-work') as PipelineAPI
   ref: WorkRef,
   message: string,
   context: WorkCallContext,
-  deps: SpaceAdapterDeps
+  deps: HyperNeoSpacesAdapterDeps
 ) => Promise<Result<{ delivered: boolean }>>;
 
-export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
+export function createHyperNeoSpacesAdapter(deps: HyperNeoSpacesAdapterDeps): WorkAdapter {
   return {
-    id: 'space',
+    id: 'hyperneo-spaces',
     capabilities: ['find', 'start', 'send', 'status', 'stop'],
     find: async (query) =>
       runSpaceFind(query, deps, query.text ? await deps.searchChats(query.text) : []),
@@ -613,7 +633,7 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
       const sessionId = agent
         ? readSpaceAgents(deps.db(), true, ref.id.slice(AGENT_REF.length))[0]?.sessionId
         : readActiveNode(deps.db(), ref.id)?.agentSessionId;
-      const last = agent && sessionId ? readHyperneoLastResult(deps.db(), sessionId) : null;
+      const last = agent && sessionId ? readHyperNeoSessionsLastResult(deps.db(), sessionId) : null;
       return {
         ...result,
         value: {
@@ -625,11 +645,11 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
           ...withExchange(
             agent && since !== undefined
               ? sessionId
-                ? readHyperneoExchange(deps.db(), sessionId, since)
+                ? readHyperNeoSessionsExchange(deps.db(), sessionId, since)
                 : { entries: [], cut: false }
               : undefined
           ),
-          recentInputs: sessionId ? readHyperneoInputs(deps.db(), sessionId, since) : [],
+          recentInputs: sessionId ? readHyperNeoSessionsInputs(deps.db(), sessionId, since) : [],
         },
       };
     },

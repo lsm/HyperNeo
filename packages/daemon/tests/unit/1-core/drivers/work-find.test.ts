@@ -5,11 +5,11 @@ import {
   FIND_AGENT_RESULT_BUDGET_CHARS,
 } from '../../../../src/lib/drivers/find-operation';
 import {
-  buildHyperneoGroups,
-  createHyperneoAdapter,
-  hyperneoWorkStatus,
+  buildHyperNeoSessionsGroups,
+  createHyperNeoSessionsAdapter,
+  hyperNeoSessionsWorkStatus,
   skipSpaceQuery,
-} from '../../../../src/lib/drivers/hyperneo-adapter';
+} from '../../../../src/lib/drivers/hyperneo-sessions-adapter';
 import { mergePlaceGroups } from '../../../../src/lib/drivers/places';
 import type { PlaceGroup, WorkAdapter } from '../../../../src/lib/drivers/types';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
@@ -73,7 +73,7 @@ describe('combineFindResults', () => {
 
   test("the calling project's own place comes first even when text hits would push it past the limit", () => {
     const hits = [1, 2, 3].map((at) => group('laptop', `/qa/${at}`, 'claude-code', 100 + at));
-    const own = group('laptop', '/focus/app', 'hyperneo', 1);
+    const own = group('laptop', '/focus/app', 'hyperneo-sessions', 1);
     const local = { groups: [...hits, own], unreachable: [] };
     const input = { includeClosed: false, limit: 2, localOnly: true };
     const remote = { groups: [], unreachable: [] };
@@ -107,13 +107,13 @@ describe('mergePlaceGroups', () => {
       [
         group('laptop', '/focus/dolmen', 'codex-desktop', 10),
         group('laptop', '/focus/dolmen', 'claude-desktop', 30),
-        group('imac', '/focus/dolmen', 'hyperneo', 20),
+        group('imac', '/focus/dolmen', 'hyperneo-sessions', 20),
       ],
       10
     );
     expect(merged.map((g) => [g.place.machine, g.adapters, g.openCount])).toEqual([
       ['laptop', ['claude-desktop', 'codex-desktop'], 2],
-      ['imac', ['hyperneo'], 1],
+      ['imac', ['hyperneo-sessions'], 1],
     ]);
     expect(merged[0].work.map((w) => w.lastActivityAt)).toEqual([30, 10]);
   });
@@ -125,9 +125,9 @@ describe('mergePlaceGroups', () => {
     });
     const merged = mergePlaceGroups(
       [
-        group('imac', '/focus/new', 'hyperneo', 50),
-        scored(group('laptop', '/focus/old', 'hyperneo', 10), 30),
-        scored(group('imac', '/focus/mid', 'hyperneo', 20), 32),
+        group('imac', '/focus/new', 'hyperneo-sessions', 50),
+        scored(group('laptop', '/focus/old', 'hyperneo-sessions', 10), 30),
+        scored(group('imac', '/focus/mid', 'hyperneo-sessions', 20), 32),
       ],
       10
     );
@@ -138,7 +138,7 @@ describe('mergePlaceGroups', () => {
     const [scored] = mergePlaceGroups(
       [
         group('laptop', '/focus/dolmen', 'claude-desktop', 30),
-        group('laptop', '/focus/dolmen', 'hyperneo', 10),
+        group('laptop', '/focus/dolmen', 'hyperneo-sessions', 10),
       ].map((g, index) => ({
         ...g,
         work: g.work.map((w) => (index === 1 ? { ...w, score: 30 } : w)),
@@ -152,7 +152,7 @@ describe('mergePlaceGroups', () => {
   });
 });
 
-describe('hyperneoWorkStatus', () => {
+describe('hyperNeoSessionsWorkStatus', () => {
   test.each([
     ['active', 'processing', 'running'],
     ['active', 'queued', 'queued'],
@@ -165,11 +165,11 @@ describe('hyperneoWorkStatus', () => {
     ['active', 'idle', 'done'],
     ['ended', 'idle', 'stopped'],
   ] as const)('%s with %s is %s', (status, processing, expected) => {
-    expect(hyperneoWorkStatus(status, processing)).toBe(expected);
+    expect(hyperNeoSessionsWorkStatus(status, processing)).toBe(expected);
   });
 });
 
-describe('buildHyperneoGroups', () => {
+describe('buildHyperNeoSessionsGroups', () => {
   const places = [
     {
       folder: '/focus/dolmen',
@@ -206,13 +206,19 @@ describe('buildHyperneoGroups', () => {
   const query = { includeClosed: false, limit: 20 };
 
   test('returns open and remembered places without text, not folders holding only closed work', () => {
-    const groups = buildHyperneoGroups(places, sessions, query, { machine: 'imac' }, new Map());
+    const groups = buildHyperNeoSessionsGroups(
+      places,
+      sessions,
+      query,
+      { machine: 'imac' },
+      new Map()
+    );
     expect(groups.map((g) => [g.place.name, g.work.length, g.archivedCount])).toEqual([
       ['dolmen', 1, 2],
       ['superpipe', 0, 3],
     ]);
     expect(groups[0].work[0]).toMatchObject({
-      ref: { adapter: 'hyperneo', id: 's1' },
+      ref: { adapter: 'hyperneo-sessions', id: 's1' },
       status: 'running',
       link: '/session/s1',
     });
@@ -220,7 +226,7 @@ describe('buildHyperneoGroups', () => {
 
   test('lists a folder holding only closed work when closed work is asked for', () => {
     expect(
-      buildHyperneoGroups(
+      buildHyperNeoSessionsGroups(
         places,
         sessions,
         { ...query, includeClosed: true },
@@ -231,7 +237,7 @@ describe('buildHyperneoGroups', () => {
   });
 
   test('matches a place by name even when nothing in it is open', () => {
-    const groups = buildHyperneoGroups(
+    const groups = buildHyperNeoSessionsGroups(
       places,
       sessions,
       { ...query, text: 'superpipe' },
@@ -243,7 +249,7 @@ describe('buildHyperneoGroups', () => {
 
   test('matches work by full-text hits and titles', () => {
     expect(
-      buildHyperneoGroups(
+      buildHyperNeoSessionsGroups(
         places,
         sessions,
         { ...query, text: 'zzz' },
@@ -252,7 +258,7 @@ describe('buildHyperneoGroups', () => {
       ).flatMap((g) => g.work)
     ).toEqual([
       expect.objectContaining({
-        ref: { adapter: 'hyperneo', id: 's1' },
+        ref: { adapter: 'hyperneo-sessions', id: 's1' },
         score: 32.8,
         hits: 1,
         lastHitAt: 1,
@@ -268,7 +274,7 @@ describe('buildHyperneoGroups', () => {
       }),
     ]);
     expect(
-      buildHyperneoGroups(
+      buildHyperNeoSessionsGroups(
         places,
         sessions,
         { ...query, text: 'loader' },
@@ -300,7 +306,7 @@ describe('skipSpaceQuery', () => {
     expect(skipSpaceQuery({ includeClosed: false, limit: 20, spaceId: 'sp' })).toEqual({
       reason: [],
     });
-    const adapter = createHyperneoAdapter({
+    const adapter = createHyperNeoSessionsAdapter({
       db: () => {
         throw new Error('read the database');
       },
@@ -396,7 +402,7 @@ describe('hyperneo adapter against the sessions table', () => {
       VALUES (?, 'old', '/focus/dolmen', 'archived', ?, 'worker')`);
     for (let n = 0; n < 600; n++)
       closed.run(`x${n}`, `2026-10-05T00:00:${String(n % 60).padStart(2, '0')}.${n}Z`);
-    const adapter = createHyperneoAdapter({
+    const adapter = createHyperNeoSessionsAdapter({
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -407,7 +413,7 @@ describe('hyperneo adapter against the sessions table', () => {
   });
 
   test('groups its own sessions by project root and adds folders from workspace history', async () => {
-    const adapter = createHyperneoAdapter({
+    const adapter = createHyperNeoSessionsAdapter({
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -437,9 +443,9 @@ describe('hyperneo adapter against the sessions table', () => {
 
 describe('work.find operation', () => {
   const local: WorkAdapter = {
-    id: 'hyperneo',
+    id: 'hyperneo-sessions',
     capabilities: ['find'],
-    find: () => [group('imac', '/focus/dolmen', 'hyperneo', 20)],
+    find: () => [group('imac', '/focus/dolmen', 'hyperneo-sessions', 20)],
   };
   const broken: WorkAdapter = {
     id: 'broken',
@@ -477,7 +483,7 @@ describe('work.find operation', () => {
         : null;
     expect(value?.places.map((g) => [g.place.machine, g.work[0].ref])).toEqual([
       ['laptop', { adapter: 'codex-desktop', id: 'codex-desktop-30', daemon: 'laptop' }],
-      ['imac', { adapter: 'hyperneo', id: 'hyperneo-20' }],
+      ['imac', { adapter: 'hyperneo-sessions', id: 'hyperneo-sessions-20' }],
     ]);
     expect(value?.unreachable).toEqual([
       { source: 'broken', reason: 'store unavailable' },
@@ -494,10 +500,12 @@ describe('work.find operation', () => {
 
   test("keeps an agent's reply small and says more was left out, while the app gets the full budget", async () => {
     const many: WorkAdapter = {
-      id: 'hyperneo',
+      id: 'hyperneo-sessions',
       capabilities: ['find'],
       find: () =>
-        Array.from({ length: 50 }, (_, n) => group('imac', `/focus/project-${n}`, 'hyperneo', n)),
+        Array.from({ length: 50 }, (_, n) =>
+          group('imac', `/focus/project-${n}`, 'hyperneo-sessions', n)
+        ),
     };
     const ops = createOperationRegistry([
       createFindWorkOperation({
@@ -523,12 +531,12 @@ describe('work.find operation', () => {
   test('looks work up by its ref id, closed or not, beyond the default place limit', async () => {
     const queries: unknown[] = [];
     const many: WorkAdapter = {
-      id: 'hyperneo',
+      id: 'hyperneo-sessions',
       capabilities: ['find'],
       find: (query) => {
         queries.push(query);
         return Array.from({ length: 40 }, (_, n) =>
-          group('imac', `/focus/project-${n}`, 'hyperneo', n)
+          group('imac', `/focus/project-${n}`, 'hyperneo-sessions', n)
         );
       },
     };
@@ -541,12 +549,14 @@ describe('work.find operation', () => {
     const outcome = await invokeOperation(
       ops,
       'work.find',
-      { id: 'hyperneo-3' },
+      { id: 'hyperneo-sessions-3' },
       { source: 'rpc' }
     );
     const places =
       outcome.kind === 'completed' ? (outcome.value as { places: PlaceGroup[] }).places : [];
-    expect(places.map((place) => place.work.map((item) => item.ref.id))).toEqual([['hyperneo-3']]);
+    expect(places.map((place) => place.work.map((item) => item.ref.id))).toEqual([
+      ['hyperneo-sessions-3'],
+    ]);
     expect(queries).toEqual([expect.objectContaining({ includeClosed: true, limit: 50 })]);
   });
 
@@ -556,14 +566,14 @@ describe('work.find operation', () => {
       remoteAsked = () => resolve(true);
     });
     const waiting: WorkAdapter = {
-      id: 'hyperneo',
+      id: 'hyperneo-sessions',
       capabilities: ['find'],
       find: async () => {
         const overlapped = await Promise.race([
           asked,
           new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
         ]);
-        return overlapped ? [group('imac', '/focus/dolmen', 'hyperneo', 20)] : [];
+        return overlapped ? [group('imac', '/focus/dolmen', 'hyperneo-sessions', 20)] : [];
       },
     };
     const ops = createOperationRegistry([

@@ -1,6 +1,9 @@
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
-import { foldNeoPlaces, foldNeoSessions } from '../../../../src/lib/drivers/hyperneo-adapter';
+import {
+  foldNeoPlaces,
+  foldNeoSessions,
+} from '../../../../src/lib/drivers/hyperneo-sessions-adapter';
 
 const root = join('/data', 'Neo');
 

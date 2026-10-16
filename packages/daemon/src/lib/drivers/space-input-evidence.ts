@@ -1,7 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { WorkDelivery, WorkDetail, WorkRef } from './types.ts';
-import { hyperneoInputText } from './hyperneo-adapter.ts';
+import { hyperNeoSessionsInputText } from './hyperneo-sessions-adapter.ts';
 import { exchangeEntry, workEntryTime } from './work-messages.ts';
 
 type Receipt = NonNullable<WorkDelivery['receipt']>;
@@ -93,7 +93,7 @@ function projectEvidence(
     const first = exchangeEntry(
       workEntryTime(input.timestamp),
       'user',
-      hyperneoInputText(input.message) || '[Non-text input]',
+      hyperNeoSessionsInputText(input.message) || '[Non-text input]',
       -Infinity
     );
     if (!first) return unavailable;

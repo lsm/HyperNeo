@@ -36,15 +36,15 @@ import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.t
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import { createReadWorkOperation } from '../../drivers/read-operation.ts';
 import {
-  createHyperneoAdapter,
-  type HyperneoSessionControl,
-} from '../../drivers/hyperneo-adapter.ts';
+  createHyperNeoSessionsAdapter,
+  type HyperNeoSessionsControl,
+} from '../../drivers/hyperneo-sessions-adapter.ts';
 import {
-  createSpaceAdapter,
-  type SpaceTaskControl,
+  createHyperNeoSpacesAdapter,
+  type HyperNeoSpacesTaskControl,
   spaceTaskCaller,
   taskOperationRejection,
-} from '../../drivers/space-adapter.ts';
+} from '../../drivers/hyperneo-spaces-adapter.ts';
 import type { PlaceGroup, WorkAdapter } from '../../drivers/types.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import { renderAddress } from '../../mailbox/address.ts';
@@ -122,7 +122,7 @@ async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
   return checkoutAt((await new WorktreeManager().detectGitSupport(folder)).gitRoot);
 }
 
-export function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
+export function hyperNeoSessionsControl(context: FamilyOperationContext): HyperNeoSessionsControl {
   const { sessionManager, internalEventBus } = context.deps;
   return {
     archive: async (ref, admit) => {
@@ -278,7 +278,9 @@ function codexDesktopAdapters(
   ];
 }
 
-export function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
+export function hyperNeoSpacesTaskControl(
+  context: FamilyOperationContext
+): HyperNeoSpacesTaskControl {
   const invoke = async (name: string, input: unknown, caller: OperationCaller) => {
     const outcome = await invokeOperation(
       context.deps.sessionManager.getOperationRegistry(),
@@ -411,7 +413,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     ).chats;
   const ownChats = (text: string) => searchChats(text, ['message', 'task']);
   const adapters = [
-    createHyperneoAdapter({
+    createHyperNeoSessionsAdapter({
       prepareExecution,
       projects: () => context.deps.db.workspaceHistory.projects(),
       db,
@@ -429,7 +431,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           messageUuid,
           jobQueue: context.deps.jobQueue,
         }),
-      sessions: hyperneoSessionControl(context),
+      sessions: hyperNeoSessionsControl(context),
       neoFolder,
       folderExists: existsSync,
       makeFolder: (folder: string) => mkdirSync(folder),
@@ -437,11 +439,11 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       liveCards: () =>
         new Map(readNeoSessionLoad(db()).map((load) => [load.sessionId, load.liveCards])),
     }),
-    createSpaceAdapter({
+    createHyperNeoSpacesAdapter({
       db,
       machine,
       searchChats: ownChats,
-      tasks: spaceTaskControl(context),
+      tasks: hyperNeoSpacesTaskControl(context),
     }),
     ...codexDesktopAdapters(searchChats, prepareExecution),
     ...claudeDesktopAdapters(searchChats, prepareExecution),

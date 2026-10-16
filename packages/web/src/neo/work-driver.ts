@@ -8,8 +8,8 @@ export function neoSessionLink(
 }
 
 const shortApps: Record<string, string> = {
-  hyperneo: 'HyperNeo',
-  space: 'Space',
+  'hyperneo-sessions': 'HyperNeo',
+  'hyperneo-spaces': 'Space',
   'codex-desktop': 'Codex',
   'claude-desktop': 'Claude Code',
   'copilot-cli': 'GitHub Copilot',

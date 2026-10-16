@@ -6,7 +6,7 @@ import { createTestDb } from '../../../helpers/database.ts';
 describe('NeoWorkRefusalRepository', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let repo: NeoWorkRefusalRepository;
-  const ref = { adapter: 'hyperneo', daemon: 'laptop', id: 's1' } as const;
+  const ref = { adapter: 'hyperneo-sessions', daemon: 'laptop', id: 's1' } as const;
 
   beforeEach(async () => {
     db = await createTestDb();

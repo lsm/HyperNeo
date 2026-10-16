@@ -77,7 +77,7 @@ import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-r
 import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
-import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
+import { spaceWorkRefForSession } from '../drivers/hyperneo-spaces-adapter.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
@@ -923,8 +923,8 @@ export class NeoService {
           if (
             at > row.at &&
             !row.ref.daemon &&
-            ((row.ref.adapter === 'hyperneo' && row.ref.id === sessionId) ||
-              (row.ref.adapter === 'space' &&
+            ((row.ref.adapter === 'hyperneo-sessions' && row.ref.id === sessionId) ||
+              (row.ref.adapter === 'hyperneo-spaces' &&
                 row.ref.id === spaceWorkRefForSession(db.getDatabase(), sessionId)?.id)) &&
             this.workRefusals.clear(row)
           )

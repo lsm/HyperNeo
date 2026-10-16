@@ -47,7 +47,7 @@ function workspace(
     lastActivityAt: 0,
     openCount: 0,
     archivedCount: 0,
-    adapters: ['hyperneo'],
+    adapters: ['hyperneo-sessions'],
     work: [],
   };
 }
@@ -70,7 +70,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
       createFindWorkOperation({
         adapters: () => [
           {
-            id: 'hyperneo',
+            id: 'hyperneo-sessions',
             capabilities: ['find'],
             find: () => [workspace('/one', elsewhere, 'root:123', HYPERNEO)],
           },

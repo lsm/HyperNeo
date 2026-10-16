@@ -183,7 +183,7 @@ describe('NeoWorkDriverTargetRepository.occupiedWorkers for other targets', () =
         instruction: 'Do d.',
         targetSessionId: 'chat-1',
       });
-      const chat = neoWorkerRefKey({ adapter: 'hyperneo', id: 'chat-1' });
+      const chat = neoWorkerRefKey({ adapter: 'hyperneo-sessions', id: 'chat-1' });
       expect(
         service.driverTargets.occupiedWorkers(service.repo, 'c', new Set(['d'])).has(chat)
       ).toBe(true);

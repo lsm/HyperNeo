@@ -45,7 +45,7 @@ export function neoContinuedLabel(count: number): string {
 }
 
 export function neoCardOpenLabel(card: NeoCardView | undefined): string {
-  const app = neoAppLabel(card?.adapter ?? 'hyperneo');
+  const app = neoAppLabel(card?.adapter ?? 'hyperneo-sessions');
   return app === 'HyperNeo' ? 'Open chat' : `Open in ${app}`;
 }
 
@@ -59,7 +59,7 @@ export function neoCardPrimaryAction(
     return card.open.link
       ? {
           kind: 'open',
-          label: `Check in ${neoAppLabel(card.adapter ?? 'hyperneo')}`,
+          label: `Check in ${neoAppLabel(card.adapter ?? 'hyperneo-sessions')}`,
           link: card.open.link,
         }
       : work.sessionId && chat

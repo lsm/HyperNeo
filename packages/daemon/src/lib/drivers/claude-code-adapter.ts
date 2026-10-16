@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import { claudeTranscriptCwd, isTempCwd } from './claude-feed.ts';
 import { listFeedFilesAsync, readFeedPrefix } from './work-feed.ts';
-import { skipSpaceQuery } from './hyperneo-adapter.ts';
+import { skipSpaceQuery } from './hyperneo-sessions-adapter.ts';
 import { mergePlaceGroups, withChatEvidence } from './places.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkSummary } from './types.ts';
 

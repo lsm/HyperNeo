@@ -162,7 +162,7 @@ import {
 } from './driver-work.ts';
 import { neoNoteChecklist } from './ask-progress.ts';
 import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
-import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
+import { spaceWorkRefForSession } from '../drivers/hyperneo-spaces-adapter.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import {
   NEO_SESSION_MUTES_MAX,
@@ -2306,7 +2306,7 @@ export function createNeoOperations(service: NeoService) {
       (work: NeoWork) => ({
         ref:
           service.driverTargets.readCard(work.id)?.ref ??
-          (work.sessionId ? { adapter: 'hyperneo', id: work.sessionId } : null),
+          (work.sessionId ? { adapter: 'hyperneo-sessions', id: work.sessionId } : null),
       }),
       'refused',
       'target'

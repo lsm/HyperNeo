@@ -2,11 +2,11 @@ import { readDriverAdoptedSent, readDriverSettlement } from '../../../../src/lib
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   buildSpaceGroups,
-  createSpaceAdapter,
+  createHyperNeoSpacesAdapter,
   spaceAgentWorkStatus,
   spaceTaskWorkStatus,
   spaceWorkRefForSession,
-} from '../../../../src/lib/drivers/space-adapter';
+} from '../../../../src/lib/drivers/hyperneo-spaces-adapter';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
 
@@ -80,7 +80,7 @@ describe('buildSpaceGroups', () => {
       ['ops', []],
     ]);
     expect(groups[0].work[0]).toMatchObject({
-      ref: { adapter: 'space', id: 't1' },
+      ref: { adapter: 'hyperneo-spaces', id: 't1' },
       place: { spaceId: 'sp1' },
       status: 'running',
       link: '/space/sp1/task/t1',
@@ -141,7 +141,7 @@ describe('space adapter against the space tables', () => {
   test('keeps every open task when closed tasks are added', async () => {
     const insert = db.prepare(`INSERT INTO space_tasks VALUES (?, 'sp1', ?, 'closed', 'done', ?)`);
     for (let n = 0; n < 600; n++) insert.run(`c${n}`, 100 + n, 1000 + n);
-    const adapter = createSpaceAdapter({
+    const adapter = createHyperNeoSpacesAdapter({
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -160,7 +160,7 @@ describe('space adapter against the space tables', () => {
     db.exec(`INSERT INTO spaces VALUES ('sp3', 'busy', '/focus/busy', 'active', 0, 5)`);
     const insert = db.prepare(`INSERT INTO space_tasks VALUES (?, 'sp3', ?, 'routine', 'done', ?)`);
     for (let n = 0; n < 600; n++) insert.run(`c${n}`, 100 + n, 1000 + n);
-    const adapter = createSpaceAdapter({
+    const adapter = createHyperNeoSpacesAdapter({
       db: () => db,
       machine: 'imac',
       searchChats: async (text) => (text === 'parser' ? [chat('w2', 't2')] : []),
@@ -179,7 +179,7 @@ describe('space adapter against the space tables', () => {
   });
 
   test('returns active Spaces with open tasks and counts, newest activity first', async () => {
-    const adapter = createSpaceAdapter({
+    const adapter = createHyperNeoSpacesAdapter({
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -203,10 +203,10 @@ describe('space adapter against the space tables', () => {
   });
 
   describe('agent exchange evidence', () => {
-    const ref = { adapter: 'space', id: 'agent:a1' };
+    const ref = { adapter: 'hyperneo-spaces', id: 'agent:a1' };
     const base = Date.parse('2026-10-14T10:00:00.000Z');
     const adapter = () =>
-      createSpaceAdapter({
+      createHyperNeoSpacesAdapter({
         db: () => db,
         machine: 'imac',
         searchChats: async () => [],
@@ -311,7 +311,7 @@ describe('space adapter against the space tables', () => {
       ('a1', 'sp1', 'ui-ux', 'Designer', 'active', 's1', 40),
       ('a2', 'sp1', 'docs', 'Writer', 'paused', 's2', 35),
       ('a3', 'sp1', 'old', 'Retired', 'archived', NULL, 50)`);
-    const adapter = createSpaceAdapter({
+    const adapter = createHyperNeoSpacesAdapter({
       db: () => db,
       machine: 'imac',
       searchChats: async (text) => (text === '16px' ? [chat('s1')] : []),
@@ -332,10 +332,10 @@ describe('space adapter against the space tables', () => {
     expect(designer.work.map((w) => w.ref.id)).toEqual(['agent:a1']);
     const [byChat] = await adapter.find({ includeClosed: false, limit: 20, text: '16px' });
     expect(byChat.work.map((w) => w.ref.id)).toEqual(['agent:a1']);
-    expect(await adapter.status?.({ adapter: 'space', id: 'agent:a3' })).toEqual({
+    expect(await adapter.status?.({ adapter: 'hyperneo-spaces', id: 'agent:a3' })).toEqual({
       ok: true,
       value: {
-        ref: { adapter: 'space', id: 'agent:a3' },
+        ref: { adapter: 'hyperneo-spaces', id: 'agent:a3' },
         title: '@old Retired',
         place: { machine: 'imac', spaceId: 'sp1', name: 'dev-neokai' },
         status: 'stopped',
@@ -344,7 +344,7 @@ describe('space adapter against the space tables', () => {
         recentInputs: [],
       },
     });
-    expect(await adapter.status?.({ adapter: 'space', id: 'agent:nope' })).toMatchObject({
+    expect(await adapter.status?.({ adapter: 'hyperneo-spaces', id: 'agent:nope' })).toMatchObject({
       ok: false,
       reason: 'not_found',
     });
@@ -360,9 +360,12 @@ describe('spaceWorkRefForSession', () => {
       INSERT INTO space_long_horizon_agents VALUES ('ops', 's-agent');
       INSERT INTO space_tasks VALUES ('t1', 's-task', NULL), ('t2', NULL, 'run-2'), ('t3', 's-both', NULL);
       INSERT INTO node_executions VALUES ('run-2', 's-node'), ('run-2', 's-both');`);
-    expect(spaceWorkRefForSession(db, 's-agent')).toEqual({ adapter: 'space', id: 'agent:ops' });
-    expect(spaceWorkRefForSession(db, 's-task')).toEqual({ adapter: 'space', id: 't1' });
-    expect(spaceWorkRefForSession(db, 's-node')).toEqual({ adapter: 'space', id: 't2' });
+    expect(spaceWorkRefForSession(db, 's-agent')).toEqual({
+      adapter: 'hyperneo-spaces',
+      id: 'agent:ops',
+    });
+    expect(spaceWorkRefForSession(db, 's-task')).toEqual({ adapter: 'hyperneo-spaces', id: 't1' });
+    expect(spaceWorkRefForSession(db, 's-node')).toEqual({ adapter: 'hyperneo-spaces', id: 't2' });
     expect(spaceWorkRefForSession(db, 's-both')).toBeNull();
     expect(spaceWorkRefForSession(db, 'ordinary')).toBeNull();
     db.close();

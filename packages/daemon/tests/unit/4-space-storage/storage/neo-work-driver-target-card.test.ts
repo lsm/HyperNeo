@@ -44,7 +44,7 @@ describe('NeoWorkDriverTargetRepository.readCard', () => {
     const db = driverTargets();
     const start = {
       verb: 'start',
-      adapter: 'hyperneo',
+      adapter: 'hyperneo-sessions',
       place: { machine: 'laptop', name: 'neokai' },
     } as const;
     db.prepare("INSERT INTO neo_work_driver_targets(work_id, target) VALUES ('fresh', ?)").run(

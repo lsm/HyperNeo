@@ -292,9 +292,9 @@ describe('neoMirroredAliases', () => {
       lastActivityAt: 0,
       openCount: 0,
       archivedCount: 0,
-      adapters: ['hyperneo'],
+      adapters: ['hyperneo-sessions'],
       work: days.map((day, index) => ({
-        ref: { adapter: 'hyperneo', id: `${folder}-${index}` },
+        ref: { adapter: 'hyperneo-sessions', id: `${folder}-${index}` },
         place: { folder, machine: 'here', name: folder.slice(1) },
         lastActivityAt: day * DAY,
       })),

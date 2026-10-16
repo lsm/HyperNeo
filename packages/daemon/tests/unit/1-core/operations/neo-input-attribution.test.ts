@@ -29,7 +29,7 @@ const work: NeoWork = Object.freeze({
   createdAt: 1,
   updatedAt: 100,
 });
-const ref: WorkRef = { adapter: 'space', id: 'space-1:agent-1' };
+const ref: WorkRef = { adapter: 'hyperneo-spaces', id: 'space-1:agent-1' };
 
 const observed = (replies: string[], exchangeCut = false, echoed = receipt) => ({
   receipt: echoed,

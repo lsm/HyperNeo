@@ -88,7 +88,7 @@ const retryVia = async (service: NeoService, id = 'work-1') => {
 const startTarget: NeoDriverTarget = { verb: 'start', adapter: 'codex-desktop', place };
 const sendTarget: NeoDriverTarget = {
   verb: 'send',
-  ref: { adapter: 'hyperneo', id: 's1' },
+  ref: { adapter: 'hyperneo-sessions', id: 's1' },
 };
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
 
@@ -302,7 +302,10 @@ describe('requireNeoExecutionChoice', () => {
   test('refuses a start in a place with no folder or Space before a card exists', () => {
     const chats = { machine: 'laptop', name: 'Chats' };
     expect(
-      requireNeoExecutionChoice({ work: { verb: 'start', adapter: 'hyperneo', place: chats } }, neo)
+      requireNeoExecutionChoice(
+        { work: { verb: 'start', adapter: 'hyperneo-sessions', place: chats } },
+        neo
+      )
     ).toMatchObject({
       reason: {
         ok: false,
@@ -311,7 +314,9 @@ describe('requireNeoExecutionChoice', () => {
     });
     expect(
       requireNeoExecutionChoice(
-        { work: { verb: 'start', adapter: 'space', place: { ...chats, spaceId: 'sp1' } } },
+        {
+          work: { verb: 'start', adapter: 'hyperneo-spaces', place: { ...chats, spaceId: 'sp1' } },
+        },
         neo
       )
     ).toEqual({ value: neo });
@@ -368,13 +373,13 @@ describe('driverWorkCall', () => {
     expect(driverWorkCall(sendTarget, work)).toEqual({
       name: 'work.send',
       input: {
-        ref: { adapter: 'hyperneo', id: 's1' },
+        ref: { adapter: 'hyperneo-sessions', id: 's1' },
         message: `Raise the body font to 16px.\n\n${NEO_WORK_BLOCKER}`,
       },
     });
     expect(
-      driverWorkCall({ ...startTarget, adapter: 'hyperneo', model: 'glm-5.3' }, work).input
-    ).toMatchObject({ adapter: 'hyperneo', model: 'glm-5.3' });
+      driverWorkCall({ ...startTarget, adapter: 'hyperneo-sessions', model: 'glm-5.3' }, work).input
+    ).toMatchObject({ adapter: 'hyperneo-sessions', model: 'glm-5.3' });
   });
 });
 
@@ -966,10 +971,10 @@ describe('Neo work with a drivers target', () => {
             status,
             sessionId: 'agent-session',
           });
-        const free = { adapter: 'space', id: 'agent:free' };
+        const free = { adapter: 'hyperneo-spaces', id: 'agent:free' };
         expect(
           service.driverTargets.reassign(service.repo, service.repo.getWork('work-1')!, [
-            { adapter: 'space', id: 'agent:held' },
+            { adapter: 'hyperneo-spaces', id: 'agent:held' },
             free,
           ])?.target
         ).toEqual({ verb: 'send', ref: free });
@@ -2328,7 +2333,7 @@ describe('Neo work with a drivers target', () => {
   });
 
   test("tracks the pull request a card's session opened on its branch without naming it", async () => {
-    const ref = { adapter: 'hyperneo', id: 'card-session' };
+    const ref = { adapter: 'hyperneo-sessions', id: 'card-session' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6301';
     const at = Date.now() + 10_000;
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
@@ -2377,7 +2382,7 @@ describe('Neo work with a drivers target', () => {
   });
 
   test('a remote HyperNeo ref cannot borrow a colliding local session repository or branch', async () => {
-    const ref = { adapter: 'hyperneo', daemon: 'other-host', id: 'collision' };
+    const ref = { adapter: 'hyperneo-sessions', daemon: 'other-host', id: 'collision' };
     const at = Date.now() + 10_000;
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
       ok: true,
@@ -2465,7 +2470,7 @@ describe('Neo work with a drivers target', () => {
   });
 
   test('records the PR its HyperNeo worker subscribes to once started, not one from before', async () => {
-    const ref = { adapter: 'hyperneo', id: 'worker' };
+    const ref = { adapter: 'hyperneo-sessions', id: 'worker' };
     const at = Date.now() + 10_000;
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
       ok: true,
@@ -2682,7 +2687,7 @@ describe('Neo work with a drivers target', () => {
   );
 
   test('does not claim PRs mentioned only in a report', async () => {
-    const ref = { adapter: 'hyperneo', id: 'card-session' };
+    const ref = { adapter: 'hyperneo-sessions', id: 'card-session' };
     const pull = (n: number) => `https://github.com/lsm/HyperNeo/pull/${n}`;
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
       ok: true,
@@ -3764,7 +3769,7 @@ describe('Neo work with a drivers target', () => {
     );
     try {
       expect(service.driverTargets.receipts(['work-1'])).toEqual([
-        { workId: 'work-1', adapter: 'hyperneo', daemon: null, status: null, link: null },
+        { workId: 'work-1', adapter: 'hyperneo-sessions', daemon: null, status: null, link: null },
       ]);
       await service.start('work-1');
       let changes = 0;
@@ -3775,7 +3780,7 @@ describe('Neo work with a drivers target', () => {
       expect(service.driverTargets.receipts(['work-1', 'missing'])).toEqual([
         {
           workId: 'work-1',
-          adapter: 'hyperneo',
+          adapter: 'hyperneo-sessions',
           daemon: null,
           status: 'queued',
           link: 'codex://threads/s1',
@@ -3817,7 +3822,7 @@ describe('Neo work with a drivers target', () => {
       expect(changes).toBe(1);
       expect(service.driverTargets.receipts(['work-1'])[0]).toEqual({
         workId: 'work-1',
-        adapter: 'hyperneo',
+        adapter: 'hyperneo-sessions',
         daemon: null,
         status: 'queued',
         link: 'claude://claude.ai/epitaxy/local_a1',

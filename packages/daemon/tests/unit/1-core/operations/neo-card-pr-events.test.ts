@@ -82,11 +82,14 @@ describe('planNeoCardSend', () => {
 
 describe('neoCardWorkerSession', () => {
   test('names a local HyperNeo worker or the target session, never another tool', () => {
-    expect(neoCardWorkerSession({ via: 'driver', ref: { adapter: 'hyperneo', id: 's9' } })).toBe(
-      's9'
-    );
     expect(
-      neoCardWorkerSession({ via: 'driver', ref: { adapter: 'hyperneo', daemon: 'tts', id: 's9' } })
+      neoCardWorkerSession({ via: 'driver', ref: { adapter: 'hyperneo-sessions', id: 's9' } })
+    ).toBe('s9');
+    expect(
+      neoCardWorkerSession({
+        via: 'driver',
+        ref: { adapter: 'hyperneo-sessions', daemon: 'tts', id: 's9' },
+      })
     ).toBeNull();
     expect(neoCardWorkerSession({ via: 'driver', ref })).toBeNull();
     expect(neoCardWorkerSession({ via: 'session', sessionId: 'native' })).toBe('native');
@@ -471,9 +474,13 @@ describe('Neo card pull request events', () => {
         title: 'Fix the bug',
         instruction: 'Fix it and merge.',
       },
-      { verb: 'start', adapter: 'hyperneo', place: { machine: 'm5', name: 'hyperneo' } }
+      { verb: 'start', adapter: 'hyperneo-sessions', place: { machine: 'm5', name: 'hyperneo' } }
     );
-    service.driverTargets.recordRef(work.id, { adapter: 'hyperneo', id: 'worker-s' }, Date.now());
+    service.driverTargets.recordRef(
+      work.id,
+      { adapter: 'hyperneo-sessions', id: 'worker-s' },
+      Date.now()
+    );
     attach(service.repo.transitionWork(work.id, work, { status: 'queued' })!);
     expect(
       isSessionTopicCovered(

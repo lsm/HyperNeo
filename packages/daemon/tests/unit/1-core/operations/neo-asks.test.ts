@@ -4280,7 +4280,7 @@ describe('driverNeedsYouNote', () => {
       driverNeedsYouNote(
         { id: 'w1', title: 'Fix startup' },
         null,
-        { adapter: 'hyperneo', id: 's' },
+        { adapter: 'hyperneo-sessions', id: 's' },
         undefined
       )
     ).toMatch(/^Card progress: card w1/);

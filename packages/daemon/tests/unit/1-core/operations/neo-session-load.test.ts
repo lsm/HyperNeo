@@ -3,7 +3,7 @@ import type { Session } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { withSessionLoad } from '../../../../src/lib/drivers/hyperneo-adapter';
+import { withSessionLoad } from '../../../../src/lib/drivers/hyperneo-sessions-adapter';
 import {
   neoTargetSessionId,
   readNeoIdleSessions,
@@ -69,11 +69,14 @@ describe('readNeoSessionLoad', () => {
     card('w1', 'proposed', { targetSessionId: 'busy-chat' });
     card('w2', 'queued', { targetSessionId: 'busy-chat', sessionId: 'busy-chat' });
     card('w3', 'queued', {
-      driver: { verb: 'send', ref: { adapter: 'hyperneo', id: 'quiet-chat' } },
+      driver: { verb: 'send', ref: { adapter: 'hyperneo-sessions', id: 'quiet-chat' } },
     });
     card('w4', 'reported', { targetSessionId: 'quiet-chat', sessionId: 'quiet-chat' });
     card('w5', 'queued', {
-      driver: { verb: 'send', ref: { adapter: 'hyperneo', daemon: 'tts', id: 'quiet-chat' } },
+      driver: {
+        verb: 'send',
+        ref: { adapter: 'hyperneo-sessions', daemon: 'tts', id: 'quiet-chat' },
+      },
     });
     card('w6', 'queued', {
       driver: { verb: 'start', adapter: 'codex-desktop', place: { machine: 'm', name: 'x' } },
@@ -113,19 +116,19 @@ describe('readNeoIdleSessions', () => {
 describe('neoTargetSessionId', () => {
   it('resolves the HyperNeo session a proposal lands in', () => {
     expect(neoTargetSessionId('chat', undefined)).toBe('chat');
-    expect(neoTargetSessionId(null, { verb: 'send', ref: { adapter: 'hyperneo', id: 's' } })).toBe(
-      's'
-    );
+    expect(
+      neoTargetSessionId(null, { verb: 'send', ref: { adapter: 'hyperneo-sessions', id: 's' } })
+    ).toBe('s');
     expect(
       neoTargetSessionId(null, {
         verb: 'send',
-        ref: { adapter: 'hyperneo', daemon: 'tts', id: 's' },
+        ref: { adapter: 'hyperneo-sessions', daemon: 'tts', id: 's' },
       })
     ).toBeNull();
     expect(
       neoTargetSessionId(null, {
         verb: 'start',
-        adapter: 'hyperneo',
+        adapter: 'hyperneo-sessions',
         place: { machine: 'm', name: 'repo' },
       })
     ).toBeNull();
@@ -163,7 +166,7 @@ describe('requireIdleNeoTarget', () => {
 
 describe('withSessionLoad', () => {
   const work = {
-    ref: { adapter: 'hyperneo', id: 's' },
+    ref: { adapter: 'hyperneo-sessions', id: 's' },
     title: 't',
     place: { machine: 'm', name: 'p' },
     lastActivityAt: 0,

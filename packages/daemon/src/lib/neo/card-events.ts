@@ -54,7 +54,7 @@ export function planNeoCardEventRoute(
 
 export function neoCardWorkerSession(send: NeoCardSend): string | null {
   if (send.via === 'session') return send.sessionId;
-  return send.via === 'driver' && send.ref.adapter === 'hyperneo' && !send.ref.daemon
+  return send.via === 'driver' && send.ref.adapter === 'hyperneo-sessions' && !send.ref.daemon
     ? send.ref.id
     : null;
 }
