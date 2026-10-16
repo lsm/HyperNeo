@@ -1422,12 +1422,14 @@ export class NeoService {
     const fixes = planNeoHolderTitles(
       this.repo.listProjectTitles().flatMap((project) => {
         const binding = this.repo.getBindingForProject(project.id);
+        const session = binding ? this.db.getSession(binding.sessionId) : null;
         return binding
           ? [
               {
                 sessionId: binding.sessionId,
                 projectTitle: project.title,
-                sessionTitle: this.db.getSession(binding.sessionId)?.title,
+                sessionTitle: session?.title,
+                titleSetBy: session?.metadata?.titleSetBy,
               },
             ]
           : [];

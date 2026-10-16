@@ -265,6 +265,15 @@ describe('Neo MVP', () => {
     });
     await invoke('neo.project.save', { ...project, title: 'Renamed', expectedRevision: 1 });
     expect(titles.get(id)).toBe('Neo · Renamed');
+    titles.set(id, 'My name');
+    Object.assign(db, {
+      getSession: (sessionId: string) =>
+        active.has(sessionId)
+          ? { id: sessionId, title: titles.get(sessionId), metadata: { titleSetBy: 'user' } }
+          : null,
+    });
+    await invoke('neo.project.save', { ...project, title: 'Again', expectedRevision: 2 });
+    expect(titles.get(id)).toBe('My name');
   });
 
   test('a project snapshot lists the folders the project owns on every machine', async () => {
