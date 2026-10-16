@@ -518,7 +518,7 @@ export class NeoRepository {
       (
         this.db
           .prepare(`SELECT COALESCE(started_at,
-      (SELECT COALESCE(claimed_at, started_at) FROM neo_work_driver_targets WHERE work_id = w.id),
+      (SELECT claimed_at FROM neo_work_driver_targets WHERE work_id = w.id),
       (SELECT ROUND((julianday(timestamp) - 2440587.5) * 86400000)
         FROM sdk_messages WHERE session_id = w.session_id AND json_extract(sdk_message, '$.uuid') = w.id
         ORDER BY rowid LIMIT 1)) AS at FROM neo_work w WHERE id = ?`)

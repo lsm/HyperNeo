@@ -65,7 +65,7 @@ describe('NeoRepository.workStartedAt', () => {
         CREATE TABLE neo_work_driver_targets(work_id TEXT, claimed_at INTEGER, started_at INTEGER);
         CREATE TABLE sdk_messages(session_id TEXT, sdk_message TEXT, timestamp TEXT);
         INSERT INTO neo_work VALUES ('driver', NULL, NULL), ('native', NULL, 'worker'), ('unknown', NULL, NULL);
-        INSERT INTO neo_work_driver_targets VALUES ('driver', 2000, 1000);
+        INSERT INTO neo_work_driver_targets VALUES ('driver', 2000, 1000), ('unknown', NULL, 1000);
         INSERT INTO sdk_messages VALUES ('worker', '{"uuid":"other"}', '2026-10-16T12:00:00.000Z'),
           ('worker', '{"uuid":"native"}', '2026-10-16T12:00:01.123Z')`);
       const repo = new NeoRepository(db);
