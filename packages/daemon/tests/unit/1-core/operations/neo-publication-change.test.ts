@@ -128,7 +128,13 @@ describe('neo.publication.edit', () => {
       insert(original);
       expect(
         await call('neo.publication.edit', { publicationId: correction, shortText: 'x' })
-      ).toEqual({ accepted: false, reason: 'not_found' });
+      ).toEqual({
+        accepted: false,
+        reason: 'not_found',
+        detail: expect.stringContaining(
+          `Use one of the recent replies: ${original} "PR #12 merged."`
+        ),
+      });
       expect(
         await call(
           'neo.publication.edit',
@@ -214,7 +220,12 @@ describe('neo.publication.correct', () => {
 describe('requireConversationPublication', () => {
   test('a missing publication is not found before ownership is checked', () => {
     expect(requireConversationPublication({ input: { sessionId: 's' } } as never, null)).toEqual({
-      reason: { accepted: false, reason: 'not_found' },
+      reason: {
+        accepted: false,
+        reason: 'not_found',
+        detail:
+          'No Neo reply in this conversation has that publicationId. There are no recent replies.',
+      },
     });
   });
 });

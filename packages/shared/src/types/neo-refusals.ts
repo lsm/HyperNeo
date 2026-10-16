@@ -13,8 +13,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The human’s approval of this ask has run out. Ask the human to approve it again before starting work.',
   approval_stale:
     'The ask changed after the human approved it, so that approval no longer covers it. Ask the human to approve the current revision.',
-  ask_not_found:
-    'No ask has that askId. Read the conversation’s asks with neo.snapshot and pass an askId from there.',
   ask_not_live:
     'The ask behind this card is already achieved or abandoned, so its cards cannot start or bind. Open a new ask for new work.',
   binding_already_dispatched:
@@ -104,8 +102,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The card has no place to run its work. Propose it with a work target, such as a repository or a session.',
   not_approved:
     'The human has not approved this ask yet. Ask the human to approve it before starting work.',
-  not_found:
-    'No Neo reply in this conversation has that publicationId. Use a publicationId from neo.publication.recent.',
   not_your_ask:
     'This turn is not answering that message, so it cannot forward it. Forward only the message this turn is answering.',
   opened_check_unbound:

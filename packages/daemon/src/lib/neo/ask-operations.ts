@@ -37,6 +37,7 @@ import { isNeoAskOutcomeItem } from './ask-views.ts';
 import { NeoAskStateViewSchema } from './card-view-schema.ts';
 import { isNeoAnswerItem } from './answer-outcome.ts';
 import { neoOutcomeBindingPolicy } from './outcome-binding-policy.ts';
+import { neoKnownIds } from './known-ids.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -326,13 +327,24 @@ function neoPromptText(message: SDKMessage): string {
 const isFinal = isNeoAskSettled;
 const ACTIVE_ASK_LIMIT = 50;
 
+const checklist = (ask: NeoAsk) =>
+  (ask.doneItems ?? [])
+    .filter((item) => !item.removed)
+    .map((item) => ({ id: item.id, title: item.text }));
+
 export function requireNeoAskOwner(
   ask: NeoAsk | null,
   caller: OperationCaller,
   action: string,
-  hint = ''
+  hint = '',
+  known: readonly Pick<NeoAsk, 'id' | 'title'>[] = []
 ): Gate<NeoAsk> {
-  if (!ask) return { reason: fail('ask_not_found') };
+  if (!ask)
+    return {
+      reason: fail(
+        `ask_not_found: no ask has that id. ${neoKnownIds('live asks you opened', known)}`
+      ),
+    };
   return caller.source === 'mcp' && caller.sessionId !== ask.originSessionId
     ? {
         reason: fail(
@@ -360,13 +372,20 @@ export function requireNeoWorkAsk(
     : { value: caller };
 }
 
+export function neoAsksOpenedBy(asks: readonly NeoAsk[], caller: OperationCaller): NeoAsk[] {
+  return caller.source === 'mcp'
+    ? asks.filter((ask) => ask.originSessionId === caller.sessionId)
+    : [...asks];
+}
+
 export function requireNeoWorkAskOwner(
   ask: NeoAsk | null,
   input: WorkAskInput,
-  caller: OperationCaller
+  caller: OperationCaller,
+  known: readonly NeoAsk[] = []
 ): Gate<OperationCaller> {
   if (!input.askId) return { value: caller };
-  const owned = requireNeoAskOwner(ask, caller, 'file work under', '; open your own ask');
+  const owned = requireNeoAskOwner(ask, caller, 'file work under', '; open your own ask', known);
   return 'reason' in owned ? owned : { value: caller };
 }
 
@@ -417,7 +436,19 @@ export function requireNeoProposalDelivers<T>(
     return { reason: fail(`delivers_repeated: ${repeated} is listed twice; name each item once.`) };
   for (const id of delivers) {
     const item = open.find((entry) => entry.id === id);
-    if (!item) return { reason: fail(`delivers_unknown: ${id} is not an open item on this ask.`) };
+    if (!item)
+      return {
+        reason: fail(
+          (ask.doneItems ?? []).some(
+            (entry) => entry.id === id && entry.check === 'coding.pr_opened'
+          )
+            ? `delivers_unknown: ${id} is a PR-opened check, met when the PR opens; no card delivers it, so leave it out of delivers.`
+            : `delivers_unknown: ${id} is not an open item a card can deliver. ${neoKnownIds(
+                'open items',
+                open.map((entry) => ({ id: entry.id, title: entry.text }))
+              )}`
+        ),
+      };
     const holder = read.cards.find(
       (card) => card.id === item.deliveredBy && card.id !== read.stored
     );
@@ -649,7 +680,12 @@ function requireNeoAskTick(
   caller: OperationCaller
 ): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
   const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
-  if (!item) return { reason: fail(`item_not_found: ${input.itemId} is not on this checklist.`) };
+  if (!item)
+    return {
+      reason: fail(
+        `item_not_found: ${input.itemId} is not on this checklist. ${neoKnownIds('items on it', checklist(ask))}`
+      ),
+    };
   if (input.state === 'needs_you')
     return {
       reason: fail(
@@ -1105,7 +1141,12 @@ export function requireNeoAskQuestion(
       ),
     };
   const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
-  if (!item) return { reason: fail(`item_not_found: ${input.itemId} is not on this checklist.`) };
+  if (!item)
+    return {
+      reason: fail(
+        `item_not_found: ${input.itemId} is not on this checklist. ${neoKnownIds('items on it', checklist(ask))}`
+      ),
+    };
   if (item.state !== 'needs_you')
     return {
       reason: fail(`item_not_waiting: ${item.id} is ${item.state}, not waiting on an answer.`),
@@ -1182,7 +1223,11 @@ export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gat
   const active = (ask.doneItems ?? []).filter((item) => !item.removed);
   const missing = input.remove.filter((id) => !active.some((item) => item.id === id));
   if (missing.length)
-    return { reason: fail(`item_not_found: ${missing.join(', ')} is not on this checklist.`) };
+    return {
+      reason: fail(
+        `item_not_found: ${missing.join(', ')} is not on this checklist. ${neoKnownIds('items on it', checklist(ask))}`
+      ),
+    };
   const left = active.length - new Set(input.remove).size + input.add.length;
   if (left < 1) return { reason: fail('checklist_empty: keep at least one item.') };
   const untracked = input.track.filter(
@@ -1392,7 +1437,13 @@ export function createNeoAskOperations(
     )
     .pipe(
       (current: { ask: NeoAsk | null }, caller: OperationCaller, verb: string) =>
-        requireNeoAskOwner(current.ask, caller, verb),
+        requireNeoAskOwner(
+          current.ask,
+          caller,
+          verb,
+          '',
+          neoAsksOpenedBy(service.askRecords.listLive(), caller)
+        ),
       ['current', 'caller', 'verb'],
       'result:ask'
     )
@@ -1554,7 +1605,13 @@ export function createNeoAskOperations(
     .pipe(requireNeoAskSummary, ['input', 'admission'], 'result:admission')
     .pipe(
       (current: { ask: NeoAsk | null }, caller: OperationCaller) =>
-        requireNeoAskOwner(current.ask, caller, 'settle'),
+        requireNeoAskOwner(
+          current.ask,
+          caller,
+          'settle',
+          '',
+          neoAsksOpenedBy(service.askRecords.listLive(), caller)
+        ),
       ['current', 'caller'],
       'result:admission'
     )
