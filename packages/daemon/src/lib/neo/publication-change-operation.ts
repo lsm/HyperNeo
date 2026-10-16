@@ -10,7 +10,11 @@ import type { NeoPublicationRepository } from '../../storage/repositories/neo-pu
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { neoDerivedId } from './derived-id.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
-import { NeoPublicationSchema } from './publication.ts';
+import {
+  NeoPublicationSchema,
+  NeoPublicationResultSchema,
+  withNeoPublicationAnswer,
+} from './publication.ts';
 import {
   requirePublicationLifetime,
   requirePublicationProducer,
@@ -32,26 +36,6 @@ const EditInput = z
   .refine((input) => input.shortText !== undefined || input.fullText !== undefined, {
     message: 'Pass shortText, fullText or both.',
   });
-const CorrectInput = z
-  .object({
-    requestId: z.string().min(1).max(160),
-    publicationId: z.string().uuid(),
-    shortText: NeoPublicationSchema.shape.shortText,
-    fullText: NeoPublicationSchema.shape.fullText,
-  })
-  .strict();
-
-const Result = z.union([
-  z.object({ accepted: z.literal(false), reason: z.string(), detail: z.string().optional() }),
-  z.object({
-    accepted: z.literal(true),
-    created: z.boolean(),
-    publication: NeoPublicationSchema.extend({
-      sequence: z.number().int().positive(),
-      createdAt: z.string(),
-    }),
-  }),
-]);
 
 export interface NeoPublicationChangeRuntime {
   getBinding(id: string): NeoBinding | null;
@@ -161,7 +145,14 @@ function changePipeline(
       (owned: Owned, request: never) => {
         const result = change(owned, request);
         if (result.accepted) runtime.notify(result.publication.conversationId);
-        return result;
+        return withNeoPublicationAnswer(
+          result,
+          result.accepted
+            ? runtime.resolveAskOrigin(
+                result.publication.answerOrigin ?? result.publication.askOrigin
+              )
+            : null
+        );
       },
       ['change', 'request'],
       'change'
@@ -169,7 +160,7 @@ function changePipeline(
     .end('change') as (
     input: unknown,
     caller: OperationCaller
-  ) => NeoPublicationChangeResult | Rejection;
+  ) => ReturnType<typeof withNeoPublicationAnswer>;
 }
 
 export function createNeoPublicationChangeOperations(
@@ -201,7 +192,6 @@ export function createNeoPublicationChangeOperations(
         )
     );
   const edit = revise('neo.publication.edit', EditInput);
-  const correct = revise('neo.publication.correct', CorrectInput);
   const recent = (superpipe({})('neo-publication-recent') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -263,17 +253,8 @@ export function createNeoPublicationChangeOperations(
         'Revise a message in this conversation without changing its publicationId. Prior text and attribution are preserved in revisions. Use a new requestId per revision and reuse it only when retrying that operation.',
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
-      resultSchema: Result,
+      resultSchema: NeoPublicationResultSchema,
       execute: async (input, caller) => edit(input, caller),
-    }),
-    defineOperation({
-      name: 'neo.publication.correct',
-      description:
-        'Revise a message in this conversation without changing its publicationId. Prior text and attribution are preserved in revisions. Use a new requestId per revision and reuse it only when retrying that operation.',
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      inputSchema: CorrectInput,
-      resultSchema: Result,
-      execute: async (input, caller) => correct(input, caller),
     }),
   ];
 }

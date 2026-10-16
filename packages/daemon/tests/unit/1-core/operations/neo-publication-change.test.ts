@@ -41,7 +41,7 @@ let publications: NeoPublicationRepository;
 let notified: number;
 let registry: ReturnType<typeof createOperationRegistry>;
 let consultationReturn: boolean;
-const call = async (name: 'edit' | 'correct' | 'recent', change: unknown, who = caller()) => {
+const call = async (name: 'edit' | 'recent', change: unknown, who = caller()) => {
   const result = await invokeOperation(registry, `neo.publication.${name}`, change, who);
   return result.kind === 'completed' ? result.value : result;
 };
@@ -106,6 +106,24 @@ describe('neo.publication.edit', () => {
     expect(publications.list(conversation)).toHaveLength(1);
     expect(publications.get(conversation, original)?.awaiting).toBeUndefined();
     expect(notified).toBe(1);
+  });
+
+  test('returns the answered message and current revision through the only revision operation', async () => {
+    expect(registry.get('neo.publication.correct')).toBeUndefined();
+    const result = await call('edit', {
+      publicationId: original,
+      requestId: 'r1',
+      shortText: 'Updated.',
+    });
+    const current = publications.get(conversation, original)!;
+    expect(result).toMatchObject({
+      accepted: true,
+      answered: {
+        message: { sessionId: root.sessionId, messageId: 'new-human-question' },
+        publicationId: original,
+        revisionId: current.revisionId,
+      },
+    });
   });
 
   test('permits multiple edits in one turn, including unchanged wording', async () => {
@@ -221,7 +239,7 @@ describe('neo.publication.edit', () => {
     const who = caller(holder.sessionId);
     expect(
       await call(
-        'correct',
+        'edit',
         { publicationId: original, requestId: 'r1', shortText: 'Private.', fullText: 'Private.' },
         { ...who, neoTurn: { ...who.neoTurn!, consultationId: 'consult-1' } }
       )
@@ -258,11 +276,11 @@ describe('neo.publication.edit', () => {
   });
 });
 
-describe('neo.publication.correct', () => {
+describe('neo.publication.edit full revisions', () => {
   test('corrects the same entry repeatedly with a preserved revision history', async () => {
     for (const requestId of ['c1', 'c2']) {
       expect(
-        await call('correct', {
+        await call('edit', {
           publicationId: original,
           requestId,
           shortText: requestId,
@@ -297,7 +315,7 @@ describe('requireChangeable', () => {
       'consultation_return'
     );
     expect(
-      await call('correct', {
+      await call('edit', {
         publicationId: original,
         requestId: 'c1',
         shortText: 'Wrong.',

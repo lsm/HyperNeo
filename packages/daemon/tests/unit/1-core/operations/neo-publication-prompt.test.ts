@@ -41,7 +41,7 @@ describe('direct human publication prompt', () => {
       restrictNeoQuery(query, projectId);
       const operations = { type: 'stdio' as const, command: 'fixture-operations' };
       expect(query.model).toBe('fixture-model');
-      expect(query.maxTurns).toBe(17);
+      expect(query.maxTurns).toBeUndefined();
       expect(query.tools).toEqual(neoCoordinatorNativeTools());
       expect(query.mcpServers).toEqual({ 'hyperneo-operations': operations });
       expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools());
@@ -209,7 +209,7 @@ describe('neoPrompt edit, correct or reply', () => {
     const prompt = neoPrompt(null);
     expect(prompt).toContain('Choose by what changes, not by how the human phrases it');
     expect(prompt).toContain('edit it in place with neo.publication.edit');
-    expect(prompt).toContain('publish the right one with neo.publication.correct');
+    expect(prompt).toContain('revise it with neo.publication.edit');
     expect(prompt).toContain('that correction is your reply to it, so publish nothing else');
     expect(prompt).toContain('Read the conversation with neo.publication.recent first');
     expect(prompt).toContain('any Neo reply in this conversation can be fixed');

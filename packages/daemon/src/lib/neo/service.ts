@@ -165,15 +165,7 @@ import {
   planNeoDeliveryRetry,
   scheduleNeoDeliveryRetry,
 } from './delivery-retry.ts';
-import {
-  NEO_PUBLISH_NUDGE,
-  NEO_UNFINISHED_REPLY,
-  type NeoDirectReplyRuntime,
-  neoIdleReplySessions,
-  neoNoteDeliveryMode,
-  neoSessionStatus,
-  publishNeoDirectReplyFallback,
-} from './direct-reply-fallback.ts';
+import { neoNoteDeliveryMode, neoSessionStatus } from './session-status.ts';
 import {
   isNeoAskLive,
   type NeoDoneCheckSkip,
@@ -244,7 +236,6 @@ import {
 import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
 import {
   coverNeoAskTriggers,
-  isNeoHumanOwnTurn,
   NEO_TRIGGER_ACHIEVED_WINDOW_MS,
   NEO_TRIGGER_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
@@ -366,13 +357,6 @@ import { NeoSessionWatcher } from './session-watcher.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import type { NeoSnapshotRead } from './snapshot-read.ts';
 import {
-  NEO_HUMAN_TURN_LIMIT_PREFIX,
-  NEO_TURN_LIMIT_PREFIX,
-  neoTurnLimitNote,
-  planNeoTurnLimitNote,
-} from './turn-limit.ts';
-import { neoAskConsulted, readNeoTurnReply } from './turn-reply.ts';
-import {
   type NeoReminderListing,
   neoReminderTurn,
   planNeoReminderListings,
@@ -435,7 +419,6 @@ const dispatchNeoConsultationWaiter = (
   )
   .endAsync('admission');
 
-const NEO_STALLED_TURN_SETTLE_MS = 20_000;
 const NEO_PROJECT_EVENT_NOTE =
   'An event on one of this project’s cards. Its ask belongs to another Neo session, which acts on it.';
 const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
@@ -574,7 +557,6 @@ export class NeoService {
   private readonly bootedAt = Date.now();
   private readonly deliveries = new Map<string, Promise<void>>();
   private readonly processingStatus = new Map<string, string>();
-  private readonly interruptedSessions = new Set<string>();
   private readonly continuing = new Set<string>();
   private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
   private readonly cardOpenedPrs = new Map<string, string[]>();
@@ -781,8 +763,6 @@ export class NeoService {
     work: NeoWork,
     followed: boolean
   ) => Promise<'checked' | NeoDoneCheckSkip | 'daemon_settled'>;
-  private readonly directReplies: NeoDirectReplyRuntime;
-  private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly savedRules = new Map<string, NeoSavedRulesNote>();
   private readonly reminderListings = new Map<string, NeoReminderListing>();
   private readonly log = new Logger('Neo');
@@ -971,30 +951,6 @@ export class NeoService {
       readSession: (id) => new DaemonInventoryRepository(db.getDatabase()).readSession(id),
       readBinding: (id) => this.repo.getBindingBySession(id),
     });
-    const directReplies: NeoDirectReplyRuntime = {
-      getBinding: (id) => this.repo.getBindingBySession(id),
-      getRootBinding: () => this.repo.getBindingForProject(null),
-      recentAsks: (conversationId, id) => this.recentAsksFor(conversationId, id),
-      isPublished: (id, messageId) => !!this.publications.findByProducer(id, messageId),
-      answeredElsewhere: (id, messageId) =>
-        neoAskConsulted(db, id, messageId) || this.forwardedAway(id, messageId),
-      turnReply: (id, messageId) => readNeoTurnReply(db, id, messageId),
-      hasNudge: (id, nudgeId) => this.hasDelivery(id, nudgeId),
-      recheck: (id) => this.scheduleReplyRecheck(id, directReplies),
-      nudge: (id, nudgeId) =>
-        void this.deliver(
-          id,
-          nudgeId,
-          NEO_PUBLISH_NUDGE,
-          id,
-          { sessionId: id, messageId: nudgedMessageId(nudgeId) ?? nudgeId },
-          'continues'
-        ).catch((error) => this.log.warn('Publish nudge failed', error)),
-      append: (input) => this.commitPublication(input),
-      notify: notifyPublication,
-      newId: () => crypto.randomUUID(),
-    };
-    this.directReplies = directReplies;
     const offHumanInput = events.subscribe(
       'message.persisted',
       ({ sessionId, messageId }) => {
@@ -1026,8 +982,6 @@ export class NeoService {
         if (status) this.processingStatus.set(sessionId, status);
         const bound = status || session?.status ? this.repo.getBindingBySession(sessionId) : null;
         if (bound && bound.kind !== 'worker') this.noteWorking();
-        if (status === 'interrupted') this.interruptedSessions.add(sessionId);
-        else if (status && status !== 'idle') this.interruptedSessions.delete(sessionId);
         if (status !== 'idle') return;
         for (const item of this.consultations
           .unsettled()
@@ -1041,21 +995,7 @@ export class NeoService {
           await this.alignModelPreference(sessionId).catch((error) =>
             this.log.warn('Neo model preference not applied', error)
           );
-        if (binding && binding.kind !== 'worker')
-          await this.noteTurnLimit(sessionId).catch((error) =>
-            this.log.warn('Turn-limit note pending', error)
-          );
-        if (binding && binding.kind !== 'worker') {
-          try {
-            publishNeoDirectReplyFallback(sessionId, directReplies, {
-              settled: false,
-              interrupted: this.interruptedSessions.has(sessionId),
-            });
-          } catch (error) {
-            this.log.warn('Direct reply fallback failed', error);
-          }
-          this.scheduleTriggerSweep();
-        }
+        if (binding && binding.kind !== 'worker') this.scheduleTriggerSweep();
         if (binding?.kind === 'project' && binding.projectId)
           await this.dispatchConsultationWaiter(binding.projectId).catch((error) =>
             this.log.warn('Consultation admission pending', error)
@@ -1281,7 +1221,7 @@ export class NeoService {
 
   private notePublishedAnswer(publication: NeoPublication): void {
     const triggerId = publication.triggerId;
-    if (!triggerId || publication.shortText === NEO_UNFINISHED_REPLY) return;
+    if (!triggerId) return;
     const traced = this.triggers.trigger(triggerId);
     const outcome = traced?.keys.some((key) => key.startsWith('outcome:'))
       ? this.askRecords.get(traced.askId)
@@ -1448,10 +1388,6 @@ export class NeoService {
     for (const key of this.snapshotReads.keys())
       if (key.startsWith(`${sessionId}\n`)) this.snapshotReads.delete(key);
     this.processingStatus.delete(sessionId);
-    this.interruptedSessions.delete(sessionId);
-    const timer = this.replyRechecks.get(sessionId);
-    if (timer) clearTimeout(timer);
-    this.replyRechecks.delete(sessionId);
   }
 
   async dispose(): Promise<void> {
@@ -1459,48 +1395,9 @@ export class NeoService {
     this.unsubscribe();
     if (this.triggerTimer) clearTimeout(this.triggerTimer);
     this.triggerTimer = undefined;
-    for (const timer of this.replyRechecks.values()) clearTimeout(timer);
-    this.replyRechecks.clear();
     this.processingStatus.clear();
-    this.interruptedSessions.clear();
     if (this.watching) await this.watching;
     this.sessionWatcher.flushSessionNoticeGroup();
-  }
-
-  private resumeDirectReplies(): void {
-    const bindings = [this.repo.getBindingForProject(null), ...this.repo.listProjectBindings()];
-    const idle = neoIdleReplySessions(bindings, (id) =>
-      neoSessionStatus(this.db.getSession(id)?.processingState)
-    );
-    for (const sessionId of idle) {
-      this.processingStatus.set(sessionId, 'idle');
-      try {
-        publishNeoDirectReplyFallback(sessionId, this.directReplies, {
-          settled: false,
-          interrupted: true,
-        });
-      } catch (error) {
-        this.log.warn('Direct reply recovery pending', error);
-      }
-    }
-  }
-
-  private scheduleReplyRecheck(sessionId: string, runtime: NeoDirectReplyRuntime): void {
-    if (this.replyRechecks.has(sessionId)) return;
-    const timer = setTimeout(() => {
-      this.replyRechecks.delete(sessionId);
-      if (this.processingStatus.get(sessionId) !== 'idle') return;
-      try {
-        publishNeoDirectReplyFallback(sessionId, runtime, {
-          settled: true,
-          interrupted: this.interruptedSessions.has(sessionId),
-        });
-      } catch (error) {
-        this.log.warn('Direct reply recheck failed', error);
-      }
-    }, NEO_STALLED_TURN_SETTLE_MS);
-    timer.unref?.();
-    this.replyRechecks.set(sessionId, timer);
   }
 
   open(projectId: string | null): Promise<string> {
@@ -1540,7 +1437,6 @@ export class NeoService {
           sdkToolsPreset: neoCoordinatorNativeTools(),
           permissionMode: 'dontAsk',
           allowedTools: neoCoordinatorAllowedTools(),
-          maxTurns: 32,
           ...(preference
             ? {
                 model: preference.model,
@@ -1553,7 +1449,16 @@ export class NeoService {
         },
       });
     }
+    await this.removeTurnLimit(binding.sessionId);
     return binding.sessionId;
+  }
+
+  private async removeTurnLimit(sessionId: string): Promise<void> {
+    const session = this.db.getSession(sessionId);
+    if (session?.config?.maxTurns !== undefined)
+      await this.sessions.updateSession(sessionId, {
+        config: { ...session.config, maxTurns: undefined },
+      });
   }
 
   async start(id: string): Promise<void> {
@@ -2086,7 +1991,11 @@ export class NeoService {
 
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
-    this.resumeDirectReplies();
+    for (const binding of [
+      this.repo.getBindingForProject(null),
+      ...this.repo.listProjectBindings(),
+    ])
+      if (binding) await this.removeTurnLimit(binding.sessionId);
     this.seedTriggers();
     await this.recoverConsultations();
     await this.clearStaleNeedsYou().catch((error) =>
@@ -3139,28 +3048,6 @@ export class NeoService {
     ref: WorkRef,
     outcome: OperationOutcome
   ) => Promise<unknown>;
-
-  async noteTurnLimit(sessionId: string): Promise<void> {
-    const messages = this.db.getSDKMessageRepo();
-    const plan = planNeoTurnLimitNote(messages.latestTurnResults(sessionId, 2), (since) =>
-      messages.hasUserUuidPrefixSince(sessionId, NEO_TURN_LIMIT_PREFIX, since)
-    );
-    if (!plan) return;
-    const interrupted = messages.firstUserUuidBetween(sessionId, plan.sinceAt, plan.untilAt);
-    const parent = interrupted ? { sessionId, messageId: interrupted } : null;
-    const own = !!parent && isNeoHumanOwnTurn(parent.messageId, this.parentTrigger(parent));
-    if (!own && this.triggerAnswered(parent)) return;
-    await this.deliverToOrigin(
-      sessionId,
-      `${own ? NEO_HUMAN_TURN_LIMIT_PREFIX : NEO_TURN_LIMIT_PREFIX}${plan.resultUuid}`,
-      neoTurnLimitNote(
-        this.askRecords.openedBy(sessionId, plan.since, plan.until),
-        this.repo.proposedBy(sessionId, plan.since, plan.until)
-      ),
-      parent,
-      'continues'
-    );
-  }
 
   readonly withdrawObsoletePrQuestions = (superpipe({})('neo-withdraw-pr-questions') as PipelineAPI)
     .input(['askId'])

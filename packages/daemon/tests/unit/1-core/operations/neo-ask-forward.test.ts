@@ -140,6 +140,20 @@ describe('neoTurnOwnsMessage', () => {
     ['a consultation turn', garden, turn('neo-consult:c:request', true, 'c'), [], false],
     ['the holder it was forwarded to', pond, turn('neo-forward:ask-1:0'), [toPond], true],
     [
+      'a resumed forwarded request',
+      pond,
+      turn('restart-recovery:restart-recovery:neo-forward:ask-1:0'),
+      [toPond],
+      true,
+    ],
+    [
+      'a resumed stale forwarded request',
+      pond,
+      turn('restart-recovery:neo-forward:ask-1:0'),
+      [toPond, toMain],
+      false,
+    ],
+    [
       'that holder once it forwarded on to main',
       pond,
       turn('neo-forward:ask-1:0'),

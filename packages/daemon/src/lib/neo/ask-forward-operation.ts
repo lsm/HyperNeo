@@ -84,11 +84,11 @@ export function neoForwardedText(
 }
 
 export function neoForwardedAskMessageId(messageId: string): string | null {
-  return /^neo-forward:(.+):\d+$/.exec(messageId)?.[1] ?? null;
+  return /^neo-forward:(.+):\d+$/.exec(resumedPromptUuid(messageId))?.[1] ?? null;
 }
 
 export function neoForwardHop(messageId: string): number | null {
-  const hop = /^neo-forward:.+:(\d+)$/.exec(messageId)?.[1];
+  const hop = /^neo-forward:.+:(\d+)$/.exec(resumedPromptUuid(messageId))?.[1];
   return hop === undefined ? null : Number(hop);
 }
 
@@ -314,3 +314,4 @@ export function createNeoAskForwardOperation(runtime: NeoAskForwardRuntime) {
     execute: (input, caller) => forward(input, caller),
   });
 }
+import { resumedPromptUuid } from '../agent/restart-turn-recovery.ts';

@@ -104,7 +104,7 @@ import {
   settleNeoProjectQuestions,
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
-import { neoSessionStatus } from './direct-reply-fallback.ts';
+import { neoSessionStatus } from './session-status.ts';
 import {
   createNeoRouter,
   type NeoRouter,

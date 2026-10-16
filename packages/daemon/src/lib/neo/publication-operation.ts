@@ -8,7 +8,11 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
-import { NeoPublicationSchema } from './publication.ts';
+import {
+  NeoPublicationSchema,
+  NeoPublicationResultSchema,
+  withNeoPublicationAnswer,
+} from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { requirePublicationTrigger } from './notification-triggers.ts';
 import { neoDerivedId } from './derived-id.ts';
@@ -232,7 +236,10 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(
       (receipt: Receipt) => {
         if (receipt.accepted) runtime.notify();
-        return receipt;
+        return withNeoPublicationAnswer(
+          receipt,
+          receipt.accepted ? runtime.resolveAskOrigin(receipt.publication.askOrigin) : null
+        );
       },
       'publication',
       'publication'
@@ -240,27 +247,17 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .end('publication') as (
     input: unknown,
     caller: OperationCaller
-  ) => NeoPublicationAppendResult | Rejection;
+  ) => ReturnType<typeof withNeoPublicationAnswer>;
 }
 
 export function createNeoPublicationOperation(publish: ReturnType<typeof createNeoPublisher>) {
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. The runtime derives publication identity, original request and producer. Scene references must exist and belong to the request. Acceptance records delivery, not work completion.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. The runtime derives publication identity, original request and producer. Scene references must exist and belong to the request. The answered field identifies the human message answered by this delivery and its publication/revision; null means no human message was resolved. It does not complete background work or require another post.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
-    resultSchema: z.union([
-      z.object({ accepted: z.literal(false), reason: z.string(), detail: z.string().optional() }),
-      z.object({
-        accepted: z.literal(true),
-        created: z.boolean(),
-        publication: NeoPublicationSchema.extend({
-          sequence: z.number().int().positive(),
-          createdAt: z.string(),
-        }),
-      }),
-    ]),
+    resultSchema: NeoPublicationResultSchema,
     execute: async (input, caller) => publish(input, caller),
   });
 }

@@ -112,7 +112,7 @@ describe('current human work guidance', () => {
       expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools());
       expect(query.settingSources).toEqual([]);
       expect(query.model).toBe('fixture-model');
-      expect(query.maxTurns).toBe(17);
+      expect(query.maxTurns).toBeUndefined();
       expect(neoPrompt(projectId)).not.toContain('AskUserQuestion');
     }
   );

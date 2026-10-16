@@ -62,10 +62,6 @@ export function neoConsultationParent(
   return reviewed && neoReviewWorkId(item.id) === reviewed.id ? neoWorkParent(reviewed) : null;
 }
 
-export function neoNudgeMessageId(messageId: string): string {
-  return `${NUDGE_PREFIX}${messageId}`;
-}
-
 export function neoDoneCheckMessageId(
   workId: string,
   continued: number,

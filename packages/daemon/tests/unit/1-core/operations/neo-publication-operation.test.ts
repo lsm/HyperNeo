@@ -194,6 +194,36 @@ describe('runtime-bound publication operation', () => {
   });
   afterEach(() => mailbox.close());
 
+  test('returns the answered human message and the delivered publication, without yielding', async () => {
+    const yieldTurn = vi.fn();
+    const who = caller();
+    const result = await invoke(draft, { ...who, neoTurn: { ...who.neoTurn, yield: yieldTurn } });
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: {
+        accepted: true,
+        answered: {
+          message: ask,
+          publicationId: expect.any(String),
+          revisionId: expect.any(String),
+        },
+      },
+    });
+    const publication = ledger.list(conversationId)![0];
+    expect(result).toHaveProperty('value.answered.publicationId', publication.publicationId);
+    expect(result).toHaveProperty('value.answered.revisionId', publication.publicationId);
+    expect(yieldTurn).not.toHaveBeenCalled();
+    expect(who.neoTurn.isLive()).toBe(true);
+  });
+
+  test('an unbound event delivery does not invent an answered human question', async () => {
+    prompt(root.sessionId, 'event', 'system');
+    expect(await invoke(draft, caller(root.sessionId, 'event', false))).toMatchObject({
+      kind: 'completed',
+      value: { accepted: true, answered: null },
+    });
+  });
+
   test('takes no publication id from the model: the daemon mints it', async () => {
     const registry = createOperationRegistry([createNeoPublicationOperation(publish)]);
     expect(
