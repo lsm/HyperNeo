@@ -55,6 +55,7 @@ describe('claude-desktop start', () => {
     openExit?: number;
     appearsAfter?: number;
     relayWrites?: boolean;
+    probeFails?: boolean;
     twin?: boolean;
     checkout?: { repo: string; linked: boolean };
     resumeExit?: number;
@@ -69,6 +70,7 @@ describe('claude-desktop start', () => {
       machine: 'laptop',
       liveSessions: async () => {
         effects.push('liveSessions');
+        if (options.probeFails) throw new Error('agent listing unavailable');
         polls++;
         return options.appearsAfter !== undefined && polls > options.appearsAfter
           ? [
@@ -237,6 +239,19 @@ describe('claude-desktop start', () => {
       expect(spawned[2].includes('bypassPermissions')).toBe(permissionMode === 'bypassPermissions');
     }
   );
+
+  test('refuses to resume or relay after Desktop ownership probing fails', async () => {
+    expect(await adapter({ probeFails: true }).start?.(request, user)).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail:
+        'local_u1 was created, but the task did not reach it: Could not tell whether Claude Code Desktop runs this session: agent listing unavailable',
+    });
+    expect(spawned).toHaveLength(2);
+    expect(spawned[0]).toContain('--session-id');
+    expect(spawned[1]).toContain('--desktop');
+    expect(spawned.some((args) => args.includes('SendMessage ListAgents'))).toBe(false);
+  });
 
   test('opens work in a git repo in its own worktree and resumes it there', async () => {
     await adapter({ appearsAfter: 0, checkout: { repo: '/focus/dolmen', linked: false } }).start?.(
