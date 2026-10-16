@@ -239,14 +239,31 @@ describe('grouped card start question', () => {
     }
   );
 
-  test('an unmatched answer remains pending consent rather than declining its cards', async () => {
+  test('unmatched consent reopens its exact question and can be answered without a new proposal', async () => {
     propose('one');
+    const original = questions()[0];
+    const revision = current().revision;
     expect(await answer('可以')).toMatchObject({ value: { ok: true } });
     const entry = { workId: 'one', target: JSON.stringify(target) };
     expect(neoStartDecision(current(), entry)).toBe('pending');
     expect(planNeoStartQuestion(current(), [entry])).not.toBeNull();
     expect(service.repo.getWork('one')?.status).toBe('proposed');
+    service.proposeStartQuestion('one');
+    expect(questions()).toHaveLength(1);
+    expect(questions()[0].id).toBe(original.id);
+    expect(neoQuestionStartTargets(questions()[0])).toEqual([entry]);
+    expect(current().revision).toBeGreaterThan(revision!);
+    const reopened = current();
+    service.proposeStartQuestion('one');
+    expect(current()).toEqual(reopened);
+    expect(await answer('开始', revision)).toMatchObject({ value: { ok: false } });
+    expect(await service.admitWork('one', true)).toMatchObject({
+      ok: false,
+      reason: 'not_approved',
+    });
     expect(starts).toEqual([]);
+    expect(await answer('开始')).toMatchObject({ value: { ok: true } });
+    expect(starts).toEqual(['Card one']);
   });
 
   test('normalized option labels drive both immediate starts and recorded consent', async () => {

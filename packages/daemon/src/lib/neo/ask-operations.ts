@@ -10,7 +10,6 @@ import {
   type NeoAskItem,
   type NeoAskItemKind,
   type NeoAskQuestionBecause,
-  neoAskApprovalSpent,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -488,7 +487,7 @@ export function projectNeoSnapshotAsks(
   return [...active, ...asks.filter(isFinal).slice(0, settledLimit)].map((ask) => ({
     ...ask,
     pooled: isPooledNeoAsk(ask),
-    approvalSpent: neoAskApprovalSpent(ask, now),
+    approvalSpent: null,
     ...(ask.workIds.some((id) => stalled.has(id))
       ? { stalledWorkIds: ask.workIds.filter((id) => stalled.has(id)) }
       : {}),
@@ -881,10 +880,10 @@ export function requireNeoAskApprovalLapsed<T>(
   now: number,
   value: T
 ): Gate<T> {
-  return ask.approvedAt != null && !stalled && neoAskApprovalSpent(ask, now) === null
+  return ask.approvedAt != null && !stalled
     ? {
         reason: fail(
-          "approval_active: this ask's approval is active and none of its cards has stalled, so there is nothing for the human to approve again. Keep the work moving; ask one question only when a new human decision is needed."
+          'approval_active: this ask already has approval. Authorization follows the approved plan revision.'
         ),
       }
     : { value };
@@ -1041,12 +1040,11 @@ export function planNeoAskSettle(
   };
 }
 
-export function neoAskHasHumanAction(ask: NeoAsk, facts: NeoAskSettleFacts, now: number): boolean {
+export function neoAskHasHumanAction(ask: NeoAsk, facts: NeoAskSettleFacts, _now: number): boolean {
   return (
     facts.offered ||
     facts.stalled ||
     facts.failed ||
-    neoAskApprovalSpent(ask, now) !== null ||
     (ask.doneItems ?? []).some(
       (item) =>
         !item.removed &&
@@ -1734,7 +1732,7 @@ export function createNeoAskOperations(
     .pipe(
       (cards: NeoWork[]): NeoAskSettleFacts => ({
         offered: cards.some((card) => card.status === 'proposed'),
-        stalled: cards.some((card) => service.isContinueStalled(card.id)),
+        stalled: false,
         failed: cards.some((card) => card.status === 'failed'),
       }),
       'cards',
@@ -2240,7 +2238,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; every doneItem declares check: a registered check kind the daemon ticks it from, or null when you tick it yourself (doneWhen alone is refused, because its lines declare no check); doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; every doneItem declares check: a registered check kind the daemon ticks it from, or null when you tick it yourself (doneWhen alone is refused, because its lines declare no check); doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent records approval of that plan revision. Execution proposals still require the grouped start question’s answer for their exact cards and targets. Approval never covers deploying to production, deleting data or other destructive steps.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -2285,7 +2283,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.approve',
       description:
-        "Approve an open ask: the daemon starts its proposed work items at once, and Neo starts the ones proposed under it later without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. Its work items keep continuing while they make progress, for 48 hours; approving again after that renews the window. An approval never covers deploying to production, deleting data or other destructive steps.",
+        'Approve the current plan revision of an open ask. Only the user can call this operation. Proposed cards with grouped start questions still require their own neo.ask.answer receipt for the exact cards and targets; ask-wide approval does not answer those questions or approve later proposals or changed targets. The daemon starts only cards already admitted by their recorded consent. An approval never covers deploying to production, deleting data or other destructive steps.',
       inputSchema: Approve,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },

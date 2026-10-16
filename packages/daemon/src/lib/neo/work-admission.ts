@@ -1,7 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { isNeoAnswerItem } from './answer-outcome.ts';
 import {
-  neoAskApprovalSpent,
   type NeoAsk,
   type NeoAskApprovalSpent,
   type NeoAskItem,
@@ -103,25 +102,26 @@ function requireNeoAdmissionHandoff(snapshot: Admissible) {
 
 export function neoAskApprovalRefusal(
   ask: Pick<NeoAsk, 'approvedAt' | 'approvedRevision' | 'revision'> | null,
-  spent: NeoAskApprovalSpent | null | undefined
+  _spent: NeoAskApprovalSpent | null | undefined
 ): string | null {
   if (!ask || ask.approvedAt == null) return 'not_approved';
   if ((ask.approvedRevision ?? null) !== (ask.revision ?? 0)) return 'approval_stale';
-  return spent ? 'approval_expired' : null;
+  return null;
 }
 
-export function isNeoAdmissionApproved(ask: NeoAsk | null, now: number): boolean {
-  return neoAskApprovalRefusal(ask, ask && neoAskApprovalSpent(ask, now)) === null;
+export function isNeoAdmissionApproved(ask: NeoAsk | null, _now: number): boolean {
+  return neoAskApprovalRefusal(ask, null) === null;
 }
 
-function requireNeoAdmissionAuthorized(snapshot: Admissible, authorized: boolean, now: number) {
+function requireNeoAdmissionAuthorized(snapshot: Admissible, authorized: boolean, _now: number) {
   const { ask } = snapshot;
   const refused =
     snapshot.approval === false
       ? 'not_approved'
       : authorized || snapshot.approval === true
         ? null
-        : neoAskApprovalRefusal(ask, ask && neoAskApprovalSpent(ask, now));
+        : neoAskApprovalRefusal(ask, null);
+
   return refused ? refuse(refused) : { value: snapshot };
 }
 

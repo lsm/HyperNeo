@@ -8,6 +8,16 @@ import {
 import { type NeoWorkPr, neoWorkPrVerdict } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoPackCardAttention, NeoPackCardFacts } from '../types.ts';
 
+const APPROVAL_ONLY = /^needs \d+ approving reviews?, has \d+$/;
+
+export function isNeoCardPrAwaited(pr: NeoWorkPr): boolean {
+  if (pr.state !== 'OPEN') return false;
+  if (pr.checks === 'pending') return true;
+  if (pr.checks === 'failing' || pr.review !== 'none') return false;
+  const blockers = pr.blockers ?? [];
+  return blockers.length > 0 && blockers.every((blocker) => APPROVAL_ONLY.test(blocker));
+}
+
 function needsOf(pr: NeoWorkPr): string[] {
   if (pr.state !== 'OPEN') return [];
   const blockers = pr.blockers ?? [];
@@ -53,6 +63,7 @@ export function neoCardPrFacts(
     ? {
         text: prsText(prs, stale),
         data: {
+          waiting_on_pr: prs.filter(isNeoCardPrAwaited).map((pr) => pr.url),
           prs: prs.map(({ url, state, checks, review, blockers }) => ({
             url,
             state,

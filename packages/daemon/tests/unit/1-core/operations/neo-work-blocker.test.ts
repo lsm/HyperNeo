@@ -167,7 +167,6 @@ describe('neoEnvironmentMoveNote', () => {
       { id: 'w1', title: 'Open a PR', report: roundSix, originSessionId: 'neo:root' },
       { goal: 'Open a PR', doneWhen: '- PR open' },
       0,
-      null,
       { move }
     );
     expect(note).toContain(move.trim());

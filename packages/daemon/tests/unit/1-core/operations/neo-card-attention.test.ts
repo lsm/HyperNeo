@@ -69,11 +69,13 @@ describe('neoCardPrFacts', () => {
   test('states the live or stale PR read, with no command in it', () => {
     const live = neoCardPrFacts([pr({ blockers: ['behind dev'] })], false);
     expect(live?.data).toEqual({
+      waiting_on_pr: [],
       prs: [{ url, state: 'OPEN', checks: 'passing', review: 'none', blockers: ['behind dev'] }],
     });
     expect(live?.text).toContain('live state');
     expect(neoCardPrFacts([pr()], true)?.text).toContain('may be out of date');
     expect(neoCardPrFacts(undefined, false)).toBeNull();
+    expect(neoCardPrFacts([pr({ checks: 'pending' })], false)?.data?.waiting_on_pr).toEqual([url]);
   });
 
   test('names a pull request that can be merged now, and only that one', () => {

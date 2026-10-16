@@ -23,12 +23,7 @@ function projectNeoServiceCards(
       ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
     };
   });
-  const asks = projectNeoSnapshotAsks(
-    listed,
-    settledLimit,
-    Date.now(),
-    new Set(workIds.filter((id) => service.isContinueStalled(id)))
-  );
+  const asks = projectNeoSnapshotAsks(listed, settledLimit, Date.now(), new Set());
   const workPrs = service.workPrs
     .list(workIds)
     .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));

@@ -25,6 +25,9 @@ human-message provenance checks. For a grouped start answer in their own words, 
 verbatim words and citation. The receipt retains both. Option labels compare
 with Unicode, case and whitespace normalization. An answer with no matching
 option leaves execution consent pending; it never means decline by default.
+Unresolved consent reopens the same exact-target question at a new ask
+revision, without creating another card; replaying the proposal changes nothing
+and stale submissions remain refused.
 When their intent is clear, recording the option starts or cancels only the
 question’s exact targets, without another confirmation. Every answer completes the question, including
 a negative result. It does not automatically verify a separate outcome item.

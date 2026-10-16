@@ -15,13 +15,12 @@ import { resumedPromptUuid } from '../agent/restart-turn-recovery.ts';
 const NEO_HUMAN_CONTINUATIONS = ['neo-turn-limit:human:', NEO_ASK_ANSWER_PREFIX];
 
 import { isNeoAskAnswerReady } from './answer-outcome.ts';
-import { isNeoCardInPlay, NEO_ASK_REFUSAL_BUDGET } from './ask-views.ts';
+import { isNeoCardInPlay } from './ask-views.ts';
 
 export const NEO_TRIGGER_PREFIX = 'neo-trigger:';
 export const NEO_HUMAN_TRIGGER_PREFIX = 'human:';
 export const NEO_TRIGGER_SWEEP_MS = 1_000;
-export const NEO_TRIGGER_RETRY_MS = 60_000;
-export const NEO_TRIGGER_ACHIEVED_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const NEO_TRIGGER_DELIVERY_RETRY_MS = 60_000;
 
 export type NeoTriggerKind = 'outcome' | 'failed' | 'idle' | 'action';
 export interface NeoTriggerKey {
@@ -48,13 +47,10 @@ export interface NeoTriggerSweepDeps {
   work(id: string): Card | null;
   deliveryRetryPending(workId: string): boolean;
   reportSettled(workId: string, updatedAt: number): boolean;
-  told(askId: string): Set<string>;
-  heard(ask: NeoAsk): boolean;
+  recorded(askId: string, triggerId: string): boolean;
   record(askId: string, keys: readonly string[], triggerId: string | null): void;
   wake(ask: NeoAsk, trigger: NeoAskTrigger): Promise<boolean>;
 }
-
-export const NEO_TRIGGER_ATTEMPTS = 3;
 
 export function neoAskTriggerConcern(
   ask: Pick<NeoAsk, 'projectId'>,
@@ -63,35 +59,8 @@ export function neoAskTriggerConcern(
   return opener && opener.kind !== 'worker' ? opener.projectId : ask.projectId;
 }
 
-export function neoTriggerMessageId(triggerId: string, attempt = 0): string {
-  return `${NEO_TRIGGER_PREFIX}${triggerId}${attempt ? `#${attempt + 1}` : ''}`;
-}
-
-export function neoTriggerMessageIds(triggerId: string): string[] {
-  return Array.from({ length: NEO_TRIGGER_ATTEMPTS }, (_, attempt) =>
-    neoTriggerMessageId(triggerId, attempt)
-  );
-}
-
-export type NeoTriggerRetry = 'retry' | 'wait' | 'done';
-
-export function planNeoTriggerRetry(
-  published: boolean,
-  statuses: readonly string[]
-): NeoTriggerRetry {
-  if (published) return 'done';
-  if (!statuses.length || statuses.some((status) => !TURN_OVER.has(status))) return 'wait';
-  return statuses.length >= NEO_TRIGGER_ATTEMPTS ? 'done' : 'retry';
-}
-
-const TURN_OVER: ReadonlySet<string> = new Set(['consumed', 'failed']);
-
-export function neoTriggerRetryStatuses(
-  owner: readonly string[],
-  legacy: readonly string[]
-): readonly string[] {
-  if (owner.length || !legacy.length) return owner;
-  return legacy.every((status) => TURN_OVER.has(status)) ? ['consumed'] : ['pending'];
+export function neoTriggerMessageId(triggerId: string): string {
+  return `${NEO_TRIGGER_PREFIX}${triggerId}`;
 }
 
 export function neoHumanTrigger(messageId: string): string {
@@ -159,9 +128,7 @@ export function isNeoCardFailedForGood(card: NeoCardView, pending: boolean): boo
 
 export function neoAskIdleLine(ask: Pick<NeoAsk, 'refused' | 'refusedCount'>): string {
   const refused = ask.refused ? ` The last propose was refused: ${ask.refused}` : '';
-  return (ask.refusedCount ?? 0) >= NEO_ASK_REFUSAL_BUDGET
-    ? `nothing has started after ${ask.refusedCount} refused proposes.${refused} Ask the human one concrete question with neo.ask.question: where it is stuck (propose, start or which adapter), why in plain words, and the options you see.`
-    : `nothing is running for this ask and its outcome is not met. Get the work moving another way (another adapter, place or approach).${refused}`;
+  return `nothing is running for this ask and its outcome is not met.${refused}`;
 }
 
 export function neoAskOutcomeBase(ask: Pick<NeoAsk, 'doneItems'>): string {
@@ -219,7 +186,7 @@ export function neoAskTriggerKeys(
           ask.status === 'achieved'
             ? 'the ask is achieved'
             : answer
-              ? 'the answer is ready: publish it for this trigger and the daemon completes the ask'
+              ? 'the answer is ready'
               : 'every item of the ask is met',
       },
     ];
@@ -266,17 +233,16 @@ export function neoAskTriggerKeys(
 const KIND_ORDER: readonly NeoTriggerKind[] = ['outcome', 'failed', 'idle', 'action'];
 
 export function planNeoAskTrigger(
-  ask: Pick<NeoAsk, 'id'>,
-  keys: readonly NeoTriggerKey[],
-  told: ReadonlySet<string>
+  ask: Pick<NeoAsk, 'id' | 'revision'>,
+  keys: readonly NeoTriggerKey[]
 ): { value: NeoAskTrigger } | { reason: null } {
-  const fresh = keys.filter((key) => !told.has(key.key));
+  const fresh = keys;
   if (!fresh.length) return { reason: null };
   const kind = KIND_ORDER.find((kind) => fresh.some((key) => key.kind === kind)) ?? 'action';
-  const signature = fresh
-    .map((key) => key.key)
-    .sort()
-    .join('|');
+  const signature = JSON.stringify({
+    revision: ask.revision ?? 0,
+    facts: fresh.map((key) => JSON.stringify([key.key, key.line])).sort(),
+  });
   return {
     value: {
       triggerId: `${kind}:${ask.id}:${hashString32(signature).toString(36)}`,
@@ -314,14 +280,12 @@ export function requireNeoTriggerRead(
   return read ? { value: read } : { reason: null };
 }
 
-export function requireNeoTriggerUnheard(
+export function requireNeoTriggerUnrecorded(
   ask: NeoAsk,
   trigger: NeoAskTrigger,
-  deps: Pick<NeoTriggerSweepDeps, 'heard' | 'record'>
+  deps: NeoTriggerSweepDeps
 ): { value: NeoAskTrigger } | { reason: null } {
-  if (trigger.kind !== 'outcome' || !deps.heard(ask)) return { value: trigger };
-  deps.record(ask.id, trigger.keys, null);
-  return { reason: null };
+  return deps.recorded(ask.id, trigger.triggerId) ? { reason: null } : { value: trigger };
 }
 
 export function shouldPreemptNeoTurn(
@@ -360,15 +324,6 @@ export function isNeoHumanOwnTurn(messageId: string, trigger: string | null): bo
   return neoHumanTurnOrigin(messageId, trigger, (id) => id === human) !== null;
 }
 
-export function shouldRetryNeoTrigger(
-  ask: Pick<NeoAsk, 'status'>,
-  kind: string,
-  heard: boolean
-): boolean {
-  if (kind === 'outcome') return !heard;
-  return ask.status !== 'achieved' && ask.status !== 'abandoned';
-}
-
 const readKeys = (ask: NeoAsk, read: NeoAskTriggerRead, deps: NeoTriggerSweepDeps) =>
   neoAskTriggerKeys(
     ask,
@@ -383,13 +338,8 @@ export const noteNeoAskTrigger = (superpipe({})('neo-ask-trigger') as PipelineAP
   .pipe(requireNeoTriggerOwnerIdle, ['ask', 'deps'], 'result:owner')
   .pipe(requireNeoTriggerRead, ['owner', 'deps'], 'result:read')
   .pipe(readKeys, ['ask', 'read', 'deps'], 'keys')
-  .pipe(
-    (ask: NeoAsk, keys: NeoTriggerKey[], deps: NeoTriggerSweepDeps) =>
-      planNeoAskTrigger(ask, keys, deps.told(ask.id)),
-    ['ask', 'keys', 'deps'],
-    'result:trigger'
-  )
-  .pipe(requireNeoTriggerUnheard, ['ask', 'trigger', 'deps'], 'result:trigger')
+  .pipe(planNeoAskTrigger, ['ask', 'keys'], 'result:trigger')
+  .pipe(requireNeoTriggerUnrecorded, ['ask', 'trigger', 'deps'], 'result:trigger')
   .pipe(
     async (ask: NeoAsk, trigger: NeoAskTrigger, deps: NeoTriggerSweepDeps) => {
       if (!(await deps.wake(ask, trigger))) return null;
@@ -403,30 +353,6 @@ export const noteNeoAskTrigger = (superpipe({})('neo-ask-trigger') as PipelineAP
   ask: NeoAsk,
   deps: NeoTriggerSweepDeps
 ) => Promise<NeoAskTrigger | null | undefined>;
-
-export const coverNeoAskTriggers = (superpipe({})('neo-ask-trigger-cover') as PipelineAPI)
-  .input(['ask', 'deps', 'kinds'])
-  .pipe(requireNeoTriggerRead, ['ask', 'deps'], 'result:read')
-  .pipe(readKeys, ['ask', 'read', 'deps'], 'keys')
-  .pipe(
-    (
-      ask: NeoAsk,
-      keys: NeoTriggerKey[],
-      kinds: readonly NeoTriggerKind[],
-      deps: NeoTriggerSweepDeps
-    ) => {
-      const covered = keys.filter((key) => kinds.includes(key.kind)).map((key) => key.key);
-      deps.record(ask.id, covered, null);
-      return covered;
-    },
-    ['ask', 'keys', 'kinds', 'deps'],
-    'covered'
-  )
-  .end('covered') as (
-  ask: NeoAsk,
-  deps: NeoTriggerSweepDeps,
-  kinds: readonly NeoTriggerKind[]
-) => string[] | null;
 
 export function requirePublicationTrigger<T>(
   value: T,

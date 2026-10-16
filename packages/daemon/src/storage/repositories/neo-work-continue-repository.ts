@@ -22,7 +22,7 @@ export class NeoWorkContinueRepository {
            VALUES (?, 1, ?, ?, ?, 0)
            ON CONFLICT(work_id) DO UPDATE SET count = count + 1,
              continued_at = excluded.continued_at, last_message = excluded.last_message,
-             stalled = CASE WHEN progress IS excluded.progress THEN stalled + 1 ELSE 0 END,
+             stalled = 0,
              progress = excluded.progress`
       )
       .run(workId, at, message, progress);

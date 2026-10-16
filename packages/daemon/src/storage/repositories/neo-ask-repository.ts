@@ -1,7 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoOutcomeBindingPolicy } from '../../lib/neo/outcome-binding-policy.ts';
 import {
-  NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
   type NeoAskItem,
   type NeoAskQuestionBecause,
@@ -212,16 +211,6 @@ export class NeoAskRepository {
     return this.withWork(rows);
   }
 
-  achievedSince(since: number): NeoAsk[] {
-    const rows = this.db
-      .prepare(
-        `SELECT ${askColumns} FROM neo_asks WHERE status = 'achieved' AND settled_at > ?
-          ORDER BY settled_at DESC, id`
-      )
-      .all(since) as NeoAskRow[];
-    return this.withWork(rows);
-  }
-
   list(projectId?: string | null): NeoAsk[] {
     const condition = projectId === undefined ? '' : 'WHERE concern_id IS ?';
     const rows = this.db
@@ -298,7 +287,9 @@ export class NeoAskRepository {
       if (
         !ask ||
         ['achieved', 'abandoned'].includes(ask.status) ||
-        ask.doneItems?.some((item) => item.id === question.id && !item.removed)
+        ask.doneItems?.some(
+          (item) => item.id === question.id && !item.removed && item.state === 'needs_you'
+        )
       )
         return false;
       this.db
@@ -836,11 +827,6 @@ export class NeoAskRepository {
       .all(JSON.stringify(rows.map((row) => row.id))) as NeoAskItemRow[];
     return rows.map((row) => ({
       ...row,
-      ...(row.approvedAt != null
-        ? {
-            approvedUntil: row.approvedAt + NEO_ASK_CONTINUE_WINDOW_MS,
-          }
-        : {}),
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)
