@@ -1,4 +1,4 @@
-import type { SDKUserMessage } from '../sdk/sdk.ts';
+import type { SDKUserMessage } from '../sdk/sdk.d.ts';
 import type { NeoInputOrigin } from './neo-message.ts';
 
 export interface NeoConversationAskInput {

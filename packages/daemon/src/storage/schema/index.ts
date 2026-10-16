@@ -33,11 +33,6 @@ import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/
 export { runMigrations } from './migrations.ts';
 export { runMigration265 } from './m265-workflow-run-blocked-retries.ts';
 export { runMigration266 } from './m266-task-assistant-messages-index.ts';
-export { runMigration267 } from './m267-restamp-contracts-task-approve.ts';
-export { runMigration268 } from './m268-rename-agent-forge-scopes.ts';
-export { runMigration269 } from './m269-restamp-goal-task-trigger.ts';
-export { runMigration270 } from './m270-restamp-contracts-task-transition-review.ts';
-export { runMigration271 } from './m271-relocate-built-in-key-templates.ts';
 export { reclaimPendingMigrationSpace } from './migration-space-reclaim.ts';
 // knip-ignore-next-line
 export { runMigration12 } from './migrations.ts';
@@ -46,73 +41,47 @@ export { runMigration47 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration48 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration49 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration50 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration51 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration55 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration56 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration57 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration58 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration66 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration68 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration72 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration74 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration78 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration86 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration93 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration94 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration95 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration96 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration97 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration98 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration99 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration100 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration101 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration109 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration111 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration112 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration117 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration118 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration119 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration120 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration121 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration122 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration123 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration124 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration125 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration126 } from './migrations.ts';
 // knip-ignore-next-line
@@ -122,19 +91,15 @@ export { runMigration128 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration129 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration130 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration131 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration132 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration133 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration134 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration137 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration138 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration139 } from './migrations.ts';
 // knip-ignore-next-line
@@ -153,7 +118,6 @@ export { runMigration144 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration148 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration156 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration166 } from './migrations.ts';
 // knip-ignore-next-line
@@ -161,7 +125,6 @@ export { runMigration170 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration174 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration186 } from './migrations.ts';
 
 export function createTables(db: BunDatabase): void {
   createNeoTables(db);

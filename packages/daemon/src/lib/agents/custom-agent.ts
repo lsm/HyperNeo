@@ -30,7 +30,7 @@ export {
   expandPrompt,
   resolveCustomAgentPrompt,
 } from './custom-agent-prompt.ts';
-export { buildCustomAgentTaskMessage, labelVerificationImplementerFacing } from './task-message.ts';
+export { buildCustomAgentTaskMessage } from './task-message.ts';
 
 export const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
 
