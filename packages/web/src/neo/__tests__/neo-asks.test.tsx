@@ -7,7 +7,6 @@ import {
   describeNeoAskFromView,
   groupNeoAsks,
   NEO_ASK_NEEDS_YOU_LABEL,
-  neoAskApproval,
   neoAskItems,
   neoAskOpenTarget,
 } from '../neo-asks.ts';
@@ -448,279 +447,89 @@ describe('NeoAskCard', () => {
     expect(card.container.querySelector('[data-ask-item="i3"] .line-through')).toBeTruthy();
   });
 
-  it('puts only the daemon’s human actions on the card face and marks items added later', () => {
-    const view = describeAsk(
-      {
-        ...ask('w', 'waiting', []),
-        doneItems: [
-          item('i1', 'met'),
-          item('i2', 'needs_you', { text: 'Check the keyboard hides', kind: 'action' }),
-          item('i3', 'pending', { addedAt: 5 }),
-          item('i4', 'needs_you', { text: 'Wait for #6618 to merge' }),
-        ],
-      },
-      [],
-      {
-        humanActions: [
-          {
-            kind: 'answer',
-            itemId: 'i2',
-            step: 'Check the keyboard hides',
-            question: 'Did it work?',
-            options: ['Yes', 'No'],
-          },
-        ],
-      }
-    );
-    const card = render(<NeoAskCard view={view} onAnswer={vi.fn()} onDone={vi.fn()} />);
-    const face = card.getByRole('list', { name: 'Needs you' });
-    expect(face.textContent).toBe('!Check the keyboard hidesDid it work?YesNo');
-    expect(card.queryByText('Wait for #6618 to merge')).toBeNull();
-    expect(card.queryByRole('button', { name: /^Mark done/ })).toBeNull();
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(
-      card.getByRole('list', { name: 'Done when' }).querySelector('[data-ask-item="i3"]')
-        ?.textContent
-    ).toBe('○Item i3added');
-  });
-
-  it('answers a human-only step’s result question from the card face', () => {
+  it('renders each question once with the decline option left and positive option right', () => {
     const answer = vi.fn();
     const view = describeAsk(
       {
         ...ask('w', 'waiting', []),
-        doneItems: [item('i2', 'needs_you', { text: 'Check the keyboard hides', kind: 'action' })],
+        doneItems: [item('i2', 'needs_you', { text: '开始调查？', decision: true })],
       },
       [],
       {
         humanActions: [
           {
-            kind: 'answer',
+            kind: 'question',
             itemId: 'i2',
-            step: 'Check the keyboard hides',
-            question: 'Did it work?',
-            options: ['Yes', 'No'],
+            question: '开始调查？',
+            options: ['先不做', '开始调查'],
           },
         ],
       }
     );
     const card = render(<NeoAskCard view={view} onAnswer={answer} />);
-    fireEvent.click(card.getByRole('button', { name: 'Answer Did it work?: Yes' }));
-    expect(answer).toHaveBeenCalledExactlyOnceWith('i2', 'Yes');
-    cleanup();
-    const busy = render(<NeoAskCard view={view} onAnswer={answer} disabled />);
+    const choices = within(card.getByRole('list', { name: 'Needs you' })).getAllByRole('button');
+    expect(choices.map((button) => button.textContent)).toEqual(['先不做', '开始调查']);
+    expect(choices[1].className).toContain('bg-accent');
+    fireEvent.click(choices[0]);
+    expect(answer).toHaveBeenCalledExactlyOnceWith('i2', '先不做');
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    const questions = within(card.getByRole('list', { name: 'Questions' }));
+    expect(questions.getByRole('button', { name: 'Question above' })).toBeTruthy();
+    expect(questions.queryByRole('button', { name: /开始调查/ })).toBeNull();
+    expect(card.getAllByRole('button', { name: /: 开始调查$/ })).toHaveLength(1);
+  });
+
+  it('disables option submission while busy', () => {
+    const view = describeAsk(ask('w', 'waiting', []), [], {
+      humanActions: [
+        { kind: 'question', itemId: 'i2', question: 'Did it work?', options: ['No', 'Yes'] },
+      ],
+    });
+    const card = render(<NeoAskCard view={view} onAnswer={vi.fn()} disabled />);
     expect(
-      (busy.getByRole('button', { name: 'Answer Did it work?: No' }) as HTMLButtonElement).disabled
+      (card.getByRole('button', { name: 'Answer Did it work?: Yes' }) as HTMLButtonElement).disabled
     ).toBe(true);
   });
 
-  it('confirms a reported claim only when the daemon offers it', () => {
-    const done = vi.fn();
-    const reported = item('i2', 'reported', { text: 'The iMac runs the fix' });
-    const view = describeAsk({ ...ask('w', 'open', []), doneItems: [reported] }, [], {
-      humanActions: [{ kind: 'confirm', itemId: 'i2', step: 'The iMac runs the fix' }],
+  it('shows an open question as a chat reply cue without answer or confirmation buttons', () => {
+    const view = describeAsk(ask('w', 'waiting', []), [], {
+      humanActions: [{ kind: 'question', itemId: 'i2', question: 'Which repo?', options: [] }],
     });
-    const card = render(<NeoAskCard view={view} onDone={done} />);
-    fireEvent.click(card.getByRole('button', { name: 'Confirm: The iMac runs the fix' }));
-    expect(done).toHaveBeenCalledExactlyOnceWith('i2');
-    cleanup();
-    const none = render(
-      <NeoAskCard
-        view={describeAsk({ ...ask('w', 'open', []), doneItems: [reported] }, [])}
-        onDone={done}
-      />
-    );
-    expect(none.queryByRole('button', { name: /^Confirm/ })).toBeNull();
+    const card = render(<NeoAskCard view={view} onAnswer={vi.fn()} />);
+    const question = within(card.getByRole('list', { name: 'Needs you' }));
+    expect(question.getByText('Which repo?')).toBeTruthy();
+    expect(question.getByText('Reply in chat…')).toBeTruthy();
+    expect(question.queryByRole('button')).toBeNull();
   });
 
-  it('answers a decision with its options in one place and points the checklist there', () => {
-    const answer = vi.fn();
-    const inChat = vi.fn();
-    const decision = item('i2', 'needs_you', {
-      text: 'Assign #6545?',
-      options: ['Assign it', 'Leave it'],
-    });
-    const view = describeAsk({ ...ask('w', 'waiting', []), doneItems: [decision] }, [], {
-      humanActions: [
-        {
-          kind: 'answer',
-          itemId: 'i2',
-          step: null,
-          question: 'Assign #6545?',
-          options: ['Assign it', 'Leave it'],
-        },
-      ],
-      answer: {
-        itemId: 'i2',
-        question: 'Assign #6545?',
-        label: 'Answer in chat',
-        options: ['Assign it', 'Leave it'],
-      },
-    });
-    const card = render(
-      <NeoAskCard view={view} onAnswer={answer} onAnswerInChat={inChat} onDone={vi.fn()} />
-    );
-    fireEvent.click(card.getByRole('button', { name: 'Answer Assign #6545?: Leave it' }));
-    expect(answer).toHaveBeenCalledExactlyOnceWith('i2', 'Leave it');
-    expect(card.queryByRole('button', { name: 'Mark done: Assign #6545?' })).toBeNull();
-    expect(card.queryByRole('button', { name: 'Answer in chat' })).toBeNull();
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    const questions = within(card.getByRole('list', { name: 'Questions' }));
-    expect(questions.getByText('Assign #6545?')).toBeTruthy();
-    expect(questions.getByRole('button', { name: 'Answer above' })).toBeTruthy();
-    expect(questions.queryByRole('button', { name: /Leave it/ })).toBeNull();
-    expect(card.getAllByRole('button', { name: /: Leave it$/ })).toHaveLength(1);
-  });
-
-  it('counts only daemon- or human-checked outcomes as verified and keeps decisions out of the count', () => {
+  it('does not invent confirm, retry or approval controls from reported items or expired approval facts', () => {
     const view = describeAsk(
       {
-        ...ask('a', 'open', []),
-        doneItems: [
-          item('i1', 'met', { metBy: 'daemon' }),
-          item('i2', 'met', { metBy: 'human' }),
-          item('i3', 'met', { metBy: 'neo' }),
-          item('i4', 'needs_you', { decision: true }),
-        ],
+        ...ask('w', 'open', []),
+        approvedAt: 1,
+        approvalSpent: 'expired',
+        stalledWorkIds: ['w1'],
+        doneItems: [item('i2', 'reported', { text: 'The iMac runs the fix' })],
       },
       []
     );
     const card = render(<NeoAskCard view={view} />);
-    expect(card.getByText('2 of 3 outcomes verified')).toBeTruthy();
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    const done = within(card.getByRole('list', { name: 'Done when' }));
-    expect(done.getByText('Neo says done, not verified')).toBeTruthy();
-    expect(done.getByText('confirmed by you')).toBeTruthy();
-    expect(within(card.getByRole('list', { name: 'Questions' })).getByText('Item i4')).toBeTruthy();
+    expect(card.queryByRole('list', { name: 'Needs you' })).toBeNull();
+    expect(card.queryByRole('button', { name: /Confirm|Retry|Approve/ })).toBeNull();
   });
 
-  it('points a reported question at its Confirm control, not an answer', () => {
-    const view = describeAsk(
-      {
-        ...ask('w', 'waiting', []),
-        doneItems: [item('i2', 'reported', { text: 'Ship it?', kind: 'decision' })],
-      },
-      [],
-      { humanActions: [{ kind: 'confirm', itemId: 'i2', step: 'Ship it?' }] }
-    );
-    const card = render(<NeoAskCard view={view} onDone={vi.fn()} />);
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    const questions = within(card.getByRole('list', { name: 'Questions' }));
-    expect(questions.getByRole('button', { name: 'Confirm above' })).toBeTruthy();
-    expect(questions.queryByRole('button', { name: 'Answer above' })).toBeNull();
-  });
-
-  it('keeps Answer in chat when a question has no options to tap', () => {
-    const inChat = vi.fn();
-    const view = describeAsk(
-      {
-        ...ask('w', 'waiting', []),
-        doneItems: [item('i2', 'needs_you', { text: 'Which repo?', kind: 'decision' })],
-      },
-      [],
-      {
-        humanActions: [
-          { kind: 'answer', itemId: 'i2', step: null, question: 'Which repo?', options: [] },
-        ],
-        answer: { itemId: 'i2', question: 'Which repo?', label: 'Answer in chat', options: [] },
-      }
-    );
-    const card = render(<NeoAskCard view={view} onAnswer={vi.fn()} onAnswerInChat={inChat} />);
-    fireEvent.click(card.getByRole('button', { name: 'Answer in chat' }));
-    expect(inChat).toHaveBeenCalledExactlyOnceWith('Which repo?');
-  });
-
-  it.each([
-    [[], 'Approved'],
-    [[{ kind: 'approve' as const, reason: 'expired' as const }], 'Approval expired'],
-    [[{ kind: 'approve' as const, reason: 'stalled' as const, workIds: ['a1'] }], 'Stalled'],
-  ])('labels approval from the current approve action: %j', (humanActions, label) => {
-    const view = describeAsk({ ...ask('a', 'open', []), approvedAt: 1 }, [], { humanActions });
-    const card = render(<NeoAskCard view={view} onApprove={vi.fn()} />);
-    expect(card.getByText(label)).toBeTruthy();
-    if (humanActions.length) {
-      expect(card.queryByText('Approved')).toBeNull();
-      expect(card.getByRole('button', { name: 'Approve again' })).toBeTruthy();
-    }
-  });
-
-  it('approves an ask with proposed steps once, and marks it approved after', () => {
+  it('hides outcome progress while all cards are still proposed', () => {
     const proposed = [...scenes.attention, ...scenes.running].filter(
       (scene) => scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'
     );
     expect(proposed.length).toBeGreaterThan(0);
-    const approve = vi.fn();
-    const view = describeAsk(ask('b', 'open', ['b1']), proposed, {
-      humanActions: [{ kind: 'start', workId: 'b1' }],
-    });
-    const card = render(<NeoAskCard view={view} onApprove={approve} />);
-    fireEvent.click(card.getByRole('button', { name: 'Approve all steps' }));
-    expect(approve).toHaveBeenCalledOnce();
-    expect(card.queryByText('Approved')).toBeNull();
-    cleanup();
-    const approved = describeAsk({ ...ask('b', 'open', ['b1']), approvedAt: 5 }, proposed);
-    const after = render(<NeoAskCard view={approved} onApprove={approve} />);
-    expect(after.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
-    expect(after.getByText('Approved')).toBeTruthy();
-    cleanup();
-    const nothing = render(
-      <NeoAskCard
-        view={describeAsk(ask('a', 'open', ['a2']), scenes.running.slice(0, 1))}
-        onApprove={approve}
-      />
+    const view = describeAsk(
+      { ...ask('b', 'open', ['b1']), doneItems: [item('i1', 'pending')] },
+      proposed
     );
-    expect(nothing.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
-  });
-
-  it('puts Retry on the card face when the daemon offers it for a failed step', () => {
-    const retry = vi.fn();
-    const owned = scenes.running.slice(0, 1);
-    const id = owned[0].ref.id;
-    const view = describeAsk(ask('a', 'open', [id]), owned, {
-      humanActions: [{ kind: 'retry', workId: id }],
-    });
-    const card = render(<NeoAskCard view={view} onRetry={retry} />);
-    const title = owned[0].receipt.kind === 'work' ? owned[0].receipt.title : '';
-    fireEvent.click(card.getByRole('button', { name: `Retry ${title}` }));
-    expect(retry).toHaveBeenCalledExactlyOnceWith(id);
-    cleanup();
-    const none = render(
-      <NeoAskCard view={describeAsk(ask('a', 'open', [id]), owned)} onRetry={retry} />
-    );
-    expect(none.queryByRole('button', { name: /^Retry/ })).toBeNull();
-  });
-
-  it('reads an approval’s budget from the ask and offers Approve again only when the daemon asks', () => {
-    expect(neoAskApproval(ask('a', 'open', []), [])).toBeNull();
-    const approved = { ...ask('a', 'open', []), approvedAt: 5 };
-    expect(neoAskApproval(approved, [])).toEqual({ line: '0 continues used', spent: false });
-    const budget = {
-      ...approved,
-      approvedContinues: 3,
-      approvedContinueLimit: 20,
-      approvedUntil: 100,
-    };
-    expect(neoAskApproval(budget, [])).toEqual({ line: '3 of 20 continues used', spent: false });
-    expect(neoAskApproval(budget, [{ kind: 'approve', reason: 'expired' }])).toEqual({
-      line: '3 of 20 continues used · approval ran out',
-      spent: true,
-    });
-    expect(
-      neoAskApproval(budget, [{ kind: 'approve', reason: 'stalled', workIds: ['a1'] }])
-    ).toEqual({ line: '3 of 20 continues used · a step stalled', spent: true });
-    const approve = vi.fn();
-    const counted = { ...budget, approvedContinues: 20, approvalSpent: 'continues' as const };
-    const quiet = render(<NeoAskCard view={describeAsk(counted, [])} onApprove={approve} />);
-    expect(quiet.queryByRole('button', { name: 'Approve again' })).toBeNull();
-    cleanup();
-    const expired = describeAsk({ ...counted, approvalSpent: 'expired' as const }, [], {
-      humanActions: [{ kind: 'approve', reason: 'expired' }],
-    });
-    const card = render(<NeoAskCard view={expired} onApprove={approve} />);
-    fireEvent.click(card.getByRole('button', { name: 'Approve again' }));
-    expect(approve).toHaveBeenCalledOnce();
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(card.getByText('20 of 20 continues used · approval ran out')).toBeTruthy();
+    const card = render(<NeoAskCard view={view} />);
+    expect(card.queryByText(/outcomes verified/)).toBeNull();
+    expect(card.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
   });
 
   it('shows the done-when text for an ask opened before checklists', () => {
