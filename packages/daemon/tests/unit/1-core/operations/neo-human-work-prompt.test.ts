@@ -29,9 +29,13 @@ describe('current human work guidance', () => {
       .split('\n\n')[0]!;
     expect(delegation).toContain('only to a proposal created for the current human message');
     expect(delegation).toContain('later says “yes, run it” about an earlier work item');
-    expect(delegation).toContain('they must use that work item’s Start work button');
-    expect(delegation).toContain('do not invoke neo.work.start for it');
-    expect(delegation).toContain('or re-propose the same work to evade its original input binding');
+    expect(delegation).toContain(
+      'record their own words against its existing start question with neo.ask.answer'
+    );
+    expect(delegation).toContain('use the question control when a decision is still needed');
+    expect(delegation).toContain(
+      'never re-propose the same work to evade its original input binding'
+    );
     expect(delegation).toContain('to evade its original input binding');
   });
 
@@ -41,7 +45,7 @@ describe('current human work guidance', () => {
     expect(card).toContain('to set up or show a work item without starting work');
     expect(card).toContain('call neo.work.propose in that turn without starting it');
     expect(card).toContain('For this proposal-only request');
-    expect(card).toContain('the Start work button is the approval to execute');
+    expect(card).toContain('the ask’s start question is the decision control for execution');
     expect(card).toContain('Do not turn placeholders into permission to execute');
   });
 
@@ -64,8 +68,8 @@ describe('current human work guidance', () => {
     expect(prompt).toContain('requires a compact choice or clarification before starting');
     expect(prompt).toContain('existing runtime admission decides authority from the actual input');
     expect(prompt).toContain('never pass an approval flag or bypass a refusal');
-    expect(prompt).toContain('an explicit admitted current human execution request');
-    expect(prompt).toContain('does not need a duplicate Start click');
+    expect(prompt).toContain('Reuse a recorded answer instead of asking for a duplicate decision');
+    expect(prompt).toContain('the ask’s question control carries those decisions');
     expect(prompt).toContain('During a consultation, You may propose work but cannot start it');
   });
 
