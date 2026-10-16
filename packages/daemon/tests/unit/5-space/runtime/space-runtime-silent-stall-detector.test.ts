@@ -12,14 +12,16 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedRuntimeSession } from '../../helpers/seed-runtime-session.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createTables(db);
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
@@ -187,9 +189,10 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
   }
 
   function saveTerminalResultMessage(sessionId: string, at: Date = new Date()) {
+    seedRuntimeSession(db, sessionId);
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
-			 VALUES (?, ?, 'result', 'success', ?, ?, 'consumed', 'sdk', 1, 1)`
+			 VALUES (?, ?, 'result', 'success', ?, ?, 'consumed', NULL, 1, 1)`
     ).run(
       `${sessionId}-result-${Date.now()}-${Math.random()}`,
       sessionId,
@@ -207,9 +210,10 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
   }
 
   function saveNonTerminalAssistantMessage(sessionId: string, at: Date) {
+    seedRuntimeSession(db, sessionId);
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
-			 VALUES (?, ?, 'assistant', ?, ?, 'consumed', 'sdk', 1, 0)`
+			 VALUES (?, ?, 'assistant', ?, ?, 'consumed', NULL, 1, 0)`
     ).run(
       `${sessionId}-assistant-${Date.now()}-${Math.random()}`,
       sessionId,
