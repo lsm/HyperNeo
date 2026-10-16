@@ -236,6 +236,13 @@ export interface NeoCardWaiting {
   items: { id: string; text: string }[];
 }
 
+export interface NeoCardControlFailure {
+  operation: 'stop' | 'withdraw';
+  reason: 'unsupported' | 'unavailable';
+  detail: string;
+  at: number;
+}
+
 export interface NeoCardView {
   waitingFor?: NeoCardWaiting[];
   autoStart?: boolean;
