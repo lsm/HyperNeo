@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 import {
-  recordProviderFailure,
+  classifyProviderFailure,
+  recordClassifiedProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 
@@ -67,7 +68,10 @@ describe('AcpProvider', () => {
   describe('getAuthStatus', () => {
     it('should surface a recorded credential failure as unauthenticated', async () => {
       process.env.HYPERNEO_ACP_COMMAND = 'broken-agent';
-      recordProviderFailure('acp', new Error('ACP agent process error: spawn broken-agent ENOENT'));
+      recordClassifiedProviderFailure(
+        'acp',
+        classifyProviderFailure(new Error('ACP agent process error: spawn broken-agent ENOENT'))
+      );
 
       const status = await provider.getAuthStatus();
 
@@ -78,7 +82,10 @@ describe('AcpProvider', () => {
 
     it('should stay authenticated but degraded for a recorded transient failure', async () => {
       process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
-      recordProviderFailure('acp', new Error('Request timed out after 10000ms: initialize'));
+      recordClassifiedProviderFailure(
+        'acp',
+        classifyProviderFailure(new Error('Request timed out after 10000ms: initialize'))
+      );
 
       const status = await provider.getAuthStatus();
 

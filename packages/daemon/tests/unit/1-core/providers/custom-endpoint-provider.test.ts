@@ -6,7 +6,8 @@ import {
   resolveModelCapabilities,
 } from '../../../../src/lib/providers/custom-endpoint-provider';
 import {
-  recordProviderFailure,
+  classifyProviderFailure,
+  recordClassifiedProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 import { buildProviderSettings } from '../../../../src/lib/agent/query-options-builder';
@@ -525,7 +526,10 @@ describe('CustomEndpointProvider', () => {
 
   it('getAuthStatus surfaces a recorded credential failure as unauthenticated', async () => {
     const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: makeFakeBridge().factory });
-    recordProviderFailure(p.id, new Error('LM Studio Local API key rejected (HTTP 401)'));
+    recordClassifiedProviderFailure(
+      p.id,
+      classifyProviderFailure(new Error('LM Studio Local API key rejected (HTTP 401)'))
+    );
 
     const status = await p.getAuthStatus();
 

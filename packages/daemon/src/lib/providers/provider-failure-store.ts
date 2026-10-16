@@ -50,10 +50,6 @@ function notifyFailureChange(change: ProviderFailureChange): void {
   }
 }
 
-export function recordProviderFailure(providerId: string, error: unknown): ProviderFailureRecord {
-  return recordClassifiedProviderFailure(providerId, classifyProviderFailure(error));
-}
-
 export function recordClassifiedProviderFailure(
   providerId: string,
   failure: { errorKind: ProviderFailureErrorKind; message: string }

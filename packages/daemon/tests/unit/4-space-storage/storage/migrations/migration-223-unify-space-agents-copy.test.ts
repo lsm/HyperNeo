@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import type { SettingSource, ThinkingLevel } from '@hyperneo/shared';
-import { workerAgentToLongHorizonParams } from '../../../../../src/lib/agents/worker-long-horizon-mapper.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { runMigration223 } from '../../../../../src/storage/schema/m223-unify-space-agents-copy.ts';
 import { createTables, runMigrations } from '../../../../../src/storage/schema/index.ts';
@@ -311,65 +310,6 @@ describe('migration 223 — copy backfill', () => {
     expect(longHorizonRow(db, 'w-empty-desc')?.description).toBeNull();
     expect(longHorizonRow(db, 'w-empty-desc')?.model_pool).toBeNull();
     expect(longHorizonRow(db, 'w-nullhandle')?.handle).toBe('Planner');
-    db.close();
-  });
-
-  test('every copied row equals the pure mapper output under the batch reservation protocol', () => {
-    const db = makeOverlayDb();
-    insertSpace(db, 'space-a');
-    seedLongHorizonAgent(db, {
-      id: 'lh-research',
-      spaceId: 'space-a',
-      handle: 'research',
-      displayName: 'Research',
-      templateKey: 'research.default',
-    });
-    const seeds = [
-      seedWorker(db, {
-        id: 'w-a',
-        spaceId: 'space-a',
-        name: 'Research',
-        handle: 'research',
-        createdAt: 100,
-      }),
-      seedWorker(db, {
-        id: 'w-b',
-        spaceId: 'space-a',
-        name: 'Coder',
-        handle: 'coder',
-        createdAt: 101,
-      }),
-      seedWorker(db, { id: 'w-c', spaceId: 'space-a', name: 'QA', handle: 'qa', createdAt: 102 }),
-    ];
-
-    const occupied = occupiedHandles(db, 'space-a');
-
-    runMigration223(db);
-
-    const ordered = [...seeds].sort(
-      (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)
-    );
-    for (const seed of ordered) {
-      const params = workerAgentToLongHorizonParams(mapperSource(seed), {
-        occupiedHandles: occupied,
-        now: 12345,
-      });
-      occupied.add(params.handle);
-      const row = longHorizonRow(db, seed.id);
-      expect(row?.handle).toBe(params.handle);
-      expect(row?.display_name).toBe(params.displayName);
-      expect(row?.status).toBe(params.status);
-      expect(row?.instructions).toBe(params.instructions);
-      expect(row?.model).toBe(params.model);
-      expect(row?.thinking_level).toBe(params.thinkingLevel);
-      expect(row?.provider).toBe(params.provider);
-      expect(row?.setting_sources).toBe(
-        params.settingSources ? JSON.stringify(params.settingSources) : null
-      );
-      expect(row?.tool_permissions_json).toBe(JSON.stringify(params.toolPermissions));
-      expect(row?.description).toBe(params.description ?? null);
-      expect(row?.model_pool).toBe(params.modelPool ? JSON.stringify(params.modelPool) : null);
-    }
     db.close();
   });
 

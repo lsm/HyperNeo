@@ -33,13 +33,6 @@ export function expandPrompt(
   return `${trimmedBase}\n\n${trimmedExpansion}`;
 }
 
-export function buildCustomAgentSystemPrompt(
-  customAgent: UnifiedSpaceAgent,
-  slotOverrides?: SlotOverrides
-): string {
-  return resolveCustomAgentPrompt(customAgent, slotOverrides).value;
-}
-
 export function resolveCustomAgentPrompt(
   customAgent: UnifiedSpaceAgent,
   slotOverrides?: SlotOverrides

@@ -6,11 +6,11 @@ import {
   clearProviderFailure,
   getAllProviderFailures,
   getProviderFailure,
-  type ProviderFailureChange,
-  recordProviderFailure,
+  recordClassifiedProviderFailure,
   removeProviderFailure,
   resetProviderFailureStore,
   subscribeProviderFailureChanges,
+  type ProviderFailureChange,
 } from '../../../../src/lib/providers/provider-failure-store';
 
 const T0 = new Date('2026-01-01T00:00:00Z').getTime();
@@ -124,7 +124,10 @@ describe('provider failure store', () => {
 
   it('records a failure with timestamps and reports it', () => {
     const before = Date.now();
-    const record = recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
+    const record = recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 503)'))
+    );
 
     expect(record.errorKind).toBe('transient');
     expect(record.providerId).toBe('glm');
@@ -136,8 +139,14 @@ describe('provider failure store', () => {
   });
 
   it('keeps the first-recorded timestamp when the same kind is re-recorded', () => {
-    const first = recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
-    const second = recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 500)'));
+    const first = recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 503)'))
+    );
+    const second = recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 500)'))
+    );
 
     expect(second.errorKind).toBe('transient');
     expect(second.firstRecordedAt).toBe(first.firstRecordedAt);
@@ -147,9 +156,15 @@ describe('provider failure store', () => {
 
   it('resets the first-recorded timestamp when the failure kind changes', () => {
     jest.setSystemTime(T0);
-    const transient = recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
+    const transient = recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 503)'))
+    );
     jest.setSystemTime(T0 + 10_000);
-    const credential = recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
+    const credential = recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai API key rejected (HTTP 401)'))
+    );
 
     expect(transient.firstRecordedAt).toBe(T0);
     expect(credential.errorKind).toBe('credential');
@@ -161,8 +176,14 @@ describe('provider failure store', () => {
     const changes: ProviderFailureChange[] = [];
     subscribeProviderFailureChanges((change) => changes.push(change));
 
-    recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
-    recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 500)'));
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 503)'))
+    );
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 500)'))
+    );
 
     expect(changes).toHaveLength(1);
     expect(changes[0]?.providerId).toBe('glm');
@@ -173,8 +194,14 @@ describe('provider failure store', () => {
     const changes: ProviderFailureChange[] = [];
     subscribeProviderFailureChanges((change) => changes.push(change));
 
-    recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
-    recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 503)'))
+    );
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai API key rejected (HTTP 401)'))
+    );
 
     expect(changes).toHaveLength(2);
     expect(changes[1]?.record?.errorKind).toBe('credential');
@@ -184,7 +211,10 @@ describe('provider failure store', () => {
     const changes: ProviderFailureChange[] = [];
     subscribeProviderFailureChanges((change) => changes.push(change));
 
-    recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 503)'))
+    );
     expect(clearProviderFailure('glm')).toBe(true);
     expect(clearProviderFailure('glm')).toBe(false);
 
@@ -197,7 +227,10 @@ describe('provider failure store', () => {
     const changes: ProviderFailureChange[] = [];
     subscribeProviderFailureChanges((change) => changes.push(change));
 
-    recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 503)'))
+    );
     expect(removeProviderFailure('glm')).toBe(true);
     expect(removeProviderFailure('glm')).toBe(false);
 
@@ -210,15 +243,24 @@ describe('provider failure store', () => {
     const unsubscribe = subscribeProviderFailureChanges((change) => changes.push(change));
 
     unsubscribe();
-    recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 503)'))
+    );
 
     expect(changes).toHaveLength(0);
     expect(getProviderFailure('glm')).toBeDefined();
   });
 
   it('tracks failures per provider independently', () => {
-    recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
-    recordProviderFailure('kimi', new Error('Kimi API key rejected (HTTP 401)'));
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 503)'))
+    );
+    recordClassifiedProviderFailure(
+      'kimi',
+      classifyProviderFailure(new Error('Kimi API key rejected (HTTP 401)'))
+    );
 
     expect(getProviderFailure('glm')?.errorKind).toBe('transient');
     expect(getProviderFailure('kimi')?.errorKind).toBe('credential');
@@ -238,7 +280,10 @@ describe('applyRecordedFailureToAuthStatus', () => {
   });
 
   it('flips a credential failure to unauthenticated with the failure message', () => {
-    recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai API key rejected (HTTP 401)'))
+    );
 
     expect(
       applyRecordedFailureToAuthStatus('glm', { isAuthenticated: true, method: 'api_key' })
@@ -251,7 +296,10 @@ describe('applyRecordedFailureToAuthStatus', () => {
   });
 
   it('keeps a transient failure authenticated but degraded', () => {
-    recordProviderFailure('glm', new Error('Z.ai probe timed out after 5000ms'));
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe timed out after 5000ms'))
+    );
 
     expect(
       applyRecordedFailureToAuthStatus('glm', { isAuthenticated: true, method: 'api_key' })
@@ -266,13 +314,19 @@ describe('applyRecordedFailureToAuthStatus', () => {
   it('leaves an unauthenticated status untouched for a transient failure', () => {
     const status = { isAuthenticated: false, method: 'api_key' as const, error: 'no key' };
 
-    recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai probe failed (HTTP 503)'))
+    );
 
     expect(applyRecordedFailureToAuthStatus('glm', status)).toBe(status);
   });
 
   it('only consults the failure record of the given provider', () => {
-    recordProviderFailure('kimi', new Error('Kimi API key rejected (HTTP 401)'));
+    recordClassifiedProviderFailure(
+      'kimi',
+      classifyProviderFailure(new Error('Kimi API key rejected (HTTP 401)'))
+    );
 
     const status = { isAuthenticated: true, method: 'api_key' as const };
 
@@ -280,7 +334,10 @@ describe('applyRecordedFailureToAuthStatus', () => {
   });
 
   it('reverts to the plain status once the failure clears', () => {
-    recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
+    recordClassifiedProviderFailure(
+      'glm',
+      classifyProviderFailure(new Error('Z.ai API key rejected (HTTP 401)'))
+    );
     clearProviderFailure('glm');
 
     expect(

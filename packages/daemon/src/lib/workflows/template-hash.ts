@@ -136,7 +136,3 @@ export function computeWorkflowHash(workflow: SpaceWorkflow): string {
   const json = JSON.stringify(fp);
   return createHash('sha256').update(json).digest('hex');
 }
-
-export function workflowsMatchFingerprint(a: SpaceWorkflow, b: SpaceWorkflow): boolean {
-  return computeWorkflowHash(a) === computeWorkflowHash(b);
-}

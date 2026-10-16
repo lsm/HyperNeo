@@ -2,7 +2,6 @@ import { describe, it, expect } from 'bun:test';
 import {
   buildAgentTemplateFingerprint,
   computeAgentTemplateHash,
-  agentTemplatesMatch,
   type AgentTemplateInput,
 } from '../../../../src/lib/agents/template-hash';
 
@@ -120,23 +119,5 @@ describe('computeAgentTemplateHash', () => {
     const a = makeAgent({ customPrompt: 'a' });
     const b = makeAgent({ customPrompt: 'a ' });
     expect(computeAgentTemplateHash(a)).not.toBe(computeAgentTemplateHash(b));
-  });
-});
-
-describe('agentTemplatesMatch', () => {
-  it('returns true for templates with identical fingerprints', () => {
-    expect(agentTemplatesMatch(makeAgent(), makeAgent())).toBe(true);
-  });
-
-  it('returns true for templates differing only in tool ordering', () => {
-    const a = makeAgent({ tools: ['Read', 'Write'] });
-    const b = makeAgent({ tools: ['Write', 'Read'] });
-    expect(agentTemplatesMatch(a, b)).toBe(true);
-  });
-
-  it('returns false for templates with any meaningful difference', () => {
-    const a = makeAgent({ description: 'old' });
-    const b = makeAgent({ description: 'new' });
-    expect(agentTemplatesMatch(a, b)).toBe(false);
   });
 });

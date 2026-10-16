@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { MinimaxProvider } from '../../../../src/lib/providers/minimax-provider';
 import {
-  recordProviderFailure,
+  classifyProviderFailure,
+  recordClassifiedProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 
@@ -60,7 +61,10 @@ describe('MinimaxProvider', () => {
   describe('getAuthStatus', () => {
     it('should surface a recorded credential failure as unauthenticated', async () => {
       process.env.MINIMAX_API_KEY = 'invalid-key';
-      recordProviderFailure('minimax', new Error('MiniMax API key rejected (HTTP 401)'));
+      recordClassifiedProviderFailure(
+        'minimax',
+        classifyProviderFailure(new Error('MiniMax API key rejected (HTTP 401)'))
+      );
 
       const status = await provider.getAuthStatus();
 
@@ -71,7 +75,10 @@ describe('MinimaxProvider', () => {
 
     it('should stay authenticated but degraded for a recorded transient failure', async () => {
       process.env.MINIMAX_API_KEY = 'test-key';
-      recordProviderFailure('minimax', new Error('MiniMax probe failed (HTTP 503)'));
+      recordClassifiedProviderFailure(
+        'minimax',
+        classifyProviderFailure(new Error('MiniMax probe failed (HTTP 503)'))
+      );
 
       const status = await provider.getAuthStatus();
 

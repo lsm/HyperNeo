@@ -9,7 +9,6 @@ import type {
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
 import {
-  buildCustomAgentSystemPrompt,
   buildCustomAgentTaskMessage,
   type CustomAgentConfig,
   type TaskMessageContext,
@@ -226,18 +225,6 @@ function makeConfig(overrides?: Partial<CustomAgentConfig>): CustomAgentConfig {
     ...overrides,
   };
 }
-
-describe('buildCustomAgentSystemPrompt', () => {
-  it('returns only trimmed visible prompt text', () => {
-    expect(buildCustomAgentSystemPrompt(makeAgent({ instructions: '  Visible prompt  ' }))).toBe(
-      'Visible prompt'
-    );
-  });
-
-  it('returns empty string when no prompt is configured', () => {
-    expect(buildCustomAgentSystemPrompt(makeAgent({ instructions: '' }))).toBe('');
-  });
-});
 
 describe('resolveCustomAgentPrompt', () => {
   it('resolves workflow node overrides before the persisted agent prompt', () => {

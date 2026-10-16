@@ -6,7 +6,8 @@ import {
   resolveKimiRegion,
 } from '../../../../src/lib/providers/kimi-provider';
 import {
-  recordProviderFailure,
+  classifyProviderFailure,
+  recordClassifiedProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 
@@ -1592,7 +1593,10 @@ describe('KimiProvider', () => {
 
     it('should surface a recorded credential failure as unauthenticated', async () => {
       process.env.KIMI_API_KEY = 'invalid-key';
-      recordProviderFailure('kimi', new Error('Kimi API key rejected (HTTP 401)'));
+      recordClassifiedProviderFailure(
+        'kimi',
+        classifyProviderFailure(new Error('Kimi API key rejected (HTTP 401)'))
+      );
 
       const status = await provider.getAuthStatus();
 
@@ -1603,7 +1607,10 @@ describe('KimiProvider', () => {
 
     it('should stay authenticated but degraded for a recorded transient failure', async () => {
       process.env.KIMI_API_KEY = 'test-key';
-      recordProviderFailure('kimi', new Error('Kimi probe timed out after 5000ms'));
+      recordClassifiedProviderFailure(
+        'kimi',
+        classifyProviderFailure(new Error('Kimi probe timed out after 5000ms'))
+      );
 
       const status = await provider.getAuthStatus();
 
