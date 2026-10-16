@@ -151,6 +151,14 @@ describe('Neo turn publication view', () => {
     ]);
   });
 
+  test('replays round 13: a holder turn runs in a fresh context, so it sees what an earlier turn was already shown', () => {
+    publish();
+    expect(shown(true)).toEqual(['Reply 1.']);
+    publish();
+    expect(shown(true)).toEqual(['Reply 1.', 'Reply 2.']);
+    expect(shown(false)).toEqual([]);
+  });
+
   test('a resumed turn sees the replies its interrupted turn already posted', () => {
     expect(shown(true)).toEqual([]);
     publish();

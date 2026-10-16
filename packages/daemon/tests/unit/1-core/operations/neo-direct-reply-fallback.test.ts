@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { vi } from 'vitest';
-import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
+import type { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
+import { vi } from 'vitest';
+import {
+  type DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
 import { neoNudgeMessageId } from '../../../../src/lib/neo/ask-origin.ts';
 import {
   NEO_UNFINISHED_REPLY,
@@ -13,14 +18,9 @@ import {
   requireNeoReplySession,
   requireUnpublishedDirectAnswer,
 } from '../../../../src/lib/neo/direct-reply-fallback.ts';
-import { readNeoTurnReply } from '../../../../src/lib/neo/turn-reply.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
-import {
-  InternalEventBus,
-  type DaemonInternalEventMap,
-} from '../../../../src/lib/internal-event-bus.ts';
+import { readNeoTurnReply } from '../../../../src/lib/neo/turn-reply.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
-import type { MessageHub } from '@hyperneo/shared';
 import type { Database } from '../../../../src/storage/database.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -60,7 +60,7 @@ function runtime(overrides: Partial<NeoDirectReplyRuntime> = {}) {
     getRootBinding: () => ({ sessionId: root, kind: 'neo', projectId: null }),
     recentAsks: (_conversation, id) => [ask(askA, id)],
     isPublished: () => false,
-    startedWork: () => false,
+    answeredElsewhere: () => false,
     turnReply: () => ended(),
     hasNudge: () => false,
     nudge: vi.fn(),
@@ -140,7 +140,10 @@ describe('Neo direct reply fallback', () => {
 
   test.each([
     ['an already published answer', { isPublished: () => true }],
-    ['a turn that started a consultation or work', { startedWork: () => true }],
+    [
+      'a turn another session answers, by consultation or forward',
+      { answeredElsewhere: () => true },
+    ],
     [
       'a turn that has not started',
       { turnReply: () => ({ status: 'missing' as const, text: null }) },
@@ -293,15 +296,15 @@ describe('Neo direct reply fallback', () => {
     expect(io.notify).not.toHaveBeenCalled();
   });
 
-  test('checks publication and started work against the exact ask', () => {
+  test('checks publication and an answer from another session against the exact ask', () => {
     const isPublished = vi.fn(() => false);
-    const startedWork = vi.fn(() => false);
-    const io = runtime({ isPublished, startedWork });
+    const answeredElsewhere = vi.fn(() => false);
+    const io = runtime({ isPublished, answeredElsewhere });
     expect(
       requireUnpublishedDirectAnswer({ sessionId: holder, conversationId, ask: ask(askB) }, io)
     ).toMatchObject({ value: { text: 'Fictional warm reply.' } });
     expect(isPublished).toHaveBeenCalledWith(holder, askB);
-    expect(startedWork).toHaveBeenCalledWith(holder, askB);
+    expect(answeredElsewhere).toHaveBeenCalledWith(holder, askB);
   });
 });
 
@@ -559,6 +562,22 @@ describe('NeoService direct reply fallback wiring', () => {
       });
     await idle();
     expect(published()).toEqual([]);
+  });
+
+  test('publishes the final text of a turn that started work, since a card does not answer the human', async () => {
+    service.repo.proposeWork({
+      id: 'work-started',
+      requestKey: 'work-started',
+      projectId: null,
+      originSessionId: root,
+      originMessageId: askA,
+      title: 'Start the garden work',
+      instruction: 'Plant it.',
+    });
+    await idle();
+    expect(published().map((item) => [item.producerInput.messageId, item.fullText])).toEqual([
+      [askA, 'Let me check with Garden.'],
+    ]);
   });
 
   test('publishes the finished reply once nothing is pending for its ask', async () => {

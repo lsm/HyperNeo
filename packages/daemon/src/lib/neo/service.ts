@@ -373,7 +373,7 @@ import {
   neoTurnLimitNote,
   planNeoTurnLimitNote,
 } from './turn-limit.ts';
-import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
+import { neoAskConsulted, readNeoTurnReply } from './turn-reply.ts';
 import {
   type NeoReminderListing,
   neoReminderTurn,
@@ -987,8 +987,8 @@ export class NeoService {
       getRootBinding: () => this.repo.getBindingForProject(null),
       recentAsks: (conversationId, id) => this.recentAsksFor(conversationId, id),
       isPublished: (id, messageId) => !!this.publications.findByProducer(id, messageId),
-      startedWork: (id, messageId) =>
-        neoAskStartedWork(db, id, messageId) || this.forwardedAway(id, messageId),
+      answeredElsewhere: (id, messageId) =>
+        neoAskConsulted(db, id, messageId) || this.forwardedAway(id, messageId),
       turnReply: (id, messageId) => readNeoTurnReply(db, id, messageId),
       hasNudge: (id, nudgeId) => this.hasDelivery(id, nudgeId),
       recheck: (id) => this.scheduleReplyRecheck(id, directReplies),
