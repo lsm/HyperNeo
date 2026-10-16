@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { isNeoContentlessCleanup } from './project-cleanup.ts';
 import type { NeoReorganized } from './reorganize-operation.ts';
 
 export const NEO_TOPICS_REORGANIZE_NIGHTLY = 'neo.projects.reorganize.nightly';
@@ -72,9 +73,10 @@ export const runNeoNightlyReorganize = (
   .pipe(requireNeoNightlyDue, 'plan', 'result:result')
   .pipe(
     async (deps: NeoNightlyReorganizeDeps): Promise<NightlyResult> => {
-      const { merged, moved, stayed } = await deps.reorganize();
+      const { merged, moved, stayed, cleanupPlanned, cleanupFailed } = await deps.reorganize();
+      const cleaned = cleanupPlanned.filter(isNeoContentlessCleanup).length - cleanupFailed.length;
       deps.log(
-        `neo reorganize: nightly run merged ${merged.length} project(s), moved ${moved.length} ask(s), left ${stayed.length} with main`
+        `neo reorganize: nightly run merged ${merged.length} project(s), moved ${moved.length} ask(s), left ${stayed.length} with main, cleaned up ${cleaned} empty project(s) or holder(s), left ${cleanupPlanned.length - cleaned - cleanupFailed.length} cleanup step(s) for the human`
       );
       return { ran: true, moved: moved.length, stayed: stayed.length };
     },

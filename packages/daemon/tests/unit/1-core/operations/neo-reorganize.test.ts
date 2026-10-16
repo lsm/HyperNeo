@@ -11,6 +11,7 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import {
   admitNeoReorganizer,
+  createNeoProjectsReorganizer,
   createNeoReorganizeOperation,
   type NeoReorganizeRuntime,
   neoMovedAskMessageId,
@@ -343,6 +344,24 @@ describe('neo.projects.reorganize', () => {
         { action: 'archive', projectId: 'idle', title: 'Idle', sessionId: 'retired:idle' },
       ],
     });
+  });
+
+  test('the nightly mode applies only steps that touch no content and leaves the rest planned', async () => {
+    const { deps, logged, cleaned } = runtime([], {});
+    deps.retiredHolders = () => [
+      { projectId: 'silent', title: 'Silent', sessionId: 's1', spoke: false },
+      { projectId: 'talked', title: 'Talked', sessionId: 's2', spoke: true },
+    ];
+    const result = await createNeoProjectsReorganizer(deps)({ apply: 'contentless' });
+    expect(result.cleanupPlanned.map((step) => step.action)).toEqual(['drop', 'archive']);
+    expect(result.cleanupApplied).toBe(true);
+    expect(cleaned).toEqual(['silent']);
+    expect(logged).toEqual(
+      expect.arrayContaining([
+        'neo reorganize: did drop project silent (Silent) holder s1',
+        'neo reorganize: would archive project talked (Talked) holder s2',
+      ])
+    );
   });
 
   test('apply runs the same plan, logs each step and reports the ones that failed', async () => {
