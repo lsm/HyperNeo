@@ -40,7 +40,8 @@ import {
   type InternalCommandBus,
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
-import { type SessionTopicSource, setupRPCHandlers } from './lib/rpc-handlers/index.ts';
+import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
+import { isSessionTopicCovered } from './lib/external-events/topic-trie.ts';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
 import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
 import { createWebSocketHandlers } from './routes/setup-websocket.ts';
@@ -814,11 +815,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       internalEventBus
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
-    const sessionTopicSources: SessionTopicSource[] = [];
+    const sessionTopicSources: (() => readonly { topic: string; session?: string | null }[])[] = [];
     const followedSessionTopics = () =>
-      sessionTopicSources.flatMap((source) => source.followedTopics());
+      sessionTopicSources.flatMap((source) => source().map((row) => row.topic));
     const coveredSessionTopic = (sessionId: string, topic: string) =>
-      sessionTopicSources.some((source) => source.coversSessionTopic(sessionId, topic));
+      isSessionTopicCovered(
+        sessionTopicSources.flatMap((source) => source()),
+        sessionId,
+        topic
+      );
     const spaceSessionEventSubscriptions = new SpaceSessionEventSubscriptionRepository(
       db.getDatabase()
     );

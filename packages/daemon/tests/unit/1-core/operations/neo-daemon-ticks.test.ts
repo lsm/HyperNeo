@@ -348,7 +348,9 @@ describe('Neo ask event ticks', () => {
     };
     service.readRefStates = async () => [];
     Object.assign(service, { deliver: async () => {} });
-    expect(service.followedTopics()).toEqual(['github/lsm/HyperNeo/pull_request/7.*']);
+    expect(service.followedTopics().map((row) => row.topic)).toEqual([
+      'github/lsm/HyperNeo/pull_request/7.*',
+    ]);
     await service.refreshDriverWork();
     await service.refreshDriverWork();
     expect(watched).toEqual(['github/lsm/HyperNeo/pull_request/7.*']);

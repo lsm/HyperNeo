@@ -136,7 +136,6 @@ import {
   planNeoCardSend,
   planNeoCardTopicsEnded,
   planNeoProjectEventHolders,
-  isNeoSessionTopicCovered,
   neoCardWorkerSession,
 } from './card-events.ts';
 import { planNeoDaemonCardSettle, requireNeoCardTurn } from './card-settle.ts';
@@ -2803,26 +2802,21 @@ export class NeoService {
     return this.packs().some((pack) => !!pack.externalTopics);
   }
 
-  coversSessionTopic(sessionId: string, topic: string): boolean {
-    return isNeoSessionTopicCovered(
-      this.cardEvents.listActive().map((row) => ({
+  followedTopics(): { topic: string; session: string | null }[] {
+    return [
+      ...this.cardEvents.listActive().map((row) => ({
+        topic: row.topic,
         session: neoCardWorkerSession(
           planNeoCardSend({
             work: this.repo.getWork(row.workId),
             ref: this.driverTargets.readRef(row.workId),
           })
         ),
-        topic: row.topic,
       })),
-      sessionId,
-      topic
-    );
-  }
-
-  followedTopics(): string[] {
-    return [
-      ...this.cardEvents.listActive().map((row) => row.topic),
-      ...neoPackAskTopics(this.packs(), this.askRecords.listLive()),
+      ...neoPackAskTopics(this.packs(), this.askRecords.listLive()).map((topic) => ({
+        topic,
+        session: null,
+      })),
     ];
   }
 
