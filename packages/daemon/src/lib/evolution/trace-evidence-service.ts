@@ -16,7 +16,6 @@ export type {
   CaptureTraceEvidenceForTaskParams,
   CaptureTraceEvidenceForTaskResult,
   EvolutionTraceEvidenceServiceDeps,
-  TraceEvidenceDiagnostic,
 } from './trace-evidence-types.ts';
 
 const TRACE_EVIDENCE_KINDS: EvidenceKind[] = [

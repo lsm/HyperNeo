@@ -10,8 +10,6 @@ export const POST_APPROVAL_TEMPLATE_KEYS = [
   'workspace_path',
 ] as const;
 
-export type PostApprovalTemplateKey = (typeof POST_APPROVAL_TEMPLATE_KEYS)[number];
-
 export interface PostApprovalTemplateResult {
   text: string;
   missingKeys: string[];

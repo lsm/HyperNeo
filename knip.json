@@ -49,7 +49,6 @@
     "packages/shared/src/sdk/sdk.d.ts": ["unlisted"],
     "packages/shared/src/sdk/sdk-tools.d.ts": ["unlisted"],
     "package.json": ["devDependencies"],
-    "packages/daemon/src/lib/github/connectors/index.ts": ["exports"],
     "packages/ui/package.json": ["devDependencies"],
     "packages/ui/src/internal/stack-machine.ts": ["exports"],
     "packages/web/build.ts": ["binaries"],

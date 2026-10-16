@@ -39,7 +39,6 @@ export { buildEpisodeJudgePrompt } from './episode-judge-prompt.ts';
 export { parseEpisodeJudgeJson } from './episode-judge-output.ts';
 export { resolveEpisodeJudgeModel } from './episode-judge-model.ts';
 export type {
-  EpisodeJudgeOutput,
   EpisodeJudgePromptInput,
   EvolutionEpisodeServiceDeps,
 } from './episode-service-types.ts';

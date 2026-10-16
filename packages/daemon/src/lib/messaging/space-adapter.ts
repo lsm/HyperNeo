@@ -25,12 +25,7 @@ import {
 } from './actor-address.ts';
 import type { SpaceActorRegistryAdapter } from './actor-registry.ts';
 
-export type { SpaceDeliveryFacadeConfig } from './delivery-facade.ts';
 export { SpaceDeliveryFacade } from './delivery-facade.ts';
-export type {
-  LegacyNodeTargetTranslatorConfig,
-  TaskMessageTargetTranslatorConfig,
-} from './target-translation.ts';
 export { translateLegacyNodeTargets, translateTaskMessageTarget } from './target-translation.ts';
 
 export interface SpaceMessageResolverContext {

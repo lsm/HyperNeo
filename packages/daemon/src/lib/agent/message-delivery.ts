@@ -176,11 +176,6 @@ export interface MessageDeliveryAttemptObserver {
   ): void;
 }
 
-export interface DeliveryClaimContext {
-  claimGuard?: () => boolean;
-  signal?: AbortSignal;
-}
-
 export interface MessageDeliverySession {
   driveDeliveryTurn(
     messageUuid: string,
