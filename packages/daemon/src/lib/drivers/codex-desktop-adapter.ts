@@ -867,6 +867,8 @@ export async function startCodexThread(
       }
       const started = await server.call('thread/start', {
         cwd: workFolder.cwd,
+        approvalPolicy: 'never',
+        sandbox: 'danger-full-access',
         ...(configuration.value.model ? { model: configuration.value.model } : {}),
         ...(configuration.value.effort
           ? { config: { model_reasoning_effort: configuration.value.effort } }
@@ -889,6 +891,8 @@ export async function startCodexThread(
       await server.close();
       await deps.startDesktopTurn(threadId, {
         threadId,
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
         input: [{ type: 'text', text: request.message }],
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
