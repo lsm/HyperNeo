@@ -372,11 +372,11 @@ describe('planNeoAskTrigger', () => {
     const keys = [key('action', 'question:proposal'), key('failed', 'failed:w2:1')];
     const id = (planned: ReturnType<typeof planNeoAskTrigger>) =>
       'value' in planned ? planned.value.triggerId : null;
-    const first = planNeoAskTrigger(ask, keys, new Set());
+    const first = planNeoAskTrigger(ask, keys);
     expect(first).toMatchObject({
       value: { kind: 'failed', keys: ['question:proposal', 'failed:w2:1'] },
     });
-    expect(id(planNeoAskTrigger(ask, [...keys].reverse(), new Set()))).toBe(id(first));
+    expect(id(planNeoAskTrigger(ask, [...keys].reverse()))).toBe(id(first));
     expect(id(first)).toMatch(/^failed:a1:/);
   });
 });
@@ -384,7 +384,7 @@ describe('planNeoAskTrigger', () => {
 describe('noteNeoAskTrigger', () => {
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
   function sweepDeps(read: { view: NeoAskView; cards: NeoCardView[] }, busy = false) {
-    const told = new Map<string, Set<string>>();
+    const recorded = new Map<string, Set<string>>();
     const wakes: NeoAskTrigger[] = [];
     const delivery = { ok: true };
     const deps: NeoTriggerSweepDeps = {
@@ -393,15 +393,14 @@ describe('noteNeoAskTrigger', () => {
       work,
       deliveryRetryPending: () => false,
       reportSettled: () => true,
-      told: (askId) => new Set(told.get(askId)),
-      heard: () => false,
-      record: (askId, keys) => told.set(askId, new Set([...(told.get(askId) ?? []), ...keys])),
+      record: (askId, keys) =>
+        recorded.set(askId, new Set([...(recorded.get(askId) ?? []), ...keys])),
       wake: async (_ask, trigger) => {
         wakes.push(trigger);
         return delivery.ok;
       },
     };
-    return { deps, wakes, delivery };
+    return { deps, wakes, delivery, recorded };
   }
   const startRead = {
     view: view({
@@ -412,7 +411,7 @@ describe('noteNeoAskTrigger', () => {
     cards: [],
   };
 
-  test('wakes Neo once per transition: a repeated sweep of the same state never wakes again', async () => {
+  test('repeated sweeps reuse the same fact-state delivery identity', async () => {
     const { deps, wakes } = sweepDeps(startRead);
     expect(await noteNeoAskTrigger(ask, deps)).toMatchObject({
       kind: 'action',
@@ -422,15 +421,15 @@ describe('noteNeoAskTrigger', () => {
     expect(await noteNeoAskTrigger(ask, deps)).toMatchObject({ triggerId: wakes[0].triggerId });
     expect(await noteNeoAskTrigger(ask, deps)).toMatchObject({ triggerId: wakes[0].triggerId });
     expect(wakes).toHaveLength(3);
-    expect(wakes[0].lines).toEqual(['card "Card w1" waits for Start']);
+    expect(wakes[0].lines).toEqual(['question: Start? (options: Later / Start)']);
   });
 
-  test('a note that fails to deliver stays untold, and the next sweep sends it again', async () => {
-    const { deps, wakes, delivery } = sweepDeps(startRead);
+  test('a failed transport retries the same fact-state delivery ID', async () => {
+    const { deps, wakes, delivery, recorded } = sweepDeps(startRead);
     delivery.ok = false;
     await noteNeoAskTrigger(ask, deps);
     await settle();
-    expect(deps.told(ask.id).size).toBe(0);
+    expect(recorded.size).toBe(0);
     delivery.ok = true;
     await noteNeoAskTrigger(ask, deps);
     await settle();
