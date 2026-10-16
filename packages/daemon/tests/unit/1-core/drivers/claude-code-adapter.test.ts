@@ -119,6 +119,22 @@ describe('createClaudeCodeAdapter', () => {
     }
   });
 
+  test('returns a typed refusal when live CLI discovery fails', async () => {
+    const adapter = createClaudeCodeAdapter({
+      machine: 'laptop',
+      searchChats: async () => [],
+      desktopSessions: async () => new Set(),
+      liveSessions: async () => {
+        throw new Error('CLI timed out or is unavailable');
+      },
+    });
+    expect(await adapter.status!({ adapter: 'claude-code', id: 'session' })).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'Could not inspect live Claude sessions: CLI timed out or is unavailable',
+    });
+  });
+
   test('discovers CLI folders without a search and links content hits to their actual folder', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
     try {

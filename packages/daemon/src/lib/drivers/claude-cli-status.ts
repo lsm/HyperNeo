@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
+  probeLiveClaudeSessions,
   readClaudeInputEvidence,
   readClaudeTranscript,
   type ClaudeLiveSession,
@@ -87,8 +88,8 @@ function describeCliWork(
 
 export const readClaudeCliStatus = (superpipe({})('read-claude-cli-status') as PipelineAPI)
   .input(['ref', 'since', 'receipt', 'deps'])
-  .pipe((deps: ClaudeCliStatusDeps) => deps.liveSessions(), 'deps', 'sessions')
-  .pipe(requireClaudeCliStatus, ['ref', 'sessions'], 'result:outcome')
+  .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
+  .pipe(requireClaudeCliStatus, ['ref', 'outcome'], 'result:outcome')
   .pipe((live: LiveWork) => live, 'outcome', 'live')
   .pipe(readCliSource, ['ref', 'since', 'receipt', 'deps'], 'source')
   .pipe(describeCliWork, ['ref', 'live', 'source', 'deps'], 'outcome')
