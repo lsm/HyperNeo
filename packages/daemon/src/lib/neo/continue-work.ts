@@ -3,8 +3,8 @@ import { isPooledNeoAsk, type NeoAsk } from '@hyperneo/shared/types/neo-snapshot
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
-import { type DriverSent, readDriverOutcome, readNeoWorkContinueBudget } from './driver-work.ts';
-import { neoCardStalledWakes, type NeoContinueTurn, requireNeoContinueTurn } from './card-wake.ts';
+import { type DriverSent, readDriverOutcome } from './driver-work.ts';
+import { type NeoContinueTurn } from './card-wake.ts';
 
 export type NeoContinueResult = { ok: true; work: NeoWork } | { ok: false; reason: string };
 type Rejection = Extract<NeoContinueResult, { ok: false }>;
@@ -55,22 +55,15 @@ const reject = (reason: string): { reason: Rejection } => ({ reason: { ok: false
 
 export function requireNeoWorkContinuable(
   evidence: NeoContinueEvidence,
-  now: number
+  _now: number
 ): { value: NeoContinueTarget } | { reason: Rejection } {
   const { work, ref, turn } = evidence;
   if (!work || !ref) return reject('Only started driver work can be continued.');
   if (work.status !== 'queued' && work.status !== 'reported')
     return reject(`This work already ${work.status}; it cannot be continued.`);
-  const budget = readNeoWorkContinueBudget(
-    neoCardStalledWakes(turn.wake, turn.human),
-    work.createdAt,
-    evidence.ask,
-    now
-  );
-  if (budget) return reject(budget);
   if (evidence.inFlight)
     return reject('This work is already being continued; wait for that first.');
-  return requireNeoContinueTurn({ work, ref, human: turn.human }, turn);
+  return { value: { work, ref, human: turn.human } };
 }
 
 type NeoAskContinueReserve = { ask: NeoAsk | null; ok: boolean };
@@ -80,9 +73,7 @@ export function requireNeoAskContinueReserved(
 ): { value: NeoAskContinueReserve } | { reason: Rejection } {
   return reserved.ok
     ? { value: reserved }
-    : reject(
-        'continue_budget_spent: this ask is no longer approved; ask the human to approve it again.'
-      );
+    : reject('not_approved: this ask is no longer approved; ask the human to approve it again.');
 }
 
 export function requireNeoContinueDelivered(

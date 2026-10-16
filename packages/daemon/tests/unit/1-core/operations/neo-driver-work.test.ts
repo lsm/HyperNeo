@@ -200,7 +200,6 @@ describe('done-check note data', () => {
       { id: 'w1', title: 'Ship', report: 'Merged.', originSessionId: 'neo:root' },
       { workId: 'w1', goal: 'Ship it', doneWhen: '- merged\n- deployed' },
       2,
-      null,
       {
         ask,
         facts: neoCardPrFacts(
@@ -228,7 +227,7 @@ describe('done-check note data', () => {
     expect(data.card.prs).toEqual([
       { url: 'u', state: 'MERGED', checks: 'passing', review: 'approved' },
     ]);
-    expect(note).toContain('more of your wakes for this card bring no new commit');
+    expect(note).not.toContain('wakes for this card bring no new commit');
   });
   test('a done list the items do not restate stays: a preamble, or a card list of its own', () => {
     const note = (goalDoneWhen: string, askDoneWhen: string) =>
@@ -238,7 +237,6 @@ describe('done-check note data', () => {
             { id: 'w1', title: 'Ship', report: null, originSessionId: 'neo:root' },
             { workId: 'w1', goal: 'Ship it', doneWhen: goalDoneWhen },
             0,
-            null,
             { ask: { ...ask, doneWhen: askDoneWhen } }
           )
         )
@@ -1607,10 +1605,10 @@ describe('Neo work with a drivers target', () => {
       expect(notes.map(([target, id]) => [target, id])).toEqual([
         ['neo:root', 'work-1:done-check:0'],
       ]);
-      expect(notes[0][2]).toMatch(/Continuing it is refused once \d more of your wakes/);
-      expect(notes[0][2]).toContain(
-        'The card is idle, and its next step goes out with neo.work.continue {id, message}.'
-      );
+      expect(notes[0][2]).not.toContain('Continuing it is refused');
+      expect(
+        JSON.parse(notes[0][2].slice(notes[0][2].indexOf('\n{'))).card.continuation
+      ).toMatchObject({ prior_sends: 0, done_when_met: false });
       expect(notes[0][2]).toContain('- voice works');
       expect(notes[0][2]).toContain('Skeleton builds.');
       expect(service.workWakes.get('work-1')).toMatchObject({
@@ -1623,9 +1621,9 @@ describe('Neo work with a drivers target', () => {
         service.workContinues.record('work-1', `Step ${n}`, Date.now(), still);
       for (let n = 0; n < 4; n++) service.workWakes.recordWake('work-1', `idle-${n}`, 'flat', n);
       await service.reconcile('work-1');
-      expect(notes[1].slice(0, 2)).toEqual(['neo:root', 'work-1:done-check:5:s:5']);
-      expect(notes[1][2]).toContain('continue_budget_spent');
-      expect(notes[1][2]).toContain('It can no longer be continued.');
+      expect(notes[1].slice(0, 2)).toEqual(['neo:root', 'work-1:done-check:5']);
+      expect(notes[1][2]).not.toContain('continue_budget_spent');
+      expect(notes[1][2]).not.toContain('It can no longer be continued.');
     } finally {
       db.close();
     }
@@ -3390,7 +3388,7 @@ describe('Neo work with a drivers target', () => {
         [2, 24, 48, 72].map((hours) => `work-1:stall:${since + hours * 60 * 60_000}`)
       );
       expect(notes[0][1]).toContain('in progress for 2 hours without a result.\n');
-      expect(notes[1][1]).toContain('It can no longer be continued.');
+      expect(notes[1][1]).not.toContain('It can no longer be continued.');
       expect(notes[3][1]).toContain('It looks abandoned.');
       expect(notes.join('\n')).not.toMatch(/neo\.work\.|tell the human/);
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
