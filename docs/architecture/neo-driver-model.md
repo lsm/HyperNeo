@@ -391,23 +391,30 @@ sequenceDiagram
   H-->>You: Done: #2008 is ready, here is its PR
 ```
 
-### With adapters: new work in Claude Code Desktop on the laptop
+### With adapters: opening Claude Desktop from a local daemon session
 
 ```mermaid
 sequenceDiagram
-  participant H as 分身
-  participant I as iMac daemon
+  participant H as Local daemon session
   participant A as claude-desktop adapter (laptop)
   participant CLI as claude CLI (laptop)
   participant App as Claude Code Desktop
-  H->>I: work.start claude-desktop in ~/focus/dolmen
-  I->>A: forwarded to the attached laptop daemon
+  H->>A: work.start in ~/focus/dolmen, local reply destination
+  A->>A: validate reply destination before creation
   A->>CLI: claude -p --session-id U -n title, short opening message
   A->>CLI: claude --desktop --resume U, under a pseudo-terminal
-  CLI->>App: session local_U appears in the sidebar
-  A->>CLI: relay: claude -p --model haiku, SendMessage the task to the session
-  CLI->>App: the task arrives and a turn starts
-  A-->>H: work item running, link claude://claude.ai/epitaxy/local_U
+  CLI->>App: open local_U in the sidebar
+  A->>CLI: inspect live owner and registered inbox protocol
+  alt Desktop-owned or unknown/unsupported owner
+    A-->>H: local_U was created, task was not delivered
+    Note over A,App: Continue in the app; no headless resume or relay fallback
+  else Confirmed CLI/SDK owner with supported inbox
+    A->>CLI: write task directly to inbox, priority next
+    A-->>H: unconfirmed write, exact input receipt
+    Note over A,CLI: Write alone does not prove acceptance or a running turn
+    CLI-->>A: reply to the daemon-owned inbox
+    A-->>H: persist peer reply to the original local session
+  end
 ```
 
 ### With adapters: a hand-off to Codex Desktop
