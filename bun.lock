@@ -119,6 +119,8 @@
       "name": "@hyperneo/web",
       "version": "0.44.1",
       "dependencies": {
+        "@hyperneo/shared": "workspace:*",
+        "@hyperneo/ui": "workspace:*",
         "@preact/signals": "2.11.2",
         "clsx": "2.1.1",
         "highlight.js": "11.12.0",
