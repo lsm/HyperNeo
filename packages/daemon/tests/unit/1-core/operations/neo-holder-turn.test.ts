@@ -257,6 +257,28 @@ describe('Neo isolated holder turns', () => {
     ).toEqual([expect.objectContaining({ text: expect.stringContaining('"ok":true') })]);
   });
 
+  test('yield closes only the bound sender turn and aborts its SDK stream', async () => {
+    const abort = new AbortController();
+    const yieldTurn = mock(() => abort.abort());
+    const current = new NeoHolderTurn(db, 'neo:holder', { isLive: () => true, yield: yieldTurn });
+    turns.push(current);
+    current.bind('human-input');
+    const never = new Promise<IteratorResult<unknown>>(() => {});
+    const sdk = {
+      [Symbol.asyncIterator]: () => ({ next: () => never, return: () => never }),
+    } as unknown as QueryLike;
+    const stream = runner.createAbortableQuery(sdk, abort.signal);
+    const completion = stream.next();
+    current.identity()?.yield?.();
+    expect(await completion).toMatchObject({ done: true });
+    expect(current.identity()?.isLive()).toBe(false);
+    current.identity()?.yield?.();
+    expect(yieldTurn).toHaveBeenCalledTimes(1);
+    const successor = turn();
+    expect(successor.bind('human-input')).toBe(true);
+    expect(successor.identity()?.isLive()).toBe(true);
+  });
+
   test('slow consultation turns remain live without a deadline timer', async () => {
     vi.useFakeTimers();
     sqlite.prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?').run('a');

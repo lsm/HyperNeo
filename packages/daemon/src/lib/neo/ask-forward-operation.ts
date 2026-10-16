@@ -7,6 +7,7 @@ import type { NeoAskForward } from '../../storage/repositories/neo-ask-forward-r
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
 import { isNeoCoordinatorBinding } from './binding-roles.ts';
+import type { MailboxMessageContent } from '../mailbox/entry.ts';
 
 const Input = z.object({ to: z.string().trim().min(1) });
 const Rejection = z.object({
@@ -16,8 +17,6 @@ const Rejection = z.object({
     'unknown_ask',
     'not_your_ask',
     'same_project',
-    'main_only',
-    'forward_limit',
     'unknown_project',
   ]),
   projects: z
@@ -46,15 +45,16 @@ export interface NeoAskForwardRuntime {
   getProject(id: string): Pick<NeoProject, 'id' | 'title'> | null;
   listProjects(): Pick<NeoProject, 'id' | 'title'>[];
   rootSessionId(): string | null;
-  askText(ask: NeoAskOrigin): string | null;
+  askContent(ask: NeoAskOrigin): MailboxMessageContent | null;
   open(projectId: string): Promise<string>;
   record(ask: NeoAskOrigin, forward: NeoAskForward): boolean;
   unrecord(ask: NeoAskOrigin, hop: number): void;
   delivered(sessionId: string, messageId: string): boolean;
+  delivering?(sessionId: string, messageId: string): boolean;
   deliver(
     sessionId: string,
     messageId: string,
-    content: string,
+    content: MailboxMessageContent,
     fromSessionId: string,
     ask: NeoAskOrigin
   ): Promise<void>;
@@ -68,18 +68,19 @@ export function neoForwardedText(
   ask: Pick<NeoConversationAsk, 'askOrigin' | 'content'> | null,
   origin: NeoAskOrigin
 ): string | null {
-  if (!ask || ask.askOrigin.sessionId !== origin.sessionId) return null;
+  if (
+    !ask ||
+    ask.askOrigin.sessionId !== origin.sessionId ||
+    ask.askOrigin.messageId !== origin.messageId
+  )
+    return null;
   if (typeof ask.content === 'string') return ask.content.trim() || null;
   const blocks = ask.content as { type: string; text?: string }[];
   const text = blocks
     .flatMap((block) => (block.type === 'text' && block.text ? [block.text] : []))
     .join('\n')
     .trim();
-  const attached = blocks.filter((block) => block.type !== 'text').length;
-  const note = attached
-    ? `(The human also attached ${attached} file${attached === 1 ? '' : 's'}, not forwarded; ask them to resend it if you need it.)`
-    : '';
-  return [text, note].filter(Boolean).join('\n\n') || null;
+  return text || null;
 }
 
 export function neoForwardedAskMessageId(messageId: string): string | null {
@@ -148,29 +149,18 @@ export function planNeoAskForward(
   input: Input,
   holder: Pick<Holder, 'sessionId' | 'projectId' | 'input'>,
   ask: NeoAskOrigin,
-  forwards: readonly Pick<NeoAskForward, 'toSessionId' | 'fromSessionId'>[],
-  main: string | null = null
+  forwards: readonly Pick<NeoAskForward, 'hop' | 'toSessionId'>[]
 ): Gate<Plan> {
-  if (forwards.length === 0) {
-    if (ask.sessionId !== holder.sessionId || holder.input.messageId !== ask.messageId)
-      return refuse('not_your_ask');
-    return input.to === (holder.projectId ?? NEO_FORWARD_MAIN)
-      ? refuse('same_project')
-      : { value: { hop: 0, to: input.to } };
-  }
-  const viaMain = forwards.some((f) => f.fromSessionId === main || f.toSessionId === main);
-  if (forwards.length === 1 && viaMain) return refuse('forward_limit');
-  if (forwards.length === 1) {
-    if (
-      forwards[0].toSessionId !== holder.sessionId ||
-      holder.input.messageId !== neoForwardMessageId(ask, 0)
-    )
-      return refuse('not_your_ask');
-    return input.to === NEO_FORWARD_MAIN
-      ? { value: { hop: 1, to: NEO_FORWARD_MAIN } }
-      : refuse('main_only');
-  }
-  return refuse('forward_limit');
+  if (input.to === (holder.projectId ?? NEO_FORWARD_MAIN)) return refuse('same_project');
+  const last = forwards.reduce<Pick<NeoAskForward, 'hop' | 'toSessionId'> | null>(
+    (latest, forward) => (!latest || forward.hop > latest.hop ? forward : latest),
+    null
+  );
+  const owns = last
+    ? last.toSessionId === holder.sessionId &&
+      holder.input.messageId === neoForwardMessageId(ask, last.hop)
+    : ask.sessionId === holder.sessionId && holder.input.messageId === ask.messageId;
+  return owns ? { value: { hop: last ? last.hop + 1 : 0, to: input.to } } : refuse('not_your_ask');
 }
 
 export function requireForwardTarget(
@@ -190,14 +180,18 @@ export function requireForwardTarget(
       };
 }
 
-export function neoForwardContent(from: string, mayForward: boolean, message: string): string {
-  return fillPrompt(NEO_ASK_FORWARDED, {
-    from: `“${from}”`,
-    next: mayForward
-      ? ' It can be forwarded on only to main, with neo.ask.forward {"to":"main"}.'
-      : '',
-    message,
-  });
+export function neoForwardContent(
+  from: string,
+  content: MailboxMessageContent
+): MailboxMessageContent {
+  const message =
+    typeof content === 'string'
+      ? content
+      : content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n');
+  const text = fillPrompt(NEO_ASK_FORWARDED, { from: `“${from}”`, message });
+  return typeof content === 'string'
+    ? text
+    : [{ type: 'text', text }, ...content.filter((block) => block.type !== 'text')];
 }
 
 function createForward(runtime: NeoAskForwardRuntime) {
@@ -217,8 +211,11 @@ function createForward(runtime: NeoAskForwardRuntime) {
     .pipe(
       (ask: NeoAskOrigin) => {
         const forwards = runtime.forwards(ask);
-        const stale = staleNeoForwardHops(ask, forwards, (sessionId, messageId) =>
-          runtime.delivered(sessionId, messageId)
+        const stale = staleNeoForwardHops(
+          ask,
+          forwards,
+          (sessionId, messageId) =>
+            runtime.delivered(sessionId, messageId) || !!runtime.delivering?.(sessionId, messageId)
         );
         for (const hop of stale) runtime.unrecord(ask, hop);
         return forwards.filter((forward) => !stale.includes(forward.hop));
@@ -228,7 +225,7 @@ function createForward(runtime: NeoAskForwardRuntime) {
     )
     .pipe(
       (input: Input, holder: Holder, ask: NeoAskOrigin, forwards: NeoAskForward[]) =>
-        planNeoAskForward(input, holder, ask, forwards, runtime.rootSessionId()),
+        planNeoAskForward(input, holder, ask, forwards),
       ['input', 'holder', 'ask', 'forwards'],
       'result:outcome'
     )
@@ -245,9 +242,10 @@ function createForward(runtime: NeoAskForwardRuntime) {
       'result:outcome'
     )
     .pipe(take, 'outcome', 'target')
-    .pipe((ask: NeoAskOrigin) => runtime.askText(ask), 'ask', 'text')
+    .pipe((ask: NeoAskOrigin) => runtime.askContent(ask), 'ask', 'text')
     .pipe(
-      (text: string | null): Gate<string> => (text ? { value: text } : refuse('unknown_ask')),
+      (text: MailboxMessageContent | null): Gate<MailboxMessageContent> =>
+        text ? { value: text } : refuse('unknown_ask'),
       'text',
       'result:outcome'
     )
@@ -268,8 +266,10 @@ function createForward(runtime: NeoAskForwardRuntime) {
         session: string,
         holder: Holder,
         ask: NeoAskOrigin,
-        message: string
+        message: MailboxMessageContent,
+        caller: OperationCaller
       ): Promise<Outcome> => {
+        if (!caller.neoTurn?.isLive()) return { ok: false, reason: 'coordinator_only' };
         const recorded = runtime.record(ask, {
           hop: target.hop,
           fromSessionId: holder.sessionId,
@@ -277,7 +277,7 @@ function createForward(runtime: NeoAskForwardRuntime) {
           toProjectId: target.to === NEO_FORWARD_MAIN ? null : target.to,
           forwardedAt: Date.now(),
         });
-        if (!recorded) return { ok: false, reason: 'forward_limit' };
+        if (!recorded) return { ok: false, reason: 'not_your_ask' };
         const from = holder.projectId
           ? (runtime.getProject(holder.projectId)?.title ?? holder.projectId)
           : NEO_FORWARD_MAIN;
@@ -285,11 +285,7 @@ function createForward(runtime: NeoAskForwardRuntime) {
           await runtime.deliver(
             session,
             neoForwardMessageId(ask, target.hop),
-            neoForwardContent(
-              from,
-              target.hop === 0 && target.to !== NEO_FORWARD_MAIN && holder.projectId !== null,
-              message
-            ),
+            neoForwardContent(from, message),
             holder.sessionId,
             ask
           );
@@ -297,9 +293,10 @@ function createForward(runtime: NeoAskForwardRuntime) {
           runtime.unrecord(ask, target.hop);
           throw error;
         }
+        caller.neoTurn.yield?.();
         return { ok: true, hop: target.hop, to: target.to };
       },
-      ['target', 'session', 'holder', 'ask', 'message'],
+      ['target', 'session', 'holder', 'ask', 'message', 'caller'],
       'outcome'
     )
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Outcome>;
@@ -310,7 +307,7 @@ export function createNeoAskForwardOperation(runtime: NeoAskForwardRuntime) {
   return defineOperation({
     name: 'neo.ask.forward',
     description:
-      'Hand the human message you are answering to the project that owns it, when it is clearly not your subject; the receiver then owns the message, answers it and may start its work. to is that project id, or "main"; an unknown id is refused with the list of projects, so call again with the right one. Main may forward once, to a project, and that project cannot forward it on. The routed holder may forward once, to another project or main; a holder that received a forward from a holder may forward only to main. Nothing forwards back. End your turn without answering after forwarding.',
+      'Hand the human message you are answering to the project that owns it, when it is clearly not your subject; the receiver then owns the message, answers it and may start its work. to is that project id, or "main"; an unknown id is refused with the list of projects, so call again with the right one. The original request and attachments follow each transfer. A successful delivery yields your turn; the current owner can forward again when another project owns the request.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },
