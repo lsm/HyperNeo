@@ -2309,6 +2309,19 @@ describe('AgentSession', () => {
       expect(cancelDeliverySpy).toHaveBeenCalledWith(mockSession.id, 'uuid-1');
     });
 
+    it('revokePendingDelivery can require a still-deferred input before cancelling delivery', async () => {
+      const deletePendingSpy = mock(() => null);
+      const cancelDeliverySpy = mock(() => false);
+      mockDb.deletePendingUserMessage = deletePendingSpy;
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
+
+      expect(await agentSession.revokePendingDelivery('db-1', 'remove', 'deferred')).toEqual({
+        changed: false,
+      });
+      expect(deletePendingSpy).toHaveBeenCalledWith(mockSession.id, 'db-1', 'deferred');
+      expect(cancelDeliverySpy).not.toHaveBeenCalled();
+    });
+
     it('revokePendingDelivery notifies the delivery feeds after defer+cancel (#862 review P2)', async () => {
       const deferSpy = mock(() => ({ dbId: 'db-1', uuid: 'uuid-1' }));
       const cancelDeliverySpy = mock(() => true);
