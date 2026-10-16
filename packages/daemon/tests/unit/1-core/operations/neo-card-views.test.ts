@@ -285,14 +285,17 @@ describe('projectNeoCardViews', () => {
     ]);
   });
 
-  test('a proposed card can start or be declined; a sessionless cancel is hidden', () => {
+  test('proposed cards leave decisions to their ask; a sessionless cancel is hidden', () => {
     const cards = projectNeoCardViews(
-      parts({ work: [work('p', 'proposed'), work('c', 'cancelled')] })
+      parts({
+        work: [work('p', 'proposed'), work('c', 'cancelled')],
+        drivers: [driver('p', 'failed', { retryable: true })],
+      })
     );
     expect(cards[0]).toMatchObject({
       label: 'Your call',
-      primary: { kind: 'start', label: 'Start work' },
-      actions: ['start', 'cancel'],
+      primary: { kind: 'none', label: null, link: null },
+      actions: [],
     });
     expect(cards[1]).toMatchObject({ phase: 'cancelled', hidden: true, label: 'Stopped' });
   });
@@ -691,7 +694,12 @@ describe('projectNeoAskViews', () => {
         ask({ id: 'settled', status: 'achieved', doneItems: [question] }),
       ],
     });
-    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
+    const cards = projectNeoCardViews(input);
+    expect(cards[0]).toMatchObject({
+      primary: { kind: 'none', label: null, link: null },
+      actions: [],
+    });
+    const views = projectNeoAskViews(input.asks, cards, input.prs);
     expect(views[0]?.humanActions).toEqual([
       { kind: 'question', itemId: 'q', question: 'Start?', options: ['Later', 'Start'] },
     ]);

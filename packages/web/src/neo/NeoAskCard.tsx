@@ -390,10 +390,10 @@ export function NeoAskCard({
         </div>
       )}
       <div class="mt-3 text-sm text-fg-muted" hidden={summarized}>
-        <p class="text-xs font-medium text-fg-faint">To-dos</p>
+        <p class="text-xs font-medium text-fg-faint">Todos</p>
         {outcomes.length > 0 ? (
           <div class="mt-1.5">
-            <Checklist items={outcomes} label="To-dos" cards={cards} />
+            <Checklist items={outcomes} label="Todos" cards={cards} />
           </div>
         ) : (
           <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>

@@ -327,11 +327,11 @@ describe('NeoAskCard', () => {
     expect(card.container.querySelector('[data-ask-session]')).toBeNull();
   });
 
-  it('shows To-dos before Details and renders each step once without nested cards', () => {
+  it('shows Todos before Details and renders each step once without nested cards', () => {
     const owned = [scenes.outcomes[0]!, scenes.running[0]!, scenes.attention[0]!];
     const view = describeAsk(ask('a', 'open', ['a1', 'a2', 'b1']), owned, { doneWorkIds: ['a1'] });
     const card = render(<NeoAskCard view={view} onOpen={vi.fn()} />);
-    expect(card.getByText('To-dos')).toBeTruthy();
+    expect(card.getByText('Todos')).toBeTruthy();
     expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
     expect(card.queryByText(/outcomes verified/)).toBeNull();
     expect(card.container.querySelectorAll('[data-ask-step]')).toHaveLength(3);
@@ -402,7 +402,7 @@ describe('NeoAskCard', () => {
     expect(card.queryByText(/outcomes verified/)).toBeNull();
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
     const rows = [
-      ...card.getByRole('list', { name: 'To-dos' }).querySelectorAll('[data-ask-item]'),
+      ...card.getByRole('list', { name: 'Todos' }).querySelectorAll('[data-ask-item]'),
     ].map((row) => [row.getAttribute('data-ask-item'), row.textContent]);
     expect(rows).toEqual([
       ['i1', '✓Item i1verifiedPR #6099 merged'],
@@ -591,7 +591,7 @@ describe('NeoAskCard', () => {
     const card = render(<NeoAskCard view={describeAsk(ask('a', 'open', []), [])} />);
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
     expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
-    expect(card.queryByRole('list', { name: 'To-dos' })).toBeNull();
+    expect(card.queryByRole('list', { name: 'Todos' })).toBeNull();
   });
 
   it('drops the count once settled and keeps a long outcome behind Details', () => {
