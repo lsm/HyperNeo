@@ -998,7 +998,7 @@ describe('Neo MVP', () => {
         status: 'pending',
       });
       expect(review.question).toContain(work.id);
-      expect(review.question).toContain('untrusted data');
+      expect(review.question).toContain('An execution result for your project returned.');
       expect(review.question).toContain('A quiet library room');
       expect(jobs).toHaveLength(2);
       expect(jobs[1].payload).toMatchObject({

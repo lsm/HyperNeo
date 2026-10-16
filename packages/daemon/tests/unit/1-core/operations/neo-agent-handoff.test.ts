@@ -332,7 +332,7 @@ describe('Neo existing Space-agent handoff operation', () => {
     expect(returned).toBeDefined();
     const message = returned.payload.message as { message: { content: string } };
     expect(message.message.content).toContain(JSON.stringify(origin.originMessageId));
-    expect(message.message.content).toContain('untrusted evidence');
+    expect(message.message.content).toContain('A delegated session returned.');
     expect(
       await invokeOperation(registry, 'neo.work.report', report, {
         source: 'mcp',
