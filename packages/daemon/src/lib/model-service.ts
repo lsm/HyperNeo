@@ -194,8 +194,6 @@ const refreshModes = new Map<string, boolean>();
 
 const pendingProviderSlices = new Map<string, ModelInfo[]>();
 
-const pendingSliceReleases = new Map<string, number>();
-
 let providerRepositoryRef: ProviderRepository | null = null;
 
 export function setProviderRepository(repo: ProviderRepository | null): void {
@@ -206,34 +204,12 @@ function pendingSliceKey(cacheKey: string, providerId: string): string {
   return `${cacheKey}:${providerId}`;
 }
 
-export function mergePendingProviderSlices(
-  cacheKey: string,
-  models: ModelInfo[],
-  loadSeq?: number,
-  loadedProviderIds?: ReadonlySet<string>
-): ModelInfo[] {
+function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): ModelInfo[] {
   let merged = models;
-  const released: string[] = [];
   for (const [key, slice] of pendingProviderSlices) {
     if (!key.startsWith(`${cacheKey}:`)) continue;
     const providerId = key.slice(cacheKey.length + 1);
-    const releaseAfterSeq = pendingSliceReleases.get(key);
-    const providerLoaded =
-      loadedProviderIds?.has(providerId) && models.some((model) => model.provider === providerId);
-    if (
-      releaseAfterSeq !== undefined &&
-      loadSeq !== undefined &&
-      loadSeq > releaseAfterSeq &&
-      providerLoaded
-    ) {
-      released.push(key);
-      continue;
-    }
     merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
-  }
-  for (const key of released) {
-    pendingSliceReleases.delete(key);
-    pendingProviderSlices.delete(key);
   }
   return merged;
 }
@@ -279,9 +255,7 @@ function applyRefreshedModels(
   previousModels: ModelInfo[] | undefined,
   supersededProviderIds: string[] = [],
   preservePreviousOnShrink = true,
-  unavailableProviders?: ReadonlySet<string>,
-  loadSeq?: number,
-  loadedProviderIds?: ReadonlySet<string>
+  unavailableProviders?: ReadonlySet<string>
 ): void {
   if (fetchedModels.length > 0) {
     const mergedModels = mergeWithFallbackModels(fetchedModels, unavailableProviders);
@@ -293,10 +267,7 @@ function applyRefreshedModels(
         superseded.size > 0 ? [...retainedPrevious, ...supersededSlices] : previousModels;
       modelsCache.set(cacheKey, overlaid);
     } else {
-      modelsCache.set(
-        cacheKey,
-        mergePendingProviderSlices(cacheKey, mergedModels, loadSeq, loadedProviderIds)
-      );
+      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
     }
     cacheTimestamps.set(cacheKey, Date.now());
     return;
@@ -308,10 +279,7 @@ function applyRefreshedModels(
   const filteredFallbacks = FALLBACK_MODELS.filter(
     (m) => registry.has(m.provider) && !unavailableProviders?.has(m.provider)
   );
-  modelsCache.set(
-    cacheKey,
-    mergePendingProviderSlices(cacheKey, filteredFallbacks, loadSeq, loadedProviderIds)
-  );
+  modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
   cacheTimestamps.set(cacheKey, Date.now());
 }
 
@@ -334,10 +302,7 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
           current.models,
           previousModels,
           current.supersededProviderIds,
-          true,
-          undefined,
-          current.loadSeq,
-          new Set(current.loadedProviderIds)
+          true
         );
       }
       /* v8 ignore next 2 */
@@ -1064,24 +1029,9 @@ function cancelAllProviderRetries(): void {
   providerRetryGeneration += 1;
 }
 
-function replaceProviderModelsInCache(
-  providerId: string,
-  models: ModelInfo[],
-  loadSeq: number,
-  loaded: boolean
-): void {
+function replaceProviderModelsInCache(providerId: string, models: ModelInfo[]): void {
   const cacheKey = 'global';
-  const key = pendingSliceKey(cacheKey, providerId);
-  const pending = pendingProviderSlices.get(key);
-  const releaseAfterSeq = pendingSliceReleases.get(key);
-  const usePending =
-    pending !== undefined &&
-    (releaseAfterSeq === undefined || loadSeq <= releaseAfterSeq || models.length === 0 || !loaded);
-  const slice = usePending ? pending : models;
-  if (!usePending && pending !== undefined) {
-    pendingProviderSlices.delete(key);
-    pendingSliceReleases.delete(key);
-  }
+  const slice = pendingProviderSlices.get(pendingSliceKey(cacheKey, providerId)) ?? models;
   const existing = modelsCache.get(cacheKey);
   if (!existing || existing.length === 0) {
     modelsCache.set(cacheKey, mergeWithFallbackModels(slice));
@@ -1154,7 +1104,7 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
     return;
   }
   providerAppliedSeq.set(providerId, probeSeq);
-  replaceProviderModelsInCache(providerId, result.models, probeSeq, result.status === 'loaded');
+  replaceProviderModelsInCache(providerId, result.models);
   clearProviderFailure(providerId);
   clearProviderRetry(providerId);
 }
@@ -1213,7 +1163,7 @@ export async function recoverDormantProvider(providerId: string): Promise<Provid
     return 'recovered';
   }
   providerAppliedSeq.set(providerId, probeSeq);
-  replaceProviderModelsInCache(providerId, result.models, probeSeq, result.status === 'loaded');
+  replaceProviderModelsInCache(providerId, result.models);
   return 'recovered';
 }
 
@@ -1331,9 +1281,7 @@ export async function initializeModels(): Promise<void> {
       if (result.models.length > 0) {
         const mergedModels = mergePendingProviderSlices(
           cacheKey,
-          mergeWithFallbackModels(result.models),
-          result.loadSeq,
-          new Set(result.loadedProviderIds)
+          mergeWithFallbackModels(result.models)
         );
         modelsCache.set(cacheKey, mergedModels);
         cacheTimestamps.set(cacheKey, Date.now());
@@ -1390,10 +1338,6 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     for (const key of pendingProviderSlices.keys()) {
       if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
     }
-    const releaseKeys = [...pendingSliceReleases.keys()];
-    for (const key of releaseKeys) {
-      if (key.startsWith(`${cacheKey}:`)) pendingSliceReleases.delete(key);
-    }
     if (cacheKey === 'global') {
       cancelAllProviderRetries();
     }
@@ -1409,7 +1353,6 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     refreshModes.clear();
     clearProviderModelCaches();
     pendingProviderSlices.clear();
-    pendingSliceReleases.clear();
     scopedCatalogStamps.clear();
     for (const key of inFlightKeys) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
@@ -1492,9 +1435,7 @@ export async function refreshModels(
           undefined,
           current.supersededProviderIds,
           false,
-          new Set(current.unavailableProviderIds),
-          current.loadSeq,
-          new Set(current.loadedProviderIds)
+          new Set(current.unavailableProviderIds)
         );
       }
       throw current.forcedDiscoveryError;
@@ -1505,9 +1446,7 @@ export async function refreshModels(
       previousModels,
       current.supersededProviderIds,
       !forceRemote,
-      forceRemote ? new Set(current.unavailableProviderIds) : undefined,
-      current.loadSeq,
-      new Set(current.loadedProviderIds)
+      forceRemote ? new Set(current.unavailableProviderIds) : undefined
     );
   })();
 
