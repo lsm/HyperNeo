@@ -439,7 +439,7 @@ const dispatchNeoConsultationWaiter = (
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
 const NEO_PROJECT_EVENT_NOTE =
-  'An event on one of this project’s cards, for your knowledge. Its ask belongs to another Neo session, which acts on it; save what it changes about the project with neo.project.save.';
+  'An event on one of this project’s cards. Its ask belongs to another Neo session, which acts on it.';
 const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
 
 type NeoWorkPrCard = {
@@ -2019,7 +2019,7 @@ export class NeoService {
         await this.deliver(
           next.originSessionId,
           `neo-work-reroute:${next.id}:${this.driverTargets.readRetries(next.id)}`,
-          `The card's target is archived, ended or taken by another card; its instruction was not delivered. The card is still approved and has not failed. Arrange an open idle worker in the same project, then call neo.work.retry with this workId; it will select an open worker and send the original instruction. Do not ask the human to approve again or duplicate the card.\n${JSON.stringify({ workId: next.id, title: next.title, ref, place })}`,
+          `The card's target is archived, ended or taken by another card; its instruction was not delivered. The card is still approved and has not failed. neo.work.retry with this workId selects an open worker and sends the original instruction.\n${JSON.stringify({ workId: next.id, title: next.title, ref, place })}`,
           next.originSessionId,
           neoWorkParent(next)
         );
@@ -3298,7 +3298,7 @@ export class NeoService {
         this.deliver(
           group.rootSessionId,
           neoCrossProjectReplyId(group),
-          `All assigned cross-project owners have returned. Publish one combined answer for this original human ask, covering every reported, failed or cancelled part honestly. Do not consult or dispatch the parts again.\n${JSON.stringify({ humanMessageId: group.askMessageId, parts: JSON.parse(group.partsJson), results: members })}`,
+          `All assigned cross-project owners have returned for this original human ask.\n${JSON.stringify({ humanMessageId: group.askMessageId, parts: JSON.parse(group.partsJson), results: members })}`,
           group.rootSessionId,
           { sessionId: group.askSessionId, messageId: group.askMessageId },
           'continues'

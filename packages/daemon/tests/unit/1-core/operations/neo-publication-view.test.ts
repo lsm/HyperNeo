@@ -62,7 +62,7 @@ describe('neoPublicationViewNote', () => {
         'What the human has read from Neo since your last turn, oldest first:',
         '- 2026-10-15T21:06:00.000Z, on "Add .DS_Store": Told 6.',
         '- 2026-10-15T21:08:00.000Z (correction): Told 8.',
-        'The human already has these; tell them only what is new.',
+        'The human already has these.',
       ].join('\n')
     );
     expect(neoPublicationViewNote([said(7, { interim: true })], true)).toBeNull();
