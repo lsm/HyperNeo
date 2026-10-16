@@ -20,7 +20,13 @@ open question: show a reply-in-chat cue and no decision button.
 Submit an option through `neo.ask.answer` with `askId`, `itemId`, `choice` equal
 to the option text, and the current `expectedRevision`. For a chat reply, Neo
 records the human's own words through the same operation with the existing
-human-message provenance checks. Every answer completes the question, including
+human-message provenance checks. For a grouped start answer in their own words, Neo also passes
+`option`, the matching label from that question, while `choice` keeps their
+verbatim words and citation. The receipt retains both. Option labels compare
+with Unicode, case and whitespace normalization. An answer with no matching
+option leaves execution consent pending; it never means decline by default.
+When their intent is clear, recording the option starts or cancels only the
+question’s exact targets, without another confirmation. Every answer completes the question, including
 a negative result. It does not automatically verify a separate outcome item.
 There is no follow-up confirmation. A second submission cannot deliver the
 answer again; settled, withdrawn and stale questions retain their guards.

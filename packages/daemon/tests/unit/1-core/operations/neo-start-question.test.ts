@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import { readNeoAskAnswerChoice } from '../../../../src/lib/neo/ask-answer-evidence.ts';
+import { planNeoStartQuestion } from '../../../../src/lib/neo/start-question.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
 import {
@@ -155,6 +158,131 @@ describe('grouped card start question', () => {
       'cancelled',
     ]);
     expect(questions()).toEqual([]);
+  });
+
+  test.each([
+    ['可以', '开始', 1, 'queued'],
+    ['以后再说', '先不做', 0, 'cancelled'],
+  ])(
+    'records chat words %s with their option %s without another confirmation',
+    async (choice, option, count, status) => {
+      propose('one');
+      const question = questions()[0];
+      db.getSDKMessageRepo().saveSDKMessage(root, {
+        type: 'user',
+        uuid: 'reply',
+        session_id: root,
+        parent_tool_use_id: null,
+        inputKind: 'human',
+        message: { role: 'user', content: choice },
+      } as unknown as SDKUserMessage);
+      db.getDatabase()
+        .prepare('UPDATE neo_ask_items SET added_at = 0 WHERE ask_id = ? AND id = ?')
+        .run('ask', question.id);
+      expect(
+        await invokeOperation(
+          createOperationRegistry(createNeoOperations(service)),
+          'neo.ask.answer',
+          {
+            askId: 'ask',
+            itemId: question.id,
+            choice: option,
+            option,
+            expectedRevision: current().revision,
+          },
+          {
+            source: 'mcp',
+            principal: 'agent',
+            role: 'neo',
+            sessionId: root,
+            neoTurn: {
+              messageId: 'reply',
+              human: true,
+              isLive: () => true,
+            },
+          }
+        )
+      ).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('answer_not_in_message') },
+      });
+      expect(starts).toEqual([]);
+      expect(
+        await invokeOperation(
+          createOperationRegistry(createNeoOperations(service)),
+          'neo.ask.answer',
+          {
+            askId: 'ask',
+            itemId: question.id,
+            choice,
+            option,
+            expectedRevision: current().revision,
+          },
+          {
+            source: 'mcp',
+            principal: 'agent',
+            role: 'neo',
+            sessionId: root,
+            neoTurn: {
+              messageId: 'reply',
+              human: true,
+              isLive: () => true,
+            },
+          }
+        )
+      ).toMatchObject({ value: { ok: true } });
+      expect(starts).toHaveLength(count);
+      expect(service.repo.getWork('one')?.status).toBe(status);
+      const answered = current().doneItems!.find((item) => item.id === question.id)!;
+      expect(answered).toMatchObject({ state: 'met', metBy: 'human' });
+      expect(readNeoAskAnswerChoice(answered.evidence)).toBe(choice);
+      expect(questions()).toEqual([]);
+    }
+  );
+
+  test('an unmatched answer remains pending consent rather than declining its cards', async () => {
+    propose('one');
+    expect(await answer('可以')).toMatchObject({ value: { ok: true } });
+    const entry = { workId: 'one', target: JSON.stringify(target) };
+    expect(neoStartDecision(current(), entry)).toBe('pending');
+    expect(planNeoStartQuestion(current(), [entry])).not.toBeNull();
+    expect(service.repo.getWork('one')?.status).toBe('proposed');
+    expect(starts).toEqual([]);
+  });
+
+  test('normalized option labels drive both immediate starts and recorded consent', async () => {
+    propose('one');
+    const question = questions()[0];
+    service.askRecords.restateQuestion(
+      'ask',
+      {
+        ...question,
+        question: question.question!,
+        kind: 'approval',
+        options: ['Not yet', 'Start'],
+        decides: question.decides!,
+      },
+      Date.now()
+    );
+    expect(await answer('ＳＴＡＲＴ')).toMatchObject({ value: { ok: true } });
+    expect(starts).toEqual(['Card one']);
+    expect(service.proposalApproval('one')).toBe(true);
+  });
+
+  test('an option outside the question cannot grant consent', async () => {
+    propose('one');
+    expect(
+      await invoke('neo.ask.answer', {
+        askId: 'ask',
+        itemId: questions()[0].id,
+        choice: '可以',
+        option: 'Do something else',
+        expectedRevision: current().revision,
+      })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('answer_option_unknown') },
+    });
+    expect(questions()).toHaveLength(1);
+    expect(starts).toEqual([]);
   });
 
   test('an added card changes question identity and revision; a stale answer cannot approve it', async () => {

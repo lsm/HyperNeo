@@ -1,6 +1,6 @@
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
-import { readNeoAskAnswerChoice } from './ask-answer-evidence.ts';
+import { readNeoAskAnswerOption } from './ask-answer-evidence.ts';
 import { neoDerivedId } from './derived-id.ts';
 
 export const NEO_START_QUESTION_PREFIX = 'neo-start:';
@@ -10,6 +10,17 @@ export type NeoStartTarget = z.infer<typeof targets>[number] & { title?: string 
 export function neoQuestionStartTargets(item: NeoAskItem): NeoStartTarget[] {
   if (!item.action?.startsWith(NEO_START_QUESTION_PREFIX)) return [];
   return targets.parse(JSON.parse(item.action.slice(NEO_START_QUESTION_PREFIX.length)));
+}
+
+export function neoStartChoice(item: NeoAskItem, choice: string | null) {
+  const normalize = (text: string | undefined) =>
+    text?.normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ');
+  const answer = normalize(choice ?? undefined);
+  return answer && answer === normalize(item.options?.at(-1))
+    ? 'approved'
+    : answer && answer === normalize(item.options?.[0])
+      ? 'declined'
+      : 'pending';
 }
 
 export function neoStartDecision(ask: NeoAsk, target: NeoStartTarget) {
@@ -26,9 +37,7 @@ export function neoStartDecision(ask: NeoAsk, target: NeoStartTarget) {
       )
   );
   return answered
-    ? readNeoAskAnswerChoice(answered.evidence) === answered.options?.at(-1)
-      ? 'approved'
-      : 'declined'
+    ? neoStartChoice(answered, readNeoAskAnswerOption(answered.evidence))
     : related.length
       ? 'pending'
       : null;

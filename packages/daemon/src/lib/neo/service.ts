@@ -42,6 +42,7 @@ import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forw
 import {
   neoQuestionStartTargets,
   neoStartDecision,
+  neoStartChoice,
   planNeoStartQuestion,
 } from './start-question.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
@@ -1622,10 +1623,10 @@ export class NeoService {
       .filter((entry) => entry.target === this.startTarget(entry.workId).target)
       .map((entry) => entry.workId);
     if (!ids.length) return;
-    if (choice === item.options?.at(-1)) {
+    if (neoStartChoice(item, choice) === 'approved') {
       this.askRecords.approve(ask.id, Date.now(), this.askRecords.get(ask.id)?.revision ?? 0);
       await this.startApprovedWork(ids);
-    } else if (choice === item.options?.[0]) {
+    } else if (neoStartChoice(item, choice) === 'declined') {
       await Promise.all(ids.map((id) => this.cancel(id)));
     }
   }

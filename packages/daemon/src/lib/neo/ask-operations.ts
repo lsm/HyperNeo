@@ -246,6 +246,7 @@ const Answer = z.object({
   askId: z.string().min(1),
   itemId: z.string().min(1),
   choice: z.string().trim().min(1).max(1000),
+  option: z.string().optional(),
   humanMessageId: z.string().min(1).max(200).optional(),
 });
 
@@ -1219,6 +1220,8 @@ export function requireNeoAskQuestion(
         `item_not_found: ${input.itemId} is not on this checklist. ${neoKnownIds('items on it', checklist(ask))}`
       ),
     };
+  if (input.option && !item.options?.includes(input.option))
+    return { reason: fail('answer_option_unknown: use an option from this question.') };
   if (item.state !== 'needs_you')
     return {
       reason: fail(`item_not_waiting: ${item.id} is ${item.state}, not waiting on an answer.`),
@@ -1958,7 +1961,7 @@ export function createNeoAskOperations(
               ...target.item,
               id: input.itemId,
               state: 'met',
-              evidence: neoAskAnswerEvidence(reply.choice, cited.id),
+              evidence: neoAskAnswerEvidence(reply.choice, cited.id, input.option),
               metBy: 'human',
             },
             Date.now(),
@@ -1972,9 +1975,9 @@ export function createNeoAskOperations(
     )
     .pipe(requireNeoAskWritten, 'answered', 'result:admission')
     .pipe(
-      (target: { ask: NeoAsk; item: NeoAskItem }, reply: { choice: string }) =>
-        service.answerStartQuestion(target.ask, target.item, reply.choice),
-      ['answerTarget', 'reply'],
+      (input: z.infer<typeof Answer>, target: { ask: NeoAsk; item: NeoAskItem }) =>
+        service.answerStartQuestion(target.ask, target.item, input.option ?? input.choice),
+      ['input', 'answerTarget'],
       'started'
     )
     .pipe(replanAsk, 'admission', 'written')
@@ -2273,7 +2276,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.answer',
       description:
-        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met. From the Answer control it is sent to the Neo session that opened the ask, which acts on it. When the human answers in chat instead, Neo records it here in the turn their message started (or passes humanMessageId, the id of an earlier human message that answered it): the daemon accepts it only in the live turn the human's message started, only if that message is the human's own, in this ask's conversation and sent after the question, and only if choice appears in what they wrote (pass their own words), so never ask them to repeat it in a control and never open a second ask for it. Every answer, including a negative result, completes the question with no confirmation step.",
+        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met. From the Answer control it is sent to the Neo session that opened the ask, which acts on it. When the human answers in chat instead, Neo records it here in the turn their message started (or passes humanMessageId, the id of an earlier human message that answered it): the daemon accepts it only in the live turn the human's message started, only if that message is the human's own, in this ask's conversation and sent after the question, and only if choice appears in what they wrote (pass their own words), so never ask them to repeat it in a control and never open a second ask for it. For a grouped start question, pass option with the question label matching their own words, keeping choice verbatim; omit option when their meaning is unclear, so execution consent stays pending. Every answer, including a negative result, completes the question with no confirmation step.",
       inputSchema: Answer,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
