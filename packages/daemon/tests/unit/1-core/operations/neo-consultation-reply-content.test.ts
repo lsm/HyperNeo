@@ -53,9 +53,7 @@ describe('Neo consultation reply content', () => {
     expect(payload.replyGuidance).toBe(
       'The holder answered this recorded ask; its full answer is below.'
     );
-    expect(neoPrompt(null)).toContain(
-      'normally in one or two sentences that lead with the useful conclusion'
-    );
+    expect(neoPrompt(null)).toContain('Its originMessageId identifies the human request');
   });
 
   test.each([null, 'other-ask'])(

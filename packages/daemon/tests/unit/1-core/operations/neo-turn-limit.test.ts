@@ -39,6 +39,6 @@ describe('neoTurnLimitNote', () => {
     expect(note).toContain('- card w1 "Guard it" (proposed)');
     expect(note).toContain('follows as its own note when there is any');
     expect(note).not.toMatch(/listed after this|never open/);
-    expect(neoPrompt(null)).toContain('never open or propose them again');
+    expect(neoPrompt(null)).not.toContain('After a turn-limit note');
   });
 });
