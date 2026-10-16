@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createClaudeCodeAdapter } from '../../../../src/lib/drivers/claude-code-adapter';
 import { createClaudeInboxDriver } from '../../../../src/lib/drivers/claude-inbox-driver';
 import type {
   ClaudeInboxEvent,
@@ -117,6 +118,46 @@ describe('Claude inbox driver runtime', () => {
     await expect(driver.send(sessionId, text, context)).rejects.toThrow('closed');
   });
 
+  test.each(['send', 'steer'] as const)(
+    'standalone CLI %s uses the owned reply transport without a fallback',
+    async (verb) => {
+      const adapter = createClaudeCodeAdapter({
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+        sendInbox: driver.send,
+      });
+      expect(adapter.capabilities).toEqual(['find', 'send', 'steer']);
+      expect(adapter.queue).toBeUndefined();
+      expect(adapter.withdraw).toBeUndefined();
+      expect(adapter.stop).toBeUndefined();
+      const ref = { adapter: 'claude-code', id: sessionId };
+      const text = 'exact question\n"调查"';
+      expect(await adapter[verb]!(ref, text, { ...context, from: 'chat' })).toMatchObject({
+        ok: false,
+        reason: 'unsupported',
+      });
+      expect(opens).toBe(0);
+      const outcome = await adapter[verb]!(ref, text, context);
+      expect(writes).toHaveLength(1);
+      expect(writes[0].text).toBe(text);
+      expect(outcome).toMatchObject({
+        ok: true,
+        value: {
+          delivered: false,
+          unconfirmed: true,
+          receipt: { executionId: sessionId, inputId: writes[0].inputId },
+        },
+      });
+      emits[0](reply());
+      await driver.close();
+      expect(handoffs[0].to).toBe(context.from);
+      expect(handoffs[0].message.inputKind).toBe('system');
+      await expect(adapter[verb]!(ref, text, context)).rejects.toThrow('closed');
+      expect(writes).toHaveLength(1);
+    }
+  );
+
   test('receipt facts use separate identities and never become a human approval', async () => {
     await driver.send(sessionId, 'question', context);
     const event: ClaudeInboxEvent = {
@@ -138,7 +179,15 @@ describe('Claude inbox driver runtime', () => {
     async (owner) => {
       deps.liveSessions = async () =>
         owner === 'missing' ? [] : [{ sessionId, pid: 456, status: 'busy', owner }];
-      expect(await driver.send(sessionId, 'text', context)).toMatchObject({
+      const adapter = createClaudeCodeAdapter({
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+        sendInbox: driver.send,
+      });
+      expect(
+        await adapter.send!({ adapter: 'claude-code', id: sessionId }, 'text', context)
+      ).toMatchObject({
         ok: false,
         reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
       });

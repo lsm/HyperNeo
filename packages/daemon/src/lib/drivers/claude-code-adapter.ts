@@ -16,6 +16,11 @@ const HEAD_READS_AT_ONCE = 32;
 
 export interface ClaudeCodeAdapterDeps {
   projectsDir?: string;
+  sendInbox?: (
+    sessionId: string,
+    text: string,
+    context: Parameters<NonNullable<WorkAdapter['send']>>[2]
+  ) => ReturnType<NonNullable<WorkAdapter['send']>>;
   liveSessions?: () => Promise<readonly ClaudeLiveSession[]>;
   machine: string;
   searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
@@ -190,9 +195,18 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
             (await scan()).find((record) => record.sessionId === id)?.folder ?? null,
         })
     : undefined;
+  const sendInbox = deps.sendInbox;
+  const send: WorkAdapter['send'] = sendInbox
+    ? (ref, message, context) => sendInbox(ref.id, message, context)
+    : undefined;
   return {
     id: 'claude-code',
-    capabilities: ['find', ...(status ? (['status'] as const) : [])],
+    capabilities: [
+      'find',
+      ...(status ? (['status'] as const) : []),
+      ...(send ? (['send', 'steer'] as const) : []),
+    ],
+    ...(send ? { send, steer: send } : {}),
     ...(status ? { status } : {}),
     find: (query) => runClaudeCodeFind(query, deps, scan),
   };
