@@ -28,6 +28,15 @@ type Sources = {
 };
 type Gate = { value: Sources } | { reason: NeoPublicConversation };
 
+export function neoPublicationAnswerOrigins(publication: NeoPublication) {
+  return [
+    publication.askOrigin,
+    publication.producerInput,
+    ...(publication.answerInput ? [publication.answerInput] : []),
+    ...(publication.revisions?.map((revision) => revision.producerInput) ?? []),
+  ].filter((origin) => !!origin);
+}
+
 function empty(conversationId: string | null): NeoPublicConversation {
   return {
     conversationId,
@@ -179,9 +188,10 @@ export function neoWorkSummaries(
   for (const entry of entries ?? []) {
     if (entry.kind !== 'publication') continue;
     const text = entry.publication.shortText.trim() || entry.publication.fullText.trim();
-    const at = Date.parse(entry.publication.createdAt);
+    const at = Date.parse(entry.publication.editedAt ?? entry.publication.createdAt);
     for (const link of entry.publication.links)
-      if (link.kind === 'work' && text) summaries.set(link.id, { text, at });
+      if (link.kind === 'work' && text && at >= (summaries.get(link.id)?.at ?? -Infinity))
+        summaries.set(link.id, { text, at });
   }
   return summaries;
 }

@@ -1,7 +1,11 @@
 import type { AgentProcessingState } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoProcessingActivity } from './processing-activity.ts';
-import type { NeoPublicConversation, NeoPublicEntry } from './public-conversation.ts';
+import {
+  neoPublicationAnswerOrigins,
+  type NeoPublicConversation,
+  type NeoPublicEntry,
+} from './public-conversation.ts';
 
 export type NeoMessageStatus =
   | 'received'
@@ -37,10 +41,20 @@ type Turn = { replied: ReadonlySet<string>; working: string | null; waiting: Rea
 export type NeoMessageStatusLink = { connected: boolean; status: NeoPublicConversation['status'] };
 
 export function neoRepliedAsks(entries: readonly NeoPublicEntry[]): ReadonlySet<string> {
+  const answered = new Set(
+    entries.flatMap((entry) =>
+      entry.kind === 'publication'
+        ? neoPublicationAnswerOrigins(entry.publication).map((origin) =>
+            JSON.stringify([origin.sessionId, origin.messageId])
+          )
+        : []
+    )
+  );
   return new Set(
     entries.flatMap((entry) =>
-      entry.kind === 'publication' && !entry.publication.interim && entry.replyTo
-        ? [entry.replyTo.requestId]
+      entry.kind === 'ask' &&
+      answered.has(JSON.stringify([entry.ask.askOrigin.sessionId, entry.ask.askOrigin.messageId]))
+        ? [entry.ask.requestId]
         : []
     )
   );

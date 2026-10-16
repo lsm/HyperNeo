@@ -194,7 +194,7 @@ describe('Neo authored publication state', () => {
       io.connection.forEach((callback) => callback('connected'));
     });
     await waitFor(() => expect(stateText()).toBe(`ready/${id}/2/false/false`));
-    expect(requests()).toHaveLength(2);
+    expect(requests()).toHaveLength(3);
   });
 
   it.each(['refusal', 'malformed', 'transport'])(
@@ -218,7 +218,7 @@ describe('Neo authored publication state', () => {
     }
   );
 
-  it('re-reads the newest replies when Neo edits one in this conversation, and only then', async () => {
+  it('re-reads retained replies when Neo revises one in this conversation, and only then', async () => {
     render(<Probe />);
     await waitFor(() => expect(stateText()).toContain('ready/'));
     const edited = page(0, 1);
@@ -235,7 +235,7 @@ describe('Neo authored publication state', () => {
     expect(requests().map((call) => call[1].input)).toMatchObject([
       {},
       { after: 1 },
-      { after: 0, before: Number.MAX_SAFE_INTEGER },
+      { after: 0, limit: 50 },
     ]);
   });
 
@@ -252,7 +252,7 @@ describe('Neo authored publication state', () => {
     await act(async () => {
       for (const listener of io.edited) listener({ conversationId: id });
     });
-    await waitFor(() => expect(requests()).toHaveLength(3));
+    await waitFor(() => expect(stateText()).toBe(`unavailable/${id}/1/false/false`));
     expect(screen.getByTestId('items').textContent).toBe('Reply 1');
     await changed();
     await waitFor(() => expect(screen.getByTestId('items').textContent).toBe('Edited reply'));
@@ -266,6 +266,87 @@ describe('Neo authored publication state', () => {
     await waitFor(() => expect(requests()).toHaveLength(2));
     expect(stateText()).toBe(`ready/${id}/1/false/false`);
     expect(screen.getByTestId('items').textContent).toBe('Reply 1');
+  });
+
+  it('refreshes older retained replies and their history after a missed edit on reconnect', async () => {
+    io.request.mockResolvedValueOnce(page(0, 50)).mockResolvedValueOnce(page(50, 50));
+    render(<Probe />);
+    await waitFor(() => expect(stateText()).toContain('/50/'));
+    fireEvent.click(screen.getByRole('button'));
+    await waitFor(() => expect(stateText()).toContain('/100/'));
+    const original = row(1);
+    const edited = {
+      ...original,
+      revisionId: '30000000-0000-4000-8000-000000000003',
+      shortText: 'Revised first reply',
+      revisions: [
+        {
+          revisionId: original.publicationId,
+          shortText: original.shortText,
+          fullText: original.fullText,
+          createdAt: original.createdAt,
+          producerInput: original.producerInput,
+        },
+      ],
+    };
+    io.request
+      .mockResolvedValueOnce(page(100, 0))
+      .mockResolvedValueOnce({ ...page(0, 50), items: [edited, ...page(0, 50).items.slice(1)] })
+      .mockResolvedValueOnce(page(50, 50));
+    await act(async () => {
+      io.connection.forEach((callback) => callback('connected'));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('items').textContent?.startsWith('Revised first reply,')).toBe(true)
+    );
+    expect(stateText()).toBe(`ready/${id}/100/false/true`);
+    expect(
+      requests()
+        .slice(2)
+        .map((call) => call[1].input.after)
+    ).toEqual([100, 0, 50]);
+  });
+
+  it('keeps an invalidation that arrives during a revision read', async () => {
+    render(<Probe />);
+    await waitFor(() => expect(stateText()).toContain('ready/'));
+    const pending = deferred<unknown>();
+    io.request
+      .mockResolvedValueOnce(page(1, 0))
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(page(1, 0))
+      .mockResolvedValueOnce({ ...page(), items: [{ ...row(1), shortText: 'Second revision' }] });
+    await act(async () => {
+      for (const listener of io.edited) listener({ conversationId: id });
+    });
+    await waitFor(() => expect(requests()).toHaveLength(3));
+    await act(async () => {
+      for (const listener of io.edited) listener({ conversationId: id });
+    });
+    await act(async () => {
+      pending.resolve(page());
+    });
+    await waitFor(() => expect(screen.getByTestId('items').textContent).toBe('Second revision'));
+    expect(requests()).toHaveLength(5);
+  });
+
+  it('ignores a revision read completing after a root switch', async () => {
+    const view = render(<Probe />);
+    await waitFor(() => expect(stateText()).toContain('ready/'));
+    const pending = deferred<unknown>();
+    io.request.mockResolvedValueOnce(page(1, 0)).mockReturnValueOnce(pending.promise);
+    await act(async () => {
+      for (const listener of io.edited) listener({ conversationId: id });
+    });
+    await waitFor(() => expect(requests()).toHaveLength(3));
+    io.request.mockResolvedValue(page(0, 1, other));
+    view.rerender(<Probe root={`neo:${other}`} />);
+    await waitFor(() => expect(stateText()).toBe(`ready/${other}/1/false/false`));
+    await act(async () => {
+      pending.resolve({ ...page(), items: [{ ...row(1), shortText: 'Old revision' }] });
+    });
+    expect(screen.getByTestId('items').textContent).toBe('Reply 1');
+    expect(stateText()).toBe(`ready/${other}/1/false/false`);
   });
 
   it('rejects a publication identity repeated across pages without advancing', async () => {
@@ -407,7 +488,7 @@ it('wires the consumer to the global root without querying SDK transcripts for p
 });
 
 describe('mergePublicationEdits', () => {
-  it('swaps in an edited or corrected copy of a loaded reply and leaves the rest alone', () => {
+  it('swaps in a revised copy of a loaded reply and leaves the rest alone', () => {
     const first = row(1) as NeoPublicationState['items'][number];
     const second = row(2) as NeoPublicationState['items'][number];
     const state: NeoPublicationState = {

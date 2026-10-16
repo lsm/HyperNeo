@@ -1,6 +1,6 @@
 import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { NeoPublicEntry } from './public-conversation.ts';
+import { neoPublicationAnswerOrigins, type NeoPublicEntry } from './public-conversation.ts';
 
 export const NEO_BUSY_WORDS = ['Neo is working…', 'Syncing…', 'Preparing a reply…', 'Busy on it…'];
 const NEO_RETRY_WORDS = ['Waiting to retry…'];
@@ -25,8 +25,7 @@ export function neoAwaitingReply(entries: readonly NeoPublicEntry[]): boolean {
   return !entries.some(
     (entry) =>
       entry.kind === 'publication' &&
-      !entry.publication.interim &&
-      origin(entry.publication.askOrigin) === asked
+      neoPublicationAnswerOrigins(entry.publication).some((answered) => origin(answered) === asked)
   );
 }
 
