@@ -19,12 +19,7 @@ import {
   runUpdateTemplate,
 } from './template-pipelines.ts';
 
-export type {
-  CreateTemplateCtx,
-  DeleteTemplateCtx,
-  TemplateInstanceScan,
-  UpdateTemplateCtx,
-} from './template-pipelines.ts';
+export type { TemplateInstanceScan } from './template-pipelines.ts';
 export { runCreateTemplate, runDeleteTemplate, runUpdateTemplate } from './template-pipelines.ts';
 
 type BuiltInTemplateSource = () => SpaceAgentTemplate[];

@@ -282,14 +282,3 @@ export function resetProviderFactory(): void {
   lastSyncedConfigByProviderId.clear();
   disabledBuiltInProviderIds.clear();
 }
-
-export type {
-  ModelTier,
-  Provider,
-  ProviderCapabilities,
-  ProviderContext,
-  ProviderId,
-  ProviderInfo,
-  ProviderSdkConfig,
-  ProviderSessionConfig,
-} from '@hyperneo/shared/provider';

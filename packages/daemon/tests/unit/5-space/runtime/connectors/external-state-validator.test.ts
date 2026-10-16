@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import {
   clearConnectorRegistry,
   registerConnector,
-  createExternalStateValidator,
-} from '../../../../../src/lib/github/connectors';
-import type { ConnectorOp, ConnectorOutcome } from '../../../../../src/lib/github/connectors';
+  type ConnectorOp,
+  type ConnectorOutcome,
+} from '../../../../../src/lib/github/connectors/connector.ts';
+import { createExternalStateValidator } from '../../../../../src/lib/github/connectors/external-state-validator.ts';
 import type { HookExecutorContext } from '../../../../../src/lib/hooks/hook-executor';
 
 function ctxWithData(prUrl?: string, extra?: Record<string, unknown>): HookExecutorContext {

@@ -14,7 +14,7 @@ import {
   textDeltaSSE,
 } from './provider-anthropic-compat/translator.js';
 import { estimateAnthropicInputTokens } from './provider-anthropic-compat/token-estimator.js';
-import { createAnthropicErrorBody, type AnthropicErrorType } from './shared/error-envelope.js';
+import { sendJsonError } from './shared/json-error-response.js';
 import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
 import { Logger } from '../logger.js';
 import { createMessagesBridgeServer } from './anthropic-non-streaming.ts';
@@ -81,13 +81,6 @@ type OllamaChatChunk = {
   eval_count?: number;
   error?: string;
 };
-
-function sendJsonError(status: number, type: AnthropicErrorType, message: string): Response {
-  return new Response(createAnthropicErrorBody(type, message), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
 
 function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));

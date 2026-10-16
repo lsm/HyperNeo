@@ -9,6 +9,7 @@ import {
 } from '../../lib/goals/owner-resolution.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SpaceAgentRepository } from './space-agent-repository.ts';
+import { rowToGoalLink } from './space-agent-repository-helpers.ts';
 
 export class SpaceAgentGoalScopeRepository {
   constructor(
@@ -150,16 +151,6 @@ export class SpaceAgentGoalScopeRepository {
       throw new Error(`${label} ${id} does not belong to space ${spaceId}`);
     }
   }
-}
-
-function rowToGoalLink(row: Record<string, unknown>): SpaceLongHorizonAgentGoal {
-  return {
-    agentId: row.agent_id as string,
-    goalId: row.goal_id as string,
-    relationship: row.relationship as SpaceLongHorizonAgentGoal['relationship'],
-    createdAt: row.created_at as number,
-    updatedAt: row.updated_at as number,
-  };
 }
 
 function rowToEvolutionScopeLink(

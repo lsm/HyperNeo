@@ -7,7 +7,6 @@
 
 # Build output
 dist/
-src/styles.out.css
 
 # npm + other dependencies
 node_modules/

@@ -9,7 +9,6 @@ import type {
   HyperNeoActionMessage,
   ChatMessage,
 } from '@hyperneo/shared';
-import type { GoalStatus, RoomGoal } from '@hyperneo/shared/types/neo';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { DatabaseCore } from './database-core.ts';
 import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
@@ -26,13 +25,7 @@ import { SettingsRepository } from './repositories/settings-repository.ts';
 import {
   InboxItemRepository,
   type CreateInboxItemParams,
-  type InboxItemFilter,
 } from './repositories/inbox-item-repository.ts';
-import {
-  GoalRepository,
-  type CreateGoalParams,
-  type UpdateGoalParams,
-} from './repositories/goal-repository.ts';
 import { JobQueueRepository } from './repositories/job-queue-repository.ts';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
 import { SpaceTaskRepository } from './repositories/space-task-repository.ts';
@@ -109,7 +102,6 @@ export class Database {
   private sdkMessageRepo!: SDKMessageRepository;
   private settingsRepo!: SettingsRepository;
   private inboxItemRepo!: InboxItemRepository;
-  private goalRepo!: GoalRepository;
   private jobQueueRepo!: JobQueueRepository;
   private appMcpServerRepo!: AppMcpServerRepository;
   private spaceTaskRepo!: SpaceTaskRepository;
@@ -151,12 +143,10 @@ export class Database {
 
     const db = this.core.getDb();
     this.shortIdAllocator = new ShortIdAllocator(db);
-    const shortIdAllocator = this.shortIdAllocator;
     this.sessionRepo = new SessionRepository(db);
     this.sdkMessageRepo = new SDKMessageRepository(db, reactiveDb);
     this.settingsRepo = new SettingsRepository(db);
     this.inboxItemRepo = new InboxItemRepository(db);
-    this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
     this.spaceTaskRepo = new SpaceTaskRepository(db, reactiveDb);
     this.nodeExecutionRepo = new NodeExecutionRepository(db, reactiveDb);
     this.longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
@@ -475,83 +465,8 @@ export class Database {
     return this.inboxItemRepo.createItem(params);
   }
 
-  getInboxItem(id: string): InboxItem | null {
-    return this.inboxItemRepo.getItem(id);
-  }
-
-  listInboxItems(filter?: InboxItemFilter): InboxItem[] {
-    return this.inboxItemRepo.listItems(filter);
-  }
-
-  listPendingInboxItems(limit?: number): InboxItem[] {
-    return this.inboxItemRepo.listPendingItems(limit);
-  }
-
-  updateInboxItemStatus(
-    id: string,
-    status: 'pending' | 'routed' | 'dismissed' | 'blocked'
-  ): InboxItem | null {
-    return this.inboxItemRepo.updateItemStatus(id, status);
-  }
-
-  dismissInboxItem(id: string): InboxItem | null {
-    return this.inboxItemRepo.dismissItem(id);
-  }
-
-  blockInboxItem(id: string): InboxItem | null {
-    return this.inboxItemRepo.blockItem(id);
-  }
-
-  deleteInboxItem(id: string): void {
-    this.inboxItemRepo.deleteItem(id);
-  }
-
-  deleteInboxItemsForRepository(repository: string): number {
-    return this.inboxItemRepo.deleteItemsForRepository(repository);
-  }
-
   countInboxItemsByStatus(status: 'pending' | 'routed' | 'dismissed' | 'blocked'): number {
     return this.inboxItemRepo.countByStatus(status);
-  }
-
-  createGoal(params: CreateGoalParams): RoomGoal {
-    return this.goalRepo.createGoal(params);
-  }
-
-  getGoal(id: string): RoomGoal | null {
-    return this.goalRepo.getGoal(id);
-  }
-
-  getGoalByShortId(roomId: string, shortId: string): RoomGoal | null {
-    return this.goalRepo.getGoalByShortId(roomId, shortId);
-  }
-
-  listGoals(roomId: string, status?: GoalStatus): RoomGoal[] {
-    return this.goalRepo.listGoals(roomId, status);
-  }
-
-  updateGoal(id: string, params: UpdateGoalParams): RoomGoal | null {
-    return this.goalRepo.updateGoal(id, params);
-  }
-
-  deleteGoal(id: string): boolean {
-    return this.goalRepo.deleteGoal(id);
-  }
-
-  linkTaskToGoal(goalId: string, taskId: string): RoomGoal | null {
-    return this.goalRepo.linkTaskToGoal(goalId, taskId);
-  }
-
-  unlinkTaskFromGoal(goalId: string, taskId: string): RoomGoal | null {
-    return this.goalRepo.unlinkTaskFromGoal(goalId, taskId);
-  }
-
-  getGoalsForTask(taskId: string): RoomGoal[] {
-    return this.goalRepo.getGoalsForTask(taskId);
-  }
-
-  getActiveGoalCount(roomId: string): number {
-    return this.goalRepo.getActiveGoalCount(roomId);
   }
 
   getDatabase(): BunDatabase {
@@ -564,10 +479,6 @@ export class Database {
 
   getSDKMessageRepo(): SDKMessageRepository {
     return this.sdkMessageRepo;
-  }
-
-  getGoalRepo(): GoalRepository {
-    return this.goalRepo;
   }
 
   getSpaceTaskRepo(): SpaceTaskRepository {

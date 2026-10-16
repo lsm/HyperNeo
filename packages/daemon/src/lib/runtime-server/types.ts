@@ -23,8 +23,6 @@ export interface ServerOptions {
   onError?: (error: unknown) => Response | Promise<Response>;
 }
 
-export type CreateServerFn = (options: ServerOptions) => Promise<ServerHandle>;
-
 export interface ServerHandle {
   readonly hostname: string;
   readonly port: number;

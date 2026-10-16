@@ -70,16 +70,6 @@ export function isTerminalTurnError(error: { recoverable: boolean; category?: st
   return error.category !== undefined && TERMINAL_TURN_ERROR_CATEGORIES.has(error.category);
 }
 
-const RETRYABLE_ERROR_RESULT_SUBTYPES: ReadonlySet<string> = new Set([
-  'error_during_execution',
-  'error_max_turns',
-]);
-
-export function isRetryableErrorResultSubtype(subtype: string | null): boolean {
-  if (!subtype) return false;
-  return RETRYABLE_ERROR_RESULT_SUBTYPES.has(subtype);
-}
-
 export interface DeliverMessageOptions {
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
@@ -113,19 +103,6 @@ export function flattenDeliveryText(content: DeliveryContent): string | null {
     texts.push(block.text);
   }
   return texts.length > 0 ? texts.join('\n') : null;
-}
-
-export type ReclaimTerminationDecision = 'terminated' | 'redrive' | 'live';
-
-export function classifyReclaimTermination(args: {
-  successResult: boolean;
-  markerExists: boolean;
-  terminalIdleInFlight: boolean;
-}): ReclaimTerminationDecision {
-  if (args.terminalIdleInFlight) return 'live';
-  if (args.successResult) return 'terminated';
-  if (args.markerExists) return 'redrive';
-  return 'live';
 }
 
 export function asMessageDeliveryPayload(
@@ -174,11 +151,6 @@ export interface MessageDeliveryAttemptObserver {
     stage: 'query_ready' | 'sdk_admitted' | 'first_sdk_response',
     details?: { generation?: number; responseType?: string }
   ): void;
-}
-
-export interface DeliveryClaimContext {
-  claimGuard?: () => boolean;
-  signal?: AbortSignal;
 }
 
 export interface MessageDeliverySession {

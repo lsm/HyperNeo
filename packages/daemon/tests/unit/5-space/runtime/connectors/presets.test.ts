@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { clearConnectorRegistry } from '../../../../../src/lib/github/connectors/connector.ts';
 import {
-  clearConnectorRegistry,
   createCodexApprovalValidator,
   createPrMergedValidator,
   createPrReadyValidatorV2,
   createReviewPostedValidator,
-} from '../../../../../src/lib/github/connectors';
+} from '../../../../../src/lib/github/connectors/presets.ts';
 import type { HookExecutorContext } from '../../../../../src/lib/hooks/hook-executor';
 import { runGhJson } from '../../../../../src/lib/github/gh-lookup-helpers.ts';
 import type { SpawnFn, SpawnProcess } from '../../../../../src/lib/runtime-spawn';

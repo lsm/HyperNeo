@@ -14,16 +14,11 @@ import {
 } from './workspace-resolution-pipelines.ts';
 
 export { buildRegistrySnapshot } from './workspace-registry.ts';
-export {
-  WorkspaceRegistrationError,
-  WorkspaceRemovalBlockedError,
-} from './workspace-registry.ts';
+export { WorkspaceRegistrationError, WorkspaceRemovalBlockedError } from './workspace-registry.ts';
 export type {
   SpaceWorkspaceManagerDeps,
   WorkspaceGoalReferences,
-  WorkspaceRegistryReader,
   WorkspaceSessionReferences,
-  WorkspaceStore,
   WorkspaceTaskReferences,
 } from './workspace-registry.ts';
 

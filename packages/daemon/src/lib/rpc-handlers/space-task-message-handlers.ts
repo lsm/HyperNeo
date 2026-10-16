@@ -110,11 +110,6 @@ export interface TaskAgentManagerInterface {
     agentName: string,
     workflowNodeId: string | undefined
   ): string | null;
-  getSubSessionByAgentName?(
-    taskId: string,
-    agentName: string,
-    workflowNodeId?: string
-  ): Promise<{ session: { id: string } } | null>;
   getPostApprovalWorkerSession?(
     taskId: string,
     hintSessionId?: string

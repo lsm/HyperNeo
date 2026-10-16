@@ -5,10 +5,7 @@ import type {
   PostToolUseHookInput,
   PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
-import {
-  createLoopDetectorHook,
-  createLoopDetectorHooks,
-} from '../../../../src/lib/agent/loop-detector-hook';
+import { createLoopDetectorHooks } from '../../../../src/lib/agent/loop-detector-hook';
 
 const signal = new AbortController().signal;
 
@@ -81,7 +78,7 @@ describe('LoopDetectorHook', () => {
   let hook: HookCallback;
 
   beforeEach(() => {
-    hook = createLoopDetectorHook();
+    hook = createLoopDetectorHooks().preToolUse;
   });
 
   describe('Read — consecutive streak semantics', () => {
@@ -273,7 +270,7 @@ describe('LoopDetectorHook', () => {
 
   describe('configuration', () => {
     it('respects a custom threshold', async () => {
-      const customHook = createLoopDetectorHook({ thresholds: { Read: 2 } });
+      const customHook = createLoopDetectorHooks({ thresholds: { Read: 2 } }).preToolUse;
       const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
       expect(await call(customHook, input)).toEqual({});
       const result = await call(customHook, input);
@@ -283,7 +280,7 @@ describe('LoopDetectorHook', () => {
     });
 
     it('disables entirely when enabled=false', async () => {
-      const offHook = createLoopDetectorHook({ enabled: false });
+      const offHook = createLoopDetectorHooks({ enabled: false }).preToolUse;
       const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
       for (let i = 0; i < 10; i++) {
         expect(await call(offHook, input)).toEqual({});
@@ -291,7 +288,7 @@ describe('LoopDetectorHook', () => {
     });
 
     it('threshold overrides REPLACE the default tracked-tool set', async () => {
-      const narrow = createLoopDetectorHook({ thresholds: { Read: 2 } });
+      const narrow = createLoopDetectorHooks({ thresholds: { Read: 2 } }).preToolUse;
 
       const read = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
       expect(await call(narrow, read)).toEqual({});
@@ -311,7 +308,7 @@ describe('LoopDetectorHook', () => {
     });
 
     it('omitting thresholds inherits the defaults wholesale', async () => {
-      const inheritsDefaults = createLoopDetectorHook({ windowMs: 30_000 });
+      const inheritsDefaults = createLoopDetectorHooks({ windowMs: 30_000 }).preToolUse;
       const read = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
       expect(await call(inheritsDefaults, read)).toEqual({});
       expect(await call(inheritsDefaults, read)).toEqual({});
@@ -367,7 +364,7 @@ describe('LoopDetectorHook', () => {
 
   describe('sliding window', () => {
     it('resets the counter when the window expires', async () => {
-      const shortWindowHook = createLoopDetectorHook({ windowMs: 1 });
+      const shortWindowHook = createLoopDetectorHooks({ windowMs: 1 }).preToolUse;
       const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
 
       expect(await call(shortWindowHook, input)).toEqual({});
@@ -381,7 +378,7 @@ describe('LoopDetectorHook', () => {
       let now = 1_000_000;
       Date.now = () => now;
       try {
-        const slowHook = createLoopDetectorHook({ windowMs: 5 });
+        const slowHook = createLoopDetectorHooks({ windowMs: 5 }).preToolUse;
         const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
 
         expect(await call(slowHook, input)).toEqual({});
@@ -397,7 +394,7 @@ describe('LoopDetectorHook', () => {
     });
 
     it('still denies bursty repeats well within the window', async () => {
-      const tightHook = createLoopDetectorHook({ windowMs: 60_000 });
+      const tightHook = createLoopDetectorHooks({ windowMs: 60_000 }).preToolUse;
       const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
       await call(tightHook, input);
       await call(tightHook, input);
@@ -850,7 +847,7 @@ describe('LoopDetectorHook', () => {
     });
 
     it('falls back to a truncated JSON dump when no known arg fields exist', async () => {
-      const jsonHook = createLoopDetectorHook({ thresholds: { WebFetch: 2 } });
+      const jsonHook = createLoopDetectorHooks({ thresholds: { WebFetch: 2 } }).preToolUse;
       const input = makePreToolUse('WebFetch', { url: 'https://example.com' });
       expect(await call(jsonHook, input)).toEqual({});
       const result = await call(jsonHook, input);
@@ -890,7 +887,7 @@ describe('LoopDetectorHook', () => {
 
   describe('arg fingerprint similarity rules (characterization)', () => {
     it('treats nested objects with different key order as identical', async () => {
-      const nestedHook = createLoopDetectorHook({ thresholds: { MyTool: 2 } });
+      const nestedHook = createLoopDetectorHooks({ thresholds: { MyTool: 2 } }).preToolUse;
       const a = makePreToolUse('MyTool', { opts: { x: 1, y: 2 } });
       const b = makePreToolUse('MyTool', { opts: { y: 2, x: 1 } });
       expect(await call(nestedHook, a)).toEqual({});
@@ -900,7 +897,7 @@ describe('LoopDetectorHook', () => {
     });
 
     it('treats arrays with different element order as different keys', async () => {
-      const nestedHook = createLoopDetectorHook({ thresholds: { MyTool: 3 } });
+      const nestedHook = createLoopDetectorHooks({ thresholds: { MyTool: 3 } }).preToolUse;
       const a = makePreToolUse('MyTool', { opts: [1, 2] });
       const b = makePreToolUse('MyTool', { opts: [2, 1] });
       for (let i = 0; i < 6; i++) {
@@ -928,7 +925,7 @@ describe('LoopDetectorHook', () => {
       let now = 1_000_000;
       Date.now = () => now;
       try {
-        const boundaryHook = createLoopDetectorHook({ windowMs: 100 });
+        const boundaryHook = createLoopDetectorHooks({ windowMs: 100 }).preToolUse;
         const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
 
         expect(await call(boundaryHook, input)).toEqual({});
@@ -948,7 +945,7 @@ describe('LoopDetectorHook', () => {
       let now = 1_000_000;
       Date.now = () => now;
       try {
-        const boundaryHook = createLoopDetectorHook({ windowMs: 100 });
+        const boundaryHook = createLoopDetectorHooks({ windowMs: 100 }).preToolUse;
         const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
 
         expect(await call(boundaryHook, input)).toEqual({});
@@ -1103,10 +1100,10 @@ describe('LoopDetectorHook', () => {
     });
 
     it('applies thresholds.Bash through the generic path when bash.enabled is false', async () => {
-      const disabledBash = createLoopDetectorHook({
+      const disabledBash = createLoopDetectorHooks({
         thresholds: { Bash: 2 },
         bash: { enabled: false, threshold: 5, failuresRequired: 5 },
-      });
+      }).preToolUse;
       const input = makePreToolUse('Bash', { command: 'git status' });
       expect(await call(disabledBash, input)).toEqual({});
       const result = await call(disabledBash, input);

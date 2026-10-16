@@ -116,5 +116,3 @@ if (isBun) {
 
 export { Database };
 export type Database = NodeDatabase;
-
-export type { DatabaseSync, Statement, SqliteDatabase } from './sqlite-node.ts';

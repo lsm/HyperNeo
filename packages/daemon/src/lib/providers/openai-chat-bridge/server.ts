@@ -1,3 +1,4 @@
+import { sendJsonError, sendRetryableUpstreamError } from '../shared/json-error-response.js';
 import type { ThinkingOffEffort } from '@hyperneo/shared';
 import {
   type AnthropicContentBlockImage,
@@ -18,7 +19,7 @@ import {
   thinkingDeltaSSE,
 } from '../provider-anthropic-compat/translator.js';
 import { estimateAnthropicInputTokens } from '../provider-anthropic-compat/token-estimator.js';
-import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
+import type { AnthropicErrorType } from '../shared/error-envelope.js';
 import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
 import {
   isJsonContentType,
@@ -153,28 +154,6 @@ type OpenAIChatStreamChunk = {
   };
   error?: { message?: string; type?: string };
 };
-
-function sendJsonError(
-  status: number,
-  type: AnthropicErrorType,
-  message: string,
-  extraHeaders?: Record<string, string>
-): Response {
-  return new Response(createAnthropicErrorBody(type, message), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...extraHeaders },
-  });
-}
-
-function sendRetryableUpstreamError(normalized: {
-  type: AnthropicErrorType;
-  status: number;
-  message: string;
-}): Response {
-  return sendJsonError(normalized.status, normalized.type, normalized.message, {
-    'x-should-retry': 'true',
-  });
-}
 
 function genMessageId(): string {
   return `msg_oai_${Math.random().toString(36).slice(2, 14)}`;

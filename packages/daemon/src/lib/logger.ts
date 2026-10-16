@@ -59,11 +59,3 @@ export {
   installConsoleLogCapture,
   withConsoleLogCaptureSuppressed,
 };
-export type {
-  StructuredLogContext,
-  StructuredLogEvent,
-  StructuredLogLevel,
-  StructuredLogProcessMetadata,
-  StructuredLogSource,
-  StructuredLogSubscriber,
-} from '@hyperneo/shared';

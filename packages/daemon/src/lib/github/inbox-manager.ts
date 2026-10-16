@@ -50,27 +50,6 @@ export class InboxManager {
     return item;
   }
 
-  getPendingItems(limit?: number): InboxItem[] {
-    return this.db.listPendingInboxItems(limit);
-  }
-
-  getItem(id: string): InboxItem | null {
-    return this.db.getInboxItem(id);
-  }
-
-  dismissItem(id: string): InboxItem | null {
-    return this.db.dismissInboxItem(id);
-  }
-
-  blockItem(id: string, _reason: string): InboxItem | null {
-    const item = this.db.updateInboxItemStatus(id, 'blocked');
-    return item;
-  }
-
-  deleteItem(id: string): void {
-    this.db.deleteInboxItem(id);
-  }
-
   countByStatus(): Record<InboxItemStatus, number> {
     const statuses: InboxItemStatus[] = ['pending', 'routed', 'dismissed', 'blocked'];
     const counts: Record<InboxItemStatus, number> = {
@@ -85,14 +64,6 @@ export class InboxManager {
     }
 
     return counts;
-  }
-
-  listItems(filter?: {
-    status?: InboxItemStatus;
-    repository?: string;
-    limit?: number;
-  }): InboxItem[] {
-    return this.db.listInboxItems(filter);
   }
 
   private getEventType(event: GitHubEvent): 'github_issue' | 'github_comment' | 'github_pr' {

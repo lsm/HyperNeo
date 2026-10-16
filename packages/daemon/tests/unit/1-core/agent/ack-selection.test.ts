@@ -2,7 +2,6 @@ import { describe, expect, it } from 'bun:test';
 import {
   isTurnEndAckEligible,
   selectPersistedAckRow,
-  selectYieldedAckRow,
 } from '../../../../src/lib/agent/ack-selection';
 
 const UUID = 'queued-user-uuid';
@@ -37,43 +36,6 @@ describe('selectPersistedAckRow', () => {
     ],
   ])('%s', (_label, statuses, expected) => {
     expect(selectPersistedAckRow(statuses)).toEqual(expected);
-  });
-});
-
-describe('selectYieldedAckRow', () => {
-  it.each([
-    [
-      'enqueued wins first',
-      { enqueued: true, submitted: true, deferred: true },
-      { action: 'consume', status: 'enqueued' },
-    ],
-    [
-      'submitted outranks deferred',
-      { enqueued: false, submitted: true, deferred: true },
-      { action: 'consume', status: 'submitted' },
-    ],
-    [
-      'deferred is consumed only when enqueued and submitted miss',
-      { enqueued: false, submitted: false, deferred: true },
-      { action: 'consume', status: 'deferred' },
-    ],
-    [
-      'no row in any status is a miss',
-      { enqueued: false, submitted: false, deferred: false },
-      { action: 'none' },
-    ],
-  ])('%s', (_label, statuses, expected) => {
-    expect(selectYieldedAckRow(statuses)).toEqual(expected);
-  });
-
-  it('the yielded ladder defers behind submitted, unlike the persisted replay ladder', () => {
-    expect(selectYieldedAckRow({ enqueued: false, submitted: true, deferred: true })).toEqual({
-      action: 'consume',
-      status: 'submitted',
-    });
-    expect(
-      selectPersistedAckRow({ enqueued: false, deferred: true, submitted: true, consumed: false })
-    ).toEqual({ action: 'consume', status: 'deferred' });
   });
 });
 

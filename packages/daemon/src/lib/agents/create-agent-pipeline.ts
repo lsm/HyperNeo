@@ -39,8 +39,6 @@ export type SpaceAgentRejectionKind =
   | 'invalid_identity'
   | 'invalid_config';
 
-export type CreateSpaceAgentRejectionKind = SpaceAgentRejectionKind;
-
 export interface BindableSession {
   type: string;
   spaceId: string | null;

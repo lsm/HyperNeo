@@ -23,7 +23,6 @@ import {
   type EditorState,
 } from './CustomEndpointEditor.tsx';
 import { useFetchModels } from './useFetchModels.ts';
-import { findPreset } from './customEndpointPresets.ts';
 
 export function CustomEndpointsSettings() {
   const [endpoints, setEndpoints] = useState<CustomEndpointConfig[]>([]);
@@ -277,35 +276,3 @@ export function CustomEndpointsSettings() {
     </SettingsSection>
   );
 }
-
-export {
-  resolveCapabilities,
-  parseHeaders,
-  editorToConfig,
-  validateEditor,
-  presetToEditor,
-  existingToEditor,
-  makeModelDraft,
-} from './CustomEndpointEditor.tsx';
-export { findPreset } from './customEndpointPresets.ts';
-
-import {
-  resolveCapabilities as _resolveCapabilities,
-  parseHeaders as _parseHeaders,
-  editorToConfig as _editorToConfig,
-  validateEditor as _validateEditor,
-  presetToEditor as _presetToEditor,
-  existingToEditor as _existingToEditor,
-  makeModelDraft as _makeModelDraft,
-} from './CustomEndpointEditor.tsx';
-
-export const __test__ = {
-  resolveCapabilities: _resolveCapabilities,
-  parseHeaders: _parseHeaders,
-  editorToConfig: _editorToConfig,
-  validateEditor: _validateEditor,
-  presetToEditor: _presetToEditor,
-  existingToEditor: _existingToEditor,
-  findPreset,
-  makeModelDraft: _makeModelDraft,
-};

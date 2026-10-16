@@ -56,7 +56,9 @@ export function applyProceedGate(_ctx: SpawnAdmissionCtx): SpawnAdmissionResult 
   return decided({ action: 'proceed_fresh' });
 }
 
-const spawnAdmissionDecisionRun = (superpipe()('spawn-execution-admission') as PipelineAPI)
+export const decideSpawnExecutionAdmissionViaPipeline = (
+  superpipe()('spawn-execution-admission') as PipelineAPI
+)
   .input(['ctx'])
   .pipe(applyLiveSessionGate, 'ctx', 'result:decision')
   .pipe(applyConcurrentSpawnGate, 'ctx', 'result:decision')
@@ -64,10 +66,4 @@ const spawnAdmissionDecisionRun = (superpipe()('spawn-execution-admission') as P
   .pipe(applyWorkflowValidityGate, 'ctx', 'result:decision')
   .pipe(applySlotResolutionGate, 'ctx', 'result:decision')
   .pipe(applyProceedGate, 'ctx', 'result:decision')
-  .end('decision');
-
-export function decideSpawnExecutionAdmissionViaPipeline(
-  input: SpawnExecutionAdmissionInput
-): SpawnExecutionAdmissionDecision {
-  return spawnAdmissionDecisionRun(input) as SpawnExecutionAdmissionDecision;
-}
+  .end('decision') as (input: SpawnExecutionAdmissionInput) => SpawnExecutionAdmissionDecision;

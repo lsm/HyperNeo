@@ -1680,41 +1680,6 @@ export class TaskAgentManager {
     }
   }
 
-  async getSubSessionByAgentName(
-    taskId: string,
-    agentName: string,
-    workflowNodeId?: string
-  ): Promise<AgentSession | null> {
-    const task = this.config.taskRepo.getTask(taskId);
-    if (!task?.workflowRunId) return null;
-
-    const executions = this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-    const exec = executions
-      .filter(
-        (e) =>
-          e.agentName === agentName &&
-          e.agentSessionId &&
-          e.status !== 'cancelled' &&
-          e.status !== 'pending' &&
-          (!workflowNodeId || e.workflowNodeId === workflowNodeId)
-      )
-      .at(-1);
-    if (!exec?.agentSessionId) return null;
-
-    const cached = this.agentSessionIndex.get(exec.agentSessionId);
-    if (cached) return cached;
-
-    return this.rehydrateSubSession(exec.agentSessionId, undefined, { startQuery: false });
-  }
-
-  async getAgentNamesForTask(taskId: string): Promise<string[]> {
-    const task = this.config.taskRepo.getTask(taskId);
-    if (!task?.workflowRunId) return [];
-    const executions = this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-    const names = new Set(executions.filter((e) => e.agentSessionId).map((e) => e.agentName));
-    return [...names];
-  }
-
   getWorkflowDeclaredAgentNamesForTask(taskId: string): string[] {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task?.workflowRunId) return [];

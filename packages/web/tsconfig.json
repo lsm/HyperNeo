@@ -19,6 +19,6 @@
       "@hyperneo/ui/*": ["../ui/src/*"]
     }
   },
-  "include": ["src/**/*", "build.ts", "../shared/src/**/*", "../ui/src/**/*"],
+  "include": ["src/**/*", "../shared/src/**/*", "../ui/src/**/*"],
   "exclude": ["node_modules", "dist", "tests/**/*", "../shared/src/sdk/**/*"]
 }

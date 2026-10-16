@@ -17,14 +17,7 @@ import type { CustomAgentConfig, SlotOverrides, UnifiedSpaceAgent } from './cust
 import { SUB_SESSION_FEATURES } from './seed-agents.ts';
 import { deriveWorkerDisallowedTools } from './tool-policy.ts';
 
-export type {
-  CustomAgentConfig,
-  SlotOverrides,
-  SlotResolutionContext,
-  TaskMessageContext,
-  UnifiedSpaceAgent,
-} from './custom-agent-types.ts';
-export type { PromptSource, ResolvedAgentPrompt } from './custom-agent-prompt.ts';
+export type { CustomAgentConfig, SlotOverrides, TaskMessageContext } from './custom-agent-types.ts';
 export {
   buildCustomAgentSystemPrompt,
   expandPrompt,
