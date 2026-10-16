@@ -26,15 +26,11 @@ const dropped = (card: NeoCardView) =>
 
 export const NEO_ASK_IDLE_LABEL = 'Not started · Neo is trying another way';
 
-export const NEO_ASK_REFUSAL_BUDGET = 3;
-
 export function neoAskIdleLabel(
-  refusedCount: number | undefined,
-  idleReason: string | undefined
+  _refusedCount: number | undefined,
+  _idleReason: string | undefined
 ): { label: string; stuck: boolean } {
-  return (refusedCount ?? 0) >= NEO_ASK_REFUSAL_BUDGET
-    ? { label: `Needs you · ${idleReason ?? "Couldn't start"}`, stuck: true }
-    : { label: NEO_ASK_IDLE_LABEL, stuck: false };
+  return { label: NEO_ASK_IDLE_LABEL, stuck: false };
 }
 
 export function neoAskIdleReason(refused: string | null | undefined): string | undefined {

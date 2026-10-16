@@ -6,11 +6,7 @@ import type {
   NeoWorkDriverReceipt,
   NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
-import {
-  NEO_ASK_IDLE_LABEL,
-  NEO_ASK_REFUSAL_BUDGET,
-  projectNeoAskViews,
-} from '../../../../src/lib/neo/ask-views.ts';
+import { NEO_ASK_IDLE_LABEL, projectNeoAskViews } from '../../../../src/lib/neo/ask-views.ts';
 import { busyNeoAskSessions } from '../../../../src/lib/neo/session-ask-links.ts';
 import { neoCardPhase } from '../../../../src/lib/neo/card-phase.ts';
 import { runMigration381 } from '../../../../src/storage/schema/m381-neo-ask-refusal.ts';
@@ -554,7 +550,7 @@ describe('projectNeoAskViews', () => {
     expect(busy.label).toBe('Working on it');
   });
 
-  test('an idle ask whose proposes were refused up to the budget shows itself to the human', () => {
+  test('refusal counts stay factual and only a real question needs the human', () => {
     const input = parts({ work: [], asks: [] });
     const view = (refusedCount: number) =>
       projectNeoAskViews(
@@ -562,14 +558,14 @@ describe('projectNeoAskViews', () => {
         projectNeoCardViews(input),
         input.prs
       )[0];
-    expect(view(NEO_ASK_REFUSAL_BUDGET - 1)).toMatchObject({
+    expect(view(2)).toMatchObject({
       label: 'Not started · Neo is trying another way',
       needsYou: false,
     });
-    expect(view(NEO_ASK_REFUSAL_BUDGET)).toMatchObject({
+    expect(view(100)).toMatchObject({
       group: 'attention',
-      label: "Needs you · Couldn't start: No adapter can start work",
-      needsYou: true,
+      label: 'Not started · Neo is trying another way',
+      needsYou: false,
       idle: true,
       humanActions: [],
     });
@@ -578,7 +574,7 @@ describe('projectNeoAskViews', () => {
         ask({
           status: 'waiting',
           refused: 'No adapter can start work.',
-          refusedCount: NEO_ASK_REFUSAL_BUDGET,
+          refusedCount: 100,
           doneItems: [
             { ...item('q', 'needs_you'), kind: 'decision', options: ['Use Codex', 'Stop'] },
           ],

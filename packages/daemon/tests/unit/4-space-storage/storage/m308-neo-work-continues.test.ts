@@ -45,7 +45,7 @@ describe('NeoWorkContinueRepository', () => {
       count: 2,
       continuedAt: 20,
       lastMessage: 'Build settings',
-      stalled: 1,
+      stalled: 0,
     });
     expect(continues.record('w1', 'Build login', 30, '1|a')).toMatchObject({
       count: 3,

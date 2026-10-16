@@ -20,8 +20,7 @@ export function planNeoDeliveryRetry(
 ): { value: number } | { reason: 'not_retryable' | 'not_approved' | 'retries_spent' } {
   if (!card.retryable) return { reason: 'not_retryable' };
   const ask = card.ask;
-  if (!ask?.approvedAt || !isNeoAskLive(ask) || (ask.approvedUntil ?? Infinity) <= card.now)
-    return { reason: 'not_approved' };
+  if (!ask?.approvedAt || !isNeoAskLive(ask)) return { reason: 'not_approved' };
   const delay = NEO_DELIVERY_RETRY_BACKOFF_MS[card.retries];
   return delay === undefined ? { reason: 'retries_spent' } : { value: delay };
 }
