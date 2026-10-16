@@ -83,6 +83,7 @@ const LiveSessionSchema = z.object({
 });
 
 export type ClaudeDesktopRecord = z.infer<typeof RecordSchema>;
+type ClaudeTranscriptLocation = Pick<ClaudeDesktopRecord, 'cliSessionId' | 'cwd' | 'originCwd'>;
 export interface ClaudeLiveSession {
   sessionId: string;
   pid?: number;
@@ -342,7 +343,7 @@ const runClaudeDesktopFind = (superpipe({})('claude-desktop-find-work') as Pipel
 
 export function claudeTranscriptPath(
   projectsDir: string,
-  record: ClaudeDesktopRecord
+  record: ClaudeTranscriptLocation
 ): string | null {
   const cwd = record.cwd ?? record.originCwd;
   if (!cwd || !record.cliSessionId) return null;
@@ -486,8 +487,8 @@ export function requireClaudeRecord(
 }
 
 export async function readClaudeTranscript(
-  record: ClaudeDesktopRecord,
-  deps: ClaudeDesktopAdapterDeps,
+  record: ClaudeTranscriptLocation,
+  deps: Pick<ClaudeDesktopAdapterDeps, 'projectsDir'>,
   since?: number
 ): Promise<ClaudeTranscriptState | null> {
   const path = claudeTranscriptPath(deps.projectsDir, record);
@@ -645,8 +646,8 @@ export function claudeInputEvidence(
 }
 
 export async function readClaudeInputEvidence(
-  record: ClaudeDesktopRecord,
-  deps: ClaudeDesktopAdapterDeps,
+  record: ClaudeTranscriptLocation,
+  deps: Pick<ClaudeDesktopAdapterDeps, 'projectsDir'>,
   receipt: ClaudeReceipt | undefined
 ): Promise<ClaudeInputEvidence | null> {
   if (!receipt) return null;
