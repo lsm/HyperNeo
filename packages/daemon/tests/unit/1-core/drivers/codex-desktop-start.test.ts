@@ -22,6 +22,7 @@ const model = {
   supportedReasoningEfforts: [{ reasoningEffort: 'medium' }],
 };
 const catalog = { data: [model], nextCursor: null };
+const fullAccess = { approvalPolicy: 'never', sandbox: 'danger-full-access' };
 
 function adapter(
   server: Partial<CodexAppServer> | Error,
@@ -186,7 +187,7 @@ describe('codex-desktop start', () => {
         location: { directory: '/focus/dolmen', destination: '/codex/worktrees/abcd1234/dolmen' },
       },
     ]);
-    expect(calls[0]).toEqual(['thread/start', { cwd: '/fresh/remote-base' }]);
+    expect(calls[0]).toEqual(['thread/start', { ...fullAccess, cwd: '/fresh/remote-base' }]);
     expect(spawned).toEqual([]);
     expect(released).toBe(false);
   });
@@ -243,7 +244,7 @@ describe('codex-desktop start', () => {
     });
     expect(calls).toEqual([
       ['model/list', { limit: 100, includeHidden: false }],
-      ['thread/start', { cwd: '/focus/dolmen', model: 'gpt-6.1-sol' }],
+      ['thread/start', { ...fullAccess, cwd: '/focus/dolmen', model: 'gpt-6.1-sol' }],
       ['thread/name/set', { threadId: 'th1', name: request.title }],
       [
         'desktop/start-turn',
@@ -272,7 +273,12 @@ describe('codex-desktop start', () => {
       ['model/list', { limit: 100, includeHidden: false }],
       [
         'thread/start',
-        { cwd: '/focus/dolmen', model: model.model, config: { model_reasoning_effort: 'medium' } },
+        {
+          ...fullAccess,
+          cwd: '/focus/dolmen',
+          model: model.model,
+          config: { model_reasoning_effort: 'medium' },
+        },
       ],
       ['thread/name/set', { threadId: 'th1', name: request.title }],
       [
@@ -334,7 +340,7 @@ describe('codex-desktop start', () => {
       const result = await instance.start?.(request, user);
       expect(result?.ok).toBe(true);
       expect(result?.ok && result.value.effort).toBe(reported ?? undefined);
-      expect(calls[0]).toEqual(['thread/start', { cwd: '/focus/dolmen' }]);
+      expect(calls[0]).toEqual(['thread/start', { ...fullAccess, cwd: '/focus/dolmen' }]);
       expect(calls.some(([method]) => method === 'model/list')).toBe(false);
     }
   });
@@ -348,7 +354,7 @@ describe('codex-desktop start', () => {
       ok: true,
       value: { model: 'configured-default' },
     });
-    expect(calls[0]).toEqual(['thread/start', { cwd: '/focus/dolmen' }]);
+    expect(calls[0]).toEqual(['thread/start', { ...fullAccess, cwd: '/focus/dolmen' }]);
     expect(calls.some(([method]) => method === 'model/list')).toBe(false);
   });
 
@@ -429,7 +435,7 @@ describe('codex-desktop start', () => {
       },
     });
     expect(calls).toEqual([
-      ['thread/start', { cwd: '/focus/dolmen' }],
+      ['thread/start', { ...fullAccess, cwd: '/focus/dolmen' }],
       ['thread/name/set', { threadId: 'th1', name: 'Bigger font' }],
       [
         'desktop/start-turn',
@@ -452,7 +458,10 @@ describe('codex-desktop start', () => {
         cwd: '/focus/dolmen',
       },
     ]);
-    expect(calls[0]).toEqual(['thread/start', { cwd: '/codex/worktrees/abcd1234/dolmen' }]);
+    expect(calls[0]).toEqual([
+      'thread/start',
+      { ...fullAccess, cwd: '/codex/worktrees/abcd1234/dolmen' },
+    ]);
   });
 
   test('runs in place when the folder is already a linked worktree', async () => {
@@ -463,7 +472,7 @@ describe('codex-desktop start', () => {
     );
     expect(await instance.start?.(request, user)).toMatchObject({ ok: true, value: { place } });
     expect(spawned).toEqual([]);
-    expect(calls[0]).toEqual(['thread/start', { cwd: '/focus/dolmen' }]);
+    expect(calls[0]).toEqual(['thread/start', { ...fullAccess, cwd: '/focus/dolmen' }]);
   });
 
   test('runs a subfolder start at the worktree root', async () => {
@@ -476,7 +485,10 @@ describe('codex-desktop start', () => {
       { ...request, place: { ...place, folder: '/focus/dolmen/web', name: 'web' } },
       user
     );
-    expect(calls[0]).toEqual(['thread/start', { cwd: '/codex/worktrees/abcd1234/dolmen' }]);
+    expect(calls[0]).toEqual([
+      'thread/start',
+      { ...fullAccess, cwd: '/codex/worktrees/abcd1234/dolmen' },
+    ]);
   });
 
   test('removes the worktree when no thread starts', async () => {
@@ -519,6 +531,21 @@ describe('codex-desktop start', () => {
       detail: '/gone does not exist. To start a new project there, pass createFolder: true.',
     });
     expect(calls).toEqual([]);
+  });
+
+  test('does not retry with lower permissions when Full Access is refused', async () => {
+    const { instance, calls, closed } = adapter({
+      call: async () => {
+        throw new Error('Full Access is disabled by managed requirements');
+      },
+    });
+    expect(await instance.start?.(request, user)).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail: expect.stringContaining('Full Access is disabled'),
+    });
+    expect(calls).toEqual([['thread/start', { ...fullAccess, cwd: '/focus/dolmen' }]]);
+    expect(closed()).toBe(true);
   });
 
   test('reports an absent app-server and a thread left without its first turn', async () => {

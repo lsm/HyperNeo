@@ -53,6 +53,7 @@ describe('claude-desktop start', () => {
   function adapter(options: {
     prepareExecution?: WorkExecutionPreparer;
     openExit?: number;
+    error?: string;
     appearsAfter?: number;
     relayWrites?: boolean;
     twin?: boolean;
@@ -97,7 +98,7 @@ describe('claude-desktop start', () => {
               : 0;
         return {
           stdout: null,
-          stderr: new Response(code ? 'no auth' : '').body,
+          stderr: new Response(code ? (options.error ?? 'no auth') : '').body,
           exited: Promise.resolve(code),
           exitCode: code,
           kill: () => {},
@@ -198,6 +199,8 @@ describe('claude-desktop start', () => {
       'u1',
       '-n',
       'Bigger font',
+      '--permission-mode',
+      'bypassPermissions',
       '--',
       'HyperNeo is handing you a task; it arrives in the next message. Reply only: ready.',
     ]);
@@ -229,6 +232,44 @@ describe('claude-desktop start', () => {
     expect(spawned[2].slice(6, 8)).toEqual(['--permission-mode', 'bypassPermissions']);
   });
 
+  test('preserves a permission mode reported by Desktop for the new session', async () => {
+    mkdirSync(join(dir, 'sessions', 'acct', 'scope'), { recursive: true });
+    writeFileSync(
+      join(dir, 'sessions', 'acct', 'scope', 'local_u1.json'),
+      JSON.stringify({
+        sessionId: 'local_u1',
+        cliSessionId: 'u1',
+        cwd: '/focus/dolmen',
+        title: 'Bigger font',
+        permissionMode: 'manual',
+      })
+    );
+    await adapter({ appearsAfter: 0, relayWrites: true }).start?.(request, user);
+    expect(spawned[0]).toContain('bypassPermissions');
+    expect(spawned[2]).not.toContain('--permission-mode');
+  });
+
+  test('does not assume Desktop inherited bypass when it reports no permission mode', async () => {
+    await adapter({ appearsAfter: 0, relayWrites: true }).start?.(request, user);
+    expect(spawned[0]).toContain('bypassPermissions');
+    expect(spawned[2]).not.toContain('--permission-mode');
+  });
+
+  test('does not retry without bypass when the CLI refuses the requested mode', async () => {
+    expect(
+      await adapter({
+        openExit: 1,
+        error: 'bypassPermissions disabled by managed settings',
+      }).start?.(request, user)
+    ).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'bypassPermissions disabled by managed settings',
+    });
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]).toContain('bypassPermissions');
+  });
+
   test('opens work in a git repo in its own worktree and resumes it there', async () => {
     await adapter({ appearsAfter: 0, checkout: { repo: '/focus/dolmen', linked: false } }).start?.(
       request,
@@ -241,6 +282,8 @@ describe('claude-desktop start', () => {
       'u1',
       '-n',
       'Bigger font',
+      '--permission-mode',
+      'bypassPermissions',
       '--worktree',
       'neo-u1',
       '--',
@@ -282,7 +325,16 @@ describe('claude-desktop start', () => {
       ok: true,
       value: { ref: { adapter: 'claude-desktop', id: 'local_u1' }, status: 'running' },
     });
-    expect(spawned[2]).toEqual(['claude', '-p', '--resume', 'u1', '--', request.message]);
+    expect(spawned[2]).toEqual([
+      'claude',
+      '-p',
+      '--resume',
+      'u1',
+      '--permission-mode',
+      'bypassPermissions',
+      '--',
+      request.message,
+    ]);
     expect(clock).toBe(1_000);
   });
 

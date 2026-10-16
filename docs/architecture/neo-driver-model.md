@@ -214,7 +214,7 @@ HyperNeo Spaces. The adapter calls the Space task operations as the real caller,
 Runs on the laptop, ported from the `codex-driver` skill. Everything it does shows in Codex Desktop.
 
 - `find` and `status`: `~/.codex/state_5.sqlite` and the thread's rollout file.
-- `start`: a short-lived stdio app-server creates and names the thread using the desktop's bundled CLI when available. Neo closes stdin and waits for the process to exit and flush its saved thread, opens its `codex://threads/<id>` link, and discovers the desktop owner over `~/.codex/ipc/ipc.sock`. The opening turn is sent directly to that owner, with the confirmed model and effort. The shared background daemon must not own newly created desktop threads; visibility in the sidebar alone does not make a thread editable in the desktop. The desktop must be running and its local IPC protocol must support the handoff; failures leave the saved thread without submitting its opening message elsewhere.
+- `start`: a short-lived stdio app-server creates and names the thread using the desktop's bundled CLI when available. The public `thread/start` request sets `approvalPolicy: "never"` and `sandbox: "danger-full-access"` for new threads. Neo closes stdin and waits for the process to exit and flush its saved thread, opens its `codex://threads/<id>` link, and discovers the desktop owner over `~/.codex/ipc/ipc.sock`. The opening turn is sent directly to that owner, with the confirmed model and effort. The shared background daemon must not own newly created desktop threads; visibility in the sidebar alone does not make a thread editable in the desktop. The desktop must be running and its local IPC protocol must support the handoff; failures leave the saved thread without submitting its opening message elsewhere.
 - `send`: `codex queue --thread <id> --message …`, then a delivery check in the rollout.
 - `stop`: interrupt the turn through the app-server. `link`: to be found.
 
@@ -224,7 +224,7 @@ Runs on the laptop. Everything it does shows in the Claude Code Desktop app. Ver
 
 | Verb | How |
 | --- | --- |
-| `start` | `claude -p --session-id <uuid> -n <title> "<opening message>"` in the place's folder, then `claude --desktop --resume <uuid>` under a pseudo-terminal. The app creates session `local_<uuid>` in its sidebar with the transcript and starts its own process for it. |
+| `start` | `claude -p --session-id <uuid> -n <title> --permission-mode bypassPermissions "<opening message>"` in the place's folder, then `claude --desktop --resume <uuid>` under a pseudo-terminal. The app creates session `local_<uuid>` in its sidebar with the transcript and starts its own process for it. |
 | `send` | When the app runs the session, a short headless relay, `claude -p --model haiku --allowedTools "SendMessage ListAgents"`, delivers the message with cross-session messaging and it starts a turn. When the session is not running, `claude -p --resume <uuid> "<message>"`. |
 | `find`, `status` | `claude agents --json` for live sessions (`status` busy, waiting or idle, and `waitingFor`), the app's session records for title, folder, archived state and last activity, and the transcript for the last reply. |
 | `link` | `claude://claude.ai/epitaxy/local_<uuid>`, the link the app reports for a session. |
@@ -234,8 +234,44 @@ Constraints:
 
 - `claude --desktop` refuses to run without a terminal, so the adapter launches it under a pseudo-terminal (`script -q /dev/null claude --desktop --resume <uuid>` works).
 - Never resume a session headlessly while the app runs it: the two writers could fork the conversation. Use the relay whenever `claude agents --json` lists the session.
-- A relayed message arrives as a message from another session, which the receiving Claude treats as a teammate's request. Sessions in bypass-permissions mode hold such messages and the app cannot show the approval dialog, so they expire after five minutes. Sessions Neo drives run in auto or default mode.
+- A relayed message arrives as a message from another session, which the receiving Claude treats as a teammate's request. The relay uses bypass mode only when the app record reports that mode, to match the target's permission class. Unknown desktop permissions are not inferred from the CLI bootstrap flag. A headless resume preserves a known bypass mode; a new session that has not appeared in Desktop yet retains its requested CLI bypass mode.
 - The first turn runs headless before the session reaches the app. Keep it short, open the session in the app, then send the real task through the relay so the work happens where the user can watch it.
+
+### New-session permission defaults
+
+Neo-created Codex threads request Full Access through the supported app-server
+`thread/start` fields (`approvalPolicy: "never"`, `sandbox: "danger-full-access"`).
+Claude Code CLI creation, including the internal rc-toggle session, passes the
+supported `--permission-mode bypassPermissions` flag. Existing sessions do not
+receive a new default. If creation is rejected by managed policy, the adapter
+reports the failure and does not retry with different permissions.
+
+Support was checked against Codex CLI 0.160.1 using its public
+`codex app-server generate-json-schema --out <temporary-directory>` command:
+`v2/ThreadStartParams.json` includes `approvalPolicy` and `sandbox`, and
+`SandboxMode` includes `danger-full-access`. Claude Code 2.1.295 `--help` lists
+`--permission-mode bypassPermissions`. The [Codex app-server documentation](https://learn.chatgpt.com/docs/app-server)
+and [Claude CLI reference](https://code.claude.com/docs/en/cli-reference)
+describe those supported creation interfaces.
+
+These guarantees cover creation requests and known CLI resumes. Desktop takeover
+is a separate boundary. Codex's existing owner handoff uses a private IPC
+protocol; this change neither extends that protocol with permission controls nor
+claims that it can force the Desktop permission selector. Claude's documented
+`--desktop --resume` entry point does not document a per-session permission
+handoff parameter. Passing a CLI creation flag is therefore not evidence that a
+desktop-owned process retained it. The adapter preserves an observed Desktop
+mode and does not guess bypass when a live session's mode is unknown.
+
+For desktop-owned sessions, use the supported app controls: select Full Access
+in Codex, or set the documented [Codex configuration defaults](https://learn.chatgpt.com/docs/config-file/config-basic)
+(`approval_policy = "never"`, `sandbox_mode = "danger-full-access"`) where
+managed requirements allow them. For Claude, enable Bypass permissions where
+available and select it in the app. The [Claude Desktop documentation](https://code.claude.com/docs/en/desktop#permission-modes)
+also supports `permissions.defaultMode = "bypassPermissions"` in the shared
+settings file; a remembered per-folder mode takes precedence. These are user
+settings, not files the driver rewrites. Organization policy can disallow either
+mode. No private database or desktop session-state mutation is used.
 
 ### Status mapping
 

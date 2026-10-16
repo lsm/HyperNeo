@@ -783,12 +783,25 @@ export async function resumeClaudeSession(
   const path = claudeTranscriptPath(deps.projectsDir, record);
   const before = await transcriptSize(path);
   try {
-    const proc = deps.spawn(['claude', '-p', '--resume', record.cliSessionId, '--', message], {
-      cwd: folder,
-      stdout: 'pipe',
-      stderr: 'pipe',
-      detached: true,
-    });
+    const proc = deps.spawn(
+      [
+        'claude',
+        '-p',
+        '--resume',
+        record.cliSessionId,
+        ...(record.permissionMode === 'bypassPermissions'
+          ? ['--permission-mode', 'bypassPermissions']
+          : []),
+        '--',
+        message,
+      ],
+      {
+        cwd: folder,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        detached: true,
+      }
+    );
     const stdout = new Response(proc.stdout).text().catch(() => '');
     const stderr = new Response(proc.stderr).text().catch(() => '');
     const early = await Promise.race([
@@ -936,6 +949,8 @@ export async function startClaudeSession(
         cliSessionId,
         '-n',
         request.title,
+        '--permission-mode',
+        'bypassPermissions',
         ...(worktree ? ['--worktree', worktree] : []),
         '--',
         OPENING_MESSAGE,
@@ -961,7 +976,7 @@ export async function startClaudeSession(
     title: request.title,
     isArchived: false,
     lastActivityAt: deps.now(),
-    permissionMode: appRecord?.permissionMode,
+    permissionMode: appRecord?.permissionMode ?? (session ? undefined : 'bypassPermissions'),
   };
   const sent = await sendClaudeMessage({ ...record, cliSessionId }, live, request.message, deps);
   if (!sent.ok) {

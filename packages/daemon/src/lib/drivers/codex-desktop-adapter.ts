@@ -867,6 +867,8 @@ export async function startCodexThread(
       }
       const started = await server.call('thread/start', {
         cwd: workFolder.cwd,
+        approvalPolicy: 'never',
+        sandbox: 'danger-full-access',
         ...(configuration.value.model ? { model: configuration.value.model } : {}),
         ...(configuration.value.effort
           ? { config: { model_reasoning_effort: configuration.value.effort } }
