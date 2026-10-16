@@ -1,3 +1,4 @@
+import { runMigration386 } from './m386-neo-work-control-failures.ts';
 import baselineSchema from './baseline-v041.json' with { type: 'json' };
 import { runMigration370 } from './m370-neo-project-merges.ts';
 import { runMigration371 } from './m371-neo-work-admission-claims.ts';
@@ -827,6 +828,7 @@ export function runMigrations(
   run(migrationMarkerKey(383), () => runMigration383(db));
   run(migrationMarkerKey(384), () => runMigration384(db));
   run(migrationMarkerKey(385), () => runMigration385(db));
+  run(migrationMarkerKey(386), () => runMigration386(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
