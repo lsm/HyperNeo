@@ -34,3 +34,27 @@ export function withNeoProposalAsk(
     });
   return ask ? { ...input, askId: ask.id } : input;
 }
+
+export function approveNeoProposalQuestion(
+  service: Pick<NeoService, 'askRecords'>,
+  workId: string
+): void {
+  const ask = service.askRecords.forWork(workId);
+  const question = ask?.doneItems?.find(
+    (item) => !item.removed && item.action?.startsWith('neo-start:')
+  );
+  if (!ask || !question) throw new Error('Expected a grouped start question in the fixture');
+  if (question.state === 'met' && question.metBy === 'human') return;
+  service.askRecords.tickItem(
+    ask.id,
+    {
+      ...question,
+      state: 'met',
+      metBy: 'human',
+      evidence: `The human answered: ${question.options!.at(-1)}`,
+    },
+    Date.now(),
+    question,
+    true
+  );
+}

@@ -22,7 +22,7 @@ import {
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
+import { approveNeoProposalQuestion, withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 const agent = Object.freeze({
   spaceId: 'space-A',
@@ -247,6 +247,7 @@ describe('Neo existing Space-agent handoff operation', () => {
     expect(await proposed()).toEqual(saved);
     expect(service.repo.listWork()).toHaveLength(1);
     expect(db.getDatabase().prepare('SELECT * FROM neo_agent_work_targets').all()).toHaveLength(1);
+    approveNeoProposalQuestion(service, saved.id);
     await service.start(saved.id);
     const queued = service.repo.getWork(saved.id)!;
     const result = await invoke();
@@ -303,6 +304,7 @@ describe('Neo existing Space-agent handoff operation', () => {
   });
   test('only the actual recipient report returns the original ask without retargeting a newer one', async () => {
     const saved = await proposed();
+    approveNeoProposalQuestion(service, saved.id);
     await service.start(saved.id);
     const report = {
       id: saved.id,

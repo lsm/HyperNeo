@@ -37,7 +37,7 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
-import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
+import { approveNeoProposalQuestion, withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const project = {
@@ -851,6 +851,7 @@ describe('Neo MVP', () => {
           ok: false,
           reason: expect.stringContaining('no standalone scratch session'),
         });
+        approveNeoProposalQuestion(service, receipt.work.id);
         await service.start(receipt.work.id);
         expect(created).toHaveLength(1);
         expect(

@@ -45,6 +45,7 @@ import {
   planNeoStartQuestion,
 } from './start-question.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
+import { neoDerivedId } from './derived-id.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { pullRequestUrlOfTopic } from '../github/parse-pr-url.ts';
@@ -1450,6 +1451,8 @@ export class NeoService {
   private async startReservedWork(id: string): Promise<void> {
     let work = this.repo.getWork(id);
     if (!work || !['proposed', 'queued'].includes(work.status)) return;
+    if (work.report === NEO_WORK_RESERVED_WORKER) this.proposeStartQuestion(id);
+    if (work.status === 'proposed' && this.proposalApproval(id) === false) return;
     this.askRecords.reopenForWork(id);
     const driver = this.driverTargets.get(id);
     if (driver) return this.startDriverWork(work, driver);
@@ -1557,19 +1560,67 @@ export class NeoService {
     return decision === null ? null : decision === 'approved';
   }
 
-  proposeStartQuestion(workId: string): void {
-    const ask = this.askRecords.forWork(workId);
-    if (!ask) return;
-    const proposed = ask.workIds
-      .filter(
-        (id) =>
-          this.repo.getWork(id)?.status === 'proposed' &&
-          !['read', 'adopt'].includes(this.driverTargets.get(id)?.verb ?? '')
-      )
-      .map((id) => this.startTarget(id));
-    const question = planNeoStartQuestion(ask, proposed);
-    if (question) this.askRecords.proposeStartQuestion(ask.id, question, Date.now());
-  }
+  readonly proposeStartQuestion = (superpipe({})('neo-proposal-start-question') as PipelineAPI)
+    .input(['workId'])
+    .pipe(
+      (workId: string) => {
+        const work = this.repo.getWork(workId);
+        return work?.status === 'proposed' &&
+          !['read', 'adopt'].includes(this.driverTargets.get(work.id)?.verb ?? '')
+          ? work
+          : null;
+      },
+      'workId',
+      'proposal'
+    )
+    .pipe(
+      (work: NeoWork | null) => {
+        if (!work) return null;
+        const existing = this.askRecords.forWork(work.id);
+        if (existing) return existing;
+        const goal = this.workGoals.get(work.id);
+        const id = neoDerivedId(`neo-proposal-ask:${work.id}`);
+        return this.askRecords.open(
+          {
+            id,
+            requestKey: id,
+            projectId: work.projectId,
+            originSessionId: work.originSessionId,
+            originMessageId: work.originMessageId,
+            title: work.title,
+            ask: goal?.goal ?? work.instruction,
+            doneWhen: goal?.doneWhen ?? work.title,
+            doneSource: 'proposal',
+          },
+          [{ text: goal?.doneWhen ?? work.title, check: null, deliveredBy: work.id }]
+        );
+      },
+      'proposal',
+      'ask'
+    )
+    .pipe(
+      (ask: NeoAsk | null) =>
+        ask &&
+        planNeoStartQuestion(
+          ask,
+          ask.workIds
+            .filter(
+              (id) =>
+                this.repo.getWork(id)?.status === 'proposed' &&
+                !['read', 'adopt'].includes(this.driverTargets.get(id)?.verb ?? '')
+            )
+            .map((id) => this.startTarget(id))
+        ),
+      'ask',
+      'question'
+    )
+    .pipe(
+      (ask: NeoAsk | null, question: ReturnType<typeof planNeoStartQuestion>) => {
+        if (ask && question) this.askRecords.proposeStartQuestion(ask.id, question, Date.now());
+      },
+      ['ask', 'question']
+    )
+    .end('question') as (workId: string) => ReturnType<typeof planNeoStartQuestion>;
 
   async answerStartQuestion(ask: NeoAsk, item: NeoAskItem, choice: string): Promise<void> {
     const targets = neoQuestionStartTargets(item);
@@ -2034,6 +2085,16 @@ export class NeoService {
         this.log.warn('Neo recovery pending', error);
       }
     }
+    for (const work of this.repo.listWork())
+      if (
+        work.status === 'proposed' &&
+        work.report !== NEO_WORK_AWAITING_WORKER &&
+        this.driverTargets.readCard(work.id)?.claimedAt == null &&
+        !this.driverTargets.readStartInterrupted(work.id) &&
+        !this.dependencies.hasStartIntent(work.id) &&
+        !isNeoAdmissionApproved(this.askRecords.forWork(work.id), Date.now())
+      )
+        this.proposeStartQuestion(work.id);
     for (const workId of new Set(this.dependencies.edges().map((edge) => edge.workId)))
       scheduleNeoAdmissionWake(this.db.getJobQueueRepo(), workId);
     await this.reclaimCardPrs();

@@ -24,7 +24,7 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
-import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
+import { approveNeoProposalQuestion, withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 describe('Neo existing chat work', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -110,6 +110,10 @@ describe('Neo existing chat work', () => {
     expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
     return (result as { value: { work: NeoWork } }).value.work;
   }
+  function startApproved(work: NeoWork) {
+    approveNeoProposalQuestion(service, work.id);
+    return service.start(work.id);
+  }
   function resources() {
     return JSON.stringify(
       [
@@ -147,8 +151,8 @@ describe('Neo existing chat work', () => {
       expect(await invoke('neo.work.start', { id: work.id }, source('ask-A'))).toMatchObject({
         value: { ok: false },
       });
-      await Promise.all([invoke('neo.work.start', { id: work.id }), service.start(work.id)]);
-      await service.start(work.id);
+      await Promise.all([invoke('neo.work.start', { id: work.id }), startApproved(work)]);
+      await startApproved(work);
       expect(service.repo.getWork(work.id)).toMatchObject({
         status: 'queued',
         sessionId: target,
@@ -186,7 +190,7 @@ describe('Neo existing chat work', () => {
     );
     const work = (proposed as { value: { work: NeoWork } }).value.work;
     await invoke('neo.work.start', { id: work.id });
-    await service.start(work.id);
+    await startApproved(work);
 
     const brief = content(jobs('project', work.id)[0]);
     expect(brief).toContain('What the human asked: A full-featured native iOS app for Neo');
@@ -442,7 +446,7 @@ describe('Neo existing chat work', () => {
       expect(transition(id, expected, { status: 'cancelled' })).not.toBeNull();
       return null;
     });
-    await service.start(work.id);
+    await startApproved(work);
     expect(service.repo.getWork(work.id)?.status).toBe('cancelled');
     expect(jobs('project')).toEqual([]);
     expect(createSession).not.toHaveBeenCalled();
@@ -452,7 +456,7 @@ describe('Neo existing chat work', () => {
     'queued work reports an unavailable %s target once across recovery',
     async (change) => {
       const work = await propose();
-      await service.start(work.id);
+      await startApproved(work);
       if (change === 'archived')
         db.getDatabase()
           .prepare("UPDATE sessions SET status = 'archived' WHERE id = 'project'")
@@ -489,7 +493,7 @@ describe('Neo existing chat work', () => {
 
   test('reconcile fails an inadmissible shared target without reading its SDK output', async () => {
     const work = await propose();
-    await service.start(work.id);
+    await startApproved(work);
     db.getDatabase().prepare("UPDATE sessions SET status = 'archived' WHERE id = 'project'").run();
     const messages = db.getSDKMessageRepo();
     spyOn(db, 'getSDKMessageRepo').mockReturnValue(messages);
@@ -512,7 +516,7 @@ describe('Neo existing chat work', () => {
           .run();
       return resolve(id);
     });
-    await service.start(work.id);
+    await startApproved(work);
     expect(service.repo.getWork(work.id)).toMatchObject({
       status: 'failed',
       report: expect.stringContaining('target_session_not_active'),
@@ -524,7 +528,7 @@ describe('Neo existing chat work', () => {
 
   test('a lost failure CAS cannot overwrite cancellation or return another result', async () => {
     const work = await propose();
-    await service.start(work.id);
+    await startApproved(work);
     db.getDatabase().prepare("UPDATE sessions SET status = 'archived' WHERE id = 'project'").run();
     const transition = service.repo.transitionWork.bind(service.repo);
     const race = spyOn(service.repo, 'transitionWork').mockImplementation((id, expected) => {
@@ -532,7 +536,7 @@ describe('Neo existing chat work', () => {
       expect(transition(id, expected, { status: 'cancelled' })).not.toBeNull();
       return null;
     });
-    await service.start(work.id);
+    await startApproved(work);
     expect(service.repo.getWork(work.id)?.status).toBe('cancelled');
     expect(jobs('root', work.id)).toHaveLength(0);
     expect(getSessionAsync).not.toHaveBeenCalled();
@@ -541,7 +545,7 @@ describe('Neo existing chat work', () => {
   test('restart recovery preserves each exact request and deduplicates its pending handoff', async () => {
     const a = await propose('A');
     const b = await propose('B');
-    await Promise.all([service.start(a.id), service.start(b.id)]);
+    await Promise.all([startApproved(a), startApproved(b)]);
     const before = resources();
     service.dispose();
     service = new NeoService(
@@ -563,7 +567,7 @@ describe('Neo existing chat work', () => {
   test('shared recipient reports B then A through the actual operations adapter to the matching asks', async () => {
     const a = await propose('A');
     const b = await propose('B');
-    await Promise.all([service.start(a.id), service.start(b.id)]);
+    await Promise.all([startApproved(a), startApproved(b)]);
     const registry = createOperationRegistry(createNeoOperations(service));
     const report = createOperationMcpHandler(registry, () => ({ sessionId: 'project' }));
     const foreign = createOperationMcpHandler(registry, () => ({ sessionId: 'ordinary' }));
@@ -598,7 +602,7 @@ describe('Neo existing chat work', () => {
   test('Stop waiting closes only A and leaves the shared execution and B available', async () => {
     const a = await propose('A');
     const b = await propose('B');
-    await Promise.all([service.start(a.id), service.start(b.id)]);
+    await Promise.all([startApproved(a), startApproved(b)]);
     const before = resources();
     await invoke('neo.work.cancel', { id: a.id });
     expect(
