@@ -50,7 +50,7 @@ const EXPECTED_ENV_BY_FAMILY: Record<string, string[]> = {
     'HYPERNEO_SQL_QUERY_MAX_QUERY_GROUPS',
     'HYPERNEO_SQL_QUERY_SUMMARY_LIMIT',
   ],
-  flags: ['HYPERNEO_WORKFLOW_CONNECTORS', 'HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING'],
+  flags: ['HYPERNEO_WORKFLOW_CONNECTORS'],
 };
 
 const EXPECTED_RESTART_KEYS = [
@@ -68,7 +68,6 @@ const EXPECTED_RESTART_KEYS = [
   'sqlQueryMaxQueryGroups',
   'sqlQuerySummaryLimit',
   'workflowConnectors',
-  'taskAgentPostApprovalRouting',
 ];
 
 function entryByKey(key: string): DaemonConfigKeyEntry {
@@ -89,9 +88,9 @@ describe('DAEMON_CONFIG_KEY_CATALOG', () => {
       providersMisc: 4,
       spaceEvents: 4,
       startup: 11,
-      flags: 2,
+      flags: 1,
     });
-    expect(DAEMON_CONFIG_KEY_CATALOG).toHaveLength(33);
+    expect(DAEMON_CONFIG_KEY_CATALOG).toHaveLength(32);
   });
 
   it('has globally unique keys and legacy env names', () => {
@@ -146,7 +145,6 @@ describe('DEFAULT_DAEMON_CONFIG', () => {
     });
     expect(DEFAULT_DAEMON_CONFIG.flags).toEqual({
       workflowConnectors: true,
-      taskAgentPostApprovalRouting: true,
     });
     for (const entry of DAEMON_CONFIG_KEY_CATALOG) {
       const family = DEFAULT_DAEMON_CONFIG[entry.family] as Record<string, unknown>;
@@ -229,11 +227,13 @@ describe('resolveDaemonConfig', () => {
 
   it('coerces booleans including 1/0 and string forms', () => {
     const on = resolveDaemonConfig({
-      startup: { disableWorktrees: 1 as unknown as boolean },
-      flags: { taskAgentPostApprovalRouting: 'false' as unknown as boolean },
+      startup: {
+        disableWorktrees: 1 as unknown as boolean,
+        sqlQueryObservability: 'false' as unknown as boolean,
+      },
     });
     expect(on.startup?.disableWorktrees).toBe(true);
-    expect(on.flags?.taskAgentPostApprovalRouting).toBe(false);
+    expect(on.startup?.sqlQueryObservability).toBe(false);
     const off = resolveDaemonConfig({
       startup: { disableWorktrees: 0 as unknown as boolean },
     });
@@ -246,16 +246,12 @@ describe('resolveDaemonConfig', () => {
 
   it('applies each boolean key legacy string semantics', () => {
     const perKey = resolveDaemonConfig({
-      flags: {
-        taskAgentPostApprovalRouting: 'off' as unknown as boolean,
-        workflowConnectors: 'off' as unknown as boolean,
-      },
+      flags: { workflowConnectors: 'off' as unknown as boolean },
       startup: {
         sqlQueryObservability: 'no' as unknown as boolean,
         disableWorktrees: 'true' as unknown as boolean,
       },
     });
-    expect(perKey.flags?.taskAgentPostApprovalRouting).toBe(false);
     expect(perKey.flags?.workflowConnectors).toBe(true);
     expect(perKey.startup?.sqlQueryObservability).toBe(true);
     expect(perKey.startup?.disableWorktrees).toBe(false);
@@ -266,14 +262,10 @@ describe('resolveDaemonConfig', () => {
     expect(recognizedFalse.flags?.workflowConnectors).toBe(false);
     expect(recognizedFalse.startup?.sqlQueryObservability).toBe(false);
     const exactMatch = resolveDaemonConfig({
-      flags: {
-        workflowConnectors: ' 0 ' as unknown as boolean,
-        taskAgentPostApprovalRouting: ' NO ' as unknown as boolean,
-      },
+      flags: { workflowConnectors: ' 0 ' as unknown as boolean },
       startup: { sqlQueryObservability: ' OFF ' as unknown as boolean },
     });
     expect(exactMatch.flags?.workflowConnectors).toBe(true);
-    expect(exactMatch.flags?.taskAgentPostApprovalRouting).toBe(false);
     expect(exactMatch.startup?.sqlQueryObservability).toBe(false);
   });
 });

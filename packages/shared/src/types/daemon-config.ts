@@ -69,7 +69,6 @@ export interface DaemonBehaviorConfig {
   };
   flags?: {
     workflowConnectors?: boolean;
-    taskAgentPostApprovalRouting?: boolean;
   };
 }
 
@@ -125,7 +124,6 @@ const FAMILY_ROWS: FamilyRows = {
   },
   flags: {
     workflowConnectors: [true, 'enable workflow runtime connectors'],
-    taskAgentPostApprovalRouting: [true, 'enable post-approval routing to sub-sessions'],
   },
 };
 
@@ -145,7 +143,6 @@ const BOOLEAN_LEGACY_STRINGS: Record<string, readonly [readonly string[], boolea
   workflowConnectors: [['0'], false],
   disableWorktrees: [['1'], true],
   disableGoalProcessing: [['1'], true],
-  taskAgentPostApprovalRouting: [['0', 'false', 'no', 'off'], false, true],
 };
 
 function legacyEnvNameFor(key: string): string {

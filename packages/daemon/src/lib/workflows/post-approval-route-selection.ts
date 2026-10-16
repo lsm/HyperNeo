@@ -5,19 +5,6 @@ import type { SpaceTaskRepository } from '../../storage/repositories/space-task-
 import { builtInWorkflowRequiresPrMerge } from './built-in-workflows.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from './post-approval-validator.ts';
 
-export const POST_APPROVAL_ROUTING_FLAG_ENV = 'HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING';
-
-export function isPostApprovalRoutingEnabled(
-  env: Readonly<Record<string, string | undefined>> = process.env
-): boolean {
-  const raw = env[POST_APPROVAL_ROUTING_FLAG_ENV];
-  if (raw === undefined) return true;
-  const v = raw.trim().toLowerCase();
-  if (v === '') return true;
-  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
-  return true;
-}
-
 export function appendPostApprovalCompletionInstructions(interpolatedInstructions: string): string {
   const trimmed = interpolatedInstructions.trim();
   return `${trimmed}\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`;
