@@ -93,46 +93,6 @@ describe('ToolProgressCard', () => {
     });
   });
 
-  describe('Compact Variant', () => {
-    it('should render in compact style', () => {
-      const { container } = render(<ToolProgressCard {...defaultProps} variant="compact" />);
-      const card = container.querySelector('.py-1');
-      expect(card).toBeTruthy();
-    });
-
-    it('should have smaller icon in compact mode', () => {
-      const { container } = render(<ToolProgressCard {...defaultProps} variant="compact" />);
-      const svg = container.querySelector('svg');
-      expect(svg?.className).toContain('w-4');
-    });
-
-    it('should truncate tool name in compact mode', () => {
-      const { container } = render(<ToolProgressCard {...defaultProps} variant="compact" />);
-      const truncatedElement = container.querySelector('.truncate');
-      expect(truncatedElement).toBeTruthy();
-    });
-  });
-
-  describe('Inline Variant', () => {
-    it('should render as inline element', () => {
-      const { container } = render(<ToolProgressCard {...defaultProps} variant="inline" />);
-      const card = container.querySelector('.inline-flex');
-      expect(card).toBeTruthy();
-    });
-
-    it('should have smallest icon in inline mode', () => {
-      const { container } = render(<ToolProgressCard {...defaultProps} variant="inline" />);
-      const svg = container.querySelector('svg');
-      expect(svg?.className).toContain('w-3');
-    });
-
-    it('should have xs text size in inline mode', () => {
-      const { container } = render(<ToolProgressCard {...defaultProps} variant="inline" />);
-      const text = container.querySelector('.text-xs');
-      expect(text).toBeTruthy();
-    });
-  });
-
   describe('Tool Input Summary', () => {
     it('should show file path for Read tool', () => {
       const { container } = render(

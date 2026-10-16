@@ -70,7 +70,6 @@ export interface ToolProgressCardProps {
   elapsedTime: number;
   toolUseId: string;
   parentToolUseId?: string;
-  variant?: ToolCardVariant;
   className?: string;
 }
 
