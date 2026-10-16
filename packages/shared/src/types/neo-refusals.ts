@@ -49,8 +49,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The edit leaves the reply exactly as it was. Pass the changed wording, or skip the edit.',
   epic_unavailable:
     'The GitHub epic could not be read or has no title. Check the URL and access, then try again.',
-  forward_limit:
-    'This message has already been forwarded as far as it can go: once out of the session that holds it, and once back to main. Answer it where it is now.',
   handoff_uncertain:
     'An earlier start of this card was interrupted, so it is unknown whether a working session exists. Check with neo.snapshot before starting it again.',
   human_ask_required:
@@ -94,8 +92,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'Only a live turn of main Neo or a project holder, in its own session of this conversation, can publish. Publish while answering, not from a finished turn.',
   main_neo_only:
     'Only main Neo or the human can do this. Ask main Neo to do it, or do it from main.',
-  main_only:
-    'A forwarded message can only go back to main Neo. Forward it to main, or answer it here.',
   needs_human:
     'Merging a project without a repository identity needs the human’s approval. Ask the human, then retry with humanApproved.',
   no_driver_target:
