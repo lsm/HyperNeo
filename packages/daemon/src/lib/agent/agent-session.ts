@@ -93,6 +93,7 @@ const NEO_CORE_OPERATIONS = [
   'neo.work.cancel',
   'neo.github.read',
   'neo.publication.publish',
+  'neo.publication.edit',
   'work.find',
   'work.read',
 ] as const;

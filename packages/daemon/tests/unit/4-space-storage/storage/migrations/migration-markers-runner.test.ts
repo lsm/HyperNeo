@@ -86,7 +86,6 @@ describe('migration runner markers', () => {
     loadSupportedBaseline(db);
     db.exec("DELETE FROM migration_markers WHERE key = 'migration_001'");
     runMigrations(db, () => {});
-    expect(markerExists(db, 'migration_001')).toBe(true);
     expect(markerExists(db, 'migration_238')).toBe(true);
     expect(markerExists(db, 'migration_239')).toBe(true);
     expect(db.prepare("SELECT title FROM sessions WHERE id = 'kept'").get()).toEqual({

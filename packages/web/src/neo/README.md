@@ -39,7 +39,7 @@ An opt-in entry inside the existing web package at `/neo`, included in the web b
 
 ## Response guidance
 
-The reusable `NEO_RESPONSE_FOCUS_BRIEFING` is delivered through the existing pure coordinator prompt/runtime policy. It asks Neo to answer only the current input, keep unrelated progress in its own attributed return, acknowledge pending checks briefly, and distinguish root snapshot redaction from missing context. This is behavioral guidance, not a routing/permission gate or guaranteed semantic isolation; actual-provider acceptance remains necessary.
+The shared `NEO_SPEAKING_POLICY` is delivered through the existing pure coordinator prompt/runtime policy. It asks Neo to answer direct human questions, use conversation and current facts to avoid repetition, and stay silent on event wakes unless something is useful to the human. Direct answers use the publication ledger so they appear in the conversation. This is behavioral guidance, not a routing/permission gate or guaranteed semantic isolation; actual-provider acceptance remains necessary.
 The Neo-only SDK policy delivers the authored prompt as `custom` with `snapshot:false`, so resumed root/holder sessions read current guidance without discarding their history. Ordinary execution-session prompt profiles remain unchanged.
 
 ## Message themes

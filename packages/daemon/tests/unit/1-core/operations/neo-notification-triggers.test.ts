@@ -524,8 +524,10 @@ describe('neoTriggerNote', () => {
       keys: ['outcome:0'],
       lines: ['the ask is achieved'],
     });
-    expect(note).toMatch(/^Ask progress on ask a1 ".*": the ask reached its outcome\. /);
-    expect(note).toContain('passes triggerId "outcome:a1:x"');
+    expect(note).toMatch(
+      /^Ask progress on ask a1 ".*": Recorded event: the ask reached its outcome\. /
+    );
+    expect(note).toContain('triggerId: "outcome:a1:x"');
     expect(JSON.parse(note.slice(note.indexOf('\n') + 1)).trigger).toEqual({
       id: 'outcome:a1:x',
       kind: 'outcome',

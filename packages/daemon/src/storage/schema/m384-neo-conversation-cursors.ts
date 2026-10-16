@@ -1,6 +1,12 @@
 import type { Database } from '../sqlite-compat.ts';
+import { createNeoPublicationTable } from './m288-neo-publications.ts';
+import { createNeoConversationAskTable } from './m289-neo-conversation-asks.ts';
+import { runMigration382 } from './m382-neo-publication-anchors.ts';
 
 export function runMigration384(db: Database): void {
+  createNeoPublicationTable(db);
+  createNeoConversationAskTable(db);
+  runMigration382(db);
   const columns = db.prepare('PRAGMA table_info(neo_publication_anchors)').all() as {
     name: string;
   }[];

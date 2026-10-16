@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 import { runMigration288 } from '../../../../../src/storage/schema/m288-neo-publications.ts';
-import { createNeoConversationAskTable } from '../../../../../src/storage/schema/m289-neo-conversation-asks.ts';
+import {
+  createNeoConversationAskTable,
+  runMigration289,
+} from '../../../../../src/storage/schema/m289-neo-conversation-asks.ts';
 import { runMigration382 } from '../../../../../src/storage/schema/m382-neo-publication-anchors.ts';
 import { runMigration384 } from '../../../../../src/storage/schema/m384-neo-conversation-cursors.ts';
 import { NeoPublicationAnchorRepository } from '../../../../../src/storage/repositories/neo-publication-anchor-repository.ts';
@@ -22,6 +25,31 @@ function legacy(db: Database) {
 }
 
 describe('runMigration384', () => {
+  test('creates missing ledgers before schema bootstrap when earlier migrations skip them', () => {
+    const db = new Database(':memory:');
+    try {
+      runMigration288(db);
+      runMigration289(db);
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name = 'neo_publications'").get()
+      ).toBeNull();
+      runMigration384(db);
+      runMigration384(db);
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE '%chronology'"
+          )
+          .all()
+      ).toHaveLength(2);
+      expect(db.prepare('PRAGMA table_info(neo_publication_anchors)').all()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'cursor_json' })])
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   test('preserves legacy cursor rows and ledger contents when run repeatedly', () => {
     const db = new Database(':memory:');
     try {

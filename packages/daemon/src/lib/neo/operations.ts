@@ -2528,7 +2528,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.respond',
       description:
-        'Return a concise answer to the root Neo for a consultation assigned to this context holder. A consultation that is already settled returns its recorded answer with replyGuidance; the new answer is not recorded and nothing more is sent.',
+        'Record an answer to the root Neo for a consultation assigned to this context holder. A consultation that is already settled returns its recorded answer with replyGuidance; the new answer is not recorded and nothing more is sent.',
       inputSchema: Respond,
       resultSchema: ConsultationResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

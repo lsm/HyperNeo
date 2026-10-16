@@ -56,7 +56,19 @@ describe('Migration 44: rename sdk_messages send_status values', () => {
 				last_active_at TEXT NOT NULL,
 				status TEXT NOT NULL,
 				config TEXT NOT NULL,
-				metadata TEXT NOT NULL
+				metadata TEXT NOT NULL,
+				is_worktree INTEGER DEFAULT 0,
+				worktree_path TEXT,
+				main_repo_path TEXT,
+				worktree_branch TEXT,
+				git_branch TEXT,
+				sdk_session_id TEXT,
+				available_commands TEXT,
+				processing_state TEXT,
+				archived_at TEXT,
+				parent_id TEXT,
+				labels TEXT,
+				sub_session_order INTEGER DEFAULT 0
 			);
 			CREATE TABLE sdk_messages (
 				id TEXT PRIMARY KEY,

@@ -35,8 +35,6 @@ export { runMigration265 } from './m265-workflow-run-blocked-retries.ts';
 export { runMigration266 } from './m266-task-assistant-messages-index.ts';
 export { reclaimPendingMigrationSpace } from './migration-space-reclaim.ts';
 // knip-ignore-next-line
-export { runMigration12 } from './migrations.ts';
-// knip-ignore-next-line
 export { runMigration47 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration48 } from './migrations.ts';
