@@ -100,8 +100,13 @@ export const readNeoPublicationView = (superpipe({})('neo-publication-view') as 
     ['db', 'sessionId', 'anchor', 'seen', 'mark'],
     'saved'
   )
-  .pipe(neoPublicationViewNote, ['seen', 'reset'], 'conversation')
-  .end('conversation') as (db: Database, sessionId: string, fresh: boolean) => string | null;
+  .pipe(neoPublicationViewNote, ['seen', 'reset'], 'note')
+  .pipe((note: string | null, reset: boolean) => ({ note, reset }), ['note', 'reset'], 'view')
+  .end('view') as (
+  db: Database,
+  sessionId: string,
+  fresh: boolean
+) => { note: string | null; reset: boolean };
 
 export function withNeoPublicationView<T extends { message?: { content?: unknown } }>(
   input: T,

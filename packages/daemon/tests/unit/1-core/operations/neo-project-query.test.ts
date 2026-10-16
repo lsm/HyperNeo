@@ -69,7 +69,7 @@ describe('Neo project query snapshot', () => {
     return JSON.parse(context.slice(context.indexOf('\n') + 1)) as NeoSnapshot;
   }
 
-  test('each fresh query gets current scoped facts without resuming a stored transcript', async () => {
+  test('a holder resumes its transcript under a stable system prompt, and its scoped snapshot is ready for a fresh context', async () => {
     const session = createTestSession(sessionId);
     session.sdkSessionId = 'old-transcript';
     const builder = new QueryOptionsBuilder({
@@ -79,35 +79,18 @@ describe('Neo project query snapshot', () => {
         getGlobalSettings: () => ({}),
         prepareSDKOptions: async () => ({}),
       } as unknown as SettingsManager,
-      getNeoProjectSnapshot: read,
       peekPendingResumeSessionAt: () => 'old-rewind-point',
     });
     const first = builder.addSessionStateOptions(await builder.build());
-    expect(first.resume).toBeUndefined();
-    expect(first.resumeSessionAt).toBeUndefined();
-    expect(first.systemPrompt).toMatchObject({
-      type: 'custom',
-      prompt: expect.stringContaining('own human request'),
-    });
-    expect(JSON.stringify(first.systemPrompt)).not.toContain('other human request');
+    expect(first.resume).toBe('old-transcript');
+    expect(first.resumeSessionAt).toBe('old-rewind-point');
     service.repo.saveProject(
       { id: 'own', title: 'own', summary: 'Updated outcome', context: 'Latest durable decision' },
       1
     );
-    session.sdkSessionId = 'first-turn-transcript';
-    const second = builder.addSessionStateOptions({
-      ...(await builder.build()),
-      resume: 'inherited-resume',
-      resumeSessionAt: 'inherited-rewind',
-      continue: true,
-      forkSession: true,
-    });
-    expect(second.resume).toBeUndefined();
-    expect(second.resumeSessionAt).toBeUndefined();
-    expect(second.continue).toBeUndefined();
-    expect(second.forkSession).toBeUndefined();
-    expect(JSON.stringify(second.systemPrompt)).toContain('Latest durable decision');
-    expect(JSON.stringify(second.systemPrompt)).not.toContain('old-transcript');
+    const second = builder.addSessionStateOptions(await builder.build());
+    expect(second.systemPrompt).toEqual(first.systemPrompt);
+    expect(JSON.stringify(second.systemPrompt)).not.toContain('Latest durable decision');
     const snapshot = parse(await read());
     expect(snapshot.projects.map((project) => project.id)).toEqual(['own']);
     expect(snapshot.asks?.map((ask) => ask.id)).toEqual(['ask-own']);
@@ -144,18 +127,9 @@ describe('Neo project query snapshot', () => {
     expect(snapshot.projects[0].id).toBe('own');
   });
 
-  test('snapshot errors prevent a project query from starting without its facts', async () => {
+  test('a snapshot that cannot be read is an error, never an empty fresh context', async () => {
     await expect(readNeoProjectSnapshot(createOperationRegistry([]), sessionId)).rejects.toThrow(
       'Could not read the fresh Neo project snapshot.'
     );
-    const builder = new QueryOptionsBuilder({
-      db,
-      session: createTestSession(sessionId),
-      settingsManager: {
-        getGlobalSettings: () => ({}),
-        prepareSDKOptions: async () => ({}),
-      } as unknown as SettingsManager,
-    });
-    await expect(builder.build()).rejects.toThrow('Neo project snapshot unavailable.');
   });
 });

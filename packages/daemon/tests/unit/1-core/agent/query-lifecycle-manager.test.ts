@@ -1,19 +1,19 @@
-import { describe, test, expect, beforeEach, mock, spyOn, afterEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { MessageHub, Session } from '@hyperneo/shared';
+import type { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import {
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from '../../../../src/lib/agent/query-lifecycle-manager';
-import { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { Session, MessageHub } from '@hyperneo/shared';
+import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
+import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
-import type { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
 import { createNeoTables } from '../../../../src/storage/schema/neo';
 import { Database as Sqlite } from '../../../../src/storage/sqlite-compat';
 
@@ -966,7 +966,7 @@ describe('QueryLifecycleManager', () => {
 
   describe('ensureQueryStarted', () => {
     test.each(['project', 'neo', 'worker'] as const)(
-      'only project sessions can start when the previous transcript is missing (%s)',
+      'a missing transcript blocks every Neo session alike, project holders included (%s)',
       async (kind) => {
         const sqlite = new Sqlite(':memory:');
         try {
@@ -990,11 +990,9 @@ describe('QueryLifecycleManager', () => {
             db: { ...mockContext.db, getDatabase: () => sqlite } as Database,
           };
           manager = new QueryLifecycleManager(mockContext);
-          expect(await manager.ensureQueryStarted()).toBe(
-            kind === 'project' ? 'started' : 'blocked'
-          );
-          expect(startStreamingCalled).toBe(kind === 'project');
-          expect(saveHyperNeoActionMessageSpy).toHaveBeenCalledTimes(kind === 'project' ? 0 : 1);
+          expect(await manager.ensureQueryStarted()).toBe('blocked');
+          expect(startStreamingCalled).toBe(false);
+          expect(saveHyperNeoActionMessageSpy).toHaveBeenCalledTimes(1);
         } finally {
           sqlite.close();
         }

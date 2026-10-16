@@ -193,7 +193,7 @@ describe('consultation runtime', () => {
       const options = agent.optionsBuilder.addSessionStateOptions(
         await agent.optionsBuilder.build()
       );
-      expect(options.resume).toBe(kind === 'project' ? undefined : session.sdkSessionId);
+      expect(options.resume).toBe(session.sdkSessionId);
       expect(options.model).toBe('default');
       expect(options.maxTurns).toBe(17);
       if (kind === 'worker') {
@@ -206,16 +206,11 @@ describe('consultation runtime', () => {
       } else {
         expect(options.systemPrompt).toEqual({
           type: 'custom',
-          prompt:
-            kind === 'project'
-              ? expect.stringContaining(neoPrompt(projectId))
-              : neoPrompt(projectId),
+          prompt: neoPrompt(projectId),
           snapshot: false,
         });
         if (kind === 'project')
-          expect(options.systemPrompt).toMatchObject({
-            prompt: expect.stringContaining('"title":"Plans"'),
-          });
+          expect(await agent.getNeoFreshContext()).toContain('"title":"Plans"');
         expect(options.permissionMode).toBe('dontAsk');
         expect(options.tools).toEqual(neoCoordinatorNativeTools());
         expect(options.plugins).toEqual([]);

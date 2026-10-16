@@ -59,10 +59,6 @@ export function neoQueryContext(binding: NeoBinding, db: Database | undefined): 
   return binding.kind === 'neo' ? readNeoCatchUp(neoDb) : readNeoHolderView(neoDb);
 }
 
-export function isNeoProjectSession(db: Database | undefined, sessionId: string): boolean {
-  return neoCoordinatorBinding(db, sessionId)?.kind === 'project';
-}
-
 function renderNeoProjectSnapshot(outcome: OperationOutcome): string {
   if (
     outcome.kind !== 'completed' ||
@@ -73,7 +69,7 @@ function renderNeoProjectSnapshot(outcome: OperationOutcome): string {
     'unchanged' in outcome.value
   )
     throw new Error('Could not read the fresh Neo project snapshot.');
-  return `Current project snapshot from the daemon (authoritative for this fresh turn):\n${JSON.stringify(outcome.value)}`;
+  return `Current project snapshot from the daemon (authoritative when this context starts):\n${JSON.stringify(outcome.value)}`;
 }
 
 export const readNeoProjectSnapshot = (superpipe({})('neo-project-query-snapshot') as PipelineAPI)

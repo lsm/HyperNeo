@@ -194,7 +194,7 @@ A publication to the human happens in three cases only:
   2. Otherwise, read how its recently merged PRs got there (which reviewer's approval or which bot signal came before the merge) and follow that.
   3. If it's still unclear, the session says so in its report. The ask's Neo then asks the human once with `neo.ask.question` and saves the answer as a standing rule for that repository, which later sessions read in step 1.
 - A PR that still doesn't merge is an exception to find and fix in the system. `ship.sh` retires.
-- Per-topic sessions (#6579, #6604) hold their asks, and root Neo keeps cross-topic questions only. A topic session is short-lived and starts from a snapshot.
+- Per-topic sessions (#6579, #6604) hold their asks, and root Neo keeps cross-topic questions only. A topic session keeps its context: it resumes its transcript like root Neo, and compaction keeps it small. State is injected only when the context doesn't hold it: a new session or a compaction gets the project snapshot and what the human has already read as part of its first input, and later changes arrive as facts-only notes. The system prompt stays stable so the prompt cache holds.
 
 ## Slices
 
@@ -214,7 +214,7 @@ Each slice is one PR, behaviour-tested, and deployable on its own. The order fol
 | 7 | Neo-managed close, follow and fold; remove Track; live-human check for human actions; `talk` via `neo.work.refused`, cleared on the session's next human input | §6, §4 (`talk`) | 0a, 2 |
 | 7b | Continue and retry another session's card in a live human turn | §6 | none |
 | 8 | The coding pack subscribes every card PR to all its events (external events) and delivers them to the working session; the coding pack teaches how to judge readiness (standing rule, then repo history, then Neo asks once and saves); retire `ship.sh` | §2, §10 | 0b, 2 |
-| 9 | Topic sessions start fresh from a snapshot | §10 | 6 |
+| 9 | Topic sessions start fresh from a snapshot (reversed: topic sessions keep their context, see §10) | §10 | 6 |
 | 10 | Neo's tools: every tool, a nudge for local changes, a block for shared state, heavy checks as cards; root and topic alike; Neo's own refusal text | §6 (Neo's tools) | none |
 
 Deleted along the way:
