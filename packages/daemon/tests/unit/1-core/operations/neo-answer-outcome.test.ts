@@ -47,9 +47,9 @@ describe('planNeoAnswerPublished', () => {
 });
 
 describe('neoAskItemAction', () => {
-  test('a reported answer asks the human for nothing, a reported state still asks to confirm', () => {
+  test('reported answers and states do not invent a confirmation question', () => {
     expect(neoAskItemAction(answer)).toBeNull();
-    expect(neoAskItemAction(item('i1', 'reported'))).toMatchObject({ kind: 'confirm' });
+    expect(neoAskItemAction(item('i1', 'reported'))).toBeNull();
   });
 });
 

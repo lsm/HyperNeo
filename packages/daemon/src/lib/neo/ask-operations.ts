@@ -232,9 +232,12 @@ const Question = z.object({
   question: z.string().trim().min(1).max(200),
   decides: Decides,
   because: Because.optional(),
-  options: Options.default([]).describe(
-    'Optional choices in display order: decline/negative first (left), agree/positive last (right). Omit for an open question answered in chat.'
-  ),
+  options: z
+    .union([z.tuple([]), Options])
+    .default([])
+    .describe(
+      'Optional choices in display order: decline/negative first (left), agree/positive last (right). Omit or pass [] for an open question answered in chat.'
+    ),
   kind: z.enum(NEO_ASK_ITEM_KINDS),
 });
 

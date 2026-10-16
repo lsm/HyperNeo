@@ -2315,29 +2315,36 @@ describe('neo.ask operations', () => {
     }
   );
 
-  test('an open question has no options and accepts the human reply in chat', async () => {
-    const askId = await openAsk();
-    const question = await invoke('neo.ask.question', {
-      askId,
-      question: 'Which repo?',
-      kind: 'decision',
-    });
-    expect(question).toMatchObject({ value: { ok: true, ask: { waitingItem: 'i3' } } });
-    const reply = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'repo-reply' } };
-    const answer = await invoke(
-      'neo.ask.answer',
-      { askId, itemId: 'i3', choice: 'lsm/HyperNeo' },
-      reply
-    );
-    expect(answer).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('answer_not_from_human') },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    humanSays('Use lsm/HyperNeo.', 'repo-reply');
-    expect(
-      await invoke('neo.ask.answer', { askId, itemId: 'i3', choice: 'lsm/HyperNeo' }, reply)
-    ).toMatchObject({ value: { ok: true, ask: { status: 'open' } } });
-  });
+  test.each([
+    { label: 'omitted', options: undefined },
+    { label: 'empty', options: [] },
+  ])(
+    'an open question with $label options accepts the human reply in chat',
+    async ({ options }) => {
+      const askId = await openAsk();
+      const question = await invoke('neo.ask.question', {
+        askId,
+        question: 'Which repo?',
+        ...(options === undefined ? {} : { options }),
+        kind: 'decision',
+      });
+      expect(question).toMatchObject({ value: { ok: true, ask: { waitingItem: 'i3' } } });
+      const reply = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'repo-reply' } };
+      const answer = await invoke(
+        'neo.ask.answer',
+        { askId, itemId: 'i3', choice: 'lsm/HyperNeo' },
+        reply
+      );
+      expect(answer).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('answer_not_from_human') },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      humanSays('Use lsm/HyperNeo.', 'repo-reply');
+      expect(
+        await invoke('neo.ask.answer', { askId, itemId: 'i3', choice: 'lsm/HyperNeo' }, reply)
+      ).toMatchObject({ value: { ok: true, ask: { status: 'open' } } });
+    }
+  );
 
   test('a question must say its kind, so a result check is never taken for a decision', async () => {
     const askId = await openAsk();
