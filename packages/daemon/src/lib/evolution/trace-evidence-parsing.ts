@@ -1,3 +1,4 @@
+import { uniqueStrings as unique } from '../utils/unique-strings.ts';
 const SOURCE_FILE_EXTENSIONS = new Set([
   'ts',
   'tsx',
@@ -106,9 +107,7 @@ export function groupBy<T>(items: T[], keyFor: (item: T) => string): Map<string,
   return grouped;
 }
 
-export function unique(values: string[]): string[] {
-  return Array.from(new Set(values));
-}
+export { unique };
 
 export function plural(count: number): string {
   return count === 1 ? '' : 's';

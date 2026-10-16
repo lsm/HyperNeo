@@ -1,3 +1,4 @@
+import { errorMessage as describeError } from '../utils/error-message.ts';
 import type { AgentProcessingState } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { AgentSession } from '../agent/agent-session.ts';
@@ -53,10 +54,6 @@ export function isVerifiedStopSettled(
   outcome: VerifiedStopOutcome
 ): outcome is VerifiedStopSettled {
   return 'settled' in outcome;
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function retryReasonOf(decision: StopVerificationDecision | null): string {

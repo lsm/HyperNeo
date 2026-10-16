@@ -1,3 +1,4 @@
+import { toSqlStringList } from '../../storage/sql-string-list.ts';
 import type {
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
@@ -2055,10 +2056,6 @@ function mayChangeBackgroundTaskMetadata(scope: TableChangeScope): boolean {
   );
 }
 const MAX_MESSAGES_BY_SESSION_WINDOW = 200;
-
-function toSqlStringList(subtypes: Iterable<string>): string {
-  return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
-}
 
 const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
   (subtype) => `SELECT * FROM (

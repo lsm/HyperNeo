@@ -6,6 +6,7 @@ import {
   type AnthropicContentBlockToolResult,
   type AnthropicContentBlockToolUse,
   type AnthropicRequest,
+  extractSystemText,
   contentBlockStartTextSSE,
   contentBlockStartThinkingSSE,
   contentBlockStartToolUseSSE,
@@ -173,12 +174,6 @@ function toolResultToText(result: AnthropicContentBlockToolResult): string {
   return result.content
     .map((part) => (part.type === 'text' ? part.text : `[${part.type}]`))
     .join('\n');
-}
-
-function extractSystemText(system: AnthropicRequest['system']): string {
-  if (!system) return '';
-  if (typeof system === 'string') return system;
-  return system.map((b) => b.text).join('\n');
 }
 
 function toOpenAIMessages(body: AnthropicRequest, visionSupported: boolean): OpenAIChatMessage[] {

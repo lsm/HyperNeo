@@ -1,3 +1,4 @@
+import { toSqlStringList } from '../sql-string-list.ts';
 import type { Session, SessionContext, SessionType } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
@@ -20,10 +21,6 @@ import {
   type SessionRuntimeSettingsSnapshot,
   sessionRuntimeSettingsSnapshotFromRow,
 } from './session-runtime-settings-write.ts';
-
-function toSqlStringList(values: readonly string[]): string {
-  return values.map((value) => `'${value.replace(/'/g, "''")}'`).join(', ');
-}
 
 export function sessionConfigReplacer(key: string, value: unknown): unknown {
   if (key === 'mcpServers') return undefined;

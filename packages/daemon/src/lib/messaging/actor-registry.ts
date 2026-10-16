@@ -1,3 +1,4 @@
+import { uniqueStrings } from '../utils/unique-strings.ts';
 import type { ActorRef, ActorStatus } from '../../../../messaging/src/types.ts';
 import type { NodeExecution, Session, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
@@ -107,7 +108,7 @@ function agentActor(agent: SpaceLongHorizonAgent, session: Session | null): Acto
     kind: 'agent',
     spaceId: agent.spaceId,
     handle,
-    roles: unique([routingRole(agent.handle)]),
+    roles: uniqueStrings([routingRole(agent.handle)]).sort(),
     status: session ? statusFromSession(session) : 'inactive',
   };
 }
@@ -118,7 +119,7 @@ function longHorizonAgentActor(agent: SpaceLongHorizonAgent): ActorRef {
     kind: 'agent',
     spaceId: agent.spaceId,
     handle: `@${agent.handle}`,
-    roles: unique([routingRole(agent.handle)]),
+    roles: uniqueStrings([routingRole(agent.handle)]).sort(),
     status: agent.status === 'active' ? 'active' : 'archived',
   };
 }
@@ -129,7 +130,10 @@ function workerActorFromExecution(spaceId: string, execution: NodeExecution): Ac
     kind: 'worker',
     spaceId,
     handle: workerHandle(execution.workflowRunId, execution.workflowNodeId, execution.agentName),
-    roles: unique([routingRole(execution.agentName), routingRole(execution.workflowNodeId)]),
+    roles: uniqueStrings([
+      routingRole(execution.agentName),
+      routingRole(execution.workflowNodeId),
+    ]).sort(),
     status: statusFromNodeExecution(execution),
   };
 }
@@ -176,7 +180,7 @@ function mergeActorRefs(left: ActorRef, right: ActorRef): ActorRef {
   return {
     ...left,
     handle: left.handle ?? right.handle,
-    roles: unique([...(left.roles ?? []), ...(right.roles ?? [])]),
+    roles: uniqueStrings([...(left.roles ?? []), ...(right.roles ?? [])]).sort(),
     status: strongerStatus(left.status, right.status),
   };
 }
@@ -193,8 +197,4 @@ function strongerStatus(left: ActorStatus, right: ActorStatus): ActorStatus {
 
 function compareActors(left: ActorRef, right: ActorRef): number {
   return left.kind.localeCompare(right.kind) || left.actorId.localeCompare(right.actorId);
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values)].sort();
 }

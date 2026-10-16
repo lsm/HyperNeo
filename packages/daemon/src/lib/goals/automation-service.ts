@@ -1,3 +1,4 @@
+import { uniqueJobMatchPayload } from './automation-job-payload.ts';
 import type {
   EvidenceRef,
   EvolutionScope,
@@ -247,19 +248,6 @@ function newestCursor<
     return firstEvidenceId.localeCompare(secondEvidenceId) >= 0 ? first : second;
   }
   return first.updatedAt >= second.updatedAt ? first : second;
-}
-
-function uniqueJobMatchPayload(payload: GoalAutomationExecutePayload): Record<string, unknown> {
-  const matchPayload: Record<string, unknown> = {
-    goalId: payload.goalId,
-    scopeId: payload.scopeId,
-    triggerKind: payload.triggerKind,
-    triggerKey: payload.triggerKey,
-  };
-  if (payload.externalEventId !== undefined) {
-    matchPayload.externalEventId = payload.externalEventId;
-  }
-  return matchPayload;
 }
 
 function isActiveGoal(goal: SpaceGoal | null): goal is SpaceGoal {

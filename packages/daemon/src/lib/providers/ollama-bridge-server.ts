@@ -3,6 +3,7 @@ import {
   type AnthropicContentBlockToolResult,
   type AnthropicContentBlockToolUse,
   type AnthropicRequest,
+  extractSystemText,
   contentBlockStartTextSSE,
   contentBlockStartToolUseSSE,
   contentBlockStopSSE,
@@ -100,12 +101,6 @@ function extractText(content: string | AnthropicRequest['messages'][number]['con
     .filter((block): block is AnthropicContentBlockText => block.type === 'text')
     .map((block) => block.text)
     .join('\n');
-}
-
-function extractSystemText(system: AnthropicRequest['system'] | undefined): string {
-  if (!system) return '';
-  if (typeof system === 'string') return system;
-  return system.map((block) => block.text).join('\n');
 }
 
 function toOllamaToolCall(toolUse: AnthropicContentBlockToolUse): OllamaToolCall {

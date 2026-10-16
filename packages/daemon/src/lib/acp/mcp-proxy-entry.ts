@@ -1,3 +1,4 @@
+import { errorMessage } from '../utils/error-message.ts';
 import { connect } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { stdin, stdout } from 'node:process';
@@ -187,8 +188,4 @@ function requiredArg(args: Record<string, string>, name: string): string {
   const value = args[name];
   if (!value) throw new Error(`Missing --${name}`);
   return value;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

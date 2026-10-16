@@ -1,3 +1,4 @@
+import { errorMessage as failureDetail } from '../utils/error-message.ts';
 import type {
   EvolutionEpisode,
   EvolutionLesson,
@@ -107,10 +108,6 @@ const ScopeTargeted = { ...SpaceScoped, scopeId: z.string().min(1) };
 
 function accepted<Shape extends z.ZodRawShape>(shape: Shape) {
   return z.object({ accepted: z.literal(true), ...shape });
-}
-
-function failureDetail(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function evolutionScopeInSpace(

@@ -1,3 +1,4 @@
+import { toSqlStringList } from '../sql-string-list.ts';
 import type {
   ChatMessage,
   HyperNeoActionMessage,
@@ -102,16 +103,12 @@ const LAST_MESSAGE_PROGRESS_SUBTYPES = new Set(['task_started', 'task_progress',
 const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
 const BACKGROUND_TASK_METADATA_BATCH_SIZE = 300;
 
-function toSqlStringList(subtypes: Iterable<string>): string {
-  return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
-}
-
 const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
   ...HIDDEN_SYSTEM_SUBTYPES,
   'thinking_tokens',
 ]);
 
-const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
+const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList([...BACKGROUND_TASK_METADATA_SUBTYPES]);
 
 const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
   ...[...HIDDEN_SYSTEM_SUBTYPES].filter((subtype) => !LAST_MESSAGE_PROGRESS_SUBTYPES.has(subtype)),

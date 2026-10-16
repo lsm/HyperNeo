@@ -1,3 +1,4 @@
+import { uniqueStrings as unique } from '../utils/unique-strings.ts';
 import type {
   EvidenceRef,
   EvolutionEvidenceListResponse,
@@ -108,18 +109,6 @@ function summarizeArtifactData(data: Record<string, unknown>): string {
 
 function stringifyArtifactField(value: unknown): string {
   return typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
-}
-
-function unique(values: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    if (!seen.has(value)) {
-      seen.add(value);
-      out.push(value);
-    }
-  }
-  return out;
 }
 
 function bucketBy<T>(items: T[], keyOf: (item: T) => string): Map<string, T[]> {
