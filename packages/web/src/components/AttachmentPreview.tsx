@@ -1,3 +1,4 @@
+import { CloseGlyph } from './icons/common-glyphs.tsx';
 import type { MessageImage } from '@hyperneo/shared/types';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { formatFileSize } from '../lib/file-utils.ts';
@@ -98,15 +99,14 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
             aria-label="Remove attachment"
             title="Remove attachment"
           >
-            <svg
+            <CloseGlyph
               class="w-3 h-3"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
               stroke-width="2"
-            >
-              <path d="M6 18L18 6M6 6l12 12" />
-            </svg>
+              pathProps={{}}
+            />
           </button>
         </div>
       ))}

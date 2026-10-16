@@ -1,3 +1,4 @@
+import { ChevronDownGlyph, ChevronUpGlyph } from '../icons/common-glyphs.tsx';
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { useFoldedActivity } from './chat-display-mode.ts';
@@ -151,26 +152,22 @@ export function ThinkingBlock({
               >
                 {isExpanded ? (
                   <>
-                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 15l7-7 7 7"
-                      />
-                    </svg>
+                    <ChevronUpGlyph
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    />
                     Show less
                   </>
                 ) : (
                   <>
-                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
+                    <ChevronDownGlyph
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    />
                     Show more
                   </>
                 )}

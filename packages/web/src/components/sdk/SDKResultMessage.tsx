@@ -1,3 +1,4 @@
+import { CheckGlyph, ChevronDownGlyph } from '../icons/common-glyphs.tsx';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { isSDKResultSuccess, isSDKResultError } from '@hyperneo/shared/sdk/type-guards';
 import { useState } from 'preact/hooks';
@@ -57,14 +58,12 @@ export function SDKResultMessage({ message }: Props) {
           <span class="text-success-soft">•</span>
           <span class="text-success-soft">{(message.duration_ms / 1000).toFixed(2)}s</span>
         </div>
-        <svg
+        <ChevronDownGlyph
           class={`w-4 h-4 text-success transition-transform ${showDetails ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        />
       </button>
 
       {showDetails && (
@@ -133,14 +132,12 @@ export function SDKResultMessage({ message }: Props) {
             <div class="pt-2 border-t border-success/40">
               <div class="flex items-center gap-4 text-xs text-success-soft">
                 <div class="flex items-center gap-1">
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
+                  <CheckGlyph
+                    class="w-3 h-3"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  />
                   <span>Cache Read: {cacheReadTokens.toLocaleString()} tokens</span>
                 </div>
                 {cacheCreationTokens > 0 && (

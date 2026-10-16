@@ -1,3 +1,4 @@
+import { CloseGlyph } from '../icons/common-glyphs.tsx';
 import { DEFAULT_SEED_AGENT_TEMPLATE_KEY, type SpaceCreateResult } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
@@ -274,14 +275,12 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
                       aria-label={`Remove additional workspace ${index + 1}`}
                       class="shrink-0 px-1 text-fg-muted transition-colors hover:text-danger"
                     >
-                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width={2}
-                          d="M6 18L18 6M6 6l12 12"
-                        />
-                      </svg>
+                      <CloseGlyph
+                        class="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      />
                     </button>
                   </div>
                   <input

@@ -1,3 +1,4 @@
+import { CloseGlyph } from '../components/icons/common-glyphs.tsx';
 import { useEffect, useState } from 'preact/hooks';
 import type {
   CloneChildrenChoice,
@@ -280,14 +281,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
             title="Close panel"
             aria-label="Close panel"
           >
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+            <CloseGlyph class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
           </button>
         )}
         <button

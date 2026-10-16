@@ -1,3 +1,4 @@
+import { CheckGlyph, ChevronLeftGlyph } from '../components/icons/common-glyphs.tsx';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import {
   navSectionSignal,
@@ -336,19 +337,12 @@ export function ContextPanel() {
                   )}
                 </div>
                 {isCurrent && (
-                  <svg
+                  <CheckGlyph
                     class="w-4 h-4 text-fg-soft flex-shrink-0"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
+                  />
                 )}
               </button>
             );
@@ -415,14 +409,12 @@ export function ContextPanel() {
               title="Back to Spaces"
               aria-label="Back to Spaces"
             >
-              <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M15 19l-7-7 7-7"
-                />
-              </svg>
+              <ChevronLeftGlyph
+                class="h-5 w-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              />
             </button>
             <h2 class="min-w-0 flex-1 text-sm font-semibold text-fg truncate">{headerTitle}</h2>
           </div>
@@ -447,19 +439,12 @@ export function ContextPanel() {
                   }}
                   class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg w-full text-sm text-fg-muted hover:text-fg hover:bg-fill-soft transition-colors"
                 >
-                  <svg
+                  <ChevronLeftGlyph
                     class="w-4 h-4 flex-shrink-0"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width={2}
-                      d="M15 19l-7-7 7-7"
-                    />
-                  </svg>
+                  />
                   All Spaces
                 </button>
               </div>

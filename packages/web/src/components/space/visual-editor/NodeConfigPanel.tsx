@@ -1,3 +1,4 @@
+import { ChevronLeftGlyph, ChevronRightGlyph, CloseGlyph } from '../../icons/common-glyphs.tsx';
 import type {
   AgentModelPoolEntry,
   SpaceLongHorizonAgent,
@@ -637,14 +638,12 @@ function AgentsSection({
                   class="text-fg-muted hover:text-danger transition-colors flex-shrink-0"
                   title="Remove agent"
                 >
-                  <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width={2}
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
+                  <CloseGlyph
+                    class="w-3 h-3"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  />
                 </button>
               </div>
               <div class="space-y-1">
@@ -988,14 +987,7 @@ export function NodeConfigPanel({
             class="p-1 rounded text-fg-muted hover:text-fg-soft hover:bg-fill-strong transition-colors flex-shrink-0"
             title="Close panel"
           >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+            <CloseGlyph class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
           </button>
         </div>
       );
@@ -1039,14 +1031,12 @@ export function NodeConfigPanel({
             class="p-1 rounded text-fg-muted hover:text-fg-soft hover:bg-fill-strong transition-colors flex-shrink-0"
             title="Back"
           >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
+            <ChevronLeftGlyph
+              class="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            />
           </button>
           <h3 class="text-sm font-semibold text-fg truncate">{title}</h3>
         </div>
@@ -1056,14 +1046,7 @@ export function NodeConfigPanel({
           class="p-1 rounded text-fg-muted hover:text-fg-soft hover:bg-fill-strong transition-colors flex-shrink-0"
           title="Close panel"
         >
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
+          <CloseGlyph class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
         </button>
       </div>
     );
@@ -1340,19 +1323,12 @@ export function NodeConfigPanel({
                         </span>
                       </div>
                     </div>
-                    <svg
+                    <ChevronRightGlyph
                       class="w-4 h-4 text-fg-muted flex-shrink-0"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width={2}
-                        d="M9 5l7 7-7 7"
-                      />
-                    </svg>
+                    />
                   </div>
                 </button>
               ))}
@@ -1421,19 +1397,12 @@ export function NodeConfigPanel({
                           {!hook.enabled && <span class="text-danger">disabled</span>}
                         </div>
                       </div>
-                      <svg
+                      <ChevronRightGlyph
                         class="w-4 h-4 text-fg-muted flex-shrink-0"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width={2}
-                          d="M9 5l7 7-7 7"
-                        />
-                      </svg>
+                      />
                     </div>
                   </button>
                 ))}

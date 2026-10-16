@@ -1,3 +1,4 @@
+import { ChevronRightGlyph } from '../../../icons/common-glyphs.tsx';
 import { memo } from 'preact/compat';
 import { useMemo, useState } from 'preact/hooks';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
@@ -2054,15 +2055,13 @@ function TaskKickoffTurn({ turn }: { turn: TaskKickoffFeedTurn }) {
         onClick={() => setExpanded((open) => !open)}
         data-testid="minimal-thread-task-kickoff"
       >
-        <svg
+        <ChevronRightGlyph
           class={`h-3 w-3 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
           aria-hidden="true"
-        >
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M9 5l7 7-7 7" />
-        </svg>
+        />
         <span class="truncate">
           {undelivered ? 'Task for' : 'Task sent to'} <span style={{ color }}>{turn.agent}</span>
         </span>

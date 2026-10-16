@@ -1,3 +1,4 @@
+import { CheckGlyph, ChevronDownGlyph, CloseGlyph } from '../icons/common-glyphs.tsx';
 import type { ComponentChild } from 'preact';
 import { useState, useMemo } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
@@ -400,33 +401,27 @@ export function SubagentBlock({
             </span>
           )}
           {notificationIsSuccess && (
-            <svg class="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
+            <CheckGlyph
+              class="w-4 h-4 text-success"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            />
           )}
           {showErrorIcon && (
-            <svg class="w-4 h-4 text-danger" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+            <CloseGlyph
+              class="w-4 h-4 text-danger"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            />
           )}
-          <svg
+          <ChevronDownGlyph
             class={cn('w-5 h-5 transition-transform', colors.icon, isExpanded ? 'rotate-180' : '')}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
+          />
         </div>
       </button>
 

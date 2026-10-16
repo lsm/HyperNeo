@@ -1,3 +1,4 @@
+import { ChevronRightGlyph } from './icons/common-glyphs.tsx';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
   GitCheckSummary,
@@ -938,14 +939,13 @@ function DotIcon() {
 
 function ChevronIcon({ open }: { open: boolean }) {
   return (
-    <svg
+    <ChevronRightGlyph
       class={cn('h-3 w-3 flex-shrink-0 text-fg-faint transition-transform', open && 'rotate-90')}
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
-    >
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M9 5l7 7-7 7" />
-    </svg>
+      pathProps={{ 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': 2.5 }}
+    />
   );
 }
 

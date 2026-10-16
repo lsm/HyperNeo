@@ -1,3 +1,4 @@
+import { ChevronDownGlyph } from '../icons/common-glyphs.tsx';
 import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
@@ -55,19 +56,12 @@ export function Collapsible({
         aria-expanded={isOpen}
       >
         {trigger}
-        <svg
+        <ChevronDownGlyph
           class={cn('w-4 h-4 transition-transform duration-200', isOpen && 'rotate-180')}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={2}
-            d="M19 9l-7 7-7-7"
-          />
-        </svg>
+        />
       </button>
 
       <div
