@@ -665,7 +665,6 @@
 5296	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-104_test.ts
 1249	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-106_test.ts
 6	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-112_test.ts
-26	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-12_test.ts
 4664	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-122_test.ts
 4264	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-124_test.ts
 393	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-126_test.ts
