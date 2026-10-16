@@ -301,7 +301,7 @@ export async function loadLiveClaudeSessions(
 }
 
 export async function probeLiveClaudeSessions(
-  deps: ClaudeDesktopAdapterDeps
+  deps: Pick<ClaudeDesktopAdapterDeps, 'liveSessions'>
 ): Promise<Gate<readonly ClaudeLiveSession[]>> {
   try {
     return { value: await deps.liveSessions() };
@@ -309,7 +309,7 @@ export async function probeLiveClaudeSessions(
     return {
       reason: reject(
         'not_delivered',
-        `Could not tell whether Claude Code Desktop runs this session: ${error instanceof Error ? error.message : String(error)}`
+        `Could not inspect live Claude sessions: ${error instanceof Error ? error.message : String(error)}`
       ),
     };
   }

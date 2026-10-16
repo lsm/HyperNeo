@@ -1,3 +1,5 @@
+import { readClaudeCliStatus } from './claude-cli-status.ts';
+import type { ClaudeLiveSession } from './claude-desktop-adapter.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { basename } from 'node:path';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
@@ -14,6 +16,7 @@ const HEAD_READS_AT_ONCE = 32;
 
 export interface ClaudeCodeAdapterDeps {
   projectsDir?: string;
+  liveSessions?: () => Promise<readonly ClaudeLiveSession[]>;
   machine: string;
   searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
   desktopSessions: () => Promise<ReadonlySet<string>>;
@@ -176,9 +179,21 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
   const scan = projectsDir
     ? shareInFlight(() => readClaudeCodeFolders(projectsDir, cache))
     : async () => [];
+  const liveSessions = deps.liveSessions;
+  const status: WorkAdapter['status'] = liveSessions
+    ? (ref, since, receipt) =>
+        readClaudeCliStatus(ref, since, receipt, {
+          machine: deps.machine,
+          projectsDir: projectsDir ?? '',
+          liveSessions,
+          folder: async (id) =>
+            (await scan()).find((record) => record.sessionId === id)?.folder ?? null,
+        })
+    : undefined;
   return {
     id: 'claude-code',
-    capabilities: ['find'],
+    capabilities: ['find', ...(status ? (['status'] as const) : [])],
+    ...(status ? { status } : {}),
     find: (query) => runClaudeCodeFind(query, deps, scan),
   };
 }
