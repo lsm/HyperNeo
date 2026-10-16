@@ -61,12 +61,6 @@ function createInboxItem(overrides: Partial<InboxItem> = {}): InboxItem {
 function createMockDatabase(): Database {
   return {
     createInboxItem: mock(() => createInboxItem()),
-    getInboxItem: mock(() => createInboxItem()),
-    listInboxItems: mock(() => [createInboxItem()]),
-    listPendingInboxItems: mock(() => [createInboxItem()]),
-    updateInboxItemStatus: mock(() => createInboxItem()),
-    dismissInboxItem: mock(() => createInboxItem()),
-    deleteInboxItem: mock(() => {}),
     countInboxItemsByStatus: mock(() => 1),
   } as unknown as Database;
 }
@@ -185,52 +179,6 @@ describe('InboxManager', () => {
     });
   });
 
-  describe('getPendingItems', () => {
-    it('should call database listPendingInboxItems', () => {
-      manager.getPendingItems();
-
-      expect(mockDb.listPendingInboxItems).toHaveBeenCalledWith(undefined);
-    });
-
-    it('should pass limit parameter', () => {
-      manager.getPendingItems(10);
-
-      expect(mockDb.listPendingInboxItems).toHaveBeenCalledWith(10);
-    });
-  });
-
-  describe('getItem', () => {
-    it('should call database getInboxItem', () => {
-      manager.getItem('inbox-123');
-
-      expect(mockDb.getInboxItem).toHaveBeenCalledWith('inbox-123');
-    });
-  });
-
-  describe('dismissItem', () => {
-    it('should call database dismissInboxItem', () => {
-      manager.dismissItem('inbox-123');
-
-      expect(mockDb.dismissInboxItem).toHaveBeenCalledWith('inbox-123');
-    });
-  });
-
-  describe('blockItem', () => {
-    it('should call database updateInboxItemStatus with blocked', () => {
-      manager.blockItem('inbox-123', 'Security concern');
-
-      expect(mockDb.updateInboxItemStatus).toHaveBeenCalledWith('inbox-123', 'blocked');
-    });
-  });
-
-  describe('deleteItem', () => {
-    it('should call database deleteInboxItem', () => {
-      manager.deleteItem('inbox-123');
-
-      expect(mockDb.deleteInboxItem).toHaveBeenCalledWith('inbox-123');
-    });
-  });
-
   describe('countByStatus', () => {
     it('should count all statuses', () => {
       const counts = manager.countByStatus();
@@ -248,29 +196,6 @@ describe('InboxManager', () => {
       expect(counts).toHaveProperty('routed');
       expect(counts).toHaveProperty('dismissed');
       expect(counts).toHaveProperty('blocked');
-    });
-  });
-
-  describe('listItems', () => {
-    it('should call database listInboxItems without filter', () => {
-      manager.listItems();
-
-      expect(mockDb.listInboxItems).toHaveBeenCalledWith(undefined);
-    });
-
-    it('should pass filter to database', () => {
-      manager.listItems({ status: 'pending', repository: 'owner/repo' });
-
-      expect(mockDb.listInboxItems).toHaveBeenCalledWith({
-        status: 'pending',
-        repository: 'owner/repo',
-      });
-    });
-
-    it('should pass limit filter', () => {
-      manager.listItems({ limit: 10 });
-
-      expect(mockDb.listInboxItems).toHaveBeenCalledWith({ limit: 10 });
     });
   });
 });
