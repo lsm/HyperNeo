@@ -26,7 +26,12 @@ describe('Neo holder sessions', () => {
     createSession.mockClear();
     service = new NeoService(
       db,
-      { createSession, getSessionAsync: vi.fn() } as unknown as SessionManager,
+      {
+        createSession,
+        getSessionAsync: vi.fn(),
+        updateSession: async (id: string, updates: Partial<Session>) =>
+          db.updateSession(id, updates),
+      } as unknown as SessionManager,
       { event: vi.fn() } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
@@ -46,6 +51,24 @@ describe('Neo holder sessions', () => {
       sessionId: holder,
       parentSessionId: root,
     });
+  });
+
+  test('new coordinators have no turn cap; opening a legacy coordinator removes only its stored cap', async () => {
+    const root = await service.open(null);
+    expect(createSession.mock.calls[0][0]).not.toHaveProperty('config.maxTurns');
+    const base = db.getSession(root)!;
+    const sdkSessionId = crypto.randomUUID();
+    db.updateSession(root, {
+      sdkSessionId,
+      config: { ...base.config, maxTurns: 32, systemPrompt: 'Stored context' },
+    });
+    expect(await service.open(null)).toBe(root);
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(db.getSession(root)).toMatchObject({
+      sdkSessionId,
+      config: { systemPrompt: 'Stored context' },
+    });
+    expect(db.getSession(root)?.config).not.toHaveProperty('maxTurns');
   });
 
   test("start on main Neo's model and provider, not the global default", async () => {

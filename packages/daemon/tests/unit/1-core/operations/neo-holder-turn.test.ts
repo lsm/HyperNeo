@@ -103,6 +103,20 @@ describe('Neo isolated holder turns', () => {
     });
   }
 
+  test('restart recovery preserves human, consultation and event identities across repeated interruptions', () => {
+    const human = turn();
+    human.bind('restart-recovery:restart-recovery:human-input');
+    expect(human.identity()).toMatchObject({ human: true, origin: 'human-input' });
+    human.dispose();
+    const consultation = turn();
+    consultation.bind('restart-recovery:neo-consult:a:request');
+    expect(consultation.identity()).toMatchObject({ human: false, consultationId: 'a' });
+    consultation.dispose();
+    const event = turn();
+    event.bind('restart-recovery:neo-project-event:club:event-1');
+    expect(event.identity()?.human).toBe(false);
+  });
+
   test('consumes one input without waiting for a successor and preserves the next queued input', async () => {
     const firstSent = queue.enqueueWithId('neo-consult:a:request', 'First', false, {
       durable: true,

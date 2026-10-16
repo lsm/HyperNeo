@@ -116,6 +116,7 @@ export function restrictNeoQuery(
     prompt,
     snapshot: false,
   };
+  delete options.maxTurns;
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
   options.tools = neoCoordinatorNativeTools();
   options.additionalDirectories = [homedir()];

@@ -31,6 +31,7 @@ import type {
   WorkStarted,
   WorkStatus,
   WorkSummary,
+  WorkWithdrawal,
 } from './types.ts';
 import {
   boundExchange,
@@ -706,7 +707,7 @@ export function rolloutHasUserMessage(lines: readonly string[], message: string)
   });
 }
 
-export async function queueCodexMessage(
+async function queueCodexCliMessage(
   detail: CodexThreadDetail,
   message: string,
   deps: CodexDesktopAdapterDeps
@@ -718,23 +719,151 @@ export async function queueCodexMessage(
     );
     const proc = deps.spawn(
       ['codex', 'queue', `--thread=${detail.thread.id}`, `--message=${message}`],
-      { stdout: 'ignore', stderr: 'pipe' }
+      { stdout: 'pipe', stderr: 'pipe' }
     );
     timer = setTimeout(() => proc.kill(), QUEUE_TIMEOUT_MS);
-    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
     if (code !== 0) {
       return reject('not_delivered', stderr.trim() || `codex queue exited with ${code}.`);
     }
     const tail = await readRolloutTail(detail.thread.rolloutPath).catch(() => []);
     return {
       ok: true,
-      value: codexQueueDelivery(tail, message, detail.thread.id, before),
+      value: {
+        ...codexQueueDelivery(tail, message, detail.thread.id, before),
+        ...(stdout.trim() ? { queuedSubmissionId: stdout.trim() } : {}),
+      },
     };
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function withCodexMessageServer<Value>(
+  deps: CodexDesktopAdapterDeps,
+  use: (server: CodexAppServer) => Promise<Result<Value>>
+): Promise<Result<Value>> {
+  try {
+    return await withCodexAppServer(deps, use);
+  } catch (error) {
+    return reject('not_delivered', error instanceof Error ? error.message : String(error));
+  }
+}
+
+export async function queueCodexMessage(
+  detail: CodexThreadDetail,
+  message: string,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<WorkDelivery>> {
+  const queued = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
+    const before = codexUserInputIds(
+      await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
+    );
+    let added: unknown;
+    try {
+      added = await server.call('thread/queue/add', {
+        threadId: detail.thread.id,
+        clientUserMessageId: deps.newId(),
+        input: [{ type: 'text', text: message }],
+      });
+    } catch (error) {
+      if (
+        /-32601|unknown method|method not found|unrecognized (?:request|method)/i.test(
+          String(error)
+        )
+      )
+        return queueCodexCliMessage(detail, message, deps);
+      throw error;
+    }
+    const { queuedSubmission } = z
+      .object({
+        queuedSubmission: z.object({ id: z.string().min(1) }),
+      })
+      .parse(added);
+    const delivery = codexQueueDelivery(
+      await readRolloutTail(detail.thread.rolloutPath).catch(() => []),
+      message,
+      detail.thread.id,
+      before
+    );
+    return {
+      ok: true,
+      value: {
+        ...delivery,
+        delivered: !!delivery.receipt,
+        queuedSubmissionId: queuedSubmission.id,
+      },
+    };
+  });
+  return !queued.ok && queued.reason === 'unreachable'
+    ? queueCodexCliMessage(detail, message, deps)
+    : queued;
+}
+
+export function admitCodexSteerTurn(read: unknown): Gate<string> {
+  const turn = z
+    .object({
+      data: z.array(z.object({ id: z.string().min(1), status: z.string() })),
+    })
+    .parse(read).data[0];
+  return turn?.status === 'inProgress'
+    ? { value: turn.id }
+    : { reason: reject('not_delivered', 'The Codex thread has no running turn to steer.') };
+}
+
+export async function steerCodexMessage(
+  detail: CodexThreadDetail,
+  message: string,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<WorkDelivery>> {
+  return withCodexMessageServer(deps, async (server) => {
+    const threadId = detail.thread.id;
+    const turn = admitCodexSteerTurn(
+      await server.call('thread/turns/list', { threadId, limit: 1 })
+    );
+    if ('reason' in turn) return turn.reason;
+    const steered = z.object({ turnId: z.literal(turn.value) }).parse(
+      await server.call('turn/steer', {
+        threadId,
+        expectedTurnId: turn.value,
+        input: [{ type: 'text', text: message }],
+      })
+    );
+    return { ok: true, value: { delivered: true, steeredIntoTurnId: steered.turnId } };
+  });
+}
+
+export function codexWithdrawal(queuedSubmissionId: string, withdrawn: boolean): WorkWithdrawal {
+  return {
+    queuedSubmissionId,
+    withdrawn,
+    ...(!withdrawn ? { reason: 'not_queued' as const } : {}),
+  };
+}
+
+export async function withdrawCodexMessage(
+  detail: CodexThreadDetail,
+  queuedSubmissionId: string,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<WorkWithdrawal>> {
+  return withCodexMessageServer(deps, async (server) => {
+    const threadId = detail.thread.id;
+    const listed = z
+      .object({ data: z.array(z.object({ id: z.string() })) })
+      .parse(await server.call('thread/queue/list', { threadId }));
+    const deleted = listed.data.some((item) => item.id === queuedSubmissionId)
+      ? z
+          .object({ deleted: z.boolean() })
+          .parse(await server.call('thread/queue/delete', { threadId, queuedSubmissionId })).deleted
+      : false;
+    return { ok: true, value: codexWithdrawal(queuedSubmissionId, deleted) };
+  });
 }
 
 const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
@@ -762,6 +891,23 @@ const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
   message: string,
   deps: CodexDesktopAdapterDeps
 ) => Promise<Result<WorkDelivery>>;
+
+const runCodexSteer = (superpipe({})('codex-steer-work') as PipelineAPI)
+  .input(['ref', 'message', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
+  .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
+  .pipe(steerCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
+  .endAsync('outcome') as typeof runCodexSend;
+
+const runCodexWithdraw = (superpipe({})('codex-withdraw-work') as PipelineAPI)
+  .input(['ref', 'queuedSubmissionId', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
+  .pipe(withdrawCodexMessage, ['outcome', 'queuedSubmissionId', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  queuedSubmissionId: string,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<WorkWithdrawal>>;
 
 export function selectCodexStartFolder(
   request: StartRequest,
@@ -980,7 +1126,17 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
     id: 'codex-desktop',
     supportsStartPreparation: !!deps.prepareExecution,
     supportsStartEffort: true,
-    capabilities: ['find', 'start', 'send', 'status', 'stop', 'archive'],
+    capabilities: [
+      'find',
+      'start',
+      'send',
+      'steer',
+      'queue',
+      'withdraw',
+      'status',
+      'stop',
+      'archive',
+    ],
     find: async (query) =>
       runCodexFind(
         query,
@@ -994,6 +1150,19 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
         deps
       ),
+    steer: (ref, message, context) =>
+      runCodexSteer(
+        ref,
+        context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
+        deps
+      ),
+    queue: (ref, message, context) =>
+      runCodexSend(
+        ref,
+        context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
+        deps
+      ),
+    withdraw: (ref, queuedSubmissionId) => runCodexWithdraw(ref, queuedSubmissionId, deps),
     status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt),
     stop: (ref) => runCodexStop(ref, deps),
     archive: async (ref, admit) => {

@@ -28,6 +28,8 @@ import {
 import type { NeoScene, NeoSceneCards } from './neo-scenes.ts';
 import { neoAppLabel, neoAppLogo, neoSessionLink } from './work-driver.ts';
 import { isNeoSummarized } from './neo-ask-detail.ts';
+import type { NeoQuote } from './neo-intake.ts';
+import { neoQuestionReply } from './reply-context.ts';
 
 const tones = {
   attention: 'text-warning bg-warning/10',
@@ -218,15 +220,19 @@ function Checklist({
 
 function ActionRow({
   action,
+  reply,
+  onReply,
   onAnswer,
   disabled,
 }: {
   action: NeoAskItemAction;
+  reply: NeoQuote;
+  onReply?: (quote: NeoQuote) => void;
   onAnswer?: (itemId: string, choice: string) => void;
   disabled?: boolean;
 }) {
   return (
-    <li data-ask-item={action.itemId} class="min-w-0 text-sm">
+    <li id={reply.anchor} data-ask-item={action.itemId} class="min-w-0 text-sm">
       <p class="break-words font-medium text-fg">{action.question}</p>
       {action.options.length > 0 ? (
         <div class="mt-2 flex flex-wrap justify-end gap-2">
@@ -244,7 +250,17 @@ function ActionRow({
           ))}
         </div>
       ) : (
-        <p class="mt-2 text-fg-muted">Reply in chat…</p>
+        <div class="mt-2 flex justify-end gap-2">
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            disabled={disabled || !onReply}
+            onClick={() => onReply?.(reply)}
+          >
+            <NeoChatMark />
+            Reply in chat
+          </button>
+        </div>
       )}
     </li>
   );
@@ -256,6 +272,7 @@ export function NeoAskCard({
   disabled = false,
   onSettle,
   onAnswer,
+  onReply,
   onOpen,
   onOpenSession,
   onExpand,
@@ -268,6 +285,7 @@ export function NeoAskCard({
   disabled?: boolean;
   onSettle?: (outcome: NeoAskOutcome) => void;
   onAnswer?: (itemId: string, choice: string) => void;
+  onReply?: (quote: NeoQuote) => void;
   onOpen?: (workId: string) => void;
   onOpenSession?: (sessionId: string, title: string) => void;
   onExpand?: () => void;
@@ -375,6 +393,8 @@ export function NeoAskCard({
               <ActionRow
                 key={action.itemId}
                 action={action}
+                reply={neoQuestionReply(ask.id, action)}
+                onReply={onReply}
                 onAnswer={onAnswer}
                 disabled={disabled}
               />
