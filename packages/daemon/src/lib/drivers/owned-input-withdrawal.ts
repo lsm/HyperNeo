@@ -8,8 +8,9 @@ const WITHDRAWN = 'driver_input_withdrawn';
 
 export interface OwnedInputWithdrawalDeps {
   jobs: Pick<JobQueueRepository, 'getLatestByPayload' | 'markDeadIfActive'>;
+  transaction<T>(effect: () => T): T;
   messageId(sessionId: string, uuid: string): string | null;
-  removeDeferred(sessionId: string, messageDbId: string): Promise<boolean>;
+  removeDeferred(sessionId: string, messageDbId: string, commit: () => void): Promise<boolean>;
 }
 
 type Outcome = Result<WorkWithdrawal>;
@@ -48,7 +49,9 @@ export function requireOwnedQueuedInput(
     return { reason: withdrawal(queuedSubmissionId, false) };
   if (job.status === 'dead' && job.error === WITHDRAWN)
     return { reason: withdrawal(queuedSubmissionId, true) };
-  return job.status === 'pending' || job.status === 'completed'
+  return job.status === 'pending' ||
+    job.status === 'completed' ||
+    (job.status === 'dead' && job.error === WITHDRAWING)
     ? { value: { job, sessionId, uuid: entry.messageUuid } }
     : { reason: withdrawal(queuedSubmissionId, false) };
 }
@@ -59,7 +62,10 @@ function claimPendingInput(
   deps: OwnedInputWithdrawalDeps
 ): Gate<QueuedInput> {
   return input.job.status === 'pending' &&
-    !deps.jobs.markDeadIfActive(input.job.id, WITHDRAWING, ['pending'])
+    !deps.transaction(() => {
+      const marker = deps.messageId(input.sessionId, input.uuid) ? WITHDRAWING : WITHDRAWN;
+      return deps.jobs.markDeadIfActive(input.job.id, marker, ['pending']);
+    })
     ? { reason: withdrawal(queuedSubmissionId, false) }
     : { value: input };
 }
@@ -71,20 +77,16 @@ async function removeDeferredInput(
 ): Promise<Gate<QueuedInput>> {
   const dbId = deps.messageId(input.sessionId, input.uuid);
   const removed = dbId
-    ? await deps.removeDeferred(input.sessionId, dbId)
+    ? await deps.removeDeferred(input.sessionId, dbId, () => {
+        if (!deps.jobs.markDeadIfActive(input.job.id, WITHDRAWN, ['dead', 'completed']))
+          throw new Error('Input withdrawal was superseded.');
+      })
     : input.job.status === 'pending';
   return removed ? { value: input } : { reason: withdrawal(queuedSubmissionId, false) };
 }
 
-function finishWithdrawal(
-  input: QueuedInput,
-  queuedSubmissionId: string,
-  deps: OwnedInputWithdrawalDeps
-): Outcome {
-  return withdrawal(
-    queuedSubmissionId,
-    !!deps.jobs.markDeadIfActive(input.job.id, WITHDRAWN, ['dead', 'completed'])
-  );
+function finishWithdrawal(queuedSubmissionId: string): Outcome {
+  return withdrawal(queuedSubmissionId, true);
 }
 
 export const withdrawOwnedInput = (superpipe({})('withdraw-owned-input') as PipelineAPI)
@@ -102,7 +104,7 @@ export const withdrawOwnedInput = (superpipe({})('withdraw-owned-input') as Pipe
   )
   .pipe(claimPendingInput, ['outcome', 'queuedSubmissionId', 'deps'], 'result:outcome')
   .pipe(removeDeferredInput, ['outcome', 'queuedSubmissionId', 'deps'], 'result:outcome')
-  .pipe(finishWithdrawal, ['outcome', 'queuedSubmissionId', 'deps'], 'outcome')
+  .pipe(finishWithdrawal, 'queuedSubmissionId', 'outcome')
   .endAsync('outcome') as (
   sessionId: string,
   queuedSubmissionId: string,

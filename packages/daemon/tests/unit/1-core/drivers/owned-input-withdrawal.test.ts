@@ -27,17 +27,20 @@ describe('owned deferred input withdrawal', () => {
     enqueueMailboxEntry(db.jobQueue, entry);
     deps = {
       jobs: db.jobQueue,
+      transaction: (effect) => db.db.transaction(effect)(),
       messageId: (sessionId, uuid) => db.sdkMessageRepo.findMessageIdByUuid(sessionId, uuid),
-      removeDeferred: async (sessionId, id) => {
-        removed.push(id);
-        return (
-          db.db
-            .prepare(
-              "DELETE FROM sdk_messages WHERE session_id = ? AND id = ? AND send_status = 'deferred'"
-            )
-            .run(sessionId, id).changes > 0
-        );
-      },
+      removeDeferred: async (sessionId, id, commit) =>
+        db.db.transaction(() => {
+          removed.push(id);
+          const deleted =
+            db.db
+              .prepare(
+                "DELETE FROM sdk_messages WHERE session_id = ? AND id = ? AND send_status = 'deferred'"
+              )
+              .run(sessionId, id).changes > 0;
+          if (deleted) commit();
+          return deleted;
+        })(),
     };
   });
 
@@ -132,15 +135,51 @@ describe('owned deferred input withdrawal', () => {
     expect(db.sdkRows()[0].send_status).toBe('enqueued');
   });
 
-  test('an interrupted withdrawal does not acquire a success tombstone', async () => {
+  test('a pending withdrawal resumes after a pre-delete interruption', async () => {
     materialize('deferred');
+    const removeDeferred = deps.removeDeferred;
     deps.removeDeferred = async () => {
       throw new Error('runtime gone');
     };
     await expect(withdraw()).rejects.toThrow('runtime gone');
     expect(db.rows()[0].error).toBe('driver_input_withdrawing');
-    expect(await withdraw()).toMatchObject({ value: { withdrawn: false } });
     expect(db.sdkRows()).toHaveLength(1);
+    deps.removeDeferred = removeDeferred;
+    expect(await withdraw()).toMatchObject({ value: { withdrawn: true } });
+    expect(db.sdkRows()).toEqual([]);
+  });
+
+  test.each(['pending', 'completed'])(
+    'retries a %s job after interruption following the committed delete',
+    async (status) => {
+      materialize('deferred');
+      jobStatus(status);
+      const removeDeferred = deps.removeDeferred;
+      deps.removeDeferred = async (...args) => {
+        await removeDeferred(...args);
+        throw new Error('cleanup interrupted');
+      };
+      await expect(withdraw()).rejects.toThrow('cleanup interrupted');
+      expect(db.sdkRows()).toEqual([]);
+      expect(db.rows()[0].error).toBe('driver_input_withdrawn');
+      expect(await withdraw()).toMatchObject({ value: { withdrawn: true } });
+    }
+  );
+
+  test('a failed tombstone write rolls back the SDK deletion before retry', async () => {
+    materialize('deferred');
+    jobStatus('completed');
+    deps.jobs = {
+      getLatestByPayload: (...args) => db.jobQueue.getLatestByPayload(...args),
+      markDeadIfActive: () => {
+        throw new Error('storage failed');
+      },
+    };
+    await expect(withdraw()).rejects.toThrow('storage failed');
+    expect(db.sdkRows()).toHaveLength(1);
+    expect(db.rows()[0].status).toBe('completed');
+    deps.jobs = db.jobQueue;
+    expect(await withdraw()).toMatchObject({ value: { withdrawn: true } });
   });
 
   test.each(['target', 'sender', 'entry', 'mode', 'uuid', 'queue', 'missing'])(
