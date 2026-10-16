@@ -3,7 +3,9 @@
 The transport belongs to the individual session, not to whichever application
 is running on the machine. This work is split into small, independently
 reviewed PRs under ADR 0004. The first slice builds ownership discovery and
-admission; it does not replace the existing send implementation yet.
+admission. A following Wire slice applies it to the shared send path, including
+new-session task handoff and Remote Control requests. The existing transport
+for admitted CLI sessions remains until its replacement is wired.
 
 ## Evidence and limits
 
@@ -46,11 +48,14 @@ identity or framing cannot be verified. No messages were sent to real sessions.
 
 Desktop evidence wins over conflicting CLI evidence. A CLI admission requires
 exactly one live session with a matched PID and confirmed CLI owner. This
-admission is built in the first slice; wiring it into execution is a follow-up.
+admission now gates the shared send path. Desktop-owned sessions return
+`unsupported`; absent or unknown live owners return `unreachable` before any
+CLI message/resume effect. Creating a session can succeed before handoff is
+rejected; this partial start is reported as not delivered, never as running.
 
 ## Remaining slices
 
-1. Wire owner admission into every Claude send/start handoff path.
+1. Keep owner admission ahead of every Claude send/start handoff path.
 2. Build and wire a daemon-owned inbox with delivery receipts and reply routing;
    then delete the Haiku relay and obsolete headless fallback.
 3. Show unsupported stop/withdraw truthfully on cards with Open session.

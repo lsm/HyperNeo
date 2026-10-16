@@ -43,7 +43,11 @@ import { matchChatsBy } from './match-chats.ts';
 import { claudeOpenedPrs } from './opened-prs.ts';
 import { readTailLines } from './transcript-tail.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
-import { readClaudeSessionOwner, type ClaudeSessionOwner } from './claude-session-owner.ts';
+import {
+  readClaudeSessionOwner,
+  requireClaudeCliOwner,
+  type ClaudeSessionOwner,
+} from './claude-session-owner.ts';
 
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
@@ -765,7 +769,7 @@ async function relayToLiveSession(
   }
 }
 
-export async function sendClaudeMessage(
+async function sendOwnedClaudeMessage(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
   message: string,
@@ -782,6 +786,27 @@ export async function sendClaudeMessage(
   }
   return resumeClaudeSession(record, message, deps, resumePermissionMode);
 }
+
+export const sendClaudeMessage = (superpipe({})('claude-owner-send') as PipelineAPI)
+  .input(['record', 'liveSessions', 'message', 'deps', 'resumePermissionMode'])
+  .pipe(
+    (record: ClaudeDesktopRecord & { cliSessionId: string }) => record.cliSessionId,
+    'record',
+    'cliSessionId'
+  )
+  .pipe(requireClaudeCliOwner, ['cliSessionId', 'liveSessions'], 'result:outcome')
+  .pipe(
+    sendOwnedClaudeMessage,
+    ['record', 'liveSessions', 'message', 'deps', 'resumePermissionMode'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  record: ClaudeDesktopRecord & { cliSessionId: string },
+  liveSessions: readonly ClaudeLiveSession[],
+  message: string,
+  deps: ClaudeDesktopAdapterDeps,
+  resumePermissionMode?: 'bypassPermissions'
+) => Promise<Result<WorkDelivery>>;
 
 export async function resumeClaudeSession(
   record: ClaudeDesktopRecord & { cliSessionId: string },
