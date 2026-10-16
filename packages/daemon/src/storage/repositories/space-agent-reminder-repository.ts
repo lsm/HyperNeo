@@ -5,6 +5,7 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SpaceAgentRepository } from './space-agent-repository.ts';
+import { rowToReminder } from './space-agent-repository-helpers.ts';
 
 export class SpaceAgentReminderRepository {
   constructor(
@@ -160,24 +161,4 @@ export class SpaceAgentReminderRepository {
       throw new Error(`Long-horizon agent ${agentId} does not belong to space ${spaceId}`);
     }
   }
-}
-
-function rowToReminder(row: Record<string, unknown>): SpaceLongHorizonAgentReminder {
-  return {
-    id: row.id as string,
-    spaceId: row.space_id as string,
-    agentId: row.agent_id as string,
-    title: row.title as string,
-    body: (row.body as string | null) ?? '',
-    status: row.status as SpaceLongHorizonAgentReminder['status'],
-    triggerType: row.trigger_type as SpaceLongHorizonAgentReminder['triggerType'],
-    runAt: (row.run_at as number | null) ?? null,
-    cronExpression: (row.cron_expression as string | null) ?? null,
-    timezone: row.timezone as string,
-    nextRunAt: (row.next_run_at as number | null) ?? null,
-    lastFiredAt: (row.last_fired_at as number | null) ?? null,
-    createdBySession: (row.created_by_session as string | null) ?? null,
-    createdAt: row.created_at as number,
-    updatedAt: row.updated_at as number,
-  };
 }
