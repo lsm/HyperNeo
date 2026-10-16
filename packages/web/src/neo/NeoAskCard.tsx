@@ -237,6 +237,15 @@ function ActionRow({
   return (
     <li id={reply.anchor} data-ask-item={action.itemId} class="min-w-0 text-sm">
       <p class="break-words font-medium text-fg">{action.question}</p>
+      {action.steps && action.steps.length > 1 && (
+        <ol aria-label="待开始步骤" class="mt-2 list-decimal space-y-1 pl-5">
+          {action.steps.map((step) => (
+            <li key={step.id} data-question-step={step.id} class="break-words">
+              {step.title}
+            </li>
+          ))}
+        </ol>
+      )}
       {action.options.length > 0 ? (
         <div class="mt-2 flex flex-wrap justify-end gap-2">
           {action.options.map((option, index) => (
@@ -312,6 +321,15 @@ export function NeoAskCard({
           ? 'ended'
           : 'running';
   const itemActions = [...view.humanActions];
+  const questioned = new Set(
+    itemActions.flatMap((action) => action.steps?.map((step) => step.id) ?? [])
+  );
+  const scenes = view.scenes.filter(
+    (scene) =>
+      scene.receipt.kind !== 'work' ||
+      scene.receipt.status !== 'proposed' ||
+      !questioned.has(scene.ref.id)
+  );
   const outcomes = view.items.filter((item) => !isNeoAskQuestionItem(item));
   const questions = view.items.filter((item) => isNeoAskQuestionItem(item) && item.state === 'met');
   const openControl = (scene: NeoScene) => {
@@ -398,9 +416,9 @@ export function NeoAskCard({
           <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
         )}
       </div>
-      {view.scenes.length > 0 && (
+      {scenes.length > 0 && (
         <div class="mt-3 space-y-2 border-l-2 border-line pl-3">
-          {view.scenes.map((scene) => (
+          {scenes.map((scene) => (
             <StepRow
               key={scene.ref.id}
               scene={scene}

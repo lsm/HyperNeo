@@ -413,6 +413,64 @@ describe('NeoAskCard', () => {
     expect(card.container.querySelector('[data-ask-item="i3"] .line-through')).toBeTruthy();
   });
 
+  it('renders grouped start steps from structured data and does not repeat proposed cards', () => {
+    const steps = ['one', 'two', 'three'].map((id, index) => ({ id, title: `第 ${index + 1} 步` }));
+    const owned = groupNeoScenes(
+      classifyNeoScenes(steps.map((step) => work(step.id, 'proposed')))
+    ).attention;
+    const answer = vi.fn();
+    const view = describeAsk(
+      ask(
+        'start-steps',
+        'waiting',
+        steps.map((step) => step.id)
+      ),
+      owned,
+      {
+        humanActions: [
+          {
+            kind: 'question',
+            itemId: 'q',
+            question: '开始这 3 步？',
+            options: ['先不做', '开始'],
+            steps,
+          },
+        ],
+      }
+    );
+    const app = render(<NeoAskCard view={view} onAnswer={answer} />);
+    const list = app.getByRole('list', { name: '待开始步骤' });
+    expect(list.tagName).toBe('OL');
+    expect(
+      within(list)
+        .getAllByRole('listitem')
+        .map((row) => [row.getAttribute('data-question-step'), row.textContent])
+    ).toEqual(steps.map((step) => [step.id, step.title]));
+    expect(app.container.querySelectorAll('[data-ask-step]')).toHaveLength(0);
+    fireEvent.click(app.getByRole('button', { name: 'Answer 开始这 3 步？: 开始' }));
+    expect(answer).toHaveBeenCalledExactlyOnceWith('q', '开始');
+  });
+
+  it('shows a named single-step question once while retaining an unrelated running row', () => {
+    const owned = [...scenes.attention, ...scenes.running];
+    const view = describeAsk(ask('single-step', 'waiting', ['b1', 'a2']), owned, {
+      humanActions: [
+        {
+          kind: 'question',
+          itemId: 'q',
+          question: '开始「按样图改网页」？',
+          options: ['先不做', '开始'],
+          steps: [{ id: 'b1', title: '按样图改网页' }],
+        },
+      ],
+    });
+    const app = render(<NeoAskCard view={view} onAnswer={vi.fn()} />);
+    expect(app.getAllByText('开始「按样图改网页」？')).toHaveLength(1);
+    expect(app.queryByRole('list', { name: '待开始步骤' })).toBeNull();
+    expect(app.container.querySelector('[data-ask-step="b1"]')).toBeNull();
+    expect(app.container.querySelector('[data-ask-step="a2"]')).toBeTruthy();
+  });
+
   it('renders each question once with the decline option left and positive option right', () => {
     const answer = vi.fn();
     const view = describeAsk(

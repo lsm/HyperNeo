@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { readNeoAskAnswerChoice } from '../../../../src/lib/neo/ask-answer-evidence.ts';
+import { deriveNeoAskHumanActions } from '../../../../src/lib/neo/ask-views.ts';
+import { NeoAskViewSchema } from '../../../../src/lib/neo/card-view-schema.ts';
+import { projectNeoAskViews } from '../../../../src/lib/neo/ask-views.ts';
 import { planNeoStartQuestion } from '../../../../src/lib/neo/start-question.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
@@ -148,6 +151,55 @@ describe('grouped card start question', () => {
     expect(current().doneItems![0].state).toBe('pending');
   });
 
+  test('projects exact step identities and titles through the snapshot schema', () => {
+    for (const id of ['one', 'two', 'three']) propose(id);
+    const [view] = projectNeoAskViews([current()], [], []);
+    expect(NeoAskViewSchema.parse(view).humanActions).toEqual([
+      {
+        kind: 'question',
+        itemId: questions()[0].id,
+        question: '开始这 3 步？',
+        options: ['先不做', '开始'],
+        steps: [
+          { id: 'one', title: 'Card one' },
+          { id: 'two', title: 'Card two' },
+          { id: 'three', title: 'Card three' },
+        ],
+      },
+    ]);
+  });
+
+  test('single-step questions name their step and old questions recover recorded titles', () => {
+    propose('one');
+    const question = questions()[0];
+    expect(deriveNeoAskHumanActions(current())[0]).toMatchObject({
+      question: '开始「Card one」？',
+      steps: [{ id: 'one', title: 'Card one' }],
+    });
+    const old = {
+      ...question,
+      action: 'neo-start:' + JSON.stringify([{ workId: 'one', target: JSON.stringify(target) }]),
+      question: '开始这 1 步？',
+    };
+    expect(deriveNeoAskHumanActions({ ...current(), doneItems: [old] })[0]).toMatchObject({
+      question: '开始「Card one」？',
+      steps: [{ id: 'one', title: 'Card one' }],
+    });
+  });
+
+  test('title-only changes preserve question identity and exact-target consent', async () => {
+    propose('one');
+    const original = questions()[0];
+    const renamed = { workId: 'one', target: JSON.stringify(target), title: '改一个更清楚的标题' };
+    expect(planNeoStartQuestion(current(), [renamed])?.id).toBe(original.id);
+    await answer('开始');
+    expect(neoStartDecision(current(), renamed)).toBe('approved');
+    expect(planNeoStartQuestion(current(), [renamed])).toBeNull();
+    expect(neoStartDecision(current(), { ...renamed, target: 'a different target' })).toBe(
+      'pending'
+    );
+  });
+
   test('decline completes the question and cancels just its proposed cards', async () => {
     propose('one');
     propose('two');
@@ -244,7 +296,7 @@ describe('grouped card start question', () => {
     const original = questions()[0];
     const revision = current().revision;
     expect(await answer('可以')).toMatchObject({ value: { ok: true } });
-    const entry = { workId: 'one', target: JSON.stringify(target) };
+    const entry = { workId: 'one', target: JSON.stringify(target), title: 'Card one' };
     expect(neoStartDecision(current(), entry)).toBe('pending');
     expect(planNeoStartQuestion(current(), [entry])).not.toBeNull();
     expect(service.repo.getWork('one')?.status).toBe('proposed');
@@ -327,7 +379,7 @@ describe('grouped card start question', () => {
     propose('replacement', replacement);
     expect(service.proposalApproval('replacement')).toBe(false);
     expect(questions()).toHaveLength(1);
-    expect(questions()[0].question).toBe('开始这 1 步？');
+    expect(questions()[0].question).toBe('开始「Card replacement」？');
     expect(await service.admitWork('replacement', true)).toMatchObject({
       ok: false,
       reason: 'not_approved',
@@ -449,7 +501,10 @@ describe('grouped card start question', () => {
         workIds: [work.id],
       });
       const question = ask.doneItems!.find((item) => item.state === 'needs_you')!;
-      expect(question).toMatchObject({ question: '开始这 1 步？', options: ['先不做', '开始'] });
+      expect(question).toMatchObject({
+        question: '开始「Loose proposal」？',
+        options: ['先不做', '开始'],
+      });
       await service.start(work.id);
       expect(starts).toEqual([]);
       expect(
@@ -485,7 +540,10 @@ describe('grouped card start question', () => {
     await service.recover();
     const ask = service.askRecords.forWork('legacy-loose')!;
     const question = ask.doneItems!.find((item) => item.state === 'needs_you')!;
-    expect(question).toMatchObject({ question: '开始这 1 步？', options: ['先不做', '开始'] });
+    expect(question).toMatchObject({
+      question: '开始「Legacy proposal」？',
+      options: ['先不做', '开始'],
+    });
     await service.start('legacy-loose');
     expect(starts).toEqual([]);
     await service.recover();

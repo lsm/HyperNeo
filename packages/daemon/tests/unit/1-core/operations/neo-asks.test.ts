@@ -796,7 +796,7 @@ describe('neo.ask operations', () => {
     expect(service.repo.getWork(proposed.value!.work!.id)?.status).toBe('proposed');
     expect(service.askRecords.get(askId)?.doneItems?.at(-1)).toMatchObject({
       state: 'needs_you',
-      question: '开始这 1 步？',
+      question: '开始「Fix it」？',
       options: ['先不做', '开始'],
     });
   });
@@ -967,7 +967,7 @@ describe('neo.ask operations', () => {
           items: [
             { id: 'i1', state: 'pending', text: 'implementation ready' },
             { id: 'i2', state: 'pending', text: 'CI green' },
-            { state: 'needs_you', text: '开始这 1 步？' },
+            { state: 'needs_you', text: '开始「Fix it」？' },
           ],
           cards: [{ id: card, title: 'Fix it', status: 'proposed' }],
         },
@@ -2986,7 +2986,7 @@ describe('neo.ask operations', () => {
       'implementation ready',
       'CI green',
       'guard merged',
-      '开始这 1 步？',
+      '开始「Fix it」？',
     ]);
     expect(service.askRecords.get(sourceId)).toMatchObject({
       status: 'abandoned',
