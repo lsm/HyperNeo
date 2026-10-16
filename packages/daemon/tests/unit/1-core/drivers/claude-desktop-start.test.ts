@@ -1,6 +1,6 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,7 +8,7 @@ import {
   selectClaudeStartFolder,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
 
-const user = { from: 'chat', caller: { source: 'rpc' as const } };
+const user = { from: 'session:origin', caller: { source: 'rpc' as const } };
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' };
 const request = { place, title: 'Bigger font', message: 'Raise the body font to 16px.' };
 
@@ -54,7 +54,6 @@ describe('claude-desktop start', () => {
     prepareExecution?: WorkExecutionPreparer;
     openExit?: number;
     appearsAfter?: number;
-    relayWrites?: boolean;
     probeFails?: boolean;
     twin?: boolean;
     checkout?: { repo: string; linked: boolean };
@@ -65,6 +64,15 @@ describe('claude-desktop start', () => {
     let polls = 0;
     return createClaudeDesktopAdapter({
       sessionsDir: join(dir, 'sessions'),
+      admitInbox: () => ({ value: user.from }),
+      sendInbox: async () => ({
+        ok: true,
+        value: {
+          delivered: false,
+          unconfirmed: true,
+          receipt: { executionId: 'u1', inputId: 'u-brief' },
+        },
+      }),
       prepareExecution: options.prepareExecution,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
@@ -90,13 +98,6 @@ describe('claude-desktop start', () => {
       spawn: (args, spawnOptions) => {
         spawned.push(args);
         cwds.push(spawnOptions?.cwd);
-        const relay = args.includes('SendMessage ListAgents');
-        if (relay && options.relayWrites) {
-          appendFileSync(
-            join(transcripts, 'u1.jsonl'),
-            `${JSON.stringify({ type: 'user', uuid: 'u-brief', message: { content: '<cross-session-message from="x">\nRaise the body font to 16px.\n</cross-session-message>' } })}\n`
-          );
-        }
         const code = args[2] === '--session-id' ? (options.openExit ?? 0) : 0;
         return {
           stdout: null,
@@ -147,7 +148,6 @@ describe('claude-desktop start', () => {
   test('uses the prepared directory for CLI creation and desktop without --worktree', async () => {
     const driver = adapter({
       appearsAfter: 0,
-      relayWrites: true,
       prepareExecution: async () => ({
         ok: true,
         value: {
@@ -184,15 +184,13 @@ describe('claude-desktop start', () => {
   });
 
   test('sends only when the newly created session has a confirmed live CLI owner', async () => {
-    expect(
-      await adapter({ appearsAfter: 0, relayWrites: true, owner: 'cli' }).start?.(request, user)
-    ).toEqual({
+    expect(await adapter({ appearsAfter: 0, owner: 'cli' }).start?.(request, user)).toEqual({
       ok: true,
       value: {
         ref: { adapter: 'claude-desktop', id: 'local_u1' },
         title: 'Bigger font',
         place,
-        status: 'running',
+        status: 'queued',
         lastActivityAt: 1_000,
         link: 'claude://claude.ai/epitaxy/local_u1',
         receipt: { executionId: 'u1', inputId: 'u-brief' },
@@ -219,29 +217,8 @@ describe('claude-desktop start', () => {
       '--resume',
       'u1',
     ]);
-    expect(spawned[2].at(-1)).toContain('session named "Bigger font"');
+    expect(spawned).toHaveLength(2);
   });
-
-  test.each([undefined, 'default', 'acceptEdits', 'bypassPermissions'])(
-    'preserves the existing CLI relay permission class %s for a confirmed CLI owner',
-    async (permissionMode) => {
-      mkdirSync(join(dir, 'sessions', 'acct', 'scope'), { recursive: true });
-      writeFileSync(
-        join(dir, 'sessions', 'acct', 'scope', 'local_u1.json'),
-        JSON.stringify({
-          sessionId: 'local_u1',
-          cliSessionId: 'u1',
-          cwd: '/focus/dolmen',
-          title: 'Bigger font',
-          permissionMode,
-        })
-      );
-      await adapter({ appearsAfter: 0, relayWrites: true, owner: 'cli' }).start?.(request, user);
-      expect(spawned[0]).toContain('bypassPermissions');
-      expect(spawned[1]).not.toContain('--permission-mode');
-      expect(spawned[2].includes('bypassPermissions')).toBe(permissionMode === 'bypassPermissions');
-    }
-  );
 
   test('refuses to resume or relay after Desktop ownership probing fails', async () => {
     expect(await adapter({ probeFails: true }).start?.(request, user)).toMatchObject({
@@ -285,18 +262,6 @@ describe('claude-desktop start', () => {
     }).start?.(request, user);
     expect(spawned[0]).not.toContain('--worktree');
     expect(cwds.slice(0, 2)).toEqual(['/focus/dolmen', '/focus/dolmen']);
-  });
-
-  test('refuses to relay when another live session has the same name', async () => {
-    expect(
-      await adapter({ appearsAfter: 0, twin: true, owner: 'cli' }).start?.(request, user)
-    ).toEqual({
-      ok: false,
-      reason: 'not_delivered',
-      detail:
-        'local_u1 was created, but the task did not reach it: Bigger font has no unique name to relay a message to.',
-    });
-    expect(spawned).toHaveLength(2);
   });
 
   test('stops when the opening turn fails', async () => {
