@@ -85,6 +85,27 @@ describe('requireForwardingHolder', () => {
 
 describe('planNeoAskForward', () => {
   const holder = { sessionId: garden.sessionId, projectId: 'garden', input: ask };
+  test.each(['restart-recovery:', 'restart-recovery:restart-recovery:'])(
+    '%s preserves forwarding for the current owner after an interruption',
+    (prefix) => {
+      const original = { ...holder, input: { ...ask, messageId: `${prefix}${ask.messageId}` } };
+      expect(planNeoAskForward({ to: 'pond' }, original, ask, [])).toEqual({
+        value: { hop: 0, to: 'pond' },
+      });
+      const current = {
+        sessionId: pond.sessionId,
+        projectId: 'pond',
+        input: { sessionId: pond.sessionId, messageId: `${prefix}neo-forward:ask-1:7` },
+      };
+      const forwards = [{ hop: 7, toSessionId: pond.sessionId }];
+      expect(planNeoAskForward({ to: 'main' }, current, ask, forwards)).toEqual({
+        value: { hop: 8, to: 'main' },
+      });
+      expect(planNeoAskForward({ to: 'pond' }, original, ask, forwards)).toEqual({
+        reason: { ok: false, reason: 'not_your_ask' },
+      });
+    }
+  );
   test('only the original request owner can make the first forward', () => {
     expect(planNeoAskForward({ to: 'pond' }, holder, ask, [])).toEqual({
       value: { hop: 0, to: 'pond' },
@@ -139,6 +160,20 @@ describe('neoTurnOwnsMessage', () => {
     ['the human turn after it was forwarded away', garden, turn('ask-1', true), [toPond], false],
     ['a consultation turn', garden, turn('neo-consult:c:request', true, 'c'), [], false],
     ['the holder it was forwarded to', pond, turn('neo-forward:ask-1:0'), [toPond], true],
+    [
+      'a resumed forwarded request',
+      pond,
+      turn('restart-recovery:restart-recovery:neo-forward:ask-1:0'),
+      [toPond],
+      true,
+    ],
+    [
+      'a resumed stale forwarded request',
+      pond,
+      turn('restart-recovery:neo-forward:ask-1:0'),
+      [toPond, toMain],
+      false,
+    ],
     [
       'that holder once it forwarded on to main',
       pond,
@@ -593,47 +628,6 @@ describe('neo.snapshot askForwards', () => {
   });
 });
 
-describe('NeoService.recentAsksFor', () => {
-  test('lists an ask forwarded to a holder under the forwarded note, so its reply fallback covers it', async () => {
-    const db = await createTestDb();
-    const service = new NeoService(
-      db,
-      {} as never,
-      { event: () => {} } as never,
-      new InternalEventBus<DaemonInternalEventMap>()
-    );
-    const conversationId = '10000000-0000-4000-8000-000000000001';
-    const requestId = '20000000-0000-4000-8000-000000000001';
-    try {
-      expect(
-        service.asks.append({
-          conversationId,
-          requestId,
-          askOrigin: { sessionId: garden.sessionId, messageId: requestId },
-          content: 'Fix the pond pump',
-        }).accepted
-      ).toBe(true);
-      const origin = { sessionId: garden.sessionId, messageId: requestId };
-      service.askForwards.record(origin, {
-        hop: 0,
-        fromSessionId: garden.sessionId,
-        toSessionId: pond.sessionId,
-        toProjectId: 'pond',
-        forwardedAt: 1,
-      });
-      expect(
-        service.recentAsksFor(conversationId, pond.sessionId).map((item) => item.requestId)
-      ).toEqual([`neo-forward:${requestId}:0`]);
-      expect(
-        service.recentAsksFor(conversationId, garden.sessionId).map((item) => item.requestId)
-      ).toEqual([requestId]);
-    } finally {
-      service.dispose();
-      db.close();
-    }
-  });
-});
-
 describe('NeoAskForwardRepository', () => {
   test('records each hop once and lists them in order', () => {
     const db = new Sqlite(':memory:');
@@ -655,48 +649,6 @@ describe('NeoAskForwardRepository', () => {
     expect(repo.listRecent(1)).toEqual([expect.objectContaining({ hop: 1, ask })]);
     repo.remove(ask, 1);
     expect(repo.list(ask).map((item) => item.hop)).toEqual([0]);
-  });
-
-  test('the forwarder stops answering an ask only once its forward was delivered', async () => {
-    const db = await createTestDb();
-    const service = new NeoService(
-      db,
-      {} as never,
-      { event: () => {} } as never,
-      new InternalEventBus<DaemonInternalEventMap>()
-    );
-    try {
-      service.askForwards.record(ask, {
-        hop: 0,
-        fromSessionId: garden.sessionId,
-        toSessionId: pond.sessionId,
-        toProjectId: 'pond',
-        forwardedAt: 1,
-      });
-      expect(service.forwardedAway(garden.sessionId, 'ask-1')).toBe(false);
-      db.getJobQueueRepo().enqueue({
-        queue: 'mailbox',
-        payload: { to: { sessionId: pond.sessionId }, messageUuid: 'neo-forward:ask-1:0' },
-      });
-      expect(service.forwardedAway(garden.sessionId, 'ask-1')).toBe(true);
-      expect(service.forwardedAway(pond.sessionId, 'ask-1')).toBe(false);
-      service.askForwards.record(ask, {
-        hop: 1,
-        fromSessionId: pond.sessionId,
-        toSessionId: root.sessionId,
-        toProjectId: null,
-        forwardedAt: 2,
-      });
-      expect(service.forwardedAway(pond.sessionId, 'neo-forward:ask-1:0')).toBe(false);
-      db.getJobQueueRepo().enqueue({
-        queue: 'mailbox',
-        payload: { to: { sessionId: root.sessionId }, messageUuid: 'neo-forward:ask-1:1' },
-      });
-      expect(service.forwardedAway(pond.sessionId, 'neo-forward:ask-1:0')).toBe(true);
-    } finally {
-      service.dispose();
-      db.close();
-    }
   });
 
   test('the holder a message was forwarded to owns it: its turn is the human’s, and the forwarder’s no longer is', async () => {

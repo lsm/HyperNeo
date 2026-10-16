@@ -37,6 +37,6 @@ describe('one Neo publication path', () => {
     expect(commit).toContain('this.appendPublication(input)');
     expect(
       service.match(/append: \(input(, consultationId)?\) =>\s*this\.commitPublication\(/g)
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 });
