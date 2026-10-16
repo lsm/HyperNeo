@@ -89,7 +89,13 @@ export function SpaceTaskThreadMessageActions({
         class={copied ? 'text-success' : ''}
       >
         {copied ? (
-          <CheckGlyph class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
+          <CheckGlyph
+            class="w-5 h-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+          />
         ) : (
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path

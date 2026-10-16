@@ -161,6 +161,7 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
         />
         <span class="font-medium">{message.model ?? 'unknown model'}</span>
         {message.mcp_servers && message.mcp_servers.length > 0 && (

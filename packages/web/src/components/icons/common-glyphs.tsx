@@ -5,9 +5,9 @@ type GlyphProps = Omit<JSX.SVGAttributes<SVGSVGElement>, 'children' | 'ref'> & {
 };
 
 const defaultPathProps: JSX.SVGAttributes<SVGPathElement> = {
-  strokeLinecap: 'round',
-  strokeLinejoin: 'round',
-  strokeWidth: 2,
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+  'stroke-width': 2,
 };
 
 export function CloseGlyph({ pathProps = defaultPathProps, ...props }: GlyphProps) {

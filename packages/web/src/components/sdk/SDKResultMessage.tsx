@@ -63,6 +63,7 @@ export function SDKResultMessage({ message }: Props) {
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
         />
       </button>
 
@@ -137,6 +138,7 @@ export function SDKResultMessage({ message }: Props) {
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
+                    pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
                   />
                   <span>Cache Read: {cacheReadTokens.toLocaleString()} tokens</span>
                 </div>

@@ -157,6 +157,11 @@ export function ThinkingBlock({
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
+                      pathProps={{
+                        strokeLinecap: 'round',
+                        strokeLinejoin: 'round',
+                        strokeWidth: 2,
+                      }}
                     />
                     Show less
                   </>
@@ -167,6 +172,11 @@ export function ThinkingBlock({
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
+                      pathProps={{
+                        strokeLinecap: 'round',
+                        strokeLinejoin: 'round',
+                        strokeWidth: 2,
+                      }}
                     />
                     Show more
                   </>

@@ -202,6 +202,7 @@ function ToolResultCardBody({
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
+            pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
           />
         )}
       </div>
@@ -326,6 +327,7 @@ function ToolResultCardBody({
               stroke="currentColor"
               viewBox="0 0 24 24"
               aria-label="task completed"
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
             />
           )}
           {showErrorIcon && (
@@ -341,6 +343,7 @@ function ToolResultCardBody({
                     : 'task failed'
                   : undefined
               }
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
             />
           )}
           {!disableExpand && (
@@ -353,6 +356,7 @@ function ToolResultCardBody({
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
             />
           )}
         </div>

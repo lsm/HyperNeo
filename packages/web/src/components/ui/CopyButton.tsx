@@ -58,7 +58,13 @@ export function CopyButton({
       class={`p-1.5 rounded transition-colors ${stateClasses}`}
     >
       {copied ? (
-        <CheckGlyph class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
+        <CheckGlyph
+          class="w-4 h-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+        />
       ) : (
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path

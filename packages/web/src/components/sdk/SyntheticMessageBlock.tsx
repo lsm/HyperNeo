@@ -229,6 +229,7 @@ export function SyntheticMessageBlock({
                     viewBox="0 0 24 24"
                     stroke="currentColor"
                     aria-hidden="true"
+                    pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
                   />
                   Show less
                 </>
@@ -240,6 +241,7 @@ export function SyntheticMessageBlock({
                     viewBox="0 0 24 24"
                     stroke="currentColor"
                     aria-hidden="true"
+                    pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
                   />
                   Show more
                 </>

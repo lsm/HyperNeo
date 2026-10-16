@@ -252,6 +252,7 @@ export function QuestionPrompt({
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
         />
       );
     }
@@ -262,6 +263,7 @@ export function QuestionPrompt({
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
         />
       );
     }

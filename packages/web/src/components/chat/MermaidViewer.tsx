@@ -387,7 +387,13 @@ export function MermaidViewerOverlay({ source, onClose }: { source: string; onCl
           onClick={onClose}
           class={overlayButtonClass}
         >
-          <CloseGlyph class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
+          <CloseGlyph
+            class="h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+          />
         </button>
       </div>
       <div

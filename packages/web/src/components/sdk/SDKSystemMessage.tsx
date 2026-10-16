@@ -301,6 +301,7 @@ function MemoryRecallMessage({ message }: { message: SDKMemoryRecallMessage }) {
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
         />
       </button>
 
@@ -432,6 +433,7 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
         />
       </button>
 
@@ -551,6 +553,7 @@ function HookRunningCard({
           stroke="currentColor"
           viewBox="0 0 24 24"
           aria-label="hook finished"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
         />
       ) : (
         <svg
@@ -638,6 +641,7 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
+                pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
               />
             )}
             <ChevronDownGlyph
@@ -645,6 +649,7 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
             />
           </div>
         </button>
@@ -725,6 +730,7 @@ function CompactBoundaryMessage({
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
             />
           </div>
         </button>

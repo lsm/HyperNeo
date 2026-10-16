@@ -406,6 +406,7 @@ export function SubagentBlock({
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
             />
           )}
           {showErrorIcon && (
@@ -414,6 +415,7 @@ export function SubagentBlock({
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
             />
           )}
           <ChevronDownGlyph
@@ -421,6 +423,7 @@ export function SubagentBlock({
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
+            pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
           />
         </div>
       </button>
