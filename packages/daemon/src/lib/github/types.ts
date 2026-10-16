@@ -1,41 +1,15 @@
 export type {
   GitHubEvent,
-  GitHubEventSource,
-  GitHubFilterConfig,
-  GitHubAuthorFilter,
-  GitHubLabelFilter,
-  GitHubEventFilter,
   InboxItem,
   InboxItemStatus,
   SecurityCheckResult,
-  RepositoryMapping,
-  RoutingDecision,
   RoutingResult,
   FilterResult,
 } from '@hyperneo/shared';
 
-export interface WebhookPayload {
-  eventType: string;
-  deliveryId: string;
-  payload: unknown;
-}
-
-export interface SignatureVerificationResult {
-  valid: boolean;
-  error?: string;
-}
-
 export interface WebhookParseResult {
   event: import('@hyperneo/shared').GitHubEvent | null;
   error?: string;
-}
-
-export interface RepositoryPollState {
-  owner: string;
-  repo: string;
-  lastPollTime: string;
-  issuesEtag?: string;
-  commentsEtag?: string;
 }
 
 export interface PollingConfig {
@@ -43,19 +17,6 @@ export interface PollingConfig {
   interval: number;
   baseUrl?: string;
   userAgent?: string;
-}
-
-export interface GitHubApiResponse {
-  data: unknown[];
-  etag?: string;
-  rateLimitRemaining?: number;
-  rateLimitReset?: number;
-  notModified?: boolean;
-}
-
-export interface PollingEvent {
-  type: 'issue' | 'comment' | 'pull_request';
-  data: unknown;
 }
 
 export interface GitHubApiIssue {
