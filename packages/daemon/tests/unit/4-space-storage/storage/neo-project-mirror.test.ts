@@ -236,7 +236,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
     full.close();
   });
 
-  test('titles a project after its repository, never a generated worktree folder, and keeps a title a human chose', () => {
+  test('names a project once after its repository, repairs only a generated title, and never renames it otherwise', () => {
     const uuid = 'f793a97e-2b7e-4088-92a1-2506bde88670';
     const tree = (remotes?: string[]) => {
       const found = workspace(`/w/neokai/worktrees/${uuid}`, 'laptop', 'git:1');
@@ -249,7 +249,9 @@ describe('mirrorNeoWorkspaceProjects', () => {
     const [first] = repo.listProjects();
     repo.saveProject({ ...first, title: uuid, summary: `Project: ${uuid}` }, first.revision);
     expect(mirrorNeoWorkspaceProjects(db, tree(['git@github.com:lsm/HyperNeo.git']))).toBe(true);
-    expect(repo.listProjects().map((project) => project.title)).toEqual(['HyperNeo']);
+    expect(repo.listProjects().map((project) => project.title)).toEqual(['neokai']);
+    mirrorNeoWorkspaceProjects(db, tree(['git@github.com:lsm/open-agent-protocol.git']));
+    expect(repo.listProjects().map((project) => project.title)).toEqual(['neokai']);
     const [named] = repo.listProjects();
     repo.saveProject({ ...named, title: 'My app' }, named.revision);
     mirrorNeoWorkspaceProjects(db, tree(['git@github.com:lsm/other.git']));
@@ -347,7 +349,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
       place: { ...group.place, toolProject: { id: 'product', name: 'Product' } },
     }));
     mirrorNeoWorkspaceProjects(db, mergePlaceGroups(groups, 50));
-    expect(repo.listProjects()).toHaveLength(1);
+    expect(repo.listProjects().map((project) => project.title)).toEqual(['Product']);
   });
 });
 

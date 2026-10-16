@@ -123,12 +123,12 @@ export function isNeoPlumbingFolder(
 const GENERATED_FOLDER = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$|^[0-9a-f]{8}$|^worktrees$/i;
 
 export function neoWorkspaceTitle(workspaces: readonly Place[], primary: Place): string {
+  const tool = workspaces.find((place) => place.toolProject)?.toolProject?.name;
+  if (tool) return tool;
   const repo = workspaces.flatMap(
     (place) => place.repoName ?? repoNameFromRemote(place.remotes?.[0]) ?? []
   )[0];
   if (repo) return repo;
-  const tool = workspaces.find((place) => place.toolProject)?.toolProject?.name;
-  if (tool) return tool;
   const readable = neoReadableFolderName(primary.folder ?? '');
   return GENERATED_FOLDER.test(primary.name) && readable ? readable : primary.name;
 }
@@ -409,18 +409,11 @@ export function persistNeoWorkspaceProjects(
       });
       if (!known.length && !canNeoMirrorCreateProject(project)) continue;
       const id = known[0] ?? `project:${crypto.randomUUID()}`;
-      const existing = known.length ? repo.getProject(id) : null;
       if (!known.length) {
         changed = true;
         repo.saveProject(
           { id, title: project.title, summary: `Project: ${project.title}`, context: '' },
           0
-        );
-      } else if (existing && existing.title !== project.title && isNeoMirrorTitled(existing)) {
-        changed = true;
-        repo.saveProject(
-          { ...existing, title: project.title, summary: `Project: ${project.title}` },
-          existing.revision
         );
       }
       for (const alias of project.aliases) {
