@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  type ClaudeDesktopAdapterDeps,
   type ClaudeRecordCache,
   type ClaudeLiveSession,
   claudeInputEvidence,
@@ -89,10 +90,12 @@ describe('claude-desktop adapter against the app session records', () => {
     ],
     exitCode = 0,
     onSpawn = () => {},
-    output: { stdout?: string; stderr?: string } = { stderr: exitCode ? 'relay failed' : '' }
+    output: { stdout?: string; stderr?: string } = { stderr: exitCode ? 'relay failed' : '' },
+    sendInbox?: ClaudeDesktopAdapterDeps['sendInbox']
   ) {
     spawned = [];
     return createClaudeDesktopAdapter({
+      sendInbox,
       sessionsDir: dir,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
@@ -121,6 +124,34 @@ describe('claude-desktop adapter against the app session records', () => {
       },
     });
   }
+
+  test('the runtime inbox sender receives the original context without spawning a relay', async () => {
+    const calls: unknown[] = [];
+    const context = { from: 'session:origin', caller: { source: 'internal' as const } };
+    const sender: NonNullable<ClaudeDesktopAdapterDeps['sendInbox']> = async (...args) => {
+      calls.push(args);
+      return { ok: true, value: { delivered: false, unconfirmed: true } };
+    };
+    const result = await adapter(undefined, 0, undefined, undefined, sender).send!(
+      { adapter: 'claude-desktop', id: 'local_a1' },
+      'exact text',
+      context
+    );
+    expect(result).toMatchObject({ ok: true, value: { unconfirmed: true } });
+    expect(calls).toEqual([['cli-a1', 'exact text', context]]);
+    expect(spawned).toEqual([]);
+  });
+
+  test('an inbox refusal is returned directly without a relay fallback', async () => {
+    const failure = { ok: false as const, reason: 'unreachable' as const, detail: 'owner changed' };
+    const result = await adapter(undefined, 0, undefined, undefined, async () => failure).send!(
+      { adapter: 'claude-desktop', id: 'local_a1' },
+      'text',
+      user
+    );
+    expect(result).toEqual(failure);
+    expect(spawned).toEqual([]);
+  });
 
   test('status exposes execution cwd without requiring a transcript', async () => {
     const result = await adapter().status!({ adapter: 'claude-desktop', id: 'local_a1' });

@@ -18,7 +18,7 @@ interface ClaudeInboxSubmitDeps {
 }
 
 export function requireClaudeReplyDestination(
-  context: WorkCallContext,
+  context: Pick<WorkCallContext, 'from'>,
   deps: Pick<ClaudeInboxSubmitDeps, 'hasSession'>
 ): { value: string } | { reason: Rejected } {
   const destination = parseAddress(context.from);

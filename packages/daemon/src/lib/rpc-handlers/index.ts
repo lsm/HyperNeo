@@ -1,3 +1,8 @@
+import { homedir } from 'node:os';
+import { createClaudeInboxDriver } from '../drivers/claude-inbox-driver.ts';
+import { readLiveClaudeSessions } from '../drivers/claude-desktop-adapter.ts';
+import { spawnProcess } from '../runtime-spawn/index.ts';
+import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { join } from 'node:path';
 import { stampActiveAttemptList } from '../tasks/direct-attempt-flag.ts';
 import { registerDirectStartJobs } from '../tasks/direct-start-jobs.ts';
@@ -1402,7 +1407,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
   const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
+  const claudeInbox = createClaudeInboxDriver({
+    registrationsDir: join(homedir(), '.claude', 'sessions'),
+    liveSessions: () => readLiveClaudeSessions(spawnProcess),
+    hasSession: (sessionId) => {
+      const session = deps.sessionManager.getSessionFromDB(sessionId);
+      return !!session && !['archived', 'ended'].includes(session.status);
+    },
+    handoff: (args) => handoffPromptToMailbox({ ...args, jobQueue: deps.jobQueue }),
+    onError: (error) => log.warn('Claude inbox reply could not be persisted', error),
+  });
   const familyContext: FamilyOperationContext = {
+    claudeInbox,
     deps,
     spaceRuntimeService,
     taskAgentManager,
@@ -1736,6 +1752,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   return {
     cleanup: async () => {
+      await claudeInbox.close();
       await neoService.dispose();
       inactivityRunNowCancelled = true;
       await Promise.allSettled(pendingInactivityRunNow);
