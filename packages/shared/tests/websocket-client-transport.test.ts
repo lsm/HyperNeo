@@ -753,6 +753,17 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       await expect(initializing).rejects.toThrow('closed before connecting');
     });
 
+    it('rejects initialize when the socket cannot be constructed', async () => {
+      global.WebSocket = vi.fn(function () {
+        throw new SyntaxError('Invalid URL');
+      }) as unknown as typeof WebSocket;
+
+      transport = new WebSocketClientTransport({ url: 'not a url', autoReconnect: true });
+
+      await expect(transport.initialize()).rejects.toThrow('Invalid URL');
+      expect(transport.getState()).toBe('error');
+    });
+
     it('rejects a pending initialize when closed during a reconnect backoff', async () => {
       global.WebSocket = vi.fn(function () {
         const ws = new MockWebSocket('ws://localhost:9999', false);

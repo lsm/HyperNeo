@@ -159,9 +159,14 @@ export class WebSocketClientTransport implements IMessageTransport {
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         this.setState('error', err);
+        this.abortPendingInitialize(err);
         reject(err);
       }
     });
+  }
+
+  private abortPendingInitialize(error: Error): void {
+    for (const abort of this.pendingInitializeAborts) abort(error);
   }
 
   private handleDisconnect(): void {
@@ -233,9 +238,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   async close(): Promise<void> {
     this.closed = true;
-    for (const abort of this.pendingInitializeAborts) {
-      abort(new Error(`WebSocket to ${this.url} closed before connecting`));
-    }
+    this.abortPendingInitialize(new Error(`WebSocket to ${this.url} closed before connecting`));
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
