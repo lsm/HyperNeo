@@ -4,7 +4,6 @@ import type {
   NeoPublicationInput,
 } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { requirePublicationNews } from './publication-news.ts';
 
 type Rejection = { accepted: false; reason: string; detail?: string };
 type Receipt = NeoPublicationAppendResult | Rejection;
@@ -17,11 +16,6 @@ export interface NeoPublicationCommitDeps {
 export function createNeoPublicationCommit(deps: NeoPublicationCommitDeps) {
   return (superpipe({})('neo-publication-commit') as PipelineAPI)
     .input(['input'])
-    .pipe(
-      (input: NeoPublicationInput) => requirePublicationNews(input, input),
-      'input',
-      'result:receipt'
-    )
     .pipe((input: NeoPublicationInput) => deps.commit(input), 'input', 'receipt')
     .pipe(
       (receipt: Receipt, input: NeoPublicationInput) => {
