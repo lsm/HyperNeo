@@ -1,3 +1,9 @@
+import {
+  readNeoNamedProjectFacts,
+  selectNeoNamedRouteFacts,
+  type NeoNamedProject,
+} from './named-route-facts.ts';
+import { readNeoNamedRepositoryFacts } from './packs/coding/route-repository.ts';
 import { neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import { readNeoSectionFacts } from './section-route-facts.ts';
 import { neoFactOwners, readNeoProjectFacts, type NeoProjectFact } from './project-route-facts.ts';
@@ -124,6 +130,13 @@ export interface NeoRouterDeps {
   classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteVerdict>;
   inbox?(): Promise<NeoHolder | null>;
   inboxRunnable?(): Promise<boolean>;
+}
+
+function readNamedRouteFacts(text: string, projects: readonly NeoNamedProject[]): NeoProjectFact[] {
+  return selectNeoNamedRouteFacts([
+    ...readNeoNamedProjectFacts(text, projects),
+    ...readNeoNamedRepositoryFacts(text, projects),
+  ]);
 }
 
 const profileVectors = new Map<string, Float32Array>();
@@ -441,7 +454,8 @@ function neoUnavailableWorkspaceHolders(
 export async function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRouted> {
   if (!text.trim()) return { choice: null };
   let holders = await deps.holders();
-  const facts = (await deps.facts?.(text)) ?? [];
+  const recorded = (await deps.facts?.(text)) ?? [];
+  const facts = recorded.length ? recorded : readNamedRouteFacts(text, holders);
   let chosen: NeoRouted = { choice: null };
   let scopedWorkspace = false;
   if (facts.length) {
@@ -552,16 +566,20 @@ export function createNeoRouter(
   const log = new NeoRoutingLogRepository(db.getDatabase());
   const deps: NeoRouterDeps = {
     facts: async (text) => {
-      const facts = readNeoProjectFacts(db.getDatabase(), text);
+      const projects = repo.listProjects();
+      const repositories = repo.repositories();
+      const named = projects.map((project) => ({
+        projectId: project.id,
+        title: project.title,
+        repository: repositories.get(project.id),
+      }));
+      const recorded = readNeoProjectFacts(db.getDatabase(), text);
+      const facts = recorded.length ? recorded : readNamedRouteFacts(text, named);
       if (facts.some((fact) => fact.projectId === undefined) && refreshFacts) {
         await refreshFacts(text);
-        return readNeoSectionFacts(
-          text,
-          readNeoProjectFacts(db.getDatabase(), text),
-          repo.listProjects()
-        );
+        return readNeoSectionFacts(text, readNeoProjectFacts(db.getDatabase(), text), projects);
       }
-      return readNeoSectionFacts(text, facts, repo.listProjects());
+      return readNeoSectionFacts(text, facts, projects);
     },
     holders: async () => {
       const root = repo.getBindingForProject(null)?.sessionId;
