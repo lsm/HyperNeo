@@ -1020,10 +1020,10 @@ export class NeoService {
     );
     const offUpdated = events.subscribe(
       'session.updated',
-      async ({ sessionId, processingState }) => {
+      async ({ sessionId, processingState, session }) => {
         const status = processingState?.status;
         if (status) this.processingStatus.set(sessionId, status);
-        const bound = status ? this.repo.getBindingBySession(sessionId) : null;
+        const bound = status || session?.status ? this.repo.getBindingBySession(sessionId) : null;
         if (bound && bound.kind !== 'worker') this.noteWorking();
         if (status === 'interrupted') this.interruptedSessions.add(sessionId);
         else if (status && status !== 'idle') this.interruptedSessions.delete(sessionId);

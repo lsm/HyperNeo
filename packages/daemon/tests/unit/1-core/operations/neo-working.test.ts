@@ -100,14 +100,15 @@ describe('Neo working sessions', () => {
     ]);
   });
 
-  test('neo.working is sent only when the set of working Neo sessions changes', async () => {
+  test('neo.working is sent only when the set changes, an archived holder included', async () => {
     await state(holder, { status: 'processing', messageId: 'n1', phase: 'initializing' });
     await state(holder, { status: 'processing', messageId: 'n1', phase: 'thinking' });
     await state(holder, { status: 'processing', messageId: 'n1', phase: 'streaming' });
     await state(worker, { status: 'processing', messageId: 'w1', phase: 'thinking' });
     await state(main, { status: 'queued', messageId: 'm1' });
-    await state(holder, { status: 'idle' });
     await state(main, { status: 'idle' });
+    db.getDatabase().prepare("UPDATE sessions SET status = 'archived' WHERE id = ?").run(holder);
+    await events.publish('session.updated', { sessionId: holder, session: { status: 'archived' } });
     expect(sent()).toEqual([
       { working: [{ sessionId: holder, projectId: 'p1', title: 'neo-ios', status: 'processing' }] },
       {
@@ -116,8 +117,9 @@ describe('Neo working sessions', () => {
           { sessionId: holder, projectId: 'p1', title: 'neo-ios', status: 'processing' },
         ],
       },
-      { working: [{ sessionId: main, projectId: null, title: 'Neo', status: 'queued' }] },
+      { working: [{ sessionId: holder, projectId: 'p1', title: 'neo-ios', status: 'processing' }] },
       { working: [] },
     ]);
+    expect(readNeoWorking(db.getDatabase())).toEqual([]);
   });
 });
