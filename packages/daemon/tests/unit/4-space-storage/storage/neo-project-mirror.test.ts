@@ -12,6 +12,7 @@ import {
   backfillNeoRepositoryIdentities,
   canNeoMirrorCreateProject,
   isNeoPlumbingFolder,
+  neoIdentityOwner,
   neoProjectMergeAllowed,
   neoRepositoryIdentity,
   mirrorNeoWorkspaceProjects,
@@ -290,7 +291,54 @@ describe('mirrorNeoWorkspaceProjects', () => {
     expect(repo.getProject('travel')?.context).toBe('Passport');
   });
 
-  test('keeps folders with different histories separate inside one named tool project', () => {
+  test('a standalone repository project keeps its identity when a tool project also holds the repository', () => {
+    const one = 'git@github.com:lsm/one.git';
+    const owner = (alias: string) =>
+      (
+        db.prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?').get(alias) as {
+          project_id: string;
+        } | null
+      )?.project_id;
+    mirrorNeoWorkspaceProjects(
+      db,
+      mergePlaceGroups([workspace('/solo', elsewhere, 'root:1', one)], 50)
+    );
+    const [standalone] = repo.listProjects();
+    const product = [
+      workspace('/p/one', elsewhere, 'root:1', one),
+      workspace('/p/two', elsewhere, 'root:2', 'git@github.com:lsm/two.git'),
+    ].map((group) => ({
+      ...group,
+      place: { ...group.place, toolProject: { id: 'product', name: 'Product' } },
+    }));
+    for (let pass = 0; pass < 2; pass++)
+      mirrorNeoWorkspaceProjects(
+        db,
+        mergePlaceGroups([workspace('/solo', elsewhere, 'root:1', one), ...product], 50)
+      );
+    expect(repo.listProjects()).toHaveLength(2);
+    expect(owner('repository:github.com/lsm/one')).toBe(standalone.id);
+    expect(owner('repository:github.com/lsm/two')).not.toBe(standalone.id);
+  });
+
+  test('a clone outside the tool project joins the tool project holding its repository', () => {
+    const one = 'git@github.com:lsm/one.git';
+    const product = workspace('/p/one', elsewhere, 'root:1', one);
+    mirrorNeoWorkspaceProjects(
+      db,
+      mergePlaceGroups(
+        [{ ...product, place: { ...product.place, toolProject: { id: 'p', name: 'Product' } } }],
+        50
+      )
+    );
+    mirrorNeoWorkspaceProjects(
+      db,
+      mergePlaceGroups([workspace('/clone', elsewhere, 'root:1', one)], 50)
+    );
+    expect(repo.listProjects()).toHaveLength(1);
+  });
+
+  test('mirrors a named tool project spanning two repositories as one project', () => {
     const groups = [
       workspace('/one', elsewhere, 'root:123', 'git@github.com:lsm/one.git'),
       workspace('/other', elsewhere, 'root:456', 'git@github.com:lsm/two.git'),
@@ -299,12 +347,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
       place: { ...group.place, toolProject: { id: 'product', name: 'Product' } },
     }));
     mirrorNeoWorkspaceProjects(db, mergePlaceGroups(groups, 50));
-    expect(
-      repo
-        .listProjects()
-        .map((project) => project.title)
-        .sort()
-    ).toEqual(['one', 'two']);
+    expect(repo.listProjects()).toHaveLength(1);
   });
 });
 
@@ -625,5 +668,16 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     mirrorNeoWorkspaceProjects(raw, place('/new', 'b'));
     expect(store.listProjects()).toHaveLength(1);
     full.close();
+  });
+});
+
+describe('neoIdentityOwner', () => {
+  test('a standalone project owns a repository over a tool project, which owns it otherwise', () => {
+    const tool = (id: string) => id.startsWith('tool');
+    expect(neoIdentityOwner('tool-a', ['tool-a', 'solo'], tool)).toBe('solo');
+    expect(neoIdentityOwner('solo', ['tool-a', 'other'], tool)).toBe('solo');
+    expect(neoIdentityOwner('tool-a', ['tool-a', 'tool-b'], tool)).toBe('tool-a');
+    expect(neoIdentityOwner(null, ['tool-b'], tool)).toBe('tool-b');
+    expect(neoIdentityOwner(null, [], tool)).toBeNull();
   });
 });
