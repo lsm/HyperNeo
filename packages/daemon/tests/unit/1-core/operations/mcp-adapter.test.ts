@@ -106,7 +106,9 @@ describe('operationRefusal', () => {
   ] as const)('reads %j as refusal %s', (outcome, reason) => {
     expect(operationRefusal('op', outcome)).toEqual(reason ? { operation: 'op', reason } : null);
   });
+});
 
+describe('createOperationMcpHandler refusal recording', () => {
   test('the door records a refusal and not a success', async () => {
     const definition = defineOperation({
       name: 'example',
