@@ -378,6 +378,10 @@ describe('codex-desktop adapter status and send', () => {
       };
     };
     return createCodexDesktopAdapter({
+      bootstrapServer: () => Promise.reject(new Error('not used')),
+      startDesktopTurn: async () => {
+        throw new Error('not used');
+      },
       statePath,
       worktreesDir,
       machine: 'laptop',

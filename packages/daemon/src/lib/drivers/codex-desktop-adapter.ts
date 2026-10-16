@@ -98,6 +98,8 @@ export interface CodexDesktopAdapterDeps {
   now: () => number;
   spawn: SpawnFn;
   appServer: () => Promise<CodexAppServer>;
+  bootstrapServer: () => Promise<CodexAppServer>;
+  startDesktopTurn: (threadId: string, request: Record<string, unknown>) => Promise<void>;
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
   homeDir: string;
@@ -833,7 +835,7 @@ export async function withCodexAppServer<Value>(
   try {
     return await use(server);
   } finally {
-    server.close();
+    await server.close();
   }
 }
 
@@ -842,7 +844,7 @@ export async function startCodexThread(
   request: StartRequest,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<WorkStarted>> {
-  return withCodexAppServer(deps, async (server) => {
+  return withCodexAppServer({ appServer: deps.bootstrapServer }, async (server) => {
     let threadId: string | null = null;
     let workFolder: CodexWorkFolder | null = null;
     try {
@@ -884,9 +886,12 @@ export async function startCodexThread(
         );
       }
       await server.call('thread/name/set', { threadId, name: request.title });
-      await server.call('turn/start', {
+      await server.close();
+      await deps.startDesktopTurn(threadId, {
         threadId,
         input: [{ type: 'text', text: request.message }],
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
       });
       const receipt = await readCodexStartReceipt(
         startedRolloutPath(started),
@@ -909,7 +914,9 @@ export async function startCodexThread(
         },
       };
     } catch (error) {
-      const made = threadId ? ` Thread ${threadId} was created without its first turn.` : '';
+      const made = threadId
+        ? ` Thread ${threadId} was created, but its opening turn was not confirmed.`
+        : '';
       return reject(
         'not_delivered',
         `${error instanceof Error ? error.message : String(error)}${made}`
