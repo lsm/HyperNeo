@@ -1,6 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoCardView, NeoWorkPrReceipt } from '@hyperneo/shared/types/neo-snapshot';
-import { projectNeoSnapshotAsks } from './ask-operations.ts';
+import { projectNeoSnapshotAsks } from './ask-plans.ts';
 import { projectNeoAskViews } from './ask-views.ts';
 import { projectNeoCardViews } from './card-views.ts';
 import type { NeoAskTriggerRead } from './notification-triggers.ts';
