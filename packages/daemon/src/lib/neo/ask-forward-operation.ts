@@ -194,7 +194,7 @@ export function neoForwardContent(from: string, mayForward: boolean, message: st
   return fillPrompt(NEO_ASK_FORWARDED, {
     from: `“${from}”`,
     next: mayForward
-      ? ' If it is not your subject either, forward it to main with neo.ask.forward {"to":"main"}; it can go nowhere else.'
+      ? ' It can be forwarded on only to main, with neo.ask.forward {"to":"main"}.'
       : '',
     message,
   });

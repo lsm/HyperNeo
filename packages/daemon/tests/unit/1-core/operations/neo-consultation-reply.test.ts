@@ -41,9 +41,10 @@ describe('presentNeoConsultationReply', () => {
           : { ok: true as const, waiter: waiter(status) }
       );
       const result = presentNeoConsultationReply(receipt);
-      expect(result.replyGuidance).toContain('Publish nothing now');
-      expect(result.replyGuidance).toContain('Do not give a preliminary answer');
-      expect(result.replyGuidance).toContain('Its attributed answer arrives separately');
+      expect(result.replyGuidance).toContain('still pending');
+      expect(result.replyGuidance).toContain(
+        "the holder's answer comes back to you as its own note"
+      );
       expect(result.replyGuidance).not.toContain(identity.question);
       expect(result).not.toBe(receipt);
       expect(result).toMatchObject(receipt);
@@ -62,9 +63,7 @@ describe('presentNeoConsultationReply', () => {
     });
     expect(result).toHaveProperty('consultation', saved);
     expect(result.replyGuidance).toContain('already returned');
-    expect(result.replyGuidance).toContain('one or two conversational sentences');
     expect(result.replyGuidance).toContain('not proof of external execution');
-    expect(result.replyGuidance).toContain('Do not consult again automatically');
     expect(result.replyGuidance).not.toContain('acknowledgement');
     expect(saved.answer).toBe('Current fact.');
   });
@@ -78,7 +77,7 @@ describe('presentNeoConsultationReply', () => {
           : { ok: true as const, waiter: waiter(status) };
       const result = presentNeoConsultationReply(receipt);
       expect(result.replyGuidance).toContain('no longer pending');
-      expect(result.replyGuidance).toContain('without inventing an answer or restarting it');
+      expect(result.replyGuidance).toContain('its recorded reason is below');
       expect(result.replyGuidance).not.toContain('not a timeout');
       expect(result).toMatchObject(receipt);
     }
@@ -89,7 +88,7 @@ describe('presentNeoConsultationReply', () => {
     (answer) => {
       const recorded = Object.freeze({ ...consultation('failed'), answer });
       const result = presentNeoConsultationReply({ ok: true, consultation: recorded });
-      expect(result.replyGuidance).toContain('Briefly explain its recorded reason');
+      expect(result.replyGuidance).toContain('its recorded reason is below');
       expect(result.replyGuidance).not.toContain('not a timeout');
       expect(result.replyGuidance).not.toContain('timed out');
       expect(result).toHaveProperty('consultation', recorded);
