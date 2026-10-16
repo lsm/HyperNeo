@@ -20,14 +20,11 @@ export function isNeoAskAnswerReady(ask: Pick<NeoAsk, 'doneItems'>): boolean {
 export function planNeoAnswerPublished(
   ask: NeoAsk,
   publicationId: string
-): { ticks: { item: NeoAskItem; evidence: string }[]; settle: boolean } | null {
+): { ticks: { item: NeoAskItem; evidence: string }[] } | null {
   if (ask.status === 'achieved' || ask.status === 'abandoned') return null;
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
   const ready = items.filter(isNeoAnswerReady);
   if (!ready.length) return null;
   const evidence = `Answered the human in publication ${publicationId}.`;
-  return {
-    ticks: ready.map((item) => ({ item, evidence })),
-    settle: items.every((item) => item.state === 'met' || isNeoAnswerReady(item)),
-  };
+  return { ticks: ready.map((item) => ({ item, evidence })) };
 }

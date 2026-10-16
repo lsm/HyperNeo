@@ -195,7 +195,7 @@ export function requireNeoWorkPrRefresh<
   Row extends { readAt: number },
 >(
   refresh: Refresh,
-  card: { row: Row | null; session: boolean },
+  card: { row: Row | null; session: boolean; changed?: boolean },
   now: number,
   closedDonePrefix: string
 ): { value: Refresh & { row: Row } } | { reason: 'not_due' } {
@@ -204,7 +204,7 @@ export function requireNeoWorkPrRefresh<
     !work.report?.startsWith(closedDonePrefix) &&
     card.session &&
     card.row &&
-    now - card.row.readAt >= NEO_WORK_PR_READ_MS
+    (card.changed || now - card.row.readAt >= NEO_WORK_PR_READ_MS)
     ? { value: { ...refresh, row: card.row } }
     : { reason: 'not_due' };
 }

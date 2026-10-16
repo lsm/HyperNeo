@@ -37,16 +37,9 @@ describe('isNeoAskAnswerReady', () => {
 });
 
 describe('planNeoAnswerPublished', () => {
-  test('meets the reported answers and settles only when nothing else is open', () => {
+  test('meets the reported answers', () => {
     expect(planNeoAnswerPublished(ask([item('i1', 'met'), answer]), 'p1')).toEqual({
       ticks: [{ item: answer, evidence: 'Answered the human in publication p1.' }],
-      settle: true,
-    });
-    expect(planNeoAnswerPublished(ask([item('i1', 'pending'), answer]), 'p1')?.settle).toBe(false);
-    const question = item('i3', 'needs_you', { kind: 'decision', options: ['Yes', 'No'] });
-    expect(planNeoAnswerPublished(ask([item('i1', 'met'), answer, question]), 'p1')).toEqual({
-      ticks: [{ item: answer, evidence: 'Answered the human in publication p1.' }],
-      settle: false,
     });
     expect(planNeoAnswerPublished(ask([answer], 'achieved'), 'p1')).toBeNull();
     expect(planNeoAnswerPublished(ask([item('i1', 'reported')]), 'p1')).toBeNull();
