@@ -269,7 +269,7 @@ describe('Neo recipient report owning operation', () => {
           message: { type: 'user', inputKind: 'system' },
         });
         const message = jobs(input.id)[0].payload.message as { message: { content: string } };
-        expect(message.message.content).toContain('untrusted evidence');
+        expect(message.message.content).toContain('A delegated session returned.');
         expect(message.message.content).toContain(JSON.stringify(work.originMessageId));
         expect(message.message.content).toContain(JSON.stringify(input.report));
         expect(await invoke(input, { ...recipient, sessionId })).toEqual(receipt(input, true));
@@ -421,7 +421,7 @@ describe('Neo recipient report owning operation', () => {
     });
     expect(consultation?.question).toContain(JSON.stringify(work.originMessageId));
     expect(consultation?.question).toContain(JSON.stringify(input.report));
-    expect(consultation?.question).toContain('goes to them as neo.ask.question');
+    expect(consultation?.question).toContain('An execution result for your project returned.');
     expect(consultation?.question).not.toContain('2 to 4 plain lines');
     expect(jobs(work.id)).toEqual([]);
     expect(jobs(`neo-consult:${id}:request`)).toHaveLength(1);

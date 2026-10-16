@@ -29,7 +29,6 @@ import {
   isNeoReceiptUnconfirmed,
   NEO_CARD_CONFIRM_MS,
   NEO_WORK_STUCK_STEPS_MS,
-  NEO_WORK_SUMMARY_NOTE,
   NEO_WORK_UNANCHORED_NOTE,
   NEO_WORK_UNANCHORED_SETTLE_MS,
   NEO_WORK_UNVERIFIED_REPLY_NOTE,
@@ -377,16 +376,6 @@ describe('driverWorkCall', () => {
     expect(
       driverWorkCall({ ...startTarget, adapter: 'hyperneo', model: 'glm-5.3' }, work).input
     ).toMatchObject({ adapter: 'hyperneo', model: 'glm-5.3' });
-  });
-});
-
-describe('NEO_WORK_SUMMARY_NOTE', () => {
-  test('acts on the report for its ask and leaves telling the human to trigger notes', () => {
-    expect(NEO_WORK_SUMMARY_NOTE).toContain('act on it for its ask');
-    expect(NEO_WORK_SUMMARY_NOTE).toContain(
-      'Do not publish: the daemon wakes you with a trigger note'
-    );
-    expect(NEO_WORK_SUMMARY_NOTE).not.toContain('neo.publication.publish');
   });
 });
 
@@ -1617,10 +1606,10 @@ describe('Neo work with a drivers target', () => {
       expect(notes.map(([target, id]) => [target, id])).toEqual([
         ['neo:root', 'work-1:done-check:0'],
       ]);
-      expect(notes[0][2]).toContain('neo.work.continue');
+      expect(notes[0][2]).toMatch(/Continuing it is refused once \d more of your wakes/);
       expect(notes[0][2]).toContain('- voice works');
       expect(notes[0][2]).toContain('Skeleton builds.');
-      expect(notes[0][2]).toContain('Follow the done-check steps in your system prompt');
+      expect(notes[0][2]).not.toContain('neo.work.continue');
       expect(service.workWakes.get('work-1')).toMatchObject({
         wakes: 1,
         note: 'work-1:done-check:0',
@@ -1633,8 +1622,7 @@ describe('Neo work with a drivers target', () => {
       await service.reconcile('work-1');
       expect(notes[1].slice(0, 2)).toEqual(['neo:root', 'work-1:done-check:5:s:5']);
       expect(notes[1][2]).toContain('continue_budget_spent');
-      expect(notes[1][2]).toContain('Do not continue it.');
-      expect(notes[1][2]).toContain('Follow the done-check steps in your system prompt');
+      expect(notes[1][2]).toContain('It can no longer be continued.');
     } finally {
       db.close();
     }
@@ -1728,7 +1716,7 @@ describe('Neo work with a drivers target', () => {
       expect(JSON.parse(notes[0].slice(notes[0].indexOf('\n{'))).ask.cards).toEqual([
         { id: 'work-2', title: 'Ship the docs', status: 'proposed', pr: 'waiting' },
       ]);
-      expect(notes[0]).toContain('Follow the done-check steps in your system prompt');
+      expect(notes[0]).toContain('which you opened');
     } finally {
       db.close();
     }
@@ -3201,7 +3189,7 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(notes.map(([target, id]) => [target, id])).toEqual([['neo:root', 'work-1']]);
-      expect(notes[0][2]).toContain(NEO_WORK_SUMMARY_NOTE);
+      expect(notes[0][2]).toContain('A delegated session returned.');
       expect(notes[0][2]).toContain('"workId":"work-1"');
     } finally {
       db.close();
@@ -3300,7 +3288,7 @@ describe('Neo work with a drivers target', () => {
       now += 60_000;
       await service.refreshDriverWork();
       expect(notes.map(([target, id]) => [target, id])).toEqual([['neo:root', 'work-1:stall:5']]);
-      expect(notes[0][2]).toContain('work.stop');
+      expect(notes[0][2]).toContain('no activity for 20 minutes.\n');
       expect(notes[0][2]).not.toContain('continue_budget_spent');
       expect(notes[0][2]).toContain('- voice works');
       activity = 6;
@@ -3342,10 +3330,10 @@ describe('Neo work with a drivers target', () => {
       expect(notes.map(([id]) => id)).toEqual(
         [2, 24, 48, 72].map((hours) => `work-1:stall:${since + hours * 60 * 60_000}`)
       );
-      expect(notes[0][1]).toContain('neo.work.continue');
-      expect(notes[1][1]).not.toContain('neo.work.continue {id');
-      expect(notes[1][1]).toContain('tell the human');
-      expect(notes[3][1]).toContain('propose closing it');
+      expect(notes[0][1]).toContain('in progress for 2 hours without a result.\n');
+      expect(notes[1][1]).toContain('It can no longer be continued.');
+      expect(notes[3][1]).toContain('It looks abandoned.');
+      expect(notes.join('\n')).not.toMatch(/neo\.work\.|tell the human/);
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
     } finally {
       clock.mockRestore();
@@ -4353,7 +4341,7 @@ describe('Neo work with a drivers target', () => {
     try {
       await service.start('work-1');
       expect(delivered.map(([, id]) => id)).toEqual(['work-1']);
-      expect(delivered[0][2]).toContain('call neo.work.retry {id} on this same work');
+      expect(delivered[0][2]).toContain('This hand-off never started.');
       expect(service.isRetryable('work-1')).toBe(true);
       expect(service.driverTargets.receipts(['work-1'])).toHaveLength(1);
 

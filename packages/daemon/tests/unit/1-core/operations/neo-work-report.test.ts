@@ -471,7 +471,7 @@ describe('NeoService recipient report facade', () => {
         message: { type: 'user', inputKind: 'system' },
       });
       const message = jobs[0].payload.message as { message: { content: string } };
-      expect(message.message.content).toContain('untrusted evidence');
+      expect(message.message.content).toContain('A delegated session returned.');
       expect(message.message.content).toContain('"originMessageId":"ask-A"');
       expect(message.message.content).toContain(JSON.stringify(input.report));
       expect(await service.reportWork(input, caller)).toMatchObject({

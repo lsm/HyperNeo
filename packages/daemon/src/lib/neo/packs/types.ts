@@ -28,7 +28,6 @@ export interface NeoPackBrief {
 export interface NeoPackFragment {
   id: string;
   instructions: string;
-  inPrompt?: boolean;
 }
 
 export interface NeoPackCardFacts {

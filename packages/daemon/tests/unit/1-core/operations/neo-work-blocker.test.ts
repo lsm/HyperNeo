@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   neoEnvironmentMoveNote,
   neoWorkBlockerLine,
@@ -148,14 +149,15 @@ describe('planNeoEnvironmentMove', () => {
 });
 
 describe('neoEnvironmentMoveNote', () => {
-  test('tells Neo to propose the move and ask the human only to approve it', () => {
+  test('states the failure and the adapters; the system prompt says to propose the move', () => {
     const note = neoEnvironmentMoveNote({
       failure: environment.what,
       adapters: ['claude-desktop', 'hyperneo'],
     });
     expect(note).toContain(environment.what);
     expect(note).toContain('claude-desktop, hyperneo');
-    expect(note).toContain('do not ask the human for access');
+    expect(note).not.toMatch(/[Dd]o not|[Pp]ropose/);
+    expect(neoPrompt(null)).toContain("When the worker's own environment failed");
     expect(neoEnvironmentMoveNote(null)).toBe('');
   });
 

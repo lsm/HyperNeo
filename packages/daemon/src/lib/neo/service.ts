@@ -198,7 +198,6 @@ import {
   messageOpening,
   NEO_DRIVER_START_INTERRUPTED,
   NEO_WORK_STALL_MS,
-  NEO_WORK_SUMMARY_NOTE,
   type NeoDriverTarget,
   type NeoWorkRetryCard,
   neoCardSent,
@@ -329,7 +328,6 @@ import {
   neoPackFragment,
   neoPacks,
   neoPackTickWrite,
-  neoSettingsPackBriefs,
   planNeoPackTicks,
   readNeoAskEventTicks,
   readNeoAskPackEvidence,
@@ -2724,15 +2722,7 @@ export class NeoService {
   }
 
   askPackFragment(ask: NeoAsk | null | undefined): NeoPackFragment | null {
-    const fragment = neoPackFragment(ask, this.installedPacks());
-    return fragment
-      ? {
-          ...fragment,
-          inPrompt: neoSettingsPackBriefs(this.db.getGlobalSettings?.().neo).some(
-            (pack) => pack.id === fragment.id && !!pack.guidance
-          ),
-        }
-      : null;
+    return neoPackFragment(ask, this.installedPacks());
   }
 
   private get cardPrDeps(): NeoCardPrDeps {
@@ -3498,11 +3488,9 @@ export class NeoService {
           })}`
         : '';
     const packNote = this.askPackFragment(this.askRecords.forWork(work.id));
-    const packLine = packNote
-      ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: packNote.id })}${packNote.inPrompt ? '' : `\n${packNote.instructions}`}\n`
-      : '';
+    const packLine = packNote ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: packNote.id })}\n` : '';
     const move = await this.environmentMoveNote(work);
-    const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote, summary: NEO_WORK_SUMMARY_NOTE })}${move}${packLine}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, projectId: work.projectId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
+    const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote })}${move}${packLine}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, projectId: work.projectId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
     const messageId = neoWorkReturnMessageId(
       work.id,
       retries,
@@ -3601,6 +3589,7 @@ export class NeoService {
     const plan = planNeoAskTickStatus(ask, {
       cardLive: neoAskLiveOutcomeCards(ask, cards).length > 0,
       outcome,
+      changes: this.askRecords.itemChanges(ask.id),
     });
     const written = writeNeoAskTickStatus(this.askRecords, ask, plan);
     if (plan.status === 'achieved' && written)

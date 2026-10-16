@@ -67,9 +67,11 @@ describe('direct human publication prompt', () => {
     'tells %s to publish only a new fact, never an interim post',
     (projectId) => {
       const prompt = delivered(projectId);
-      expect(prompt).toContain('You publish to the human when you have something new for them');
       expect(prompt).toContain(
-        'There are no interim or status posts, and never repeat yourself: publish the answer, then only a new fact'
+        'Speak to the human when there is something new they need to know or a decision they must make; otherwise stay silent.'
+      );
+      expect(prompt).toContain(
+        'there are no interim or status posts, and nothing they have already read is said again'
       );
       expect(prompt).not.toContain('interim:true');
     }

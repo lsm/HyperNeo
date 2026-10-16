@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { NEO_UNFINISHED_REPLY } from '../../../../src/lib/neo/direct-reply-fallback.ts';
 import { adoptNeoFilePacks } from '../../../../src/lib/neo/packs/index.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
@@ -97,6 +98,8 @@ const opening = {
   ],
   doneSource: 'human',
 };
+
+const metLast = { cardLive: false, changes: { metAt: 2, removedAt: 1 } };
 
 describe('isNeoTurnAskReadable', () => {
   test('root reads any turn ask, a holder only its own project, anyone else none', () => {
@@ -212,6 +215,92 @@ describe('neo.ask operations', () => {
       delivers: [],
     });
   }
+
+  test('a question the daemon withdraws after the last met item still lets the ask settle', async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const askId = (
+        await invoke('neo.ask.open', {
+          ...opening,
+          doneWhen: undefined,
+          doneItems: [{ text: 'NOTICE file added', check: null }],
+        })
+      ).value!.ask!.id;
+      await invoke('neo.ask.question', {
+        askId,
+        question: 'Which wording?',
+        options: ['Short', 'Long'],
+        kind: 'decision',
+      });
+      now += 1;
+      await invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met', evidence: 'added' });
+      now += 1;
+      service.askRecords.editItems(
+        askId,
+        { add: [], remove: ['i2'], removedReason: 'No longer needed: the card moved on' },
+        now
+      );
+      service.writeAskStatus(service.askRecords.get(askId)!);
+      expect(service.askRecords.get(askId)?.status).toBe('achieved');
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test('removing the pending item left after a met one does not settle the ask; a later met tick does', async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const two = [
+        { text: 'Notice wording chosen', check: null },
+        { text: 'NOTICE file added', check: null },
+        { text: 'README links it', check: null },
+      ];
+      const askId = (
+        await invoke('neo.ask.open', { ...opening, doneWhen: undefined, doneItems: two })
+      ).value!.ask!.id;
+      const tick = (itemId: string) =>
+        invoke('neo.ask.tick', { askId, itemId, state: 'met', evidence: `${itemId} done` });
+      now += 1;
+      await tick('i1');
+      now += 1;
+      humanSays('Never mind, drop the NOTICE file.');
+      await invoke('neo.ask.edit', {
+        askId,
+        remove: ['i2'],
+        humanSaid: 'Never mind, drop the NOTICE file.',
+      });
+      now += 1;
+      await tick('i3');
+      expect(service.askRecords.get(askId)?.status).toBe('achieved');
+      const dropped = (
+        await invoke('neo.ask.open', {
+          ...opening,
+          requestKey: 'dropped',
+          doneWhen: undefined,
+          doneItems: two.slice(0, 2),
+        })
+      ).value!.ask!.id;
+      now += 1;
+      await invoke('neo.ask.tick', {
+        askId: dropped,
+        itemId: 'i1',
+        state: 'met',
+        evidence: 'chosen',
+      });
+      now += 1;
+      await invoke('neo.ask.edit', {
+        askId: dropped,
+        remove: ['i2'],
+        humanSaid: 'Never mind, drop the NOTICE file.',
+      });
+      expect(service.askRecords.get(dropped)?.doneItems?.[1]?.removed).toBe(true);
+      expect(service.askRecords.get(dropped)?.status).toBe('open');
+    } finally {
+      clock.mockRestore();
+    }
+  });
 
   test('an item records whether it is an answer or a state outcome, and an answer carries no check', async () => {
     const opened = await invoke('neo.ask.open', {
@@ -764,21 +853,18 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true } });
   });
 
-  test("a note leaves out an enabled pack's guidance, which the system prompt carries", () => {
+  test('an ask names its installed pack', () => {
     const filePack = {
       id: 'inbox-triage',
       describe: 'Inbox triage',
       instructions: () => 'Triage the inbox.',
     };
     service.filePacks = adoptNeoFilePacks([filePack]);
-    db.updateGlobalSettings({ neo: { packs: ['coding', 'inbox-triage'] } });
+    db.updateGlobalSettings({ neo: { packs: ['coding'] } });
     try {
-      for (const id of ['coding', 'inbox-triage'])
-        expect(service.askPackFragment({ pack: id } as NeoAsk)?.inPrompt).toBe(true);
-      db.updateGlobalSettings({ neo: { packs: ['coding'] } });
-      expect(service.askPackFragment({ pack: 'inbox-triage' } as NeoAsk)).toMatchObject({
+      expect(service.askPackFragment({ pack: 'inbox-triage' } as NeoAsk)).toEqual({
+        id: 'inbox-triage',
         instructions: 'Triage the inbox.',
-        inPrompt: false,
       });
     } finally {
       adoptNeoFilePacks([]);
@@ -1937,10 +2023,16 @@ describe('neo.ask operations', () => {
     });
     const ask = { status: 'open', waitingItem: null } as unknown as NeoAsk;
     expect(
-      planNeoAskTickStatus({ ...ask, doneItems: [item('i1', 'reported'), item('i2', 'pending')] })
+      planNeoAskTickStatus(
+        { ...ask, doneItems: [item('i1', 'reported'), item('i2', 'pending')] },
+        metLast
+      )
     ).toEqual({ status: 'unchanged' });
     expect(
-      planNeoAskTickStatus({ ...ask, doneItems: [item('i1', 'reported'), item('i2', 'met')] })
+      planNeoAskTickStatus(
+        { ...ask, doneItems: [item('i1', 'reported'), item('i2', 'met')] },
+        metLast
+      )
     ).toEqual({ status: 'waiting', outcome: 'Confirm: i1', item: 'i1' });
   });
 
@@ -3906,7 +3998,16 @@ describe('planNeoAskTickStatus', () => {
       { status: 'unchanged' },
     ],
   ])('%s', (_label, overrides, plan) => {
-    expect(planNeoAskTickStatus({ ...ask, ...overrides })).toEqual(plan);
+    expect(planNeoAskTickStatus({ ...ask, ...overrides }, metLast)).toEqual(plan);
+  });
+
+  test('a removal after the last met item never settles the ask achieved', () => {
+    expect(
+      planNeoAskTickStatus(
+        { ...ask, doneItems: [item('i1', 'pending', true), item('i2', 'met')] },
+        { cardLive: false, changes: { metAt: 1, removedAt: 2 } }
+      )
+    ).toEqual({ status: 'unchanged' });
   });
 });
 
@@ -4146,39 +4247,33 @@ describe('driverDoneCheckNote', () => {
 
   const sibling = { id: 'w2', title: 'Ship the docs', status: 'queued' as const };
 
-  test('asks the session that opened the ask to settle it, and only that session', () => {
+  test('shows the owning session the whole ask, and another session only whose ask it is', () => {
     const owned = driverDoneCheckNote(work, goal, 0, null, { ask, cards: [sibling] });
-    expect(owned).toContain('Follow the done-check steps in your system prompt');
+    expect(owned).toContain('which you opened');
     expect(JSON.parse(owned.slice(owned.indexOf('\n{'))).ask.cards).toEqual([sibling]);
     const other = driverDoneCheckNote({ ...work, originSessionId: 'holder' }, goal, 0, null, {
       ask,
       cards: [sibling],
     });
-    expect(other).toContain('do not settle the ask');
-    expect(other).not.toContain('settle the ask: neo.ask.settle');
+    expect(other).toContain('which another Neo session opened and settles');
     expect(JSON.parse(other.slice(other.indexOf('\n{'))).ask.cards).toBeUndefined();
   });
 
-  test('tells the owner to settle before telling the human, also once the budget is spent', () => {
+  test('states a spent budget as a fact, with no command', () => {
     const spent = driverDoneCheckNote(work, goal, 5, 'continue_budget_spent', { ask });
-    expect(spent).toContain(
-      'Do not continue it. Follow the done-check steps in your system prompt'
-    );
+    expect(spent).toContain('continue_budget_spent It can no longer be continued.');
+    expect(spent).not.toMatch(/Do not|Follow the|tell the human/);
   });
 
-  test('names the ask pack, and embeds its guidance only when the system prompt lacks it', () => {
-    const fragment = { id: 'coding', instructions: NEO_PACK_CODING_INSTRUCTIONS };
-    const inPrompt = driverDoneCheckNote(work, goal, 0, null, {
-      ask: { ...ask, pack: 'coding' },
-      pack: { ...fragment, inPrompt: true },
-    });
-    expect(inPrompt).toContain('This ask works under the coding pack');
-    expect(inPrompt).not.toContain(NEO_PACK_CODING_INSTRUCTIONS);
+  test('names the ask pack and leaves its guidance to the system prompt', () => {
     const noted = driverDoneCheckNote(work, goal, 0, null, {
       ask: { ...ask, pack: 'coding' },
-      pack: fragment,
+      pack: { id: 'coding', instructions: NEO_PACK_CODING_INSTRUCTIONS },
     });
-    expect(noted).toContain(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(noted).toContain(
+      'This ask works under the coding pack; neo.pack.read {id} returns its guidance.'
+    );
+    expect(noted).not.toContain(NEO_PACK_CODING_INSTRUCTIONS);
     expect(driverDoneCheckNote(work, goal, 0, null, { ask, pack: null })).not.toContain(
       'This ask works under'
     );
@@ -4223,16 +4318,15 @@ describe('neoPrompt decision items', () => {
 });
 
 describe('driverNeedsYouNote', () => {
-  test('asks Neo to put the decision to the human as neo.ask.question with its kind, not a post', () => {
+  test('states that the work waits on the user; the system prompt says how to ask', () => {
     const note = driverNeedsYouNote(
       { id: 'w1', title: 'Fix startup' },
       { adapter: 'claude-desktop', daemon: 'laptop', id: 't1' },
       'A or B?'
     );
-    expect(note).toContain(
-      'ask it with neo.ask.question {askId, question, decides, options, kind}'
-    );
-    expect(note).toContain('do not publish');
+    expect(note).toContain('Work you handed off is waiting on the user.');
+    expect(note).not.toMatch(/neo\.ask\.question|[Dd]o not/);
+    expect(neoPrompt(null)).toContain('When work is waiting on the user');
   });
 });
 
@@ -4242,6 +4336,10 @@ describe('neoPrompt dropped items', () => {
       'when the human drops part of an ask, remove that item in that turn with humanSaid quoting their words (it stays listed as removed, with that reason), and never tick a dropped item met'
     );
     expect(neoPrompt(null)).toContain('Only the human drops unfinished work');
+  });
+
+  test('lists abandoned among the settle outcomes', () => {
+    expect(neoPrompt(null)).toContain('"abandoned" when the human dropped it');
   });
 });
 

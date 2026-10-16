@@ -1306,7 +1306,7 @@ export function planNeoAskEdit(
 
 export function planNeoAskTickStatus(
   ask: NeoAsk,
-  settle: { cardLive: boolean; outcome?: string } = { cardLive: false }
+  settle: { cardLive: boolean; outcome?: string; changes: { metAt: number; removedAt: number } }
 ):
   | { status: 'achieved'; outcome: string; evidence: string }
   | { status: 'waiting'; outcome: string; item: string }
@@ -1315,7 +1315,13 @@ export function planNeoAskTickStatus(
   if (isFinal(ask)) return { status: 'unchanged' };
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
   const held = ask.status === 'waiting' && !ask.waitingItem;
-  if (!held && !settle.cardLive && items.length && items.every((item) => item.state === 'met')) {
+  if (
+    settle.changes.metAt > settle.changes.removedAt &&
+    !held &&
+    !settle.cardLive &&
+    items.length &&
+    items.every((item) => item.state === 'met')
+  ) {
     const evidence = [...new Set(items.map((item) => item.evidence ?? item.text))].join('; ');
     return { status: 'achieved', outcome: settle.outcome ?? evidence, evidence };
   }
