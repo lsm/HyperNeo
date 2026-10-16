@@ -4233,6 +4233,13 @@ describe('neoPrompt dropped items', () => {
     );
     expect(neoPrompt(null)).toContain('Only the human drops unfinished work');
   });
+
+  test('settles an ask the human drops whole as abandoned, not by removing its items', () => {
+    expect(neoPrompt(null)).toContain(
+      'When the human drops the whole ask, settle it abandoned with neo.ask.settle instead of removing its items'
+    );
+    expect(neoPrompt(null)).toContain('"abandoned" when the human dropped it');
+  });
 });
 
 describe('neoPrompt stale failures', () => {
