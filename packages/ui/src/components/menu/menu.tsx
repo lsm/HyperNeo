@@ -1,3 +1,4 @@
+import { useTransitionAttrs } from '../../internal/use-transition-attrs.ts';
 import type { RefObject } from 'preact';
 import { createContext, createElement, Fragment } from 'preact';
 import { useCallback, useContext, useEffect, useRef, useState } from 'preact/hooks';
@@ -70,47 +71,6 @@ function useMenuContext(component: string): MenuState {
     throw new Error(`<${component}> must be used within a <Menu>`);
   }
   return ctx;
-}
-
-function useTransitionAttrs(open: boolean, transition: boolean) {
-  const [transitionAttrs, setTransitionAttrs] = useState<Record<string, ''>>({});
-  const prevOpenRef = useRef(open);
-
-  useEffect(() => {
-    if (!transition) {
-      setTransitionAttrs({});
-      return;
-    }
-
-    const prev = prevOpenRef.current;
-    prevOpenRef.current = open;
-
-    if (open && !prev) {
-      setTransitionAttrs({ 'data-transition': '', 'data-enter': '' });
-      const raf = requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          setTransitionAttrs({});
-        });
-      });
-      return () => cancelAnimationFrame(raf);
-    }
-
-    if (!open && prev) {
-      setTransitionAttrs({ 'data-transition': '', 'data-leave': '', 'data-closed': '' });
-      const raf = requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          setTransitionAttrs({ 'data-closed': '' });
-        });
-      });
-      return () => cancelAnimationFrame(raf);
-    }
-
-    if (!open) {
-      setTransitionAttrs({ 'data-closed': '' });
-    }
-  }, [open, transition]);
-
-  return transitionAttrs;
 }
 
 interface MenuProps {
