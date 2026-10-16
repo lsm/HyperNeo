@@ -20,14 +20,16 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedRuntimeSession } from '../../helpers/seed-runtime-session.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createTables(db);
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (
 			id TEXT PRIMARY KEY,
@@ -106,6 +108,7 @@ function makeMockTaskAgentManager(
 ) {
   const spawned: string[] = [];
   const defaultInject = async (sessionId: string, message: string): Promise<string> => {
+    seedRuntimeSession(db, sessionId);
     sdkMessages.saveSDKMessage(sessionId, {
       type: 'user',
       message: { role: 'user', content: message },
@@ -448,6 +451,7 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
           : [],
       result: opts.promptTooLong || opts.nonOverflowError ? '' : 'ok',
     };
+    seedRuntimeSession(db, sessionId);
     sdkMessageRepo.saveSDKMessage(sessionId, message as never);
     const minutesAgo = opts.minutesAgo ?? 20;
     const ts = new Date(Date.now() - minutesAgo * 60_000).toISOString();
@@ -459,6 +463,7 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     content: string,
     opts: { minutesAgo?: number } = {}
   ): void {
+    seedRuntimeSession(db, sessionId);
     sdkMessageRepo.saveSDKMessage(sessionId, {
       type: 'user',
       message: { role: 'user', content },
@@ -483,6 +488,7 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     return makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, sdkMessageRepo, db, {
       inject: async (sessionId, message) => {
         injections.push({ sessionId, message });
+        seedRuntimeSession(db, sessionId);
         sdkMessageRepo.saveSDKMessage(sessionId, {
           type: 'user',
           message: { role: 'user', content: message },
@@ -859,6 +865,7 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
         injectCallCount += 1;
         if (message === '/compact') {
           injections.push({ sessionId, message });
+          seedRuntimeSession(db, sessionId);
           sdkMessageRepo.saveSDKMessage(sessionId, {
             type: 'user',
             message: { role: 'user', content: message },
