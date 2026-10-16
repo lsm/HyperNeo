@@ -244,6 +244,7 @@ function claudeDesktopAdapters(
   const deps: ClaudeDesktopAdapterDeps = {
     sessionsDir,
     sendInbox: inbox?.send,
+    admitInbox: inbox?.admit,
     prepareExecution,
     projectsDir: join(homedir(), '.claude', 'projects'),
     machine: hostname(),

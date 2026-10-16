@@ -94,6 +94,7 @@ export interface ClaudeLiveSession {
 }
 
 export interface ClaudeDesktopAdapterDeps {
+  admitInbox?: (context: WorkCallContext) => Gate<string>;
   sendInbox?: (
     sessionId: string,
     message: string,
@@ -984,9 +985,24 @@ export async function startClaudeSession(
   };
 }
 
+function requireClaudeStartReply(
+  request: StartRequest,
+  deps: ClaudeDesktopAdapterDeps,
+  context?: WorkCallContext
+): Gate<StartRequest> {
+  if (!deps.sendInbox) return { value: request };
+  if (!context || !deps.admitInbox)
+    return {
+      reason: reject('unsupported', 'The Claude inbox requires a session reply destination.'),
+    };
+  const destination = deps.admitInbox(context);
+  return 'reason' in destination ? destination : { value: request };
+}
+
 const runClaudeDesktopStart = (superpipe({})('claude-desktop-start-work') as PipelineAPI)
   .input(['request', 'deps', 'context'])
   .pipe(admitClaudeStartConfiguration, 'request', 'result:outcome')
+  .pipe(requireClaudeStartReply, ['outcome', 'deps', 'context'], 'result:outcome')
   .pipe(selectClaudeStartFolder, ['outcome', 'deps'], 'result:outcome')
   .pipe(startClaudeSession, ['outcome', 'request', 'deps', 'context'], 'outcome')
   .endAsync('outcome') as (

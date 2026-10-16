@@ -1,3 +1,4 @@
+import { requireClaudeReplyDestination } from '../../../../src/lib/drivers/claude-inbox-submit';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   appendFileSync,
@@ -96,6 +97,9 @@ describe('claude-desktop adapter against the app session records', () => {
     spawned = [];
     return createClaudeDesktopAdapter({
       sendInbox,
+      admitInbox: sendInbox
+        ? (context) => requireClaudeReplyDestination(context, { hasSession: () => false })
+        : undefined,
       sessionsDir: dir,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
@@ -125,33 +129,36 @@ describe('claude-desktop adapter against the app session records', () => {
     });
   }
 
-  test('the runtime inbox sender receives the original context without spawning a relay', async () => {
+  test.each([
+    { ok: true as const, value: { delivered: false, unconfirmed: true as const } },
+    { ok: false as const, reason: 'unreachable' as const, detail: 'owner changed' },
+  ])('uses the injected inbox result without relay fallback (%j)', async (reply) => {
     const calls: unknown[] = [];
     const context = { from: 'session:origin', caller: { source: 'internal' as const } };
-    const sender: NonNullable<ClaudeDesktopAdapterDeps['sendInbox']> = async (...args) => {
+    const driver = adapter(undefined, 0, undefined, undefined, async (...args) => {
       calls.push(args);
-      return { ok: true, value: { delivered: false, unconfirmed: true } };
-    };
-    const result = await adapter(undefined, 0, undefined, undefined, sender).send!(
-      { adapter: 'claude-desktop', id: 'local_a1' },
-      'exact text',
-      context
-    );
-    expect(result).toMatchObject({ ok: true, value: { unconfirmed: true } });
+      return reply;
+    });
+    expect(
+      await driver.send!({ adapter: 'claude-desktop', id: 'local_a1' }, 'exact text', context)
+    ).toEqual(reply);
     expect(calls).toEqual([['cli-a1', 'exact text', context]]);
     expect(spawned).toEqual([]);
   });
 
-  test('an inbox refusal is returned directly without a relay fallback', async () => {
-    const failure = { ok: false as const, reason: 'unreachable' as const, detail: 'owner changed' };
-    const result = await adapter(undefined, 0, undefined, undefined, async () => failure).send!(
-      { adapter: 'claude-desktop', id: 'local_a1' },
-      'text',
-      user
-    );
-    expect(result).toEqual(failure);
-    expect(spawned).toEqual([]);
-  });
+  test.each(['chat', 'session:missing'])(
+    'rejects reply target %s before start effects',
+    async (from) => {
+      const driver = adapter(undefined, 0, undefined, undefined, async () => {
+        throw new Error('not reached');
+      });
+      const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'd' };
+      expect(
+        await driver.start!({ place, title: 'new', message: 'task' }, { ...user, from })
+      ).toMatchObject({ ok: false, reason: from === 'chat' ? 'unsupported' : 'unreachable' });
+      expect(spawned).toEqual([]);
+    }
+  );
 
   test('status exposes execution cwd without requiring a transcript', async () => {
     const result = await adapter().status!({ adapter: 'claude-desktop', id: 'local_a1' });

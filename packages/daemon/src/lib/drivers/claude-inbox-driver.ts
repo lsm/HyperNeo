@@ -64,6 +64,7 @@ export function createClaudeInboxDriver(deps: ClaudeInboxDriverDeps) {
     },
   });
   return {
+    admit: (context: WorkCallContext) => requireClaudeReplyDestination(context, deps),
     send(sessionId: string, text: string, context: WorkCallContext) {
       const id = crypto.randomUUID();
       return submitClaudeInboxMessage(sessionId, { messageId: id, inputId: id, text }, context, {

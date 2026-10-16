@@ -84,6 +84,8 @@ describe('Claude inbox driver runtime', () => {
   });
 
   test('direct writes remain unconfirmed and keep a reply route after sending', async () => {
+    expect(driver.admit(context)).toEqual({ value: context.from });
+    expect(opens).toBe(0);
     const text = 'exact text\n"调查"';
     const result = await driver.send(sessionId, text, context);
     expect(result).toMatchObject({ ok: true, value: { delivered: false, unconfirmed: true } });
