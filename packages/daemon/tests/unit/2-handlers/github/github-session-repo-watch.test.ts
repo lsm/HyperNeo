@@ -115,6 +115,21 @@ describe('watchSessionRepo', () => {
       'private',
     ]);
   });
+
+  test('answers a rate-limited 403 with GitHub’s message, not as an access failure', async () => {
+    const db = freshDb();
+    extension = new GitHubEventExtension(db, 'token', {
+      getPollIntervalMs: () => 0,
+      fetchImpl: (async () =>
+        new Response('{"message":"API rate limit exceeded"}', {
+          status: 403,
+          headers: { 'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': '9999999999' },
+        })) as unknown as typeof fetch,
+    });
+    const answer = await extension.watchSessionRepo('acme', 'widgets');
+    expect(answer).toStartWith('The daemon could not start watching acme/widgets:');
+    expect(answer).toContain('rate limit');
+  });
 });
 
 describe('the first poll of a session watch', () => {

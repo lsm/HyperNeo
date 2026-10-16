@@ -3423,7 +3423,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
 function sessionRepoWatchFailure(owner: string, repo: string, error: unknown): string {
   const status = error instanceof GitHubApiError ? error.status : null;
-  return status === 401 || status === 403 || status === 404
+  return status === 401 || status === 404
     ? `The daemon's GitHub token can't read ${owner}/${repo} (GitHub answered ${status}), so none of its events arrive.`
     : `The daemon could not start watching ${owner}/${repo}: ${error instanceof Error ? error.message : String(error)}`;
 }
