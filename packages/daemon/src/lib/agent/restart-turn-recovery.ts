@@ -2,6 +2,12 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 
 export const RESTART_RECOVERY_PREFIX = 'restart-recovery:';
 
+export function resumedPromptUuid(messageId: string): string {
+  while (messageId.startsWith(RESTART_RECOVERY_PREFIX))
+    messageId = messageId.slice(RESTART_RECOVERY_PREFIX.length);
+  return messageId;
+}
+
 export const RESTART_RECOVERY_NOTE =
   'The daemon restarted while you were working on the request above, so that turn was cut off. Your earlier tool results are real. Continue from where you left off without repeating steps that already finished.';
 

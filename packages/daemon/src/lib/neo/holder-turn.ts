@@ -1,5 +1,6 @@
 import type { Database } from '../../storage/database.ts';
 import type { OperationCaller } from '../operations/registry.ts';
+import { resumedPromptUuid } from '../agent/restart-turn-recovery.ts';
 import { neoHumanTurnOrigin } from './notification-triggers.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
@@ -27,7 +28,7 @@ export class NeoHolderTurn {
       .getDatabase()
       .prepare(`SELECT id, status
       FROM neo_consultations WHERE session_id = ? AND 'neo-consult:' || id || ':request' = ?`)
-      .get(this.sessionId, messageId) as { id: string; status: string } | null;
+      .get(this.sessionId, resumedPromptUuid(messageId)) as { id: string; status: string } | null;
     if (item && item.status !== 'pending') {
       this.closed = true;
       return false;

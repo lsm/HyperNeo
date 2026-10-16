@@ -1,4 +1,4 @@
-import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import { z } from 'zod';
 
 const text = (max: number) =>
@@ -55,6 +55,41 @@ export const NeoPublicationSchema = z
       .optional(),
   })
   .strict();
+
+export const NeoPublicationResultSchema = z.union([
+  z.object({ accepted: z.literal(false), reason: z.string(), detail: z.string().optional() }),
+  z.object({
+    accepted: z.literal(true),
+    created: z.boolean(),
+    publication: NeoPublicationSchema.extend({
+      sequence: z.number().int().positive(),
+      createdAt: z.string(),
+    }),
+    answered: z
+      .object({ message: origin, publicationId: z.uuid(), revisionId: z.uuid() })
+      .nullable(),
+  }),
+]);
+
+export function withNeoPublicationAnswer(
+  receipt:
+    | { accepted: false; reason: string; detail?: string }
+    | { accepted: true; created: boolean; publication: NeoPublication },
+  message: { sessionId: string; messageId: string } | null
+) {
+  return receipt.accepted
+    ? {
+        ...receipt,
+        answered: message
+          ? {
+              message,
+              publicationId: receipt.publication.publicationId,
+              revisionId: receipt.publication.revisionId ?? receipt.publication.publicationId,
+            }
+          : null,
+      }
+    : receipt;
+}
 
 export function admitNeoPublication(
   input: unknown
