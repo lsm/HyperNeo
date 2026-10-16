@@ -93,16 +93,6 @@ export function isHtmlFile(path: string): boolean {
   return path.endsWith('.html');
 }
 
-export function getCacheControlHeader(path: string): string {
-  if (shouldHaveImmutableCache(path)) {
-    return 'public, max-age=31536000, immutable';
-  }
-  if (isHtmlFile(path)) {
-    return 'no-cache';
-  }
-  return 'public, max-age=3600';
-}
-
 export function isWebSocketPath(pathname: string): boolean {
   return pathname === '/ws';
 }
