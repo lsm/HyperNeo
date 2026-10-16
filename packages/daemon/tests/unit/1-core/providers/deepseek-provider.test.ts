@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { DeepSeekProvider } from '../../../../src/lib/providers/deepseek-provider';
 import {
-  recordProviderFailure,
+  classifyProviderFailure,
+  recordClassifiedProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 
@@ -296,7 +297,10 @@ describe('DeepSeekProvider', () => {
 
     it('surfaces a recorded credential failure as unauthenticated', async () => {
       const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'invalid-key' });
-      recordProviderFailure('deepseek', new Error('DeepSeek API key rejected (HTTP 401)'));
+      recordClassifiedProviderFailure(
+        'deepseek',
+        classifyProviderFailure(new Error('DeepSeek API key rejected (HTTP 401)'))
+      );
 
       const status = await provider.getAuthStatus();
 
@@ -307,7 +311,10 @@ describe('DeepSeekProvider', () => {
 
     it('stays authenticated but degraded for a recorded transient failure', async () => {
       const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'test-key' });
-      recordProviderFailure('deepseek', new Error('DeepSeek probe failed (HTTP 503)'));
+      recordClassifiedProviderFailure(
+        'deepseek',
+        classifyProviderFailure(new Error('DeepSeek probe failed (HTTP 503)'))
+      );
 
       const status = await provider.getAuthStatus();
 

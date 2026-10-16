@@ -24,11 +24,6 @@ export interface ScopeTableConfig {
   description: string;
 }
 
-export interface ScopeFilterResult {
-  whereClause: string;
-  params: unknown[];
-}
-
 const COLUMN_BLACKLISTS: Record<string, string[]> = {
   sessions: ['config', 'session_context'],
   rooms: ['config'],
@@ -449,44 +444,4 @@ const SCOPE_CONFIGS: Record<DbScopeType, ScopeTableConfig[]> = {
 
 export function getScopeConfig(scopeType: DbScopeType): ScopeTableConfig[] {
   return SCOPE_CONFIGS[scopeType];
-}
-
-export function buildScopeFilter(
-  tableConfig: ScopeTableConfig,
-  scopeValue: string
-): ScopeFilterResult {
-  if (!tableConfig.scopeColumn && !tableConfig.scopeJoin && !tableConfig.scopeLike) {
-    return { whereClause: '', params: [] };
-  }
-
-  if (tableConfig.scopeColumn) {
-    return {
-      whereClause: `${tableConfig.scopeColumn} = ?`,
-      params: [scopeValue],
-    };
-  }
-
-  if (tableConfig.scopeLike) {
-    const { column, patternPrefix, patternSuffix } = tableConfig.scopeLike;
-    return {
-      whereClause: `${column} LIKE ?`,
-      params: [`${patternPrefix}${scopeValue}${patternSuffix}`],
-    };
-  }
-
-  if (tableConfig.scopeJoin) {
-    const join = tableConfig.scopeJoin;
-    if (join.likePrefix !== undefined) {
-      return {
-        whereClause: `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} LIKE ?)`,
-        params: [`${join.likePrefix}${scopeValue}${join.likeSuffix ?? ''}`],
-      };
-    }
-    return {
-      whereClause: `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} = ?)`,
-      params: [scopeValue],
-    };
-  }
-
-  return { whereClause: '', params: [] };
 }

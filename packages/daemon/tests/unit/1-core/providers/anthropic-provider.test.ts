@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { AnthropicProvider } from '../../../../src/lib/providers/anthropic-provider';
 import {
-  recordProviderFailure,
+  classifyProviderFailure,
+  recordClassifiedProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 
@@ -392,7 +393,10 @@ describe('AnthropicProvider', () => {
 
     it('surfaces a recorded credential failure as unauthenticated', async () => {
       process.env.ANTHROPIC_API_KEY = 'revoked-key';
-      recordProviderFailure('anthropic', new Error('SDK credential rejected (HTTP 401)'));
+      recordClassifiedProviderFailure(
+        'anthropic',
+        classifyProviderFailure(new Error('SDK credential rejected (HTTP 401)'))
+      );
 
       const status = await provider.getAuthStatus();
 
@@ -403,7 +407,10 @@ describe('AnthropicProvider', () => {
 
     it('stays authenticated but degraded for a recorded transient failure', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
-      recordProviderFailure('anthropic', new Error('SDK model load timeout'));
+      recordClassifiedProviderFailure(
+        'anthropic',
+        classifyProviderFailure(new Error('SDK model load timeout'))
+      );
 
       const status = await provider.getAuthStatus();
 

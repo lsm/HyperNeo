@@ -17,7 +17,8 @@ import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 import { CODEX_MODEL_POLICY } from '../../../../src/lib/providers/codex-model-discovery';
 import {
-  recordProviderFailure,
+  classifyProviderFailure,
+  recordClassifiedProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 
@@ -278,7 +279,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
         expires: Date.now() + 3600_000,
       });
       provider = makeProvider({}, hyperneoDir, codexDir);
-      recordProviderFailure('anthropic-codex', new Error('Codex probe failed (HTTP 503)'));
+      recordClassifiedProviderFailure(
+        'anthropic-codex',
+        classifyProviderFailure(new Error('Codex probe failed (HTTP 503)'))
+      );
 
       const result = await provider.getAuthStatus();
 

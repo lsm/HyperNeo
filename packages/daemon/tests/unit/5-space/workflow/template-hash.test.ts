@@ -3,7 +3,6 @@ import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   buildWorkflowFingerprint,
   computeWorkflowHash,
-  workflowsMatchFingerprint,
 } from '../../../../src/lib/workflows/template-hash';
 
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
@@ -278,7 +277,7 @@ describe('buildWorkflowFingerprint', () => {
     expect(
       (buildWorkflowFingerprint(blank) as Record<string, unknown>).nodeAgentTemplateKeys
     ).toBeUndefined();
-    expect(workflowsMatchFingerprint(base, blank)).toBe(true);
+    expect(computeWorkflowHash(blank)).toBe(computeWorkflowHash(base));
   });
 });
 
@@ -477,108 +476,6 @@ describe('computeWorkflowHash', () => {
       ],
     });
     expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
-  });
-});
-
-describe('workflowsMatchFingerprint', () => {
-  it('returns true for structurally identical workflows', () => {
-    const wf1 = makeWorkflow();
-    const wf2 = makeWorkflow({ id: 'wf-different-id', layout: { n1: { x: 42, y: 42 } } });
-    expect(workflowsMatchFingerprint(wf1, wf2)).toBe(true);
-  });
-
-  it('distinguishes workflows that differ only in slot templateKey refs', () => {
-    const swe = makeWorkflow({
-      nodes: [
-        {
-          id: 'n1',
-          name: 'Coder',
-          agents: [{ agentId: '', templateKey: 'worker.swe', name: 'Coder' }],
-        },
-        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'a2', name: 'Reviewer' }] },
-      ],
-    });
-    const qa: SpaceWorkflow = {
-      ...swe,
-      nodes: swe.nodes.map((n) =>
-        n.name === 'Coder'
-          ? { ...n, agents: n.agents.map((a) => ({ ...a, templateKey: 'worker.qa' })) }
-          : n
-      ),
-    };
-    expect(workflowsMatchFingerprint(swe, qa)).toBe(false);
-  });
-
-  it('returns false when node structure differs', () => {
-    const wf1 = makeWorkflow({
-      nodes: [{ id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'Coder' }] }],
-    });
-    const wf2 = makeWorkflow({
-      nodes: [
-        { id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'Coder' }] },
-        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'a2', name: 'Reviewer' }] },
-      ],
-    });
-    expect(workflowsMatchFingerprint(wf1, wf2)).toBe(false);
-  });
-
-  it('returns false when an agent slot toolGuards set changes (task #866)', () => {
-    const guard = {
-      matcher: 'Bash',
-      pattern: 'gh pr merge',
-      decision: 'deny' as const,
-      reason: 'no',
-    };
-    const wf1 = makeWorkflow({
-      nodes: [{ id: 'n1', name: 'Merger', agents: [{ agentId: 'a1', name: 'Merger' }] }],
-    });
-    const wf2 = makeWorkflow({
-      nodes: [
-        {
-          id: 'n1',
-          name: 'Merger',
-          agents: [{ agentId: 'a1', name: 'Merger', toolGuards: [guard] }],
-        },
-      ],
-    });
-    expect(workflowsMatchFingerprint(wf1, wf2)).toBe(false);
-    expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
-    expect(
-      (buildWorkflowFingerprint(wf1) as Record<string, unknown>).nodeAgentToolGuards
-    ).toBeUndefined();
-    expect((buildWorkflowFingerprint(wf2) as Record<string, unknown>).nodeAgentToolGuards).toEqual([
-      `Merger|Merger|${JSON.stringify([guard])}`,
-    ]);
-  });
-
-  it('returns false when an agent slot eventInterests set changes (task #907)', () => {
-    const interest = {
-      topicFrom: {
-        source: 'primaryLink',
-        pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
-      },
-      label: 'My PR events',
-    };
-    const wf1 = makeWorkflow({
-      nodes: [{ id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'coder' }] }],
-    });
-    const wf2 = makeWorkflow({
-      nodes: [
-        {
-          id: 'n1',
-          name: 'Coder',
-          agents: [{ agentId: 'a1', name: 'coder', eventInterests: [interest] }],
-        },
-      ],
-    });
-    expect(workflowsMatchFingerprint(wf1, wf2)).toBe(false);
-    expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
-    expect(
-      (buildWorkflowFingerprint(wf1) as Record<string, unknown>).nodeAgentEventInterests
-    ).toBeUndefined();
-    expect(
-      (buildWorkflowFingerprint(wf2) as Record<string, unknown>).nodeAgentEventInterests
-    ).toEqual([`Coder|coder|${JSON.stringify([interest])}`]);
   });
 });
 

@@ -29,8 +29,6 @@ import { humanSessionColumnsPredicate } from '../../storage/schema/session-count
 import { Logger } from '../logger.ts';
 import { mapActiveTurnEntryRow } from './activity-preview.ts';
 
-export { buildActiveTurnSummariesFromRows } from './activity-preview.ts';
-
 export interface NamedQuery {
   sql: string;
   paramCount: number;

@@ -28,7 +28,3 @@ export function computeAgentTemplateHash(agent: AgentTemplateInput): string {
   const json = JSON.stringify(fp);
   return createHash('sha256').update(json).digest('hex');
 }
-
-export function agentTemplatesMatch(a: AgentTemplateInput, b: AgentTemplateInput): boolean {
-  return computeAgentTemplateHash(a) === computeAgentTemplateHash(b);
-}

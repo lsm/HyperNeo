@@ -1,15 +1,5 @@
 export type PostApprovalTemplateContext = Readonly<Record<string, unknown>>;
 
-export const POST_APPROVAL_TEMPLATE_KEYS = [
-  'autonomy_level',
-  'task_id',
-  'task_title',
-  'reviewer_name',
-  'approval_source',
-  'space_id',
-  'workspace_path',
-] as const;
-
 export interface PostApprovalTemplateResult {
   text: string;
   missingKeys: string[];

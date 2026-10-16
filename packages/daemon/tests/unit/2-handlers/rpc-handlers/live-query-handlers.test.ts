@@ -7,6 +7,7 @@ import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 import type { RoomGoal } from '@hyperneo/shared/types/neo';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { mapActiveTurnEntryRow } from '../../../../src/lib/rpc-handlers/activity-preview';
 import { Database } from '../../../../src/storage/index';
 import type { QueryDiff } from '../../../../src/storage/live-query';
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
@@ -21,6 +22,28 @@ import { createTables, runMigration74 } from '../../../../src/storage/schema';
 import { runMigration191 } from '../../../../src/storage/schema/migrations';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
+
+type ActiveTurnSummary = {
+  sessionId: string;
+  turnIndex: number;
+  entries: Record<string, unknown>[];
+};
+
+function groupActiveTurnRows(rows: Record<string, unknown>[]): ActiveTurnSummary[] {
+  const bySession = new Map<string, ActiveTurnSummary>();
+  for (const row of rows) {
+    const { sessionId, turnIndex, entry } = mapActiveTurnEntryRow(row) as {
+      sessionId: string;
+      turnIndex: number;
+      entry: Record<string, unknown> | null;
+    };
+    if (!entry) continue;
+    const summary = bySession.get(sessionId) ?? { sessionId, turnIndex, entries: [] };
+    summary.entries.push(entry);
+    bySession.set(sessionId, summary);
+  }
+  return [...bySession.values()];
+}
 
 describe('NAMED_QUERY_REGISTRY', () => {
   let db: BunDatabase;
@@ -2842,9 +2865,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           entries: Record<string, unknown>[];
         }>
       > {
-        const mod = await import('../../../../src/lib/rpc-handlers/live-query-handlers');
-        const rows = (await runEntries(taskId)) as Record<string, unknown>[];
-        return mod.buildActiveTurnSummariesFromRows(rows);
+        return groupActiveTurnRows((await runEntries(taskId)) as Record<string, unknown>[]);
       }
 
       test('emits a summary only for the active conversation turn per session', async () => {
@@ -3950,9 +3971,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           entries: Record<string, unknown>[];
         }>
       > {
-        const mod = await import('../../../../src/lib/rpc-handlers/live-query-handlers');
-        const rows = await runEntries(taskId);
-        return mod.buildActiveTurnSummariesFromRows(rows);
+        return groupActiveTurnRows(await runEntries(taskId));
       }
 
       test('compact feed excludes mid-turn hook_* system rows (roster-only via active-turn summary)', () => {

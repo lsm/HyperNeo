@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   admitPostApprovalKickoff,
   interpolatePostApprovalTemplate,
-  POST_APPROVAL_TEMPLATE_KEYS,
 } from '../../../../src/lib/workflows/post-approval-template.ts';
 
 describe('interpolatePostApprovalTemplate — happy path', () => {
@@ -59,18 +58,6 @@ describe('interpolatePostApprovalTemplate — happy path', () => {
     });
     expect(result.text).toBe('merge https://github.com/a/b/pull/1 (sha deadbeef)');
     expect(result.missingKeys).toEqual([]);
-  });
-
-  test('POST_APPROVAL_TEMPLATE_KEYS matches the §1.6 contract', () => {
-    expect([...POST_APPROVAL_TEMPLATE_KEYS]).toEqual([
-      'autonomy_level',
-      'task_id',
-      'task_title',
-      'reviewer_name',
-      'approval_source',
-      'space_id',
-      'workspace_path',
-    ]);
   });
 });
 
