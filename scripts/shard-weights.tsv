@@ -115,7 +115,6 @@
 11	packages/daemon/tests/unit/1-core/agent/startup-watch-pipeline.test.ts
 14237	packages/daemon/tests/unit/1-core/agent/task-notification-requery.test.ts
 10	packages/daemon/tests/unit/1-core/agent/transient-error-patterns.test.ts
-7	packages/daemon/tests/unit/1-core/agent/turn-end-pipeline.test.ts
 7	packages/daemon/tests/unit/1-core/agent/turn-end-routing.test.ts
 86	packages/daemon/tests/unit/1-core/agent/usage-accounting-invariants.test.ts
 4	packages/daemon/tests/unit/1-core/agent/usage-accounting.test.ts
@@ -987,7 +986,6 @@
 5	packages/daemon/tests/unit/5-space/runtime/connectors/production.test.ts
 5	packages/daemon/tests/unit/5-space/runtime/create-task-target.test.ts
 177	packages/daemon/tests/unit/5-space/runtime/create-task.test.ts
-3	packages/daemon/tests/unit/5-space/runtime/delivery-mode.test.ts
 6	packages/daemon/tests/unit/5-space/runtime/delivery-pipeline.test.ts
 99	packages/daemon/tests/unit/5-space/runtime/direct-attempt-flag.test.ts
 4178	packages/daemon/tests/unit/5-space/runtime/direct-kickoff-intent.test.ts

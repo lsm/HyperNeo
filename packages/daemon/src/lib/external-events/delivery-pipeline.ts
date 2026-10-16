@@ -1,4 +1,3 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ExternalEventTaskDecision } from './admission-gates.ts';
 
 export type ExternalEventDeliveryDecision =
@@ -29,13 +28,6 @@ export interface ExternalEventDeliveryInput {
   executionPendingActivation: boolean;
 }
 
-export interface PostActivationDeliveryInput {
-  activationError: string | null;
-  activatedTargetFound: boolean;
-  activatedHasSession: boolean;
-  activatedSessionLive: boolean;
-}
-
 export function classifyExternalEventDelivery(
   input: ExternalEventDeliveryInput
 ): ExternalEventDeliveryDecision {
@@ -62,36 +54,3 @@ export function classifyExternalEventDelivery(
   }
   return { action: 'activateTarget' };
 }
-
-export function classifyPostActivationDelivery(
-  input: PostActivationDeliveryInput
-): ExternalEventDeliveryDecision {
-  if (input.activationError !== null) {
-    return {
-      action: 'queueForActivation',
-      reason: `deliveryMode:defer; activation_failed; ${input.activationError}`,
-    };
-  }
-  if (!input.activatedTargetFound) {
-    return {
-      action: 'queueForActivation',
-      reason: 'deliveryMode:defer; node_execution_not_active',
-      retryUnlessPaused: true,
-    };
-  }
-  if (!input.activatedHasSession) return { action: 'deferNotActive' };
-  if (!input.activatedSessionLive) return { action: 'deliverStaleSession' };
-  return { action: 'deliverLiveSession' };
-}
-
-export const decideExternalEventDelivery = (superpipe({})('external-event-delivery') as PipelineAPI)
-  .input(['input'])
-  .pipe(classifyExternalEventDelivery, 'input', 'decision')
-  .end('decision') as (input: ExternalEventDeliveryInput) => ExternalEventDeliveryDecision;
-
-export const decidePostActivationDelivery = (
-  superpipe({})('external-event-post-activation') as PipelineAPI
-)
-  .input(['input'])
-  .pipe(classifyPostActivationDelivery, 'input', 'decision')
-  .end('decision') as (input: PostActivationDeliveryInput) => ExternalEventDeliveryDecision;
