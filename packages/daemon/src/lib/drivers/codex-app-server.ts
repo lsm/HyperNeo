@@ -63,6 +63,7 @@ export async function startCodexBootstrapServer(
   try {
     await server.call('initialize', {
       clientInfo: { name: 'hyperneo', title: 'HyperNeo', version: '1' },
+      capabilities: { experimentalApi: true },
     });
     transport.sendNotification('initialized', {});
     return server;
@@ -123,6 +124,7 @@ export function connectCodexAppServer(socketPath: string): Promise<CodexAppServe
       try {
         await call('initialize', {
           clientInfo: { name: 'hyperneo', title: 'HyperNeo', version: '1' },
+          capabilities: { experimentalApi: true },
         });
         socket.send(JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} }));
         resolve({
