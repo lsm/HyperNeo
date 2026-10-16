@@ -10,10 +10,7 @@ import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publications.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { admitNeoPublication } from '../../../../src/lib/neo/publication.ts';
-import {
-  getAccessibleTableNames,
-  getExcludedTableNames,
-} from '../../../../src/lib/db-query/scope-config.ts';
+import { getAccessibleTableNames, getExcludedTableNames } from '../../../helpers/db-query-scope.ts';
 
 const input: NeoPublicationInput = {
   conversationId: '10000000-0000-4000-8000-000000000001',

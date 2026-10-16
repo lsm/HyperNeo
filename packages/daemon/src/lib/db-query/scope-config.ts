@@ -1,5 +1,3 @@
-import type { SessionContext } from '@hyperneo/shared';
-
 export type DbScopeType = 'global' | 'room' | 'space';
 
 export interface ScopeJoinConfig {
@@ -24,16 +22,6 @@ export interface ScopeTableConfig {
   scopeLike?: ScopeLikeConfig;
   blacklistedColumns: string[];
   description: string;
-}
-
-export interface ResolvedScope {
-  scopeType: DbScopeType;
-  scopeValue: string;
-}
-
-export interface ScopeFilterResult {
-  whereClause: string;
-  params: unknown[];
 }
 
 const COLUMN_BLACKLISTS: Record<string, string[]> = {
@@ -448,126 +436,6 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
   },
 ];
 
-const EXCLUDED_TABLE_NAMES: string[] = [
-  'session_incarnations',
-  'session_event_subscriptions',
-  'session_external_events',
-  'neo_agent_work_targets',
-  'neo_concerns',
-  'neo_project_merges',
-  'neo_project_workspaces',
-  'neo_cross_project_dispatches',
-  'neo_cross_project_dispatch_members',
-  'neo_route_pr_refs',
-  'neo_consultations',
-  'neo_consultation_waiters',
-  'neo_context_write_grants',
-  'neo_publications',
-  'neo_routing_log',
-  'neo_conversation_asks',
-  'neo_conversation_ask_images',
-  'neo_consultation_publications',
-  'neo_session_bindings',
-  'neo_work',
-  'neo_work_resources',
-  'neo_work_driver_targets',
-  'neo_work_goals',
-  'neo_work_continues',
-  'neo_work_wakes',
-  'neo_notification_triggers',
-  'neo_work_supersessions',
-  'neo_asks',
-  'neo_ask_work',
-  'neo_work_prs',
-  'neo_work_pr_claims',
-  'neo_input_origins',
-  'neo_ask_forwards',
-  'neo_card_pr_relays',
-  'neo_card_event_subscriptions',
-  'neo_session_seen',
-  'neo_publication_anchors',
-  'operation_refusals',
-  'neo_work_checks',
-  'neo_work_refusals',
-  'neo_work_dependencies',
-  'neo_work_start_intents',
-  'neo_ask_checks',
-  'neo_ask_items',
-  'client_registrations',
-  'direct_task_execution_selection',
-  'direct_task_execution_attempts',
-  'direct_task_session_provenance',
-  'direct_task_kickoff_intents',
-  'direct_task_kickoff_dispatches',
-  'direct_task_stop_requests',
-  'direct_task_start_requests',
-  'direct_task_process_coverage',
-  'direct_task_process_launches',
-  'agent_child_processes',
-  'auth_config',
-  'global_tools_config',
-  'global_settings',
-  'daemon_config',
-  'session_counters',
-  'task_message_rows',
-  'providers',
-  'provider_credentials',
-  'task_group_events',
-  'space_github_events',
-  'space_github_watched_repos',
-  'node_executions',
-  'tool_continuation_recovery',
-  'tool_continuation_inbox',
-  'sdk_message_replacements',
-  'github_filter_configs',
-  'workspace_history',
-  'workspace_projects',
-  'workspace_project_folders',
-  'mcp_enablement',
-  'message_search_content',
-  'message_search_pending',
-  'message_search_fts',
-  'message_search_fts_config',
-  'message_search_fts_content',
-  'message_search_fts_data',
-  'message_search_fts_docsize',
-  'message_search_fts_idx',
-  'external_event_source_configs',
-  'external_event_extension_configs',
-  'space_external_event_source_configs',
-  'space_external_events',
-  'space_external_event_deliveries',
-  'delivery_turn_end',
-  'delivery_consumed_seq',
-  'memory_vectors',
-  'message_search_vectors',
-  'work_feed_offsets',
-  'space_agent_memory_fts',
-  'space_agent_memory_fts_config',
-  'space_agent_memory_fts_data',
-  'space_agent_memory_fts_docsize',
-  'space_agent_memory_fts_idx',
-  'migration_markers',
-  'migration_space_reclaims',
-  'space_session_groups',
-  'space_session_group_members',
-  'space_workflow_transitions',
-  'space_workflow_definition_versions',
-  'messages',
-  'tool_calls',
-  'space_long_horizon_agent_goals',
-  'space_long_horizon_agent_evolution_scopes',
-  'space_long_horizon_agent_reminders',
-  'space_long_horizon_agent_event_subscriptions',
-  'space_session_event_subscriptions',
-  'space_agent_template_version_seq',
-
-  'space_workflow_event_subscriptions',
-  'space_agent_goal_assignments',
-  'space_agent_forge_scope_assignments',
-  'space_agent_reminders',
-];
-
 const SCOPE_CONFIGS: Record<DbScopeType, ScopeTableConfig[]> = {
   global: GLOBAL_SCOPE_TABLES,
   room: ROOM_SCOPE_TABLES,
@@ -576,26 +444,4 @@ const SCOPE_CONFIGS: Record<DbScopeType, ScopeTableConfig[]> = {
 
 export function getScopeConfig(scopeType: DbScopeType): ScopeTableConfig[] {
   return SCOPE_CONFIGS[scopeType];
-}
-
-export function getScopeForSession(context: SessionContext): ResolvedScope {
-  if (context.roomId) {
-    return { scopeType: 'room', scopeValue: context.roomId };
-  }
-  if (context.spaceId) {
-    return { scopeType: 'space', scopeValue: context.spaceId };
-  }
-  return { scopeType: 'global', scopeValue: '' };
-}
-
-export function getAccessibleTableNames(scopeType: DbScopeType): string[] {
-  return SCOPE_CONFIGS[scopeType].map((cfg) => cfg.tableName);
-}
-
-export function getBlacklistedColumns(tableName: string): string[] {
-  return COLUMN_BLACKLISTS[tableName] ?? [];
-}
-
-export function getExcludedTableNames(): string[] {
-  return [...EXCLUDED_TABLE_NAMES];
 }

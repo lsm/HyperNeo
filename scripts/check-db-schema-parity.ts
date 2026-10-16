@@ -1,8 +1,8 @@
+import { getScopeConfig } from '../packages/daemon/src/lib/db-query/scope-config';
 import {
   getAccessibleTableNames,
   getExcludedTableNames,
-  getScopeConfig,
-} from '../packages/daemon/src/lib/db-query/scope-config';
+} from '../packages/daemon/tests/helpers/db-query-scope';
 import { createTables, runMigrations } from '../packages/daemon/src/storage/schema';
 import { Database } from '../packages/daemon/src/storage/sqlite-compat';
 import { createSpaceTables } from '../packages/daemon/tests/unit/helpers/space-test-db';

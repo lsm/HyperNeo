@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { getScopeConfig, type ScopeTableConfig } from '@/lib/db-query/scope-config';
 import {
   getAccessibleTableNames,
   getBlacklistedColumns,
   getExcludedTableNames,
-  getScopeConfig,
-  getScopeForSession,
-  type ScopeTableConfig,
-} from '@/lib/db-query/scope-config';
+} from '../../../helpers/db-query-scope.ts';
 
 function tableNames(configs: ScopeTableConfig[]): string[] {
   return configs.map((c) => c.tableName);
@@ -150,33 +148,6 @@ describe('scope-config', () => {
       expect(getBlacklistedColumns('space_long_horizon_agents')).toContain('session_id');
       expect(getBlacklistedColumns('job_queue')).toContain('payload');
       expect(getBlacklistedColumns('tasks')).toContain('restrictions');
-    });
-  });
-
-  describe('getScopeForSession', () => {
-    it('maps roomId to room scope', () => {
-      const result = getScopeForSession({ roomId: 'room-123' });
-      expect(result).toEqual({ scopeType: 'room', scopeValue: 'room-123' });
-    });
-
-    it('maps spaceId to space scope when no roomId', () => {
-      const result = getScopeForSession({ spaceId: 'space-456' });
-      expect(result).toEqual({ scopeType: 'space', scopeValue: 'space-456' });
-    });
-
-    it('prefers roomId over spaceId when both are present', () => {
-      const result = getScopeForSession({ roomId: 'room-1', spaceId: 'space-2' });
-      expect(result).toEqual({ scopeType: 'room', scopeValue: 'room-1' });
-    });
-
-    it('returns global scope when neither roomId nor spaceId', () => {
-      const result = getScopeForSession({});
-      expect(result).toEqual({ scopeType: 'global', scopeValue: '' });
-    });
-
-    it('returns global scope when only other fields are present', () => {
-      const result = getScopeForSession({ lobbyId: 'lobby-1', taskId: 'task-1' });
-      expect(result).toEqual({ scopeType: 'global', scopeValue: '' });
     });
   });
 
