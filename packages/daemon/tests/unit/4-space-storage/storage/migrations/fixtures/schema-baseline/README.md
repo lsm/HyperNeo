@@ -25,3 +25,12 @@ bodies, plus table_xinfo (including generated columns), foreign keys, and
 index_list/index_xinfo (including implicit indexes). Its SQL tokenizer
 ignores comments, whitespace and optional double quotes around simple
 identifiers. It preserves string literals and does not mask schema drift.
+
+`dev-383.sql` was captured before changing startup behavior, from unmodified
+dev commit `1dd2fd64277b0f39d48943ef1b10a165af412fbd`, using Bun 1.4.3 and
+the same capture command. Its last numbered migration is 383. It includes
+the schema-parity prerequisite from #7200 and the test-fixture prerequisite
+from #7202. This immutable legacy reference lets the test compare fresh
+creation by the code under test, legacy creation on current dev, and the
+v0.41.0 schema upgraded by the code under test. All three must match again
+after a second startup.
