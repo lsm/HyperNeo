@@ -22,10 +22,12 @@ export interface ClaudeInboxSubmission {
 }
 
 export type ClaudeInboxEvent =
-  | { kind: 'reply'; sessionId: string; from: string; content: string }
+  | { kind: 'reply'; sessionId: string; messageId: string; from: string; content: string }
   | { kind: 'receipt'; sessionId: string; messageId: string; status: string };
 
 const ReplySchema = z.object({
+  msgV: z.literal(1),
+  msg_id: z.string().uuid(),
   type: z.literal('user'),
   from: z.string(),
   message: z.object({ role: z.literal('user'), content: z.string().min(1) }),
@@ -89,6 +91,7 @@ export function claudeInboxEvent(
     return {
       kind: 'reply',
       sessionId: target.sessionId,
+      messageId: reply.data.msg_id,
       from,
       content: reply.data.message.content,
     };
