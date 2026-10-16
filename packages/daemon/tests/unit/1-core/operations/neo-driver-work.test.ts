@@ -2496,7 +2496,11 @@ describe('Neo work with a drivers target', () => {
     db.createSession(createTestSession('neo:root'));
     db.createSession(createTestSession('worker'));
     const subscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
-    subscriptions.upsert({ sessionId: 'worker', topic: 'github/lsm/HyperNeo/pull_request/3.*' });
+    for (const number of [3, 4, 5])
+      subscriptions.upsert({
+        sessionId: 'worker',
+        topic: `github/lsm/HyperNeo/pull_request/${number}.*`,
+      });
     subscriptions.upsert({
       sessionId: 'worker',
       topic: 'github/lsm/hyperneo-review-test/pull_request/18.*',

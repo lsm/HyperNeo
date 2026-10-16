@@ -3573,6 +3573,7 @@ export class NeoService {
         ...(worker
           ? this.sessionSubscriptions
               .listBySession(worker)
+              .reverse()
               .flatMap((row) => pullRequestUrlOfTopic(row.topic) ?? [])
           : []),
       ],
