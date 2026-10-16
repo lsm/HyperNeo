@@ -1,11 +1,4 @@
-import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-
-export function templateToolsList(template: SpaceLongHorizonAgentTemplate | undefined): string[] {
-  const tools = template?.toolPermissions?.tools;
-  if (!Array.isArray(tools)) return [];
-  return tools.filter((tool): tool is string => typeof tool === 'string');
-}
 
 export function trackAddedTools(added: string[], baseline: string[], current: string[]): string[] {
   const stillAdded = added.filter((tool) => current.includes(tool));

@@ -43,13 +43,3 @@ export function NeoIcon({
     </svg>
   );
 }
-
-export function projectColor(id: string): string {
-  const index = [...id].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 4;
-  return [
-    'text-accent bg-accent/10',
-    'text-cat-teal bg-cat-teal/10',
-    'text-cat-rose bg-cat-rose/10',
-    'text-cat-violet bg-cat-violet/10',
-  ][index];
-}
