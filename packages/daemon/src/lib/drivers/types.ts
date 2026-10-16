@@ -161,18 +161,16 @@ export type WorkExchangeEntry = z.infer<typeof WorkExchangeEntrySchema>;
 export type Rejected = { ok: false; reason: WorkRejection; detail: string };
 export type Result<T> = { ok: true; value: T } | Rejected;
 
-export const WorkVerbSchema = z.enum([
-  'find',
-  'start',
-  'send',
-  'steer',
-  'queue',
-  'withdraw',
-  'status',
-  'stop',
-  'archive',
-]);
-export type WorkVerb = z.infer<typeof WorkVerbSchema>;
+export type WorkVerb =
+  | 'find'
+  | 'start'
+  | 'send'
+  | 'steer'
+  | 'queue'
+  | 'withdraw'
+  | 'status'
+  | 'stop'
+  | 'archive';
 export type WorkWithdrawal = {
   queuedSubmissionId: string;
   withdrawn: boolean;

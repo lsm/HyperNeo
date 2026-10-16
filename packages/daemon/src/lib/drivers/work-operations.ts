@@ -18,7 +18,6 @@ import {
   WorkInputReceiptSchema,
   WorkRefSchema,
   WorkStartedSchema,
-  WorkVerbSchema,
   workResultSchema,
   type Rejected,
   type WorkAdapter,
@@ -75,11 +74,13 @@ export const StartWorkResultSchema = workResultSchema(WorkStartedSchema);
 export const SendWorkResultSchema = workResultSchema(WorkDeliverySchema);
 export const WorkStatusResultSchema = workResultSchema(WorkDetailSchema);
 export const StopWorkResultSchema = workResultSchema(z.object({ stopped: z.boolean() }));
+const RoutedCapabilitySchema = z.enum(['find', 'start', 'send', 'status', 'stop', 'archive']);
+
 export const WorkAdaptersResultSchema = workResultSchema(
   z.array(
     z.object({
       id: z.string(),
-      capabilities: z.array(WorkVerbSchema),
+      capabilities: z.array(RoutedCapabilitySchema),
     })
   )
 );
@@ -358,7 +359,13 @@ async function listWorkAdapters(
     return forwardWork(daemon, 'work.adapters', {}, WorkAdaptersResultSchema, deps.remote);
   return {
     ok: true,
-    value: deps.adapters().map(({ id, capabilities }) => ({ id, capabilities: [...capabilities] })),
+    value: deps.adapters().map(({ id, capabilities }) => ({
+      id,
+      capabilities: capabilities.flatMap((capability) => {
+        const routed = RoutedCapabilitySchema.safeParse(capability);
+        return routed.success ? [routed.data] : [];
+      }),
+    })),
   };
 }
 
@@ -367,7 +374,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.adapters',
       description:
-        'List the work adapters on this daemon, or on the attached daemon named by daemon, with the driver capabilities each supports: find, start, send, steer, queue, withdraw, status, stop, archive. Steer, queue and withdraw are driver methods; they do not have work operation routes. Callers of the driver interface select them directly. Archive uses neo.session.archive and requires a human request in a live turn. Start new work only with an adapter that can start, and send only through one that can send.',
+        'List the work adapters on this daemon, or on the attached daemon named by daemon, with their available work-operation verbs: find, start, send, status, stop, archive. Direct driver methods such as steer, queue and withdraw are not exposed as work operation routes and are not listed here. Archive uses neo.session.archive and requires a human request in a live turn. Start new work only with an adapter that can start, and send only through one that can send.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },

@@ -828,7 +828,7 @@ describe('codex-desktop adapter status and send', () => {
     expect(closed).toBe(true);
   });
 
-  test.each(['steer', 'queue', 'withdraw'] as const)(
+  test.each(['steer', 'withdraw'] as const)(
     'reports an unreachable server for %s without shell fallback',
     async (method) => {
       const driver = adapter(0, '', () => Promise.reject(new Error('offline')));
@@ -839,6 +839,63 @@ describe('codex-desktop adapter status and send', () => {
       expect(spawned).toEqual([]);
     }
   );
+
+  test.each(['send', 'queue'] as const)(
+    'preserves CLI availability when %s cannot connect before submission',
+    async (method) => {
+      const driver = adapter(
+        0,
+        '',
+        () => Promise.reject(new Error('connect ECONNREFUSED')),
+        undefined,
+        'offline-queue-id\n'
+      );
+      expect(await driver[method]!(ref('busy'), 'later', user)).toEqual({
+        ok: true,
+        value: { delivered: false, queuedSubmissionId: 'offline-queue-id' },
+      });
+      expect(spawned).toEqual([['codex', 'queue', '--thread=busy', '--message=later']]);
+    }
+  );
+
+  test('native queue preserves a fresh delivered input receipt for later evidence reads', async () => {
+    appendFileSync(join(dir, 'running.jsonl'), `\n${heardAs('older', 'next step')}`);
+    const driver = adapter(0, '', async () => ({
+      call: async () => {
+        appendFileSync(join(dir, 'running.jsonl'), `\n${heardAs('native-input', 'next step')}`);
+        return { queuedSubmission: { id: 'native-queue' } };
+      },
+      close: () => {},
+    }));
+    const receipt = { executionId: 'busy', inputId: 'native-input' };
+    expect(await driver.send!(ref('busy'), 'next step', user)).toEqual({
+      ok: true,
+      value: { delivered: true, queuedSubmissionId: 'native-queue', receipt },
+    });
+    expect(await driver.status!(ref('busy'), undefined, receipt)).toMatchObject({
+      ok: true,
+      value: {
+        inputEvidence: {
+          receipt,
+          state: 'observed',
+          exchange: [{ role: 'user', text: 'next step' }],
+        },
+      },
+    });
+    expect(spawned).toEqual([]);
+  });
+
+  test('a previously delivered copy does not make a newly queued native input delivered', async () => {
+    appendFileSync(join(dir, 'running.jsonl'), `\n${heardAs('older', 'next step')}`);
+    const driver = adapter(0, '', async () => ({
+      call: async () => ({ queuedSubmission: { id: 'still-queued' } }),
+      close: () => {},
+    }));
+    expect(await driver.queue!(ref('busy'), 'next step', user)).toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'still-queued' },
+    });
+  });
 
   test('CLI compatibility preserves its queue id for withdrawal', async () => {
     expect(

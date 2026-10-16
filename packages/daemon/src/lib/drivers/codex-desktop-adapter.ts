@@ -761,7 +761,10 @@ export async function queueCodexMessage(
   message: string,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<WorkDelivery>> {
-  return withCodexMessageServer(deps, async (server) => {
+  const queued = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
+    const before = codexUserInputIds(
+      await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
+    );
     let added: unknown;
     try {
       added = await server.call('thread/queue/add', {
@@ -783,8 +786,24 @@ export async function queueCodexMessage(
         queuedSubmission: z.object({ id: z.string().min(1) }),
       })
       .parse(added);
-    return { ok: true, value: { delivered: false, queuedSubmissionId: queuedSubmission.id } };
+    const delivery = codexQueueDelivery(
+      await readRolloutTail(detail.thread.rolloutPath).catch(() => []),
+      message,
+      detail.thread.id,
+      before
+    );
+    return {
+      ok: true,
+      value: {
+        ...delivery,
+        delivered: !!delivery.receipt,
+        queuedSubmissionId: queuedSubmission.id,
+      },
+    };
   });
+  return !queued.ok && queued.reason === 'unreachable'
+    ? queueCodexCliMessage(detail, message, deps)
+    : queued;
 }
 
 export function admitCodexSteerTurn(read: unknown): Gate<string> {
