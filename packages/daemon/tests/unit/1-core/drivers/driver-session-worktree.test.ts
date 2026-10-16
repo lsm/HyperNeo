@@ -1,4 +1,7 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
+import { createMailboxEntry } from '../../../../src/lib/mailbox/entry';
+import { enqueueMailboxEntry } from '../../../../src/lib/mailbox/enqueue';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +15,88 @@ import {
   newestAvailableModel,
   hyperneoSessionControl,
 } from '../../../../src/lib/rpc-handlers/family-operations/drivers.ts';
+
+describe('hyperneoSessionControl withdraw', () => {
+  let fixture: MailboxTestDb;
+  beforeEach(() => {
+    fixture = createMailboxTestDb();
+  });
+  afterEach(() => fixture.close());
+
+  test.each(
+    [false, true].flatMap((cached) =>
+      ['deferred', 'enqueued', 'consumed'].map((status) => ({ cached, status }))
+    )
+  )('withdraws only deferred inputs without restoring %j', async ({ cached, status }) => {
+    const entry = createMailboxEntry({
+      to: { kind: 'session', sessionId: 'owned' },
+      origin: 'session:sender',
+      deliveryMode: 'defer',
+      messageUuid: 'input',
+      message: { type: 'user', message: { content: 'later' }, parent_tool_use_id: null },
+    });
+    enqueueMailboxEntry(fixture.jobQueue, entry);
+    fixture.db.exec("UPDATE job_queue SET status = 'completed'");
+    fixture.db
+      .prepare(`INSERT INTO sdk_messages
+      (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+      VALUES ('db-input', 'owned', 'user', '{"uuid":"input"}', '2026-10-16', ?, 'input')`)
+      .run(status);
+    const delivery = fixture.jobQueue.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'owned', messageUuid: 'input' },
+    });
+    const restore = mock(() => {
+      throw new Error('must not restore');
+    });
+    const revoke = mock(
+      async (id: string, mode: string, expected: 'deferred', commit: () => void) => {
+        expect(mode).toBe('remove');
+        return fixture.db.transaction(() => {
+          const removed = fixture.sdkMessageRepo.deletePendingUserMessage('owned', id, expected);
+          if (removed?.uuid) commit();
+          return { changed: !!removed };
+        })();
+      }
+    );
+    const controls = hyperneoSessionControl({
+      deps: {
+        sessionManager: {
+          getCachedSession: () => (cached ? { revokePendingDelivery: revoke } : undefined),
+          getSession: restore,
+        },
+        db: {
+          getDatabase: () => fixture.db,
+          getSDKMessageRepo: () => fixture.sdkMessageRepo,
+          deletePendingUserMessage: (
+            ...args: Parameters<typeof fixture.sdkMessageRepo.deletePendingUserMessage>
+          ) => fixture.sdkMessageRepo.deletePendingUserMessage(...args),
+          notifyChange: mock(() => {}),
+        },
+        jobQueue: fixture.jobQueue,
+      },
+    } as never);
+    expect(await controls.withdraw!('owned', entry.id, 'session:other')).toMatchObject({
+      value: { withdrawn: false },
+    });
+    expect(fixture.sdkRows()).toHaveLength(1);
+    expect(await controls.withdraw!('owned', entry.id, 'session:sender')).toMatchObject({
+      value: { withdrawn: status === 'deferred' },
+    });
+    expect(fixture.sdkRows()).toHaveLength(status === 'deferred' ? 0 : 1);
+    expect(await controls.withdraw!('owned', entry.id, 'session:sender')).toMatchObject({
+      value: { withdrawn: status === 'deferred' },
+    });
+    expect(restore).not.toHaveBeenCalled();
+    if (!cached)
+      expect(fixture.jobQueue.getJob(delivery.id)?.status ?? null).toBe(
+        status === 'deferred' ? null : 'pending'
+      );
+    expect(revoke).toHaveBeenCalledTimes(cached ? (status === 'deferred' ? 1 : 2) : 0);
+    if (cached)
+      expect(revoke).toHaveBeenCalledWith('db-input', 'remove', 'deferred', expect.any(Function));
+  });
+});
 
 describe('hyperneoSessionControl interrupt', () => {
   test.each(['idle', 'interrupted', 'processing', 'missing', 'replaced'])(
