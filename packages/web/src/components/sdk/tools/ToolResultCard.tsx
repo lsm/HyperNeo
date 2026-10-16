@@ -1,3 +1,4 @@
+import { getToolConfig } from './tool-registry.ts';
 import { useEffect, useState } from 'preact/hooks';
 import type { ToolResultCardProps } from './tool-types.ts';
 import { ToolIcon } from './ToolIcon.tsx';
@@ -5,14 +6,7 @@ import { ToolSummary } from './ToolSummary.tsx';
 import { TaskProgressLine } from './TaskProgressLine.tsx';
 import { DiffViewer } from './DiffViewer.tsx';
 import { CodeViewer } from './CodeViewer.tsx';
-import {
-  getToolDisplayName,
-  getToolColors,
-  getOutputDisplayText,
-  hasCustomRenderer,
-  getCustomRenderer,
-  shouldExpandByDefault,
-} from './tool-utils.ts';
+import { getToolDisplayName, getToolColors, getOutputDisplayText } from './tool-utils.ts';
 import { isFileReadOutput, isFileEditOutput, isFileWriteOutput } from './sdk-tool-types.ts';
 import { cn } from '../../../lib/utils.ts';
 import { connectionManager } from '../../../lib/connection-manager.ts';
@@ -147,12 +141,16 @@ function ToolResultCardBody({
   const displayName = getToolDisplayName(toolName);
   const folded = useFoldedActivity();
   const shouldExpand =
-    defaultExpanded !== undefined ? defaultExpanded : !folded && shouldExpandByDefault(toolName);
+    defaultExpanded !== undefined
+      ? defaultExpanded
+      : !folded && (getToolConfig(toolName).defaultExpanded || false);
   const [isExpanded, setIsExpanded] = useState(shouldExpand);
   useEffect(() => setIsExpanded(shouldExpand), [shouldExpand]);
   const [deleting, setDeleting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const customRenderer = hasCustomRenderer(toolName) ? getCustomRenderer(toolName) : null;
+  const customRenderer = getToolConfig(toolName).customRenderer
+    ? getToolConfig(toolName).customRenderer
+    : null;
 
   const handleDeleteClick = () => {
     if (!messageUuid || !sessionId) {

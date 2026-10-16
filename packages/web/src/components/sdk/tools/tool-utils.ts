@@ -88,18 +88,3 @@ export function getOutputDisplayText(output: unknown): string {
 
   return String(output);
 }
-
-export function hasCustomRenderer(toolName: string): boolean {
-  const config = getToolConfig(toolName);
-  return !!config.customRenderer;
-}
-
-export function getCustomRenderer(toolName: string) {
-  const config = getToolConfig(toolName);
-  return config.customRenderer;
-}
-
-export function shouldExpandByDefault(toolName: string): boolean {
-  const config = getToolConfig(toolName);
-  return config.defaultExpanded || false;
-}

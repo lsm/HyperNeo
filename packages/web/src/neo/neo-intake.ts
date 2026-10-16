@@ -38,10 +38,6 @@ const THUMBNAIL_SIZE_LIMIT = 100_000;
 const THUMBNAIL_LIMIT = 32 * 1024;
 const THUMBNAIL_QUALITIES = [0.7, 0.5, 0.3];
 
-function base64Bytes(data: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
-}
-
 function bytesBase64(bytes: Uint8Array): string {
   let binary = '';
   for (let start = 0; start < bytes.length; start += 0x8000)
@@ -78,7 +74,9 @@ function thumbnailSurface(width: number, height: number) {
 async function neoPhotoThumbnail(image: MessageImage): Promise<Omit<NeoThumbnail, 'index'> | null> {
   if (typeof createImageBitmap !== 'function') return null;
   const bitmap = await createImageBitmap(
-    new Blob([base64Bytes(image.data)], { type: image.media_type })
+    new Blob([Uint8Array.from(atob(image.data), (char) => char.charCodeAt(0))], {
+      type: image.media_type,
+    })
   );
   try {
     const scale = Math.min(1, THUMBNAIL_EDGE / Math.max(bitmap.width, bitmap.height));
