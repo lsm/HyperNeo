@@ -104,7 +104,6 @@ import mdneoWorkDoneCheck from './neo/work/done-check.md' with { type: 'text' };
 import mdneoWorkDoneCheckAskForeign from './neo/work/done-check-ask-foreign.md' with {
   type: 'text',
 };
-import mdneoWorkDoneCheckAskNext from './neo/work/done-check-ask-next.md' with { type: 'text' };
 import mdneoWorkDoneCheckAskOwned from './neo/work/done-check-ask-owned.md' with { type: 'text' };
 import mdneoWorkDoneCheckBudget from './neo/work/done-check-budget.md' with { type: 'text' };
 import mdneoWorkDoneCheckContinue from './neo/work/done-check-continue.md' with { type: 'text' };
@@ -139,12 +138,9 @@ import mdneoWorkBlocker from './neo/work/blocker.md' with { type: 'text' };
 import mdneoWorkReturnedRetry from './neo/work/returned-retry.md' with { type: 'text' };
 import mdneoWorkStall from './neo/work/stall.md' with { type: 'text' };
 import mdneoWorkStallBudget from './neo/work/stall-budget.md' with { type: 'text' };
-import mdneoWorkStallCheck from './neo/work/stall-check.md' with { type: 'text' };
 import mdneoWorkStuck from './neo/work/stuck.md' with { type: 'text' };
 import mdneoWorkStuckAbandoned from './neo/work/stuck-abandoned.md' with { type: 'text' };
 import mdneoWorkStuckBudget from './neo/work/stuck-budget.md' with { type: 'text' };
-import mdneoWorkStuckCheck from './neo/work/stuck-check.md' with { type: 'text' };
-import mdneoWorkSummary from './neo/work/summary.md' with { type: 'text' };
 
 export { fillPrompt } from './loader.ts';
 
@@ -396,7 +392,6 @@ const registry: Record<string, string> = {
   'neo/operations/work-propose.md': mdneoWorkProposeDescription,
   'neo/work/delegated.md': mdneoWorkDelegated,
   'neo/work/done-check-ask-foreign.md': mdneoWorkDoneCheckAskForeign,
-  'neo/work/done-check-ask-next.md': mdneoWorkDoneCheckAskNext,
   'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
   'neo/work/done-check-budget.md': mdneoWorkDoneCheckBudget,
   'neo/work/done-check-continue.md': mdneoWorkDoneCheckContinue,
@@ -422,13 +417,10 @@ const registry: Record<string, string> = {
   'neo/work/returned-retry.md': mdneoWorkReturnedRetry,
   'neo/work/returned.md': mdneoWorkReturned,
   'neo/work/stall-budget.md': mdneoWorkStallBudget,
-  'neo/work/stall-check.md': mdneoWorkStallCheck,
   'neo/work/stall.md': mdneoWorkStall,
   'neo/work/stuck-abandoned.md': mdneoWorkStuckAbandoned,
   'neo/work/stuck-budget.md': mdneoWorkStuckBudget,
-  'neo/work/stuck-check.md': mdneoWorkStuckCheck,
   'neo/work/stuck.md': mdneoWorkStuck,
-  'neo/work/summary.md': mdneoWorkSummary,
   'agents/default-instructions.md': mdagentsDefaultInstructions,
   'evolution/episode-judge.md': mdevolutionEpisodeJudge,
   'providers/codex-probe-instructions.md': mdprovidersCodexProbeInstructions,
@@ -591,7 +583,6 @@ export const {
   NEO_WORK_PROPOSE_DESCRIPTION,
   NEO_WORK_DELEGATED,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
-  NEO_WORK_DONE_CHECK_ASK_NEXT,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
   NEO_WORK_DONE_CHECK_BUDGET,
   NEO_WORK_DONE_CHECK_CONTINUE,
@@ -614,13 +605,10 @@ export const {
   NEO_WORK_RETURNED_RETRY,
   NEO_WORK_RETURNED,
   NEO_WORK_STALL_BUDGET,
-  NEO_WORK_STALL_CHECK,
   NEO_WORK_STALL,
   NEO_WORK_STUCK_ABANDONED,
   NEO_WORK_STUCK_BUDGET,
-  NEO_WORK_STUCK_CHECK,
   NEO_WORK_STUCK,
-  NEO_WORK_SUMMARY_NOTE,
   AGENT_DEFAULT_INSTRUCTIONS,
   EVOLUTION_EPISODE_JUDGE_PROMPT,
   CODEX_PROBE_INSTRUCTIONS,

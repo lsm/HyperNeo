@@ -3,7 +3,6 @@ import {
   NEO_WORK_BLOCKER,
   NEO_WORK_DONE_CHECK,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
-  NEO_WORK_DONE_CHECK_ASK_NEXT,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
   NEO_WORK_DONE_CHECK_BUDGET,
   NEO_WORK_DONE_CHECK_CONTINUE,
@@ -18,12 +17,9 @@ import {
   NEO_WORK_PACK_NOTE,
   NEO_WORK_STALL,
   NEO_WORK_STALL_BUDGET,
-  NEO_WORK_STALL_CHECK,
   NEO_WORK_STUCK,
   NEO_WORK_STUCK_ABANDONED,
   NEO_WORK_STUCK_BUDGET,
-  NEO_WORK_STUCK_CHECK,
-  NEO_WORK_SUMMARY_NOTE,
 } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
@@ -183,9 +179,9 @@ export function readContinueBudget(
   now: number
 ): string | null {
   if (stalledWakes >= NEO_WORK_STALLED_CONTINUES)
-    return `continue_budget_spent: your last ${NEO_WORK_STALLED_CONTINUES} wakes for this card brought no new commit, PR state, review, report or met item; tell the human what is stuck and ask how to proceed.`;
+    return `continue_budget_spent: your last ${NEO_WORK_STALLED_CONTINUES} wakes for this card brought no new commit, PR state, review, report or met item.`;
   if (startedAt !== null && now - startedAt >= NEO_WORK_CONTINUE_WINDOW_MS)
-    return 'continue_budget_spent: this work started over 12 hours ago; ask the human how to proceed.';
+    return 'continue_budget_spent: this work started over 12 hours ago.';
   return null;
 }
 
@@ -203,7 +199,7 @@ export function readNeoWorkContinueBudget(
   const stalled = readContinueBudget(stalledWakes, null, now);
   if (stalled) return stalled;
   return neoAskApprovalSpent(ask, now) === 'expired'
-    ? 'continue_budget_spent: this ask was approved over 48 hours ago; ask the human to approve it again.'
+    ? 'continue_budget_spent: this ask was approved over 48 hours ago.'
     : null;
 }
 
@@ -567,8 +563,6 @@ export function readDriverNeedsYou(
   return { needsYou: status === 'needs_you', since: lastActivityAt, lastReply };
 }
 
-export { NEO_WORK_SUMMARY_NOTE };
-
 const NEO_DRIVER_NO_REPLY = 'It finished without a written reply.';
 
 export interface NeoAskCard {
@@ -651,21 +645,17 @@ export function driverDoneCheckNote(
   } = {}
 ): string {
   const owned = !!ask && ask.originSessionId === work.originSessionId;
-  const summary = owned ? NEO_WORK_DONE_CHECK_ASK_NEXT : NEO_WORK_SUMMARY_NOTE;
   const next = budget
-    ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget, summary })
+    ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget })
     : fillPrompt(NEO_WORK_DONE_CHECK_CONTINUE, {
         continues_left: String(neoContinuesLeft(stalled)),
-        summary,
       });
   const owner = !ask
     ? ''
     : owned
       ? ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_OWNED, { ask_id: ask.id })}`
       : ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_FOREIGN, { ask_id: ask.id })}`;
-  const packNote = pack
-    ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: pack.id })}${pack.inPrompt ? '' : `\n${pack.instructions}`}`
-    : '';
+  const packNote = pack ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: pack.id })}` : '';
   const items = owned && ask ? neoNoteChecklist(ask) : [];
   const restates = (doneWhen: string | null | undefined) =>
     !!ask && items.length > 0 && isNeoDoneWhenRestated(doneWhen ?? '', ask);
@@ -698,7 +688,7 @@ export function driverStallNote(
   lastReply: string | undefined,
   budget: string | null
 ): string {
-  const next = budget ? fillPrompt(NEO_WORK_STALL_BUDGET, { budget }) : NEO_WORK_STALL_CHECK;
+  const next = budget ? fillPrompt(NEO_WORK_STALL_BUDGET, { budget }) : '';
   return `${fillPrompt(NEO_WORK_STALL, { next })}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal?.goal ?? null, doneWhen: goal?.doneWhen ?? null, lastReply: lastReply?.slice(0, 2000) ?? null })}`;
 }
 
@@ -743,7 +733,7 @@ export function driverStuckNote(
     ? NEO_WORK_STUCK_ABANDONED
     : budget
       ? fillPrompt(NEO_WORK_STUCK_BUDGET, { budget })
-      : NEO_WORK_STUCK_CHECK;
+      : '';
   return `${fillPrompt(NEO_WORK_STUCK, { hours: String(hours), next })}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal?.goal ?? null, doneWhen: goal?.doneWhen ?? null })}`;
 }
 

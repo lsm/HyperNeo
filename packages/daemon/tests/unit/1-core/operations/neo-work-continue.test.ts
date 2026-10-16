@@ -81,7 +81,9 @@ describe('readNeoWorkContinueBudget', () => {
       readNeoWorkContinueBudget(0, 0, { ...approved, approvedContinues: 500 }, 13 * HOUR)
     ).toBeNull();
     expect(readNeoWorkContinueBudget(3, 0, approved, 13 * HOUR)).toContain('brought no new commit');
-    expect(readNeoWorkContinueBudget(0, 0, approved, 48 * HOUR)).toContain('approve it again');
+    expect(readNeoWorkContinueBudget(0, 0, approved, 48 * HOUR)).toContain(
+      'approved over 48 hours ago'
+    );
   });
 
   test('work under an ask not approved, or settled, keeps its own budget', () => {

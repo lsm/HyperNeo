@@ -764,21 +764,18 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true } });
   });
 
-  test("a note leaves out an enabled pack's guidance, which the system prompt carries", () => {
+  test('an ask names its installed pack', () => {
     const filePack = {
       id: 'inbox-triage',
       describe: 'Inbox triage',
       instructions: () => 'Triage the inbox.',
     };
     service.filePacks = adoptNeoFilePacks([filePack]);
-    db.updateGlobalSettings({ neo: { packs: ['coding', 'inbox-triage'] } });
+    db.updateGlobalSettings({ neo: { packs: ['coding'] } });
     try {
-      for (const id of ['coding', 'inbox-triage'])
-        expect(service.askPackFragment({ pack: id } as NeoAsk)?.inPrompt).toBe(true);
-      db.updateGlobalSettings({ neo: { packs: ['coding'] } });
-      expect(service.askPackFragment({ pack: 'inbox-triage' } as NeoAsk)).toMatchObject({
+      expect(service.askPackFragment({ pack: 'inbox-triage' } as NeoAsk)).toEqual({
+        id: 'inbox-triage',
         instructions: 'Triage the inbox.',
-        inPrompt: false,
       });
     } finally {
       adoptNeoFilePacks([]);
@@ -4146,39 +4143,31 @@ describe('driverDoneCheckNote', () => {
 
   const sibling = { id: 'w2', title: 'Ship the docs', status: 'queued' as const };
 
-  test('asks the session that opened the ask to settle it, and only that session', () => {
+  test('shows the owning session the whole ask, and another session only whose ask it is', () => {
     const owned = driverDoneCheckNote(work, goal, 0, null, { ask, cards: [sibling] });
-    expect(owned).toContain('Follow the done-check steps in your system prompt');
+    expect(owned).toContain('which you opened');
     expect(JSON.parse(owned.slice(owned.indexOf('\n{'))).ask.cards).toEqual([sibling]);
     const other = driverDoneCheckNote({ ...work, originSessionId: 'holder' }, goal, 0, null, {
       ask,
       cards: [sibling],
     });
-    expect(other).toContain('do not settle the ask');
-    expect(other).not.toContain('settle the ask: neo.ask.settle');
+    expect(other).toContain('which another Neo session opened and settles');
     expect(JSON.parse(other.slice(other.indexOf('\n{'))).ask.cards).toBeUndefined();
   });
 
-  test('tells the owner to settle before telling the human, also once the budget is spent', () => {
+  test('states a spent budget as a fact, with no command', () => {
     const spent = driverDoneCheckNote(work, goal, 5, 'continue_budget_spent', { ask });
-    expect(spent).toContain(
-      'Do not continue it. Follow the done-check steps in your system prompt'
-    );
+    expect(spent).toContain('continue_budget_spent It can no longer be continued.');
+    expect(spent).not.toMatch(/Do not|Follow the|tell the human/);
   });
 
-  test('names the ask pack, and embeds its guidance only when the system prompt lacks it', () => {
-    const fragment = { id: 'coding', instructions: NEO_PACK_CODING_INSTRUCTIONS };
-    const inPrompt = driverDoneCheckNote(work, goal, 0, null, {
-      ask: { ...ask, pack: 'coding' },
-      pack: { ...fragment, inPrompt: true },
-    });
-    expect(inPrompt).toContain('This ask works under the coding pack');
-    expect(inPrompt).not.toContain(NEO_PACK_CODING_INSTRUCTIONS);
+  test('names the ask pack and leaves its guidance to the system prompt', () => {
     const noted = driverDoneCheckNote(work, goal, 0, null, {
       ask: { ...ask, pack: 'coding' },
-      pack: fragment,
+      pack: { id: 'coding', instructions: NEO_PACK_CODING_INSTRUCTIONS },
     });
-    expect(noted).toContain(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(noted).toContain('This ask works under the coding pack.');
+    expect(noted).not.toContain(NEO_PACK_CODING_INSTRUCTIONS);
     expect(driverDoneCheckNote(work, goal, 0, null, { ask, pack: null })).not.toContain(
       'This ask works under'
     );
@@ -4223,16 +4212,15 @@ describe('neoPrompt decision items', () => {
 });
 
 describe('driverNeedsYouNote', () => {
-  test('asks Neo to put the decision to the human as neo.ask.question with its kind, not a post', () => {
+  test('states that the work waits on the user; the system prompt says how to ask', () => {
     const note = driverNeedsYouNote(
       { id: 'w1', title: 'Fix startup' },
       { adapter: 'claude-desktop', daemon: 'laptop', id: 't1' },
       'A or B?'
     );
-    expect(note).toContain(
-      'ask it with neo.ask.question {askId, question, decides, options, kind}'
-    );
-    expect(note).toContain('do not publish');
+    expect(note).toContain('Work you handed off is waiting on the user.');
+    expect(note).not.toMatch(/neo\.ask\.question|[Dd]o not/);
+    expect(neoPrompt(null)).toContain('When work is waiting on the user');
   });
 });
 
