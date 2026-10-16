@@ -1,6 +1,6 @@
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
-import { CLAUDE_DESKTOP_OPENING, CLAUDE_DESKTOP_RELAY, fillPrompt } from '@hyperneo/prompts';
-import { open, readdir, readFile, stat } from 'node:fs/promises';
+import { CLAUDE_DESKTOP_OPENING } from '@hyperneo/prompts';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -55,7 +55,7 @@ const LIVE_TIMEOUT_MS = 5_000;
 const LIVE_REUSE_MS = 5_000;
 const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
 const REPLY_LIMIT = 4_000;
-const RELAY_TIMEOUT_MS = 120_000;
+const BOOTSTRAP_TIMEOUT_MS = 120_000;
 const OPEN_WAIT_MS = 60_000;
 const OPEN_POLL_MS = 2_000;
 const OPENING_MESSAGE = CLAUDE_DESKTOP_OPENING;
@@ -564,14 +564,8 @@ export function requireOpenClaudeRecord(
     : { reason: reject('not_open', `${record.title} has no Claude Code session yet.`) };
 }
 
-export function claudeRelayPrompt(name: string, message: string): string {
-  return fillPrompt(CLAUDE_DESKTOP_RELAY, { name: JSON.stringify(name), message });
-}
-
 type ClaudeReceipt = NonNullable<WorkDelivery['receipt']>;
 type ClaudeInputEvidence = NonNullable<WorkDetail['inputEvidence']>;
-
-const messageOpening = (message: string) => message.trim().split('\n')[0].slice(0, 200);
 
 function parseClaudeEntry(line: string): (ClaudeTranscriptEntry & { uuid?: unknown }) | null {
   try {
@@ -580,26 +574,6 @@ function parseClaudeEntry(line: string): (ClaudeTranscriptEntry & { uuid?: unkno
   } catch {
     return null;
   }
-}
-
-function claudeReceipt(line: string | undefined, executionId: string): ClaudeReceipt | null {
-  const inputId = line ? parseClaudeEntry(line)?.uuid : undefined;
-  return typeof inputId === 'string' && inputId ? { executionId, inputId } : null;
-}
-
-function findRelayedMessage(lines: readonly string[], message: string): string | undefined {
-  const opening = JSON.stringify(messageOpening(message)).slice(1, -1);
-  return lines.find((line) => line.includes('cross-session-message') && line.includes(opening));
-}
-
-export function claudeRelayDelivery(
-  lines: readonly string[],
-  message: string,
-  executionId: string
-): WorkDelivery {
-  const line = findRelayedMessage(lines, message);
-  const receipt = claudeReceipt(line, executionId);
-  return { delivered: line !== undefined, ...(receipt ? { receipt } : {}) };
 }
 
 function claudeTurnEnded(entry: ClaudeTranscriptEntry): boolean {
@@ -677,27 +651,6 @@ export function withClaudeInputEvidence(
     : outcome;
 }
 
-async function transcriptSize(path: string | null): Promise<number> {
-  if (!path) return 0;
-  return stat(path).then(
-    (info) => info.size,
-    () => 0
-  );
-}
-
-async function readLinesAfter(path: string, offset: number): Promise<string[]> {
-  const handle = await open(path, 'r');
-  try {
-    const { size } = await handle.stat();
-    const start = Math.min(offset, size);
-    const buffer = Buffer.alloc(Math.min(size - start, TRANSCRIPT_TAIL_BYTES));
-    await handle.read(buffer, 0, buffer.length, start);
-    return buffer.toString('utf8').split('\n');
-  } finally {
-    await handle.close();
-  }
-}
-
 const CLAUDE_LOGIN_FAILURE =
   /OAuth session expired|Failed to authenticate|not logged in|Please run \/login|Invalid API key/i;
 
@@ -716,56 +669,8 @@ export function claudeCliFailure(output: { stdout?: string; stderr?: string }, f
   return reject('not_delivered', text || fallback);
 }
 
-async function relayToLiveSession(
-  record: ClaudeDesktopRecord & { cliSessionId: string },
-  name: string,
-  message: string,
-  deps: ClaudeDesktopAdapterDeps
-): Promise<Result<WorkDelivery>> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const path = claudeTranscriptPath(deps.projectsDir, record);
-  const before = await transcriptSize(path);
-  try {
-    const proc = deps.spawn(
-      [
-        'claude',
-        '-p',
-        '--model',
-        'haiku',
-        '--max-turns',
-        '4',
-        ...(record.permissionMode === 'bypassPermissions'
-          ? ['--permission-mode', 'bypassPermissions']
-          : []),
-        '--tools',
-        'SendMessage ListAgents',
-        '--allowedTools',
-        'SendMessage ListAgents',
-        '-n',
-        'HyperNeo relay',
-        claudeRelayPrompt(name, message),
-      ],
-      { stdout: 'pipe', stderr: 'pipe' }
-    );
-    timer = setTimeout(() => proc.kill('SIGKILL'), RELAY_TIMEOUT_MS);
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    if (code !== 0) return claudeCliFailure({ stdout, stderr }, `The relay exited with ${code}.`);
-    const appended = path ? await readLinesAfter(path, before).catch(() => []) : [];
-    return { ok: true, value: claudeRelayDelivery(appended, message, record.cliSessionId) };
-  } catch (error) {
-    return reject('not_delivered', error instanceof Error ? error.message : String(error));
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function sendOwnedClaudeMessage(
   record: ClaudeDesktopRecord & { cliSessionId: string },
-  liveSessions: readonly ClaudeLiveSession[],
   message: string,
   deps: ClaudeDesktopAdapterDeps,
   context?: WorkCallContext
@@ -774,12 +679,7 @@ async function sendOwnedClaudeMessage(
     return context
       ? deps.sendInbox(record.cliSessionId, message, context)
       : reject('unsupported', 'The Claude inbox requires a session reply destination.');
-  const live = liveSessions.find((session) => session.sessionId === record.cliSessionId);
-  const name = live?.name;
-  if (!name || liveSessions.filter((session) => session.name === name).length > 1) {
-    return reject('not_delivered', `${record.title} has no unique name to relay a message to.`);
-  }
-  return relayToLiveSession(record, name, message, deps);
+  return reject('unsupported', 'The direct Claude inbox transport is unavailable.');
 }
 
 export const sendClaudeMessage = (superpipe({})('claude-owner-send') as PipelineAPI)
@@ -790,7 +690,7 @@ export const sendClaudeMessage = (superpipe({})('claude-owner-send') as Pipeline
     'cliSessionId'
   )
   .pipe(requireClaudeCliOwner, ['cliSessionId', 'liveSessions'], 'result:outcome')
-  .pipe(sendOwnedClaudeMessage, ['record', 'liveSessions', 'message', 'deps', 'context'], 'outcome')
+  .pipe(sendOwnedClaudeMessage, ['record', 'message', 'deps', 'context'], 'outcome')
   .endAsync('outcome') as (
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
@@ -846,7 +746,7 @@ export async function runToExit(
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const proc = deps.spawn(args, { cwd, stdout: 'pipe', stderr: 'pipe' });
-    timer = setTimeout(() => proc.kill('SIGKILL'), RELAY_TIMEOUT_MS);
+    timer = setTimeout(() => proc.kill('SIGKILL'), BOOTSTRAP_TIMEOUT_MS);
     const [stdout, stderr, code] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -990,8 +890,7 @@ function requireClaudeStartReply(
   deps: ClaudeDesktopAdapterDeps,
   context?: WorkCallContext
 ): Gate<StartRequest> {
-  if (!deps.sendInbox) return { value: request };
-  if (!context || !deps.admitInbox)
+  if (!deps.sendInbox || !context || !deps.admitInbox)
     return {
       reason: reject('unsupported', 'The Claude inbox requires a session reply destination.'),
     };
@@ -1017,7 +916,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
   return {
     id: 'claude-desktop',
     supportsStartPreparation: !!deps.prepareExecution,
-    capabilities: ['find', 'start', 'send', 'status', 'archive'],
+    capabilities: ['find', 'start', 'send', 'steer', 'status', 'archive'],
     find: async (query) =>
       runClaudeDesktopFind(
         query,
@@ -1027,6 +926,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
       ),
     start: (request, context) => runClaudeDesktopStart(request, deps, context),
     send: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
+    steer: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     status: (ref, since, receipt) => runClaudeDesktopStatus(ref, reused, cache, since, receipt),
     archive: (ref, admit) => archiveClaudeSession(ref, admit, deps),
   };

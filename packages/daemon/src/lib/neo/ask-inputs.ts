@@ -74,6 +74,7 @@ export const NeoAskSchema = z.object({
         text: z.string(),
         state: z.enum(['pending', 'met', 'needs_you', 'reported']),
         evidence: z.string().nullable(),
+        answer: z.object({ choice: z.string().nullable(), at: z.number().nullable() }).optional(),
         check: z.string().min(1).nullable(),
         verifiedDefinitionHash: z.string().nullable().optional(),
         deliveredBy: z.string().nullable().optional(),

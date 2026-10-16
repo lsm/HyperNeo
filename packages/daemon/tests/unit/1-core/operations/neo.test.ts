@@ -54,7 +54,7 @@ describe('Neo MVP', () => {
     expect(prompt).toContain('permission to create its record now');
     expect(prompt).toContain('call neo.work.propose in that turn');
     expect(prompt).toContain('never render a pretend work item');
-    expect(prompt).toContain('Start work button is the approval to execute');
+    expect(prompt).toContain('ask’s start question is the decision control for execution');
     expect(prompt).toContain('no implicit project, workspace, folder, repository or worktree');
     expect(prompt).toContain('wait for needed facts or ask for genuinely missing information');
     expect(prompt).toContain('Apply them whenever you propose work and write doneWhen');

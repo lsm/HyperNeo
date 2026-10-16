@@ -448,7 +448,11 @@ export class NeoWorkDriverTargetRepository {
           adapter,
           daemon,
           status: status.success ? status.data : null,
-          link: row.link,
+          link:
+            row.link ??
+            (ref?.adapter === 'claude-desktop' && ref.id.startsWith('local_')
+              ? `claude://claude.ai/epitaxy/${encodeURIComponent(ref.id)}`
+              : null),
           ...(row.model !== null ? { model: row.model } : {}),
           ...(row.effort !== null ? { effort: row.effort } : {}),
           ...(row.remoteLink ? { remoteLink: row.remoteLink } : {}),

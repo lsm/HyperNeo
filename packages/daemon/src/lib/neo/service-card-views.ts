@@ -35,6 +35,7 @@ function projectNeoServiceCards(
     continues: service.workContinues.list(workIds),
     supersessions: service.workSupersessions.list(workIds),
     refusals: service.workRefusals.list(workIds),
+    controlFailures: service.cardControlFailures(workIds),
     asks,
   });
   return { asks, cards, workPrs };

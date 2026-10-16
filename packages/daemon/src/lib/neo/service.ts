@@ -1,3 +1,5 @@
+import { NeoWorkControlFailureRepository } from '../../storage/repositories/neo-work-control-failure-repository.ts';
+import { neoControlFailure, neoControlFailureForRef } from './control-failure.ts';
 import { neoHolderTitle, planNeoHolderTitles } from './holder-title.ts';
 import { hostname } from 'node:os';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
@@ -476,6 +478,7 @@ export class NeoService {
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
   readonly workPrClaims: NeoWorkPrClaimRepository;
   readonly workRefusals: NeoWorkRefusalRepository;
+  readonly controlFailures: NeoWorkControlFailureRepository;
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
@@ -793,6 +796,7 @@ export class NeoService {
       notifyChanged: () => this.notifyChanged(),
     });
     this.workRefusals = new NeoWorkRefusalRepository(db.getDatabase());
+    this.controlFailures = new NeoWorkControlFailureRepository(db.getDatabase());
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged, (settled) => {
       const wakes = planNeoAvailabilityWakes(settled, this.repo.listWork(), (id) =>
         this.dependencyBlockers(id).some((blocker) => blocker.workId !== id)
@@ -2031,8 +2035,26 @@ export class NeoService {
     return { ok: false, reason: refused.reason };
   }
 
+  cardControlFailures(workIds: readonly string[]) {
+    const rows = this.controlFailures.list(workIds);
+    return workIds.flatMap((workId) => {
+      const failure = neoControlFailureForRef(rows, workId, this.driverTargets.readRef(workId));
+      return failure ? [{ workId, ...failure }] : [];
+    });
+  }
+
   private async stopDriverWork(ref: WorkRef, work: NeoWork): Promise<void> {
-    await this.invokeAsCard(work, 'work.stop', { ref }).catch(() => undefined);
+    const outcome = await this.invokeAsCard(work, 'work.stop', { ref }).catch(
+      (error: unknown): OperationOutcome => ({
+        kind: 'failed',
+        code: 'execution_failed',
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+    const failure = neoControlFailure('stop', outcome, Date.now());
+    if (failure) this.controlFailures.record({ workId: work.id, ref, ...failure });
+    else this.controlFailures.clear(work.id, ref, 'stop');
+    this.notifyChanged();
   }
 
   private async failUnavailableTarget(work: NeoWork, reason: string): Promise<void> {

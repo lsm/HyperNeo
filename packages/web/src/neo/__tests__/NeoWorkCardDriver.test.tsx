@@ -47,6 +47,39 @@ afterEach(cleanup);
 
 describe('NeoWorkCard with drivers work', () => {
   it.each(['detail', 'summary'] as const)(
+    'shows a failed stop with its Desktop opener in %s',
+    (presentation) => {
+      const cancelled = { ...work, status: 'cancelled' as const };
+      renderCard(
+        testCard(cancelled, {
+          adapter: 'claude-desktop',
+          label: 'Cancelled · stop unsupported',
+          open: {
+            link: 'claude://claude.ai/epitaxy/local_one',
+            remoteLink: null,
+            sessionId: null,
+            daemon: null,
+          },
+          controlFailure: {
+            operation: 'stop',
+            reason: 'unsupported',
+            detail: 'Desktop cannot be stopped here.',
+            at: 2,
+          },
+        }),
+        { presentation, work: cancelled }
+      );
+      expect(screen.getByText('Cancelled · stop unsupported')).toBeTruthy();
+      expect(screen.getByText(/Desktop cannot be stopped here.*Open the session/)).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Open Bigger font' }).getAttribute('href')).toBe(
+        'claude://claude.ai/epitaxy/local_one'
+      );
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
+    }
+  );
+
+  it.each(['detail', 'summary'] as const)(
     'shows confirmed start configuration in %s',
     (presentation) => {
       renderCard(codex({ model: 'gpt-6.1-sol', effort: 'medium' }), { presentation });

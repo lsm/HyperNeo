@@ -1,14 +1,6 @@
 import { requireClaudeReplyDestination } from '../../../../src/lib/drivers/claude-inbox-submit';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import {
-  appendFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -139,10 +131,15 @@ describe('claude-desktop adapter against the app session records', () => {
       calls.push(args);
       return reply;
     });
-    expect(
-      await driver.send!({ adapter: 'claude-desktop', id: 'local_a1' }, 'exact text', context)
-    ).toEqual(reply);
-    expect(calls).toEqual([['cli-a1', 'exact text', context]]);
+    for (const verb of ['send', 'steer'] as const) {
+      expect(
+        await driver[verb]!({ adapter: 'claude-desktop', id: 'local_a1' }, 'exact text', context)
+      ).toEqual(reply);
+    }
+    expect(calls).toEqual([
+      ['cli-a1', 'exact text', context],
+      ['cli-a1', 'exact text', context],
+    ]);
     expect(spawned).toEqual([]);
   });
 
@@ -442,114 +439,21 @@ describe('claude-desktop adapter against the app session records', () => {
     });
   });
 
-  test('send relays to a live session and confirms it from the transcript', async () => {
-    const transcripts = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
-    mkdirSync(transcripts, { recursive: true });
-    const transcript = join(transcripts, 'cli-a1.jsonl');
-    const relayed = `${JSON.stringify({
-      type: 'user',
-      message: {
-        content: '<cross-session-message from="x">\nload "orders"\n</cross-session-message>',
-      },
-    })}\n`;
-    writeFileSync(transcript, relayed);
-    const ref = { adapter: 'claude-desktop', id: 'local_a1' };
-    expect(await adapter().send?.(ref, 'load "orders"\nthen stop', user)).toEqual({
-      ok: true,
-      value: { delivered: false },
-    });
-    const relay = adapter(undefined, 0, () => appendFileSync(transcript, relayed));
-    expect(await relay.send?.(ref, 'load "orders"\nthen stop', user)).toEqual({
-      ok: true,
-      value: { delivered: true },
-    });
-    expect(spawned[0].args.slice(0, 11)).toEqual([
-      'claude',
-      '-p',
-      '--model',
-      'haiku',
-      '--max-turns',
-      '4',
-      '--tools',
-      'SendMessage ListAgents',
-      '--allowedTools',
-      'SendMessage ListAgents',
-      '-n',
-    ]);
-    expect(spawned[0].args.at(-1)).toContain('session named "lakehouse loader"');
-    expect(spawned[0].args.at(-1)).toContain(
-      'load "orders"\nthen stop\n\n(Relayed from HyperNeo by a one-shot sender that has already exited.'
-    );
-    expect(spawned[0].args.at(-1)).toContain('Do not message the sender back.)\n</message>');
-    expect(await adapter(undefined, 1).send?.(ref, 'hi', user)).toEqual({
-      ok: false,
-      reason: 'not_delivered',
-      detail: 'relay failed',
-    });
-    const twins: ClaudeLiveSession[] = [
-      { sessionId: 'cli-a1', status: 'idle', name: 'init', owner: 'cli', pid: 1 },
-      { sessionId: 'cli-x', status: 'idle', name: 'init', owner: 'cli', pid: 2 },
-    ];
-    expect(await adapter(twins).send?.(ref, 'hi', user)).toMatchObject({
-      reason: 'not_delivered',
-    });
-    expect(spawned).toEqual([]);
-  });
-
-  test('a send that fails because the claude CLI login expired says how to fix it', async () => {
-    const ref = { adapter: 'claude-desktop', id: 'local_a1' };
-    const expired = {
-      stdout: 'Failed to authenticate: OAuth session expired and could not be refreshed\n',
-      stderr: '',
-    };
-    const result = await adapter(undefined, 1, () => {}, expired).send?.(ref, 'hi', user);
-    expect(result).toEqual({
-      ok: false,
-      reason: 'claude_cli_login_expired',
-      detail:
-        'The claude CLI on this Mac is not logged in (Failed to authenticate: OAuth session expired and could not be refreshed). Run `claude auth login`, then try again.',
-    });
-    const b2 = { adapter: 'claude-desktop', id: 'local_b2' };
-    expect(await adapter([], 1, () => {}, expired).send?.(b2, 'next', user)).toMatchObject({
-      reason: 'unreachable',
-    });
-    expect(spawned).toEqual([]);
+  test('refuses missing direct transport without spawning a model relay', async () => {
     expect(
-      await adapter(undefined, 1, () => {}, { stdout: 'Error: rate limited', stderr: '' }).send?.(
-        ref,
-        'hi',
+      await adapter().send?.({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user)
+    ).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(
+      await adapter().start!(
+        {
+          place: { machine: 'laptop', name: 'project', folder: '/project' },
+          title: 'task',
+          message: 'task',
+        },
         user
       )
-    ).toEqual({ ok: false, reason: 'not_delivered', detail: 'Error: rate limited' });
-  });
-
-  test('send relays from the permission class of a session that bypasses permissions', async () => {
-    writeFileSync(
-      join(dir, 'acct-a/scope-1/local_p1.json'),
-      JSON.stringify(
-        record('p1', {
-          cwd: '/focus/ios',
-          title: 'Neo iOS app',
-          permissionMode: 'bypassPermissions',
-        })
-      )
-    );
-    const live: ClaudeLiveSession[] = [
-      { sessionId: 'cli-p1', status: 'idle', name: 'Neo iOS app', owner: 'cli', pid: 1 },
-    ];
-    await adapter(live).send?.({ adapter: 'claude-desktop', id: 'local_p1' }, 'next', user);
-    expect(spawned[0].args.slice(4, 12)).toEqual([
-      '--max-turns',
-      '4',
-      '--permission-mode',
-      'bypassPermissions',
-      '--tools',
-      'SendMessage ListAgents',
-      '--allowedTools',
-      'SendMessage ListAgents',
-    ]);
-    await adapter().send?.({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user);
-    expect(spawned[0].args).not.toContain('--permission-mode');
+    ).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(spawned).toEqual([]);
   });
 
   test('send refuses to resume when it cannot tell what the app runs, while find carries on', async () => {
@@ -603,35 +507,15 @@ describe('claude-desktop adapter against the app session records', () => {
         ok: false,
         reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
       });
+      expect(
+        await driver.steer!({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user)
+      ).toMatchObject({
+        ok: false,
+        reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
+      });
       expect(spawned).toEqual([]);
     }
   );
-
-  test('a delivered send returns the receipt of the input it put in the transcript', async () => {
-    const relayDir = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
-    mkdirSync(relayDir, { recursive: true });
-    const relayLog = join(relayDir, 'cli-a1.jsonl');
-    writeFileSync(relayLog, '');
-    const relayed = JSON.stringify({
-      type: 'user',
-      uuid: 'u-relay',
-      message: {
-        content: '<cross-session-message from="x">\nload orders\n</cross-session-message>',
-      },
-    });
-    const relay = adapter(undefined, 0, () => appendFileSync(relayLog, `${relayed}\n`));
-    expect(
-      await relay.send?.({ adapter: 'claude-desktop', id: 'local_a1' }, 'load orders', user)
-    ).toEqual({
-      ok: true,
-      value: { delivered: true, receipt: { executionId: 'cli-a1', inputId: 'u-relay' } },
-    });
-    const inactive = adapter([]);
-    expect(
-      await inactive.send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user)
-    ).toMatchObject({ ok: false, reason: 'unreachable' });
-    expect(spawned).toEqual([]);
-  });
 
   test('status reads the exchange that answered a receipt, and only its own reply', async () => {
     const transcripts = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');

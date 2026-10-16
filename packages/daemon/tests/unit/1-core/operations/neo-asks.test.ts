@@ -2143,7 +2143,10 @@ describe('neo.ask operations', () => {
               id: 'i3',
               state: 'met',
               metBy: 'human',
-              evidence: 'The human answered: dev (their message reply)',
+              evidence: expect.stringMatching(
+                /^The human answered with option: .* \(their message reply\)$/
+              ),
+              answer: { choice: 'dev', at: expect.any(Number) },
             }),
           ],
         },
@@ -2242,7 +2245,8 @@ describe('neo.ask operations', () => {
             expect.objectContaining({
               state: 'met',
               metBy: 'human',
-              evidence: 'The human answered: Fix CI first',
+              evidence: expect.stringContaining('"choice":"Fix CI first"'),
+              answer: { choice: 'Fix CI first', at: expect.any(Number) },
             }),
           ],
         },
