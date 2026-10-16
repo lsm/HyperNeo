@@ -43,7 +43,7 @@ export function neoPublicationViewNote(
       ? 'What the human has already read from Neo in this conversation, oldest first:'
       : 'What the human has read from Neo since your last turn, oldest first:',
     ...lines,
-    'The human already has these; tell them only what is new.',
+    'The human already has these.',
   ].join('\n');
 }
 
