@@ -692,13 +692,23 @@ function requireNeoAskChecklistMet(
         `decision_open: ${asked.map((item) => `${item.id} "${item.text}"`).join('; ')} waits on the human. Settle waiting until they answer, or settle abandoned in the turn the human's own message drops the ask.`
       ),
     };
-  return input.outcome === 'achieved' && caller.source === 'mcp' && open.length
-    ? {
-        reason: fail(
-          `checklist_incomplete: ${open.map((item) => `${item.id} "${item.text}" is ${item.state}`).join('; ')}. Tick each item met with neo.ask.tick first, or settle waiting or blocked.`
-        ),
-      }
-    : { value: ask };
+  if (input.outcome !== 'achieved' || caller.source !== 'mcp' || !open.length)
+    return { value: ask };
+  const daemon = (item: NeoAskItem) => (isNeoAnswerItem(item) ? null : neoDaemonTickPath(item));
+  const tickable = open.filter((item) => !daemon(item));
+  const state = open.map((item) => {
+    const path = daemon(item);
+    return `${item.id} "${item.text}" is ${item.state}${path ? `, and ${NEO_DAEMON_TICKS[path]}` : ''}`;
+  });
+  return {
+    reason: fail(
+      `checklist_incomplete: ${state.join('; ')}. ${
+        tickable.length
+          ? `Tick ${tickable.map((item) => item.id).join(', ')} met with neo.ask.tick first, or settle waiting or blocked.`
+          : 'The ask is achieved by itself once the daemon ticks them.'
+      }`
+    ),
+  };
 }
 
 const NEO_DAEMON_TICKS: Record<NeoDaemonTickPath, string> = {

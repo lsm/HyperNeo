@@ -2581,6 +2581,28 @@ describe('neo.ask operations', () => {
         },
       });
     expect(await tick('i2', 'reported')).toMatchObject({ value: { ok: true } });
+    const settle = (id: string) =>
+      invoke('neo.ask.settle', {
+        id,
+        outcome: 'achieved',
+        summary: 'Merged.',
+        evidence: 'The fix merged.',
+      });
+    expect(await settle(askId)).toMatchObject({
+      value: {
+        ok: false,
+        reason:
+          'checklist_incomplete: i1 "Fix merged to dev" is pending, and the daemon ticks it itself from what it reads; i2 "lsm/HyperNeo#6700 merged and deployed" is reported. Tick i2 met with neo.ask.tick first, or settle waiting or blocked.',
+      },
+    });
+    expect(await tick('i2', 'met')).toMatchObject({ value: { ok: true } });
+    expect(await settle(askId)).toMatchObject({
+      value: {
+        ok: false,
+        reason:
+          'checklist_incomplete: i1 "Fix merged to dev" is pending, and the daemon ticks it itself from what it reads. The ask is achieved by itself once the daemon ticks them.',
+      },
+    });
   });
 
   describe('obsolete PR question reconciliation', () => {
