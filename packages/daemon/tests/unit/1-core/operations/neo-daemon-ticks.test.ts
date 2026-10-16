@@ -96,7 +96,7 @@ describe('neoWatchEventMerge', () => {
 });
 
 describe('readNeoWatchEventTicks', () => {
-  test('ticks an item on its PR merge event, citing the event, once its other refs settled', async () => {
+  test('ticks an item on its PR merge event, citing the event, after independently reading its merge time and the other refs', async () => {
     const watched = ask([
       item('i1', { watch: [pull(7)] }),
       item('i2', { watch: [pull(7), pull(8)] }),
@@ -108,13 +108,21 @@ describe('readNeoWatchEventTicks', () => {
       prEvent(7, 'closed', { merged: true }),
       async (refs) => {
         reads.push(refs);
-        return [{ url: pull(8), kind: 'pr', state: 'OPEN', at: null, done: false, closedBy: null }];
+        return [
+          { url: pull(7), kind: 'pr', state: 'MERGED', at: 2_000, done: true, closedBy: null },
+          { url: pull(8), kind: 'pr', state: 'OPEN', at: null, done: false, closedBy: null },
+        ];
       }
     );
     expect(ticks).toEqual([
       { id: 'i1', evidence: `Watched: ${pull(7)} merged (event event-7-closed: PR #7 closed)` },
     ]);
-    expect(reads).toEqual([[{ owner: 'lsm', repo: 'HyperNeo', number: 8 }]]);
+    expect(reads).toEqual([
+      [
+        { owner: 'lsm', repo: 'HyperNeo', number: 7 },
+        { owner: 'lsm', repo: 'HyperNeo', number: 8 },
+      ],
+    ]);
   });
 
   test('reads nothing for an event no live item watches or one that is not a merge', async () => {
@@ -380,18 +388,34 @@ describe('Neo ask event ticks', () => {
     ]);
   });
 
-  test('ticks the watched item met on its merge event, without a read', async () => {
-    const opened = openWatch('a-event');
-    const reader = mock(async () => []);
-    service.readRefStates = reader;
-    await publisher.publish(prEvent(7, 'closed', { merged: true }));
-    expect(service.askRecords.get(opened.id)?.doneItems?.[0]).toMatchObject({
-      state: 'met',
-      metBy: 'daemon',
-      evidence: `Watched: ${pull(7)} merged (event event-7-closed: PR #7 closed)`,
-    });
-    expect(reader).not.toHaveBeenCalled();
-  });
+  test.each([null, -1_000, 1_000])(
+    'checks the actual merge time %s after an event',
+    async (offset) => {
+      const opened = openWatch('a-event');
+      const reader = mock(async () => [
+        {
+          url: pull(7),
+          kind: 'pr' as const,
+          state: 'MERGED' as const,
+          at: offset === null ? null : opened.createdAt + offset,
+          done: true,
+          closedBy: null,
+        },
+      ]);
+      service.readRefStates = reader;
+      await publisher.publish(prEvent(7, 'closed', { merged: true }));
+      expect(service.askRecords.get(opened.id)?.doneItems?.[0]).toMatchObject(
+        offset !== null && offset > 0
+          ? {
+              state: 'met',
+              metBy: 'daemon',
+              evidence: `Watched: ${pull(7)} merged (event event-7-closed: PR #7 closed)`,
+            }
+          : { state: 'pending', metBy: null, evidence: null }
+      );
+      expect(reader).toHaveBeenCalledWith([{ owner: 'lsm', repo: 'HyperNeo', number: 7 }]);
+    }
+  );
 
   test('a close without merge leaves the item pending', async () => {
     const opened = openWatch('a-closed');

@@ -6,6 +6,7 @@ import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../../src/storage/schema/neo.ts';
 import { runMigration283 } from '../../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration284 } from '../../../../../src/storage/schema/m284-neo-work-targets.ts';
+import { runMigration385 } from '../../../../../src/storage/schema/m385-neo-work-kickoff.ts';
 import { runMigration380 } from '../../../../../src/storage/schema/m380-neo-work-follows.ts';
 import { NeoRepository } from '../../../../../src/storage/repositories/neo-repository.ts';
 import { Database as DaemonDatabase } from '../../../../../src/storage/database.ts';
@@ -137,6 +138,7 @@ describe('migration 284 and work-target storage', () => {
         }
         runMigration284(db);
         runMigration380(db);
+        runMigration385(db);
         const notify = mock(() => {});
         const repo = new NeoRepository(db, notify);
         const targetSessionId = "existing:manager/α|?x=1';SELECT 1";
