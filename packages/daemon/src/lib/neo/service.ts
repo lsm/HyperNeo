@@ -69,7 +69,6 @@ import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-re
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
-import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import type { WorkRef } from '../drivers/types.ts';
@@ -137,7 +136,8 @@ import {
   planNeoCardSend,
   planNeoCardTopicsEnded,
   planNeoProjectEventHolders,
-  planNeoSessionTopicsHandedOver,
+  isNeoSessionTopicCovered,
+  neoCardWorkerSession,
 } from './card-events.ts';
 import { planNeoDaemonCardSettle, requireNeoCardTurn } from './card-settle.ts';
 import type { NeoCardWait } from './card-views.ts';
@@ -497,7 +497,6 @@ export class NeoService {
   readonly workPrs: NeoWorkPrRepository;
   readonly cardEvents: NeoCardEventSubscriptionRepository;
   private readonly sessionEvents: SessionExternalEventStore;
-  private readonly sessionSubscriptions: SessionEventSubscriptionRepository;
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
   readonly workPrClaims: NeoWorkPrClaimRepository;
   readonly workRefusals: NeoWorkRefusalRepository;
@@ -888,7 +887,6 @@ export class NeoService {
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
     this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
-    this.sessionSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     this.cardPrRelays = new NeoCardPrRelayRepository(db.getDatabase());
     this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
@@ -2765,12 +2763,6 @@ export class NeoService {
     const work = this.repo.getWork(workId);
     if (!work || !isNeoCardLive(work)) return;
     const topics = this.packs().flatMap((pack) => pack.externalTopics?.(work) ?? []);
-    if (work.sessionId)
-      for (const row of planNeoSessionTopicsHandedOver(
-        this.sessionSubscriptions.listBySession(work.sessionId),
-        topics
-      ))
-        this.sessionSubscriptions.delete(row.sessionId, row.topic);
     for (const topic of topics) {
       if (!this.cardEvents.subscribe(workId, topic, Date.now())) continue;
       void this.watchExternalTopic?.(topic).catch((error) =>
@@ -2809,6 +2801,22 @@ export class NeoService {
 
   cardEventsDelivered(): boolean {
     return this.packs().some((pack) => !!pack.externalTopics);
+  }
+
+  coversSessionTopic(sessionId: string, topic: string): boolean {
+    return isNeoSessionTopicCovered(
+      this.cardEvents.listActive().map((row) => ({
+        session: neoCardWorkerSession(
+          planNeoCardSend({
+            work: this.repo.getWork(row.workId),
+            ref: this.driverTargets.readRef(row.workId),
+          })
+        ),
+        topic: row.topic,
+      })),
+      sessionId,
+      topic
+    );
   }
 
   followedTopics(): string[] {
@@ -2922,6 +2930,10 @@ export class NeoService {
           await this.refreshWorkPrs(workId, Date.now(), event.occurredAt).catch((error) =>
             this.log.warn('Card evidence refresh after its event pending', error)
           );
+        for (const workId of route.workIds) {
+          const told = neoPackCardAttention(this.installedPacks(), workId).attention;
+          if (told) this.cardPrRelays.markTold(workId, told.signature, Date.now());
+        }
       },
       ['event', 'route']
     )

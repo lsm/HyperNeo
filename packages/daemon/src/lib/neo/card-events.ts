@@ -2,6 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { isNeoWorkClosedDone } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkRef } from '../drivers/types.ts';
 import type { ExternalEvent } from '../external-events/types.ts';
+import { topicMatchesPattern } from '../external-events/topic-trie.ts';
 import type { NeoCardEventSubscription, NeoPack, NeoPackEventRoute } from './packs/types.ts';
 
 export interface NeoCardSendTarget {
@@ -52,12 +53,21 @@ export function planNeoCardEventRoute(
     : { reason: 'not_followed' };
 }
 
-export function planNeoSessionTopicsHandedOver<Row extends { topic: string }>(
-  own: readonly Row[],
-  topics: readonly string[]
-): Row[] {
-  const owned = new Set(topics.map((topic) => topic.toLowerCase()));
-  return own.filter((row) => owned.has(row.topic.toLowerCase()));
+export function neoCardWorkerSession(send: NeoCardSend): string | null {
+  if (send.via === 'session') return send.sessionId;
+  return send.via === 'driver' && send.ref.adapter === 'hyperneo' && !send.ref.daemon
+    ? send.ref.id
+    : null;
+}
+
+export function isNeoSessionTopicCovered(
+  followed: readonly { session: string | null; topic: string }[],
+  sessionId: string,
+  topic: string
+): boolean {
+  return followed.some(
+    (card) => card.session === sessionId && topicMatchesPattern(card.topic, topic)
+  );
 }
 
 const PROJECT_EVENT = 'neo-project-event:';

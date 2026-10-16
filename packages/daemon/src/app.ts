@@ -40,7 +40,7 @@ import {
   type InternalCommandBus,
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
-import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
+import { type SessionTopicSource, setupRPCHandlers } from './lib/rpc-handlers/index.ts';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
 import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
 import { createWebSocketHandlers } from './routes/setup-websocket.ts';
@@ -814,8 +814,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       internalEventBus
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
-    const sessionTopicSources: (() => readonly string[])[] = [];
-    const followedSessionTopics = () => sessionTopicSources.flatMap((source) => source());
+    const sessionTopicSources: SessionTopicSource[] = [];
+    const followedSessionTopics = () =>
+      sessionTopicSources.flatMap((source) => source.followedTopics());
+    const coveredSessionTopic = (sessionId: string, topic: string) =>
+      sessionTopicSources.some((source) => source.coversSessionTopic(sessionId, topic));
     const spaceSessionEventSubscriptions = new SpaceSessionEventSubscriptionRepository(
       db.getDatabase()
     );
@@ -840,6 +843,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           );
       },
       removeSubscription: (sessionId, topic) => sessionEventSubscriptions.delete(sessionId, topic),
+      isTopicCovered: coveredSessionTopic,
     };
     internalEventBus.subscribe(
       'externalEvent.published',
@@ -1014,6 +1018,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const rpcHandlers = setupRPCHandlers({
       watchSessionRepo: async (owner, repo) => githubEventExtension?.watchSessionRepo(owner, repo),
       followSessionTopics: (source) => sessionTopicSources.push(source),
+      isSessionTopicCovered: coveredSessionTopic,
       messageHub,
       sessionManager,
       authManager,

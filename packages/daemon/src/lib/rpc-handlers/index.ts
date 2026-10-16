@@ -247,9 +247,15 @@ function createGoalAutomationSelfNagSchedules(
   }
 }
 
+export interface SessionTopicSource {
+  followedTopics(): readonly string[];
+  coversSessionTopic(sessionId: string, topic: string): boolean;
+}
+
 export interface RPCHandlerDependencies {
   watchSessionRepo?: (owner: string, repo: string) => Promise<void>;
-  followSessionTopics?: (source: () => readonly string[]) => void;
+  followSessionTopics?: (source: SessionTopicSource) => void;
+  isSessionTopicCovered?: (sessionId: string, topic: string) => boolean;
   messageHub: MessageHub;
   sessionManager: SessionManager;
   authManager: AuthManager;
@@ -1453,7 +1459,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     const repo = githubRepoOfTopic(topic);
     if (repo) await deps.watchSessionRepo?.(repo.owner, repo.repo);
   };
-  deps.followSessionTopics?.(() => neoService.followedTopics());
+  deps.followSessionTopics?.(neoService);
   neoService.filePacks = adoptNeoFilePacks(
     loadNeoFilePacks({
       root: join(getDataDir(), 'neo-packs'),
