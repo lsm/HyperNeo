@@ -9,23 +9,11 @@ import {
   isValidModel,
   resolveModelAlias,
   resolveModelAliasUnfiltered,
-  mergeDiscoveredWithStatic,
   fallbackModelsFor,
   extractPersistedDiscoveredWrapper,
   setProviderRepository,
   endpointMatchingPersistedDiscovered,
-  schedulePendingSliceRelease,
-  releaseAppliedProviderSlice,
   mergePendingProviderSlices,
-  applyDiscoveredProviderModels,
-  restoreProviderModelsSlice,
-  restoreProviderPendingSlice,
-  getPendingProviderSlice,
-  getModelsCacheClearSequence,
-  getCurrentCacheLoad,
-  markModelsCacheSliceProtected,
-  markProviderRefreshSucceeded,
-  seedProviderCatalogModels,
   getProviderCatalogModels,
   bumpProviderCatalogEpoch,
   getProviderCatalogEpoch,
@@ -156,54 +144,6 @@ describe('Model Service', () => {
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
       clearModelsCache('session-123');
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
-    });
-  });
-
-  describe('mergeDiscoveredWithStatic', () => {
-    it('merges discovered models over static models for the same provider', () => {
-      const discovered = [
-        {
-          ...mockModels[0],
-          id: 'sonnet',
-          name: 'Discovered Sonnet',
-          provider: 'anthropic',
-        },
-      ];
-
-      const merged = mergeDiscoveredWithStatic('anthropic', discovered);
-
-      expect(
-        merged.some((model) => model.id === 'sonnet' && model.name === 'Discovered Sonnet')
-      ).toBe(true);
-      expect(merged.some((model) => model.id === 'opus')).toBe(true);
-      expect(merged.some((model) => model.id === 'haiku')).toBe(true);
-    });
-
-    it('keeps discovered-only models when there is no matching static entry', () => {
-      const discovered = [
-        {
-          id: 'new-glm',
-          name: 'New GLM',
-          alias: 'new-glm',
-          family: 'glm',
-          provider: 'glm',
-          contextWindow: 128000,
-          description: 'New GLM model',
-          releaseDate: '2026-01-01',
-          available: true,
-        },
-      ];
-
-      const merged = mergeDiscoveredWithStatic('glm', discovered);
-
-      expect(merged.some((model) => model.id === 'new-glm')).toBe(true);
-      expect(merged.some((model) => model.family === 'glm' && model.id !== 'new-glm')).toBe(true);
-    });
-
-    it('returns static models when discovered is empty', () => {
-      const merged = mergeDiscoveredWithStatic('anthropic', []);
-
-      expect(merged.map((model) => model.id).sort()).toEqual(['haiku', 'opus', 'sonnet']);
     });
   });
 
@@ -502,120 +442,6 @@ describe('Model Service', () => {
     });
   });
 
-  describe('pendingSliceReleases', () => {
-    function providerSliceModel(providerId: string): ModelInfo {
-      return {
-        id: `${providerId}-model`,
-        name: `${providerId} Model`,
-        alias: `${providerId}-model`,
-        family: providerId,
-        provider: providerId,
-        contextWindow: 128000,
-        description: `${providerId} model`,
-        releaseDate: '2026-01-01',
-        available: true,
-      };
-    }
-
-    beforeEach(() => {
-      clearModelsCache();
-    });
-
-    it('merges a pending slice into each load result and retains it across loads', () => {
-      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
-      schedulePendingSliceRelease('beta');
-
-      const merged = mergePendingProviderSlices('global', [providerSliceModel('alpha')]);
-      expect(merged.some((model) => model.provider === 'beta')).toBe(true);
-
-      const mergedAgain = mergePendingProviderSlices('global', [providerSliceModel('alpha')]);
-      expect(mergedAgain).toEqual(merged);
-    });
-
-    it('releaseAppliedProviderSlice deletes the slice and release marker immediately', () => {
-      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
-      schedulePendingSliceRelease('beta');
-      releaseAppliedProviderSlice('beta');
-
-      expect(mergePendingProviderSlices('global', [providerSliceModel('alpha')])).toEqual([
-        providerSliceModel('alpha'),
-      ]);
-    });
-
-    it('releases a pending slice only when a newer load for that provider is merged', () => {
-      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
-      schedulePendingSliceRelease('beta');
-
-      const olderLoad = mergePendingProviderSlices(
-        'global',
-        [providerSliceModel('alpha')],
-        0,
-        new Set(['alpha'])
-      );
-      expect(olderLoad.some((model) => model.provider === 'beta')).toBe(true);
-
-      const newerLoad = mergePendingProviderSlices(
-        'global',
-        [providerSliceModel('alpha'), providerSliceModel('beta')],
-        1,
-        new Set(['beta'])
-      );
-      expect(newerLoad).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
-
-      expect(mergePendingProviderSlices('global', [providerSliceModel('alpha')])).toEqual([
-        providerSliceModel('alpha'),
-      ]);
-    });
-
-    it('keeps the pending slice when a newer load does not contain that provider', () => {
-      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
-      schedulePendingSliceRelease('beta');
-
-      const newerLoadWithoutBeta = mergePendingProviderSlices(
-        'global',
-        [providerSliceModel('alpha')],
-        1,
-        new Set(['alpha'])
-      );
-      expect(newerLoadWithoutBeta).toEqual([
-        providerSliceModel('alpha'),
-        providerSliceModel('beta'),
-      ]);
-
-      const newerLoadWithBeta = mergePendingProviderSlices(
-        'global',
-        [providerSliceModel('alpha'), providerSliceModel('beta')],
-        2,
-        new Set(['beta'])
-      );
-      expect(newerLoadWithBeta).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
-    });
-
-    it('keeps the pending slice when the newer load failed and supplied only fallback models', () => {
-      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
-      schedulePendingSliceRelease('beta');
-
-      const failedFallbackLoad = mergePendingProviderSlices(
-        'global',
-        [providerSliceModel('alpha'), providerSliceModel('beta')],
-        1
-      );
-      expect(failedFallbackLoad).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
-
-      const successfulLoad = mergePendingProviderSlices(
-        'global',
-        [providerSliceModel('alpha'), providerSliceModel('beta')],
-        2,
-        new Set(['beta'])
-      );
-      expect(successfulLoad).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
-
-      expect(mergePendingProviderSlices('global', [providerSliceModel('alpha')])).toEqual([
-        providerSliceModel('alpha'),
-      ]);
-    });
-  });
-
   describe('discovery write-path helpers', () => {
     function writePathModel(providerId: string, id: string): ModelInfo {
       return {
@@ -630,113 +456,6 @@ describe('Model Service', () => {
         available: true,
       };
     }
-
-    it('applyDiscoveredProviderModels overlays the live cache and reports the applied slice', () => {
-      setModelsCache(new Map([['global', [...mockModels, writePathModel('acp', 'stale-acp')]]]));
-
-      const result = applyDiscoveredProviderModels('acp', [writePathModel('acp', 'acp-applied')]);
-
-      expect(result.applied).toBe(true);
-      expect(result.models).toEqual([writePathModel('acp', 'acp-applied')]);
-      const models = getAvailableModels('global');
-      expect(models.filter((m) => m.provider === 'acp')).toEqual([
-        writePathModel('acp', 'acp-applied'),
-      ]);
-      expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
-    });
-
-    it('applyDiscoveredProviderModels defers to a pending slice when the cache entry is missing', () => {
-      const result = applyDiscoveredProviderModels('acp', [writePathModel('acp', 'acp-applied')]);
-
-      expect(result.applied).toBe(false);
-      expect(getModelsCache().has('global')).toBe(false);
-      expect(getPendingProviderSlice('acp')).toEqual([writePathModel('acp', 'acp-applied')]);
-      expect(getCurrentCacheLoad('global')).toBeUndefined();
-    });
-
-    it('seeds curated ids from persisted discovery and drops curated-out discovered models', () => {
-      getProviderRegistry().setCuratedModels('acp', [
-        { id: 'acp-applied' },
-        { id: 'acp-persisted' },
-      ]);
-      setModelsCache(new Map([['global', mockModels]]));
-
-      const result = applyDiscoveredProviderModels(
-        'acp',
-        [writePathModel('acp', 'acp-applied'), writePathModel('acp', 'acp-rogue')],
-        'global',
-        [{ id: 'acp-persisted', name: 'Persisted Model' }]
-      );
-
-      expect(result.applied).toBe(true);
-      expect(result.models).toEqual([
-        expect.objectContaining({
-          id: 'acp-persisted',
-          name: 'Persisted Model',
-          provider: 'acp',
-          contextWindow: 128000,
-          preferContextWindowMetadata: true,
-          description: 'Persisted Model via acp',
-        }),
-        writePathModel('acp', 'acp-applied'),
-      ]);
-      expect(
-        getAvailableModels('global')
-          .filter((m) => m.provider === 'acp')
-          .map((m) => m.id)
-      ).toEqual(['acp-persisted', 'acp-applied']);
-    });
-
-    it('restoreProviderModelsSlice rolls the provider slice back and leaves a cleared cache cleared', () => {
-      setModelsCache(new Map([['global', [...mockModels, writePathModel('acp', 'acp-applied')]]]));
-
-      restoreProviderModelsSlice('acp', [writePathModel('acp', 'acp-previous')]);
-
-      const models = getAvailableModels('global');
-      expect(models.filter((m) => m.provider === 'acp')).toEqual([
-        writePathModel('acp', 'acp-previous'),
-      ]);
-      expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
-
-      clearModelsCache('global');
-      restoreProviderModelsSlice('acp', [writePathModel('acp', 'acp-previous')]);
-      expect(getModelsCache().has('global')).toBe(false);
-    });
-
-    it('a rolled-back apply is not re-applied when the in-flight refresh settles', async () => {
-      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
-      getProviderRegistry().register({
-        id: 'slow-splice-provider',
-        getModels: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          return [1, 2, 3, 4].map((n) => writePathModel('slow-splice-provider', `slow-${n}`));
-        },
-        isAvailable: async () => true,
-      } as ProviderLike);
-      setModelsCache(new Map([['global', mockModels]]));
-
-      const { refreshModels } = await import('../../../../src/lib/model-service');
-      const refreshPromise = refreshModels();
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      expect(getCurrentCacheLoad('global')).toBeDefined();
-      const previousSlice = (getModelsCache().get('global') ?? []).filter(
-        (m) => m.provider === 'acp'
-      );
-      const previousOverlay = getPendingProviderSlice('acp');
-      expect(
-        applyDiscoveredProviderModels('acp', [writePathModel('acp', 'acp-applied')]).applied
-      ).toBe(true);
-
-      restoreProviderPendingSlice('acp', previousOverlay);
-      restoreProviderModelsSlice('acp', previousSlice);
-
-      await refreshPromise;
-
-      const models = getAvailableModels('global');
-      expect(models.filter((m) => m.provider === 'acp')).toEqual([]);
-      expect(models.filter((m) => m.provider === 'slow-splice-provider').length).toBe(4);
-    });
 
     it('a provider that never answers cannot hold the whole model refresh', async () => {
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
@@ -768,73 +487,6 @@ describe('Model Service', () => {
       } finally {
         jest.useRealTimers();
       }
-    });
-
-    it('restoreProviderPendingSlice reinstates a captured overlay and clears its release marker', () => {
-      applyDiscoveredProviderModels('acp', [writePathModel('acp', 'acp-first')]);
-      const captured = getPendingProviderSlice('acp');
-      schedulePendingSliceRelease('acp');
-
-      restoreProviderPendingSlice('acp', captured);
-
-      expect(mergePendingProviderSlices('global', mockModels)).toEqual([
-        ...mockModels,
-        writePathModel('acp', 'acp-first'),
-      ]);
-      expect(mergePendingProviderSlices('global', mockModels, 1_000_000, new Set(['acp']))).toEqual(
-        [...mockModels, writePathModel('acp', 'acp-first')]
-      );
-
-      restoreProviderPendingSlice('acp', undefined);
-      expect(mergePendingProviderSlices('global', mockModels)).toEqual(mockModels);
-    });
-
-    it('getModelsCacheClearSequence advances on global clears only', () => {
-      const before = getModelsCacheClearSequence();
-      clearModelsCache('session-123');
-      expect(getModelsCacheClearSequence()).toBe(before);
-      clearModelsCache('global');
-      expect(getModelsCacheClearSequence()).toBe(before + 1);
-      clearModelsCache();
-      expect(getModelsCacheClearSequence()).toBe(before + 2);
-    });
-
-    it('markModelsCacheSliceProtected refreshes the entry so a stale read no longer re-triggers discovery', async () => {
-      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
-      const getModels = mock(async () => [writePathModel('fresh-provider', 'fresh-model')]);
-      getProviderRegistry().register({
-        id: 'fresh-provider',
-        getModels,
-        isAvailable: async () => true,
-      } as ProviderLike);
-      setModelsCache(new Map([['global', mockModels]]), Date.now() - 5 * 60 * 60 * 1000);
-
-      markModelsCacheSliceProtected('global');
-      expect(getAvailableModels('global')).toEqual(mockModels);
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(getModels.mock.calls.length).toBe(0);
-    });
-
-    it('markProviderRefreshSucceeded clears failure and retry state and advances the catalog epoch', () => {
-      const epochBefore = getProviderCatalogEpoch('glm');
-      markRefreshAttemptedFor(['glm']);
-      recordClassifiedProviderFailure('glm', { errorKind: 'credential', message: 'rejected' });
-      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
-
-      expect(markProviderRefreshSucceeded('glm')).toBe(true);
-      expect(getProviderFailure('glm')).toBeUndefined();
-      expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
-      expect(getProviderCatalogEpoch('glm')).toBeGreaterThan(epochBefore);
-      expect(markProviderRefreshSucceeded('glm')).toBe(false);
-    });
-
-    it('seedProviderCatalogModels seeds a discovered catalog readable through peekProviderCatalogModels', () => {
-      const provider = { id: 'seed-provider' } as Provider;
-      const models = [writePathModel('seed-provider', 'seeded-model')];
-
-      seedProviderCatalogModels(provider, models);
-
-      expect(peekProviderCatalogModels('seed-provider', provider)).toEqual(models);
     });
   });
 

@@ -28,7 +28,6 @@ import {
 } from './providers/provider-failure-store.js';
 import { getProviderRegistry } from './providers/registry.js';
 import { raceWithTimeout } from './providers/discovery-refresh-pipeline.js';
-import { mergeDiscoveredModels } from './providers/shared/discovery-cache.js';
 import {
   classifyProviderLoadOutcomes,
   type ProviderLoadOutcome,
@@ -172,19 +171,9 @@ function mergeWithFallbackModels(
   return Array.from(modelMap.values());
 }
 
-export function mergeDiscoveredWithStatic(
-  providerId: string,
-  discovered: ReadonlyArray<ModelInfo>
-): ModelInfo[] {
-  const staticModels = STATIC_MODEL_METADATA.filter((model) => model.provider === providerId);
-  return mergeDiscoveredModels(staticModels, discovered);
-}
-
 const refreshInProgress = new Map<string, Promise<void>>();
 
 const cacheGeneration = new Map<string, number>();
-
-let cacheClearSequence = 0;
 
 const PROVIDER_RETRY_BACKOFF_MS = 60_000;
 
@@ -206,8 +195,6 @@ const refreshModes = new Map<string, boolean>();
 const pendingProviderSlices = new Map<string, ModelInfo[]>();
 
 const pendingSliceReleases = new Map<string, number>();
-
-const pendingSliceEpochs = new Map<string, number>();
 
 let providerRepositoryRef: ProviderRepository | null = null;
 
@@ -1392,9 +1379,6 @@ function clearFailedStrictProviderCaches(result: ModelsLoadResult): void {
 }
 
 export function clearModelsCache(cacheKey?: string, providerId?: string): void {
-  if (!cacheKey || cacheKey === 'global') {
-    cacheClearSequence += 1;
-  }
   if (cacheKey) {
     clearObservedContextWindows(providerId, cacheKey);
     const hadInFlight = refreshInProgress.has(cacheKey);
@@ -1566,13 +1550,11 @@ export function updateProviderModelsInCache(
     ...models,
   ]);
   const generationAtUpdate = cacheGeneration.get(cacheKey) ?? 0;
-  const epochAtUpdate = pendingSliceEpochs.get(sliceKey) ?? 0;
   const inFlight = refreshInProgress.get(cacheKey);
   if (inFlight) {
     inFlight
       .then(() => {
         if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtUpdate) return;
-        if ((pendingSliceEpochs.get(sliceKey) ?? 0) !== epochAtUpdate) return;
         const current = modelsCache.get(cacheKey);
         if (!current) return;
         modelsCache.set(cacheKey, [
@@ -1583,143 +1565,6 @@ export function updateProviderModelsInCache(
       .catch(() => {});
   }
   return true;
-}
-
-export function restoreProviderModelsSlice(
-  providerId: string,
-  slice: ModelInfo[],
-  cacheKey: string = 'global'
-): void {
-  const sliceKey = pendingSliceKey(cacheKey, providerId);
-  pendingSliceEpochs.set(sliceKey, (pendingSliceEpochs.get(sliceKey) ?? 0) + 1);
-  const current = modelsCache.get(cacheKey);
-  if (!current) return;
-  modelsCache.set(cacheKey, [
-    ...current.filter((model) => model.provider !== providerId),
-    ...slice,
-  ]);
-}
-
-export function getModelsCacheClearSequence(): number {
-  return cacheClearSequence;
-}
-
-export function getCurrentCacheLoad(cacheKey: string = 'global'): Promise<void> | undefined {
-  return refreshInProgress.get(cacheKey);
-}
-
-export function applyDiscoveredProviderModels(
-  providerId: string,
-  models: ModelInfo[],
-  cacheKey: string = 'global',
-  persistedDiscovered: ReadonlyArray<{ id: string; name?: string }> = []
-): { applied: boolean; models: ModelInfo[] } {
-  const curatedIds = getCuratedModelIds(providerId);
-  let enriched = models;
-  if (curatedIds !== undefined) {
-    const present = new Set(models.map((model) => model.id));
-    const missing = [...curatedIds].filter((id) => !present.has(id));
-    if (missing.length > 0) {
-      const currentSlice = (modelsCache.get(cacheKey) ?? []).filter(
-        (model) => model.provider === providerId
-      );
-      const byId = new Map(currentSlice.map((model) => [model.id, model]));
-      const persistedById = new Map(
-        persistedDiscovered.filter((entry) => entry.id).map((entry) => [entry.id, entry])
-      );
-      const seeded: ModelInfo[] = [];
-      const seededIds = new Set<string>();
-      const staticProviderModels = STATIC_MODEL_METADATA.filter(
-        (model) => model.provider === providerId
-      );
-      for (const id of missing) {
-        const canonical = findInModels(staticProviderModels, id);
-        if (canonical && (present.has(canonical.id) || seededIds.has(canonical.id))) continue;
-        const found = canonical ?? byId.get(id) ?? persistedById.get(id);
-        if (found) {
-          if ('family' in found) {
-            seeded.push(found as ModelInfo);
-            seededIds.add(found.id);
-          } else {
-            const base: ModelInfo = {
-              id: found.id,
-              name: found.name ?? found.id,
-              alias: found.id,
-              family: providerId,
-              provider: providerId,
-              contextWindow: 128000,
-              preferContextWindowMetadata: true,
-              description: `${found.name ?? found.id} via ${providerId}`,
-              releaseDate: '',
-              available: true,
-            };
-            seeded.push(base);
-            seededIds.add(base.id);
-          }
-        }
-      }
-      if (seeded.length > 0) enriched = [...seeded, ...models];
-    }
-  }
-  const appliedModels = filterProviderModels(providerId, enriched);
-  const applied = updateProviderModelsInCache(providerId, appliedModels, cacheKey);
-  return { applied, models: appliedModels };
-}
-
-export function markModelsCacheSliceProtected(cacheKey: string = 'global'): void {
-  cacheTimestamps.set(cacheKey, Date.now());
-}
-
-export function seedProviderCatalogModels(provider: Provider, models: ModelInfo[]): void {
-  const curatedNow = getProviderRegistry().getCuratedModels(provider.id);
-  providerCatalogCache.set(provider, {
-    models,
-    at: Date.now(),
-    curatedStamp:
-      curatedNow === undefined ? undefined : curatedNow.map((model) => model.id).join(','),
-    epoch: getProviderCatalogEpoch(),
-    discovered: true,
-  });
-}
-
-export function markProviderRefreshSucceeded(providerId: string): boolean {
-  providerAppliedSeq.set(providerId, ++modelLoadSequence);
-  clearProviderRetry(providerId);
-  const recoveredFailure = clearProviderFailure(providerId);
-  bumpProviderCatalogEpoch(providerId);
-  return recoveredFailure;
-}
-
-export function releaseAppliedProviderSlice(providerId: string, cacheKey: string = 'global'): void {
-  pendingSliceReleases.delete(pendingSliceKey(cacheKey, providerId));
-  pendingProviderSlices.delete(pendingSliceKey(cacheKey, providerId));
-}
-
-export function getPendingProviderSlice(
-  providerId: string,
-  cacheKey: string = 'global'
-): ModelInfo[] | undefined {
-  return pendingProviderSlices.get(pendingSliceKey(cacheKey, providerId));
-}
-
-export function restoreProviderPendingSlice(
-  providerId: string,
-  slice: ModelInfo[] | undefined,
-  cacheKey: string = 'global'
-): void {
-  const key = pendingSliceKey(cacheKey, providerId);
-  pendingSliceEpochs.set(key, (pendingSliceEpochs.get(key) ?? 0) + 1);
-  if (slice === undefined) {
-    pendingProviderSlices.delete(key);
-    pendingSliceReleases.delete(key);
-    return;
-  }
-  pendingProviderSlices.set(key, slice);
-  pendingSliceReleases.delete(key);
-}
-
-export function schedulePendingSliceRelease(providerId: string, cacheKey: string = 'global'): void {
-  pendingSliceReleases.set(pendingSliceKey(cacheKey, providerId), modelLoadSequence);
 }
 
 export function canonicalModelId(providerId: string, model: string): string {

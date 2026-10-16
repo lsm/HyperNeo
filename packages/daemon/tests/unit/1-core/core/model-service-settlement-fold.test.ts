@@ -4,7 +4,6 @@ import {
   clearModelsCache,
   getAvailableModels,
   hasRefreshBeenAttemptedFor,
-  markProviderRefreshSucceeded,
 } from '../../../../src/lib/model-service';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import {
@@ -220,38 +219,6 @@ describe('model-service settlement + fold pins', () => {
       );
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
       expect(models.some((m) => m.provider === 'glm')).toBe(true);
-    });
-
-    it('skips a superseded provider result in favor of the cached slice', async () => {
-      const { refreshModels } = await import('../../../../src/lib/model-service');
-      let stall = false;
-      let releaseGlm: ((models: ModelInfo[]) => void) | null = null;
-      registerStubProvider('glm', async () => {
-        if (!stall) return [stubModel('glm', 'glm-5-first')];
-        return new Promise<ModelInfo[]>((resolve) => {
-          releaseGlm = resolve;
-        });
-      });
-      registerStubProvider('stub-ok', async () => [stubModel('stub-ok', 'stub-model')]);
-
-      await refreshModels();
-      expect(getAvailableModels('global').some((m) => m.id === 'glm-5-first')).toBe(true);
-
-      stall = true;
-      const foreground = refreshModels();
-      while (!releaseGlm) {
-        await Promise.resolve();
-      }
-      markProviderRefreshSucceeded('glm');
-      releaseGlm?.([stubModel('glm', 'glm-5-stale')]);
-      await foreground;
-
-      expect(
-        getAvailableModels('global')
-          .filter((m) => m.provider === 'glm')
-          .map((m) => m.id)
-      ).toEqual(['glm-5-first']);
-      expect(getAvailableModels('global').some((m) => m.id === 'stub-model')).toBe(true);
     });
 
     it('propagates the first strict discovery failure when several strict providers fail', async () => {

@@ -397,7 +397,6 @@
 60	packages/daemon/tests/unit/1-core/providers/provider-registry.test.ts
 60	packages/daemon/tests/unit/1-core/providers/provider-sync.test.ts
 8	packages/daemon/tests/unit/1-core/providers/shared/discovery-cache.test.ts
-9	packages/daemon/tests/unit/1-core/providers/shared/last-good-discovery.test.ts
 65	packages/daemon/tests/unit/1-core/providers/shared/model-list.test.ts
 11	packages/daemon/tests/unit/1-core/providers/shared/normalize-upstream-error.test.ts
 543	packages/daemon/tests/unit/1-core/schedule/schedule-service.test.ts
