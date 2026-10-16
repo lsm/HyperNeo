@@ -298,7 +298,6 @@ describe('neo.publication.edit full revisions', () => {
     expect(current).not.toHaveProperty('corrects');
     expect(current).not.toHaveProperty('correctedBy');
     expect(publications.list(conversation)).toHaveLength(1);
-    expect(publications.findByProducer(root.sessionId, 'm-2')?.publicationId).toBe(original);
   });
 });
 

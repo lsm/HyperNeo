@@ -16,7 +16,6 @@ import {
 } from '@hyperneo/prompts';
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { MailboxMessageContent } from '../mailbox/entry.ts';
 import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
@@ -95,7 +94,6 @@ import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-
 import { isNeoAskAnswerReady, planNeoAnswerPublished } from './answer-outcome.ts';
 import { planNeoAskEvidenceNote, requireNeoAskEvidenceDue } from './ask-evidence.ts';
 import {
-  neoForwardedAskMessageId,
   neoForwardedText,
   neoForwardMessageId,
   neoTurnOwnsMessage,
@@ -3646,26 +3644,6 @@ export class NeoService {
 
   private toldDoneCheck(work: NeoWork, ids: readonly string[]): boolean {
     return ids.some((id) => this.hasDelivery(work.originSessionId, id));
-  }
-
-  recentAsksFor(conversationId: string, sessionId: string): NeoConversationAsk[] {
-    const forwarded = this.askForwards.listTo(sessionId, 5).flatMap((forward) => {
-      const ask = this.asks.find(conversationId, forward.ask.messageId);
-      return ask && ask.askOrigin.sessionId === forward.ask.sessionId
-        ? [{ ...ask, requestId: neoForwardMessageId(forward.ask, forward.hop) }]
-        : [];
-    });
-    return [...this.asks.recentFrom(conversationId, sessionId, 5), ...forwarded].sort(
-      (a, b) => a.sequence - b.sequence
-    );
-  }
-
-  forwardedAway(sessionId: string, messageId: string): boolean {
-    return this.askForwards
-      .listFrom(sessionId, neoForwardedAskMessageId(messageId) ?? messageId)
-      .some((forward) =>
-        this.hasDelivery(forward.toSessionId, neoForwardMessageId(forward.ask, forward.hop))
-      );
   }
 
   isDelivering(sessionId: string, messageId: string): boolean {
