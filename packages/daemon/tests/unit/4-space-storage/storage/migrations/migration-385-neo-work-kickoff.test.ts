@@ -13,14 +13,15 @@ describe('runMigration385', () => {
     try {
       runMigration385(db);
       db.exec(`CREATE TABLE neo_work(id TEXT);
-        CREATE TABLE neo_asks(id TEXT, status TEXT);
+        CREATE TABLE neo_asks(id TEXT, status TEXT, pack TEXT);
         CREATE TABLE neo_ask_items(ask_id TEXT, check_kind TEXT, state TEXT, met_by TEXT,
-          evidence TEXT, verified_definition_hash TEXT);
-        INSERT INTO neo_asks VALUES ('active', 'open'), ('done', 'achieved');
+          evidence TEXT, verified_definition_hash TEXT, watch TEXT);
+        INSERT INTO neo_asks VALUES ('active', 'open', 'coding'), ('done', 'achieved', 'coding');
         INSERT INTO neo_ask_items VALUES
-          ('active', 'coding.pr_merged', 'met', 'daemon', 'old proof', 'old hash'),
-          ('active', 'life-admin.confirmed', 'met', 'human', 'words', 'hash'),
-          ('done', 'coding.pr_merged', 'met', 'daemon', 'old proof', 'old hash')`);
+          ('active', 'coding.pr_merged', 'met', 'daemon', 'old proof', 'old hash', NULL),
+          ('active', 'life-admin.confirmed', 'met', 'human', 'words', 'hash', NULL),
+          ('done', 'coding.pr_merged', 'met', 'daemon', 'old proof', 'old hash', NULL),
+          ('active', NULL, 'met', 'daemon', 'old watch', 'old hash', '["https://github.com/lsm/HyperNeo/pull/1"]')`);
       runMigration385(db);
       expect(
         db
@@ -41,6 +42,9 @@ describe('runMigration385', () => {
       ).toEqual({ state: 'met' });
       expect(db.prepare("SELECT state FROM neo_ask_items WHERE ask_id = 'done'").get()).toEqual({
         state: 'met',
+      });
+      expect(db.prepare('SELECT state FROM neo_ask_items WHERE check_kind IS NULL').get()).toEqual({
+        state: 'pending',
       });
       db.exec("UPDATE neo_ask_items SET state = 'met' WHERE ask_id = 'active'");
       runMigration385(db);

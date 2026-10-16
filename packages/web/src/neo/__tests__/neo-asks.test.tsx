@@ -480,6 +480,35 @@ describe('NeoAskCard', () => {
       within(card.getByRole('list', { name: 'Answered questions' })).getByText('开始这 1 步？')
     ).toBeTruthy();
     expect(card.getByText('The human answered: 开始')).toBeTruthy();
+    const openedCard = testCard(
+      { id: 'a2', status: 'queued', sessionId: 'a2-session' },
+      {
+        pr: {
+          number: '7255',
+          label: 'Checks pending',
+          count: 1,
+          inProgress: true,
+          setback: false,
+          merged: [],
+        },
+      }
+    );
+    card.rerender(
+      <NeoAskCard
+        view={{
+          ...view,
+          scenes: [{ ...scene, label: 'PR #7255 · checks pending · waiting for bot approval' }],
+        }}
+        cards={new Map([['a2', openedCard]])}
+        onOpen={vi.fn()}
+      />
+    );
+    expect(card.queryByText('等 PR 开出来')).toBeNull();
+    expect(card.getAllByText('PR #7255 · checks pending · waiting for bot approval')).toHaveLength(
+      1
+    );
+    expect(card.queryByText(/outcomes verified/)).toBeNull();
+    expect(card.getAllByRole('button', { name: 'Open 实现会话归属控制' })).toHaveLength(1);
   });
 
   it('disables option submission while busy', () => {
