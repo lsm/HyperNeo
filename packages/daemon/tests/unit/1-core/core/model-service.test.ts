@@ -13,7 +13,6 @@ import {
   extractPersistedDiscoveredWrapper,
   setProviderRepository,
   endpointMatchingPersistedDiscovered,
-  mergePendingProviderSlices,
   getProviderCatalogModels,
   bumpProviderCatalogEpoch,
   getProviderCatalogEpoch,
