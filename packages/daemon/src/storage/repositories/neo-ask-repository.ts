@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { readNeoAskAnswerChoice } from '../../lib/neo/ask-answer-evidence.ts';
 import { neoOutcomeBindingPolicy } from '../../lib/neo/outcome-binding-policy.ts';
 import {
   type NeoAsk,
@@ -36,6 +37,7 @@ export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'del
   Partial<Pick<NeoAskItem, 'outcomeKind'>>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
+  | 'answer'
   | 'removed'
   | 'removedReason'
   | 'options'
@@ -50,6 +52,7 @@ type NeoAskItemRow = Omit<
   | 'outcomeKind'
 > & {
   askId: string;
+  updatedAt: number;
   removed: number;
   removedReason: string | null;
   options: string | null;
@@ -67,7 +70,7 @@ type NeoAskItemRow = Omit<
 const watchJson = (item: Pick<NeoAskItem, 'watch'>) =>
   item.watch?.length ? JSON.stringify(item.watch) : null;
 
-const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
+const itemColumns = `ask_id AS askId, updated_at AS updatedAt, id, text, state, evidence, check_kind AS "check",
   delivered_by AS deliveredBy, verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, removed_reason AS removedReason, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, decides, because, watch, outcome_kind AS outcomeKind`;
 
 export interface NeoAskOwner {
@@ -833,6 +836,7 @@ export class NeoAskRepository {
         .map(
           ({
             askId: _askId,
+            updatedAt,
             removed,
             removedReason,
             options,
@@ -848,6 +852,11 @@ export class NeoAskRepository {
             ...item
           }) => ({
             ...item,
+            ...(item.state === 'met' &&
+            item.metBy === 'human' &&
+            (decision === 1 || question || ['decision', 'action', 'approval'].includes(kind ?? ''))
+              ? { answer: { choice: readNeoAskAnswerChoice(item.evidence), at: updatedAt } }
+              : {}),
             removed: removed === 1,
             ...(removedReason ? { removedReason } : {}),
             ...(options ? { options: JSON.parse(options) as string[] } : {}),

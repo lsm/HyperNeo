@@ -337,10 +337,10 @@ describe('NeoAskCard', () => {
     expect(card.container.querySelectorAll('[data-ask-step]')).toHaveLength(3);
     expect(card.container.querySelectorAll('article')).toHaveLength(1);
     expect(card.getAllByText('Handed to HyperNeo')).toHaveLength(1);
-    const opener = card.getByRole('button', { name: 'Open Card a2' });
+    const opener = card.getByRole('button', { name: '打开 Card a2' });
     expect(opener.closest('[data-ask-step]')?.getAttribute('data-ask-step')).toBe('a2');
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(card.getAllByRole('button', { name: 'Open Card a2' })).toHaveLength(1);
+    expect(card.getAllByRole('button', { name: '打开 Card a2' })).toHaveLength(1);
     expect(card.container.querySelectorAll('article')).toHaveLength(1);
   });
 
@@ -356,8 +356,8 @@ describe('NeoAskCard', () => {
     );
     const view = describeAsk(ask('a', 'open', ['a2']), linked);
     const app = render(<NeoAskCard view={view} cards={new Map([['a2', card]])} />);
-    const link = app.getByRole('link', { name: 'Open Card a2' });
-    expect([link.getAttribute('href'), link.textContent]).toEqual(['codex://threads/t1', 'Open']);
+    const link = app.getByRole('link', { name: '打开 Card a2' });
+    expect([link.getAttribute('href'), link.textContent]).toEqual(['codex://threads/t1', '打开']);
     expect(link.querySelector('[data-app-logo]')?.getAttribute('data-app-logo')).toBe(
       'anthropic-codex'
     );
@@ -369,14 +369,14 @@ describe('NeoAskCard', () => {
         onOpen={open}
       />
     );
-    fireEvent.click(chat.getByRole('button', { name: 'Open Card c1' }));
+    fireEvent.click(chat.getByRole('button', { name: '打开 Card c1' }));
     expect(open).toHaveBeenCalledExactlyOnceWith('c1');
-    expect(chat.getByRole('button', { name: 'Open Card c1' }).textContent).toBe('Open');
+    expect(chat.getByRole('button', { name: '打开 Card c1' }).textContent).toBe('打开');
     cleanup();
     const unstarted = render(
       <NeoAskCard view={describeAsk(ask('b', 'open', ['b1']), scenes.attention)} onOpen={open} />
     );
-    expect(unstarted.queryByRole('button', { name: 'Open Card b1' })).toBeNull();
+    expect(unstarted.queryByRole('button', { name: '打开 Card b1' })).toBeNull();
   });
 
   it('counts checklist items, not cards, and leaves removed items out of the count', () => {
@@ -409,7 +409,7 @@ describe('NeoAskCard', () => {
       ['i2', '○Item i2'],
       ['i3', '○Item i3removedRemoved by the human.'],
     ]);
-    expect(card.queryByRole('list', { name: 'Answered questions' })).toBeNull();
+    expect(card.queryByRole('list', { name: '已回答' })).toBeNull();
     expect(card.container.querySelector('[data-ask-item="i3"] .line-through')).toBeTruthy();
   });
 
@@ -504,7 +504,62 @@ describe('NeoAskCard', () => {
     expect(app.queryByText('等 PR 开出来')).toBeNull();
     expect(app.getByText('Waiting on CI · #42')).toBeTruthy();
     expect(app.queryByText('verified')).toBeNull();
-    expect(app.getByText('○')).toBeTruthy();
+    expect(app.container.querySelector('[data-ask-item="merge"]')?.textContent).toContain('○');
+  });
+
+  it('uses fixed marks for proposed, running, verified, and needs-you steps', () => {
+    const cases = [
+      { id: 'proposed', status: 'proposed', group: 'attention', done: false, mark: '○' },
+      { id: 'running', status: 'queued', group: 'running', done: false, mark: '●' },
+      { id: 'handed', status: 'queued', group: 'running', done: false, mark: '○' },
+      { id: 'done', status: 'reported', group: 'outcomes', done: true, mark: '✓' },
+      { id: 'needs', status: 'queued', group: 'attention', done: false, mark: '!' },
+      { id: 'stopped', status: 'cancelled', group: 'outcomes', done: false, mark: '○' },
+    ] as const;
+    for (const entry of cases) {
+      const base = classifyNeoScenes([work(entry.id, entry.status)])[0];
+      const scene = { ...base, group: entry.group };
+      const view = describeAsk(ask('marks', 'open', [entry.id]), [scene], {
+        doneWorkIds: entry.done ? [entry.id] : [],
+      });
+      const cards = new Map([
+        [
+          entry.id,
+          testCard(
+            { id: entry.id, status: entry.status, sessionId: 'session' },
+            entry.id === 'running' ? { phase: 'running' } : {}
+          ),
+        ],
+      ]);
+      const app = render(<NeoAskCard view={view} cards={cards} />);
+      expect(app.container.querySelector('[data-ask-step] > [aria-hidden]')?.textContent).toBe(
+        entry.mark
+      );
+      if (entry.status === 'proposed') expect(app.getByText('等你决定')).toBeTruthy();
+      cleanup();
+    }
+  });
+
+  it('does not mark a step done from a merged card while its bound todo is still pending', () => {
+    const value = {
+      ...ask('unverified-card', 'open', ['a1']),
+      doneItems: [item('merge', 'pending', { deliveredBy: 'a1' })],
+    };
+    const view = describeAsk(value, scenes.outcomes, { doneWorkIds: ['a1'] });
+    const app = render(<NeoAskCard view={view} />);
+    expect(app.container.querySelector('[data-ask-step] > [aria-hidden]')?.textContent).toBe('○');
+  });
+
+  it('keeps missing historical answer facts explicit without repeating the question', () => {
+    const value = {
+      ...ask('unknown-answer', 'open', []),
+      doneItems: [item('old', 'met', { decision: true, metBy: 'human', text: 'Old question' })],
+    };
+    const app = render(<NeoAskCard view={describeAsk(value, [])} />);
+    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    expect(app.getByText('选择未记录')).toBeTruthy();
+    expect(app.getByText('时间未记录')).toBeTruthy();
+    expect(app.queryByText('Old question')).toBeNull();
   });
 
   it('renders grouped start steps from structured data and does not repeat proposed cards', () => {
@@ -591,7 +646,7 @@ describe('NeoAskCard', () => {
     fireEvent.click(choices[0]);
     expect(answer).toHaveBeenCalledExactlyOnceWith('i2', '先不做');
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(card.queryByRole('list', { name: 'Answered questions' })).toBeNull();
+    expect(card.queryByRole('list', { name: '已回答' })).toBeNull();
     expect(card.getAllByText('开始调查？')).toHaveLength(1);
     expect(card.getAllByRole('button', { name: /: 开始调查$/ })).toHaveLength(1);
   });
@@ -619,6 +674,7 @@ describe('NeoAskCard', () => {
               decision: true,
               metBy: 'human',
               evidence: 'The human answered: 开始',
+              answer: { choice: '开始', at: 1_792_173_600_000 },
             }),
           ],
         },
@@ -631,10 +687,12 @@ describe('NeoAskCard', () => {
       expect(card.queryByText(/outcomes verified/)).toBeNull();
       expect(card.queryByText('开始这 1 步？')).toBeNull();
       fireEvent.click(card.getByRole('button', { name: 'Details' }));
-      expect(
-        within(card.getByRole('list', { name: 'Answered questions' })).getByText('开始这 1 步？')
-      ).toBeTruthy();
-      expect(card.getByText('The human answered: 开始')).toBeTruthy();
+      expect(within(card.getByRole('list', { name: '已回答' })).getByText('开始')).toBeTruthy();
+      expect(card.queryByText('The human answered: 开始')).toBeNull();
+      expect(card.queryByText('开始这 1 步？')).toBeNull();
+      expect(card.getByRole('list', { name: '已回答' }).querySelector('time')?.dateTime).toBe(
+        new Date(1_792_173_600_000).toISOString()
+      );
       const openedCard = testCard(
         { id: 'a2', status: 'queued', sessionId: 'a2-session' },
         {
@@ -663,7 +721,7 @@ describe('NeoAskCard', () => {
         card.getAllByText('PR #7255 · checks pending · waiting for bot approval')
       ).toHaveLength(1);
       expect(card.queryByText(/outcomes verified/)).toBeNull();
-      expect(card.getAllByRole('button', { name: 'Open 实现会话归属控制' })).toHaveLength(1);
+      expect(card.getAllByRole('button', { name: '打开 实现会话归属控制' })).toHaveLength(1);
     }
   );
 

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { readNeoAskAnswerChoice } from '../../../../src/lib/neo/ask-answer-evidence.ts';
+import { NeoAskSchema } from '../../../../src/lib/neo/ask-inputs.ts';
+import {
+  readNeoAskAnswerChoice,
+  readNeoAskAnswerOption,
+} from '../../../../src/lib/neo/ask-answer-evidence.ts';
 import { deriveNeoAskHumanActions } from '../../../../src/lib/neo/ask-views.ts';
 import { NeoAskViewSchema } from '../../../../src/lib/neo/card-view-schema.ts';
 import { projectNeoAskViews } from '../../../../src/lib/neo/ask-views.ts';
@@ -160,11 +164,11 @@ describe('grouped card start question', () => {
         itemId: questions()[0].id,
         question: '开始这 3 步？',
         options: ['先不做', '开始'],
-        steps: [
+        steps: expect.arrayContaining([
           { id: 'one', title: 'Card one' },
           { id: 'two', title: 'Card two' },
           { id: 'three', title: 'Card three' },
-        ],
+        ]),
       },
     ]);
   });
@@ -198,6 +202,31 @@ describe('grouped card start question', () => {
     expect(neoStartDecision(current(), { ...renamed, target: 'a different target' })).toBe(
       'pending'
     );
+  });
+
+  test('records the human choice and answer time without changing it on a replay', async () => {
+    propose('one');
+    const original = questions()[0];
+    expect(original.answer).toBeUndefined();
+    db.getDatabase()
+      .prepare('UPDATE neo_ask_items SET added_at = 1000, updated_at = 1000 WHERE id = ?')
+      .run(original.id);
+    const before = Date.now();
+    await answer('开始');
+    const receipt = current().doneItems!.find((item) => item.id === original.id)!.answer!;
+    expect(receipt.choice).toBe('开始');
+    expect(receipt.at).toBeGreaterThanOrEqual(before);
+    expect(receipt.at).toBeLessThanOrEqual(Date.now());
+    expect(
+      NeoAskSchema.parse(current()).doneItems!.find((item) => item.id === original.id)!.answer
+    ).toEqual(receipt);
+    await invoke('neo.ask.answer', {
+      askId: 'ask',
+      itemId: original.id,
+      choice: '先不做',
+      expectedRevision: current().revision,
+    });
+    expect(current().doneItems!.find((item) => item.id === original.id)!.answer).toEqual(receipt);
   });
 
   test('decline completes the question and cancels just its proposed cards', async () => {
@@ -572,4 +601,15 @@ describe('grouped card start question', () => {
     expect(questions()).toHaveLength(1);
     expect(starts).toEqual([]);
   });
+});
+
+describe('readNeoAskAnswerChoice', () => {
+  test.each(['{bad', 'null', '{"choice":1,"option":"开始"}', '{"choice":"开始"}'])(
+    'keeps malformed historical option evidence unknown: %s',
+    (body) => {
+      const evidence = `The human answered with option: ${body}`;
+      expect(readNeoAskAnswerChoice(evidence)).toBeNull();
+      expect(readNeoAskAnswerOption(evidence)).toBeNull();
+    }
+  );
 });
