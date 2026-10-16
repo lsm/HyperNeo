@@ -1,3 +1,4 @@
+import { toSqlStringList } from '../../../storage/sql-string-list.ts';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { TableChangeScope } from '../../../storage/reactive-database.ts';
 import { activeDeliveryJobsCtes } from './task-delivery.ts';
@@ -30,10 +31,6 @@ export function mayChangeBackgroundTaskMetadata(scope: TableChangeScope): boolea
 }
 
 export const MAX_MESSAGES_BY_SESSION_WINDOW = 200;
-
-function toSqlStringList(subtypes: Iterable<string>): string {
-  return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
-}
 
 const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
   (subtype) => `SELECT * FROM (

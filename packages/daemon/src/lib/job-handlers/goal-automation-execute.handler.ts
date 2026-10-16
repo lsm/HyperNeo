@@ -1,3 +1,4 @@
+import { uniqueJobMatchPayload } from '../goals/automation-job-payload.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { EvidenceRef, GoalEvolutionAutomationTriggerKind, SpaceTask } from '@hyperneo/shared';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
@@ -530,19 +531,6 @@ function requeueActiveReview(
 function readActiveReviewRequeueCount(payload: GoalAutomationExecutePayload): number {
   const value = payload.activeReviewRequeueCount;
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0;
-}
-
-function uniqueJobMatchPayload(payload: GoalAutomationExecutePayload): Record<string, unknown> {
-  const matchPayload: Record<string, unknown> = {
-    goalId: payload.goalId,
-    scopeId: payload.scopeId,
-    triggerKind: payload.triggerKind,
-    triggerKey: payload.triggerKey,
-  };
-  if (payload.externalEventId !== undefined) {
-    matchPayload.externalEventId = payload.externalEventId;
-  }
-  return matchPayload;
 }
 
 function skipped(

@@ -1,3 +1,4 @@
+import { uniqueStrings as unique } from '../utils/unique-strings.ts';
 import type { CreateEvidenceRefParams, SpaceTask } from '@hyperneo/shared';
 import type {
   ConversationFrictionAnalysis,
@@ -91,8 +92,4 @@ function patternFingerprint(pattern: ConversationFrictionPattern): string {
 
 function canonicalizeMessageIds(messageIds: string[]): string[] {
   return unique(messageIds).sort();
-}
-
-function unique(values: string[]): string[] {
-  return Array.from(new Set(values));
 }

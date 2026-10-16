@@ -1,3 +1,4 @@
+import { errorMessage as failureMessage } from '../utils/error-message.ts';
 import type { Session } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -187,10 +188,6 @@ const SCOPE_MESSAGES: Record<SpaceCallerRejection, string> = {
 
 function reject(reason: SessionRejection['reason'], message: string): SessionRejection {
   return { ok: false, reason, message };
-}
-
-function failureMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function auditSpaceId(caller: OperationCaller, input: { spaceId?: string }): string {
