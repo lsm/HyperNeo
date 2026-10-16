@@ -41,8 +41,9 @@ function ToastResetter() {
 afterEach(async () => {
   await act(async () => {
     render(<ToastResetter />);
+    cleanup();
   });
-  cleanup();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
   const portalRoot = document.getElementById('headlessui-portal-root');
