@@ -25,7 +25,10 @@ export async function readCodeIdentity(folder: string): Promise<CodeIdentity> {
     const shallow = (await git.raw(['rev-parse', '--is-shallow-repository'])).trim() !== 'false';
     const remotes = [
       ...new Set(
-        (await git.getRemotes(true)).flatMap(({ refs }) => [refs.fetch, refs.push]).filter(Boolean)
+        (await git.getRemotes(true))
+          .sort((a, b) => Number(b.name === 'origin') - Number(a.name === 'origin'))
+          .flatMap(({ refs }) => [refs.fetch, refs.push])
+          .filter(Boolean)
       ),
     ];
     const commonDir = (

@@ -84,6 +84,14 @@ describe('git history workspace discovery', () => {
     expect((await readCodeIdentity(clone)).codeIdentity).toBe(identity.codeIdentity);
   });
 
+  test('reads origin first when another remote sorts before it', async () => {
+    git(repo, 'remote', 'add', 'makai', 'git@github.com:lsm/makai.git');
+    git(repo, 'remote', 'add', 'origin', 'git@github.com:lsm/open-agent-protocol.git');
+    const identity = await readCodeIdentity(repo);
+    expect(identity.remotes?.[0]).toBe('git@github.com:lsm/open-agent-protocol.git');
+    expect(identity.repoName).toBe('open-agent-protocol');
+  });
+
   test("does not manufacture history for shallow, empty, missing or non-git folders, but keeps a shallow clone's remotes", async () => {
     git(repo, 'commit', '--allow-empty', '-m', 'second');
     const shallow = join(dir, 'shallow');
