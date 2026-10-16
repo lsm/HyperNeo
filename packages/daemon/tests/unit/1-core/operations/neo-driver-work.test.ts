@@ -1607,9 +1607,11 @@ describe('Neo work with a drivers target', () => {
         ['neo:root', 'work-1:done-check:0'],
       ]);
       expect(notes[0][2]).toMatch(/Continuing it is refused once \d more of your wakes/);
+      expect(notes[0][2]).toContain(
+        'The card is idle, and its next step goes out with neo.work.continue {id, message}.'
+      );
       expect(notes[0][2]).toContain('- voice works');
       expect(notes[0][2]).toContain('Skeleton builds.');
-      expect(notes[0][2]).not.toContain('neo.work.continue');
       expect(service.workWakes.get('work-1')).toMatchObject({
         wakes: 1,
         note: 'work-1:done-check:0',

@@ -75,6 +75,25 @@ describe('neoCardPrFacts', () => {
     expect(neoCardPrFacts([pr()], true)?.text).toContain('may be out of date');
     expect(neoCardPrFacts(undefined, false)).toBeNull();
   });
+
+  test('names a pull request that can be merged now, and only that one', () => {
+    const ready = pr({ review: 'approved' });
+    const facts = neoCardPrFacts(
+      [
+        ready,
+        pr({ url: `${url}0`, review: 'approved', blockers: ['behind dev'] }),
+        pr({ url: `${url}1` }),
+      ],
+      false
+    );
+    expect(facts?.text).toContain(`so it can be merged now: ${url}.`);
+    expect(facts?.text).not.toContain(`${url}0`);
+    expect(facts?.text).not.toContain(`${url}1`);
+    expect(
+      neoCardPrFacts([pr({ checks: 'pending', review: 'approved' })], false)?.text
+    ).not.toContain('merged now');
+    expect(neoCardPrFacts([ready], true)?.text).not.toContain('merged now');
+  });
 });
 
 describe('neoPackCardAttention', () => {
