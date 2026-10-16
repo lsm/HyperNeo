@@ -4,6 +4,7 @@ export interface NeoProject {
   epicUrl?: string | null;
   workspaceAliases?: string[];
   repository?: string;
+  folders?: { machine: string; folder: string }[];
   title: string;
   summary: string;
   context: string;
