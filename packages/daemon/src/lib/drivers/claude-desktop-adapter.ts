@@ -17,6 +17,7 @@ import type {
   Result,
   StartRequest,
   WorkAdapter,
+  WorkCallContext,
   WorkDelivery,
   WorkDetail,
   WorkStarted,
@@ -93,6 +94,12 @@ export interface ClaudeLiveSession {
 }
 
 export interface ClaudeDesktopAdapterDeps {
+  admitInbox?: (context: WorkCallContext) => Gate<string>;
+  sendInbox?: (
+    sessionId: string,
+    message: string,
+    context: WorkCallContext
+  ) => Promise<Result<WorkDelivery>>;
   prepareExecution?: WorkExecutionPreparer;
   sessionsDir: string;
   projectsDir: string;
@@ -760,8 +767,13 @@ async function sendOwnedClaudeMessage(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
   message: string,
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  context?: WorkCallContext
 ): Promise<Result<WorkDelivery>> {
+  if (deps.sendInbox)
+    return context
+      ? deps.sendInbox(record.cliSessionId, message, context)
+      : reject('unsupported', 'The Claude inbox requires a session reply destination.');
   const live = liveSessions.find((session) => session.sessionId === record.cliSessionId);
   const name = live?.name;
   if (!name || liveSessions.filter((session) => session.name === name).length > 1) {
@@ -771,35 +783,37 @@ async function sendOwnedClaudeMessage(
 }
 
 export const sendClaudeMessage = (superpipe({})('claude-owner-send') as PipelineAPI)
-  .input(['record', 'liveSessions', 'message', 'deps'])
+  .input(['record', 'liveSessions', 'message', 'deps', 'context'])
   .pipe(
     (record: ClaudeDesktopRecord & { cliSessionId: string }) => record.cliSessionId,
     'record',
     'cliSessionId'
   )
   .pipe(requireClaudeCliOwner, ['cliSessionId', 'liveSessions'], 'result:outcome')
-  .pipe(sendOwnedClaudeMessage, ['record', 'liveSessions', 'message', 'deps'], 'outcome')
+  .pipe(sendOwnedClaudeMessage, ['record', 'liveSessions', 'message', 'deps', 'context'], 'outcome')
   .endAsync('outcome') as (
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
   message: string,
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  context?: WorkCallContext
 ) => Promise<Result<WorkDelivery>>;
 
 const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as PipelineAPI)
-  .input(['ref', 'message', 'deps', 'cache'])
+  .input(['ref', 'message', 'deps', 'cache', 'context'])
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
   .pipe(requireClaudeRecord, ['ref', 'records'], 'result:outcome')
   .pipe(requireOpenClaudeRecord, 'outcome', 'result:outcome')
   .pipe((record: ClaudeDesktopRecord) => record, 'outcome', 'record')
   .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
   .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'liveSessions')
-  .pipe(sendClaudeMessage, ['record', 'liveSessions', 'message', 'deps'], 'outcome')
+  .pipe(sendClaudeMessage, ['record', 'liveSessions', 'message', 'deps', 'context'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,
   deps: ClaudeDesktopAdapterDeps,
-  cache: ClaudeRecordCache
+  cache: ClaudeRecordCache,
+  context?: WorkCallContext
 ) => Promise<Result<WorkDelivery>>;
 
 function admitClaudeStartConfiguration(request: StartRequest): Gate<StartRequest> {
@@ -877,7 +891,8 @@ export async function waitUntilLive(
 export async function startClaudeSession(
   folder: string,
   request: StartRequest,
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  context?: WorkCallContext
 ): Promise<Result<WorkStarted>> {
   const cliSessionId = deps.newId();
   const sessionId = `local_${cliSessionId}`;
@@ -942,7 +957,13 @@ export async function startClaudeSession(
     lastActivityAt: deps.now(),
     permissionMode: appRecord?.permissionMode,
   };
-  const sent = await sendClaudeMessage({ ...record, cliSessionId }, live, request.message, deps);
+  const sent = await sendClaudeMessage(
+    { ...record, cliSessionId },
+    live,
+    request.message,
+    deps,
+    context
+  );
   if (!sent.ok) {
     return reject(
       'not_delivered',
@@ -964,14 +985,30 @@ export async function startClaudeSession(
   };
 }
 
+function requireClaudeStartReply(
+  request: StartRequest,
+  deps: ClaudeDesktopAdapterDeps,
+  context?: WorkCallContext
+): Gate<StartRequest> {
+  if (!deps.sendInbox) return { value: request };
+  if (!context || !deps.admitInbox)
+    return {
+      reason: reject('unsupported', 'The Claude inbox requires a session reply destination.'),
+    };
+  const destination = deps.admitInbox(context);
+  return 'reason' in destination ? destination : { value: request };
+}
+
 const runClaudeDesktopStart = (superpipe({})('claude-desktop-start-work') as PipelineAPI)
-  .input(['request', 'deps'])
+  .input(['request', 'deps', 'context'])
   .pipe(admitClaudeStartConfiguration, 'request', 'result:outcome')
+  .pipe(requireClaudeStartReply, ['outcome', 'deps', 'context'], 'result:outcome')
   .pipe(selectClaudeStartFolder, ['outcome', 'deps'], 'result:outcome')
-  .pipe(startClaudeSession, ['outcome', 'request', 'deps'], 'outcome')
+  .pipe(startClaudeSession, ['outcome', 'request', 'deps', 'context'], 'outcome')
   .endAsync('outcome') as (
   request: StartRequest,
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  context?: WorkCallContext
 ) => Promise<Result<WorkStarted>>;
 
 export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): WorkAdapter {
@@ -988,8 +1025,8 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
         cache,
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
       ),
-    start: (request) => runClaudeDesktopStart(request, deps),
-    send: (ref, message) => runClaudeDesktopSend(ref, message, deps, cache),
+    start: (request, context) => runClaudeDesktopStart(request, deps, context),
+    send: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     status: (ref, since, receipt) => runClaudeDesktopStatus(ref, reused, cache, since, receipt),
     archive: (ref, admit) => archiveClaudeSession(ref, admit, deps),
   };

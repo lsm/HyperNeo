@@ -1,3 +1,4 @@
+import { requireClaudeReplyDestination } from '../../../../src/lib/drivers/claude-inbox-submit';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   appendFileSync,
@@ -11,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  type ClaudeDesktopAdapterDeps,
   type ClaudeRecordCache,
   type ClaudeLiveSession,
   claudeInputEvidence,
@@ -89,10 +91,15 @@ describe('claude-desktop adapter against the app session records', () => {
     ],
     exitCode = 0,
     onSpawn = () => {},
-    output: { stdout?: string; stderr?: string } = { stderr: exitCode ? 'relay failed' : '' }
+    output: { stdout?: string; stderr?: string } = { stderr: exitCode ? 'relay failed' : '' },
+    sendInbox?: ClaudeDesktopAdapterDeps['sendInbox']
   ) {
     spawned = [];
     return createClaudeDesktopAdapter({
+      sendInbox,
+      admitInbox: sendInbox
+        ? (context) => requireClaudeReplyDestination(context, { hasSession: () => false })
+        : undefined,
       sessionsDir: dir,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
@@ -121,6 +128,37 @@ describe('claude-desktop adapter against the app session records', () => {
       },
     });
   }
+
+  test.each([
+    { ok: true as const, value: { delivered: false, unconfirmed: true as const } },
+    { ok: false as const, reason: 'unreachable' as const, detail: 'owner changed' },
+  ])('uses the injected inbox result without relay fallback (%j)', async (reply) => {
+    const calls: unknown[] = [];
+    const context = { from: 'session:origin', caller: { source: 'internal' as const } };
+    const driver = adapter(undefined, 0, undefined, undefined, async (...args) => {
+      calls.push(args);
+      return reply;
+    });
+    expect(
+      await driver.send!({ adapter: 'claude-desktop', id: 'local_a1' }, 'exact text', context)
+    ).toEqual(reply);
+    expect(calls).toEqual([['cli-a1', 'exact text', context]]);
+    expect(spawned).toEqual([]);
+  });
+
+  test.each(['chat', 'session:missing'])(
+    'rejects reply target %s before start effects',
+    async (from) => {
+      const driver = adapter(undefined, 0, undefined, undefined, async () => {
+        throw new Error('not reached');
+      });
+      const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'd' };
+      expect(
+        await driver.start!({ place, title: 'new', message: 'task' }, { ...user, from })
+      ).toMatchObject({ ok: false, reason: from === 'chat' ? 'unsupported' : 'unreachable' });
+      expect(spawned).toEqual([]);
+    }
+  );
 
   test('status exposes execution cwd without requiring a transcript', async () => {
     const result = await adapter().status!({ adapter: 'claude-desktop', id: 'local_a1' });

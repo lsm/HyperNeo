@@ -392,7 +392,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.send',
       description:
-        'Send a message to existing work by the ref from work.find, work.start or work.status. delivered false means it was accepted and queued behind the current turn. Optional receipt contains opaque executionId and inputId for that accepted input, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
+        'Send a message to existing work by the ref from work.find, work.start or work.status. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },

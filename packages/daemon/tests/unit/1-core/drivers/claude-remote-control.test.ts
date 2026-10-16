@@ -134,6 +134,26 @@ describe('runClaudeRemoteControlRequest', () => {
     );
   });
 
+  test('uses the injected inbox with its reply context for a confirmed CLI helper', async () => {
+    write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
+    live = [{ sessionId: 'cli-rc', status: 'idle', pid: 1, owner: 'cli' }];
+    const calls: unknown[] = [];
+    const context = { from: 'session:origin', caller: { source: 'internal' as const } };
+    const configured = {
+      ...deps(),
+      sendInbox: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: true as const, value: { delivered: false, unconfirmed: true as const } };
+      },
+    };
+    expect(
+      await runClaudeRemoteControlRequest(target, configured, new Map(), context)
+    ).toMatchObject({ ok: true, value: { unconfirmed: true } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(['cli-rc', expect.stringContaining('local_t1'), context]);
+    expect(spawned).toEqual([]);
+  });
+
   test('refuses a CLI relay after opening rc-toggle in Desktop', async () => {
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
     const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
@@ -181,6 +201,8 @@ describe('withClaudeRemoteControl', () => {
 
   test('asks for Remote Control after a start succeeds, and not after one fails', async () => {
     const asked: string[] = [];
+    const context = { from: 'session:origin', caller: { source: 'internal' as const } };
+    const contexts: unknown[] = [];
     let ok = true;
     const adapter = {
       id: 'claude-desktop',
@@ -191,15 +213,21 @@ describe('withClaudeRemoteControl', () => {
           ? { ok: true as const, value: summary }
           : { ok: false as const, reason: 'not_delivered' as const, detail: 'x' },
     } as unknown as WorkAdapter;
-    const wrapped = withClaudeRemoteControl(adapter, {} as ClaudeDesktopAdapterDeps, async (t) => {
-      asked.push(`${t.sessionId} ${t.title}`);
-      return { ok: true, value: { delivered: true } };
-    });
-    expect(await wrapped.start?.({} as never, {} as never)).toEqual({ ok: true, value: summary });
+    const wrapped = withClaudeRemoteControl(
+      adapter,
+      {} as ClaudeDesktopAdapterDeps,
+      async (t, _deps, _cache, replyContext) => {
+        contexts.push(replyContext);
+        asked.push(`${t.sessionId} ${t.title}`);
+        return { ok: true, value: { delivered: true } };
+      }
+    );
+    expect(await wrapped.start?.({} as never, context)).toEqual({ ok: true, value: summary });
     ok = false;
     await wrapped.start?.({} as never, {} as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(asked).toEqual(['local_t1 Fix the parser']);
+    expect(contexts).toEqual([context]);
   });
 
   test('logs a request that fails or throws instead of dropping it', async () => {
