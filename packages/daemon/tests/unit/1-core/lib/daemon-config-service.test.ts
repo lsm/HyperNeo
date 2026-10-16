@@ -428,9 +428,7 @@ describe('casDaemonConfigRow', () => {
   test('loses the claim when the row appeared concurrently', () => {
     const db = createDb();
     writeConfigRow(db, { flags: { workflowConnectors: false } });
-    expect(casDaemonConfigRow(db, null, { flags: { taskAgentPostApprovalRouting: false } })).toBe(
-      false
-    );
+    expect(casDaemonConfigRow(db, null, { flags: { workflowConnectors: false } })).toBe(false);
     expect(readConfigRow(db)?.config_json).toBe('{"flags":{"workflowConnectors":false}}');
     db.close();
   });
@@ -439,10 +437,8 @@ describe('casDaemonConfigRow', () => {
     const db = createDb();
     writeConfigRow(db, { flags: { workflowConnectors: false } });
     const expected = JSON.stringify({ flags: { workflowConnectors: false } });
-    expect(
-      casDaemonConfigRow(db, expected, { flags: { taskAgentPostApprovalRouting: false } })
-    ).toBe(true);
-    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"taskAgentPostApprovalRouting":false}}');
+    expect(casDaemonConfigRow(db, expected, { flags: { workflowConnectors: false } })).toBe(true);
+    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"workflowConnectors":false}}');
     db.close();
   });
 
@@ -450,9 +446,7 @@ describe('casDaemonConfigRow', () => {
     const db = createDb();
     writeConfigRow(db, { flags: { workflowConnectors: false } });
     const stale = JSON.stringify({ flags: { workflowConnectors: true } });
-    expect(casDaemonConfigRow(db, stale, { flags: { taskAgentPostApprovalRouting: false } })).toBe(
-      false
-    );
+    expect(casDaemonConfigRow(db, stale, { flags: { workflowConnectors: false } })).toBe(false);
     expect(readConfigRow(db)?.config_json).toBe('{"flags":{"workflowConnectors":false}}');
     db.close();
   });

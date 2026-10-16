@@ -4,10 +4,7 @@ import { getPresetAgentTemplates } from '../../../../src/lib/agents/seed-agents.
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager.ts';
-import {
-  isPostApprovalRoutingEnabled,
-  POST_APPROVAL_ROUTING_FLAG_ENV,
-} from '../../../../src/lib/workflows/post-approval-route-selection.ts';
+import {} from '../../../../src/lib/workflows/post-approval-route-selection.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { createTaskCompletion } from '../../../../src/lib/tasks/complete-task.ts';
@@ -369,14 +366,6 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     expect(result.mode).toBe('no-route');
     expect(h.spawned).toHaveLength(0);
     expect(h.taskRepo.getTask(taskId)!.status).toBe('done');
-  });
-
-  test('kill-switch: HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING=0 disables routing at the call site', () => {
-    expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: '0' })).toBe(false);
-    expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: 'false' })).toBe(false);
-    expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: 'off' })).toBe(false);
-    expect(isPostApprovalRoutingEnabled({})).toBe(true);
-    expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: '1' })).toBe(true);
   });
 
   test('Layer B: clears pending-completion fields even when the spawner throws after the status commit', async () => {

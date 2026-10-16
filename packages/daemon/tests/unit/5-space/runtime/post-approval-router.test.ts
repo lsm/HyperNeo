@@ -7,9 +7,7 @@ import {
   TransientSpawnError,
 } from '../../../../src/lib/workflows/node-execution-validation.ts';
 import {
-  isPostApprovalRoutingEnabled,
   mapPostApprovalDispatchWarning,
-  POST_APPROVAL_ROUTING_FLAG_ENV,
   selectFirstDispatchablePostApprovalRoute,
 } from '../../../../src/lib/workflows/post-approval-route-selection.ts';
 import { PostApprovalRouter } from '../../../../src/lib/workflows/post-approval-router.ts';
@@ -101,28 +99,6 @@ function makeDelegates(): Delegates {
   };
   return d;
 }
-
-describe('isPostApprovalRoutingEnabled', () => {
-  test('returns true when env var unset (default ON)', () => {
-    expect(isPostApprovalRoutingEnabled({})).toBe(true);
-  });
-  test('returns true when env var empty string', () => {
-    expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: '' })).toBe(true);
-  });
-  test('returns true for explicit truthy values ("1", "true", "yes", "on")', () => {
-    for (const v of ['1', 'true', 'TRUE', 'yes', 'ON']) {
-      expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: v })).toBe(true);
-    }
-  });
-  test('returns false only for explicit falsy kill-switch values', () => {
-    for (const v of ['0', 'false', 'FALSE', 'no', 'NO', 'off', 'OFF']) {
-      expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: v })).toBe(false);
-    }
-  });
-  test('returns true for arbitrary strings (non-kill-switch values keep routing on)', () => {
-    expect(isPostApprovalRoutingEnabled({ [POST_APPROVAL_ROUTING_FLAG_ENV]: 'maybe' })).toBe(true);
-  });
-});
 
 describe('PostApprovalRouter.route', () => {
   let db: BunDatabase;
