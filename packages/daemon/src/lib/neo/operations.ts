@@ -1,10 +1,10 @@
 import { neoTurnRequestKey } from './request-key.ts';
+import { neoKnownIds } from './known-ids.ts';
 import { NeoWorkBlockerSchema } from './work-blocker.ts';
 import { hostname } from 'node:os';
 import {
   backfillNeoRepositoryIdentities,
   isNeoPlumbingFolder,
-  planNeoProjectRetitles,
   neoProjectFolders,
 } from './project-mirror.ts';
 import { neoFolderPath } from './folder.ts';
@@ -104,7 +104,6 @@ import {
   NEO_PROJECT_QUESTION_ATTEMPTS,
   readNeoProjectDecision,
   readNeoProjectIdentities,
-  readNeoProjectNames,
   settleNeoProjectQuestions,
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -195,6 +194,7 @@ import {
   requireNeoWorkAskLink,
   requireNeoWorkAskLive,
   requireNeoWorkAskOwner,
+  neoAsksOpenedBy,
 } from './ask-operations.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import { neoWaitingOnHuman } from './waiting-reminders.ts';
@@ -279,6 +279,8 @@ const Consult = z.object({
 });
 const Respond = z.object({ id: z.string().min(1), answer: z.string().trim().min(1).max(4000) });
 type ConsultRequest = z.infer<typeof Consult> & { requestKey: string };
+const NEO_CONSULTATION_SETTLED =
+  'Already settled: Neo already received the recorded answer shown here, and this new answer was not recorded.';
 const ConsultationResult = z.union([
   Failure,
   z.object({
@@ -964,7 +966,7 @@ function askNeoProjectQuestion(
   const [source, target] = [question.sourceId, question.targetId].map(
     (id) => service.repo.getProject(id)?.title ?? id
   );
-  const text = `Are ${source} and ${target} the same project? Both point at ${question.repository.slice(5)}.`;
+  const text = `Are ${source} and ${target} the same project? ${'why' in question ? question.why : `Both point at ${question.repository.slice(5)}.`}`;
   const opened = service.askRecords.open({
     id: crypto.randomUUID(),
     requestKey: neoProjectQuestionKey(question.key, attempt),
@@ -983,6 +985,23 @@ function askNeoProjectQuestion(
     decides: question.key,
   });
   return !!service.askRecords.settle(opened, 'waiting', text, text, item.id, item);
+}
+
+function settleNeoQuestions(
+  service: NeoService,
+  questions: () => readonly NeoProjectQuestion[]
+): ReturnType<typeof settleNeoProjectQuestions> {
+  return settleNeoProjectQuestions(
+    questions,
+    (question) =>
+      readNeoProjectDecision(
+        readNeoProjectQuestionAsks(service.askRecords, question.key),
+        question.key
+      ),
+    (input) => service.repo.projectMerges.merge(input),
+    (question, attempt) => askNeoProjectQuestion(service, question, attempt),
+    (line) => service.logReorganize(line)
+  );
 }
 
 export function neoReorganizeRuntime(
@@ -1020,40 +1039,37 @@ export function neoReorganizeRuntime(
         (input) => merges.merge(input),
         (line) => service.logReorganize(line)
       );
-      const settled = settleNeoProjectQuestions(
-        () => merges.questions(fresh),
-        (question) =>
-          readNeoProjectDecision(
-            readNeoProjectQuestionAsks(service.askRecords, question.key),
-            question.key
-          ),
-        (input) => merges.merge(input),
-        (question, attempt) => askNeoProjectQuestion(service, question, attempt),
-        (line) => service.logReorganize(line)
-      );
-      const names = await readNeoProjectNames(
-        merges.localFolders(hostname()),
-        readWorkspaceIdentity
-      );
-      for (const retitle of planNeoProjectRetitles(
-        service.repo.listProjects(),
-        names,
-        merges.allFolders()
-      )) {
-        const project = service.repo.getProject(retitle.id);
-        if (!project) continue;
-        service.repo.saveProject(
-          { ...project, title: retitle.title, summary: `Project: ${retitle.title}` },
-          retitle.revision
-        );
-        service.logReorganize(`neo reorganize: retitled ${retitle.id} to ${retitle.title}`);
-      }
+      const settled = settleNeoQuestions(service, () => merges.questions(fresh));
       return { merged: [...backfilled, ...merged, ...settled.merged], asked: settled.asked };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
     retiredHolders: () => service.repo.retiredHolders(),
     machine: () => hostname(),
     cleanup: createNeoProjectCleanupApply(service),
+    askMerge: async (step) => {
+      const [source, target] =
+        step.action === 'merge'
+          ? [service.repo.getProject(step.projectId), service.repo.getProject(step.targetId)]
+          : [null, null];
+      if (!source || !target) return 'skipped a question';
+      const settled = settleNeoQuestions(service, () => [
+        {
+          key: `neo-project-merge:${[source.id, target.id].sort().join('\u0000')}`,
+          sourceId: source.id,
+          targetId: target.id,
+          sourceRevision: source.revision,
+          targetRevision: target.revision,
+          sourceIdentities: [],
+          targetIdentities: [],
+          why: `${source.title} has no repository, and most of its cards ran in ${target.title}.`,
+        },
+      ]);
+      return settled.merged.length
+        ? 'merged after the human said yes'
+        : settled.asked.length
+          ? 'asked the human'
+          : 'still waiting on the human';
+    },
     mirroredAliases: async (folders) => {
       const caller = {
         source: 'internal' as const,
@@ -1583,7 +1599,7 @@ export function createNeoOperations(service: NeoService) {
       (input: z.infer<typeof Respond>, item: z.infer<typeof Consultation>) =>
         item.status === 'pending' || (item.status === 'reported' && item.answer === input.answer)
           ? { value: item }
-          : { reason: { ok: false, reason: 'This consultation is already settled.' } },
+          : { reason: { ok: true, consultation: item, replyGuidance: NEO_CONSULTATION_SETTLED } },
       ['input', 'admission'],
       'result:admission'
     )
@@ -1591,9 +1607,9 @@ export function createNeoOperations(service: NeoService) {
       async (input: z.infer<typeof Respond>, item: z.infer<typeof Consultation>) => {
         const saved = service.consultations.finish(item.id, 'reported', input.answer)!;
         await service.syncConsultation(saved.id);
-        if (saved.status !== 'reported' || saved.answer !== input.answer)
-          return { ok: false as const, reason: 'This consultation is already settled.' };
-        return { ok: true as const, consultation: saved };
+        return saved.status !== 'reported' || saved.answer !== input.answer
+          ? { ok: true as const, consultation: saved, replyGuidance: NEO_CONSULTATION_SETTLED }
+          : { ok: true as const, consultation: saved };
       },
       ['input', 'admission'],
       'admission'
@@ -1845,7 +1861,17 @@ export function createNeoOperations(service: NeoService) {
       'workAsk'
     )
     .pipe(requireNeoWorkAsk, ['workAsk', 'input', 'admission'], 'result:admission')
-    .pipe(requireNeoWorkAskOwner, ['workAsk', 'input', 'admission'], 'result:admission')
+    .pipe(
+      (workAsk: NeoAsk | null, input: ProposeRequest, caller: OperationCaller) =>
+        requireNeoWorkAskOwner(
+          workAsk,
+          input,
+          caller,
+          neoAsksOpenedBy(service.askRecords.listLive(), caller)
+        ),
+      ['workAsk', 'input', 'admission'],
+      'result:admission'
+    )
     .pipe(requireNeoWorkAskLive, ['workAsk', 'input', 'admission'], 'result:admission')
     .pipe(
       (input: ProposeRequest) => {
@@ -2156,12 +2182,24 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof StartWork>,
     caller: OperationCaller
   ) => Promise<z.infer<typeof WorkResult> | Rejection>;
+  const workNotFound = (caller: OperationCaller) => ({
+    ok: false as const,
+    reason: `work_not_found: no card has that id. ${neoKnownIds(
+      'cards on your live asks',
+      neoAsksOpenedBy(service.askRecords.listLive(), caller).flatMap((ask) =>
+        ask.workIds.flatMap((id) => {
+          const work = service.repo.getWork(id);
+          return work ? [{ id: work.id, title: work.title }] : [];
+        })
+      )
+    )}`,
+  });
   const continueWork = path(
     'neo.work.continue',
     (_input: z.infer<typeof Continue>) => undefined,
     async ({ id, message }, caller) => {
       const work = service.repo.getWork(id);
-      if (!work) return { ok: false as const, reason: 'work_not_found' };
+      if (!work) return workNotFound(caller);
       const humanTurn = isNeoHumanTurn(service, caller);
       const admission = requireNeoWorkContinuation(work, caller, humanTurn);
       if ('reason' in admission) return admission.reason;
@@ -2187,9 +2225,9 @@ export function createNeoOperations(service: NeoService) {
       'found'
     )
     .pipe(
-      (found: NeoWorkRetryFound) =>
-        found.work ? { value: found.work } : { reason: { ok: false, reason: 'work_not_found' } },
-      'found',
+      (found: NeoWorkRetryFound, caller: OperationCaller) =>
+        found.work ? { value: found.work } : { reason: workNotFound(caller) },
+      ['found', 'caller'],
       'result:retry'
     )
     .pipe((caller: OperationCaller) => isNeoHumanTurn(service, caller), 'caller', 'humanTurn')
@@ -2229,11 +2267,11 @@ export function createNeoOperations(service: NeoService) {
       'result:refused'
     )
     .pipe(
-      ({ workId }: z.infer<typeof Refused>) => {
+      ({ workId }: z.infer<typeof Refused>, caller: OperationCaller) => {
         const work = service.repo.getWork(workId);
-        return work ? { value: work } : { reason: { ok: false, reason: 'work_not_found' } };
+        return work ? { value: work } : { reason: workNotFound(caller) };
       },
-      'input',
+      ['input', 'caller'],
       'result:refused'
     )
     .pipe(
@@ -2281,8 +2319,10 @@ export function createNeoOperations(service: NeoService) {
     'neo.work.close',
     (_input: z.infer<typeof Close>) => undefined,
     async ({ id, outcome, reason }, caller) => {
+      const work = service.repo.getWork(id);
+      if (!work) return workNotFound(caller);
       const closer = requireNeoWorkCloser(
-        service.repo.getWork(id),
+        work,
         caller,
         isNeoHumanTurn(service, caller),
         outcome,
@@ -2296,7 +2336,7 @@ export function createNeoOperations(service: NeoService) {
     (_input: z.infer<typeof WorkId>) => undefined,
     async ({ id }, caller) => {
       const work = service.repo.getWork(id);
-      if (!work) return { ok: false as const, reason: 'work_not_found' };
+      if (!work) return workNotFound(caller);
       const admission = requireNeoWorkCancellation(work, caller);
       if ('reason' in admission) return admission.reason;
       if (work.status !== 'cancelled') await service.cancel(id);
@@ -2447,7 +2487,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.respond',
       description:
-        'Return a concise answer to the root Neo for a consultation assigned to this context holder.',
+        'Return a concise answer to the root Neo for a consultation assigned to this context holder. A consultation that is already settled returns its recorded answer with replyGuidance; the new answer is not recorded and nothing more is sent.',
       inputSchema: Respond,
       resultSchema: ConsultationResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

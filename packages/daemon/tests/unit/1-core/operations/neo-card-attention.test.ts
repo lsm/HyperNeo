@@ -1,17 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import { NEO_WORK_CLOSED_DONE, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { vi } from 'vitest';
+import {
+  type DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
+import {
+  neoCardAttentionNeoNote,
+  requireNeoCardAttentionRelay,
+} from '../../../../src/lib/neo/card-attention.ts';
 import {
   neoCardPrAttention,
-  neoCardPrNeoNote,
-  requireNeoCardPrRelay,
-} from '../../../../src/lib/neo/card-pr-relay.ts';
+  neoCardPrFacts,
+} from '../../../../src/lib/neo/packs/coding/card-facts.ts';
+import { neoPackCardAttention } from '../../../../src/lib/neo/packs/index.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
-import {
-  InternalEventBus,
-  type DaemonInternalEventMap,
-} from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -35,15 +39,18 @@ describe('neoCardPrAttention', () => {
         }),
       ])
     ).toEqual({
-      signature: `- ${url}: CI checks are failing; a reviewer requested changes; 2 unresolved review threads; merge conflicts with dev`,
-      items: `- ${url}: CI checks are failing; a reviewer requested changes; 2 unresolved review threads; merge conflicts with dev`,
+      attention: {
+        signature: `- ${url}: CI checks are failing; a reviewer requested changes; 2 unresolved review threads; merge conflicts with dev`,
+        facts: `Your pull requests have news:\n- ${url}: CI checks are failing; a reviewer requested changes; 2 unresolved review threads; merge conflicts with dev`,
+      },
+      pending: false,
     });
   });
 
   test('a new review thread changes the signature even when the kinds stay the same', () => {
     const one = neoCardPrAttention([pr({ blockers: ['1 unresolved review thread'] })]);
     const two = neoCardPrAttention([pr({ blockers: ['2 unresolved review threads'] })]);
-    expect(one?.signature).not.toBe(two?.signature);
+    expect(one.attention?.signature).not.toBe(two.attention?.signature);
   });
 
   test('stays quiet for a clean, pending, merged or closed PR', () => {
@@ -54,21 +61,50 @@ describe('neoCardPrAttention', () => {
         pr({ state: 'MERGED', checks: 'failing' }),
         pr({ state: 'CLOSED', review: 'changes_requested' }),
       ])
-    ).toBeNull();
+    ).toEqual({ attention: null, pending: true });
   });
 });
 
-describe('requireNeoCardPrRelay', () => {
-  const attention = { signature: 's1', items: `- ${url}: CI checks are failing` };
+describe('neoCardPrFacts', () => {
+  test('states the live or stale PR read, with no command in it', () => {
+    const live = neoCardPrFacts([pr({ blockers: ['behind dev'] })], false);
+    expect(live?.data).toEqual({
+      prs: [{ url, state: 'OPEN', checks: 'passing', review: 'none', blockers: ['behind dev'] }],
+    });
+    expect(live?.text).toContain('live state');
+    expect(neoCardPrFacts([pr()], true)?.text).toContain('may be out of date');
+    expect(neoCardPrFacts(undefined, false)).toBeNull();
+  });
+});
+
+describe('neoPackCardAttention', () => {
+  test('joins what each pack reports and stays pending while any pack waits', () => {
+    const a = { signature: 'a', facts: 'A' };
+    const b = { signature: 'b', facts: 'B' };
+    const packs = [
+      { cardAttention: () => ({ attention: a, pending: false }) },
+      { cardAttention: () => ({ attention: b, pending: true }) },
+      {},
+    ] as unknown as Parameters<typeof neoPackCardAttention>[0];
+    expect(neoPackCardAttention(packs, 'w1')).toEqual({
+      attention: { signature: 'a\nb', facts: 'A\nB' },
+      pending: true,
+    });
+    expect(neoPackCardAttention([], 'w1')).toEqual({ attention: null, pending: false });
+  });
+});
+
+describe('requireNeoCardAttentionRelay', () => {
+  const attention = { signature: 's1', facts: `- ${url}: CI checks are failing` };
 
   test('relays new PR news to a queued or reported card', () => {
     for (const status of ['queued', 'reported'] as const) {
-      const relay = requireNeoCardPrRelay({ status, report: null }, attention, null);
+      const relay = requireNeoCardAttentionRelay({ status, report: null }, attention, null);
       expect(relay).toMatchObject({ value: { signature: 's1' } });
-      expect('value' in relay && relay.value.message).toContain(attention.items);
+      expect('value' in relay && relay.value.message).toBe(attention.facts);
     }
     expect(
-      requireNeoCardPrRelay({ status: 'queued', report: null }, attention, 's0')
+      requireNeoCardAttentionRelay({ status: 'queued', report: null }, attention, 's0')
     ).toMatchObject({ value: { signature: 's1' } });
   });
 
@@ -90,22 +126,26 @@ describe('requireNeoCardPrRelay', () => {
     ['clear', { status: 'queued' as const, report: null }, null, null],
     ['told', { status: 'queued' as const, report: null }, attention, 's1'],
   ] as const)('skips with %s', (reason, work, news, told) => {
-    expect(requireNeoCardPrRelay(work, news, told)).toEqual({ reason });
+    expect(requireNeoCardAttentionRelay(work, news, told)).toEqual({ reason });
   });
 });
 
-describe('neoCardPrNeoNote', () => {
+describe('neoCardAttentionNeoNote', () => {
   test('tells Neo when the card can never take the news, but not when it is only busy', () => {
     const work = { id: 'w1', title: 'Fix login' };
     expect(
-      neoCardPrNeoNote(
+      neoCardAttentionNeoNote(
         work,
         `- ${url}: CI checks are failing`,
         'Only started driver work can be continued.'
       )
     ).toContain(`- ${url}: CI checks are failing`);
     expect(
-      neoCardPrNeoNote(work, 'items', 'This work is already being continued; wait for that first.')
+      neoCardAttentionNeoNote(
+        work,
+        'items',
+        'This work is already being continued; wait for that first.'
+      )
     ).toBeNull();
   });
 });

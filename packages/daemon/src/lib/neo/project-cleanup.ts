@@ -142,3 +142,5 @@ export function planNeoProjectCleanup(
     });
   return [...steps, ...retired];
 }
+
+export const isNeoUnattendedCleanup = (step: NeoProjectCleanup) => step.action !== 'merge';

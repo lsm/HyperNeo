@@ -1,19 +1,5 @@
 import { neoHolderTitle, planNeoHolderTitles } from './holder-title.ts';
-import { NeoDependencyRepository } from '../../storage/repositories/neo-dependency-repository.ts';
-import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
-import { runNeoReadWork } from './read-work.ts';
-import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
-import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-refusal-repository.ts';
-import { reconcileNeoWorkRefusal } from './work-refusal.ts';
-import {
-  NeoCrossProjectRepository,
-  neoCrossProjectReplyId,
-  type NeoCrossProjectGroup,
-  type NeoCrossProjectMember,
-} from '../../storage/repositories/neo-cross-project-repository.ts';
-import { neoForwardedText } from './ask-forward-operation.ts';
-import { neoOutcomeCheckPolicy } from './outcome-check-policy.ts';
-import { neoPrQuestionWithdrawalPolicy } from './packs/coding/question-withdrawal-policy.ts';
+import { hostname } from 'node:os';
 import {
   fillPrompt,
   NEO_SESSION_TRACK,
@@ -24,11 +10,9 @@ import {
   NEO_WORK_RETURNED_RETRY,
 } from '@hyperneo/prompts';
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
-import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
-import { isNeoAskAnswerReady, planNeoAnswerPublished } from './answer-outcome.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
+import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
   isNeoWorkClosedDone,
   NEO_WORK_CLOSED_DONE_PREFIX,
@@ -39,45 +23,111 @@ import {
   type NeoWorkGoal,
   type NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
-import { hostname } from 'node:os';
-import type { NeoSnapshotRead } from './snapshot-read.ts';
+import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
-import type { OperationCaller } from '../operations/registry.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
-import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
-import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
-import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
 import {
-  neoForwardedAskMessageId,
-  neoForwardMessageId,
-  neoTurnOwnsMessage,
-} from './ask-forward-operation.ts';
+  NeoAskCheckRepository,
+  type NeoAskCheckRow,
+} from '../../storage/repositories/neo-ask-check-repository.ts';
+import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
+import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
+import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
+import { NeoCardPrRelayRepository } from '../../storage/repositories/neo-card-pr-relay-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
+import {
+  type NeoCrossProjectGroup,
+  type NeoCrossProjectMember,
+  NeoCrossProjectRepository,
+  neoCrossProjectReplyId,
+} from '../../storage/repositories/neo-cross-project-repository.ts';
+import { NeoDependencyRepository } from '../../storage/repositories/neo-dependency-repository.ts';
+import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
+import { NeoNotificationTriggerRepository } from '../../storage/repositories/neo-notification-trigger-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
-import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
+import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
   NeoWorkCheckRepository,
   type NeoWorkCheckRow,
 } from '../../storage/repositories/neo-work-check-repository.ts';
-import { NeoCardPrRelayRepository } from '../../storage/repositories/neo-card-pr-relay-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
-import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
-import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
+import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
+import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-refusal-repository.ts';
+import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
+import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
+import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
+import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
+import { BUILD_METADATA } from '../build-metadata.ts';
+import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
+import type { WorkRef } from '../drivers/types.ts';
+import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
+import { sessionEventText } from '../external-events/session-event-delivery.ts';
+import {
+  SESSION_EVENT_SCOPE,
+  SessionExternalEventStore,
+} from '../external-events/session-external-event-store.ts';
+import type { ExternalEvent } from '../external-events/types.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
+import { renderAddress } from '../mailbox/address.ts';
+import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
+import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
+import type { OperationCaller } from '../operations/registry.ts';
+import { remoteDaemons } from '../remote-daemons/registry.ts';
+import { hashString32 } from '../runtime-hash.ts';
+import type { SessionManager } from '../session/session-manager.ts';
+import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-wake.ts';
+import { isNeoAskAnswerReady, planNeoAnswerPublished } from './answer-outcome.ts';
+import {
+  neoAskEvidenceNote,
+  planNeoAskEvidenceNote,
+  requireNeoAskEvidenceDue,
+} from './ask-evidence.ts';
+import {
+  neoForwardedAskMessageId,
+  neoForwardedText,
+  neoForwardMessageId,
+  neoTurnOwnsMessage,
+} from './ask-forward-operation.ts';
+import {
+  type NeoAskIdleSeen,
+  neoAskIdleNote,
+  neoAskIdleSignature,
+  requireNeoAskIdle,
+  trackNeoAskIdle,
+} from './ask-idle.ts';
 import {
   neoAskLiveOutcomeCards,
   planNeoAskTickStatus,
   planNeoAskWorkStops,
   writeNeoAskTickStatus,
 } from './ask-operations.ts';
-import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
-import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
+import {
+  createNeoAskOriginResolver,
+  type NeoAskOrigin,
+  neoAskAnswerMessageId,
+  neoAskEvidenceMessageId,
+  neoAskParent,
+  neoAskTickedMessageId,
+  neoConsultationParent,
+  neoDoneCheckMessageId,
+  neoNeedsYouMessageId,
+  neoReviewWorkId,
+  neoStallMessageId,
+  neoWorkParent,
+  neoWorkReturnMessageId,
+  nudgedMessageId,
+} from './ask-origin.ts';
+import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
+import { neoCardAttentionNeoNote, requireNeoCardAttentionRelay } from './card-attention.ts';
+import { planNeoCardCheck } from './card-check.ts';
 import {
   isNeoCardLive,
   neoProjectEventMessageId,
@@ -87,104 +137,8 @@ import {
   planNeoProjectEventHolders,
   planNeoSessionTopicsHandedOver,
 } from './card-events.ts';
-import { sessionEventText } from '../external-events/session-event-delivery.ts';
-import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
-import type { ExternalEvent } from '../external-events/types.ts';
-import type { NeoCardEventSubscription, NeoPackEventRoute } from './packs/types.ts';
-import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
-import {
-  SESSION_EVENT_SCOPE,
-  SessionExternalEventStore,
-} from '../external-events/session-external-event-store.ts';
-import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
-import type { WorkRef } from '../drivers/types.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { Logger } from '../logger.ts';
-import { renderAddress } from '../mailbox/address.ts';
-import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
-import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
-import type { SessionManager } from '../session/session-manager.ts';
-import {
-  createNeoAskOriginResolver,
-  neoAskAnswerMessageId,
-  neoAskTickedMessageId,
-  neoAskEvidenceMessageId,
-  neoAskParent,
-  neoConsultationParent,
-  neoReviewWorkId,
-  neoWorkParent,
-  type NeoAskOrigin,
-  neoNeedsYouMessageId,
-  neoDoneCheckMessageId,
-  neoWorkReturnMessageId,
-  neoStallMessageId,
-  nudgedMessageId,
-} from './ask-origin.ts';
-import { neoConsultationReplyContent } from './consultation-reply-content.ts';
-import { neoConsultationRequestContent } from './consultation-request-content.ts';
-import {
-  NEO_PUBLISH_NUDGE,
-  type NeoDirectReplyRuntime,
-  neoIdleReplySessions,
-  neoNoteDeliveryMode,
-  neoSessionStatus,
-  NEO_UNFINISHED_REPLY,
-  publishNeoDirectReplyFallback,
-} from './direct-reply-fallback.ts';
-import {
-  readNeoWorkBlocker,
-  NEO_WORK_REPORT_LIMIT,
-  neoEnvironmentMoveNote,
-  planNeoEnvironmentMove,
-  type NeoEnvironmentMove,
-  type NeoWorkBlocker,
-} from './work-blocker.ts';
-import {
-  driverStartedReport,
-  driverTargetDaemon,
-  readNeoDriverAdapters,
-  driverWorkCall,
-  driverWorkCaller,
-  type DriverSent,
-  type NeoDriverTarget,
-  readDriverOutcome,
-  driverAdoptedReport,
-  readDriverLive,
-  readDriverOpenedPrs,
-  readDriverCardExchange,
-  isDriverCardCurrent,
-  readDriverAdoptedSent,
-  readDriverSendBaseline,
-  neoCardSent,
-  readDriverSent,
-  messageOpening,
-  planNeoStartReceiptAdoption,
-  readDriverNeedsYou,
-  driverNeedsYouNote,
-  driverStuckNote,
-  decideStuckReminder,
-  driverDoneCheckNote,
-  projectNeoAskCards,
-  neoWorkDoneGoal,
-  NEO_WORK_SUMMARY_NOTE,
-  driverStallNote,
-  NEO_WORK_STALL_MS,
-  NEO_DRIVER_START_INTERRUPTED,
-  readDriverActivity,
-  requireNeoWorkRetryable,
-  type NeoWorkRetryCard,
-  withWorkGoal,
-  readNeoWorkContinueBudget,
-  neoStalledContinues,
-  neoWorkProgress,
-} from './driver-work.ts';
-import {
-  admitNeoWorkContinue,
-  type NeoContinueCaller,
-  type NeoContinueDeps,
-  type NeoContinueResult,
-  sendNeoWorkContinue,
-} from './continue-work.ts';
+import { planNeoDaemonCardSettle, requireNeoCardTurn } from './card-settle.ts';
+import type { NeoCardWait } from './card-views.ts';
 import {
   isNeoCardAwaitingPr,
   isNeoCardDoneWhenMet,
@@ -192,86 +146,187 @@ import {
   neoCardStalledWakes,
   neoCardWakeProgress,
 } from './card-wake.ts';
-import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
-import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
+import { neoConsultationReplyContent } from './consultation-reply-content.ts';
+import { neoConsultationRequestContent } from './consultation-request-content.ts';
 import {
-  type NeoSavedRulesNote,
-  planNeoSavedRulesAppend,
-  planNeoSavedRulesNote,
-  withNeoSavedRules,
-} from './saved-rules.ts';
-import { neoFolderPath } from './folder.ts';
-import { neoPrompt } from './prompt.ts';
-import type { NeoPackFragment } from './packs/types.ts';
-import { createNeoPublisher } from './publication-operation.ts';
+  admitNeoWorkContinue,
+  type NeoContinueCaller,
+  type NeoContinueDeps,
+  type NeoContinueResult,
+  sendNeoWorkContinue,
+} from './continue-work.ts';
+import { readNeoDaemonCommits } from './daemon-commits.ts';
 import {
-  neoCoordinatorAllowedTools,
-  neoCoordinatorBinding,
-  neoCoordinatorNativeTools,
-} from './session-policy.ts';
-import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
-import { createNeoWorkReporter } from './work-report.ts';
-import { returnWorkThroughHolder } from './work-return.ts';
-import { createNeoWorkTargetResolver } from './work-target.ts';
+  isNeoDeliveryRetryPending,
+  planNeoDeliveryRetry,
+  scheduleNeoDeliveryRetry,
+} from './delivery-retry.ts';
+import {
+  NEO_PUBLISH_NUDGE,
+  NEO_UNFINISHED_REPLY,
+  type NeoDirectReplyRuntime,
+  neoIdleReplySessions,
+  neoNoteDeliveryMode,
+  neoSessionStatus,
+  publishNeoDirectReplyFallback,
+} from './direct-reply-fallback.ts';
+import {
+  isNeoAskLive,
+  type NeoDoneCheckSkip,
+  neoDoneCheckToldIds,
+  neoWorkReturnToldIds,
+  requireNeoDoneCheck,
+  requireNeoDoneCheckDue,
+  requireNeoDoneCheckUntold,
+  requireNeoWorkReturnUntold,
+} from './done-check.ts';
+import {
+  type DriverSent,
+  decideStuckReminder,
+  driverAdoptedReport,
+  driverDoneCheckNote,
+  driverNeedsYouNote,
+  driverStallNote,
+  driverStartedReport,
+  driverStuckNote,
+  driverTargetDaemon,
+  driverWorkCall,
+  driverWorkCaller,
+  isDriverCardCurrent,
+  messageOpening,
+  NEO_DRIVER_START_INTERRUPTED,
+  NEO_WORK_STALL_MS,
+  NEO_WORK_SUMMARY_NOTE,
+  type NeoDriverTarget,
+  type NeoWorkRetryCard,
+  neoCardSent,
+  neoStalledContinues,
+  neoWorkDoneGoal,
+  neoWorkProgress,
+  planNeoStartReceiptAdoption,
+  projectNeoAskCards,
+  readDriverActivity,
+  readDriverAdoptedSent,
+  readDriverCardExchange,
+  readDriverLive,
+  readDriverNeedsYou,
+  readDriverOpenedPrs,
+  readDriverOutcome,
+  readDriverSendBaseline,
+  readDriverSent,
+  readNeoDriverAdapters,
+  readNeoWorkContinueBudget,
+  requireNeoWorkRetryable,
+  withWorkGoal,
+} from './driver-work.ts';
 import {
   type NeoEvidence,
   type NeoEvidenceRead,
   neoEvidenceSignature,
   planNeoDoneCheck,
 } from './evidence.ts';
+import { neoFolderPath } from './folder.ts';
+import { reconcileNeoHandoff } from './handoff-reconcile.ts';
+import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
 import {
-  localCodingSessionId,
-  localCodingExecutionDirectory,
+  neoAskAnswerNote,
+  neoAskReopensAfterClear,
+  neoAskTickedNote,
+  neoNeedsYouClearedNote,
+  neoResumeWhy,
+  planNeoNeedsYou,
+  planNeoNeedsYouCleared,
+  planNeoQuestionsWithdrawn,
+} from './needs-you.ts';
+import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
+import {
+  coverNeoAskTriggers,
+  isNeoAskAnsweredByReply,
+  isNeoHumanOwnTurn,
+  NEO_CONSULTATION_PENDING_DETAIL,
+  NEO_TRIGGER_ACHIEVED_WINDOW_MS,
+  NEO_TRIGGER_RETRY_MS,
+  NEO_TRIGGER_SWEEP_MS,
+  type NeoDeliveryTrigger,
+  type NeoTriggerSweepDeps,
+  neoAskOutcomeBase,
+  neoAskTriggerConcern,
+  neoConsultationDelivery,
+  neoDeliveryTrigger,
+  neoHumanTrigger,
+  neoHumanTriggerMessageId,
+  neoReplyOriginKey,
+  neoTriggerMessageId,
+  neoTriggerMessageIds,
+  neoTriggerNote,
+  neoTriggerRetryStatuses,
+  neoTriggerWatchSessions,
+  neoTriggerWorkProblem,
+  noteNeoAskTrigger,
+  planNeoTriggerRetry,
+  shouldPreemptNeoTurn,
+  shouldRetryNeoTrigger,
+} from './notification-triggers.ts';
+import { neoOutcomeCheckPolicy } from './outcome-check-policy.ts';
+import { buildNeoCheckRegistry } from './packs/check-registry.ts';
+import {
+  type NeoRefStateReader,
+  readCodingCardRefs,
+  readGithubRefStates,
+} from './packs/coding/ask-prs.ts';
+import {
   currentCodingExecutionDirectory,
+  localCodingExecutionDirectory,
+  localCodingSessionId,
+  type NeoBranchPrReader,
+  type NeoWorkRepoReader,
   neoWorkBranch,
   neoWorkRepoCwd,
   readGithubBranchPrs,
   readGithubWorkRepo,
-  type NeoBranchPrReader,
-  type NeoWorkRepoReader,
 } from './packs/coding/branch-prs.ts';
 import {
   hasNeoUnattachedOpenedPrs,
+  type NeoCardPrCandidate,
   neoCardOpenedPrs,
   planNeoCardPrCandidates,
-  type NeoCardPrCandidate,
 } from './packs/coding/card-pr-claims.ts';
+import {
+  type NeoDeployReader,
+  readGithubDeploys,
+  readMergeCommit,
+} from './packs/coding/deploy-checks.ts';
+import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
 import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
-import { planNeoCardCheck } from './card-check.ts';
+import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import {
   CODING_PACK_BRIEF,
   createCodingPack,
   type NeoCardPrDeps,
   readNeoCardPrs,
 } from './packs/coding/pack.ts';
+import { neoPrQuestionWithdrawalPolicy } from './packs/coding/question-withdrawal-policy.ts';
 import { codingCardBase } from './packs/coding/watch-checks.ts';
-import { createLifeAdminPack } from './packs/life-admin/pack.ts';
-import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-checks.ts';
-import { readNeoDaemonCommits } from './daemon-commits.ts';
-import { remoteDaemons } from '../remote-daemons/registry.ts';
-import { BUILD_METADATA } from '../build-metadata.ts';
-import { buildNeoCheckRegistry } from './packs/check-registry.ts';
-import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-wake.ts';
 import {
-  admitNeoWork,
-  isNeoAdmissionApproved,
-  neoAdmissionRefusal,
-  neoOutcomeEligibility,
-} from './work-admission.ts';
-import type { NeoCardWait } from './card-views.ts';
-import { reconcileNeoHandoff } from './handoff-reconcile.ts';
-import { readMergeCommit } from './packs/coding/deploy-checks.ts';
+  type NeoWorkPrReader,
+  type NeoWorkPrRefreshSkip,
+  readGithubPrs,
+  requireNeoWorkPrCurrent,
+  requireNeoWorkPrDelivery,
+} from './packs/coding/work-prs.ts';
 import {
   neoEnabledPacks,
-  neoSettingsPackBriefs,
-  neoPackBriefs,
   neoPackAskCardEvidence,
   neoPackAskTopics,
+  neoPackBriefs,
+  neoPackCardAttention,
+  neoPackCardFacts,
   neoPackChecks,
   neoPackEvidenceOrNone,
   neoPackFragment,
   neoPacks,
   neoPackTickWrite,
+  neoSettingsPackBriefs,
   planNeoPackTicks,
   readNeoAskEventTicks,
   readNeoAskPackEvidence,
@@ -280,129 +335,77 @@ import {
   requireNeoEvidenceRefresh,
   requireNeoPackTickable,
 } from './packs/index.ts';
-import type { NeoPack, NeoPackBrief } from './packs/types.ts';
-import {
-  requireNeoWorkPrCurrent,
-  requireNeoWorkPrDelivery,
-  type NeoWorkPrRefreshSkip,
-  readGithubPrs,
-  type NeoWorkPrReader,
-} from './packs/coding/work-prs.ts';
-import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
-import { planNeoDaemonCardSettle, requireNeoCardTurn } from './card-settle.ts';
-import {
-  isNeoAskLive,
-  neoDoneCheckToldIds,
-  requireNeoDoneCheck,
-  requireNeoDoneCheckDue,
-  requireNeoDoneCheckUntold,
-  neoWorkReturnToldIds,
-  requireNeoWorkReturnUntold,
-  type NeoDoneCheckSkip,
-} from './done-check.ts';
-import {
-  neoReminderTurn,
-  planNeoReminderListings,
-  planNeoRemindersSpent,
-  planNeoWaitingReminders,
-  type NeoReminderListing,
-} from './waiting-reminders.ts';
-import { type NeoSessionNotice, type NeoSessionNoticeGroup } from './session-watch.ts';
-import { keepNeoTrackedSessions } from './session-track.ts';
-import { neoAskPrKeys, type NeoAskPrs } from './session-ask-links.ts';
-import {
-  neoAskEvidenceNote,
-  planNeoAskEvidenceNote,
-  requireNeoAskEvidenceDue,
-} from './ask-evidence.ts';
-import {
-  type NeoAskIdleSeen,
-  neoAskIdleNote,
-  neoAskIdleSignature,
-  requireNeoAskIdle,
-  trackNeoAskIdle,
-} from './ask-idle.ts';
-import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
-import { hashString32 } from '../runtime-hash.ts';
-import {
-  neoCardPrAttention,
-  neoCardPrNeoNote,
-  neoCardPrPending,
-  requireNeoCardPrRelay,
-} from './card-pr-relay.ts';
-import {
-  readCodingCardRefs,
-  readGithubRefStates,
-  type NeoRefStateReader,
-} from './packs/coding/ask-prs.ts';
-import {
-  NeoAskCheckRepository,
-  type NeoAskCheckRow,
-} from '../../storage/repositories/neo-ask-check-repository.ts';
-import {
-  neoAskAnswerNote,
-  neoAskTickedNote,
-  neoAskReopensAfterClear,
-  neoNeedsYouClearedNote,
-  neoResumeWhy,
-  planNeoNeedsYou,
-  planNeoNeedsYouCleared,
-  planNeoQuestionsWithdrawn,
-} from './needs-you.ts';
-import { NeoSessionWatcher } from './session-watcher.ts';
-import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
+import { createLifeAdminPack } from './packs/life-admin/pack.ts';
+import type {
+  NeoCardEventSubscription,
+  NeoPack,
+  NeoPackBrief,
+  NeoPackCardAttention,
+  NeoPackEventRoute,
+  NeoPackFragment,
+} from './packs/types.ts';
+import { neoPrompt } from './prompt.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
+import { createNeoPublisher } from './publication-operation.ts';
+import { runNeoReadWork } from './read-work.ts';
+import {
+  type NeoSavedRulesNote,
+  planNeoSavedRulesAppend,
+  planNeoSavedRulesNote,
+  withNeoSavedRules,
+} from './saved-rules.ts';
+import { readNeoAskTriggerView } from './service-card-views.ts';
+import { type NeoAskPrs, neoAskPrKeys } from './session-ask-links.ts';
+import {
+  neoCoordinatorAllowedTools,
+  neoCoordinatorBinding,
+  neoCoordinatorNativeTools,
+} from './session-policy.ts';
+import { keepNeoTrackedSessions } from './session-track.ts';
+import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
+import { NeoSessionWatcher } from './session-watcher.ts';
+import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
+import type { NeoSnapshotRead } from './snapshot-read.ts';
 import {
   NEO_HUMAN_TURN_LIMIT_PREFIX,
   NEO_TURN_LIMIT_PREFIX,
   neoTurnLimitNote,
   planNeoTurnLimitNote,
 } from './turn-limit.ts';
+import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
 import {
-  isNeoDeliveryRetryPending,
-  planNeoDeliveryRetry,
-  scheduleNeoDeliveryRetry,
-} from './delivery-retry.ts';
-import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
-import { NeoNotificationTriggerRepository } from '../../storage/repositories/neo-notification-trigger-repository.ts';
+  type NeoReminderListing,
+  neoReminderTurn,
+  planNeoReminderListings,
+  planNeoRemindersSpent,
+  planNeoWaitingReminders,
+} from './waiting-reminders.ts';
 import {
-  coverNeoAskTriggers,
-  isNeoAskAnsweredByReply,
-  neoReplyOriginKey,
-  neoConsultationDelivery,
-  neoDeliveryTrigger,
-  neoHumanTrigger,
-  type NeoDeliveryTrigger,
-  NEO_TRIGGER_ACHIEVED_WINDOW_MS,
-  NEO_TRIGGER_RETRY_MS,
-  NEO_TRIGGER_SWEEP_MS,
-  neoHumanTriggerMessageId,
-  neoTriggerMessageId,
-  neoTriggerMessageIds,
-  planNeoTriggerRetry,
-  neoAskOutcomeBase,
-  shouldRetryNeoTrigger,
-  neoTriggerWatchSessions,
-  neoAskTriggerConcern,
-  neoTriggerRetryStatuses,
-  shouldPreemptNeoTurn,
-  neoTriggerWorkProblem,
-  isNeoHumanOwnTurn,
-  NEO_CONSULTATION_PENDING_DETAIL,
-  neoTriggerNote,
-  noteNeoAskTrigger,
-  type NeoTriggerSweepDeps,
-} from './notification-triggers.ts';
-import { readNeoAskTriggerView } from './service-card-views.ts';
+  admitNeoWork,
+  isNeoAdmissionApproved,
+  neoAdmissionRefusal,
+  neoOutcomeEligibility,
+} from './work-admission.ts';
+import {
+  NEO_WORK_REPORT_LIMIT,
+  type NeoEnvironmentMove,
+  type NeoWorkBlocker,
+  neoEnvironmentMoveNote,
+  planNeoEnvironmentMove,
+  readNeoWorkBlocker,
+} from './work-blocker.ts';
+import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
 import {
   NEO_WORK_FOLLOW_MAX_AGE_MS,
+  type NeoWorkFollowCard,
   planNeoWorkFollow,
   planNeoWorkFollowLive,
-  type NeoWorkFollowCard,
   requireNeoWorkFollow,
   requireNeoWorkFollowAnswered,
   requireNeoWorkFollowUp,
 } from './work-follow.ts';
+import { reconcileNeoWorkRefusal } from './work-refusal.ts';
+import { createNeoWorkReporter } from './work-report.ts';
 import {
   awaitingNeoWorker,
   NEO_WORK_AWAITING_WORKER,
@@ -410,6 +413,8 @@ import {
   neoWorkerRefKey,
   rerouteNeoDriverWork,
 } from './work-reroute.ts';
+import { returnWorkThroughHolder } from './work-return.ts';
+import { createNeoWorkTargetResolver } from './work-target.ts';
 
 const dispatchNeoConsultationWaiter = (
   superpipe({})('neo-consultation-waiter-dispatch') as PipelineAPI
@@ -2325,29 +2330,29 @@ export class NeoService {
   private readonly relayCardPr = (superpipe({})('neo-card-pr-relay') as PipelineAPI)
     .input(['workId'])
     .pipe((workId: string) => this.repo.getWork(workId), 'workId', 'work')
-    .pipe((workId: string) => this.workPrs.get(workId)?.prs ?? [], 'workId', 'prs')
-    .pipe(neoCardPrAttention, 'prs', 'attention')
+    .pipe((workId: string) => neoPackCardAttention(this.installedPacks(), workId), 'workId', 'read')
     .pipe(
-      (workId: string, prs: NeoWorkPr[], attention: unknown) => {
-        if (!attention && !neoCardPrPending(prs)) this.cardPrRelays.clear(workId);
-        return attention ? this.cardPrRelays.get(workId) : null;
+      (workId: string, read: NeoPackCardAttention) => {
+        if (!read.attention && !read.pending) this.cardPrRelays.clear(workId);
+        return read.attention ? this.cardPrRelays.get(workId) : null;
       },
-      ['workId', 'prs', 'attention'],
+      ['workId', 'read'],
       'told'
     )
-    .pipe(requireNeoCardPrRelay, ['work', 'attention', 'told'], 'result:relay')
     .pipe(
-      async (
-        work: NeoWork,
-        attention: { items: string },
-        relay: { signature: string; message: string }
-      ) => {
+      (work: NeoWork | null, read: NeoPackCardAttention, told: string | null) =>
+        requireNeoCardAttentionRelay(work, read.attention, told),
+      ['work', 'read', 'told'],
+      'result:relay'
+    )
+    .pipe(
+      async (work: NeoWork, relay: { signature: string; message: string }) => {
         const sent = await this.continueWork(work.id, relay.message);
         if (sent.ok) {
           this.cardPrRelays.markTold(work.id, relay.signature, Date.now());
           return sent;
         }
-        const note = neoCardPrNeoNote(work, attention.items, sent.reason);
+        const note = neoCardAttentionNeoNote(work, relay.message, sent.reason);
         if (!note || !this.db.getSession(work.originSessionId)) return sent;
         await this.wakeCards(
           [work.id],
@@ -2359,7 +2364,7 @@ export class NeoService {
         this.cardPrRelays.markTold(work.id, relay.signature, Date.now());
         return sent;
       },
-      ['work', 'attention', 'relay'],
+      ['work', 'relay'],
       'relay'
     )
     .endAsync('relay') as (workId: string) => Promise<unknown>;
@@ -3669,8 +3674,7 @@ export class NeoService {
             this.continueBudget(work, Date.now()),
             {
               stalled: this.stalledWakes(work.id),
-              prs: found.row?.prs,
-              stale: options.stale ?? false,
+              facts: neoPackCardFacts(this.installedPacks(), work.id, options.stale ?? false),
               ask: current.ask,
               pack: this.askPackFragment(current.ask),
               cards: current.ask

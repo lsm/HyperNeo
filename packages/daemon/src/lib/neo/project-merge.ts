@@ -1,7 +1,7 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { readNeoAskAnswerChoice } from './ask-answer-evidence.ts';
 
 export interface NeoProjectMergeInput {
@@ -116,19 +116,6 @@ export async function readNeoProjectIdentities(
   return fresh;
 }
 
-export async function readNeoProjectNames(
-  folders: readonly { projectId: string; folder: string }[],
-  read: (folder: string) => Promise<{ repoName?: string }>
-): Promise<Record<string, string>> {
-  const names: Record<string, string> = {};
-  for (const { projectId, folder } of folders) {
-    if (names[projectId]) continue;
-    const { repoName } = await read(folder);
-    if (repoName) names[projectId] = repoName;
-  }
-  return names;
-}
-
 export function planNeoProjectMerges(
   state: NeoProjectMergeState,
   fresh: Readonly<Record<string, readonly string[]>>
@@ -188,7 +175,10 @@ export function mergeNeoDuplicateProjects(
 export const NEO_PROJECT_SAME = 'Same project';
 export const NEO_PROJECT_SEPARATE = 'Keep separate';
 
-export type NeoProjectQuestion = NeoProjectMergeInput & { key: string; repository: string };
+export type NeoProjectQuestion = NeoProjectMergeInput & { key: string } & (
+    | { repository: string }
+    | { why: string }
+  );
 
 export function planNeoProjectQuestions(
   state: NeoProjectMergeState,

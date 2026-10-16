@@ -1446,7 +1446,12 @@ describe('neo.ask operations', () => {
   test('refuses work under a missing or achieved ask, and settling is final', async () => {
     const askId = await openAsk();
     expect(await propose('card-1', 'nope')).toMatchObject({
-      value: { ok: false, reason: 'ask_not_found' },
+      value: {
+        ok: false,
+        reason: expect.stringContaining(
+          `ask_not_found: no ask has that id. Use one of the live asks you opened: ${askId}`
+        ),
+      },
     });
 
     const settle = {
@@ -3514,7 +3519,10 @@ describe('requireNeoWorkAskOwner', () => {
   const input = { askId: 'a1', projectId: null };
   test('refuses a missing ask or another Neo session, and passes the user', () => {
     expect(requireNeoWorkAskOwner(null, input, neo)).toEqual({
-      reason: { ok: false, reason: 'ask_not_found' },
+      reason: {
+        ok: false,
+        reason: 'ask_not_found: no ask has that id. There are no live asks you opened.',
+      },
     });
     expect(requireNeoWorkAskOwner(ask, input, { ...neo, sessionId: 'holder' })).toMatchObject({
       reason: { ok: false, reason: expect.stringContaining('open your own ask') },
@@ -3548,8 +3556,14 @@ describe('requireNeoAskOwner', () => {
         reason: 'Only the Neo session that opened this ask or the user can tick it.',
       },
     });
-    expect(requireNeoAskOwner(null, neo, 'tick')).toEqual({
-      reason: { ok: false, reason: 'ask_not_found' },
+    expect(
+      requireNeoAskOwner(null, neo, 'tick', '', [{ id: 'a1', title: 'Plan the pond' }])
+    ).toEqual({
+      reason: {
+        ok: false,
+        reason:
+          'ask_not_found: no ask has that id. Use one of the live asks you opened: a1 "Plan the pond".',
+      },
     });
   });
 });
@@ -3989,6 +4003,23 @@ describe('requireNeoProposalDelivers', () => {
   ] as const)('%s', (_label, delivers, target, state, admitted) => {
     const result = requireNeoProposalDelivers(delivers, target, state, 'ok');
     expect('value' in result).toBe(admitted);
+  });
+
+  test('a refused id names why and the open items a card can deliver', () => {
+    expect(requireNeoProposalDelivers(['i6'], ask, read, 'ok')).toEqual({
+      reason: {
+        ok: false,
+        reason:
+          'delivers_unknown: i6 is a PR-opened check, met when the PR opens; no card delivers it, so leave it out of delivers.',
+      },
+    });
+    expect(requireNeoProposalDelivers(['i9'], ask, read, 'ok')).toEqual({
+      reason: {
+        ok: false,
+        reason:
+          'delivers_unknown: i9 is not an open item a card can deliver. Use one of the open items: i1 "outcome i1"; i2 "outcome i2"; i3 "outcome i3".',
+      },
+    });
   });
 });
 

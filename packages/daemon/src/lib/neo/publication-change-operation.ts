@@ -1,4 +1,5 @@
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
+import { neoKnownIds } from './known-ids.ts';
 import type {
   NeoPublication,
   NeoPublicationChangeResult,
@@ -60,11 +61,21 @@ export interface NeoPublicationChangeRuntime {
 
 export function requireConversationPublication(
   producer: Producer,
-  publication: NeoPublication | null
+  publication: NeoPublication | null,
+  recent: readonly NeoPublication[] = []
 ): { value: Owned } | { reason: Rejection } {
   return publication
     ? { value: { producer, publication } }
-    : { reason: { accepted: false, reason: 'not_found' } };
+    : {
+        reason: {
+          accepted: false,
+          reason: 'not_found',
+          detail: `No Neo reply in this conversation has that publicationId. ${neoKnownIds(
+            'recent replies',
+            recent.map((item) => ({ id: item.publicationId, title: item.shortText }))
+          )}`,
+        },
+      };
 }
 
 export function requireChangeable(
@@ -153,7 +164,8 @@ function changePipeline(
       (producer: Producer, request: { publicationId: string }) =>
         requireConversationPublication(
           producer,
-          runtime.publications.get(producer.root.sessionId.slice(4), request.publicationId)
+          runtime.publications.get(producer.root.sessionId.slice(4), request.publicationId),
+          runtime.publications.listRecent(producer.root.sessionId.slice(4), 8)
         ),
       ['change', 'request'],
       'result:change'

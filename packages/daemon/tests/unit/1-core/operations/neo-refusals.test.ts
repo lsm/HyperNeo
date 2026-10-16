@@ -29,9 +29,9 @@ function neoRefusalCodes(): Set<string> {
 
 describe('explainNeoRefusal', () => {
   test('turns a bare refusal code into the code, why, and what would pass', () => {
-    expect(explainNeoRefusal({ ok: false, reason: 'ask_not_found' })).toEqual({
+    expect(explainNeoRefusal({ ok: false, reason: 'work_not_found' })).toEqual({
       ok: false,
-      reason: `ask_not_found: ${NEO_REFUSALS.ask_not_found}`,
+      reason: `work_not_found: ${NEO_REFUSALS.work_not_found}`,
     });
     expect(
       explainNeoRefusal({ accepted: false, reason: 'edit_unchanged', publicationId: 'p1' })

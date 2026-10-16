@@ -134,12 +134,12 @@ export function isNeoPlumbingFolder(
 const GENERATED_FOLDER = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$|^[0-9a-f]{8}$|^worktrees$/i;
 
 export function neoWorkspaceTitle(workspaces: readonly Place[], primary: Place): string {
+  const tool = workspaces.find((place) => place.toolProject)?.toolProject?.name;
+  if (tool) return tool;
   const repo = workspaces.flatMap(
     (place) => place.repoName ?? repoNameFromRemote(place.remotes?.[0]) ?? []
   )[0];
   if (repo) return repo;
-  const tool = workspaces.find((place) => place.toolProject)?.toolProject?.name;
-  if (tool) return tool;
   const readable = neoReadableFolderName(primary.folder ?? '');
   return GENERATED_FOLDER.test(primary.name) && readable ? readable : primary.name;
 }
@@ -151,32 +151,6 @@ export function neoReadableFolderName(folder: string): string | null {
       .filter(Boolean)
       .reverse()
       .find((segment) => !GENERATED_FOLDER.test(segment)) ?? null
-  );
-}
-
-export function planNeoProjectRetitles(
-  projects: readonly { id: string; title: string; summary: string; revision: number }[],
-  names: Readonly<Record<string, string>>,
-  folders: readonly { projectId: string; folder: string }[]
-): { id: string; title: string; revision: number }[] {
-  return projects.flatMap((project) => {
-    if (!GENERATED_FOLDER.test(project.title) || !isNeoMirrorTitled(project)) return [];
-    const title =
-      names[project.id] ??
-      folders
-        .filter((entry) => entry.projectId === project.id)
-        .flatMap((entry) => neoReadableFolderName(entry.folder) ?? [])[0];
-    return title && title !== project.title
-      ? [{ id: project.id, title, revision: project.revision }]
-      : [];
-  });
-}
-
-export function isNeoMirrorTitled(project: { title: string; summary: string }): boolean {
-  const lines = project.summary.split('\n\n');
-  return (
-    lines.includes(`Project: ${project.title}`) &&
-    lines.every((line) => line.startsWith('Project: '))
   );
 }
 
@@ -379,21 +353,6 @@ export function backfillNeoRepositoryIdentities(db: Database): boolean {
     () => {}
   );
   for (const pair of merged) withdrawNeoProjectQuestions(db, pair.sourceId, pair.targetId);
-  for (const [alias] of carriers()) {
-    const id = owner(alias);
-    const found = id ? repo.getProject(id) : null;
-    const title = alias.split('/').at(-1);
-    if (
-      !found ||
-      !title ||
-      found.title === title ||
-      !GENERATED_FOLDER.test(found.title) ||
-      !isNeoMirrorTitled(found)
-    )
-      continue;
-    repo.saveProject({ ...found, title, summary: `Project: ${title}` }, found.revision);
-    changed = true;
-  }
   return changed || merged.length > 0;
 }
 
@@ -420,18 +379,11 @@ export function persistNeoWorkspaceProjects(
       });
       if (!known.length && !canNeoMirrorCreateProject(project)) continue;
       const id = known[0] ?? `project:${crypto.randomUUID()}`;
-      const existing = known.length ? repo.getProject(id) : null;
       if (!known.length) {
         changed = true;
         repo.saveProject(
           { id, title: project.title, summary: `Project: ${project.title}`, context: '' },
           0
-        );
-      } else if (existing && existing.title !== project.title && isNeoMirrorTitled(existing)) {
-        changed = true;
-        repo.saveProject(
-          { ...existing, title: project.title, summary: `Project: ${project.title}` },
-          existing.revision
         );
       }
       for (const alias of project.aliases) {

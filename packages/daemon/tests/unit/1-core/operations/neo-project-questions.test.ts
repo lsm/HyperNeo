@@ -174,7 +174,7 @@ describe('reorganize merge questions on a real store', () => {
     );
   };
 
-  test('retitles a generated title from the stored folder or the local repository, and records local identity', async () => {
+  test('keeps every title, even a generated one, and records local identity', async () => {
     const uuid = '50028a5f-f9ce-4692-a1ab-63f786f65b1f';
     const save = (id: string, title: string, summary = `Project: ${title}`) =>
       repo.saveProject({ id, title, summary, context: '' }, 0);
@@ -214,9 +214,9 @@ describe('reorganize merge questions on a real store', () => {
       'local'
     );
     await runtime().mergeProjects();
-    expect(repo.getProject('gone')?.title).toBe('bg-test-repo-2448f54b');
+    expect(repo.getProject('gone')?.title).toBe(uuid);
     expect(repo.getProject('kept')?.title).toBe('e6e0cc8b-1aba-47ce-9453-838b17d96dda');
-    expect(repo.getProject('local')?.title).toBe('neo-ios');
+    expect(repo.getProject('local')?.title).toBe('ee72a104-5c52-4e27-b08d-dcbfc49a1d7f');
     expect(
       db
         .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')

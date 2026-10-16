@@ -1,6 +1,7 @@
 import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import { CONSULTATION_TIMEOUT_MS } from '../../lib/neo/consultation-policy.ts';
+import type { NeoHealthFacts } from '../../lib/neo/health-digest.ts';
 import type { NeoProjectFacts, NeoRetiredHolder } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
@@ -136,6 +137,41 @@ export class NeoRepository {
     return !!this.db
       .prepare('SELECT 1 FROM sdk_messages WHERE session_id = ? LIMIT 1')
       .get(sessionId);
+  }
+
+  healthFacts(since: number): NeoHealthFacts {
+    const count = (sql: string, ...args: (string | number)[]) =>
+      (this.db.prepare(sql).get(...args) as { n: number }).n;
+    return {
+      projects: count(
+        'SELECT count(*) AS n FROM neo_concerns WHERE id NOT IN (SELECT source_id FROM neo_project_merges)'
+      ),
+      projectsCreated: count('SELECT count(*) AS n FROM neo_concerns WHERE created_at > ?', since),
+      projectsMerged: count(
+        'SELECT count(*) AS n FROM neo_project_merges WHERE merged_at > ?',
+        since
+      ),
+      holders:
+        count(`SELECT count(*) AS n FROM neo_session_bindings b JOIN sessions s ON s.id = b.session_id
+        WHERE b.kind = 'project' AND s.status != 'archived'`),
+      holdersOpened: count(
+        `SELECT count(*) AS n FROM neo_session_bindings b JOIN sessions s ON s.id = b.session_id
+          WHERE b.kind = 'project' AND s.created_at > ?`,
+        new Date(since).toISOString()
+      ),
+      routing: this.db
+        .prepare(`SELECT signal, count(*) AS count FROM neo_routing_log WHERE asked_at > ?
+          GROUP BY signal ORDER BY count DESC`)
+        .all(since) as NeoHealthFacts['routing'],
+      refusals: this.db
+        .prepare(`SELECT what, count(*) AS count FROM neo_work_refusals WHERE at > ?
+          GROUP BY what ORDER BY count DESC`)
+        .all(since) as NeoHealthFacts['refusals'],
+      liveAsks: this.db
+        .prepare(`SELECT id, title, status, updated_at AS updatedAt FROM neo_asks
+          WHERE status IN ('open', 'waiting', 'blocked') ORDER BY updated_at`)
+        .all() as NeoHealthFacts['liveAsks'],
+    };
   }
 
   listProjectTitles(): Array<{ id: string; title: string }> {

@@ -255,7 +255,7 @@
 4	packages/daemon/tests/unit/1-core/operations/neo-card-check.test.ts
 1107	packages/daemon/tests/unit/1-core/operations/neo-card-pr-claims.test.ts
 2735	packages/daemon/tests/unit/1-core/operations/neo-card-pr-events.test.ts
-1644	packages/daemon/tests/unit/1-core/operations/neo-card-pr-relay.test.ts
+1644	packages/daemon/tests/unit/1-core/operations/neo-card-attention.test.ts
 32	packages/daemon/tests/unit/1-core/operations/neo-card-views.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-card-wake.test.ts
 18	packages/daemon/tests/unit/1-core/operations/neo-catch-up.test.ts

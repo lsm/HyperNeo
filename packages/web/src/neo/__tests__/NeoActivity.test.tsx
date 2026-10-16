@@ -6,6 +6,7 @@ import { URL as NodeURL } from 'node:url';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoActivity, neoActivityItems } from '../NeoActivity.tsx';
+import { NEO_BUSY_WORDS } from '../processing-activity.ts';
 import {
   classifyNeoScene,
   classifyNeoScenes,
@@ -100,7 +101,11 @@ describe('neoActivityItems', () => {
     expect(items.some((item) => /complete|working|verified/i.test(item.text))).toBe(false);
   });
   it('uses safe fallback labels without exposing internal ids or summaries', () => {
-    const empty = classifyNeoScene({ ...work('private-id'), title: '', kind: 'work' });
+    const empty = classifyNeoScene({
+      ...work('private-id'),
+      title: '',
+      kind: 'work',
+    });
     const items = neoActivityItems([empty, checkScene('internal-check')], []);
     expect(items.map((item) => item.text)).toEqual([
       'Handed to HyperNeo · Work',
@@ -127,28 +132,21 @@ describe('NeoActivity', () => {
     expect(result.container.querySelectorAll('button, a, input')).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('shows only the one Neo reply line while a reply is pending, whatever else runs', () => {
-    const view = render(
-      <NeoActivity
-        scenes={[workScene('one')]}
-        projects={projects}
-        enabled={false}
-        reply="Neo is working on a reply…"
-      />
+  it('puts the busy line first, cycling its words, and keeps what else runs', () => {
+    render(
+      <NeoActivity scenes={[workScene('one')]} projects={projects} enabled busy={NEO_BUSY_WORDS} />
     );
     const line = screen.getByRole('note', { name: 'Neo activity' });
-    expect(line.hidden).toBe(false);
-    expect(line.textContent).toContain('Neo is working on a reply…');
-    view.rerender(
-      <NeoActivity
-        scenes={[workScene('one')]}
-        projects={projects}
-        enabled
-        reply="Neo is working on a reply…"
-      />
-    );
-    expect(line.textContent).toContain('Neo is working on a reply…');
-    expect(line.textContent).not.toContain('1/2');
+    expect(line.textContent).toContain('Neo is working…');
+    expect(line.textContent).toContain('1/2');
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(line.textContent).toContain('Syncing…');
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(line.textContent).toContain('Handed to HyperNeo · Compare one');
   });
   it('rotates stable scene identities without taking focus from a draft', () => {
     const result = render(
@@ -157,7 +155,9 @@ describe('NeoActivity', () => {
         <NeoActivity scenes={[workScene('one'), checkScene('two')]} projects={projects} enabled />
       </>
     );
-    const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
+    const draft = screen.getByRole('textbox', {
+      name: 'Draft',
+    }) as HTMLTextAreaElement;
     draft.focus();
     draft.setSelectionRange(5, 9);
     expect(screen.getByRole('note').textContent).toContain('1/2');

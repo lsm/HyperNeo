@@ -32,7 +32,7 @@ import {
   type NeoSceneRef,
   projectNeoScenes,
 } from './neo-scenes.ts';
-import { neoAwaitingReply } from './processing-activity.ts';
+import { neoAwaitingReply, neoBusyWords } from './processing-activity.ts';
 import { neoWorkSummaries, neoWorkSummary } from './public-conversation.ts';
 import { resolveNeoProjectId } from './project-redirects.ts';
 import { revealNeoAsk, revealNeoWork } from './reveal-work.ts';
@@ -61,7 +61,10 @@ export function NeoLive() {
   const [replyProgress, setReplyProgress] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
-  const [quoted, setQuoted] = useState<{ scope: string; quote: NeoQuote } | null>(null);
+  const [quoted, setQuoted] = useState<{
+    scope: string;
+    quote: NeoQuote;
+  } | null>(null);
   const quote = quoted?.scope === neo.sessionId ? quoted.quote : undefined;
   useEffect(() => setQuoted(null), [neo.sessionId]);
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
@@ -95,7 +98,10 @@ export function NeoLive() {
       (forward) =>
         [
           neoForwardKey(
-            { sessionId: forward.askSessionId, messageId: forward.askMessageId },
+            {
+              sessionId: forward.askSessionId,
+              messageId: forward.askMessageId,
+            },
             forward.toSessionId
           ),
           projectTitles.get(forward.fromSessionId) ?? 'Neo',
@@ -186,7 +192,12 @@ export function NeoLive() {
     { key: 'outcomes', label: 'Recent outcomes' },
   ].map((group) => {
     const key = group.key as NeoSceneGroup;
-    return { ...group, key, asks: askGroups.asks[key], scenes: askGroups.loose[key] };
+    return {
+      ...group,
+      key,
+      asks: askGroups.asks[key],
+      scenes: askGroups.loose[key],
+    };
   });
   const workCount = sceneGroups.reduce(
     (total, group) => total + group.asks.length + group.scenes.length,
@@ -483,7 +494,9 @@ export function NeoLive() {
           <svg
             viewBox="0 0 102 176"
             class="h-[30px] w-auto"
-            style={{ fill: 'light-dark(var(--hn-color-ink), var(--hn-color-paper))' }}
+            style={{
+              fill: 'light-dark(var(--hn-color-ink), var(--hn-color-paper))',
+            }}
             aria-hidden="true"
           >
             <rect x="0" y="0" width="42" height="176" rx="6" />
@@ -774,18 +787,18 @@ export function NeoLive() {
             )}
             projects={projects}
             enabled={connected && conversationReady}
-            reply={
-              replyProgress ??
-              (connected &&
-              publicConversation &&
-              conversationLoaded &&
-              neo.store.agentState.value.status !== 'waiting_for_input' &&
-              !neo.store.error.value &&
-              !scenes?.attention.some((scene) => scene.label === NEO_QUICK_CHOICE_LABEL) &&
-              neoAwaitingReply(publicConversation.entries)
-                ? 'Neo is working on a reply…'
-                : null)
-            }
+            busy={neoBusyWords(
+              replyProgress,
+              !!(
+                connected &&
+                publicConversation &&
+                conversationLoaded &&
+                neo.store.agentState.value.status !== 'waiting_for_input' &&
+                !neo.store.error.value &&
+                !scenes?.attention.some((scene) => scene.label === NEO_QUICK_CHOICE_LABEL) &&
+                neoAwaitingReply(publicConversation.entries)
+              )
+            )}
           />
           {ready && neo.sessionId && (
             <NeoComposer
