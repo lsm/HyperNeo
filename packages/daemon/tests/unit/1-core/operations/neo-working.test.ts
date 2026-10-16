@@ -43,11 +43,14 @@ describe('projectNeoWorking', () => {
 });
 
 describe('neoWorkingKey', () => {
-  test('changes when a session joins, leaves or changes status', () => {
+  test('changes when a session joins, leaves, changes status or is renamed', () => {
     const one = projectNeoWorking([row('neo:a', 'processing')]);
     expect(neoWorkingKey(one)).toBe(neoWorkingKey(projectNeoWorking([row('neo:a', 'processing')])));
     expect(neoWorkingKey(one)).not.toBe(neoWorkingKey(projectNeoWorking([row('neo:a', 'queued')])));
     expect(neoWorkingKey(one)).not.toBe(neoWorkingKey([]));
+    expect(neoWorkingKey(one)).not.toBe(
+      neoWorkingKey(projectNeoWorking([row('neo:a', 'processing', { title: 'Renamed' })]))
+    );
   });
 });
 

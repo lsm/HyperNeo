@@ -928,13 +928,15 @@ export class NeoService {
       } catch {}
     };
     this.noteWorking = () => {
-      const working = readNeoWorking(this.db.getDatabase());
-      const key = neoWorkingKey(working);
-      if (key === this.workingKey) return;
-      this.workingKey = key;
       try {
+        const working = readNeoWorking(this.db.getDatabase());
+        const key = neoWorkingKey(working);
+        if (key === this.workingKey) return;
+        this.workingKey = key;
         void hub.event('neo.working', { working } satisfies NeoWorkingEvent);
-      } catch {}
+      } catch (error) {
+        this.log.warn('Neo working list not sent', error);
+      }
     };
     this.publish = createNeoPublisher({
       getBinding: (id) => this.repo.getBindingBySession(id),

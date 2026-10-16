@@ -23,7 +23,7 @@ export function projectNeoWorking(rows: readonly Row[]): NeoWorkingSession[] {
 }
 
 export function neoWorkingKey(working: readonly NeoWorkingSession[]): string {
-  return working.map((item) => `${item.sessionId}:${item.status}`).join('|');
+  return JSON.stringify(working);
 }
 
 export function readNeoWorking(db: BunDatabase): NeoWorkingSession[] {
