@@ -193,9 +193,7 @@ describe('Neo existing trusted human work input', () => {
       value: {
         askViews: expect.arrayContaining([
           expect.objectContaining({
-            humanActions: expect.arrayContaining([
-              { kind: 'talk', workId: work.id, what: input.what },
-            ]),
+            humanActions: [],
           }),
         ]),
         cards: expect.arrayContaining([
