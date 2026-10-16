@@ -107,6 +107,38 @@ describe('neoCardPhase', () => {
 });
 
 describe('projectNeoCardViews', () => {
+  test('keeps failed-stop external cards visible without claiming their execution stopped', () => {
+    const failure = {
+      workId: 'w',
+      operation: 'stop' as const,
+      reason: 'unsupported' as const,
+      detail: 'Open Desktop.',
+      at: 2,
+    };
+    const card = projectNeoCardViews(
+      parts({
+        work: [work('w', 'cancelled')],
+        drivers: [
+          driver('w', null, {
+            adapter: 'claude-desktop',
+            link: 'claude://claude.ai/epitaxy/local_one',
+          }),
+        ],
+        controlFailures: [failure],
+      })
+    )[0];
+    expect(NeoCardViewSchema.parse(card)).toMatchObject({
+      hidden: false,
+      tone: 'warning',
+      label: 'Cancelled · stop unsupported',
+      controlFailure: { operation: 'stop', reason: 'unsupported', detail: 'Open Desktop.', at: 2 },
+      open: { link: 'claude://claude.ai/epitaxy/local_one' },
+      primary: { kind: 'open' },
+      actions: [],
+    });
+    expect(projectNeoCardViews(parts({ work: [work('w', 'cancelled')] }))[0].hidden).toBe(true);
+  });
+
   test('a waiting card carries its unverified prerequisites, its automatic start and any uncertain start', () => {
     const waitingFor = [
       {

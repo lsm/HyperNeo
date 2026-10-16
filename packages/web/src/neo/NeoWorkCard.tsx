@@ -168,6 +168,11 @@ export function NeoWorkCard({
           {card.talk && (
             <span class="text-sm text-fg-muted">{card.talk} Open it and tell it yourself.</span>
           )}
+          {card.controlFailure && (
+            <span data-control-failure class="break-words text-sm text-warning">
+              {card.controlFailure.detail} Open the session to check its state.
+            </span>
+          )}
           {note && <span class="line-clamp-2 break-words text-sm text-fg-muted">{note}</span>}
           {configuration && (
             <span class="break-words text-xs text-fg-muted">Started with {configuration}</span>
@@ -266,6 +271,11 @@ export function NeoWorkCard({
       {dependency}
       {card.talk && (
         <p class="mt-2 text-sm text-fg-muted">{card.talk} Open it and tell it yourself.</p>
+      )}
+      {card.controlFailure && (
+        <p data-control-failure class="mt-2 break-words text-sm text-warning">
+          {card.controlFailure.detail} Open the session to check its state.
+        </p>
       )}
       {note && (
         <p

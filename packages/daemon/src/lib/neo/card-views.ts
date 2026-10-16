@@ -2,6 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   type NeoAsk,
   type NeoCardAction,
+  type NeoCardControlFailure,
   type NeoCardOpenTarget,
   type NeoCardPhase,
   type NeoCardPrimary,
@@ -29,6 +30,7 @@ export type NeoCardWait = {
 };
 
 export type NeoCardViewParts = {
+  controlFailures?: readonly (NeoCardControlFailure & { workId: string })[];
   waits?: readonly NeoCardWait[];
   refusals?: readonly { workId: string; what: string }[];
   work: readonly NeoWork[];
@@ -41,6 +43,7 @@ export type NeoCardViewParts = {
 };
 
 type CardIndex = {
+  controlFailures: Map<string, NeoCardControlFailure>;
   waits: Map<string, NeoCardWait>;
   refusals: Map<string, string>;
   drivers: Map<string, NeoWorkDriverReceipt>;
@@ -216,6 +219,9 @@ export function neoCardTone(
 
 export function indexNeoCardParts(parts: NeoCardViewParts): CardIndex {
   return {
+    controlFailures: new Map(
+      parts.controlFailures?.map(({ workId, ...fact }) => [workId, fact]) ?? []
+    ),
     waits: new Map(parts.waits?.map((row) => [row.workId, row]) ?? []),
     refusals: new Map(parts.refusals?.map((row) => [row.workId, row.what]) ?? []),
     drivers: new Map(parts.drivers.map((driver) => [driver.workId, driver])),
@@ -248,24 +254,33 @@ export function describeNeoCard(work: NeoWork, index: CardIndex): NeoCardView {
   const talk = work.status === 'cancelled' ? undefined : index.refusals.get(work.id);
   const replyUnverified = pr ? null : neoCardReplyUnverified(work);
   const wait = index.waits.get(work.id);
+  const controlFailure = index.controlFailures.get(work.id);
   return {
     ...(wait?.waitingFor.length ? { waitingFor: wait.waitingFor, autoStart: wait.autoStart } : {}),
     ...(wait?.uncertain ? { uncertain: true } : {}),
     ...(talk ? { talk } : {}),
+    ...(controlFailure ? { controlFailure } : {}),
     ...(replyUnverified ? { replyUnverified } : {}),
     workId: work.id,
     phase,
     group: talk ? 'attention' : neoCardGroup(phase),
-    tone: neoCardTone(phase, pr, driver),
-    label:
-      work.status === 'queued' && driver
+    tone: controlFailure ? 'warning' : neoCardTone(phase, pr, driver),
+    label: controlFailure
+      ? `${work.status === 'cancelled' ? 'Cancelled · ' : ''}${controlFailure.operation} ${controlFailure.reason}`
+      : work.status === 'queued' && driver
         ? neoCardDriverLabel(driver)
         : replyUnverified
           ? NEO_CARD_REPLY_UNVERIFIED_LABEL
           : (work.status === 'reported' && pr?.label) || workLabels[work.status],
-    hidden: work.status === 'cancelled' && !work.sessionId,
-    primary: neoCardPrimary(work, driver, !!talk),
-    actions: neoCardActions(work, retryable),
+    hidden: work.status === 'cancelled' && !work.sessionId && !controlFailure,
+    primary: controlFailure
+      ? {
+          kind: work.sessionId ? 'chat' : 'open',
+          label: 'Open session',
+          link: neoCardSessionLink(driver),
+        }
+      : neoCardPrimary(work, driver, !!talk),
+    actions: controlFailure ? [] : neoCardActions(work, retryable),
     adapter: driver?.adapter ?? null,
     ...(driver?.model ? { model: driver.model } : {}),
     ...(driver?.effort ? { effort: driver.effort } : {}),
