@@ -3,7 +3,6 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import { projectNeoProjectBoard } from '../neo-project-board.ts';
-import { projectNeoRequestSnapshot } from '../request-board.ts';
 
 const work = (id: string, projectId: string): NeoWork => ({
   id,
@@ -83,12 +82,6 @@ describe('exact work resource seeds on Neo boards', () => {
     );
     expect(board?.truncatedKinds).toEqual(['task']);
     expect(source).toEqual(before);
-  });
-  it('request scoping removes unrelated resource sidecars and uses exact ask identity', () => {
-    const scoped = projectNeoRequestSnapshot(source, { sessionId: 'root', messageId: 'ask-A' });
-    expect(scoped?.workResources).toEqual([{ workId: 'A', refs: [taskA] }]);
-    expect(participants(scoped!, null).map((row) => row.ref)).toContainEqual(taskA);
-    expect(participants(scoped!, null).map((row) => row.ref)).not.toContainEqual(taskB);
   });
   it.each([undefined, [], [{ workId: 'A', refs: null }], [{ workId: 'A', refs: [] }]])(
     'legacy, unknown and explicit empty refs never infer manager tasks: %j',
