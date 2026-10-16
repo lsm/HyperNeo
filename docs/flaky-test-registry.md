@@ -2,7 +2,7 @@
 
 `flaky-tests.json` + `scripts/flaky-test-runner.ts` wrap the CI suites that
 run through them (daemon-online, daemon-unit, and web jobs in
-`.github/workflows/main.yml`; the `cli` and `e2e` suite keys currently have
+`.github/workflows/main.yml`; the `cli` suite key currently has
 no workflow wrapping them). A registered failure is retried (up to
 `policy.maxRetries`) and, after `quarantineAfterFailures` attempts,
 quarantined so the shard passes — the runner writes a quarantine report and

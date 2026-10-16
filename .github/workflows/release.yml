@@ -65,7 +65,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           echo "Checking package versions match tag version: $VERSION"
           MISMATCHES=()
-          for pkg in npm/hyperneo npm/hyperneod packages/cli packages/daemon packages/e2e packages/prompts packages/shared packages/web packages/desktop; do
+          for pkg in npm/hyperneo npm/hyperneod packages/cli packages/daemon packages/prompts packages/shared packages/web packages/desktop; do
             PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
             if [ "$PKG_VERSION" != "$VERSION" ]; then
               MISMATCHES+=("$pkg/package.json: $PKG_VERSION (expected $VERSION)")
@@ -122,7 +122,7 @@ jobs:
           # pushes, which would abort this release. The tag run has its own
           # group and is never cancelled by dev traffic. Filtering on the
           # push event matters too: a workflow_dispatch on the same tag ref
-          # reports the same headBranch (e.g. a run_e2e_only=true dispatch)
+          # reports the same headBranch (e.g. a manual dispatch)
           # but is not the release evidence run.
           for attempt in $(seq 1 30); do
             RUN_ID=$(gh run list \

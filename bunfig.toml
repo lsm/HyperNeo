@@ -5,9 +5,7 @@ exclude = [
   "tmp/**",
   "**/node_modules/**",
   "**/dist/**",
-  "**/.next/**",
-  "e2e/**",
-  "packages/e2e/**"
+  "**/.next/**"
 ]
 # JSX configuration for Preact
 [jsx]

@@ -20,7 +20,6 @@ This project uses `dev` as the sole integration and release branch:
   - PRs to `dev` run lint, type check, unit tests, and integration tests
   - Push to `dev` triggers the full CI gate (including web tests, CLI tests, build)
   - Releases go directly from `dev` via version tags
-  - E2E tests run on-demand via `workflow_dispatch`
 
 ### Workflow
 
@@ -49,7 +48,7 @@ This project uses `dev` as the sole integration and release branch:
 |-------|---------------|-----------|
 | PR → `dev` | `dev` | Lint, type check, unit tests, integration tests |
 | Push to `dev` | `dev` | Lint, type check, unit tests, integration tests, web tests, CLI tests, build |
-| `workflow_dispatch` | any | **All** tests including E2E |
+| `workflow_dispatch` | any | **All** tests and the build |
 ## Development Guidelines
 
 ### Code Style
@@ -66,7 +65,6 @@ This project uses `dev` as the sole integration and release branch:
 - For daemon unit shards: `./scripts/test-daemon.sh`
 - For targeted daemon tests: `cd packages/daemon && bun test ./tests/unit/some-test.test.ts`
 - For web tests: `cd packages/web && bunx vitest run`
-- For E2E tests: `make run-e2e TEST=tests/features/foo.e2e.ts`
 
 ### Commit Messages
 

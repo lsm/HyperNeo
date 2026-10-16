@@ -11,7 +11,7 @@ export default defineConfig({
     globals: true,
     fileParallelism: false,
     include: ['tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist', 'tests/e2e-coverage/**'],
+    exclude: ['node_modules', 'dist'],
     coverage: {
       provider: 'v8',
       reportsDirectory: 'coverage',

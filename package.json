@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "echo \"Error: This is a monorepo. Do not run 'bun test', 'bun run test', or 'npm test' from the root.\" && echo \"\" && echo \"For daemon unit shards: ./scripts/test-daemon.sh\" && echo \"For targeted daemon tests: cd packages/daemon && bun\" \"test ./tests/unit/some-test.test.ts\" && echo \"For web tests: cd packages/web && bunx vitest run\" && echo \"For e2e tests: make run-e2e TEST=tests/features/foo.e2e.ts\" && echo \"See CLAUDE.md for more details.\" && exit 1",
+    "test": "echo \"Error: This is a monorepo. Do not run 'bun test', 'bun run test', or 'npm test' from the root.\" && echo \"\" && echo \"For daemon unit shards: ./scripts/test-daemon.sh\" && echo \"For targeted daemon tests: cd packages/daemon && bun\" \"test ./tests/unit/some-test.test.ts\" && echo \"For web tests: cd packages/web && bunx vitest run\" && echo \"See CLAUDE.md for more details.\" && exit 1",
     "dev": "make dev",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",

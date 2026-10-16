@@ -1338,7 +1338,6 @@ function main(): void {
 
   for (const filePath of testFiles) {
     const relPath = relative(repoRoot, filePath);
-    if (relPath.includes('e2e/')) continue;
     if (relPath.includes('check-test-quality')) continue;
 
     try {

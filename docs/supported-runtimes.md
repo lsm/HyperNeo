@@ -79,7 +79,7 @@ Bumps are deliberate, coordinated edits landing through a PR like any other chan
 
 Dual support is guarded in two places:
 
-1. **`deno-boot-smoke` job** (`.github/workflows/main.yml`) — boots the daemon under the pinned Deno via `scripts/deno-smoke.sh` and asserts the boot contract: HTTP 200 on `/`, the `/ws` WebSocket handshake, > 80 sqlite tables created by migrations, and graceful SIGTERM shutdown. It runs on every trigger regardless of the daemon/web path filters (docs-only PRs included); the one exception is manual `run_e2e_only=true` workflow dispatches, which skip it via the job-level `if`. It is `continue-on-error` (non-blocking) until it has been green long enough to flip required.
+1. **`deno-boot-smoke` job** (`.github/workflows/main.yml`) — boots the daemon under the pinned Deno via `scripts/deno-smoke.sh` and asserts the boot contract: HTTP 200 on `/`, the `/ws` WebSocket handshake, > 80 sqlite tables created by migrations, and graceful SIGTERM shutdown. It runs on every trigger regardless of the daemon/web path filters (docs-only PRs included). It is `continue-on-error` (non-blocking) until it has been green long enough to flip required.
 2. **Deno session-loop integration test** (`packages/daemon/tests/online/deno/session-loop.test.ts`) — a full mocked session loop against a Deno-booted daemon: session create with worktree, message send, assistant reply delivery. It is exempt from the online shard matrix (manual-only, needs Deno 2.9.x on PATH):
 
 ```bash

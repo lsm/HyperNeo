@@ -33,7 +33,7 @@
           "id": { "type": "string", "minLength": 1 },
           "suite": {
             "type": "string",
-            "enum": ["daemon-unit", "daemon-online", "web", "cli", "e2e"]
+            "enum": ["daemon-unit", "daemon-online", "web", "cli"]
           },
           "path": { "type": "string", "minLength": 1 },
           "namePattern": { "type": "string", "minLength": 1 },

@@ -16,10 +16,6 @@
       "entry": ["main.ts", "vitest.online.config.ts", "scripts/**/*.ts", "tests/**/*.ts"],
       "project": ["**/*.ts"]
     },
-    "packages/e2e": {
-      "entry": ["global-teardown.ts", "tests/**/*.ts", "scripts/**/*.ts", "fixtures/**/*.ts"],
-      "project": ["**/*.ts"]
-    },
     "packages/messaging": {
       "entry": ["tests/**/*.ts"],
       "project": ["**/*.ts"]
@@ -64,7 +60,6 @@
     "packages/daemon/tests/online/glm/glm-provider.test.ts": ["unresolved"],
     "packages/daemon/tests/unit/5-space/runtime/session-kind-injected-text.test.ts": ["unresolved"],
     "packages/daemon/tests/unit/5-space/runtime/session-kind-mcp-servers.test.ts": ["unresolved"],
-    "packages/e2e/global.d.ts": ["unlisted"],
     "packages/shared/src/types/neo-conversation-ask.ts": ["unresolved"],
     "packages/ui/package.json": ["devDependencies"],
     "packages/ui/src/internal/stack-machine.ts": ["exports"],

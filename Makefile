@@ -1,4 +1,4 @@
-.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-daemon-shard test-web test-shared e2e e2e-ui lint lint-fix format strip-comments typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart desktop-dev desktop-build desktop-build-sidecar
+.PHONY: dev serve-random self run build test test-daemon test-daemon-shard test-web test-shared lint lint-fix format strip-comments typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart desktop-dev desktop-build desktop-build-sidecar
 
 # Development server - uses random available port by default
 # Usage: make dev
@@ -39,12 +39,6 @@ serve-random:
 self:
 	@HYPERNEO_SELF_MODE=1 $(MAKE) run PORT=9983
 
-# Run E2E tests against the `make self` instance (requires `make self` to be running)
-# Usage: make self-test TEST=tests/core/navigation-3-column.e2e.ts
-#        make self-test (runs all tests)
-self-test:
-	@PLAYWRIGHT_BASE_URL=http://localhost:9983 cd packages/e2e && bunx playwright test $(TEST)
-
 # Run production server
 # Usage: make run [PORT=8080] [DB_PATH=/tmp/mydb.db]
 run:
@@ -63,14 +57,6 @@ run:
 	else \
 		NODE_ENV=production bun run packages/cli/main.ts $$DB_FLAGS; \
 	fi
-
-# Run E2E tests with an auto-started server on a random port (self-contained, no server needed)
-# Usage: make run-e2e TEST=tests/features/slash-cmd.e2e.ts
-#        make run-e2e (runs all tests)
-run-e2e:
-	@PORT=$$(node -e "const net = require('net'); const s = net.createServer(); s.listen(0, () => { console.log(s.address().port); s.close(); });"); \
-	echo "Running E2E tests on random port $$PORT..."; \
-	cd packages/e2e && E2E_PORT=$$PORT bunx playwright test $(TEST)
 
 build:
 	@echo "📦 Building web production bundle..."

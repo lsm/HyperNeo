@@ -1,4 +1,4 @@
-# Real API Tests - Manual-only integration and LLM/E2E coverage
+# Real API Tests - Manual-only integration coverage
 #
 # Audit findings:
 # - .github/workflows/release.yml uses only dummy GLM_API_KEY=smoke-test; no real API secrets.
@@ -14,8 +14,6 @@
 # - daemon-real-api (cross-provider-4): GLM_API_KEY/ZHIPU_API_KEY + MINIMAX_API_KEY +
 #   ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN for
 #   tests/online/cross-provider/thinking-block-signatures.test.ts.
-# - e2e-llm: GLM_API_KEY for the Playwright tests categorized by discover as requiring
-#   LLM round-trips; Anthropic calls are routed to Dev Proxy with a dummy key.
 # - Disabled but documented real-key shards: providers-anthropic-to-codex-bridge needs
 #   OPENAI_API_KEY, and providers-anthropic-copilot needs COPILOT_GITHUB_TOKEN.
 
@@ -23,12 +21,6 @@ name: Real API Tests
 
 on:
   workflow_dispatch:
-    inputs:
-      run_e2e_only:
-        description: 'Skip daemon real-API shards and run only E2E LLM tests (any branch)'
-        required: false
-        default: 'false'
-        type: boolean
 
 concurrency:
   group: real-api-tests-${{ github.ref }}
@@ -41,7 +33,6 @@ jobs:
   daemon-real-api:
     name: Daemon Real API (${{ matrix.module }})
     runs-on: ubuntu-latest
-    if: github.event.inputs.run_e2e_only != 'true'
     timeout-minutes: ${{ matrix.timeout || 10 }}
     strategy:
       fail-fast: false
@@ -120,261 +111,6 @@ jobs:
           DEFAULT_PROVIDER: ${{ matrix.default_provider }}
           DEFAULT_MODEL: ${{ matrix.default_provider == 'minimax' && 'MiniMax-M2.7-highspeed' || '' }}
 
-  build-e2e:
-    name: Build Binary for Real API E2E
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.4.2
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build web frontend
-        run: cd packages/web && bun run build
-
-      - name: Generate embedded assets
-        run: bun run scripts/generate-embedded-assets.ts
-
-      - name: Compile binary
-        run: bun build --compile --target=bun-linux-x64 --outfile=dist/bin/hyperneo-linux-x64 packages/cli/prod-entry.ts
-
-      - name: Smoke test
-        run: bun run scripts/smoke-test.ts ./dist/bin/hyperneo-linux-x64
-        env:
-          GLM_API_KEY: smoke-test
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: hyperneo-linux-x64-real-api-e2e
-          path: dist/bin/hyperneo-linux-x64
-
-  discover-e2e:
-    name: Discover LLM E2E Tests
-    runs-on: ubuntu-latest
-    outputs:
-      tests_llm: ${{ steps.categorize.outputs.tests_llm }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Categorize E2E test files
-        id: categorize
-        run: |
-          LLM_TESTS=(
-            core/message-flow
-            core/interrupt-button
-            core/interrupt-error-bug
-            core/context-features
-            core/model-selection
-            features/archive
-            features/file-operations
-            features/message-operations
-           
-            features/reviewer-feedback-loop
-            features/rewind-features
-            features/session-operations
-            features/slash-cmd
-            features/space-approval-gate-rejection
-            features/space-canvas-mode
-            features/space-happy-path-pipeline
-            features/worktree-isolation
-            responsive/mobile
-            responsive/tablet
-            settings/auto-title
-          )
-
-          EXCLUDED_TESTS=(
-            features/space-export-import
-            features/space-workflow-rules
-          )
-
-          declare -A LLM_SET EXCLUDED_SET
-          for t in "${LLM_TESTS[@]}"; do LLM_SET[$t]=1; done
-          for t in "${EXCLUDED_TESTS[@]}"; do EXCLUDED_SET[$t]=1; done
-
-          LLM_JSON="[]"
-          for file in $(find packages/e2e/tests -name "*.e2e.ts" -type f | sed 's|packages/e2e/tests/||; s|\.e2e\.ts$||' | sort); do
-            if [[ -n "${EXCLUDED_SET[$file]}" ]]; then
-              echo "EXCLUDED: $file"
-              continue
-            fi
-            if [[ -z "${LLM_SET[$file]}" ]]; then
-              continue
-            fi
-            safe_name=$(echo "$file" | tr '/' '-')
-            entry=$(jq -n -c --arg path "$file" --arg name "$safe_name" '{path: $path, name: $name}')
-            LLM_JSON=$(echo "$LLM_JSON" | jq -c ". + [$entry]")
-          done
-
-          llm_count=$(echo "$LLM_JSON" | jq length)
-          echo "LLM tests ($llm_count): $LLM_JSON"
-          echo "tests_llm=$LLM_JSON" >> $GITHUB_OUTPUT
-
-  e2e-llm:
-    name: E2E LLM (${{ matrix.test.name }})
-    runs-on: ubuntu-latest
-    needs: [build-e2e, discover-e2e]
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      max-parallel: 8
-      matrix:
-        test: ${{ fromJson(needs.discover-e2e.outputs.tests_llm) }}
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Document real API requirements
-        run: |
-          echo "Secrets: GLM_API_KEY"
-          echo "Why: LLM E2E tests send messages and wait for real GLM-backed agent responses. Anthropic traffic uses Dev Proxy."
-          echo "Test: packages/e2e/tests/${{ matrix.test.path }}.e2e.ts"
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.4.2
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
-
-      - name: Setup Dev Proxy
-        if: runner.os == 'Linux'
-        uses: ./.github/actions/setup-devproxy
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: |
-          echo "Starting bun install at $(date)"
-          timeout 180 bun install --frozen-lockfile --verbose 2>&1 || {
-            echo "bun install timed out or failed (lockfile may be stale — run 'bun install' locally and commit the updated bun.lock)"
-            exit 1
-          }
-          echo "Finished bun install at $(date)"
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('packages/e2e/package.json') }}
-          restore-keys: |
-            playwright-chromium-${{ runner.os }}-
-
-      - name: Install Playwright browsers
-        run: cd packages/e2e && bunx playwright install chromium
-
-      - name: Download binary
-        uses: actions/download-artifact@v8
-        with:
-          name: hyperneo-linux-x64-real-api-e2e
-          path: dist/bin/
-
-      - name: Run E2E LLM test (${{ matrix.test.name }})
-        run: |
-          chmod +x dist/bin/hyperneo-linux-x64
-          WORKSPACE=$(mktemp -d)
-
-          PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
-          echo "Reserved port $PORT for binary"
-
-          HYPERNEO_WORKSPACE_ROOT="$WORKSPACE" ./dist/bin/hyperneo-linux-x64 --port "$PORT" &
-          BINARY_PID=$!
-          trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
-
-          for i in $(seq 1 60); do
-            if curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
-              echo "Server ready on port $PORT (PID $BINARY_PID)"
-              break
-            fi
-            if ! kill -0 $BINARY_PID 2>/dev/null; then
-              echo "Binary process died unexpectedly"
-              exit 1
-            fi
-            sleep 0.5
-          done
-
-          if ! curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
-            echo "Server failed to start within 30s"
-            exit 1
-          fi
-
-          export PLAYWRIGHT_BASE_URL="http://localhost:$PORT"
-          cd packages/e2e
-          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-            bunx playwright test "tests/${{ matrix.test.path }}.e2e.ts"
-        env:
-          HYPERNEO_USE_DEV_PROXY: "1"
-          ANTHROPIC_BASE_URL: "http://127.0.0.1:8000"
-          ANTHROPIC_API_KEY: "sk-devproxy-test-key"
-          ANTHROPIC_AUTH_TOKEN: ""
-          CLAUDE_CODE_OAUTH_TOKEN: ""
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          CI: true
-
-      - name: Stop Dev Proxy
-        if: always()
-        run: |
-          if [ -n "$DEVPROXY_PID" ]; then
-            kill $DEVPROXY_PID 2>/dev/null || true
-          fi
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: e2e-results-llm-${{ matrix.test.name }}
-          path: |
-            packages/e2e/test-results/
-            packages/e2e/playwright-report/
-          retention-days: 7
-
   all-real-api-tests-pass:
     name: All Real API Tests Pass
     runs-on: ubuntu-latest
@@ -382,9 +118,6 @@ jobs:
     if: always()
     needs:
       - daemon-real-api
-      - build-e2e
-      - discover-e2e
-      - e2e-llm
 
     steps:
       - name: Check all real API jobs passed
@@ -395,26 +128,11 @@ jobs:
             echo "❌ daemon-real-api failed"
             FAILED=1
           fi
-          if [[ "${{ needs.build-e2e.result }}" == "failure" ]]; then
-            echo "❌ build-e2e failed"
-            FAILED=1
-          fi
-          if [[ "${{ needs.discover-e2e.result }}" == "failure" ]]; then
-            echo "❌ discover-e2e failed"
-            FAILED=1
-          fi
-          if [[ "${{ needs.e2e-llm.result }}" == "failure" ]]; then
-            echo "❌ e2e-llm failed"
-            FAILED=1
-          fi
 
           if [ $FAILED -eq 1 ]; then
             echo ""
             echo "One or more required real API jobs failed:"
             echo "  daemon-real-api: ${{ needs.daemon-real-api.result }}"
-            echo "  build-e2e: ${{ needs.build-e2e.result }}"
-            echo "  discover-e2e: ${{ needs.discover-e2e.result }}"
-            echo "  e2e-llm: ${{ needs.e2e-llm.result }}"
             exit 1
           fi
           echo "All real API tests passed!"

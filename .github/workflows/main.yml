@@ -23,12 +23,9 @@
 # | PR to dev (docs-only, per changes)    | check only                                      |
 # | Push to dev                           | check + unit + online + web (no path filter)    |
 # | Push of a v* tag                      | check + unit + online + web (no path filter)    |
-# | workflow_dispatch (default)           | mocked CI + no-LLM E2E                          |
-# | workflow_dispatch (run_e2e_only=true) | discover + build + no-LLM E2E only              |
+# | workflow_dispatch                     | mocked CI + build                               |
 #
-# NOTE: E2E tests are NOT run on any automatic trigger (push / PR). No-LLM E2E
-# remains manual-only here via workflow_dispatch on any branch. Real-API daemon
-# shards and LLM E2E are manual-only in real-api-tests.yml.
+# NOTE: Real-API daemon shards are manual-only in real-api-tests.yml.
 #
 # NOTE: The Deno boot smoke job runs on every trigger regardless of the
 # daemon/web path filters (docs-only PRs included) — it guards the Bun/Deno
@@ -37,10 +34,8 @@
 # NOTE: Sandbox apt packages (bubblewrap/socat/ripgrep) are intentionally not
 # installed on test/build jobs — no CI-executed test there runs a real sandbox
 # (online jobs set HYPERNEO_TEST_DISABLE_SANDBOX=1; tests/online/sandbox is
-# matrix-exempt/manual-only; the build smoke test passes without them). e2e-no-llm
-# is the exception: the compiled binary runs with the daemon-default sandbox
-# enabled, so its SDK subprocess needs bwrap/socat at spawn. real-api-tests.yml
-# installs them for its real-session shards too.
+# matrix-exempt/manual-only; the build smoke test passes without them).
+# real-api-tests.yml installs them for its real-session shards.
 #
 # Release is handled separately in release.yml (triggered by version tags).
 
@@ -53,12 +48,6 @@ on:
   pull_request:
     branches: [dev]
   workflow_dispatch:
-    inputs:
-      run_e2e_only:
-        description: 'Skip all prerequisite jobs and run only E2E tests (any branch)'
-        required: false
-        default: 'false'
-        type: boolean
 
 # Cancel in-progress runs when a new run is triggered on the same ref. Tag
 # runs land in their own group (ci-refs/tags/<tag>), so a release's CI
@@ -83,7 +72,6 @@ jobs:
     name: Lint, Knip, Format & Type Check
     runs-on: ubuntu-latest
     timeout-minutes: 8
-    if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
       # Shallow checkout: nothing in this job walks history except the
@@ -187,7 +175,6 @@ jobs:
     name: Deno Boot Smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v6
@@ -276,7 +263,7 @@ jobs:
             # web unless the file is daemon-side-only (packages/ui and root
             # tooling count as web-relevant — they feed the web build)
             case "$f" in
-              packages/daemon/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/e2e/*) ;;
+              packages/daemon/*|packages/cli/*|packages/skills/*|packages/desktop/*) ;;
               *) web=true ;;
             esac
           done <<< "$files"
@@ -298,7 +285,7 @@ jobs:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
     needs: [changes]
-    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && (github.ref_type != 'tag' || github.event_name == 'push') && github.event.inputs.run_e2e_only != 'true'
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && (github.ref_type != 'tag' || github.event_name == 'push')
     timeout-minutes: 15
 
     strategy:
@@ -409,7 +396,7 @@ jobs:
     name: Daemon Unit Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     needs: [changes]
-    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && github.event.inputs.run_e2e_only != 'true'
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true')
     timeout-minutes: 47
     strategy:
       fail-fast: false
@@ -472,7 +459,7 @@ jobs:
     name: Web Tests
     runs-on: ubuntu-latest
     needs: [changes]
-    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.web == 'true') && (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref_type == 'tag') || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.web == 'true') && (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref_type == 'tag') || github.event_name == 'workflow_dispatch')
     timeout-minutes: 9
 
     steps:
@@ -527,7 +514,7 @@ jobs:
     name: Test Duration Balance Report
     runs-on: ubuntu-latest
     needs: [test-daemon-shared-unit, test-daemon-online, test-web]
-    if: ${{ !cancelled() && github.event.inputs.run_e2e_only != 'true' && (contains(fromJSON('["success", "failure"]'), needs.test-daemon-shared-unit.result) || contains(fromJSON('["success", "failure"]'), needs.test-daemon-online.result) || contains(fromJSON('["success", "failure"]'), needs.test-web.result)) }}
+    if: ${{ !cancelled() && (contains(fromJSON('["success", "failure"]'), needs.test-daemon-shared-unit.result) || contains(fromJSON('["success", "failure"]'), needs.test-daemon-online.result) || contains(fromJSON('["success", "failure"]'), needs.test-web.result)) }}
     timeout-minutes: 3
 
     steps:
@@ -566,23 +553,20 @@ jobs:
   # BUILD - Compile linux-x64 binary + smoke test
   # Run on: push to dev, workflow_dispatch
   # Waits for test jobs; proceeds if they passed or were skipped.
-  # Discover may be skipped (E2E is workflow_dispatch-only); we tolerate that.
   # ============================================
 
   build:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
-    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, discover]
+    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web]
     if: >-
       always() &&
       (github.event_name == 'push' && github.ref == 'refs/heads/dev' ||
        github.event_name == 'workflow_dispatch') &&
-      (github.event.inputs.run_e2e_only == 'true' ||
-       (contains(fromJSON('["success", "skipped"]'), needs.discover.result) &&
-        contains(fromJSON('["success", "skipped"]'), needs.check.result) &&
-        contains(fromJSON('["success", "skipped"]'), needs.test-daemon-online.result) &&
-        contains(fromJSON('["success", "skipped"]'), needs.test-daemon-shared-unit.result) &&
-        contains(fromJSON('["success", "skipped"]'), needs.test-web.result)))
+      contains(fromJSON('["success", "skipped"]'), needs.check.result) &&
+      contains(fromJSON('["success", "skipped"]'), needs.test-daemon-online.result) &&
+      contains(fromJSON('["success", "skipped"]'), needs.test-daemon-shared-unit.result) &&
+      contains(fromJSON('["success", "skipped"]'), needs.test-web.result)
     timeout-minutes: 10
 
     steps:
@@ -624,202 +608,11 @@ jobs:
           GLM_API_KEY: smoke-test
           HYPERNEO_DATA_DIR: /tmp/hyperneod-smoke-data
 
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: hyperneo-linux-x64-e2e
-          path: dist/bin/hyperneo-linux-x64
-
-  # ============================================
-  # DISCOVER TESTS
-  # Auto-discover No-LLM E2E test files
-  # LLM tests are excluded here and run from real-api-tests.yml.
-  # Run on: workflow_dispatch only (No-LLM E2E is manual-only)
-  # ============================================
-
-  discover:
-    name: Discover Tests
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
-    outputs:
-      tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Categorize E2E test files
-        id: categorize
-        run: |
-          # Tests that require LLM API round-trips are excluded here and run in real-api-tests.yml.
-          LLM_TESTS=(core/message-flow core/interrupt-button core/interrupt-error-bug core/context-features core/model-selection features/archive features/file-operations features/message-operations features/reviewer-feedback-loop features/rewind-features features/session-operations features/slash-cmd features/space-approval-gate-rejection features/space-canvas-mode features/space-happy-path-pipeline features/worktree-isolation responsive/mobile responsive/tablet settings/auto-title)
-
-          # Tests to exclude entirely (disabled, pending stabilization)
-          EXCLUDED_TESTS=(
-            features/space-export-import
-            features/space-workflow-rules
-          )
-
-          # Build lookup sets
-          declare -A LLM_SET EXCLUDED_SET
-          for t in "${LLM_TESTS[@]}"; do LLM_SET[$t]=1; done
-          for t in "${EXCLUDED_TESTS[@]}"; do EXCLUDED_SET[$t]=1; done
-
-          # Find all test files recursively and extract subdir/name paths
-          NO_LLM_JSON="[]"
-          for file in $(find packages/e2e/tests -name "*.e2e.ts" -type f | sed 's|packages/e2e/tests/||; s|\.e2e\.ts$||' | sort); do
-            if [[ -n "${EXCLUDED_SET[$file]}" ]]; then
-              echo "EXCLUDED: $file"
-              continue
-            fi
-            if [[ -n "${LLM_SET[$file]}" ]]; then
-              echo "LLM (real-api-tests.yml): $file"
-              continue
-            fi
-            # Create JSON object with path (for test runner) and name (for artifact/display)
-            safe_name=$(echo "$file" | tr '/' '-')
-            entry=$(jq -n -c --arg path "$file" --arg name "$safe_name" '{path: $path, name: $name}')
-            NO_LLM_JSON=$(echo "$NO_LLM_JSON" | jq -c ". + [$entry]")
-          done
-
-          no_llm_count=$(echo "$NO_LLM_JSON" | jq length)
-          echo "No-LLM tests ($no_llm_count): $NO_LLM_JSON"
-
-          echo "tests_no_llm=$NO_LLM_JSON" >> $GITHUB_OUTPUT
-
-  # ============================================
-  # E2E TESTS - No LLM (Matrix, fully parallel)
-  # UI-only tests that don't require LLM API calls
-  # Run on: workflow_dispatch only (E2E is manual-only on any branch)
-  # ============================================
-
-  e2e-no-llm:
-    name: E2E No-LLM (${{ matrix.test.name }})
-    runs-on: ubuntu-latest
-    needs: [build, discover]
-    # Manual-only: E2E must be explicitly triggered via workflow_dispatch.
-    if: >-
-      always() &&
-      github.event_name == 'workflow_dispatch' &&
-      needs.build.result == 'success' &&
-      needs.discover.result == 'success'
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        test: ${{ fromJson(needs.discover.outputs.tests_no_llm) }}
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.4.2
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-
-      # Required here: the compiled binary runs with the daemon-default sandbox
-      # enabled, and the SDK subprocess hard-fails at spawn ("Sandbox required
-      # but unavailable: bubblewrap (bwrap) not installed, socat not installed")
-      # without these — breaking every no-LLM E2E test. Other jobs omit them.
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
-
-      - name: Install dependencies
-        run: |
-          echo "Starting bun install at $(date)"
-          timeout 180 bun install --frozen-lockfile --verbose 2>&1 || {
-            echo "bun install timed out or failed (lockfile may be stale — run 'bun install' locally and commit the updated bun.lock)"
-            exit 1
-          }
-          echo "Finished bun install at $(date)"
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('packages/e2e/package.json') }}
-          restore-keys: |
-            playwright-chromium-${{ runner.os }}-
-
-      - name: Install Playwright browsers
-        run: cd packages/e2e && bunx playwright install chromium
-
-      - name: Download binary
-        uses: actions/download-artifact@v8
-        with:
-          name: hyperneo-linux-x64-e2e
-          path: dist/bin/
-
-      - name: Run E2E test (${{ matrix.test.name }})
-        run: |
-          chmod +x dist/bin/hyperneo-linux-x64
-          WORKSPACE=$(mktemp -d)
-
-          # Get a free port via a short-lived Python socket with SO_REUSEADDR.
-          # SO_REUSEADDR shrinks the reuse window on Linux so the binary can
-          # re-bind quickly even if the port is briefly in TIME_WAIT state.
-          PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
-          echo "Reserved port $PORT for binary"
-
-          HYPERNEO_WORKSPACE_ROOT="$WORKSPACE" ./dist/bin/hyperneo-linux-x64 --port "$PORT" &
-          BINARY_PID=$!
-          trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
-
-          for i in $(seq 1 60); do
-            if curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
-              echo "Server ready on port $PORT (PID $BINARY_PID)"
-              break
-            fi
-            if ! kill -0 $BINARY_PID 2>/dev/null; then
-              echo "Binary process died unexpectedly"
-              exit 1
-            fi
-            sleep 0.5
-          done
-
-          if ! curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
-            echo "Server failed to start within 30s"
-            exit 1
-          fi
-
-          export PLAYWRIGHT_BASE_URL="http://localhost:$PORT"
-          cd packages/e2e
-          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-            bunx playwright test "tests/${{ matrix.test.path }}.e2e.ts"
-        env:
-          # Set a dummy API key so provider availability check passes.
-          # No-LLM tests don't need real API calls; the key just satisfies isAvailable().
-          ANTHROPIC_API_KEY: "sk-devproxy-test-key"
-          # Clear real auth tokens to avoid credential conflicts.
-          ANTHROPIC_AUTH_TOKEN: ""
-          CLAUDE_CODE_OAUTH_TOKEN: ""
-          GLM_API_KEY: ""
-          DEFAULT_MODEL: sonnet
-          # Signal that the LLM will not respond in this environment.
-          # rather than timing out waiting for a response from a dummy API key.
-          CI: true
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: e2e-no-llm-results-${{ matrix.test.name }}
-          path: |
-            packages/e2e/test-results/
-            packages/e2e/playwright-report/
-          retention-days: 7
 
   # ============================================
   # GATE - All tests must pass (handles conditional job results)
-  # Depends only on check + the test jobs (and the PR/dispatch-only build/
-  # discover/e2e chain, which is skipped on PRs) — no serialized tail after
+  # Depends only on check + the test jobs (and the push/dispatch-only build,
+  # which is skipped on PRs) — no serialized tail after
   # the last test. Path-filtered suites report "skipped" and pass. The
   # balance report intentionally lags outside this gate.
   # ============================================
@@ -836,8 +629,6 @@ jobs:
       - test-daemon-shared-unit
       - test-web
       - build
-      - discover
-      - e2e-no-llm
       - deno-boot-smoke
 
     steps:
@@ -882,18 +673,6 @@ jobs:
             FAILED=1
           fi
 
-          # discover: workflow_dispatch only (E2E is manual-only)
-          if [[ "${{ needs.discover.result }}" == "failure" ]]; then
-            echo "❌ discover failed"
-            FAILED=1
-          fi
-
-          # e2e-no-llm: workflow_dispatch only (E2E is manual-only)
-          if [[ "${{ needs.e2e-no-llm.result }}" == "failure" ]]; then
-            echo "❌ e2e-no-llm failed"
-            FAILED=1
-          fi
-
           # deno-boot-smoke: PR to dev, push to dev, workflow_dispatch
           if [[ "${{ needs.deno-boot-smoke.result }}" == "failure" ]]; then
             echo "❌ deno-boot-smoke failed"
@@ -909,8 +688,6 @@ jobs:
             echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
             echo "  test-web: ${{ needs.test-web.result }}"
             echo "  build: ${{ needs.build.result }}"
-            echo "  discover: ${{ needs.discover.result }}"
-            echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"
             echo "  deno-boot-smoke: ${{ needs.deno-boot-smoke.result }}"
             exit 1
           fi
