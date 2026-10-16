@@ -61,7 +61,7 @@ import {
   neoAskScope,
 } from '../../../../src/lib/neo/operations.ts';
 import { neoTurnRequestKey } from '../../../../src/lib/neo/request-key.ts';
-import { neoAskItemAction, neoCardHumanAction } from '../../../../src/lib/neo/ask-views.ts';
+import { neoAskItemAction } from '../../../../src/lib/neo/ask-views.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -789,9 +789,6 @@ describe('neo.ask operations', () => {
     expect(service.askRecords.get(askId)?.approvedAt).toEqual(expect.any(Number));
     const proposed = await propose('card-1', askId);
     expect(service.repo.getWork(proposed.value!.work!.id)?.status).not.toBe('proposed');
-    const card = { workId: 'w', phase: 'proposed' } as NeoCardView;
-    expect(neoCardHumanAction(card, true)).toBeNull();
-    expect(neoCardHumanAction(card, false)).toEqual({ kind: 'start', workId: 'w' });
   });
 
   test('only a human message opens an ask; a note turn is told to edit the ask it works on', async () => {
@@ -986,7 +983,7 @@ describe('neo.ask operations', () => {
           id: askId,
           cards: [{ id: card, title: 'Fix it', status: 'proposed' }],
           humanActions: expect.arrayContaining([
-            expect.objectContaining({ kind: 'answer', options: ['Own dir', 'Attach'] }),
+            expect.objectContaining({ kind: 'question', options: ['Own dir', 'Attach'] }),
           ]),
         },
       },
@@ -995,7 +992,7 @@ describe('neo.ask operations', () => {
       value: {
         ok: true,
         ask: {
-          humanActions: expect.arrayContaining([expect.objectContaining({ kind: 'answer' })]),
+          humanActions: expect.arrayContaining([expect.objectContaining({ kind: 'question' })]),
         },
       },
     });
@@ -2239,9 +2236,8 @@ describe('neo.ask operations', () => {
         snapshot.value as { askViews?: { askId: string; humanActions?: unknown[] }[] }
       ).askViews?.find((view) => view.askId === askId)?.humanActions
     ).toContainEqual({
-      kind: 'answer',
+      kind: 'question',
       itemId: 'i3',
-      step: null,
       question: 'Is red CI on main acceptable?',
       options: ['Accept it', 'Fix CI first'],
     });
@@ -2286,57 +2282,67 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test('a result check carries its own options and is met only on its first', async () => {
-    const askId = await openAsk();
-    const user: OperationCaller = { source: 'rpc', principal: 'local' };
-    expect(
+  test.each(['没成功', '成功了'])(
+    'a result answer %s completes the question once without confirmation',
+    async (choice) => {
+      const askId = await openAsk();
+      const user: OperationCaller = { source: 'rpc', principal: 'local' };
       await invoke('neo.ask.question', {
         askId,
         question: '这一步成功了吗？',
-        options: ['成功了', '没成功'],
+        options: ['没成功', '成功了'],
         kind: 'action',
-      })
-    ).toMatchObject({
-      value: { ok: true, ask: { status: 'waiting', waitingItem: 'i3' } },
-    });
-    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
-      kind: 'action',
-      question: '这一步成功了吗？',
-      options: ['成功了', '没成功'],
-    });
-    const snapshot = await invoke('neo.snapshot', {});
-    expect(
-      (
-        snapshot.value as { askViews?: { askId: string; humanActions?: unknown[] }[] }
-      ).askViews?.find((view) => view.askId === askId)?.humanActions
-    ).toContainEqual({
-      kind: 'answer',
-      itemId: 'i3',
-      step: null,
-      question: '这一步成功了吗？',
-      options: ['成功了', '没成功'],
-    });
-    const delivered = mock(
-      async (_ask: NeoAsk, _item: unknown, _choice: string, _met: boolean) => {}
-    );
-    service.deliverAskAnswer = delivered;
-    const answer = { askId, itemId: 'i3', choice: 'Yes' };
-    expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('成功了 or 没成功') },
-    });
-    expect(await invoke('neo.ask.answer', { ...answer, choice: '没成功' }, user)).toMatchObject({
-      value: { ok: true, ask: { status: 'waiting' } },
-    });
-    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({ state: 'needs_you' });
-    expect(delivered.mock.calls[0]?.slice(2)).toEqual(['没成功', false]);
-    await invoke('neo.ask.answer', { ...answer, choice: '成功了' }, user);
-    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
-      state: 'met',
-      metBy: 'human',
-    });
-    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
-    expect(delivered.mock.calls[1]?.slice(2)).toEqual(['成功了', true]);
-  });
+      });
+      const delivered = mock(async () => {});
+      service.deliverAskAnswer = delivered;
+      expect(await invoke('neo.ask.answer', { askId, itemId: 'i3', choice }, user)).toMatchObject({
+        value: { ok: true, ask: { status: 'open' } },
+      });
+      expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
+        state: 'met',
+        metBy: 'human',
+      });
+      expect(delivered).toHaveBeenCalledTimes(1);
+      expect((await invoke('neo.snapshot', {})).value).toMatchObject({
+        askViews: expect.arrayContaining([expect.objectContaining({ askId, humanActions: [] })]),
+      });
+      expect(await invoke('neo.ask.answer', { askId, itemId: 'i3', choice }, user)).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('item_not_waiting') },
+      });
+      expect(delivered).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  test.each([
+    { label: 'omitted', options: undefined },
+    { label: 'empty', options: [] },
+  ])(
+    'an open question with $label options accepts the human reply in chat',
+    async ({ options }) => {
+      const askId = await openAsk();
+      const question = await invoke('neo.ask.question', {
+        askId,
+        question: 'Which repo?',
+        ...(options === undefined ? {} : { options }),
+        kind: 'decision',
+      });
+      expect(question).toMatchObject({ value: { ok: true, ask: { waitingItem: 'i3' } } });
+      const reply = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'repo-reply' } };
+      const answer = await invoke(
+        'neo.ask.answer',
+        { askId, itemId: 'i3', choice: 'lsm/HyperNeo' },
+        reply
+      );
+      expect(answer).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('answer_not_from_human') },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      humanSays('Use lsm/HyperNeo.', 'repo-reply');
+      expect(
+        await invoke('neo.ask.answer', { askId, itemId: 'i3', choice: 'lsm/HyperNeo' }, reply)
+      ).toMatchObject({ value: { ok: true, ask: { status: 'open' } } });
+    }
+  );
 
   test('a question must say its kind, so a result check is never taken for a decision', async () => {
     const askId = await openAsk();
@@ -2550,11 +2556,7 @@ describe('neo.ask operations', () => {
     ]);
     const reported = service.askRecords.get(askId)!.doneItems![0];
     expect(reported).toMatchObject({ state: 'reported', evidence: 'Confirmation: id=abc' });
-    expect(neoAskItemAction(reported)).toEqual({
-      kind: 'confirm',
-      itemId: 'i1',
-      step: reported.text,
-    });
+    expect(neoAskItemAction(reported)).toBeNull();
     expect(
       await invoke('neo.ask.settle', {
         id: askId,
