@@ -3432,7 +3432,7 @@ describe('Neo work with a drivers target', () => {
     Object.assign(service, {
       deliver: async (_target: string, messageId: string, content: string) => {
         delivered.add(messageId);
-        if (content.includes('No work is running for this ask')) notes.push(messageId);
+        if (content.includes('no work is running for it')) notes.push(messageId);
       },
       hasDelivery: (_session: string, messageId: string) => delivered.has(messageId),
     });
