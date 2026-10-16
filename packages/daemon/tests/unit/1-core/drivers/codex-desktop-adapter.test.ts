@@ -83,6 +83,10 @@ describe('codex-desktop adapter against a Codex state database', () => {
 
   function adapter() {
     return createCodexDesktopAdapter({
+      bootstrapServer: () => Promise.reject(new Error('not used')),
+      startDesktopTurn: async () => {
+        throw new Error('not used');
+      },
       statePath,
       worktreesDir: dir,
       machine: 'laptop',
@@ -116,6 +120,10 @@ describe('codex-desktop adapter against a Codex state database', () => {
   test('finds a thread by what was said in it and shows the matching snippet', async () => {
     const searched: string[] = [];
     const found = await createCodexDesktopAdapter({
+      bootstrapServer: () => Promise.reject(new Error('not used')),
+      startDesktopTurn: async () => {
+        throw new Error('not used');
+      },
       statePath,
       worktreesDir: dir,
       machine: 'laptop',
@@ -167,6 +175,16 @@ describe('codex-desktop adapter against a Codex state database', () => {
     const probe = spyOn(acp, 'gitWorktreeProject');
     try {
       const adapter = createCodexDesktopAdapter({
+        bootstrapServer: () => Promise.reject(new Error('not used')),
+        startDesktopTurn: async () => {
+          throw new Error('not used');
+        },
+        appServer: () => Promise.reject(new Error('not used')),
+        folderExists: () => true,
+        makeFolder: () => {},
+        homeDir: '/Users/test',
+        gitCheckout: async () => null,
+        newId: () => 'unused',
         statePath,
         machine: 'laptop',
         worktreesDir: dir,
@@ -300,6 +318,10 @@ describe('codex-desktop adapter against a Codex state database', () => {
 
   test('answers a Space search without opening the state database', async () => {
     const groups = await createCodexDesktopAdapter({
+      bootstrapServer: () => Promise.reject(new Error('not used')),
+      startDesktopTurn: async () => {
+        throw new Error('not used');
+      },
       statePath: join(dir, 'missing.sqlite'),
       worktreesDir: dir,
       machine: 'laptop',

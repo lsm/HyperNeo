@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
-import { connectCodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
+import {
+  connectCodexAppServer,
+  startCodexBootstrapServer,
+} from '../../../../src/lib/drivers/codex-app-server';
 
 describe('connectCodexAppServer', () => {
   let dir: string;
@@ -77,5 +80,70 @@ describe('connectCodexAppServer', () => {
     } finally {
       client.close();
     }
+  });
+});
+
+describe('startCodexBootstrapServer', () => {
+  let directory = '';
+  afterEach(() => {
+    if (directory) rmSync(directory, { recursive: true, force: true });
+    directory = '';
+  });
+
+  function executable(failInitialization = false) {
+    directory = mkdtempSync(join(tmpdir(), 'codex-bootstrap-'));
+    const command = join(directory, 'codex');
+    const persisted = join(directory, 'saved.json');
+    writeFileSync(
+      command,
+      `#!${process.execPath}
+const fs = require('node:fs');
+const readline = require('node:readline');
+const seen = [];
+const lines = readline.createInterface({ input: process.stdin });
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  seen.push(message.method);
+  if (message.id === undefined) return;
+  const response = ${failInitialization} && message.method === 'initialize'
+    ? { error: { code: -1, message: 'initialization failed' } }
+    : { result: message.method === 'thread/start' ? { thread: { id: 'saved-thread' } } : {} };
+  process.stdout.write(JSON.stringify({ id: message.id, ...response }) + '\\n');
+});
+lines.on('close', () => {
+  fs.writeFileSync(${JSON.stringify(persisted)}, JSON.stringify(seen));
+});
+`,
+      { mode: 0o700 }
+    );
+    return { command, persisted };
+  }
+
+  test('flushes the saved thread through EOF and waits for process exit before resolving close', async () => {
+    const f = executable();
+    const client = await startCodexBootstrapServer(f.command);
+    try {
+      expect(await client.call('thread/start', { cwd: '/focus' })).toEqual({
+        thread: { id: 'saved-thread' },
+      });
+      await client.call('thread/name/set', { threadId: 'saved-thread', name: 'Desktop chat' });
+      expect(existsSync(f.persisted)).toBe(false);
+      await Promise.all([client.close(), client.close()]);
+      expect(JSON.parse(readFileSync(f.persisted, 'utf8'))).toEqual([
+        'initialize',
+        'initialized',
+        'thread/start',
+        'thread/name/set',
+      ]);
+      await expect(client.call('turn/start', {})).rejects.toThrow('closed');
+    } finally {
+      await client.close();
+    }
+  });
+
+  test('closes its owned process after failed initialization', async () => {
+    const f = executable(true);
+    await expect(startCodexBootstrapServer(f.command)).rejects.toThrow('initialization failed');
+    expect(JSON.parse(readFileSync(f.persisted, 'utf8'))).toEqual(['initialize']);
   });
 });

@@ -81,7 +81,11 @@ describe('createCodexDesktopAdapter with coding preparation', () => {
             [{ id: 'coding', prepareExecution: prepareCodingExecution }],
             f.effects
           ),
-        appServer: async () => ({
+        appServer: async () => {
+          throw new Error('not used');
+        },
+        startDesktopTurn: async () => {},
+        bootstrapServer: async () => ({
           close: () => {},
           call: async (method, params) => {
             if (method === 'thread/start') {

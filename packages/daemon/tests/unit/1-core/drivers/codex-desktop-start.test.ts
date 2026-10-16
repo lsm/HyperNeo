@@ -54,13 +54,23 @@ function adapter(
       };
     },
     appServer: async () => {
+      throw new Error('Shared daemon must not create desktop threads');
+    },
+    startDesktopTurn: async (threadId, params) => {
+      expect(closed).toBe(true);
+      expect(params.threadId).toBe(threadId);
+      calls.push(['desktop/start-turn', params]);
+      if (!(server instanceof Error)) await server.call?.('desktop/start-turn', params);
+    },
+    bootstrapServer: async () => {
       if (server instanceof Error) throw server;
       return {
         call: async (method, params) => {
           calls.push([method, params]);
           return server.call?.(method, params);
         },
-        close: () => {
+        close: async () => {
+          await server.close?.();
           closed = true;
         },
       };
@@ -235,7 +245,10 @@ describe('codex-desktop start', () => {
       ['model/list', { limit: 100, includeHidden: false }],
       ['thread/start', { cwd: '/focus/dolmen', model: 'gpt-6.1-sol' }],
       ['thread/name/set', { threadId: 'th1', name: request.title }],
-      ['turn/start', { threadId: 'th1', input: [{ type: 'text', text: request.message }] }],
+      [
+        'desktop/start-turn',
+        { threadId: 'th1', input: [{ type: 'text', text: request.message }], model: model.model },
+      ],
     ]);
     expect(closed()).toBe(true);
   });
@@ -262,7 +275,15 @@ describe('codex-desktop start', () => {
         { cwd: '/focus/dolmen', model: model.model, config: { model_reasoning_effort: 'medium' } },
       ],
       ['thread/name/set', { threadId: 'th1', name: request.title }],
-      ['turn/start', { threadId: 'th1', input: [{ type: 'text', text: request.message }] }],
+      [
+        'desktop/start-turn',
+        {
+          threadId: 'th1',
+          input: [{ type: 'text', text: request.message }],
+          model: model.model,
+          effort: 'medium',
+        },
+      ],
     ]);
   });
 
@@ -411,7 +432,7 @@ describe('codex-desktop start', () => {
       ['thread/start', { cwd: '/focus/dolmen' }],
       ['thread/name/set', { threadId: 'th1', name: 'Bigger font' }],
       [
-        'turn/start',
+        'desktop/start-turn',
         { threadId: 'th1', input: [{ type: 'text', text: 'Raise the body font to 16px.' }] },
       ],
     ]);
@@ -508,14 +529,15 @@ describe('codex-desktop start', () => {
     });
     const halfway = adapter({
       call: async (method) => {
-        if (method === 'turn/start') throw new Error('turn/start: busy');
+        if (method === 'desktop/start-turn') throw new Error('desktop/start-turn: busy');
         return method === 'thread/start' ? { threadId: 'th2' } : {};
       },
     });
     expect(await halfway.instance.start?.(request, user)).toEqual({
       ok: false,
       reason: 'not_delivered',
-      detail: 'turn/start: busy Thread th2 was created without its first turn.',
+      detail:
+        'desktop/start-turn: busy Thread th2 was created, but its opening turn was not confirmed.',
     });
     expect(halfway.closed()).toBe(true);
   });

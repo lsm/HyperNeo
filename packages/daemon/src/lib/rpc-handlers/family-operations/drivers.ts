@@ -27,7 +27,11 @@ import {
 import { readHyperneoSdkSessions } from '../../drivers/claude-feed.ts';
 import { createClaudeCodeAdapter } from '../../drivers/claude-code-adapter.ts';
 import { withClaudeRemoteControl } from '../../drivers/claude-remote-control.ts';
-import { connectCodexAppServer } from '../../drivers/codex-app-server.ts';
+import {
+  connectCodexAppServer,
+  startCodexBootstrapServer,
+} from '../../drivers/codex-app-server.ts';
+import { startCodexDesktopTurn } from '../../drivers/codex-desktop-handoff.ts';
 import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import { createReadWorkOperation } from '../../drivers/read-operation.ts';
@@ -261,6 +265,9 @@ function codexDesktopAdapters(
       spawn: spawnProcess,
       appServer: () =>
         connectCodexAppServer(join(codexHome, 'app-server-control', 'app-server-control.sock')),
+      bootstrapServer: () => startCodexBootstrapServer(),
+      startDesktopTurn: (threadId, request) =>
+        startCodexDesktopTurn(join(codexHome, 'ipc', 'ipc.sock'), spawnProcess, threadId, request),
       folderExists: existsSync,
       makeFolder: (folder: string) => mkdirSync(folder),
       homeDir: homedir(),

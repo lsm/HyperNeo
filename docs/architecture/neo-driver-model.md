@@ -214,7 +214,7 @@ HyperNeo Spaces. The adapter calls the Space task operations as the real caller,
 Runs on the laptop, ported from the `codex-driver` skill. Everything it does shows in Codex Desktop.
 
 - `find` and `status`: `~/.codex/state_5.sqlite` and the thread's rollout file.
-- `start`: the shared app-server socket that Codex Desktop uses (`thread/start`, `thread/name/set`, `turn/start`), so the thread appears in the Desktop sidebar.
+- `start`: a short-lived stdio app-server creates and names the thread using the desktop's bundled CLI when available. Neo closes stdin and waits for the process to exit and flush its saved thread, opens its `codex://threads/<id>` link, and discovers the desktop owner over `~/.codex/ipc/ipc.sock`. The opening turn is sent directly to that owner, with the confirmed model and effort. The shared background daemon must not own newly created desktop threads; visibility in the sidebar alone does not make a thread editable in the desktop. The desktop must be running and its local IPC protocol must support the handoff; failures leave the saved thread without submitting its opening message elsewhere.
 - `send`: `codex queue --thread <id> --message …`, then a delivery check in the rollout.
 - `stop`: interrupt the turn through the app-server. `link`: to be found.
 

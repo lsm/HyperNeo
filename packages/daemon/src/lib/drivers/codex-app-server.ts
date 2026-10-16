@@ -1,14 +1,75 @@
 import WebSocket from 'ws';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { AcpTransport } from '../acp/acp-transport.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 
 const CALL_TIMEOUT_MS = 30_000;
 
 export interface CodexAppServer {
   call(method: string, params: Record<string, unknown>): Promise<unknown>;
-  close(): void;
+  close(): void | Promise<void>;
   selectConfiguration?: (
     request: Parameters<typeof selectCodexConfiguration>[0]
   ) => ReturnType<typeof selectCodexConfiguration>;
+}
+
+export async function startCodexBootstrapServer(
+  command = process.env.CODEX_CLI_PATH ??
+    [homedir(), '']
+      .flatMap((root) => [
+        join(root, '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex'),
+        join(root, '/Applications/Codex.app/Contents/Resources/codex'),
+      ])
+      .find(existsSync) ??
+    'codex'
+): Promise<CodexAppServer> {
+  let endInput = () => {};
+  let resolveExit = () => {};
+  let closing: Promise<void> | undefined;
+  const exited = new Promise<void>((resolve) => {
+    resolveExit = resolve;
+  });
+  const transport = new AcpTransport({
+    command,
+    args: ['app-server', '--listen', 'stdio://'],
+    requestTimeoutMs: CALL_TIMEOUT_MS,
+    onProcessSpawn: (child) => {
+      endInput = () => child.stdin?.end();
+    },
+    onExit: () => resolveExit(),
+  });
+  const server: CodexAppServer = {
+    call: async (method, params) => {
+      const response = await transport.sendRequest(method, params);
+      if ('error' in response) throw new Error(`${method}: ${response.error.message}`);
+      return response.result;
+    },
+    close: () =>
+      (closing ??= (async () => {
+        const timer = setTimeout(() => {
+          void transport.close();
+        }, 5_000);
+        try {
+          endInput();
+          await exited;
+          await transport.close();
+        } finally {
+          clearTimeout(timer);
+        }
+      })()),
+  };
+  try {
+    await server.call('initialize', {
+      clientInfo: { name: 'hyperneo', title: 'HyperNeo', version: '1' },
+    });
+    transport.sendNotification('initialized', {});
+    return server;
+  } catch (error) {
+    await server.close();
+    throw error;
+  }
 }
 
 type Pending = {
