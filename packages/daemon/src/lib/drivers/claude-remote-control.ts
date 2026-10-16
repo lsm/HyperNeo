@@ -74,6 +74,8 @@ async function createRcToggle(deps: ClaudeDesktopAdapterDeps): Promise<Gate<RcTo
       cliSessionId,
       '-n',
       RC_TOGGLE_TITLE,
+      '--permission-mode',
+      'bypassPermissions',
       '--model',
       'haiku',
       '--',
