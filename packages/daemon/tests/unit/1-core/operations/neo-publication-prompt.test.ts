@@ -41,6 +41,7 @@ describe('Neo speaking policy delivery', () => {
     'documents message delivery and revisions with request identity for %s',
     (projectId) => {
       const prompt = neoPrompt(projectId);
+      expect(prompt).toContain('ordinary assistant text is internal');
       expect(prompt).toContain('neo.publication.publish {requestId,shortText,fullText,links}');
       expect(prompt).toContain(
         'neo.publication.edit {publicationId,requestId,shortText?,fullText?}'
