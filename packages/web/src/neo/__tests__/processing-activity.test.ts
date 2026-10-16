@@ -366,12 +366,13 @@ describe('neoAwaitingReply', () => {
 });
 
 describe('neoBusyWords', () => {
-  it('cycles the busy words while any Neo works or a message waits, and says retry in a cooldown', () => {
+  it('cycles the busy words while any Neo works or a message waits, and says retry only when every working session is cooling down', () => {
     expect(neoBusyWords([], false)).toBeNull();
     expect(neoBusyWords([], true)).toBe(NEO_BUSY_WORDS);
     expect(neoBusyWords([{ status: 'processing' }], false)).toBe(NEO_BUSY_WORDS);
-    expect(neoBusyWords([{ status: 'queued' }, { status: 'rate_limit_cooldown' }], true)).toEqual([
-      'Waiting to retry…',
-    ]);
+    expect(neoBusyWords([{ status: 'rate_limit_cooldown' }], true)).toEqual(['Waiting to retry…']);
+    expect(neoBusyWords([{ status: 'processing' }, { status: 'rate_limit_cooldown' }], false)).toBe(
+      NEO_BUSY_WORDS
+    );
   });
 });

@@ -9,7 +9,8 @@ export function neoBusyWords(
   working: readonly { status: string }[],
   awaiting: boolean
 ): readonly string[] | null {
-  if (working.some((session) => session.status === 'rate_limit_cooldown')) return NEO_RETRY_WORDS;
+  if (working.length && working.every((session) => session.status === 'rate_limit_cooldown'))
+    return NEO_RETRY_WORDS;
   return working.length || awaiting ? NEO_BUSY_WORDS : null;
 }
 
