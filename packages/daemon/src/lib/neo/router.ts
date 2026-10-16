@@ -10,6 +10,7 @@ import {
   neoExcerpt,
 } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { getProviderService } from '../provider-service.ts';
+import { effectiveNeoPreference } from './model-preference.ts';
 import { classifyNeoRoute, neoRouteTimeoutMs } from './route-classifier.ts';
 import { cosineSimilarity, embedQueryOrNull } from '../../storage/vector-similarity.ts';
 import { fitLines } from './fit-lines.ts';
@@ -516,6 +517,32 @@ function neoRedirectTurns(turns: readonly NeoRoute[], repo: NeoRepository): NeoR
   );
 }
 
+export function neoProjectHolders(
+  projects: readonly {
+    project: { id: string; parentId?: string | null; title: string; summary: string };
+    binding: { sessionId: string; kind: string } | null;
+    provider?: string;
+    repository?: string;
+  }[],
+  opening: string | undefined
+): NeoHolder[] {
+  return projects.flatMap(({ project, binding, provider, repository }) => {
+    if (binding && binding.kind !== 'project') return [];
+    const runs = binding ? provider : opening;
+    return [
+      {
+        projectId: project.id,
+        parentId: project.parentId,
+        sessionId: binding?.sessionId ?? '',
+        title: project.title,
+        summary: project.summary,
+        ...(repository ? { repository } : {}),
+        ...(runs ? { provider: runs } : {}),
+      },
+    ];
+  });
+}
+
 export function createNeoRouter(
   db: Database,
   repo: NeoRepository,
@@ -537,25 +564,25 @@ export function createNeoRouter(
       return readNeoSectionFacts(text, facts, repo.listProjects());
     },
     holders: async () => {
+      const root = repo.getBindingForProject(null)?.sessionId;
+      const settings = db.getGlobalSettings();
+      const opening = effectiveNeoPreference(
+        settings.neo?.preferences,
+        root ? (db.getSession(root)?.config ?? null) : null
+      )?.provider;
       const repositories = repo.repositories();
-      const holders: NeoHolder[] = repo.listProjects().flatMap((project) => {
-        const repository = repositories.get(project.id);
-        const binding = repo.getBindingForProject(project.id);
-        const session = binding ? db.getSession(binding.sessionId) : null;
-        return !binding || binding.kind === 'project'
-          ? [
-              {
-                projectId: project.id,
-                parentId: project.parentId,
-                sessionId: binding?.sessionId ?? '',
-                title: project.title,
-                summary: project.summary,
-                ...(repository ? { repository } : {}),
-                ...(session?.config.provider ? { provider: session.config.provider } : {}),
-              },
-            ]
-          : [];
-      });
+      const holders = neoProjectHolders(
+        repo.listProjects().map((project) => {
+          const binding = repo.getBindingForProject(project.id);
+          return {
+            project,
+            binding,
+            provider: binding ? db.getSession(binding.sessionId)?.config.provider : undefined,
+            repository: repositories.get(project.id),
+          };
+        }),
+        opening
+      );
       if (process.env.NODE_ENV === 'test') return holders;
       const providers = [...new Set(holders.map((holder) => holder.provider ?? 'anthropic'))];
       const available = new Map(

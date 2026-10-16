@@ -13,6 +13,7 @@ import {
   type NeoRouteVerdict,
   type NeoRouterDeps,
   neoHolderProfile,
+  neoProjectHolders,
   pickNeoHolder,
   renderNeoRouteContext,
   runnableNeoHolders,
@@ -329,6 +330,28 @@ describe('wakeNeoRoute', () => {
       choice: null,
       fallback: 'holder-unavailable',
     });
+  });
+});
+
+describe('neoProjectHolders', () => {
+  const project = (id: string) => ({ id, title: id, summary: '' });
+  test('a project without a holder runs on the provider its holder would open with', () => {
+    const holders = neoProjectHolders(
+      [
+        {
+          project: project('bound'),
+          binding: { sessionId: 's1', kind: 'project' },
+          provider: 'glm',
+        },
+        { project: project('unbound'), binding: null },
+        { project: project('worker'), binding: { sessionId: 's2', kind: 'worker' } },
+      ],
+      'anthropic-codex'
+    );
+    expect(holders.map((holder) => [holder.projectId, holder.sessionId, holder.provider])).toEqual([
+      ['bound', 's1', 'glm'],
+      ['unbound', '', 'anthropic-codex'],
+    ]);
   });
 });
 
