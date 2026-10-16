@@ -5,9 +5,13 @@ import type { NeoPublicEntry } from './public-conversation.ts';
 export const NEO_BUSY_WORDS = ['Neo is working…', 'Syncing…', 'Preparing a reply…', 'Busy on it…'];
 const NEO_RETRY_WORDS = ['Waiting to retry…'];
 
-export function neoBusyWords(progress: string | null, awaiting: boolean): readonly string[] | null {
-  if (progress === 'Neo is waiting to retry…') return NEO_RETRY_WORDS;
-  return progress || awaiting ? NEO_BUSY_WORDS : null;
+export function neoBusyWords(
+  working: readonly { status: string }[],
+  awaiting: boolean
+): readonly string[] | null {
+  if (working.length && working.every((session) => session.status === 'rate_limit_cooldown'))
+    return NEO_RETRY_WORDS;
+  return working.length || awaiting ? NEO_BUSY_WORDS : null;
 }
 
 export function neoAwaitingReply(entries: readonly NeoPublicEntry[]): boolean {

@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import { Button } from '../components/ui/Button.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import type { SessionStore } from '../lib/session-store.ts';
@@ -37,10 +38,12 @@ export function NeoComposer({
   preference,
   onPreferenceSaved,
   quote,
+  activity,
   onCancelQuote,
 }: {
   preference?: NeoPreference;
   quote?: NeoQuote;
+  activity?: ComponentChildren;
   onCancelQuote?: () => void;
   onPreferenceSaved?: () => void;
   store: SessionStore;
@@ -206,6 +209,7 @@ export function NeoComposer({
       }}
       class="pointer-events-auto relative rounded-3xl border border-line-strong bg-surface-raised/95 p-4 shadow-xl backdrop-blur-xl transition-colors focus-within:border-accent/60"
     >
+      {activity}
       {quote && (
         <div
           role="region"

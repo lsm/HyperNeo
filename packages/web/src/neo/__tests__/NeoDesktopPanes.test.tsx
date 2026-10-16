@@ -20,7 +20,12 @@ vi.mock('../NeoComposer.tsx', () => ({
   ),
 }));
 vi.mock('../NeoConversation.tsx', () => ({
-  NeoConversation: () => <p>Durable fictional conversation</p>,
+  NeoConversation: ({ busy }: { busy?: readonly string[] | null }) => (
+    <>
+      <p>Durable fictional conversation</p>
+      {busy?.length ? <div class="neo-progress">{busy[0]}</div> : null}
+    </>
+  ),
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
 vi.mock('../NeoSessionPane.tsx', () => ({
@@ -203,7 +208,7 @@ describe('Neo desktop panes', () => {
 
   it('hides the working line until the conversation has loaded once', () => {
     const { container, model } = mount(true, 'loading');
-    const line = () => container.querySelector<HTMLElement>('.neo-activity')!;
+    const line = () => container.querySelector<HTMLElement>('.neo-progress');
     const withAsk = (status: string) => {
       model.value = {
         ...model.value,
@@ -221,14 +226,14 @@ describe('Neo desktop panes', () => {
       };
     };
     act(() => withAsk('loading'));
-    expect(line().hidden).toBe(true);
+    expect(line()).toBeNull();
     act(() => withAsk('ready'));
-    expect(line().textContent).toContain('Neo is working…');
+    expect(line()?.textContent).toContain('Neo is working…');
   });
 
   it('shows one working line for an unanswered ask, but not while Neo waits on you', () => {
     const { container, model } = mount();
-    const line = () => container.querySelector<HTMLElement>('.neo-activity')!;
+    const line = () => container.querySelector<HTMLElement>('.neo-progress');
     act(() => {
       model.value = {
         ...model.value,
@@ -244,7 +249,7 @@ describe('Neo desktop panes', () => {
         },
       };
     });
-    expect(line().textContent).toContain('Neo is working…');
+    expect(line()?.textContent).toContain('Neo is working…');
     act(() => {
       model.value = {
         ...model.value,
@@ -254,7 +259,7 @@ describe('Neo desktop panes', () => {
         },
       };
     });
-    expect(line().textContent).toContain('Neo is working…');
+    expect(line()?.textContent).toContain('Neo is working…');
     act(() => {
       model.value = {
         ...model.value,
@@ -264,7 +269,7 @@ describe('Neo desktop panes', () => {
         },
       };
     });
-    expect(line().hidden).toBe(true);
+    expect(line()).toBeNull();
     act(() => {
       model.value = {
         ...model.value,
@@ -277,12 +282,12 @@ describe('Neo desktop panes', () => {
         status: 'waiting_for_input',
       } as never;
     });
-    expect(line().hidden).toBe(true);
+    expect(line()).toBeNull();
     act(() => {
       model.value.store.agentState.value = { status: 'idle' } as never;
       model.value.store.error.value = { message: 'Session failed' } as never;
     });
-    expect(line().hidden).toBe(true);
+    expect(line()).toBeNull();
   });
 
   it('does not enable the new layout for legacy SDK conversations', () => {
