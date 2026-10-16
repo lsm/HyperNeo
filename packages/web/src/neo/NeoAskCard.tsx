@@ -21,7 +21,6 @@ import {
   type NeoAskOutcome,
   type NeoAskView,
   isNeoAskQuestionItem,
-  neoAskItemActions,
   neoAskOpenTarget,
   neoAskOutcomeCount,
 } from './neo-asks.ts';
@@ -312,7 +311,7 @@ export function NeoAskCard({
           : 'running';
   const steps = view.scenes.length;
   const single = steps === 1 ? view.scenes[0] : undefined;
-  const itemActions = neoAskItemActions(view);
+  const itemActions = [...view.humanActions];
   const count = neoAskOutcomeCount(view.items);
   const outcomes = view.items.filter((item) => !isNeoAskQuestionItem(item));
   const questions = view.items.filter(isNeoAskQuestionItem);

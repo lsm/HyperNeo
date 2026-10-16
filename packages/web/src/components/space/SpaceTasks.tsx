@@ -8,7 +8,7 @@ import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
 import { toast } from '../../lib/toast';
 import { getTaskStatusClasses, getTaskStatusConfig } from '../../lib/task-status';
-import { ActivitySpinner } from '../ui/ActivitySpinner';
+import { Spinner } from '../ui/Spinner';
 import { StatusBadge } from '../ui/StatusBadge';
 import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
 
@@ -460,7 +460,7 @@ function TaskGroup({
       aria-busy="true"
       role="status"
     >
-      <ActivitySpinner tone="info" />
+      <Spinner size="xs" color="border-accent" className="flex-shrink-0" />
       Loading tasks…
     </div>
   ) : (
@@ -624,7 +624,7 @@ function TaskItem({
           </div>
           <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
             {showStatus && <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />}
-            {showsActivity && <ActivitySpinner tone="info" />}
+            {showsActivity && <Spinner size="xs" color="border-accent" className="flex-shrink-0" />}
             {workspaceLabel && (
               <span
                 class="inline-flex h-6 max-w-[8.5rem] items-center rounded border border-line-strong bg-fill-strong px-1.5 py-0.5 text-xs font-medium leading-none text-fg-muted whitespace-nowrap"
