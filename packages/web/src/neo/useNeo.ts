@@ -30,7 +30,6 @@ export function useNeo() {
   );
   const [received, setSnapshot] = useState<NeoSnapshot | null>(null);
   const [working, setWorking] = useState<NeoWorkingSession[] | null>(null);
-  useEffect(() => setWorking(null), [received]);
   const [askDetails, setAskDetails] = useState<ReadonlyMap<string, NeoSnapshot>>(new Map());
   const askDetailReads = useRef(new Map<string, string>());
   const [askDetailFailures, setAskDetailFailures] = useState<ReadonlySet<string>>(new Set());
@@ -121,7 +120,9 @@ export function useNeo() {
           offWorking();
         };
         reconnect = hub.onConnection((state) => {
-          if (state === 'connected') update();
+          if (state !== 'connected') return;
+          setWorking(null);
+          update();
         });
         void open();
       })

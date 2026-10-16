@@ -97,7 +97,7 @@ describe('useNeo intake client', () => {
 });
 
 describe('useNeo root conversation', () => {
-  it('shows who is working from the snapshot, then from each neo.working event', async () => {
+  it('shows who is working from the snapshot, then from each neo.working event, which a later refresh does not undo', async () => {
     request.mockImplementation(async () => ({
       ok: true,
       sessionId: 'root',
@@ -113,6 +113,13 @@ describe('useNeo root conversation', () => {
       })
     );
     await waitFor(() => expect(screen.getByText('Working: holder')).toBeTruthy());
+    act(() => neoEvents.changed?.());
+    await waitFor(() =>
+      expect(
+        request.mock.calls.filter(([, call]) => call.name === 'neo.snapshot')
+      ).not.toHaveLength(0)
+    );
+    expect(screen.getByText('Working: holder')).toBeTruthy();
   });
 
   it('shows the snapshot neo.open returns without reading it again, then refreshes on change', async () => {
