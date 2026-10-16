@@ -438,6 +438,16 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(
       await adapter().send?.({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user)
     ).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(
+      await adapter().start!(
+        {
+          place: { machine: 'laptop', name: 'project', folder: '/project' },
+          title: 'task',
+          message: 'task',
+        },
+        user
+      )
+    ).toMatchObject({ ok: false, reason: 'unsupported' });
     expect(spawned).toEqual([]);
   });
 
