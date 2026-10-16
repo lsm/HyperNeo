@@ -729,6 +729,15 @@ export function NeoLive() {
                     onAnswer={(itemId, choice) =>
                       void neo.answerAskItem(ask.ask.id, itemId, choice)
                     }
+                    onReply={(quote) => {
+                      if (!neo.sessionId) return;
+                      setQuoted({ scope: neo.sessionId, quote });
+                      setScenesOpen(false);
+                      scrollToBottom();
+                      const input = footer.current?.querySelector('textarea');
+                      input?.scrollIntoView({ block: 'nearest' });
+                      input?.focus({ preventScroll: true });
+                    }}
                     onExpand={
                       isNeoSummarized(ask.ask)
                         ? () => void neo.loadAskDetail(ask.ask.id)

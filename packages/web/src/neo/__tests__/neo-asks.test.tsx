@@ -491,15 +491,38 @@ describe('NeoAskCard', () => {
     ).toBe(true);
   });
 
-  it('shows an open question as a chat reply cue without answer or confirmation buttons', () => {
+  it('offers a secondary right-aligned reply button that targets the open question', () => {
+    const reply = vi.fn();
+    const answer = vi.fn();
     const view = describeAsk(ask('w', 'waiting', []), [], {
       humanActions: [{ kind: 'question', itemId: 'i2', question: 'Which repo?', options: [] }],
     });
-    const card = render(<NeoAskCard view={view} onAnswer={vi.fn()} />);
-    const question = within(card.getByRole('list', { name: 'Needs you' }));
-    expect(question.getByText('Which repo?')).toBeTruthy();
-    expect(question.getByText('Reply in chat…')).toBeTruthy();
-    expect(question.queryByRole('button')).toBeNull();
+    const card = render(<NeoAskCard view={view} onAnswer={answer} onReply={reply} />);
+    const button = within(card.getByRole('list', { name: 'Needs you' })).getByRole('button', {
+      name: 'Reply in chat',
+    });
+    expect(button.parentElement?.classList.contains('justify-end')).toBe(true);
+    expect(button.classList.contains('bg-accent')).toBe(false);
+    fireEvent.click(button);
+    expect(reply).toHaveBeenCalledExactlyOnceWith({
+      author: 'Neo',
+      text: 'Which repo?',
+      anchor: button.closest('li')!.id,
+    });
+    expect(button.closest('li')!.id).not.toBe('');
+    expect(answer).not.toHaveBeenCalled();
+  });
+
+  it('disables open-question replies while unavailable', () => {
+    const reply = vi.fn();
+    const view = describeAsk(ask('w', 'waiting', []), [], {
+      humanActions: [{ kind: 'question', itemId: 'i2', question: 'Which repo?', options: [] }],
+    });
+    const card = render(<NeoAskCard view={view} onReply={reply} disabled />);
+    const button = card.getByRole('button', { name: 'Reply in chat' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(reply).not.toHaveBeenCalled();
   });
 
   it('does not invent confirm, retry or approval controls from reported items or expired approval facts', () => {
