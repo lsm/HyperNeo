@@ -160,7 +160,7 @@ export function planNeoCardPrOwnership(
     const prior = mine && isRanked(mine) ? mine : undefined;
     const claim =
       prior &&
-      (prior.scoped || candidate.scope === undefined) &&
+      (prior.scoped || prior.claim === 'named' || candidate.scope === undefined) &&
       RANK[prior.claim] < RANK[candidate.claim]
         ? prior.claim
         : candidate.claim;
