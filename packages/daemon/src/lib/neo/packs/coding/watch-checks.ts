@@ -128,10 +128,12 @@ export function judgeNeoWatchTicks(
             ? Math.min(...starts)
             : null
           : ask.createdAt;
-      const checked =
-        ask.pack === 'coding' && !item.check ? { ...item, check: CODING_CHECK_PR_MERGED } : item;
       const read = watched.map((url) => {
         const state = byKey.get(refKey(url));
+        const checked =
+          ask.pack === 'coding' && !item.check && state?.kind === 'pr'
+            ? { ...item, check: CODING_CHECK_PR_MERGED }
+            : item;
         return state
           ? {
               url: state.url,

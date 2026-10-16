@@ -44,12 +44,13 @@ describe('runMigration385', () => {
         CREATE TABLE neo_asks(id TEXT, status TEXT, pack TEXT);
         CREATE TABLE neo_ask_items(ask_id TEXT, check_kind TEXT, state TEXT, met_by TEXT,
           evidence TEXT, verified_definition_hash TEXT, watch TEXT);
-        INSERT INTO neo_asks VALUES ('active', 'open', 'coding'), ('done', 'achieved', 'coding'), ('human', 'open', 'coding');
+        INSERT INTO neo_asks VALUES ('active', 'open', 'coding'), ('done', 'achieved', 'coding'), ('human', 'open', 'coding'), ('issue', 'open', 'coding');
         INSERT INTO neo_ask_items VALUES
           ('active', 'coding.pr_merged', 'met', 'daemon', 'old proof', 'old hash', NULL),
           ('active', 'life-admin.confirmed', 'met', 'human', 'words', 'hash', NULL),
           ('human', 'coding.pr_merged', 'met', 'human', 'Confirmed by the human', 'hash', NULL),
           ('done', 'coding.pr_merged', 'met', 'daemon', 'old proof', 'old hash', NULL),
+          ('issue', NULL, 'met', 'daemon', 'issue completion', 'hash', '["https://github.com/lsm/HyperNeo/issues/1"]'),
           ('active', NULL, 'met', 'daemon', 'old watch', 'old hash', '["https://github.com/lsm/HyperNeo/pull/1"]')`);
       runMigration385(db);
       expect(
@@ -75,10 +76,20 @@ describe('runMigration385', () => {
         state: 'met',
         evidence: 'Confirmed by the human',
       });
+      expect(
+        db.prepare("SELECT state, evidence FROM neo_ask_items WHERE ask_id = 'issue'").get()
+      ).toEqual({
+        state: 'met',
+        evidence: 'issue completion',
+      });
       expect(db.prepare("SELECT state FROM neo_ask_items WHERE ask_id = 'done'").get()).toEqual({
         state: 'met',
       });
-      expect(db.prepare('SELECT state FROM neo_ask_items WHERE check_kind IS NULL').get()).toEqual({
+      expect(
+        db
+          .prepare("SELECT state FROM neo_ask_items WHERE check_kind IS NULL AND ask_id = 'active'")
+          .get()
+      ).toEqual({
         state: 'pending',
       });
       db.exec("UPDATE neo_ask_items SET state = 'met' WHERE ask_id = 'active'");
@@ -103,14 +114,19 @@ describe('NeoRepository.workStartedAt', () => {
       db.exec(`CREATE TABLE neo_work(id TEXT, started_at INTEGER, session_id TEXT);
         CREATE TABLE neo_work_driver_targets(work_id TEXT, claimed_at INTEGER, started_at INTEGER);
         CREATE TABLE sdk_messages(session_id TEXT, sdk_message TEXT, timestamp TEXT);
-        INSERT INTO neo_work VALUES ('driver', NULL, NULL), ('native', NULL, 'worker'), ('unknown', NULL, NULL);
+        INSERT INTO neo_work VALUES ('driver', NULL, NULL), ('native', NULL, 'worker'), ('unknown', NULL, NULL), ('assistant', NULL, 'worker'), ('human', NULL, 'worker');
         INSERT INTO neo_work_driver_targets VALUES ('driver', 2000, 1000), ('unknown', NULL, 1000);
         INSERT INTO sdk_messages VALUES ('worker', '{"uuid":"other"}', '2026-10-16T12:00:00.000Z'),
-          ('worker', '{"uuid":"native"}', '2026-10-16T12:00:01.123Z')`);
+          ('worker', '{"uuid":"native","type":"assistant"}', '2026-10-16T12:00:00.000Z'),
+          ('worker', '{"uuid":"native","type":"user","inputKind":"system"}', '2026-10-16T12:00:01.123Z'),
+          ('worker', '{"uuid":"assistant","type":"assistant"}', '2026-10-16T12:00:00.000Z'),
+          ('worker', '{"uuid":"human","type":"user","inputKind":"user"}', '2026-10-16T12:00:00.000Z')`);
       const repo = new NeoRepository(db);
       expect(repo.workStartedAt('driver')).toBe(2000);
       expect(repo.workStartedAt('native')).toBe(Date.parse('2026-10-16T12:00:01.123Z'));
       expect(repo.workStartedAt('unknown')).toBeNull();
+      expect(repo.workStartedAt('assistant')).toBeNull();
+      expect(repo.workStartedAt('human')).toBeNull();
       expect(repo.workStartedAt('absent')).toBeNull();
     } finally {
       db.close();
