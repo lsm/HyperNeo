@@ -642,9 +642,25 @@ export function requireNeoAskSettleable(input: z.infer<typeof Settle>, ask: NeoA
 export const neoAskOpenDecisions = (ask: NeoAsk) =>
   (ask.doneItems ?? []).filter((item) => !item.removed && item.state === 'needs_you');
 
+export function neoAskLatestQuestionBefore(
+  asks: readonly Pick<NeoAsk, 'id' | 'doneItems'>[],
+  at: number
+): string | null {
+  return (
+    asks
+      .flatMap((ask) =>
+        neoAskOpenDecisions(ask as NeoAsk).flatMap((item) =>
+          item.addedAt !== null && item.addedAt < at ? [{ id: ask.id, at: item.addedAt }] : []
+        )
+      )
+      .sort((a, b) => b.at - a.at)[0]?.id ?? null
+  );
+}
+
 export function isNeoHumanDrop(
   caller: OperationCaller,
   owns: boolean,
+  about: boolean,
   asked: readonly Pick<NeoAskItem, 'addedAt'>[],
   prompt: { at: number } | null
 ): boolean {
@@ -652,6 +668,7 @@ export function isNeoHumanDrop(
   return (
     caller.source === 'mcp' &&
     owns &&
+    about &&
     !!turn?.human &&
     !turn.consultationId &&
     turn.isLive() &&
@@ -1437,6 +1454,15 @@ export function createNeoAskOperations(
             ? (neoAskAnswerChoice(neoPromptText(message)) ?? [])
             : []
       );
+  const nameable = (ask: NeoAsk): NeoAskNameable => ({
+    id: ask.id,
+    title: ask.title,
+    cardIds: ask.workIds,
+    refs: [
+      ...ask.workIds.flatMap((id) => service.workPrs.get(id)?.prs.map((pr) => pr.url) ?? []),
+      ...(ask.doneItems ?? []).flatMap((item) => (item.removed ? [] : (item.watch ?? []))),
+    ],
+  });
   const openNeoAsksOf = (origin: NeoWorkOrigin): NeoAskNameable[] =>
     service.askRecords
       .listLive()
@@ -1445,15 +1471,7 @@ export function createNeoAskOperations(
           ask.originSessionId === origin.originSessionId &&
           ask.originMessageId !== origin.originMessageId
       )
-      .map((ask) => ({
-        id: ask.id,
-        title: ask.title,
-        cardIds: ask.workIds,
-        refs: [
-          ...ask.workIds.flatMap((id) => service.workPrs.get(id)?.prs.map((pr) => pr.url) ?? []),
-          ...(ask.doneItems ?? []).flatMap((item) => (item.removed ? [] : (item.watch ?? []))),
-        ],
-      }));
+      .map(nameable);
   const readOwnedLiveAsk = (superpipe({})('neo-ask-owned-live') as PipelineAPI)
     .input(['askId', 'caller', 'name', 'verb'])
     .pipe((askId: string) => ({ ask: service.askRecords.get(askId) }), 'askId', 'current')
@@ -1650,9 +1668,19 @@ export function createNeoAskOperations(
         const prompt = service.db
           .getSDKMessageRepo()
           .getHumanPrompt(ask.originSessionId, caller.neoTurn.messageId);
+        const about =
+          !!prompt &&
+          (neoAskNamedBy([prompt.text], nameable(ask)) ||
+            neoAskLatestQuestionBefore(
+              service.askRecords
+                .listLive()
+                .filter((live) => live.originSessionId === ask.originSessionId),
+              prompt.at
+            ) === ask.id);
         return isNeoHumanDrop(
           caller,
           service.ownsHumanMessage(caller),
+          about,
           neoAskOpenDecisions(ask),
           prompt
         )
@@ -1725,19 +1753,27 @@ export function createNeoAskOperations(
         drop: { text: string } | null
       ) => {
         if (isNeoAskReplay(ask, input)) return { ask };
-        const settled = service.askRecords.settle(
-          ask,
-          input.outcome,
-          neoAskSummary(input),
-          input.evidence,
-          plan.waitingItem,
-          plan.item,
-          false,
-          drop && `The human dropped this ask: "${drop.text}"`
-        );
-        if (settled && plan.restate)
-          service.askRecords.restateQuestion(ask.id, plan.restate, Date.now());
-        return { ask: settled };
+        const lost = new Error('neo-ask-settle-lost');
+        try {
+          return service.db.getDatabase().transaction(() => {
+            if (plan.restate) service.askRecords.restateQuestion(ask.id, plan.restate, Date.now());
+            const settled = service.askRecords.settle(
+              ask,
+              input.outcome,
+              neoAskSummary(input),
+              input.evidence,
+              plan.waitingItem,
+              plan.item,
+              false,
+              drop && `The human dropped this ask: "${drop.text}"`
+            );
+            if (!settled) throw lost;
+            return { ask: settled };
+          })();
+        } catch (error) {
+          if (error !== lost) throw error;
+          return { ask: null };
+        }
       },
       ['input', 'admission', 'plan', 'drop'],
       'written'
