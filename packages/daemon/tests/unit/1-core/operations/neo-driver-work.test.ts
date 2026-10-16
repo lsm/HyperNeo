@@ -89,7 +89,10 @@ const retryVia = async (service: NeoService, id = 'work-1') => {
 const approveReplacement = async (service: NeoService, id = 'work-1') => {
   const ask = service.askRecords.forWork(id)!;
   const question = ask.doneItems!.find((item) => item.state === 'needs_you' && !item.removed)!;
-  expect(question).toMatchObject({ question: '开始这 1 步？', options: ['先不做', '开始'] });
+  expect(question).toMatchObject({
+    question: `开始「${service.repo.getWork(id)!.title}」？`,
+    options: ['先不做', '开始'],
+  });
   expect(
     await invokeOperation(
       createOperationRegistry(createNeoOperations(service)),

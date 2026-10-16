@@ -14,7 +14,7 @@ import {
   sendClaudeMessage,
   waitUntilLive,
 } from './claude-desktop-adapter.ts';
-import type { Result, WorkAdapter } from './types.ts';
+import type { Result, WorkAdapter, WorkCallContext } from './types.ts';
 import { reject } from './work-operations.ts';
 
 export const RC_TOGGLE_TITLE = 'rc-toggle';
@@ -129,29 +129,31 @@ export async function openRcToggle(
 export function sendRcToggleRequest(
   rcToggle: { record: RcToggle['record']; liveSessions: readonly ClaudeLiveSession[] },
   target: RemoteControlTarget,
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  context?: WorkCallContext
 ): Promise<Result<{ delivered: boolean }>> {
   const message = fillPrompt(CLAUDE_RC_TOGGLE_REQUEST, {
     sessionId: target.sessionId,
     title: target.title,
   });
-  return sendClaudeMessage(rcToggle.record, rcToggle.liveSessions, message, deps);
+  return sendClaudeMessage(rcToggle.record, rcToggle.liveSessions, message, deps, context);
 }
 
 export const runClaudeRemoteControlRequest = (
   superpipe({})('claude-remote-control-request') as PipelineAPI
 )
-  .input(['target', 'deps', 'cache'])
+  .input(['target', 'deps', 'cache', 'context'])
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
   .pipe(requireDisconnectedTarget, ['target', 'records'], 'result:outcome')
   .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
   .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'liveSessions')
   .pipe(openRcToggle, ['records', 'liveSessions', 'deps'], 'result:outcome')
-  .pipe(sendRcToggleRequest, ['outcome', 'target', 'deps'], 'outcome')
+  .pipe(sendRcToggleRequest, ['outcome', 'target', 'deps', 'context'], 'outcome')
   .endAsync('outcome') as (
   target: RemoteControlTarget,
   deps: ClaudeDesktopAdapterDeps,
-  cache: ClaudeRecordCache
+  cache: ClaudeRecordCache,
+  context?: WorkCallContext
 ) => Promise<Result<{ delivered: boolean }>>;
 
 export function withClaudeRemoteControl(
@@ -169,7 +171,7 @@ export function withClaudeRemoteControl(
       if (started.ok) {
         const target = { sessionId: started.value.ref.id, title: started.value.title };
         queue = queue
-          .then(() => request(target, deps, new Map()))
+          .then(() => request(target, deps, new Map(), context))
           .then(
             (outcome) => {
               if (!outcome.ok)

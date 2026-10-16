@@ -307,6 +307,7 @@ export interface NeoAskHumanAction {
   itemId: string;
   question: string;
   options: string[];
+  steps?: { id: string; title: string }[];
 }
 
 export interface NeoReceiptAskOrigin {

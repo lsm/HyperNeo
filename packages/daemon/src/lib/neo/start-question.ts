@@ -4,8 +4,10 @@ import { readNeoAskAnswerOption } from './ask-answer-evidence.ts';
 import { neoDerivedId } from './derived-id.ts';
 
 export const NEO_START_QUESTION_PREFIX = 'neo-start:';
-const targets = z.array(z.object({ workId: z.string(), target: z.string() }));
-export type NeoStartTarget = z.infer<typeof targets>[number] & { title?: string };
+const targets = z.array(
+  z.object({ workId: z.string(), target: z.string(), title: z.string().optional() })
+);
+export type NeoStartTarget = z.infer<typeof targets>[number];
 
 export function neoQuestionStartTargets(item: NeoAskItem): NeoStartTarget[] {
   if (!item.action?.startsWith(NEO_START_QUESTION_PREFIX)) return [];
@@ -43,6 +45,12 @@ export function neoStartDecision(ask: NeoAsk, target: NeoStartTarget) {
       : null;
 }
 
+export function neoStartQuestionTitle(steps: readonly { title?: string }[]): string {
+  return steps.length === 1 && steps[0].title
+    ? `开始「${steps[0].title}」？`
+    : `开始这 ${steps.length} 步？`;
+}
+
 export function planNeoStartQuestion(ask: NeoAsk, proposed: NeoStartTarget[]) {
   const pending = proposed.filter(
     (entry) => !['approved', 'declined'].includes(neoStartDecision(ask, entry) ?? '')
@@ -53,8 +61,8 @@ export function planNeoStartQuestion(ask: NeoAsk, proposed: NeoStartTarget[]) {
     JSON.stringify(pending.map(({ workId, target }) => ({ workId, target })));
   return {
     id: neoDerivedId(action),
-    action,
-    text: `开始这 ${pending.length} 步？`,
+    action: NEO_START_QUESTION_PREFIX + JSON.stringify(pending),
+    text: neoStartQuestionTitle(pending),
     options: ['先不做', '开始'],
     decides: pending.map((entry) => entry.title ?? entry.workId).join('\n'),
   };

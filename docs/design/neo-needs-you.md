@@ -9,6 +9,7 @@ projected in `NeoAskView.humanActions` and operation results' `humanActions`:
   itemId: string,
   question: string,
   options: string[],
+  steps?: { id: string; title: string }[],
 }
 ```
 
@@ -16,6 +17,14 @@ projected in `NeoAskView.humanActions` and operation results' `humanActions`:
 agree/positive last. For example, `["先不做", "开始调查"]`. The last option is
 the primary option. Clients preserve the array order. An empty array means an
 open question: show a reply-in-chat cue and no decision button.
+
+A start question carries its exact cards as optional structured `steps`, in display
+order. The daemon supplies their ids and titles; clients do not parse question
+text to recover them. A grouped start renders one numbered list inside the
+question; a single-step question names that step directly. Proposed steps shown
+inside the question are not repeated below it. Older questions recover their
+recorded titles from `decides`. Titles are display facts: changing a title does
+not change question identity or recorded consent for the same cards and targets.
 
 Submit an option through `neo.ask.answer` with `askId`, `itemId`, `choice` equal
 to the option text, and the current `expectedRevision`. For a chat reply, Neo

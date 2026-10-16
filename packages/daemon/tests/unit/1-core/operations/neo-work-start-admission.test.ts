@@ -233,7 +233,7 @@ describe('neo.work.start', () => {
       expect(service.driverTargets.readRef('a')).toBeNull();
       expect(service.askRecords.forWork('a')?.doneItems?.at(-1)).toMatchObject({
         state: 'needs_you',
-        question: '开始这 1 步？',
+        question: '开始「Card a」？',
       });
       expect(await start('a')).toMatchObject({ value: { ok: false, reason: 'not_approved' } });
       expect(driverCalls(calls).map((call) => (call.input.ref as WorkRef).id)).toEqual([

@@ -248,7 +248,7 @@ describe('claude-desktop start', () => {
       ok: false,
       reason: 'not_delivered',
       detail:
-        'local_u1 was created, but the task did not reach it: Could not tell whether Claude Code Desktop runs this session: agent listing unavailable',
+        'local_u1 was created, but the task did not reach it: Could not inspect live Claude sessions: agent listing unavailable',
     });
     expect(spawned).toHaveLength(2);
     expect(spawned[0]).toContain('--session-id');

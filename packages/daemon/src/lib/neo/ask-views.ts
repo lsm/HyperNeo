@@ -10,6 +10,7 @@ import {
   type NeoWorkPrReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { neoQuestionStartTargets, neoStartQuestionTitle } from './start-question.ts';
 
 const NEO_ASK_SUMMARY_LIMIT = 160;
 
@@ -100,10 +101,16 @@ export function neoAskItemAction(item: NeoAskItem): NeoAskHumanAction | null {
     !item.options?.length
   )
     return null;
+  const titles = item.decides?.split('\n') ?? [];
+  const steps = neoQuestionStartTargets(item).flatMap((step, index) => {
+    const title = step.title ?? titles[index];
+    return title ? [{ id: step.workId, title }] : [];
+  });
   return {
     kind: 'question',
     itemId: item.id,
-    question: item.question ?? item.text,
+    question: steps.length === 1 ? neoStartQuestionTitle(steps) : (item.question ?? item.text),
+    ...(steps.length ? { steps } : {}),
     options: item.options ?? [],
   };
 }

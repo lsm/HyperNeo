@@ -327,11 +327,11 @@ describe('NeoAskCard', () => {
     expect(card.container.querySelector('[data-ask-session]')).toBeNull();
   });
 
-  it('shows Todos before Details and renders each step once without nested cards', () => {
+  it('shows 还要 before Details and renders each step once without nested cards', () => {
     const owned = [scenes.outcomes[0]!, scenes.running[0]!, scenes.attention[0]!];
     const view = describeAsk(ask('a', 'open', ['a1', 'a2', 'b1']), owned, { doneWorkIds: ['a1'] });
     const card = render(<NeoAskCard view={view} onOpen={vi.fn()} />);
-    expect(card.getByText('Todos')).toBeTruthy();
+    expect(card.getByText('还要')).toBeTruthy();
     expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
     expect(card.queryByText(/outcomes verified/)).toBeNull();
     expect(card.container.querySelectorAll('[data-ask-step]')).toHaveLength(3);
@@ -402,7 +402,7 @@ describe('NeoAskCard', () => {
     expect(card.queryByText(/outcomes verified/)).toBeNull();
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
     const rows = [
-      ...card.getByRole('list', { name: 'Todos' }).querySelectorAll('[data-ask-item]'),
+      ...card.getByRole('list', { name: '还要' }).querySelectorAll('[data-ask-item]'),
     ].map((row) => [row.getAttribute('data-ask-item'), row.textContent]);
     expect(rows).toEqual([
       ['i1', '✓Item i1verifiedPR #6099 merged'],
@@ -411,6 +411,158 @@ describe('NeoAskCard', () => {
     ]);
     expect(card.queryByRole('list', { name: 'Answered questions' })).toBeNull();
     expect(card.container.querySelector('[data-ask-item="i3"] .line-through')).toBeTruthy();
+  });
+
+  it('places each todo under its delivering step and puts unassigned or missing steps under 还要', () => {
+    const value = {
+      ...ask('owned-todos', 'open', ['a1', 'a2']),
+      doneItems: [
+        item('one', 'pending', { text: 'Backend merged', deliveredBy: 'a1' }),
+        item('two', 'pending', { text: 'Web merged', deliveredBy: 'a2' }),
+        item('manual', 'pending', { text: 'Try it on the laptop' }),
+        item('missing', 'pending', {
+          text: 'Retain the missing step outcome',
+          deliveredBy: 'gone',
+        }),
+      ],
+    };
+    const app = render(
+      <NeoAskCard view={describeAsk(value, [...scenes.running, ...scenes.outcomes])} />
+    );
+    const first = app.container.querySelector<HTMLElement>('[data-ask-step="a1"]')!;
+    const second = app.container.querySelector<HTMLElement>('[data-ask-step="a2"]')!;
+    expect(within(first).getByText('Backend merged')).toBeTruthy();
+    expect(within(first).queryByText('Web merged')).toBeNull();
+    expect(within(second).getByText('Web merged')).toBeTruthy();
+    expect(within(second).getByText('做完 =')).toBeTruthy();
+    const rest = within(app.getByRole('list', { name: '还要' }));
+    expect(rest.getByText('Try it on the laptop')).toBeTruthy();
+    expect(rest.getByText('Retain the missing step outcome')).toBeTruthy();
+    expect(rest.queryByText('Web merged')).toBeNull();
+    expect(app.queryByText('Todos')).toBeNull();
+    expect(app.queryByText('Done when')).toBeNull();
+  });
+
+  it('places proposed step outcomes inside the start question for one or several steps', () => {
+    for (const ids of [['one'], ['one', 'two', 'three']]) {
+      const steps = ids.map((id) => ({ id, title: `Step ${id}` }));
+      const owned = groupNeoScenes(
+        classifyNeoScenes(ids.map((id) => work(id, 'proposed')))
+      ).attention;
+      const value = {
+        ...ask('question-todos', 'waiting', ids),
+        doneItems: ids.map((id) => item(id, 'pending', { text: `Outcome ${id}`, deliveredBy: id })),
+      };
+      const view = describeAsk(value, owned, {
+        humanActions: [
+          {
+            kind: 'question',
+            itemId: 'q',
+            question: 'Start these steps?',
+            options: ['Later', 'Start'],
+            steps,
+          },
+        ],
+      });
+      const app = render(<NeoAskCard view={view} onAnswer={vi.fn()} />);
+      const question = within(app.getByRole('list', { name: 'Needs you' }));
+      for (const id of ids) expect(question.getByText(`Outcome ${id}`)).toBeTruthy();
+      expect(app.container.querySelectorAll('[data-ask-step]')).toHaveLength(0);
+      expect(app.queryByText('还要')).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('updates a step todo from waiting for a PR to live PR progress without premature verification', () => {
+    const value = {
+      ...ask('pr-progress', 'open', ['a2']),
+      doneItems: [
+        item('merge', 'pending', {
+          text: 'Merge the PR',
+          deliveredBy: 'a2',
+          check: 'coding.pr_merged',
+        }),
+      ],
+    };
+    const view = describeAsk(value, scenes.running);
+    const app = render(<NeoAskCard view={view} />);
+    expect(app.getByText('等 PR 开出来')).toBeTruthy();
+    const card = testCard(
+      { id: 'a2', status: 'queued', sessionId: 'a2-session' },
+      {
+        pr: {
+          number: '42',
+          label: 'Waiting on CI · #42',
+          count: 1,
+          inProgress: true,
+          setback: false,
+          merged: [],
+        },
+      }
+    );
+    app.rerender(<NeoAskCard view={view} cards={new Map([['a2', card]])} />);
+    expect(app.queryByText('等 PR 开出来')).toBeNull();
+    expect(app.getByText('Waiting on CI · #42')).toBeTruthy();
+    expect(app.queryByText('verified')).toBeNull();
+    expect(app.getByText('○')).toBeTruthy();
+  });
+
+  it('renders grouped start steps from structured data and does not repeat proposed cards', () => {
+    const steps = ['one', 'two', 'three'].map((id, index) => ({ id, title: `第 ${index + 1} 步` }));
+    const owned = groupNeoScenes(
+      classifyNeoScenes(steps.map((step) => work(step.id, 'proposed')))
+    ).attention;
+    const answer = vi.fn();
+    const view = describeAsk(
+      ask(
+        'start-steps',
+        'waiting',
+        steps.map((step) => step.id)
+      ),
+      owned,
+      {
+        humanActions: [
+          {
+            kind: 'question',
+            itemId: 'q',
+            question: '开始这 3 步？',
+            options: ['先不做', '开始'],
+            steps,
+          },
+        ],
+      }
+    );
+    const app = render(<NeoAskCard view={view} onAnswer={answer} />);
+    const list = app.getByRole('list', { name: '待开始步骤' });
+    expect(list.tagName).toBe('OL');
+    expect(
+      within(list)
+        .getAllByRole('listitem')
+        .map((row) => [row.getAttribute('data-question-step'), row.textContent])
+    ).toEqual(steps.map((step) => [step.id, step.title]));
+    expect(app.container.querySelectorAll('[data-ask-step]')).toHaveLength(0);
+    fireEvent.click(app.getByRole('button', { name: 'Answer 开始这 3 步？: 开始' }));
+    expect(answer).toHaveBeenCalledExactlyOnceWith('q', '开始');
+  });
+
+  it('shows a named single-step question once while retaining an unrelated running row', () => {
+    const owned = [...scenes.attention, ...scenes.running];
+    const view = describeAsk(ask('single-step', 'waiting', ['b1', 'a2']), owned, {
+      humanActions: [
+        {
+          kind: 'question',
+          itemId: 'q',
+          question: '开始「按样图改网页」？',
+          options: ['先不做', '开始'],
+          steps: [{ id: 'b1', title: '按样图改网页' }],
+        },
+      ],
+    });
+    const app = render(<NeoAskCard view={view} onAnswer={vi.fn()} />);
+    expect(app.getAllByText('开始「按样图改网页」？')).toHaveLength(1);
+    expect(app.queryByRole('list', { name: '待开始步骤' })).toBeNull();
+    expect(app.container.querySelector('[data-ask-step="b1"]')).toBeNull();
+    expect(app.container.querySelector('[data-ask-step="a2"]')).toBeTruthy();
   });
 
   it('renders each question once with the decline option left and positive option right', () => {
@@ -595,7 +747,7 @@ describe('NeoAskCard', () => {
     const card = render(<NeoAskCard view={describeAsk(ask('a', 'open', []), [])} />);
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
     expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
-    expect(card.queryByRole('list', { name: 'Todos' })).toBeNull();
+    expect(card.queryByRole('list', { name: '还要' })).toBeNull();
   });
 
   it('drops the count once settled and keeps a long outcome behind Details', () => {

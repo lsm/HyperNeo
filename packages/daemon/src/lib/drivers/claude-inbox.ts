@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Stats } from 'node:fs';
-import { chmod, lstat, unlink } from 'node:fs/promises';
+import { chmod, link, lstat, mkdtemp, rmdir, unlink } from 'node:fs/promises';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
@@ -199,6 +199,8 @@ export async function openClaudeInbox(
   await requirePrivatePath(target.socketPath, 'socket');
   const path = join(directory, `${process.pid}-${randomUUID().slice(0, 8)}.sock`);
   claudeInboxAddress(path);
+  const bindingDir = await mkdtemp(join(directory, '.hn-'));
+  const bindingPath = join(bindingDir, 's');
   const connections = new Set<Socket>();
   const sent = new Set<string>();
   const writes = new Map<string, { frame: string; result?: Promise<{ written: true }> }>();
@@ -232,17 +234,26 @@ export async function openClaudeInbox(
       }
     });
   });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(path, resolve);
-  });
   let bound: Stats | undefined;
+  async function removePaths(): Promise<void> {
+    try {
+      if (bound) await removeOwnedClaudeInboxPath(path, bound);
+    } finally {
+      if (bound) await removeOwnedClaudeInboxPath(bindingPath, bound);
+      await rmdir(bindingDir);
+    }
+  }
   try {
-    bound = await lstat(path);
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(bindingPath, resolve);
+    });
+    bound = await lstat(bindingPath);
+    await link(bindingPath, path);
     await chmod(path, 0o600);
   } catch (error) {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (bound) await removeOwnedClaudeInboxPath(path, bound);
+    await removePaths();
     throw error;
   }
   return {
@@ -275,10 +286,13 @@ export async function openClaudeInbox(
       if (closed) return;
       closed = true;
       for (const socket of connections) socket.destroy();
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-      if (bound) await removeOwnedClaudeInboxPath(path, bound);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      } finally {
+        await removePaths();
+      }
     },
   };
 }
