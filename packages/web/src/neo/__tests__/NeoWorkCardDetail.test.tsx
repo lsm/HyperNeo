@@ -277,7 +277,7 @@ describe('NeoWorkCard goal', () => {
     };
     const { unmount } = render(<NeoWorkCard {...props} />);
     expect(screen.getByText('A full iOS app')).toBeTruthy();
-    expect(screen.getByText('Done when')).toBeTruthy();
+    expect(screen.getByText('To-dos')).toBeTruthy();
     expect(screen.getByText('- runs in the simulator')).toBeTruthy();
     unmount();
 
