@@ -167,7 +167,7 @@ describe('git history workspace discovery', () => {
 });
 
 describe('mergePlaceGroups identity links', () => {
-  test('a tool project spanning two repositories keeps one group per repository in any input order', () => {
+  test('a tool project spans its repositories, and clones outside it stay their own repository in any input order', () => {
     const toolProject = { id: 'codex:one', name: 'Product' };
     const places = [
       group({ machine: 'a', folder: '/one', name: 'one', codeIdentity: 'git:one' }),
@@ -199,13 +199,18 @@ describe('mergePlaceGroups identity links', () => {
       [places[2], places[0], places[3], places[1]],
     ]) {
       const merged = mergePlaceGroups(input, 20);
-      expect(merged.map((group) => group.projectId).sort()).toEqual(['git:one', 'git:two']);
-      expect(merged.map((group) => group.workspaces?.length)).toEqual([2, 2]);
-      expect(merged.map((group) => group.work.length)).toEqual([2, 2]);
+      expect(merged.map((group) => group.projectId).sort()).toEqual([
+        'git:one',
+        'git:two',
+        'tool:c:codex:one',
+      ]);
+      expect(
+        merged.find((group) => group.projectId === 'tool:c:codex:one')?.workspaces?.length
+      ).toBe(2);
     }
   });
 
-  test('a tool project does not join shallow checkouts of different repositories', () => {
+  test('a tool project spans shallow checkouts of different repositories', () => {
     const toolProject = { id: 'codex:shallow', name: 'Shallow' };
     const merged = mergePlaceGroups(
       ['one', 'two'].map((name) =>
@@ -222,7 +227,7 @@ describe('mergePlaceGroups identity links', () => {
       ),
       20
     );
-    expect(merged).toHaveLength(2);
+    expect(merged).toHaveLength(1);
   });
 
   test('shallow checkouts of one remote share a group', () => {
