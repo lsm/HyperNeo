@@ -22,11 +22,6 @@ export interface Point {
   y: number;
 }
 
-export interface Size {
-  width: number;
-  height: number;
-}
-
 export interface ViewportState {
   offsetX: number;
   offsetY: number;

@@ -1,22 +1,6 @@
-import type { ComponentType, JSX, VNode } from 'preact';
+import type { ComponentType, JSX } from 'preact';
 
 export type ElementType = keyof JSX.IntrinsicElements | ComponentType<Record<string, unknown>>;
-
-export type PropsOf<T extends ElementType> = T extends keyof JSX.IntrinsicElements
-  ? JSX.IntrinsicElements[T]
-  : T extends ComponentType<infer P>
-    ? P
-    : never;
-
-export type Render<SlotType, DefaultTag extends ElementType = 'div'> = {
-  as?: DefaultTag | ElementType;
-  children?: VNode | ((slot: SlotType) => VNode);
-  refName?: string;
-};
-
-export interface HasDisplayName {
-  displayName: string;
-}
 
 export enum Features {
   None = 0,

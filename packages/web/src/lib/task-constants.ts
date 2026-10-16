@@ -1,20 +1,3 @@
-export const TASK_STATUS_COLORS: Record<string, string> = {
-  draft: 'text-fg-muted',
-  open: 'text-fg-muted',
-  in_progress: 'text-warning',
-  approved: 'text-success',
-  done: 'text-success',
-  blocked: 'text-danger',
-  cancelled: 'text-fg-faint',
-  archived: 'text-fg-faint',
-  pending: 'text-fg-muted',
-  completed: 'text-success',
-  needs_attention: 'text-danger',
-  review: 'text-cat-purple',
-  rate_limited: 'text-warning',
-  usage_limited: 'text-orange-600',
-};
-
 export const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: string }> = {
   planner: { border: 'border-l-teal-500', label: 'Planner', labelColor: 'text-teal-400' },
   coder: { border: 'border-l-blue-500', label: 'Coder', labelColor: 'text-accent' },
