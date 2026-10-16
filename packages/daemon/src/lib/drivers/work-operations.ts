@@ -18,6 +18,7 @@ import {
   WorkInputReceiptSchema,
   WorkRefSchema,
   WorkStartedSchema,
+  WorkVerbSchema,
   workResultSchema,
   type Rejected,
   type WorkAdapter,
@@ -78,7 +79,7 @@ export const WorkAdaptersResultSchema = workResultSchema(
   z.array(
     z.object({
       id: z.string(),
-      capabilities: z.array(z.enum(['find', 'start', 'send', 'status', 'stop', 'archive'])),
+      capabilities: z.array(WorkVerbSchema),
     })
   )
 );

@@ -4,6 +4,7 @@ import {
   SendWorkResultSchema,
   WorkStatusInputSchema,
   WorkStatusResultSchema,
+  WorkAdaptersResultSchema,
   createWorkVerbOperations,
 } from '../../../../src/lib/drivers/work-operations';
 import type { WorkAdapter, WorkSummary, WorkDetail } from '../../../../src/lib/drivers/types';
@@ -83,6 +84,22 @@ async function call(
 }
 
 describe('work verb operations', () => {
+  test('keeps messaging capabilities and delivery facts in driver result schemas', () => {
+    expect(
+      WorkAdaptersResultSchema.parse({
+        ok: true,
+        value: [{ id: 'codex-desktop', capabilities: ['steer', 'queue', 'withdraw'] }],
+      })
+    ).toEqual({
+      ok: true,
+      value: [{ id: 'codex-desktop', capabilities: ['steer', 'queue', 'withdraw'] }],
+    });
+    for (const fact of [{ queuedSubmissionId: 'q1' }, { steeredIntoTurnId: 't1' }]) {
+      const result = { ok: true, value: { delivered: false, ...fact } };
+      expect(SendWorkResultSchema.parse(result)).toEqual(result);
+    }
+  });
+
   test('runs each verb on the adapter named by the ref', async () => {
     expect(
       await call('work.send', { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi' })

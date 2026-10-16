@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
 import {
+  admitCodexSteerTurn,
   codexExchange,
   codexInputEvidence,
   codexQueueDelivery,
@@ -364,13 +365,19 @@ describe('codex-desktop adapter status and send', () => {
   function adapter(
     exitCode = 0,
     stderr = '',
-    appServer: () => Promise<CodexAppServer> = () => Promise.reject(new Error('not used')),
-    worktreesDir = '/codex/worktrees'
+    appServer: () => Promise<CodexAppServer> = async () => ({
+      call: async () => {
+        throw new Error('thread/queue/add: method not found (-32601)');
+      },
+      close: () => {},
+    }),
+    worktreesDir = '/codex/worktrees',
+    stdout = ''
   ) {
     const spawn: SpawnFn = (args) => {
       spawned.push(args);
       return {
-        stdout: null,
+        stdout: new Response(stdout).body,
         stderr: new Response(stderr).body,
         exited: Promise.resolve(exitCode),
         exitCode,
@@ -459,7 +466,9 @@ describe('codex-desktop adapter status and send', () => {
       reason: 'unsupported',
       detail: 'Codex Desktop runs thread busy itself; stop it in the app.',
     });
-    expect(await adapter().stop?.(ref('busy'), user)).toMatchObject({
+    expect(
+      await adapter(0, '', () => Promise.reject(new Error('offline'))).stop?.(ref('busy'), user)
+    ).toMatchObject({
       ok: false,
       reason: 'unreachable',
     });
@@ -549,6 +558,320 @@ describe('codex-desktop adapter status and send', () => {
   });
 
   const user = { from: 'chat', caller: { source: 'rpc' as const, principal: 'local' } };
+
+  test('advertises separate messaging capabilities and queues natively without spawning', async () => {
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    let closed = 0;
+    const driver = adapter(0, '', async () => ({
+      call: async (method, params) => {
+        calls.push([method, params]);
+        return {
+          queuedSubmission: {
+            id: 'queue-1',
+            input: params.input,
+            clientUserMessageId: params.clientUserMessageId,
+          },
+        };
+      },
+      close: () => {
+        closed++;
+      },
+    }));
+    expect(driver.capabilities).toEqual(
+      expect.arrayContaining(['steer', 'queue', 'withdraw', 'send', 'stop'])
+    );
+    for (const method of ['queue', 'send'] as const) {
+      expect(await driver[method]!(ref('busy'), 'after this', user)).toEqual({
+        ok: true,
+        value: { delivered: false, queuedSubmissionId: 'queue-1' },
+      });
+    }
+    expect(calls).toEqual(
+      Array.from({ length: 2 }, () => [
+        'thread/queue/add',
+        {
+          threadId: 'busy',
+          clientUserMessageId: 'abcd1234-0000',
+          input: [{ type: 'text', text: 'after this' }],
+        },
+      ])
+    );
+    expect(spawned).toEqual([]);
+    expect(closed).toBe(2);
+  });
+
+  test('steers the active server turn even when the local rollout disagrees', async () => {
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    let closed = false;
+    const driver = adapter(0, '', async () => ({
+      call: async (method, params) => {
+        calls.push([method, params]);
+        return method === 'thread/turns/list'
+          ? {
+              data: [{ id: 'server-turn', status: 'inProgress' }],
+              nextCursor: null,
+              backwardsCursor: null,
+            }
+          : { turnId: 'server-turn' };
+      },
+      close: () => {
+        closed = true;
+      },
+    }));
+    expect(await driver.steer!(ref('idle'), 'use the parser', user)).toEqual({
+      ok: true,
+      value: { delivered: true, steeredIntoTurnId: 'server-turn' },
+    });
+    expect(calls).toEqual([
+      ['thread/turns/list', { threadId: 'idle', limit: 1 }],
+      [
+        'turn/steer',
+        {
+          threadId: 'idle',
+          expectedTurnId: 'server-turn',
+          input: [{ type: 'text', text: 'use the parser' }],
+        },
+      ],
+    ]);
+    expect(closed).toBe(true);
+    expect(spawned).toEqual([]);
+  });
+
+  test('the pure steer admission selects only the latest active turn', () => {
+    expect(admitCodexSteerTurn({ data: [{ id: 't1', status: 'inProgress' }] })).toEqual({
+      value: 't1',
+    });
+    expect(
+      admitCodexSteerTurn({
+        data: [
+          { id: 't2', status: 'completed' },
+          { id: 't1', status: 'inProgress' },
+        ],
+      })
+    ).toMatchObject({ reason: { reason: 'not_delivered' } });
+  });
+
+  test.each(['completed', 'interrupted', 'failed', 'missing'])(
+    'never steers or queues without a running server turn: %s',
+    async (status) => {
+      const calls: string[] = [];
+      const data = status === 'missing' ? [] : [{ id: 'server-turn', status }];
+      expect(admitCodexSteerTurn({ data })).toMatchObject({ reason: { reason: 'not_delivered' } });
+      const driver = adapter(0, '', async () => ({
+        call: async (method) => {
+          calls.push(method);
+          return { data };
+        },
+        close: () => {},
+      }));
+      expect(await driver.steer!(ref('busy'), 'hi', user)).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+      });
+      expect(calls).toEqual(['thread/turns/list']);
+      expect(spawned).toEqual([]);
+    }
+  );
+
+  test('a changed active turn rejects steering without retrying or queueing', async () => {
+    const calls: string[] = [];
+    let closed = false;
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        calls.push(method);
+        if (method === 'thread/turns/list') return { data: [{ id: 't1', status: 'inProgress' }] };
+        throw new Error('expected turn t1 but active turn is t2');
+      },
+      close: () => {
+        closed = true;
+      },
+    }));
+    expect(await driver.steer!(ref('busy'), 'hi', user)).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail: expect.stringContaining('active turn is t2'),
+    });
+    expect(calls).toEqual(['thread/turns/list', 'turn/steer']);
+    expect(closed).toBe(true);
+    expect(spawned).toEqual([]);
+  });
+
+  test.each(['withdrawn', 'delivered', 'steered', 'delivery-race'])(
+    'withdraw returns a fact for %s',
+    async (state) => {
+      const calls: Array<[string, Record<string, unknown>]> = [];
+      let closed = false;
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          calls.push([method, params]);
+          return method === 'thread/queue/list'
+            ? {
+                data: [
+                  { id: 'unrelated' },
+                  ...(['withdrawn', 'delivery-race'].includes(state)
+                    ? [{ id: 'queue-1', input: [], clientUserMessageId: 'client-1' }]
+                    : []),
+                ],
+              }
+            : { deleted: state === 'withdrawn' };
+        },
+        close: () => {
+          closed = true;
+        },
+      }));
+      const withdrawn = state === 'withdrawn';
+      expect(await driver.withdraw!(ref('busy'), 'queue-1', user)).toEqual({
+        ok: true,
+        value: {
+          queuedSubmissionId: 'queue-1',
+          withdrawn,
+          ...(!withdrawn ? { reason: 'not_queued' } : {}),
+        },
+      });
+      expect(calls).toEqual([
+        ['thread/queue/list', { threadId: 'busy' }],
+        ...(['withdrawn', 'delivery-race'].includes(state)
+          ? [['thread/queue/delete', { threadId: 'busy', queuedSubmissionId: 'queue-1' }]]
+          : []),
+      ]);
+      expect(closed).toBe(true);
+      expect(spawned).toEqual([]);
+    }
+  );
+
+  test.each(['requires experimentalApi capability', 'connection closed', 'queue add timed out'])(
+    'never falls back to CLI for a possibly accepted queue request: %s',
+    async (error) => {
+      let closed = false;
+      const driver = adapter(0, '', async () => ({
+        call: async () => {
+          throw new Error(error);
+        },
+        close: () => {
+          closed = true;
+        },
+      }));
+      expect(await driver.queue!(ref('busy'), 'hi', user)).toEqual({
+        ok: false,
+        reason: 'not_delivered',
+        detail: error,
+      });
+      expect(spawned).toEqual([]);
+      expect(closed).toBe(true);
+    }
+  );
+
+  test.each(['queue', 'steer', 'withdraw'] as const)(
+    'reports malformed %s responses as faults and closes the connection',
+    async (method) => {
+      let closed = false;
+      const driver = adapter(0, '', async () => ({
+        call: async () => ({ unexpected: true }),
+        close: () => {
+          closed = true;
+        },
+      }));
+      expect(await driver[method]!(ref('busy'), 'id-or-message', user)).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+      });
+      expect(closed).toBe(true);
+      expect(spawned).toEqual([]);
+    }
+  );
+
+  test.each(['steer', 'queue'] as const)(
+    'marks native %s input as agent-originated',
+    async (method) => {
+      const calls: Array<[string, Record<string, unknown>]> = [];
+      const driver = adapter(0, '', async () => ({
+        call: async (name, params) => {
+          calls.push([name, params]);
+          return name === 'thread/turns/list'
+            ? { data: [{ id: 't1', status: 'inProgress' }] }
+            : name === 'turn/steer'
+              ? { turnId: 't1' }
+              : { queuedSubmission: { id: 'q1' } };
+        },
+        close: () => {},
+      }));
+      expect(
+        (
+          await driver[method]!(ref('busy'), 'continue', {
+            from: 'session:neo',
+            caller: { source: 'internal', role: 'neo' },
+          })
+        ).ok
+      ).toBe(true);
+      expect(calls.at(-1)?.[1].input).toEqual([
+        { type: 'text', text: 'continue\n[HyperNeo agent input]' },
+      ]);
+    }
+  );
+
+  test('withdraw surfaces a failed delete rather than claiming the message is no longer queued', async () => {
+    let closed = false;
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        if (method === 'thread/queue/list') return { data: [{ id: 'q1' }] };
+        throw new Error('delete refused');
+      },
+      close: () => {
+        closed = true;
+      },
+    }));
+    expect(await driver.withdraw!(ref('busy'), 'q1', user)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'delete refused',
+    });
+    expect(closed).toBe(true);
+  });
+
+  test.each(['steer', 'queue', 'withdraw'] as const)(
+    'reports an unreachable server for %s without shell fallback',
+    async (method) => {
+      const driver = adapter(0, '', () => Promise.reject(new Error('offline')));
+      expect(await driver[method]!(ref('busy'), 'id-or-message', user)).toMatchObject({
+        ok: false,
+        reason: 'unreachable',
+      });
+      expect(spawned).toEqual([]);
+    }
+  );
+
+  test('CLI compatibility preserves its queue id for withdrawal', async () => {
+    expect(
+      await adapter(0, '', undefined, undefined, 'queue-cli-1\n').queue!(ref('busy'), 'hi', user)
+    ).toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'queue-cli-1' },
+    });
+    expect(spawned).toEqual([['codex', 'queue', '--thread=busy', '--message=hi']]);
+  });
+
+  test('message capabilities reject unknown or archived targets before connecting', async () => {
+    let connected = false;
+    const driver = adapter(0, '', async () => {
+      connected = true;
+      throw new Error('unexpected');
+    });
+    for (const method of ['steer', 'queue'] as const) {
+      expect(await driver[method]!(ref('nope'), 'hi', user)).toMatchObject({
+        ok: false,
+        reason: 'not_found',
+      });
+      expect(await driver[method]!(ref('old'), 'hi', user)).toMatchObject({
+        ok: false,
+        reason: 'not_open',
+      });
+    }
+    expect(await driver.withdraw!(ref('nope'), 'q1', user)).toMatchObject({
+      ok: false,
+      reason: 'not_found',
+    });
+    expect(connected).toBe(false);
+  });
 
   test('marks agent sends without confusing their delivery with a previous marked message', async () => {
     appendFileSync(

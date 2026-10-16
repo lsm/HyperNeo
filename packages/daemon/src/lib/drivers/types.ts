@@ -109,6 +109,8 @@ export const WorkInputReceiptSchema = z.object({
 export const WorkDeliverySchema = z.object({
   delivered: z.boolean(),
   receipt: WorkInputReceiptSchema.optional(),
+  queuedSubmissionId: z.string().min(1).optional(),
+  steeredIntoTurnId: z.string().min(1).optional(),
 });
 
 export type WorkDelivery = z.infer<typeof WorkDeliverySchema>;
@@ -159,7 +161,23 @@ export type WorkExchangeEntry = z.infer<typeof WorkExchangeEntrySchema>;
 export type Rejected = { ok: false; reason: WorkRejection; detail: string };
 export type Result<T> = { ok: true; value: T } | Rejected;
 
-export type WorkVerb = 'find' | 'start' | 'send' | 'status' | 'stop' | 'archive';
+export const WorkVerbSchema = z.enum([
+  'find',
+  'start',
+  'send',
+  'steer',
+  'queue',
+  'withdraw',
+  'status',
+  'stop',
+  'archive',
+]);
+export type WorkVerb = z.infer<typeof WorkVerbSchema>;
+export type WorkWithdrawal = {
+  queuedSubmissionId: string;
+  withdrawn: boolean;
+  reason?: 'not_queued';
+};
 
 export type ArchiveAdmission = () => Rejected | null;
 
@@ -201,6 +219,13 @@ export interface WorkAdapter {
     message: string,
     context: WorkCallContext
   ) => Promise<Result<WorkDelivery>>;
+  readonly steer?: WorkAdapter['send'];
+  readonly queue?: WorkAdapter['send'];
+  readonly withdraw?: (
+    ref: WorkRef,
+    queuedSubmissionId: string,
+    context: WorkCallContext
+  ) => Promise<Result<WorkWithdrawal>>;
   readonly status?: (
     ref: WorkRef,
     since?: number,
