@@ -17,7 +17,7 @@ export class NeoHolderTurn {
   constructor(
     private readonly db: Database,
     private readonly sessionId: string,
-    private readonly attempt: { isLive(): boolean }
+    private readonly attempt: { isLive(): boolean; yield?(): void }
   ) {}
 
   bind(messageId: string): boolean {
@@ -53,6 +53,11 @@ export class NeoHolderTurn {
       consultationId: item?.id,
       human,
       isLive: () => !this.closed && this.attempt.isLive(),
+      yield: () => {
+        if (!this.turn?.isLive()) return;
+        this.dispose();
+        this.attempt.yield?.();
+      },
     };
     return true;
   }

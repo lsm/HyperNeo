@@ -233,45 +233,19 @@ Runs on the laptop. Everything it does shows in the Claude Code Desktop app. Ver
 Constraints:
 
 - `claude --desktop` refuses to run without a terminal, so the adapter launches it under a pseudo-terminal (`script -q /dev/null claude --desktop --resume <uuid>` works).
-- Never resume a session headlessly while the app runs it: the two writers could fork the conversation. Use the relay whenever `claude agents --json` lists the session.
-- A relayed message arrives as a message from another session, which the receiving Claude treats as a teammate's request. The relay uses bypass mode only when the app record reports that mode, to match the target's permission class. Unknown desktop permissions are not inferred from the CLI bootstrap flag. A headless resume preserves a known bypass mode; a new session that has not appeared in Desktop yet retains its requested CLI bypass mode.
+- Never resume a session headlessly while the app runs it: the two writers could fork the conversation. Use the relay whenever `claude agents --json` lists the session. If the live-session probe fails after creation, report the failure without resuming or relaying the task.
+- A relayed message arrives as a message from another session, which the receiving Claude treats as a teammate's request. The relay uses the app's recorded permission class, including `bypassPermissions` when the app reports it; the CLI bootstrap's mode does not establish the desktop session's mode.
 - The first turn runs headless before the session reaches the app. Keep it short, open the session in the app, then send the real task through the relay so the work happens where the user can watch it.
 
-### New-session permission defaults
+### Creation permission defaults
 
-Neo-created Codex threads request Full Access through the supported app-server
-`thread/start` fields (`approvalPolicy: "never"`, `sandbox: "danger-full-access"`).
-Claude Code CLI creation, including the internal rc-toggle session, passes the
-supported `--permission-mode bypassPermissions` flag. Existing sessions do not
-receive a new default. If creation is rejected by managed policy, the adapter
-reports the failure and does not retry with different permissions.
+New work started through HyperNeo requests Full Access through the supported permission parameters:
 
-Support was checked against Codex CLI 0.160.1 using its public
-`codex app-server generate-json-schema --out <temporary-directory>` command:
-`v2/ThreadStartParams.json` includes `approvalPolicy` and `sandbox`, and
-`SandboxMode` includes `danger-full-access`. Claude Code 2.1.295 `--help` lists
-`--permission-mode bypassPermissions`. The [Codex app-server documentation](https://learn.chatgpt.com/docs/app-server)
-and [Claude CLI reference](https://code.claude.com/docs/en/cli-reference)
-describe those supported creation interfaces.
+- Codex: `thread/start` sends `approvalPolicy: "never"` and `sandbox: "danger-full-access"`. The opening turn request carries the public `turn/start` fields `approvalPolicy: "never"` and `sandboxPolicy: {type: "dangerFullAccess"}` so desktop handoff does not lose the requested permissions. The pre-existing undocumented desktop ownership/IPC handoff is unchanged; no private permission setter, session database edit or global configuration change is introduced. A server policy rejection is returned without a weaker-permission retry.
+- Claude Code CLI: the opening `claude -p --session-id …` invocation passes `--permission-mode bypassPermissions`. If the new session is not yet running in Desktop, the initial task's headless `--resume` invocation passes the same flag. Sends to pre-existing sessions keep their existing behavior.
+- Claude Code Desktop: `claude --desktop --resume` accepts no permission flag. The app starts its own process and uses its configured permission mode; the CLI bootstrap does not prove Desktop is in bypass mode. The `claude-code` discovery-only adapter has no creation API. To default new local Desktop sessions through supported settings, enable Bypass permissions where the app/account permits it and set `permissions.defaultMode` to `"bypassPermissions"` in the user's Claude settings. A mode previously selected for a folder takes precedence, so select Bypass permissions in that folder as needed. Organization restrictions still apply. HyperNeo does not edit private app records or silently rewrite the user's settings.
 
-These guarantees cover creation requests and known CLI resumes. Desktop takeover
-is a separate boundary. Codex's existing owner handoff uses a private IPC
-protocol; this change neither extends that protocol with permission controls nor
-claims that it can force the Desktop permission selector. Claude's documented
-`--desktop --resume` entry point does not document a per-session permission
-handoff parameter. Passing a CLI creation flag is therefore not evidence that a
-desktop-owned process retained it. The adapter preserves an observed Desktop
-mode and does not guess bypass when a live session's mode is unknown.
-
-For desktop-owned sessions, use the supported app controls: select Full Access
-in Codex, or set the documented [Codex configuration defaults](https://learn.chatgpt.com/docs/config-file/config-basic)
-(`approval_policy = "never"`, `sandbox_mode = "danger-full-access"`) where
-managed requirements allow them. For Claude, enable Bypass permissions where
-available and select it in the app. The [Claude Desktop documentation](https://code.claude.com/docs/en/desktop#permission-modes)
-also supports `permissions.defaultMode = "bypassPermissions"` in the shared
-settings file; a remembered per-folder mode takes precedence. These are user
-settings, not files the driver rewrites. Organization policy can disallow either
-mode. No private database or desktop session-state mutation is used.
+Interface evidence (2026-10-16): both `codex-cli 0.160.1` and the desktop-bundled `codex-cli 0.162.0-alpha.17.2` public `codex app-server generate-json-schema` outputs include both permission fields and the above sandbox enum values; `claude 2.1.295 --help` exposes `--permission-mode`. See the official [Codex App Server protocol](https://learn.chatgpt.com/docs/app-server), [Codex Full Access definition](https://learn.chatgpt.com/docs/sandboxing), [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), and [Desktop permission settings](https://code.claude.com/docs/en/desktop#choose-a-permission-mode). Unit tests exercise the real adapter creation functions with recorded transport/process arguments; they do not establish that a live Desktop application accepted or displayed the requested mode.
 
 ### Status mapping
 

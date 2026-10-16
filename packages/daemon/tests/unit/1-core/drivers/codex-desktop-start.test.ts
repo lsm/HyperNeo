@@ -22,7 +22,8 @@ const model = {
   supportedReasoningEfforts: [{ reasoningEffort: 'medium' }],
 };
 const catalog = { data: [model], nextCursor: null };
-const fullAccess = { approvalPolicy: 'never', sandbox: 'danger-full-access' };
+const threadAccess = { approvalPolicy: 'never', sandbox: 'danger-full-access' };
+const turnAccess = { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } };
 
 function adapter(
   server: Partial<CodexAppServer> | Error,
@@ -156,6 +157,21 @@ describe('codex-desktop start receipt', () => {
 });
 
 describe('codex-desktop start', () => {
+  test('surfaces a refused Full Access request without retrying with weaker permissions', async () => {
+    const { instance, calls, closed } = adapter({
+      call: async () => {
+        throw new Error('Full Access disabled by policy');
+      },
+    });
+    expect(await instance.start!(request, user)).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'Full Access disabled by policy',
+    });
+    expect(calls).toEqual([['thread/start', { ...threadAccess, cwd: place.folder }]]);
+    expect(closed()).toBe(true);
+  });
+
   test('starts in the prepared location instead of another HEAD worktree and keeps its resource', async () => {
     const prepared: unknown[] = [];
     let released = false;
@@ -187,7 +203,7 @@ describe('codex-desktop start', () => {
         location: { directory: '/focus/dolmen', destination: '/codex/worktrees/abcd1234/dolmen' },
       },
     ]);
-    expect(calls[0]).toEqual(['thread/start', { ...fullAccess, cwd: '/fresh/remote-base' }]);
+    expect(calls[0]).toEqual(['thread/start', { ...threadAccess, cwd: '/fresh/remote-base' }]);
     expect(spawned).toEqual([]);
     expect(released).toBe(false);
   });
@@ -244,11 +260,16 @@ describe('codex-desktop start', () => {
     });
     expect(calls).toEqual([
       ['model/list', { limit: 100, includeHidden: false }],
-      ['thread/start', { ...fullAccess, cwd: '/focus/dolmen', model: 'gpt-6.1-sol' }],
+      ['thread/start', { ...threadAccess, cwd: '/focus/dolmen', model: 'gpt-6.1-sol' }],
       ['thread/name/set', { threadId: 'th1', name: request.title }],
       [
         'desktop/start-turn',
-        { threadId: 'th1', input: [{ type: 'text', text: request.message }], model: model.model },
+        {
+          ...turnAccess,
+          threadId: 'th1',
+          input: [{ type: 'text', text: request.message }],
+          model: model.model,
+        },
       ],
     ]);
     expect(closed()).toBe(true);
@@ -274,7 +295,7 @@ describe('codex-desktop start', () => {
       [
         'thread/start',
         {
-          ...fullAccess,
+          ...threadAccess,
           cwd: '/focus/dolmen',
           model: model.model,
           config: { model_reasoning_effort: 'medium' },
@@ -284,6 +305,7 @@ describe('codex-desktop start', () => {
       [
         'desktop/start-turn',
         {
+          ...turnAccess,
           threadId: 'th1',
           input: [{ type: 'text', text: request.message }],
           model: model.model,
@@ -340,7 +362,7 @@ describe('codex-desktop start', () => {
       const result = await instance.start?.(request, user);
       expect(result?.ok).toBe(true);
       expect(result?.ok && result.value.effort).toBe(reported ?? undefined);
-      expect(calls[0]).toEqual(['thread/start', { ...fullAccess, cwd: '/focus/dolmen' }]);
+      expect(calls[0]).toEqual(['thread/start', { ...threadAccess, cwd: '/focus/dolmen' }]);
       expect(calls.some(([method]) => method === 'model/list')).toBe(false);
     }
   });
@@ -354,7 +376,7 @@ describe('codex-desktop start', () => {
       ok: true,
       value: { model: 'configured-default' },
     });
-    expect(calls[0]).toEqual(['thread/start', { ...fullAccess, cwd: '/focus/dolmen' }]);
+    expect(calls[0]).toEqual(['thread/start', { ...threadAccess, cwd: '/focus/dolmen' }]);
     expect(calls.some(([method]) => method === 'model/list')).toBe(false);
   });
 
@@ -435,11 +457,15 @@ describe('codex-desktop start', () => {
       },
     });
     expect(calls).toEqual([
-      ['thread/start', { ...fullAccess, cwd: '/focus/dolmen' }],
+      ['thread/start', { ...threadAccess, cwd: '/focus/dolmen' }],
       ['thread/name/set', { threadId: 'th1', name: 'Bigger font' }],
       [
         'desktop/start-turn',
-        { threadId: 'th1', input: [{ type: 'text', text: 'Raise the body font to 16px.' }] },
+        {
+          ...turnAccess,
+          threadId: 'th1',
+          input: [{ type: 'text', text: 'Raise the body font to 16px.' }],
+        },
       ],
     ]);
     expect(closed()).toBe(true);
@@ -460,7 +486,7 @@ describe('codex-desktop start', () => {
     ]);
     expect(calls[0]).toEqual([
       'thread/start',
-      { ...fullAccess, cwd: '/codex/worktrees/abcd1234/dolmen' },
+      { ...threadAccess, cwd: '/codex/worktrees/abcd1234/dolmen' },
     ]);
   });
 
@@ -472,7 +498,7 @@ describe('codex-desktop start', () => {
     );
     expect(await instance.start?.(request, user)).toMatchObject({ ok: true, value: { place } });
     expect(spawned).toEqual([]);
-    expect(calls[0]).toEqual(['thread/start', { ...fullAccess, cwd: '/focus/dolmen' }]);
+    expect(calls[0]).toEqual(['thread/start', { ...threadAccess, cwd: '/focus/dolmen' }]);
   });
 
   test('runs a subfolder start at the worktree root', async () => {
@@ -487,7 +513,7 @@ describe('codex-desktop start', () => {
     );
     expect(calls[0]).toEqual([
       'thread/start',
-      { ...fullAccess, cwd: '/codex/worktrees/abcd1234/dolmen' },
+      { ...threadAccess, cwd: '/codex/worktrees/abcd1234/dolmen' },
     ]);
   });
 
@@ -531,21 +557,6 @@ describe('codex-desktop start', () => {
       detail: '/gone does not exist. To start a new project there, pass createFolder: true.',
     });
     expect(calls).toEqual([]);
-  });
-
-  test('does not retry with lower permissions when Full Access is refused', async () => {
-    const { instance, calls, closed } = adapter({
-      call: async () => {
-        throw new Error('Full Access is disabled by managed requirements');
-      },
-    });
-    expect(await instance.start?.(request, user)).toMatchObject({
-      ok: false,
-      reason: 'not_delivered',
-      detail: expect.stringContaining('Full Access is disabled'),
-    });
-    expect(calls).toEqual([['thread/start', { ...fullAccess, cwd: '/focus/dolmen' }]]);
-    expect(closed()).toBe(true);
   });
 
   test('reports an absent app-server and a thread left without its first turn', async () => {

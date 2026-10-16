@@ -875,6 +875,7 @@ export class QueryRunner {
       if (neoCoordinatorBinding(this.ctx.db, session.id)) {
         if (!this.ctx.createNeoTurnMcpServer) throw new Error('Neo turn isolation unavailable.');
         holderTurn = new NeoHolderTurn(this.ctx.db, session.id, {
+          yield: () => runAbortController?.abort(),
           isLive: () =>
             attemptToken.isLive() &&
             this.ctx.getQueryGeneration() === queryGeneration &&

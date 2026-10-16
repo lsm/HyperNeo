@@ -754,7 +754,8 @@ export async function sendClaudeMessage(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
   message: string,
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  resumePermissionMode?: 'bypassPermissions'
 ): Promise<Result<WorkDelivery>> {
   const live = liveSessions.find((session) => session.sessionId === record.cliSessionId);
   if (live) {
@@ -764,13 +765,14 @@ export async function sendClaudeMessage(
     }
     return relayToLiveSession(record, name, message, deps);
   }
-  return resumeClaudeSession(record, message, deps);
+  return resumeClaudeSession(record, message, deps, resumePermissionMode);
 }
 
 export async function resumeClaudeSession(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   message: string,
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  permissionMode?: 'bypassPermissions'
 ): Promise<Result<WorkDelivery>> {
   const folder = record.cwd ?? record.originCwd;
   if (!folder || !deps.folderExists(folder)) {
@@ -789,9 +791,7 @@ export async function resumeClaudeSession(
         '-p',
         '--resume',
         record.cliSessionId,
-        ...(record.permissionMode === 'bypassPermissions'
-          ? ['--permission-mode', 'bypassPermissions']
-          : []),
+        ...(permissionMode ? ['--permission-mode', permissionMode] : []),
         '--',
         message,
       ],
@@ -983,9 +983,15 @@ export async function startClaudeSession(
     title: request.title,
     isArchived: false,
     lastActivityAt: deps.now(),
-    permissionMode: appRecord?.permissionMode ?? (session ? undefined : 'bypassPermissions'),
+    permissionMode: appRecord?.permissionMode,
   };
-  const sent = await sendClaudeMessage({ ...record, cliSessionId }, live, request.message, deps);
+  const sent = await sendClaudeMessage(
+    { ...record, cliSessionId },
+    live,
+    request.message,
+    deps,
+    'bypassPermissions'
+  );
   if (!sent.ok) {
     return reject(
       'not_delivered',

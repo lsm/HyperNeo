@@ -262,7 +262,7 @@ describe('chooseNeoRoute', () => {
   test('offers the classifier every topic without recent turns or embeddings', async () => {
     const many = Array.from({ length: 30 }, (_, n) => ({ ...drivers, projectId: `t${n}` }));
     const offered: string[][] = [];
-    await chooseNeoRoute('what changed in t29?', {
+    await chooseNeoRoute('what changed?', {
       ...deps(),
       holders: () => many,
       embed: async () => null,

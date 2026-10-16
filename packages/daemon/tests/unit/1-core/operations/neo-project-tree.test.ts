@@ -267,7 +267,7 @@ describe('hierarchical Neo routing', () => {
         )!;
       }),
     };
-    expect((await chooseNeoRoute('Implement the section', deps)).choice?.projectId).toBe('section');
+    expect((await chooseNeoRoute('Implement this task', deps)).choice?.projectId).toBe('section');
     expect(levels).toEqual([
       ['product', 'other'],
       ['product', 'repo'],
@@ -276,7 +276,7 @@ describe('hierarchical Neo routing', () => {
     expect(holders).toHaveLength(4);
     expect(
       (
-        await chooseNeoRoute('Stay in product', {
+        await chooseNeoRoute('Keep it broad', {
           ...routeDeps(holders),
           classify: async () => holders[0],
         })
@@ -458,7 +458,7 @@ describe('hierarchical Neo routing', () => {
       const levels: string[][] = [];
       expect(
         (
-          await chooseNeoRoute('leaf work', {
+          await chooseNeoRoute('Implement this task', {
             ...routeDeps(holders),
             classify: async (_text, choices) => {
               levels.push(choices.map((choice) => choice.projectId));

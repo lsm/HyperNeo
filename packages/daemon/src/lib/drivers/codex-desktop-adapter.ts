@@ -891,6 +891,8 @@ export async function startCodexThread(
       await server.close();
       await deps.startDesktopTurn(threadId, {
         threadId,
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
         input: [{ type: 'text', text: request.message }],
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),

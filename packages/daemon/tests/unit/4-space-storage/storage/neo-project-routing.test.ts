@@ -16,7 +16,11 @@ import {
   neoFactOwners,
   neoRepoAlias,
 } from '../../../../src/lib/neo/project-route-facts.ts';
-import { chooseNeoRoute, type NeoRouterDeps } from '../../../../src/lib/neo/router.ts';
+import {
+  chooseNeoRoute,
+  createNeoRouter,
+  type NeoRouterDeps,
+} from '../../../../src/lib/neo/router.ts';
 
 let db: Database;
 let repo: NeoRepository;
@@ -193,6 +197,24 @@ describe('chooseNeoRoute', () => {
       fallback: 'facts:unresolved',
     });
   });
+});
+
+describe('createNeoRouter explicit identity', () => {
+  test.each(['alpha', 'lsm/HyperNeo', 'https://github.com/lsm/HyperNeo'])(
+    'uses known project and repository names in the real router: %s',
+    async (text) => {
+      db.createSession(createTestSession('holder-alpha'));
+      repo.reserveBinding({ sessionId: 'holder-alpha', projectId: 'alpha', kind: 'project' });
+      db.getDatabase()
+        .prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)')
+        .run('repository:github.com/lsm/HyperNeo', 'alpha');
+      expect((await createNeoRouter(db, repo)(text)).choice).toMatchObject({
+        projectId: 'alpha',
+        sessionId: 'holder-alpha',
+        signal: 'facts',
+      });
+    }
+  );
 });
 
 describe('NeoCrossProjectRepository', () => {
