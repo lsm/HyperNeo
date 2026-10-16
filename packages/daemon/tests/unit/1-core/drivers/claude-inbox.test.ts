@@ -140,10 +140,13 @@ describe('claudeInboxEvent', () => {
   });
 
   test('does not interpret peer reply text as a human decision', () => {
+    const replyMessageId = randomUUID();
     expect(
       claudeInboxEvent(
         {
           type: 'user',
+          msgV: 1,
+          msg_id: replyMessageId,
           from: `uds:${target.socketPath}`,
           message: { role: 'user', content: 'approved' },
         },
@@ -153,12 +156,15 @@ describe('claudeInboxEvent', () => {
     ).toEqual({
       kind: 'reply',
       sessionId: target.sessionId,
+      messageId: replyMessageId,
       from: `uds:${target.socketPath}`,
       content: 'approved',
     });
     expect(
       claudeInboxEvent({ ...receipt, action: 'stop' }, target, new Set([messageId]))
     ).toBeNull();
+    const raw = { ...receipt, type: 'user', msgV: 1, message: { role: 'user', content: 'x' } };
+    expect(claudeInboxEvent(raw, target, new Set())).toBeNull();
   });
 });
 
@@ -227,16 +233,23 @@ describe('openClaudeInbox', () => {
     expect(await inbox.write(input)).toEqual({ written: true });
     expect(frames).toHaveLength(1);
     const from = `uds:${session.socketPath}`;
+    const replyMessageId = randomUUID();
     await incoming(
       `${JSON.stringify({ type: 'control', action: 'peer_message_status', from, orig_msg_id: input.messageId, status: 'held' })}\n`
     );
     await incoming(
-      `${JSON.stringify({ type: 'user', from, message: { role: 'user', content: '答复\nnext line' } })}\n`,
+      `${JSON.stringify({ msgV: 1, msg_id: replyMessageId, type: 'user', from, message: { role: 'user', content: '答复\nnext line' } })}\n`,
       true
     );
     expect(events).toEqual([
       { kind: 'receipt', sessionId: session.sessionId, messageId: input.messageId, status: 'held' },
-      { kind: 'reply', sessionId: session.sessionId, from, content: '答复\nnext line' },
+      {
+        kind: 'reply',
+        sessionId: session.sessionId,
+        messageId: replyMessageId,
+        from,
+        content: '答复\nnext line',
+      },
     ]);
     await expect(inbox.write({ ...input, text: 'different' })).rejects.toThrow('reused');
   });
