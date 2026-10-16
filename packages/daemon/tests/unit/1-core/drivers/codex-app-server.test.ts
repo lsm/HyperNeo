@@ -20,16 +20,19 @@ describe('connectCodexAppServer', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function listen(): Promise<{ path: string; seen: string[] }> {
+  async function listen(): Promise<{
+    path: string;
+    seen: Array<{ method: string; params: unknown }>;
+  }> {
     dir = mkdtempSync(join(tmpdir(), 'codex-app-server-'));
     const path = join(dir, 'control.sock');
-    const seen: string[] = [];
+    const seen: Array<{ method: string; params: unknown }> = [];
     server = createServer();
     sockets = new WebSocketServer({ server });
     sockets.on('connection', (socket) => {
       socket.on('message', (data) => {
         const message = JSON.parse(String(data));
-        seen.push(message.method);
+        seen.push({ method: message.method, params: message.params });
         if (message.id === undefined) return;
         socket.send(
           JSON.stringify(
@@ -54,7 +57,16 @@ describe('connectCodexAppServer', () => {
         thread: { id: 'th1' },
       });
       await expect(client.call('thread/fly', {})).rejects.toThrow('thread/fly');
-      expect(seen).toEqual(['initialize', 'initialized', 'thread/start', 'thread/fly']);
+      expect(seen.map((message) => message.method)).toEqual([
+        'initialize',
+        'initialized',
+        'thread/start',
+        'thread/fly',
+      ]);
+      expect(seen[0].params).toEqual({
+        clientInfo: { name: 'hyperneo', title: 'HyperNeo', version: '1' },
+        capabilities: { experimentalApi: true },
+      });
     } finally {
       client.close();
     }
@@ -76,7 +88,11 @@ describe('connectCodexAppServer', () => {
         ok: false,
         reason: 'unreachable',
       });
-      expect(seen).toEqual(['initialize', 'initialized', 'model/list']);
+      expect(seen.map((message) => message.method)).toEqual([
+        'initialize',
+        'initialized',
+        'model/list',
+      ]);
     } finally {
       client.close();
     }
@@ -103,7 +119,7 @@ const seen = [];
 const lines = readline.createInterface({ input: process.stdin });
 lines.on('line', (line) => {
   const message = JSON.parse(line);
-  seen.push(message.method);
+  seen.push({ method: message.method, params: message.params });
   if (message.id === undefined) return;
   const response = ${failInitialization} && message.method === 'initialize'
     ? { error: { code: -1, message: 'initialization failed' } }
@@ -129,12 +145,17 @@ lines.on('close', () => {
       await client.call('thread/name/set', { threadId: 'saved-thread', name: 'Desktop chat' });
       expect(existsSync(f.persisted)).toBe(false);
       await Promise.all([client.close(), client.close()]);
-      expect(JSON.parse(readFileSync(f.persisted, 'utf8'))).toEqual([
+      const seen = JSON.parse(readFileSync(f.persisted, 'utf8'));
+      expect(seen.map((message: { method: string }) => message.method)).toEqual([
         'initialize',
         'initialized',
         'thread/start',
         'thread/name/set',
       ]);
+      expect(seen[0].params).toEqual({
+        clientInfo: { name: 'hyperneo', title: 'HyperNeo', version: '1' },
+        capabilities: { experimentalApi: true },
+      });
       await expect(client.call('turn/start', {})).rejects.toThrow('closed');
     } finally {
       await client.close();
@@ -144,6 +165,10 @@ lines.on('close', () => {
   test('closes its owned process after failed initialization', async () => {
     const f = executable(true);
     await expect(startCodexBootstrapServer(f.command)).rejects.toThrow('initialization failed');
-    expect(JSON.parse(readFileSync(f.persisted, 'utf8'))).toEqual(['initialize']);
+    expect(
+      JSON.parse(readFileSync(f.persisted, 'utf8')).map(
+        (message: { method: string }) => message.method
+      )
+    ).toEqual(['initialize']);
   });
 });
