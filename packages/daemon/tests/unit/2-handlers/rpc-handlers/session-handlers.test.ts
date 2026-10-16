@@ -487,6 +487,23 @@ describe('Session RPC Handlers — models.list', () => {
   it('triggers fallback refresh when cache is empty and useCache is true', {
     timeout: 15_000,
   }, async () => {
+    const getModels = mock(async () => [
+      {
+        id: 'test-refresh-model',
+        name: 'Test Refresh',
+        provider: 'test-refresh',
+        contextWindow: 1000,
+      } as ModelInfo,
+    ]);
+    getProviderRegistry().register({
+      id: 'test-refresh',
+      displayName: 'Test Refresh',
+      isAvailable: () => true,
+      getModels,
+      ownsModel: () => false,
+      getModelForTier: () => undefined,
+      buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+    } as unknown as Provider);
     const handler = messageHubData.handlers.get('models.list');
 
     const result = (await handler!({ useCache: true }, {})) as {
@@ -495,7 +512,8 @@ describe('Session RPC Handlers — models.list', () => {
     };
 
     expect(result.models.length).toBeGreaterThan(0);
-    expect(result.models.some((m) => m.id === 'sonnet')).toBe(true);
+    expect(result.models.some((m) => m.id === 'test-refresh-model')).toBe(true);
+    expect(getModels).toHaveBeenCalledTimes(1);
     expect(result.cached).toBe(false);
   });
 
