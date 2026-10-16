@@ -61,7 +61,13 @@ describe('requireDisconnectedTarget', () => {
 describe('runClaudeRemoteControlRequest', () => {
   let dir: string;
   let spawned: Array<{ args: string[]; cwd?: string }>;
-  let live: Array<{ sessionId: string; status: string; name?: string }>;
+  let live: Array<{
+    sessionId: string;
+    status: string;
+    name?: string;
+    pid?: number;
+    owner?: 'desktop' | 'cli' | 'unknown';
+  }>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'claude-rc-'));
@@ -94,7 +100,13 @@ describe('runClaudeRemoteControlRequest', () => {
       spawn: (args, options) => {
         spawned.push({ args, cwd: options?.cwd });
         if (args.includes('--desktop')) {
-          live.push({ sessionId: args.at(-1) as string, status: 'idle', name: 'rc-toggle' });
+          live.push({
+            sessionId: args.at(-1) as string,
+            status: 'idle',
+            name: 'rc-toggle',
+            pid: 1,
+            owner: 'desktop',
+          });
         }
         return {
           stdout: new Response('').body,
@@ -112,7 +124,7 @@ describe('runClaudeRemoteControlRequest', () => {
   test('relays the request to the live rc-toggle session', async () => {
     write(record('t1', { title: target.title }));
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
-    live = [{ sessionId: 'cli-rc', status: 'idle', name: 'rc-toggle' }];
+    live = [{ sessionId: 'cli-rc', status: 'idle', name: 'rc-toggle', pid: 1, owner: 'cli' }];
     const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
     expect(outcome.ok).toBe(true);
     expect(spawned.some((call) => call.args.includes('--desktop'))).toBe(false);
@@ -122,17 +134,17 @@ describe('runClaudeRemoteControlRequest', () => {
     );
   });
 
-  test('opens a closed rc-toggle in Claude Code Desktop before relaying', async () => {
+  test('refuses a CLI relay after opening rc-toggle in Desktop', async () => {
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
     const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
-    expect(outcome.ok).toBe(true);
+    expect(outcome).toMatchObject({ ok: false, reason: 'unsupported' });
     expect(spawned[0].args.slice(-3)).toEqual(['--desktop', '--resume', 'cli-rc']);
-    expect(relayed()).toContain('local_t1');
+    expect(relayed()).toBeUndefined();
   });
 
   test('creates rc-toggle with its brief when there is none', async () => {
     const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
-    expect(outcome.ok).toBe(true);
+    expect(outcome).toMatchObject({ ok: false, reason: 'unsupported' });
     const created = spawned[0];
     expect(created.cwd).toBe('/Users/test');
     expect(created.args.slice(0, 11)).toEqual([
@@ -150,7 +162,7 @@ describe('runClaudeRemoteControlRequest', () => {
     ]);
     expect(created.args.at(-1)).toContain('You are rc-toggle.');
     expect(spawned[1].args.slice(-3)).toEqual(['--desktop', '--resume', 'new-rc']);
-    expect(relayed()).toContain('local_t1');
+    expect(relayed()).toBeUndefined();
   });
 
   test('leaves a session that already has its Remote Control set alone', async () => {
