@@ -1,49 +1,56 @@
-import { hostname } from 'node:os';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { describe, expect, mock, spyOn, test } from 'bun:test';
+import { hostname } from 'node:os';
 import { NEO_WORK_BLOCKER, NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
-import { NEO_CARD_UNCHECKED_MS } from '../../../../src/lib/neo/card-check.ts';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
+import type { WorkRef, WorkSummary } from '../../../../src/lib/drivers/types.ts';
 import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
+import { NEO_CARD_UNCHECKED_MS } from '../../../../src/lib/neo/card-check.ts';
 import {
+  NEO_DELIVERY_RETRY_BACKOFF_MS,
+  NEO_WORK_DELIVERY_RETRY,
+  runNeoDeliveryRetry,
+} from '../../../../src/lib/neo/delivery-retry.ts';
+import {
+  type DriverSent,
+  decideCardLiveStatus,
+  decideStuckReminder,
+  driverDoneCheckNote,
+  driverExchangeReport,
   driverStartedReport,
   driverWorkCall,
-  NEO_WORK_SUMMARY_NOTE,
-  withWorkGoal,
   driverWorkCaller,
+  isNeoReceiptUnconfirmed,
+  NEO_CARD_CONFIRM_MS,
+  NEO_WORK_STUCK_STEPS_MS,
+  NEO_WORK_SUMMARY_NOTE,
+  NEO_WORK_UNANCHORED_NOTE,
+  NEO_WORK_UNANCHORED_SETTLE_MS,
+  NEO_WORK_UNVERIFIED_REPLY_NOTE,
   type NeoDriverTarget,
   NeoDriverTargetSchema,
-  driverExchangeReport,
-  readDriverLanded,
-  readDriverSent,
   neoCardSent,
-  type DriverSent,
+  neoNoteCards,
+  neoWorkProgress,
+  planNeoStartReceiptAdoption,
+  readDriverLanded,
   readDriverNeedsYou,
   readDriverOutcome,
   readDriverSendBaseline,
-  NEO_WORK_STUCK_STEPS_MS,
-  decideStuckReminder,
-  NEO_WORK_UNANCHORED_NOTE,
-  NEO_WORK_UNVERIFIED_REPLY_NOTE,
-  NEO_WORK_UNANCHORED_SETTLE_MS,
-  decideCardLiveStatus,
-  requireNeoWorkRetryable,
-  isNeoReceiptUnconfirmed,
-  NEO_CARD_CONFIRM_MS,
+  readDriverSent,
   readDriverSettlement,
   readNeoStartFolder,
   requireNeoStartFolder,
-  neoWorkProgress,
-  driverDoneCheckNote,
-  neoNoteCards,
-  planNeoStartReceiptAdoption,
+  requireNeoWorkRetryable,
+  withWorkGoal,
 } from '../../../../src/lib/neo/driver-work.ts';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
@@ -51,10 +58,13 @@ import {
   requireNeoWorkContinuation,
   requireNeoWorkRetryCaller,
 } from '../../../../src/lib/neo/operations.ts';
-import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
-import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
+import { neoCardPrFacts } from '../../../../src/lib/neo/packs/coding/card-facts.ts';
 import { lifeAdminReportEvidence } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
+import {
+  NEO_WORK_AWAITING_WORKER,
+  pickNeoReplacementWorkers,
+} from '../../../../src/lib/neo/work-reroute.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -62,17 +72,7 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
-import {
-  NEO_DELIVERY_RETRY_BACKOFF_MS,
-  NEO_WORK_DELIVERY_RETRY,
-  runNeoDeliveryRetry,
-} from '../../../../src/lib/neo/delivery-retry.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
-import {
-  NEO_WORK_AWAITING_WORKER,
-  pickNeoReplacementWorkers,
-} from '../../../../src/lib/neo/work-reroute.ts';
-import type { WorkRef, WorkSummary } from '../../../../src/lib/drivers/types.ts';
 import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
@@ -203,16 +203,19 @@ describe('done-check note data', () => {
       null,
       {
         ask,
-        prs: [
-          {
-            url: 'u',
-            state: 'MERGED',
-            checks: 'passing',
-            review: 'approved',
-            title: 'x',
-            createdAt: 1,
-          },
-        ],
+        facts: neoCardPrFacts(
+          [
+            {
+              url: 'u',
+              state: 'MERGED',
+              checks: 'passing',
+              review: 'approved',
+              title: 'x',
+              createdAt: 1,
+            },
+          ],
+          false
+        ),
       }
     );
     const data = JSON.parse(note.slice(note.indexOf('\n{')));
@@ -3115,7 +3118,7 @@ describe('Neo work with a drivers target', () => {
       expect(changed).toHaveBeenCalledTimes(1);
       await refreshLater();
       expect(notes.map(([id]) => id)).toEqual(['work-1:done-check:0:pr:2']);
-      expect(notes[0][1]).toContain('trust it over the report');
+      expect(notes[0][1]).toContain('it is newer than the report');
       expect(notes[0][1]).toContain('"checks":"passing","review":"approved"');
 
       let reads = 0;
