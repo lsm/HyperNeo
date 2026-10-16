@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { NeoAskSchema } from '../../../../src/lib/neo/ask-inputs.ts';
 import {
+  readNeoAskAnswerAt,
   readNeoAskAnswerChoice,
   readNeoAskAnswerOption,
 } from '../../../../src/lib/neo/ask-answer-evidence.ts';
@@ -220,6 +221,10 @@ describe('grouped card start question', () => {
     expect(
       NeoAskSchema.parse(current()).doneItems!.find((item) => item.id === original.id)!.answer
     ).toEqual(receipt);
+    db.getDatabase()
+      .prepare('UPDATE neo_ask_items SET updated_at = ? WHERE id = ?')
+      .run(Date.now() + 60_000, original.id);
+    expect(current().doneItems!.find((item) => item.id === original.id)!.answer).toEqual(receipt);
     await invoke('neo.ask.answer', {
       askId: 'ask',
       itemId: original.id,
@@ -604,12 +609,22 @@ describe('grouped card start question', () => {
 });
 
 describe('readNeoAskAnswerChoice', () => {
+  test('retains legacy choices without inventing an answer time', () => {
+    for (const evidence of [
+      'The human answered: 开始',
+      'The human answered with option: {"choice":"可以","option":"开始"}',
+    ]) {
+      expect(readNeoAskAnswerChoice(evidence)).toBeTruthy();
+      expect(readNeoAskAnswerAt(evidence)).toBeNull();
+    }
+  });
   test.each(['{bad', 'null', '{"choice":1,"option":"开始"}', '{"choice":"开始"}'])(
     'keeps malformed historical option evidence unknown: %s',
     (body) => {
       const evidence = `The human answered with option: ${body}`;
       expect(readNeoAskAnswerChoice(evidence)).toBeNull();
       expect(readNeoAskAnswerOption(evidence)).toBeNull();
+      expect(readNeoAskAnswerAt(evidence)).toBeNull();
     }
   );
 });

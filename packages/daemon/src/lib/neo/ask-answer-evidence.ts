@@ -5,17 +5,22 @@ const CITATION = / \(their message [^()]+\)$/;
 export function neoAskAnswerEvidence(
   choice: string,
   messageId: string | null,
-  option?: string
+  option?: string,
+  at?: number
 ): string {
-  return `${option ? OPTION_PREFIX + JSON.stringify({ choice, option }) : PREFIX + choice}${messageId ? ` (their message ${messageId})` : ''}`;
+  return `${option || at !== undefined ? OPTION_PREFIX + JSON.stringify({ choice, option: option ?? choice, ...(at !== undefined ? { at } : {}) }) : PREFIX + choice}${messageId ? ` (their message ${messageId})` : ''}`;
 }
 
-function readOptionEvidence(evidence: string): { choice: string; option: string } | null {
+function readOptionEvidence(
+  evidence: string
+): { choice: string; option: string; at: number | null } | null {
   try {
     const value: unknown = JSON.parse(evidence.slice(OPTION_PREFIX.length).replace(CITATION, ''));
     if (!value || typeof value !== 'object') return null;
-    const { choice, option } = value as Record<string, unknown>;
-    return typeof choice === 'string' && typeof option === 'string' ? { choice, option } : null;
+    const { choice, option, at } = value as Record<string, unknown>;
+    return typeof choice === 'string' && typeof option === 'string'
+      ? { choice, option, at: typeof at === 'number' && Number.isFinite(at) && at >= 0 ? at : null }
+      : null;
   } catch {
     return null;
   }
@@ -30,4 +35,8 @@ export function readNeoAskAnswerOption(evidence: string | null | undefined): str
   return evidence?.startsWith(OPTION_PREFIX)
     ? (readOptionEvidence(evidence)?.option ?? null)
     : readNeoAskAnswerChoice(evidence);
+}
+
+export function readNeoAskAnswerAt(evidence: string | null | undefined): number | null {
+  return evidence?.startsWith(OPTION_PREFIX) ? (readOptionEvidence(evidence)?.at ?? null) : null;
 }

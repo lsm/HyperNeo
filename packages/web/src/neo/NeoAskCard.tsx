@@ -238,7 +238,7 @@ function AnsweredQuestion({ item }: { item: NeoAskItem }) {
   return (
     <li data-ask-answer={item.id} class="flex min-w-0 flex-wrap gap-x-2 text-sm text-fg-muted">
       <span>{answer?.choice ?? '选择未记录'}</span>
-      {answer ? (
+      {answer?.at != null ? (
         <time dateTime={new Date(answer.at).toISOString()} class="text-xs text-fg-faint">
           {new Date(answer.at).toLocaleString()}
         </time>

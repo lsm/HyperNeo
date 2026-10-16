@@ -612,8 +612,9 @@ export function createNeoAskOperations(
         input: z.infer<typeof Answer>,
         target: { ask: NeoAsk; item: NeoAskItem },
         reply: { choice: string; met: boolean },
-        cited: { id: string | null }
+        cited: { id: string | null; at: number | null }
       ) => {
+        const answeredAt = cited.at ?? Date.now();
         const written =
           !reply.met ||
           service.askRecords.tickItem(
@@ -622,10 +623,10 @@ export function createNeoAskOperations(
               ...target.item,
               id: input.itemId,
               state: 'met',
-              evidence: neoAskAnswerEvidence(reply.choice, cited.id, input.option),
+              evidence: neoAskAnswerEvidence(reply.choice, cited.id, input.option, answeredAt),
               metBy: 'human',
             },
-            Date.now(),
+            answeredAt,
             target.ask.doneItems?.find((item) => item.id === input.itemId),
             true
           );

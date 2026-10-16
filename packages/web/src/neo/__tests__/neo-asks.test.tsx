@@ -550,17 +550,22 @@ describe('NeoAskCard', () => {
     expect(app.container.querySelector('[data-ask-step] > [aria-hidden]')?.textContent).toBe('○');
   });
 
-  it('keeps missing historical answer facts explicit without repeating the question', () => {
-    const value = {
-      ...ask('unknown-answer', 'open', []),
-      doneItems: [item('old', 'met', { decision: true, metBy: 'human', text: 'Old question' })],
-    };
-    const app = render(<NeoAskCard view={describeAsk(value, [])} />);
-    fireEvent.click(app.getByRole('button', { name: 'Details' }));
-    expect(app.getByText('选择未记录')).toBeTruthy();
-    expect(app.getByText('时间未记录')).toBeTruthy();
-    expect(app.queryByText('Old question')).toBeNull();
-  });
+  it.each([undefined, { choice: '先不做', at: null }])(
+    'keeps missing historical answer facts explicit: %s',
+    (answer) => {
+      const value = {
+        ...ask('unknown-answer', 'open', []),
+        doneItems: [
+          item('old', 'met', { decision: true, metBy: 'human', text: 'Old question', answer }),
+        ],
+      };
+      const app = render(<NeoAskCard view={describeAsk(value, [])} />);
+      fireEvent.click(app.getByRole('button', { name: 'Details' }));
+      expect(app.getByText(answer?.choice ?? '选择未记录')).toBeTruthy();
+      expect(app.getByText('时间未记录')).toBeTruthy();
+      expect(app.queryByText('Old question')).toBeNull();
+    }
+  );
 
   it('renders grouped start steps from structured data and does not repeat proposed cards', () => {
     const steps = ['one', 'two', 'three'].map((id, index) => ({ id, title: `第 ${index + 1} 步` }));

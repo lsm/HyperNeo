@@ -1,5 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { readNeoAskAnswerChoice } from '../../lib/neo/ask-answer-evidence.ts';
+import { readNeoAskAnswerAt, readNeoAskAnswerChoice } from '../../lib/neo/ask-answer-evidence.ts';
 import { neoOutcomeBindingPolicy } from '../../lib/neo/outcome-binding-policy.ts';
 import {
   type NeoAsk,
@@ -52,7 +52,6 @@ type NeoAskItemRow = Omit<
   | 'outcomeKind'
 > & {
   askId: string;
-  updatedAt: number;
   removed: number;
   removedReason: string | null;
   options: string | null;
@@ -70,7 +69,7 @@ type NeoAskItemRow = Omit<
 const watchJson = (item: Pick<NeoAskItem, 'watch'>) =>
   item.watch?.length ? JSON.stringify(item.watch) : null;
 
-const itemColumns = `ask_id AS askId, updated_at AS updatedAt, id, text, state, evidence, check_kind AS "check",
+const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
   delivered_by AS deliveredBy, verified_definition_hash AS verifiedDefinitionHash, met_by AS metBy, removed, removed_reason AS removedReason, added_at AS addedAt, options, decision, action, wait_card AS waitCard, kind, question, decides, because, watch, outcome_kind AS outcomeKind`;
 
 export interface NeoAskOwner {
@@ -836,7 +835,6 @@ export class NeoAskRepository {
         .map(
           ({
             askId: _askId,
-            updatedAt,
             removed,
             removedReason,
             options,
@@ -855,7 +853,12 @@ export class NeoAskRepository {
             ...(item.state === 'met' &&
             item.metBy === 'human' &&
             (decision === 1 || question || ['decision', 'action', 'approval'].includes(kind ?? ''))
-              ? { answer: { choice: readNeoAskAnswerChoice(item.evidence), at: updatedAt } }
+              ? {
+                  answer: {
+                    choice: readNeoAskAnswerChoice(item.evidence),
+                    at: readNeoAskAnswerAt(item.evidence),
+                  },
+                }
               : {}),
             removed: removed === 1,
             ...(removedReason ? { removedReason } : {}),
