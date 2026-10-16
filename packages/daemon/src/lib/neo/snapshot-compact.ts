@@ -159,6 +159,7 @@ function withShortText(snapshot: NeoSnapshot): NeoSnapshot {
   return {
     ...snapshot,
     sessionLoad: [],
+    working: [],
     sessionNoticeGroups: snapshot.sessionNoticeGroups?.slice(0, 1),
     work: snapshot.work.map((item) => ({
       ...item,

@@ -399,11 +399,25 @@ export interface NeoSnapshot {
   omitted?: { work?: number; asks?: number };
   cards: NeoCardView[];
   sessionLoad?: NeoSessionLoad[];
+  working?: NeoWorkingSession[];
   askViews: NeoAskView[];
   waitingOnHuman?: NeoWaitingOnHuman;
   routeFailure?: NeoRouteFailure;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
   trimmed?: string;
+}
+
+export type NeoWorkingStatus = 'queued' | 'processing' | 'rate_limit_cooldown';
+
+export interface NeoWorkingSession {
+  sessionId: string;
+  projectId: string | null;
+  title: string;
+  status: NeoWorkingStatus;
+}
+
+export interface NeoWorkingEvent {
+  working: NeoWorkingSession[];
 }
 
 export interface NeoSessionLoad {
