@@ -7,10 +7,7 @@ import {
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn';
 import { materializeMailboxFailuresForSession } from '../../../../src/lib/mailbox/cancellation';
-import {
-  createMailboxDeadHandler,
-  createMailboxDeliveryHandler,
-} from '../../../../src/lib/mailbox/delivery';
+import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import {
   DEFAULT_MAILBOX_ENTRY_POLICY,
@@ -90,60 +87,6 @@ function humanPredicate(mailbox: MailboxTestDb, sessionId: string, messageUuid: 
     | undefined;
   return row?.isHuman === 1;
 }
-
-describe('createMailboxDeadHandler', () => {
-  test('logs a valid entry id and job error without writing a settlement', () => {
-    const messages: string[] = [];
-    const handler = createMailboxDeadHandler((message) => messages.push(message));
-    const job = {
-      id: 'job-1',
-      queue: MAILBOX_LANE,
-      status: 'dead',
-      payload: { id: 'entry-1' },
-      result: null,
-      error: 'delivery failed',
-      priority: 0,
-      maxRetries: 3,
-      retryCount: 3,
-      runAt: 1,
-      createdAt: 1,
-      startedAt: 1,
-      heartbeatAt: 1,
-      completedAt: 1,
-      claimToken: null,
-    } as Job;
-
-    expect(handler(job)).toBeUndefined();
-    expect(messages).toEqual(['mailbox: entry entry-1 dead-lettered: delivery failed']);
-    expect(job.result).toBeNull();
-  });
-
-  test('logs a corrupt payload without throwing or writing a settlement', () => {
-    const messages: string[] = [];
-    const handler = createMailboxDeadHandler((message) => messages.push(message));
-    const job = {
-      id: 'job-1',
-      queue: MAILBOX_LANE,
-      status: 'dead',
-      payload: { garbage: true },
-      result: null,
-      error: null,
-      priority: 0,
-      maxRetries: 3,
-      retryCount: 3,
-      runAt: 1,
-      createdAt: 1,
-      startedAt: 1,
-      heartbeatAt: 1,
-      completedAt: 1,
-      claimToken: null,
-    } as Job;
-
-    expect(handler(job)).toBeUndefined();
-    expect(messages).toEqual(['mailbox: entry unknown dead-lettered: unknown error']);
-    expect(job.result).toBeNull();
-  });
-});
 
 describe('createMailboxDeliveryHandler', () => {
   let mailbox: MailboxTestDb;

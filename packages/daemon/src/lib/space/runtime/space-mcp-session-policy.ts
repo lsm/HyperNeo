@@ -140,11 +140,3 @@ function isLongTermAgentSession(
     (session.id === agent.sessionId || session.parentSessionId === agent.sessionId)
   );
 }
-
-export function missingMcpServers(
-  mcpServers: Record<string, unknown> | undefined,
-  requiredServers: readonly string[]
-): string[] {
-  const serverNames = Object.keys(mcpServers ?? {});
-  return requiredServers.filter((name) => !serverNames.includes(name));
-}

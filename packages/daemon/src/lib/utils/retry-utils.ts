@@ -47,28 +47,6 @@ export async function retryWithBackoff<T>(
   throw lastError;
 }
 
-export function parseRetryAfter(
-  headers: Record<string, string | string[] | undefined>
-): number | null {
-  const raw = headers['retry-after'] ?? headers['Retry-After'];
-  if (!raw) return null;
-
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  if (!value) return null;
-
-  const seconds = parseInt(value, 10);
-  if (!isNaN(seconds) && seconds >= 0 && String(seconds) === value.trim()) {
-    return seconds * 1_000;
-  }
-
-  const date = new Date(value).getTime();
-  if (!isNaN(date)) {
-    return Math.max(0, date - Date.now());
-  }
-
-  return null;
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

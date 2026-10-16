@@ -116,27 +116,6 @@ const MAX_FAILURE_REASON_KEYS = 64;
 
 const FAILURE_REASON_OVERFLOW_KEY = '__other__';
 
-function computeAgeStats(ages: readonly number[]): QueueAgeStats | null {
-  if (ages.length === 0) return null;
-  let min = Infinity;
-  let max = -Infinity;
-  let sum = 0;
-  for (const age of ages) {
-    if (age < min) min = age;
-    if (age > max) max = age;
-    sum += age;
-  }
-  const sorted = [...ages].sort((a, b) => a - b);
-  const p95Index = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1);
-  return {
-    count: ages.length,
-    minMs: min,
-    maxMs: max,
-    avgMs: Math.round(sum / ages.length),
-    p95Ms: sorted[p95Index]!,
-  };
-}
-
 export class ExternalEventQueueMetrics {
   private readonly since: number;
   private enqueue = 0;
@@ -236,8 +215,6 @@ export class ExternalEventQueueMetrics {
     return { collectedAt: now, counters, failuresByCategory, gauges };
   }
 }
-
-export { computeAgeStats as computeQueueAgeStats };
 
 function recordToObject(map: Map<string, number>): Record<string, number> {
   const obj: Record<string, number> = Object.create(null);

@@ -105,8 +105,3 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
 
   return `─── Message from ${options.fromAgentName} ───\n\n${body}${footer}`;
 }
-
-export function extractReplyToSessionId(message: string): string | null {
-  const match = message.match(/<reply-routing replyToSessionId="([^"]+)" \/>\s*$/);
-  return match ? match[1] : null;
-}

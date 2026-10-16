@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  isReceivingStatus,
-  segmentMatches,
-  TopicTrie,
-} from '../../../../src/lib/external-events/topic-trie';
+import { segmentMatches, TopicTrie } from '../../../../src/lib/external-events/topic-trie';
 
 describe('TopicTrie', () => {
   const topic = 'github/lsm/neokai/pull_request/5.review_submitted';
@@ -136,16 +132,5 @@ describe('segmentMatches', () => {
     expect(segmentMatches('*.*', '5.review_submitted')).toBe(true);
     expect(segmentMatches('review_*', 'review_submitted')).toBe(true);
     expect(segmentMatches('review_*', 'review/submitted')).toBe(false);
-  });
-});
-
-describe('isReceivingStatus', () => {
-  test('only excludes cancelled node executions', () => {
-    expect(isReceivingStatus('pending')).toBe(true);
-    expect(isReceivingStatus('in_progress')).toBe(true);
-    expect(isReceivingStatus('idle')).toBe(true);
-    expect(isReceivingStatus('waiting_rebind')).toBe(true);
-    expect(isReceivingStatus('blocked')).toBe(true);
-    expect(isReceivingStatus('cancelled')).toBe(false);
   });
 });

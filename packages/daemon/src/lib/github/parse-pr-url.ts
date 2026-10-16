@@ -1,5 +1,3 @@
-import type { EventInterest } from '@hyperneo/shared';
-
 export interface ParsedPrUrl {
   host: string;
   owner: string;
@@ -74,37 +72,6 @@ export function parseGitHubTopic(topic: string): GitHubTopic | null {
 }
 
 export const KNOWN_TOPIC_FROM_SOURCES: ReadonlySet<string> = new Set<string>(['primaryLink']);
-
-export function resolveTopicFromInterest(
-  interest: Pick<EventInterest, 'topicFrom'>,
-  primaryLinkUrl: string | undefined | null,
-  allowedHosts: ReadonlySet<string> = new Set(['github.com'])
-): string | null {
-  const { topicFrom } = interest;
-  if (!topicFrom || !KNOWN_TOPIC_FROM_SOURCES.has(topicFrom.source)) return null;
-  const parsed = parsePrUrl(typeof primaryLinkUrl === 'string' ? primaryLinkUrl : '');
-  if (!parsed) return null;
-  const normalizeHost = (value: string): string => value.toLowerCase().replace(/:\d+$/, '');
-  const host = normalizeHost(parsed.host);
-  if (![...allowedHosts].some((allowed) => normalizeHost(allowed) === host)) return null;
-  const literalSegment = /^[a-zA-Z0-9._-]+$/;
-  if (
-    !literalSegment.test(parsed.owner) ||
-    !literalSegment.test(parsed.repo) ||
-    !literalSegment.test(parsed.number)
-  ) {
-    return null;
-  }
-  switch (topicFrom.source) {
-    case 'primaryLink':
-      return topicFrom.pattern
-        .replaceAll('{owner}', parsed.owner)
-        .replaceAll('{repo}', parsed.repo)
-        .replaceAll('{number}', parsed.number);
-    default:
-      return null;
-  }
-}
 
 export function pullRequestNumbersOfTopics(
   topics: readonly string[],
