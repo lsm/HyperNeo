@@ -265,7 +265,8 @@ function registeredTicks(
     if (!item) return false;
     const entry = item.check ? registry.resolve(item.check) : null;
     if (entry && !entry.ok) return false;
-    if (route !== 'check' && item.watch?.length) return true;
+    if (route !== 'check' && (item.watch?.length || (entry?.ok && entry.value.packId === packId)))
+      return true;
     return (
       route !== 'watch' &&
       entry?.ok &&

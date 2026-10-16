@@ -2471,7 +2471,15 @@ describe('neo.ask operations', () => {
         evidence: 'The human said it came.',
       })
     ).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('daemon_ticks_check') },
+      value: {
+        ok: true,
+        note: expect.stringContaining('the daemon ticks it itself from what it reads'),
+        ask: {
+          doneItems: expect.arrayContaining([
+            expect.objectContaining({ id: 'i1', state: 'pending' }),
+          ]),
+        },
+      },
     });
     service['writeAskTicks'](service.askRecords.get(askId)!, [
       { id: 'i1', evidence: 'Confirmation: id=abc' },
@@ -2510,7 +2518,15 @@ describe('neo.ask operations', () => {
       invoke('neo.ask.tick', { askId, itemId, state, evidence: 'I read it.' });
     for (const state of ['met', 'reported'] as const)
       expect(await tick('i1', state)).toMatchObject({
-        value: { ok: false, reason: expect.stringContaining('daemon_ticks_check') },
+        value: {
+          ok: true,
+          note: expect.stringContaining('the daemon ticks it itself from what it reads'),
+          ask: {
+            doneItems: expect.arrayContaining([
+              expect.objectContaining({ id: 'i1', state: 'pending' }),
+            ]),
+          },
+        },
       });
     expect(await tick('i2', 'reported')).toMatchObject({ value: { ok: true } });
   });
@@ -2933,7 +2949,15 @@ describe('neo.ask operations', () => {
         evidence: 'neo.github.read says merged.',
       })
     ).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('daemon_ticks_watched') },
+      value: {
+        ok: true,
+        note: expect.stringContaining('once every watched pull request has merged'),
+        ask: {
+          doneItems: expect.arrayContaining([
+            expect.objectContaining({ id: 'i3', state: 'pending' }),
+          ]),
+        },
+      },
     });
   });
 
@@ -2958,7 +2982,15 @@ describe('neo.ask operations', () => {
       invoke('neo.ask.tick', { askId, itemId, state, evidence });
     for (const state of ['met', 'reported'] as const)
       expect(await tick('i5', state, 'Deployed on both, I read it.')).toMatchObject({
-        value: { ok: false, reason: expect.stringContaining('daemon_ticks_check') },
+        value: {
+          ok: true,
+          note: expect.stringContaining('the daemon ticks it itself from what it reads'),
+          ask: {
+            doneItems: expect.arrayContaining([
+              expect.objectContaining({ id: 'i5', state: 'pending' }),
+            ]),
+          },
+        },
       });
     expect(await tick('i6', 'met', 'I read the page; the copy is clear.')).toMatchObject({
       value: { ok: true },

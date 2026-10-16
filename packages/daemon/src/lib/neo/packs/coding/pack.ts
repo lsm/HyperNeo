@@ -259,6 +259,7 @@ export function createCodingPack(
     cardBase: (workId: string) => string | null;
   }
 ): NeoPack {
+  const cardPrs = (workId: string) => deps.workPrs.get(workId)?.prs ?? [];
   return {
     ...CODING_PACK_BRIEF,
     prepareExecution: prepareCodingExecution,
@@ -317,10 +318,10 @@ export function createCodingPack(
       )),
     ],
     readAskWatchTicks: (ask: NeoAsk) =>
-      readNeoWatchTicks(ask, deps.readRefStates, Date.now(), deps.cardBase),
+      readNeoWatchTicks(ask, deps.readRefStates, Date.now(), deps.cardBase, cardPrs),
     readAskEventTicks: (ask: NeoAsk, event: ExternalEvent) =>
-      readNeoWatchEventTicks(ask, event, deps.readRefStates, deps.cardBase),
-    askTopics: neoWatchTopics,
+      readNeoWatchEventTicks(ask, event, deps.readRefStates, deps.cardBase, cardPrs),
+    askTopics: (ask: NeoAsk) => neoWatchTopics(ask, cardPrs),
     readAskEvidence: async (ask: NeoAsk) => {
       const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));
       const refs = neoAskCardRefs(
