@@ -1,4 +1,3 @@
-import { NEO_ASK_STALLED } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 
@@ -24,17 +23,4 @@ export function requireNeoAskStalled(
 
 export function requireNeoAskStallUntold(told: boolean): { value: true } | { reason: 'told' } {
   return told ? { reason: 'told' } : { value: true };
-}
-
-export function neoAskStalledNote(
-  ask: Pick<NeoAsk, 'id' | 'title'>,
-  cards: readonly NeoAskStallCard[],
-  replacedBy: string | null
-): string {
-  return `${NEO_ASK_STALLED}\n${JSON.stringify({
-    askId: ask.id,
-    title: ask.title,
-    cards: cards.map(({ id, title, status }) => ({ id, title, status })),
-    ...(replacedBy ? { replacedBy } : {}),
-  })}`;
 }

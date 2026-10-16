@@ -1,9 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { NEO_ASK_STALLED } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   NEO_ASK_STALL_QUIET_MS,
-  neoAskStalledNote,
   requireNeoAskStalled,
   requireNeoAskStallUntold,
 } from '../../../../src/lib/neo/ask-stall.ts';
@@ -69,24 +67,5 @@ describe('requireNeoAskStallUntold', () => {
   test('passes only a note Neo has not had yet', () => {
     expect(requireNeoAskStallUntold(false)).toEqual({ value: true });
     expect(requireNeoAskStallUntold(true)).toEqual({ reason: 'told' });
-  });
-});
-
-describe('neoAskStalledNote', () => {
-  test('names the ask, its cards, and the ask that carries the work on', () => {
-    const note = neoAskStalledNote(
-      { id: 'ask-1', title: 'Split the packs' },
-      [card('a', 'failed')],
-      'ask-2'
-    );
-    expect(note.startsWith(NEO_ASK_STALLED)).toBe(true);
-    expect(JSON.parse(note.slice(NEO_ASK_STALLED.length + 1))).toEqual({
-      askId: 'ask-1',
-      title: 'Split the packs',
-      cards: [{ id: 'a', title: 'Card a', status: 'failed' }],
-      replacedBy: 'ask-2',
-    });
-    const bare = neoAskStalledNote({ id: 'ask-1', title: 'T' }, [], null);
-    expect(JSON.parse(bare.slice(NEO_ASK_STALLED.length + 1))).not.toHaveProperty('replacedBy');
   });
 });

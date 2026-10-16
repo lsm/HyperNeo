@@ -1,4 +1,3 @@
-import { NEO_ASK_EVIDENCE } from '@hyperneo/prompts';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { isNeoAskLive } from './done-check.ts';
 import { neoEvidenceSignature, type NeoEvidence } from './evidence.ts';
@@ -50,17 +49,4 @@ export function planNeoAskEvidenceNote(
         .sort((a, b) => a.key.localeCompare(b.key)),
     },
   };
-}
-
-export function neoAskEvidenceNote(
-  ask: Pick<NeoAsk, 'id' | 'title' | 'status' | 'outcome'>,
-  evidence: readonly NeoEvidence[]
-): string {
-  return `${NEO_ASK_EVIDENCE}\n${JSON.stringify({
-    askId: ask.id,
-    title: ask.title,
-    status: ask.status,
-    summary: ask.outcome,
-    changed: evidence.map(({ key, summary }) => ({ key, summary })),
-  })}`;
 }

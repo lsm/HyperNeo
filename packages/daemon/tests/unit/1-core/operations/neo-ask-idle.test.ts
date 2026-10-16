@@ -5,7 +5,6 @@ import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import {
   NEO_ASK_IDLE_MS,
-  neoAskIdleNote,
   neoAskIdleSignature,
   requireNeoAskIdle,
   trackNeoAskIdle,
@@ -108,18 +107,6 @@ describe('trackNeoAskIdle', () => {
   });
 });
 
-describe('neoAskIdleNote', () => {
-  test('carries the ask and its cards after the instruction', () => {
-    const note = neoAskIdleNote({ id: 'a1', title: 'Login' }, [card('queued')]);
-    expect(note.startsWith(NEO_ASK_IDLE)).toBe(true);
-    expect(JSON.parse(note.slice(NEO_ASK_IDLE.length + 1))).toEqual({
-      askId: 'a1',
-      title: 'Login',
-      cards: [{ id: 'w1', title: 'Fix login', status: 'queued' }],
-    });
-  });
-});
-
 describe('NeoService.refreshDriverWork', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
@@ -178,7 +165,7 @@ describe('NeoService.refreshDriverWork', () => {
     return { ask, workId: work.id };
   }
 
-  const idleNotes = () => delivered.filter((note) => note.content.startsWith(NEO_ASK_IDLE));
+  const idleNotes = () => delivered.filter((note) => note.content.includes(NEO_ASK_IDLE));
 
   test('wakes Neo when a card under a pending ask makes no progress for 20 minutes', async () => {
     stuckAsk();

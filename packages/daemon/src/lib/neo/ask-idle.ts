@@ -1,4 +1,3 @@
-import { NEO_ASK_IDLE } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 
@@ -61,15 +60,4 @@ export function requireNeoAskIdle(
   if (inFlight.every((card) => card.awaited)) return { reason: 'awaiting_pr' };
   if (now - read.since < NEO_ASK_IDLE_MS) return { reason: 'moving' };
   return { value: `idle:${read.signature}` };
-}
-
-export function neoAskIdleNote(
-  ask: Pick<NeoAsk, 'id' | 'title'>,
-  cards: readonly NeoAskIdleCard[]
-): string {
-  return `${NEO_ASK_IDLE}\n${JSON.stringify({
-    askId: ask.id,
-    title: ask.title,
-    cards: cards.map(({ id, title, status }) => ({ id, title, status })),
-  })}`;
 }

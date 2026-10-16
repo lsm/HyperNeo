@@ -3,6 +3,9 @@ import { hostname } from 'node:os';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 import {
   fillPrompt,
+  NEO_ASK_EVIDENCE,
+  NEO_ASK_IDLE,
+  NEO_ASK_STALLED,
   NEO_SESSION_TRACK,
   NEO_WORK_DELEGATED,
   NEO_WORK_PACK_NOTE,
@@ -87,11 +90,7 @@ import { hashString32 } from '../runtime-hash.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-wake.ts';
 import { isNeoAskAnswerReady, planNeoAnswerPublished } from './answer-outcome.ts';
-import {
-  neoAskEvidenceNote,
-  planNeoAskEvidenceNote,
-  requireNeoAskEvidenceDue,
-} from './ask-evidence.ts';
+import { planNeoAskEvidenceNote, requireNeoAskEvidenceDue } from './ask-evidence.ts';
 import {
   neoForwardedAskMessageId,
   neoForwardedText,
@@ -100,7 +99,6 @@ import {
 } from './ask-forward-operation.ts';
 import {
   type NeoAskIdleSeen,
-  neoAskIdleNote,
   neoAskIdleSignature,
   requireNeoAskIdle,
   trackNeoAskIdle,
@@ -127,7 +125,8 @@ import {
   neoWorkReturnMessageId,
   nudgedMessageId,
 } from './ask-origin.ts';
-import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
+import { requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
+import { neoAskProgressNote } from './ask-progress.ts';
 import { neoCardAttentionNeoNote, requireNeoCardAttentionRelay } from './card-attention.ts';
 import { planNeoCardCheck } from './card-check.ts';
 import {
@@ -2438,7 +2437,10 @@ export class NeoService {
         await this.deliverToOrigin(
           ask.originSessionId,
           note.id,
-          neoAskStalledNote(ask, read.cards, read.newer),
+          neoAskProgressNote(ask, NEO_ASK_STALLED, {
+            cards: read.cards.map(({ id, title, status }) => ({ id, title, status })),
+            ...(read.newer ? { replacedBy: read.newer } : {}),
+          }),
           neoAskParent(ask)
         );
       },
@@ -2501,7 +2503,9 @@ export class NeoService {
           read.cards.map((card) => card.id),
           ask.originSessionId,
           note.id,
-          neoAskIdleNote(ask, read.cards),
+          neoAskProgressNote(ask, NEO_ASK_IDLE, {
+            cards: read.cards.map(({ id, title, status }) => ({ id, title, status })),
+          }),
           neoAskParent(ask)
         );
       },
@@ -2551,7 +2555,10 @@ export class NeoService {
         await this.deliverToOrigin(
           check.originSessionId,
           neoAskEvidenceMessageId(check.id, note.signature),
-          neoAskEvidenceNote(check, note.evidence),
+          neoAskProgressNote(check, NEO_ASK_EVIDENCE, {
+            summary: check.outcome,
+            changed: note.evidence.map(({ key, summary }) => ({ key, summary })),
+          }),
           neoAskParent(check)
         );
         this.askChecks.markTold(check.id, note.signature, Date.now());
