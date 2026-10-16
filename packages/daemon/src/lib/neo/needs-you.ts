@@ -1,8 +1,4 @@
-import {
-  type NeoAsk,
-  type NeoAskItem,
-  neoAskApprovalSpent,
-} from '@hyperneo/shared/types/neo-snapshot';
+import { type NeoAsk, type NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { isNeoAskSettled } from './done-check.ts';
 
 const NEO_ASK_ANSWER_LINE = 'Their answer: ';
@@ -87,12 +83,12 @@ function cardWaitsOnHuman(card: NeoAskCardWait | undefined): boolean {
 function neoUnkindedItemCleared(
   ask: NeoAsk,
   cards: readonly NeoAskCardWait[],
-  now: number
+  _now: number
 ): string | null {
   if (!cards.length || cards.some((card) => card.status === 'queued' && card.needsYou)) return null;
   if (!cards.some((card) => card.status === 'proposed'))
     return 'no card under this ask is proposed or waits on the human';
-  const approved = ask.approvedAt != null && neoAskApprovalSpent(ask, now) === null;
+  const approved = ask.approvedAt != null;
   return approved && !cards.some((card) => card.stalled)
     ? "the ask's approval is active and none of its cards has stalled"
     : null;

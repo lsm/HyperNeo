@@ -1142,12 +1142,7 @@ export function createNeoOperations(service: NeoService) {
   function askView(ask: NeoAsk | null): z.infer<typeof WorkAskView> | null {
     if (!ask) return null;
     const work = ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []);
-    const asks = projectNeoSnapshotAsks(
-      [ask],
-      1,
-      Date.now(),
-      new Set(ask.workIds.filter((id) => service.isContinueStalled(id)))
-    );
+    const asks = projectNeoSnapshotAsks([ask], 1, Date.now(), new Set());
     const { workPrs, cards } = projectCards(work, asks);
     const [view] = projectNeoAskViews(
       asks,
@@ -1246,7 +1241,6 @@ export function createNeoOperations(service: NeoService) {
     const visibleWork = [...recentWork, ...olderActiveWork];
     const consultations = focus ? [] : service.consultations.list(scope ?? undefined);
     const waiters = focus ? [] : service.consultationWaiters.queued(scope ?? undefined);
-    const workIds = visibleWork.map((item) => item.id);
     const listed = focus
       ? [focus]
       : service.askRecords.list(scope === undefined ? undefined : scope);
@@ -1255,7 +1249,7 @@ export function createNeoOperations(service: NeoService) {
       listed,
       caller.source === 'rpc' && !summarize ? 50 : NEO_SNAPSHOT_SETTLED_ASKS,
       Date.now(),
-      new Set(workIds.filter((id) => service.isContinueStalled(id)))
+      new Set()
     );
     const { workPrs, cards } = projectCards(visibleWork, asks);
     const cardOf = new Map(cards.map((card) => [card.workId, card]));
@@ -2664,7 +2658,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.continue',
       description:
-        'Send the next instruction to started work whose session stopped before its doneWhen was met, in the same session with its context. The goal and checklist are attached again. Reported work reopens as queued. Allowed while the work keeps moving: it stops after 3 continues in a row bring no new commit, PR state, review or report, or 12 hours after the work started; work under an approved ask follows the same no-progress rule for 48 hours after approval instead of 12. Past that it rejects with continue_budget_spent and you must ask the human (to approve the ask again, for approved work). The Neo session that proposed the work can continue it at any time; any Neo session can while answering the human’s own chat message, and the user always can.',
+        'Send the next instruction to started work whose session stopped before its doneWhen was met, in the same session with its context. The goal and checklist are attached again. Reported work reopens as queued. PR waits, met outcomes, prior sends and progress are facts for choosing the next step. Concurrent sends are protected. The Neo session that proposed the work can continue it at any time; any Neo session can while answering the human’s own chat message, and the user always can.',
       inputSchema: Continue,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

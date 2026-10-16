@@ -1,7 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoOutcomeBindingPolicy } from '../../lib/neo/outcome-binding-policy.ts';
 import {
-  NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
   type NeoAskItem,
   type NeoAskQuestionBecause,
@@ -209,16 +208,6 @@ export class NeoAskRepository {
           ORDER BY updated_at DESC, id`
       )
       .all() as NeoAskRow[];
-    return this.withWork(rows);
-  }
-
-  achievedSince(since: number): NeoAsk[] {
-    const rows = this.db
-      .prepare(
-        `SELECT ${askColumns} FROM neo_asks WHERE status = 'achieved' AND settled_at > ?
-          ORDER BY settled_at DESC, id`
-      )
-      .all(since) as NeoAskRow[];
     return this.withWork(rows);
   }
 
@@ -785,11 +774,6 @@ export class NeoAskRepository {
       .all(JSON.stringify(rows.map((row) => row.id))) as NeoAskItemRow[];
     return rows.map((row) => ({
       ...row,
-      ...(row.approvedAt != null
-        ? {
-            approvedUntil: row.approvedAt + NEO_ASK_CONTINUE_WINDOW_MS,
-          }
-        : {}),
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)

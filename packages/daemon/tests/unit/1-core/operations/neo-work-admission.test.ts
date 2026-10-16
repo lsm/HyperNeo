@@ -203,11 +203,11 @@ describe('NeoService.admitWork', () => {
         .prepare('UPDATE neo_asks SET approved_at = 1, approved_revision = revision WHERE id = ?')
         .run(ask.id);
       expect(await service.admitWork('a', false)).toEqual({
-        ok: false,
-        reason: 'approval_expired',
+        ok: true,
+        handoff: 'started',
       });
-      expect(starts).toHaveLength(0);
-      expect(await service.admitWork('a', true)).toEqual({ ok: true, handoff: 'started' });
+      expect(starts).toHaveLength(1);
+      expect(await service.admitWork('a', true)).toEqual({ ok: false, reason: 'already_started' });
       expect(starts).toHaveLength(1);
     } finally {
       db.close();

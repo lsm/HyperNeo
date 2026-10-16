@@ -1,11 +1,10 @@
+import type { neoContinueFacts } from './card-wake.ts';
 import {
   fillPrompt,
   NEO_WORK_BLOCKER,
   NEO_WORK_DONE_CHECK,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
-  NEO_WORK_DONE_CHECK_BUDGET,
-  NEO_WORK_DONE_CHECK_CONTINUE,
   NEO_WORK_GOAL,
   NEO_WORK_GOAL_ASKED,
   NEO_WORK_GOAL_DONE_WHEN,
@@ -16,20 +15,14 @@ import {
   NEO_WORK_NEEDS_YOU,
   NEO_WORK_PACK_NOTE,
   NEO_WORK_STALL,
-  NEO_WORK_STALL_BUDGET,
   NEO_WORK_STUCK,
   NEO_WORK_STUCK_ABANDONED,
-  NEO_WORK_STUCK_BUDGET,
 } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
-  isPooledNeoAsk,
-  NEO_WORK_STALLED_CONTINUES,
   type NeoAsk,
-  type NeoWorkContinue,
   type NeoWorkGoal,
   type NeoWorkPr,
-  neoAskApprovalSpent,
   neoWorkPrVerdict,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
@@ -153,8 +146,6 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
 
-const NEO_WORK_CONTINUE_WINDOW_MS = 12 * 60 * 60 * 1000;
-
 export function neoWorkProgress(
   work: Pick<NeoWork, 'status' | 'report'>,
   prRevision: number | null,
@@ -165,43 +156,6 @@ export function neoWorkProgress(
       ? hashString32(work.report ?? '').toString(36)
       : (prior?.split('|')[1] ?? '-');
   return `${prRevision ?? 0}|${report}`;
-}
-
-export function neoStalledContinues(
-  continued: Pick<NeoWorkContinue, 'progress' | 'stalled'> | null,
-  progress: string
-): number {
-  return continued && continued.progress === progress ? continued.stalled + 1 : 0;
-}
-
-export function readContinueBudget(
-  stalledWakes: number,
-  startedAt: number | null,
-  now: number
-): string | null {
-  if (stalledWakes >= NEO_WORK_STALLED_CONTINUES)
-    return `continue_budget_spent: your last ${NEO_WORK_STALLED_CONTINUES} wakes for this card brought no new commit, PR state, review, report or met item.`;
-  if (startedAt !== null && now - startedAt >= NEO_WORK_CONTINUE_WINDOW_MS)
-    return 'continue_budget_spent: this work started over 12 hours ago.';
-  return null;
-}
-
-export function neoContinuesLeft(stalled: number): number {
-  return Math.max(0, NEO_WORK_STALLED_CONTINUES - stalled);
-}
-
-export function readNeoWorkContinueBudget(
-  stalledWakes: number,
-  startedAt: number | null,
-  ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null,
-  now: number
-): string | null {
-  if (!ask || !isPooledNeoAsk(ask)) return readContinueBudget(stalledWakes, startedAt, now);
-  const stalled = readContinueBudget(stalledWakes, null, now);
-  if (stalled) return stalled;
-  return neoAskApprovalSpent(ask, now) === 'expired'
-    ? 'continue_budget_spent: this ask was approved over 48 hours ago.'
-    : null;
 }
 
 export function withWorkGoal(
@@ -622,16 +576,16 @@ export function driverDoneCheckNote(
   work: Pick<NeoWork, 'id' | 'title' | 'report' | 'originSessionId'>,
   goal: NeoWorkGoal,
   continued: number,
-  budget: string | null,
   {
-    stalled = 0,
     facts = null,
+    continuation,
     ask,
     pack = null,
     cards = [],
     move = '',
   }: {
     stalled?: number;
+    continuation?: ReturnType<typeof neoContinueFacts>;
     facts?: NeoPackCardFacts | null;
     ask?: NeoAsk | null;
     pack?: NeoPackFragment | null;
@@ -640,11 +594,7 @@ export function driverDoneCheckNote(
   } = {}
 ): string {
   const owned = !!ask && ask.originSessionId === work.originSessionId;
-  const next = budget
-    ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget })
-    : fillPrompt(NEO_WORK_DONE_CHECK_CONTINUE, {
-        continues_left: String(neoContinuesLeft(stalled)),
-      });
+  const next = '';
   const owner = !ask
     ? ''
     : owned
@@ -664,6 +614,7 @@ export function driverDoneCheckNote(
         goal: goal.goal,
         ...(restates(goal.doneWhen) ? {} : { doneWhen: goal.doneWhen }),
         continued,
+        continuation,
         report: work.report?.slice(0, 12000) ?? null,
         ...facts?.data,
       },
@@ -697,10 +648,9 @@ export function driverStallNote(
   work: Pick<NeoWork, 'id' | 'title'>,
   ask: NeoAsk | null,
   goal: NeoWorkGoal | null,
-  lastReply: string | undefined,
-  budget: string | null
+  lastReply: string | undefined
 ): string {
-  const next = budget ? fillPrompt(NEO_WORK_STALL_BUDGET, { budget }) : '';
+  const next = '';
   return neoAskProgressNote(
     ask,
     fillPrompt(NEO_WORK_STALL, { work_id: work.id, title: work.title, next }),
@@ -750,15 +700,10 @@ export function driverStuckNote(
   goal: NeoWorkGoal | null,
   queuedSince: number,
   now: number,
-  abandoned: boolean,
-  budget: string | null
+  abandoned: boolean
 ): string {
   const hours = Math.floor((now - queuedSince) / HOUR_MS);
-  const next = abandoned
-    ? NEO_WORK_STUCK_ABANDONED
-    : budget
-      ? fillPrompt(NEO_WORK_STUCK_BUDGET, { budget })
-      : '';
+  const next = abandoned ? NEO_WORK_STUCK_ABANDONED : '';
   return neoAskProgressNote(
     ask,
     fillPrompt(NEO_WORK_STUCK, { work_id: work.id, title: work.title, hours: String(hours), next }),
