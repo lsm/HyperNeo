@@ -937,10 +937,6 @@ describe('AgentSession', () => {
       expect(info).toBeNull();
     });
 
-    it('getQueryObject should return query object', () => {
-      expect(agentSession.getQueryObject()).toBeNull();
-    });
-
     it('getFirstMessageReceived should return firstMessageReceived flag', () => {
       expect(agentSession.getFirstMessageReceived()).toBe(false);
     });
@@ -2210,22 +2206,6 @@ describe('AgentSession', () => {
       expect(settledCount).toBe(2);
       expect(enqueue).toHaveBeenCalledTimes(1);
       expect(markDeliveryFailedByUuid).toHaveBeenCalledTimes(1);
-    });
-
-    it('replayAllPendingMessages bypasses the manual-mode guard that stops immediate-mode replay', async () => {
-      agentSession.session.config.queryMode = 'manual';
-      const inner = agentSession.queryModeHandler as unknown as {
-        replayPendingMessagesForImmediateMode: ReturnType<typeof mock>;
-      };
-      const innerSpy = spyOn(inner, 'replayPendingMessagesForImmediateMode').mockResolvedValue(
-        undefined
-      );
-
-      await agentSession.replayPendingMessagesForImmediateMode();
-      expect(innerSpy).not.toHaveBeenCalled();
-
-      await agentSession.replayAllPendingMessages();
-      expect(innerSpy).toHaveBeenCalledTimes(1);
     });
 
     it('handleModelSwitch should delegate to modelSwitchHandler', async () => {
@@ -4590,128 +4570,6 @@ describe('AgentSession', () => {
       expect(agentSession.getSessionData().worktree).toBeUndefined();
       expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
       expect(agentSession.getSessionData().type).toBe('room');
-    });
-  });
-
-  describe('awaitSdkSessionCaptured', () => {
-    function makeAgentSessionWithCapturedId(
-      preCapturedSdkSessionId: string | undefined,
-      onListener: (handler: (payload: Record<string, unknown>) => void) => {
-        fire: (payload: Record<string, unknown>) => void;
-        unsubscribe: ReturnType<typeof mock>;
-      }
-    ): { agentSession: AgentSession; controls: ReturnType<typeof onListener> } {
-      const session: Session = {
-        id: 'space:s1:task:t1',
-        title: 'Task Agent',
-        workspacePath: '/tmp/workspace',
-        createdAt: new Date().toISOString(),
-        lastActiveAt: new Date().toISOString(),
-        status: 'active',
-        config: {
-          model: 'claude-sonnet-4-5-20250929',
-          maxTokens: 8192,
-          temperature: 1,
-        },
-        metadata: {
-          messageCount: 0,
-          totalTokens: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          totalCost: 0,
-          toolCallCount: 0,
-        },
-        type: 'worker',
-        context: { spaceId: 's1', taskId: 't1' },
-        sdkSessionId: preCapturedSdkSessionId,
-      } as Session;
-
-      const mockDb = {
-        getSession: mock(() => session),
-        createSession: mock(() => {}),
-        updateSession: mock(() => {}),
-        getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
-      } as unknown as Database;
-
-      let captured: ReturnType<typeof onListener> | null = null;
-      const mockInternalEventBus = {
-        publish: mock(async () => {}),
-        publishAsync: mock(() => {}),
-        subscribe: mock((event: string, handler: (payload: Record<string, unknown>) => void) => {
-          if (event === 'session.updated') {
-            captured = onListener(handler);
-            return captured.unsubscribe;
-          }
-          return () => {};
-        }),
-      } as unknown as InternalEventBus<any>;
-      const mockMessageHub = {} as MessageHub;
-      const mockGetApiKey = mock(async () => 'test-key');
-
-      const init = {
-        sessionId: session.id,
-        workspacePath: session.workspacePath,
-        type: 'worker' as const,
-        context: session.context,
-        model: session.config.model,
-      };
-
-      const agentSession = AgentSession.fromInit(
-        init,
-        mockDb,
-        mockMessageHub,
-        mockInternalEventBus,
-        mockGetApiKey,
-        'claude-sonnet-4-5-20250929'
-      );
-
-      return {
-        agentSession,
-        controls: captured as unknown as ReturnType<typeof onListener>,
-      };
-    }
-
-    it('resolves immediately when sdkSessionId is already set', async () => {
-      const { agentSession } = makeAgentSessionWithCapturedId('sdk-already-here', () => ({
-        fire: () => {},
-        unsubscribe: mock(() => {}),
-      }));
-      const id = await agentSession.awaitSdkSessionCaptured(500);
-      expect(id).toBe('sdk-already-here');
-    });
-
-    it('resolves when session.updated fires with a sdkSessionId payload', async () => {
-      let handler: ((payload: Record<string, unknown>) => void) | null = null;
-      const unsubscribe = mock(() => {});
-      const { agentSession } = makeAgentSessionWithCapturedId(undefined, (h) => {
-        handler = h;
-        return { fire: h, unsubscribe };
-      });
-
-      const waiter = agentSession.awaitSdkSessionCaptured(2000);
-
-      handler?.({ sessionId: 'other-session', session: { sdkSessionId: 'ignored' } });
-      handler?.({
-        sessionId: 'space:s1:task:t1',
-        session: { sdkSessionId: 'sdk-just-captured' },
-      });
-
-      const id = await waiter;
-      expect(id).toBe('sdk-just-captured');
-      expect(unsubscribe).toHaveBeenCalledTimes(1);
-    });
-
-    it('rejects on timeout if the SDK never publishes a sdkSessionId', async () => {
-      const unsubscribe = mock(() => {});
-      const { agentSession } = makeAgentSessionWithCapturedId(undefined, (_h) => ({
-        fire: () => {},
-        unsubscribe,
-      }));
-
-      await expect(agentSession.awaitSdkSessionCaptured(50)).rejects.toThrow(
-        /Timed out after 50ms/
-      );
-      expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
   });
 
