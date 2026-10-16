@@ -275,7 +275,7 @@ const Consult = z.object({
 const Respond = z.object({ id: z.string().min(1), answer: z.string().trim().min(1).max(4000) });
 type ConsultRequest = z.infer<typeof Consult> & { requestKey: string };
 const NEO_CONSULTATION_SETTLED =
-  'Already settled: Neo has this consultation’s recorded answer above, so nothing more is sent. End the turn.';
+  'Already settled: Neo already received the recorded answer shown here, and this new answer was not recorded.';
 const ConsultationResult = z.union([
   Failure,
   z.object({
@@ -2461,7 +2461,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.respond',
       description:
-        'Return a concise answer to the root Neo for a consultation assigned to this context holder. A consultation that is already settled returns its recorded answer with replyGuidance; nothing more is sent, so end the turn.',
+        'Return a concise answer to the root Neo for a consultation assigned to this context holder. A consultation that is already settled returns its recorded answer with replyGuidance; the new answer is not recorded and nothing more is sent.',
       inputSchema: Respond,
       resultSchema: ConsultationResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
