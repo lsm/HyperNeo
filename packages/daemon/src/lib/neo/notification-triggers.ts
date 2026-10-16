@@ -231,16 +231,16 @@ export function neoAskTriggerKeys(
 const KIND_ORDER: readonly NeoTriggerKind[] = ['outcome', 'failed', 'idle', 'action'];
 
 export function planNeoAskTrigger(
-  ask: Pick<NeoAsk, 'id'>,
+  ask: Pick<NeoAsk, 'id' | 'revision'>,
   keys: readonly NeoTriggerKey[]
 ): { value: NeoAskTrigger } | { reason: null } {
   const fresh = keys;
   if (!fresh.length) return { reason: null };
   const kind = KIND_ORDER.find((kind) => fresh.some((key) => key.kind === kind)) ?? 'action';
-  const signature = fresh
-    .map((key) => key.key)
-    .sort()
-    .join('|');
+  const signature = JSON.stringify({
+    revision: ask.revision ?? 0,
+    facts: fresh.map((key) => JSON.stringify([key.key, key.line])).sort(),
+  });
   return {
     value: {
       triggerId: `${kind}:${ask.id}:${hashString32(signature).toString(36)}`,

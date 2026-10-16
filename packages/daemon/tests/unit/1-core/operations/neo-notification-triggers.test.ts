@@ -378,6 +378,15 @@ describe('planNeoAskTrigger', () => {
     });
     expect(id(planNeoAskTrigger(ask, [...keys].reverse()))).toBe(id(first));
     expect(id(first)).toMatch(/^failed:a1:/);
+    expect(id(planNeoAskTrigger({ ...ask, revision: 1 }, keys))).not.toBe(id(first));
+    expect(
+      id(
+        planNeoAskTrigger(
+          ask,
+          keys.map((key) => ({ ...key, line: `${key.line} updated` }))
+        )
+      )
+    ).not.toBe(id(first));
   });
 });
 
@@ -628,7 +637,7 @@ describe('NeoService notification triggers', () => {
     });
   });
 
-  test('every item met wakes Neo with a note naming the outcome trigger, once per transition', async () => {
+  test('met items and recorded settlement are distinct facts, with stable IDs on repeat', async () => {
     const outcomes = () =>
       mailbox().filter((note) => note.messageUuid.startsWith('neo-trigger:outcome:'));
     const opened = open();
@@ -644,7 +653,8 @@ describe('NeoService notification triggers', () => {
     sweep();
     sweep();
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(outcomes()).toHaveLength(1);
+    expect(outcomes()).toHaveLength(2);
+    expect(new Set(outcomes().map((item) => item.messageUuid)).size).toBe(2);
   });
 
   test('a root opener whose session row is gone is recreated for the note, not the holder', async () => {
@@ -927,6 +937,8 @@ describe('NeoNotificationTriggerRepository', () => {
       receipts.record('a1', ['idle:1'], 'idle:a1:first', 1);
       receipts.record('a1', ['idle:1', 'answer:q1'], 'action:a1:next', 2);
       receipts.record('a1', ['answer:q1', 'idle:1'], 'action:a1:next', 3);
+      receipts.record('a1', ['idle:1'], 'idle:a1:revised', 4);
+      expect(receipts.trigger('idle:a1:revised')).toEqual({ askId: 'a1', keys: ['idle:1'] });
       expect(receipts.trigger('idle:a1:first')).toEqual({ askId: 'a1', keys: ['idle:1'] });
       expect(receipts.trigger('action:a1:next')).toEqual({
         askId: 'a1',

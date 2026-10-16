@@ -18,7 +18,7 @@ export class NeoNotificationTriggerRepository {
     if (!this.ready() || !keys.length) return;
     const insert = this.db.prepare(`INSERT OR IGNORE INTO neo_notification_triggers
       (ask_id, trigger_key, trigger_id, created_at) VALUES (?, ?, ?, ?)`);
-    insert.run(askId, JSON.stringify([...keys].sort()), triggerId, at);
+    insert.run(askId, JSON.stringify({ id: triggerId, keys: [...keys].sort() }), triggerId, at);
   }
 
   trigger(triggerId: string): { askId: string; keys: string[] } | null {
@@ -55,7 +55,12 @@ export class NeoNotificationTriggerRepository {
 function readTriggerKeys(key: string): string[] {
   try {
     const parsed: unknown = JSON.parse(key);
-    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) return parsed;
+    const keys = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === 'object' && 'keys' in parsed
+        ? parsed.keys
+        : null;
+    if (Array.isArray(keys) && keys.every((item) => typeof item === 'string')) return keys;
   } catch {}
   return [key];
 }
