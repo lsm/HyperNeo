@@ -5,6 +5,7 @@ import type {
   NeoPublicationAppendResult,
   NeoPublicationChangeResult,
   NeoPublicationInput,
+  NeoPublicationRevision,
 } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -22,7 +23,13 @@ const page = z.object({
 });
 
 function decode(row: Row): NeoPublication {
-  const parsed = admitNeoPublication(JSON.parse(row.payloadJson));
+  const {
+    interim: _interim,
+    corrects: _corrects,
+    correctedBy: _correctedBy,
+    ...message
+  } = JSON.parse(row.payloadJson);
+  const parsed = admitNeoPublication(message);
   if ('reason' in parsed) throw new Error('Invalid stored Neo publication');
   return { ...parsed.value, sequence: row.sequence, createdAt: row.createdAt };
 }
@@ -39,45 +46,12 @@ function hasTrigger(
     .get(conversationId, triggerId, publicationId);
 }
 
-const sameAnswer = (a: NeoPublicationInput, b: NeoPublicationInput) =>
-  a.shortText === b.shortText &&
-  a.fullText === b.fullText &&
-  a.awaiting === b.awaiting &&
-  JSON.stringify(a.links) === JSON.stringify(b.links);
-
-export function findNeoRepeatedPublication(
-  priors: readonly NeoPublication[],
-  input: NeoPublicationInput
-): NeoPublication | null {
-  return priors.find((prior) => sameAnswer(prior, input)) ?? null;
-}
-
-function repeatOnTrigger(db: Database, input: NeoPublicationInput): NeoPublication | null {
-  const rows = db
-    .prepare(`SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
-      AND publication_id <> ? AND (json_extract(payload_json, '$.triggerId') = ?
-        OR (? IS NULL AND json_extract(payload_json, '$.askOrigin.sessionId') = ?
-          AND json_extract(payload_json, '$.askOrigin.messageId') = ?))
-      ORDER BY sequence`)
-    .all(
-      input.conversationId,
-      input.publicationId,
-      input.triggerId ?? null,
-      input.triggerId ?? null,
-      input.askOrigin.sessionId,
-      input.askOrigin.messageId
-    ) as Row[];
-  return findNeoRepeatedPublication(rows.map(decode), input);
-}
-
 function appendImmutable(
   db: Database,
   input: NeoPublicationInput,
   payload: string
 ): NeoPublicationAppendResult {
   return db.transaction((): NeoPublicationAppendResult => {
-    const repeat = repeatOnTrigger(db, input);
-    if (repeat) return { accepted: true, created: false, publication: repeat };
     const inserted = db
       .prepare(`INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at)
         VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id, publication_id) DO NOTHING
@@ -96,7 +70,28 @@ function appendImmutable(
         )
         .get(input.conversationId, input.publicationId) as Row | null);
     if (!row) throw new Error('Neo publication append lost its reservation');
-    return row.payloadJson === payload
+    const current = decode(row);
+    const first = current.revisions?.[0];
+    const {
+      sequence: _sequence,
+      createdAt: _createdAt,
+      revisionId: _revisionId,
+      revisions: _revisions,
+      editedAt: _editedAt,
+      editedBy: _editedBy,
+      answerInput: _answerInput,
+      ...original
+    } = current;
+    const initial = first
+      ? {
+          ...original,
+          shortText: first.shortText,
+          fullText: first.fullText,
+          awaiting: first.awaiting,
+        }
+      : null;
+    return row.payloadJson === payload ||
+      (initial && JSON.stringify(admitNeoPublication(initial)) === JSON.stringify({ value: input }))
       ? { accepted: true, created: !!inserted, publication: decode(row) }
       : { accepted: false, reason: 'publication_conflict' };
   })();
@@ -146,7 +141,7 @@ export class NeoPublicationRepository {
   append(input: unknown): NeoPublicationAppendResult {
     const result = append(input, this.db);
     if (result === 'invalid_publication') return { accepted: false, reason: result };
-    if (result.accepted && !result.publication.interim) this.recordReplyOutcome(result.publication);
+    if (result.accepted && result.created) this.recordReplyOutcome(result.publication);
     return result;
   }
 
@@ -165,60 +160,66 @@ export class NeoPublicationRepository {
     text: { shortText?: string; fullText?: string },
     at: string,
     by: string,
-    input?: NeoInputOrigin
+    input: NeoInputOrigin,
+    revisionId: string
   ): NeoPublicationChangeResult {
-    const current = this.get(conversationId, publicationId);
-    if (!current) return { accepted: false, reason: 'not_found' };
-    const { sequence: _sequence, createdAt: _createdAt, awaiting: _awaiting, ...stored } = current;
-    const next = admitNeoPublication({
-      ...stored,
-      ...text,
-      editedAt: at,
-      editedBy: by,
-      ...(input ? { answerInput: input } : {}),
-    });
-    if ('reason' in next) return { accepted: false, reason: 'publication_conflict' };
-    this.db
-      .prepare(
-        'UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?'
-      )
-      .run(JSON.stringify(next.value), conversationId, publicationId);
-    return {
-      accepted: true,
-      created: false,
-      publication: this.get(conversationId, publicationId)!,
-    };
-  }
-
-  correct(original: NeoPublication, correction: NeoPublicationInput): NeoPublicationChangeResult {
     return this.db.transaction((): NeoPublicationChangeResult => {
-      const current = this.get(original.conversationId, original.publicationId);
+      const reserved = this.db
+        .prepare(`SELECT publication_id AS id FROM neo_publications
+        WHERE conversation_id = ? AND (json_extract(payload_json, '$.revisionId') = ?
+          OR EXISTS (SELECT 1 FROM json_each(payload_json, '$.revisions') r
+            WHERE json_extract(r.value, '$.revisionId') = ?)) LIMIT 1`)
+        .get(conversationId, revisionId, revisionId) as { id: string } | null;
+      if (reserved && reserved.id !== publicationId)
+        return { accepted: false, reason: 'publication_conflict' };
+      const current = this.get(conversationId, publicationId);
       if (!current) return { accepted: false, reason: 'not_found' };
-      if (current.correctedBy === correction.publicationId) {
-        const existing = this.get(current.conversationId, correction.publicationId);
-        return existing
-          ? { accepted: true, created: false, publication: existing }
+      const version = (message: NeoPublication): NeoPublicationRevision => ({
+        revisionId: message.revisionId ?? message.publicationId,
+        shortText: message.shortText,
+        fullText: message.fullText,
+        createdAt: message.editedAt ?? message.createdAt,
+        producerInput: message.answerInput ?? message.producerInput,
+        ...(message.awaiting ? { awaiting: message.awaiting } : {}),
+      });
+      const prior = [...(current.revisions ?? []), version(current)].find(
+        (item) => item.revisionId === revisionId
+      );
+      if (prior) {
+        const same =
+          (text.shortText === undefined || text.shortText === prior.shortText) &&
+          (text.fullText === undefined || text.fullText === prior.fullText) &&
+          input.sessionId === prior.producerInput.sessionId &&
+          input.messageId === prior.producerInput.messageId;
+        return same
+          ? { accepted: true, created: false, publication: current }
           : { accepted: false, reason: 'publication_conflict' };
       }
-      if (current.correctedBy || current.corrects)
-        return { accepted: false, reason: 'already_corrected' };
-      const admitted = admitNeoPublication({ ...correction, corrects: current.publicationId });
-      if ('reason' in admitted) return { accepted: false, reason: 'publication_conflict' };
-      const appended = appendImmutable(this.db, admitted.value, JSON.stringify(admitted.value));
-      if (!appended.accepted || !appended.created)
-        return { accepted: false, reason: 'publication_conflict' };
-      const { sequence: _sequence, createdAt: _createdAt, ...stored } = current;
+      const {
+        sequence: _sequence,
+        createdAt: _createdAt,
+        awaiting: _awaiting,
+        ...stored
+      } = current;
+      const next = admitNeoPublication({
+        ...stored,
+        ...(text.shortText !== undefined ? { shortText: text.shortText } : {}),
+        ...(text.fullText !== undefined ? { fullText: text.fullText } : {}),
+        revisionId,
+        revisions: [...(current.revisions ?? []), version(current)],
+        editedAt: at,
+        editedBy: by,
+        answerInput: input,
+      });
+      if ('reason' in next) return { accepted: false, reason: 'publication_conflict' };
       this.db
         .prepare(
           'UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?'
         )
-        .run(
-          JSON.stringify({ ...stored, correctedBy: correction.publicationId }),
-          current.conversationId,
-          current.publicationId
-        );
-      if (appended.publication.triggerId) this.recordReplyOutcome(appended.publication);
-      return appended;
+        .run(JSON.stringify(next.value), conversationId, publicationId);
+      const publication = this.get(conversationId, publicationId)!;
+      this.recordReplyOutcome(publication);
+      return { accepted: true, created: false, publication };
     })();
   }
 
@@ -233,10 +234,6 @@ export class NeoPublicationRepository {
     );
   }
 
-  repeatOf(input: NeoPublicationInput): NeoPublication | null {
-    return repeatOnTrigger(this.db, input);
-  }
-
   toldForAsk(
     conversationId: string,
     ask: Pick<NeoAsk, 'id' | 'originSessionId' | 'originMessageId'>
@@ -245,7 +242,6 @@ export class NeoPublicationRepository {
       this.db
         .prepare(
           `SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
-            AND json_extract(payload_json, '$.interim') IS NULL
             AND (json_extract(payload_json, '$.triggerId') LIKE ?
               OR (json_extract(payload_json, '$.askOrigin.sessionId') = ?
                 AND json_extract(payload_json, '$.askOrigin.messageId') = ?))
@@ -290,7 +286,6 @@ export class NeoPublicationRepository {
       this.db
         .prepare(
           `SELECT ${columns} FROM neo_publications WHERE conversation_id = ?
-            AND json_extract(payload_json, '$.interim') IS NULL
           ORDER BY sequence DESC LIMIT ?`
         )
         .all(conversationId, limit) as Row[]
@@ -301,14 +296,16 @@ export class NeoPublicationRepository {
     const row = this.db
       .prepare(
         `SELECT ${columns} FROM neo_publications
-        WHERE json_extract(payload_json, '$.producerInput.sessionId') = ?
-          AND json_extract(payload_json, '$.producerInput.messageId') = ?
-          AND json_extract(payload_json, '$.interim') IS NULL
-          AND (json_extract(payload_json, '$.corrects') IS NULL
-            OR json_extract(payload_json, '$.triggerId') IS NOT NULL)
+        WHERE (json_extract(payload_json, '$.producerInput.sessionId') = ?
+          AND json_extract(payload_json, '$.producerInput.messageId') = ?)
+          OR (json_extract(payload_json, '$.answerInput.sessionId') = ?
+          AND json_extract(payload_json, '$.answerInput.messageId') = ?)
+          OR EXISTS (SELECT 1 FROM json_each(payload_json, '$.revisions') r
+            WHERE json_extract(r.value, '$.producerInput.sessionId') = ?
+              AND json_extract(r.value, '$.producerInput.messageId') = ?)
           ORDER BY sequence LIMIT 1`
       )
-      .get(sessionId, messageId) as Row | null;
+      .get(sessionId, messageId, sessionId, messageId, sessionId, messageId) as Row | null;
     return row ? decode(row) : null;
   }
 }

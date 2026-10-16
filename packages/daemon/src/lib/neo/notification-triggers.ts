@@ -114,22 +114,6 @@ export function neoDeliveryTrigger(
   return trigger?.id ?? null;
 }
 
-export function neoReplyOriginKey(origin: { sessionId: string; messageId: string }): string {
-  return `${origin.sessionId}\0${origin.messageId}`;
-}
-
-export function isNeoAskAnsweredByReply(
-  ask: Pick<NeoAsk, 'originSessionId' | 'originMessageId'>,
-  covers: ReadonlySet<string>
-): boolean {
-  return (
-    !!ask.originMessageId &&
-    covers.has(
-      neoReplyOriginKey({ sessionId: ask.originSessionId, messageId: ask.originMessageId })
-    )
-  );
-}
-
 export function neoHumanTriggerMessageId(triggerId: string | undefined): string | null {
   return triggerId?.startsWith(NEO_HUMAN_TRIGGER_PREFIX)
     ? triggerId.slice(NEO_HUMAN_TRIGGER_PREFIX.length) || null
@@ -407,9 +391,6 @@ export function neoTriggerWorkProblem(trigger: string | null, consulted: boolean
     ? 'already_consulted: this holder already returned for this message. Use its answer instead of asking again.'
     : null;
 }
-
-export const NEO_CONSULTATION_PENDING_DETAIL =
-  'A holder you consulted for this message has not returned yet; its answer comes back to you, and you answer the human from it.';
 
 export function shouldRetryNeoTrigger(
   ask: Pick<NeoAsk, 'status'>,

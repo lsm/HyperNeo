@@ -170,7 +170,6 @@ describe('planNeoSavedRulesAppend', () => {
       boolean,
     ]
   >([
-    ['an interim update', { ...reply, interim: true }, pending, kept, [], false],
     ['the first final reply', reply, pending, kept, [rule], true],
     ['a rule the turn removed again', reply, pending, { ...kept, standingRules: [] }, [], false],
     ['a retry of that reply after another save', reply, sent, kept, [rule], false],
@@ -230,7 +229,6 @@ describe('withNeoSavedRules', () => {
       `Started #5559.\nSaved: something else\n\nSaved: ${rule}`,
       `${reply.fullText}\n\nSaved: ${rule}`,
     ],
-    ['an interim update', { ...reply, interim: true }, [rule], reply.shortText, reply.fullText],
   ])('%s', (_label, input, saved, shortText, fullText) => {
     expect(withNeoSavedRules(input, saved)).toMatchObject({ shortText, fullText });
   });
@@ -302,7 +300,7 @@ describe('Neo reply after a rule save', () => {
     expect(await invoke('neo.publication.publish', draft)).toMatchObject({
       value: { accepted: true, created: true },
     });
-    expect(service.publications.get(conversationId, reply.publicationId)).toMatchObject({
+    expect(service.publications.list(conversationId)?.[0]).toMatchObject({
       shortText: `${reply.shortText}\n\nSaved: ${rule}`,
     });
     expect(await invoke('neo.publication.publish', draft)).toMatchObject({
@@ -327,7 +325,7 @@ describe('Neo reply after a rule save', () => {
     expect(await invoke('neo.publication.publish', next)).toMatchObject({
       value: { accepted: true, created: true },
     });
-    expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
+    expect(service.publications.list(conversationId)?.[0]?.shortText).toBe(
       `${reply.shortText}\n\nSaved: ${rule}`
     );
   });
@@ -337,7 +335,7 @@ describe('Neo reply after a rule save', () => {
     await invoke('neo.rule.save', { remove: ['Keep B.'], from: 'Keep B.' });
     const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
     await invoke('neo.publication.publish', draft);
-    expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
+    expect(service.publications.list(conversationId)?.[0]?.shortText).toBe(
       `${reply.shortText}\n\nSaved: ${rule}`
     );
   });
@@ -365,7 +363,7 @@ describe('Neo reply after a rule save', () => {
         neoTurn: { ...caller.neoTurn!, messageId: 'neo-nudge:ask-1', human: false },
       })
     ).toMatchObject({ value: { accepted: true } });
-    expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
+    expect(service.publications.list(conversationId)?.[0]?.shortText).toBe(
       `${reply.shortText}\n\nSaved: ${rule}`
     );
   });
@@ -389,9 +387,7 @@ describe('Neo reply after a rule save', () => {
     );
     const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
     await invoke('neo.publication.publish', draft);
-    expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
-      reply.shortText
-    );
+    expect(service.publications.list(conversationId)?.[0]?.shortText).toBe(reply.shortText);
   });
 });
 

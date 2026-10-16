@@ -127,11 +127,6 @@ export class NeoCrossProjectRepository {
     const group = this.forAsk(input.askOrigin);
     if (!group) return null;
     if (input.producerInput.sessionId !== group.rootSessionId) return 'cross_project_root_only';
-    if (
-      !input.interim &&
-      (!this.ready(group) || input.producerInput.messageId !== neoCrossProjectReplyId(group))
-    )
-      return 'cross_project_pending';
     return null;
   }
 
@@ -143,7 +138,13 @@ export class NeoCrossProjectRepository {
       const problem = this.publicationProblem(input);
       if (problem) return { accepted: false as const, reason: 'invalid_publication' as const };
       const receipt = publish();
-      if (receipt.accepted && !input.interim)
+      const group = this.forAsk(input.askOrigin);
+      if (
+        receipt.accepted &&
+        receipt.created &&
+        group &&
+        input.producerInput.messageId === neoCrossProjectReplyId(group)
+      )
         this.db
           .prepare(
             'UPDATE neo_cross_project_dispatches SET publication_id = ? WHERE ask_session_id = ? AND ask_message_id = ?'

@@ -178,20 +178,27 @@ describe('Neo publication ledger', () => {
     expect(repo.list('bad-conversation')).toBeNull();
   });
 
-  test('an interim message is a normal publication but never stands in for the answer', () => {
-    const interim = { ...next(5), shortText: 'Checking that now.', interim: true as const };
-    const accepted = repo.append(interim);
-    expect(accepted).toMatchObject({ accepted: true, publication: interim });
-    expect(repo.list(input.conversationId)).toHaveLength(1);
-    expect(repo.findByProducer('avatar', 'internal-input')).toBeNull();
-    expect(repo.append(input).accepted).toBe(true);
-    expect(repo.list(input.conversationId)).toHaveLength(2);
-    expect(repo.findByProducer('avatar', 'internal-input')?.publicationId).toBe(
-      input.publicationId
+  test('legacy interim and correction records remain readable without message kinds', () => {
+    db.prepare(
+      'INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at) VALUES (?, ?, ?, ?)'
+    ).run(
+      input.conversationId,
+      input.publicationId,
+      JSON.stringify({ ...input, interim: true, corrects: 'legacy' }),
+      '2026-10-16T10:00:00.000Z'
     );
-    expect(admitNeoPublication({ ...input, interim: false })).toEqual({
-      reason: 'invalid_publication',
+    expect(repo.get(input.conversationId, input.publicationId)).toMatchObject(input);
+    expect(repo.listRecent(input.conversationId, 10)).toHaveLength(1);
+    expect(repo.get(input.conversationId, input.publicationId)).not.toHaveProperty('interim');
+    expect(repo.get(input.conversationId, input.publicationId)).not.toHaveProperty('corrects');
+  });
+  test('identical content with different operation identities is not deduplicated', () => {
+    expect(repo.append(input)).toMatchObject({ accepted: true, created: true });
+    expect(repo.append({ ...input, publicationId: next(2).publicationId })).toMatchObject({
+      accepted: true,
+      created: true,
     });
+    expect(repo.list(input.conversationId)).toHaveLength(2);
   });
 });
 
@@ -256,16 +263,30 @@ describe('migration 288 publication durability', () => {
           .prepare('SELECT key FROM migration_markers WHERE key = ?')
           .get('migration_288')
       ).toEqual({ key: 'migration_288' });
-      const first = new NeoPublicationRepository(daemon.getDatabase()).append(input);
+      const writer = new NeoPublicationRepository(daemon.getDatabase());
+      const first = writer.append(input);
       expect(first.accepted).toBe(true);
+      const revised = writer.edit(
+        input.conversationId,
+        input.publicationId,
+        { shortText: 'Revised after delivery.' },
+        '2026-10-16T10:00:00.000Z',
+        'editor',
+        { sessionId: 'editor', messageId: 'revision-input' },
+        '30000000-0000-4000-8000-000000000003'
+      );
+      expect(revised.accepted).toBe(true);
       daemon.close();
       daemon = new DaemonDatabase(path, { messageSearchIndexFlushIntervalMs: 0 });
       await daemon.initialize(createReactiveDatabase(daemon));
       const repo = new NeoPublicationRepository(daemon.getDatabase());
-      expect(first.accepted && repo.list(input.conversationId)).toEqual(
-        first.accepted ? [first.publication] : false
+      expect(revised.accepted && repo.list(input.conversationId)).toEqual(
+        revised.accepted ? [revised.publication] : false
       );
-      expect(repo.append(input)).toEqual({ ...first, created: false });
+      expect(repo.append(input)).toEqual({ ...revised, created: false });
+      expect(repo.get(input.conversationId, input.publicationId)?.revisions?.[0].shortText).toBe(
+        input.shortText
+      );
     } finally {
       daemon?.close();
       rmSync(directory, { recursive: true, force: true });

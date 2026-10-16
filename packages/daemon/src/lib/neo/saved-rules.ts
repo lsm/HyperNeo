@@ -49,7 +49,6 @@ export function planNeoSavedRulesAppend(
   notes: NeoSavedRulesNotes,
   current: { standingRules: readonly string[]; stored: boolean }
 ): { rules: string[]; keep: NeoSavedRulesKeep | null } {
-  if (input.interim) return { rules: [], keep: null };
   const key = neoSavedRulesKey(input.producerInput.sessionId, input.producerInput.messageId);
   const note = notes.get(key);
   const id = neoSavedRulesReplayKey(input);
@@ -123,7 +122,7 @@ export function withNeoSavedRules(
   input: NeoPublicationInput,
   saved: readonly string[]
 ): NeoPublicationInput {
-  if (!saved.length || input.interim) return input;
+  if (!saved.length) return input;
   return {
     ...input,
     shortText: withSavedLines(input.shortText, saved, 2000),

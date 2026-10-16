@@ -1,12 +1,9 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import {
   createNeoPublicationChangeOperations,
-  requireNeoEditable,
-  planNeoCorrectionAnswer,
-  requireChangeable,
-  requireCorrectable,
   requireConversationPublication,
+  requireChangeable,
 } from '../../../../src/lib/neo/publication-change-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -21,466 +18,285 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const conversation = '10000000-0000-4000-8000-000000000001';
 const original = '20000000-0000-4000-8000-000000000002';
-const correctionFor = (publicationId: string, turn: string) =>
-  neoDerivedId(`neo.publication.correct:${conversation}:${publicationId}:${turn}`);
-const correction = correctionFor(
-  '20000000-0000-4000-8000-000000000002',
-  'neo:10000000-0000-4000-8000-000000000001:m-2'
-);
-const humanCorrection = correctionFor('20000000-0000-4000-8000-000000000002', 'human:m-3');
-const consultationReply = '50000000-0000-4000-8000-000000000005';
-const sameTurnReply = '60000000-0000-4000-8000-000000000006';
 const root: NeoBinding = { sessionId: `neo:${conversation}`, projectId: null, kind: 'neo' };
 const holder: NeoBinding = { sessionId: 'neo:holder', projectId: 'p1', kind: 'project' };
-
-const neo = (sessionId = root.sessionId, messageId = 'm-2'): OperationCaller => ({
+const input = {
+  conversationId: conversation,
+  publicationId: original,
+  askOrigin: { sessionId: root.sessionId, messageId: 'm-1' },
+  producerInput: { sessionId: root.sessionId, messageId: 'm-1' },
+  shortText: 'The result is ready.',
+  fullText: 'The original details.',
+  links: [{ label: 'Project', kind: 'project' as const, id: 'p1' }],
+  triggerId: 'human:m-1',
+  awaiting: 'Use it?',
+};
+const caller = (sessionId = root.sessionId): OperationCaller => ({
   source: 'mcp',
   sessionId,
-  neoTurn: { messageId, human: false, isLive: () => true },
+  neoTurn: { messageId: 'm-2', human: true, isLive: () => true },
 });
-
-function setup() {
-  const db = new Database(':memory:');
+let db: Database;
+let publications: NeoPublicationRepository;
+let notified: number;
+let registry: ReturnType<typeof createOperationRegistry>;
+let consultationReturn: boolean;
+const call = async (name: 'edit' | 'correct' | 'recent', change: unknown, who = caller()) => {
+  const result = await invokeOperation(registry, `neo.publication.${name}`, change, who);
+  return result.kind === 'completed' ? result.value : result;
+};
+beforeEach(() => {
+  db = new Database(':memory:');
   createNeoPublicationTable(db);
-  const publications = new NeoPublicationRepository(db);
-  const insert = (publicationId: string, producer = root.sessionId, extra = {}) =>
-    db
-      .prepare(`INSERT INTO neo_publications(conversation_id, publication_id, payload_json, created_at)
-        VALUES (?, ?, ?, ?)`)
-      .run(
-        conversation,
-        publicationId,
-        JSON.stringify({
-          conversationId: conversation,
-          publicationId,
-          askOrigin: { sessionId: root.sessionId, messageId: 'm-1' },
-          producerInput: { sessionId: producer, messageId: 'm-1' },
-          shortText: 'PR #12 merged.',
-          fullText: 'PR #12 merged into dev.',
-          links: [],
-          triggerId: 'human:m-1',
-          ...extra,
-        }),
-        '2026-10-14T10:00:00.000Z'
-      );
-  let notified = 0;
-  const published = new Set<string>();
-  const replies: string[] = [];
-  const registry = createOperationRegistry(
+  createNeoRoutingLogTable(db);
+  db.exec('ALTER TABLE neo_routing_log ADD COLUMN digested_at INTEGER');
+  db.exec('ALTER TABLE neo_routing_log ADD COLUMN ask_summary TEXT');
+  db.exec('ALTER TABLE neo_routing_log ADD COLUMN awaiting TEXT');
+  publications = new NeoPublicationRepository(db);
+  publications.append(input);
+  notified = 0;
+  consultationReturn = false;
+  registry = createOperationRegistry(
     createNeoPublicationChangeOperations(
       {
-        getBinding: (id) => [root, holder].find((binding) => binding.sessionId === id) ?? null,
+        getBinding: (id) => [root, holder].find((item) => item.sessionId === id) ?? null,
         getRootBinding: () => root,
         publications,
-        isConsultationReturn: (_conversationId, publicationId) =>
-          publicationId === consultationReply,
-        resolveAskOrigin: (input) => ({
-          sessionId: input.sessionId,
-          messageId: `ask-of-${input.messageId}`,
-        }),
-        inputTrigger: (input) => (input.messageId === 'm-3' ? `human:${input.messageId}` : null),
-        isTriggerPublished: (_conversationId, triggerId) => published.has(triggerId),
+        isConsultationReturn: () => consultationReturn,
         notify: () => notified++,
-        noteReply: (publication) => replies.push(publication.publicationId),
       },
-      () => new Date('2026-10-14T11:00:00.000Z')
+      () => new Date('2026-10-16T10:00:00.000Z')
     )
   );
-  const call = async (name: string, input: unknown, caller = neo()) => {
-    const outcome = await invokeOperation(registry, name, input, caller);
-    return outcome.kind === 'completed' ? outcome.value : outcome;
-  };
-  return { db, publications, insert, call, notified: () => notified, published, replies };
-}
+});
+afterEach(() => db.close());
 
 describe('neo.publication.edit', () => {
-  test('fixes the wording in place and marks it edited, keeping links and trigger', async () => {
-    const { db, publications, insert, call, notified } = setup();
-    try {
-      insert(original);
-      expect(
-        await call(
-          'neo.publication.edit',
-          { publicationId: original, shortText: 'PR #12 is merged.' },
-          neo(root.sessionId, 'm-3')
-        )
-      ).toMatchObject({
-        accepted: true,
-        created: false,
-        publication: {
-          shortText: 'PR #12 is merged.',
-          fullText: 'PR #12 merged into dev.',
-          editedAt: '2026-10-14T11:00:00.000Z',
-          triggerId: 'human:m-1',
-          links: [],
-        },
-      });
-      expect(publications.get(conversation, original)?.editedAt).toBe('2026-10-14T11:00:00.000Z');
-      expect(notified()).toBe(1);
-    } finally {
-      db.close();
-    }
+  test('revises the same message and preserves the original text and attribution', async () => {
+    const before = publications.get(conversation, original)!;
+    expect(
+      await call('edit', { publicationId: original, requestId: 'r1', shortText: 'Revised.' })
+    ).toMatchObject({
+      accepted: true,
+      created: false,
+      publication: {
+        publicationId: original,
+        sequence: before.sequence,
+        createdAt: before.createdAt,
+        shortText: 'Revised.',
+        fullText: input.fullText,
+        links: input.links,
+        askOrigin: input.askOrigin,
+        producerInput: input.producerInput,
+        triggerId: input.triggerId,
+        editedBy: root.sessionId,
+        revisions: [
+          {
+            revisionId: original,
+            shortText: input.shortText,
+            fullText: input.fullText,
+            createdAt: before.createdAt,
+            producerInput: input.producerInput,
+            awaiting: 'Use it?',
+          },
+        ],
+      },
+    });
+    expect(publications.list(conversation)).toHaveLength(1);
+    expect(publications.get(conversation, original)?.awaiting).toBeUndefined();
+    expect(notified).toBe(1);
   });
 
-  test('refuses an unknown id, an RPC caller and an empty edit', async () => {
-    const { db, insert, call, publications } = setup();
-    try {
-      insert(original);
+  test('permits multiple edits in one turn, including unchanged wording', async () => {
+    for (const requestId of ['r1', 'r2', 'r3']) {
       expect(
-        await call('neo.publication.edit', { publicationId: correction, shortText: 'x' })
-      ).toEqual({
-        accepted: false,
-        reason: 'not_found',
-        detail: expect.stringContaining(
-          `Use one of the recent replies: ${original} "PR #12 merged."`
-        ),
-      });
-      expect(
-        await call(
-          'neo.publication.edit',
-          { publicationId: original, shortText: 'x' },
-          { source: 'rpc', principal: 'local' }
-        )
-      ).toEqual({ accepted: false, reason: 'live_avatar_required' });
-      expect(await call('neo.publication.edit', { publicationId: original })).toMatchObject({
-        kind: 'failed',
-        code: 'invalid_input',
-      });
-      expect(publications.get(conversation, original)?.shortText).toBe('PR #12 merged.');
-    } finally {
-      db.close();
+        await call('edit', { publicationId: original, requestId, shortText: 'Revised.' })
+      ).toHaveProperty('accepted', true);
     }
+    expect(publications.get(conversation, original)?.revisions).toHaveLength(3);
+  });
+
+  test('a different holder can revise a conversation message with its own attribution', async () => {
+    expect(
+      await call(
+        'edit',
+        { publicationId: original, requestId: 'r1', fullText: 'New detail.' },
+        caller(holder.sessionId)
+      )
+    ).toMatchObject({
+      accepted: true,
+      publication: {
+        editedBy: holder.sessionId,
+        producerInput: input.producerInput,
+        answerInput: { sessionId: holder.sessionId, messageId: 'm-2' },
+      },
+    });
+  });
+
+  test('retries do not add revisions, even after another revision changed the current text', async () => {
+    const first = { publicationId: original, requestId: 'r1', shortText: 'First revision.' };
+    await call('edit', first);
+    await call('edit', { publicationId: original, requestId: 'r2', shortText: 'Second revision.' });
+    expect(await call('edit', first)).toMatchObject({
+      accepted: true,
+      publication: { shortText: 'Second revision.' },
+    });
+    expect(publications.get(conversation, original)?.revisions).toHaveLength(2);
+    expect(await call('edit', { ...first, shortText: 'Conflicting retry.' })).toMatchObject({
+      accepted: false,
+      reason: 'publication_conflict',
+    });
+    expect(publications.get(conversation, original)?.shortText).toBe('Second revision.');
+  });
+
+  test('a send retried after revisions returns its receipt without reverting the message', async () => {
+    await call('edit', { publicationId: original, requestId: 'r1', shortText: 'Changed.' });
+    expect(publications.append(input)).toMatchObject({
+      accepted: true,
+      created: false,
+      publication: { shortText: 'Changed.' },
+    });
+    expect(publications.append({ ...input, shortText: 'Different original.' })).toEqual({
+      accepted: false,
+      reason: 'publication_conflict',
+    });
+    expect(publications.list(conversation)).toHaveLength(1);
+  });
+
+  test('a revision identity cannot be reused to change another message', async () => {
+    const second = '40000000-0000-4000-8000-000000000004';
+    publications.append({ ...input, publicationId: second });
+    await call('edit', { publicationId: original, requestId: 'r1', shortText: 'First.' });
+    expect(
+      await call('edit', { publicationId: second, requestId: 'r1', shortText: 'Second.' })
+    ).toMatchObject({ accepted: false, reason: 'publication_conflict' });
+    expect(publications.get(conversation, second)?.shortText).toBe(input.shortText);
+  });
+
+  test('rechecks the live caller at the revision write boundary', async () => {
+    let checks = 0;
+    const who = caller();
+    const turn = { ...who.neoTurn!, isLive: () => ++checks === 1 };
+    expect(
+      await call(
+        'edit',
+        { publicationId: original, requestId: 'r1', shortText: 'Stale.' },
+        { ...who, neoTurn: turn }
+      )
+    ).toMatchObject({ accepted: false, reason: 'publication_superseded' });
+    expect(publications.get(conversation, original)?.shortText).toBe(input.shortText);
+  });
+
+  test('a consultation-only turn cannot revise the public conversation', async () => {
+    const who = caller(holder.sessionId);
+    expect(
+      await call(
+        'correct',
+        { publicationId: original, requestId: 'r1', shortText: 'Private.', fullText: 'Private.' },
+        { ...who, neoTurn: { ...who.neoTurn!, consultationId: 'consult-1' } }
+      )
+    ).toMatchObject({ accepted: false, reason: 'consultation_answer' });
+    expect(publications.get(conversation, original)?.shortText).toBe(input.shortText);
+  });
+
+  test.each([
+    { publicationId: original, requestId: 'r1' },
+    { publicationId: original, shortText: 'No identity.' },
+    { publicationId: original, requestId: 'r1', shortText: 'Spoof.', revisions: [] },
+  ])('rejects invalid revision input: %j', async (change) => {
+    expect(await call('edit', change)).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    expect(publications.get(conversation, original)?.shortText).toBe(input.shortText);
+  });
+
+  test.each([
+    { source: 'rpc', principal: 'local' },
+    { ...caller(), neoTurn: { ...caller().neoTurn!, isLive: () => false } },
+    { ...caller(), sessionId: 'worker' },
+  ] satisfies OperationCaller[])('refuses an unauthorized or dead publisher: %j', async (who) => {
+    expect(
+      await call('edit', { publicationId: original, requestId: 'r1', shortText: 'Wrong.' }, who)
+    ).toMatchObject({ accepted: false, reason: 'live_avatar_required' });
+    expect(notified).toBe(0);
+  });
+
+  test('cannot revise another conversation or a missing message', async () => {
+    const foreign = '30000000-0000-4000-8000-000000000003';
+    publications.append({ ...input, publicationId: foreign, conversationId: foreign });
+    expect(
+      await call('edit', { publicationId: foreign, requestId: 'r1', shortText: 'Wrong.' })
+    ).toMatchObject({ accepted: false, reason: 'not_found' });
   });
 });
 
 describe('neo.publication.correct', () => {
-  const corrected = {
-    publicationId: original,
-    shortText: 'Correction: PR #12 did not merge.',
-    fullText: 'PR #12 is still open; checks failed.',
-  };
-
-  test('publishes one labelled correction that cites the original, and retries reuse it', async () => {
-    const { db, publications, insert, call, published } = setup();
-    try {
-      insert(original);
-      published.add('human:m-3');
-      const human = neo(root.sessionId, 'm-3');
-      expect(await call('neo.publication.correct', corrected, human)).toMatchObject({
-        accepted: true,
-        created: true,
-        publication: {
-          publicationId: humanCorrection,
-          corrects: original,
-          askOrigin: { sessionId: root.sessionId, messageId: 'm-1' },
-          producerInput: { sessionId: root.sessionId, messageId: 'm-3' },
-        },
-      });
-      expect(publications.get(conversation, original)).toMatchObject({
-        correctedBy: humanCorrection,
-        shortText: 'PR #12 merged.',
-      });
-      expect(publications.get(conversation, humanCorrection)?.triggerId).toBeUndefined();
-      expect(await call('neo.publication.correct', corrected, human)).toMatchObject({
-        accepted: true,
-        created: false,
-      });
-      expect(await call('neo.publication.correct', corrected, neo(root.sessionId, 'm-4'))).toEqual({
-        accepted: false,
-        reason: 'already_corrected',
-      });
+  test('corrects the same entry repeatedly with a preserved revision history', async () => {
+    for (const requestId of ['c1', 'c2']) {
       expect(
-        await call(
-          'neo.publication.correct',
-          { ...corrected, publicationId: humanCorrection },
-          neo(root.sessionId, 'm-4')
-        )
-      ).toEqual({ accepted: false, reason: 'already_corrected' });
-    } finally {
-      db.close();
+        await call('correct', {
+          publicationId: original,
+          requestId,
+          shortText: requestId,
+          fullText: `Details ${requestId}`,
+        })
+      ).toMatchObject({ accepted: true, created: false, publication: { publicationId: original } });
     }
-  });
-
-  test('corrects a reply another Neo session published in this conversation', async () => {
-    const { db, insert, call } = setup();
-    try {
-      insert(original, holder.sessionId);
-      expect(
-        await call('neo.publication.correct', corrected, neo(root.sessionId, 'm-3'))
-      ).toMatchObject({
-        accepted: true,
-        publication: { corrects: original, producerInput: { sessionId: root.sessionId } },
-      });
-    } finally {
-      db.close();
-    }
+    const current = publications.get(conversation, original)!;
+    expect(current.shortText).toBe('c2');
+    expect(current.revisions?.map((version) => version.shortText)).toEqual([input.shortText, 'c1']);
+    expect(current).not.toHaveProperty('corrects');
+    expect(current).not.toHaveProperty('correctedBy');
+    expect(publications.list(conversation)).toHaveLength(1);
+    expect(publications.findByProducer(root.sessionId, 'm-2')?.publicationId).toBe(original);
   });
 });
 
 describe('requireConversationPublication', () => {
-  test('a missing publication is not found before ownership is checked', () => {
-    expect(requireConversationPublication({ input: { sessionId: 's' } } as never, null)).toEqual({
-      reason: {
-        accepted: false,
-        reason: 'not_found',
-        detail:
-          'No Neo reply in this conversation has that publicationId. There are no recent replies.',
-      },
-    });
-  });
-});
-
-describe('requireCorrectable', () => {
-  test('a correction cannot itself be corrected', () => {
-    expect(requireCorrectable({ publication: { corrects: original } } as never)).toEqual({
-      reason: { accepted: false, reason: 'already_corrected' },
-    });
+  test('missing messages return a not-found receipt', () => {
+    expect(requireConversationPublication({} as never, null)).toHaveProperty(
+      'reason.reason',
+      'not_found'
+    );
   });
 });
 
 describe('requireChangeable', () => {
-  test('a consultation reply is never edited or corrected', async () => {
-    expect(requireChangeable({} as never, true)).toEqual({
-      reason: { accepted: false, reason: 'consultation_return' },
-    });
-    const { db, insert, call } = setup();
-    try {
-      insert(consultationReply);
-      expect(
-        await call('neo.publication.edit', { publicationId: consultationReply, shortText: 'x' })
-      ).toEqual({ accepted: false, reason: 'consultation_return' });
-      expect(
-        await call('neo.publication.correct', {
-          publicationId: consultationReply,
-          shortText: 'x',
-          fullText: 'y',
-        })
-      ).toEqual({ accepted: false, reason: 'consultation_return' });
-    } finally {
-      db.close();
-    }
-  });
-});
-
-describe('NeoPublicationRepository.findByProducer', () => {
-  test('a correction made in the same turn as a reply does not make the turn ambiguous', async () => {
-    const { db, publications, insert, call, published } = setup();
-    try {
-      insert(original);
-      published.add('human:m-3');
-      insert(sameTurnReply);
-      db.prepare(
-        `UPDATE neo_publications SET payload_json = json_set(payload_json, '$.producerInput.messageId', 'm-3')
-          WHERE publication_id = ?`
-      ).run(sameTurnReply);
-      expect(
-        await call(
-          'neo.publication.correct',
-          { publicationId: original, shortText: 'Correction.', fullText: 'Correction.' },
-          neo(root.sessionId, 'm-3')
-        )
-      ).toMatchObject({ accepted: true });
-      expect(publications.findByProducer(root.sessionId, 'm-3')?.publicationId).toBe(sameTurnReply);
-    } finally {
-      db.close();
-    }
-  });
-});
-
-describe('planNeoCorrectionAnswer', () => {
-  const owned = {
-    publication: { askOrigin: { sessionId: root.sessionId, messageId: 'm-1' } },
-  } as never;
-  const ask = { sessionId: root.sessionId, messageId: 'm-2' };
-
-  test('a correction answers this turn when its trigger has no reply yet', () => {
-    expect(planNeoCorrectionAnswer(owned, 'human:m-2', false, ask)).toEqual({
-      askOrigin: ask,
-      triggerId: 'human:m-2',
-    });
-  });
-
-  test('otherwise it threads under the publication it corrects', () => {
-    const threaded = { askOrigin: { sessionId: root.sessionId, messageId: 'm-1' } };
-    expect(planNeoCorrectionAnswer(owned, 'human:m-2', true, ask)).toEqual(threaded);
-    expect(planNeoCorrectionAnswer(owned, null, false, ask)).toEqual(threaded);
+  test('a consultation-return record remains protected until returned', async () => {
+    consultationReturn = true;
+    expect(requireChangeable({} as never, true)).toHaveProperty(
+      'reason.reason',
+      'consultation_return'
+    );
+    expect(
+      await call('correct', {
+        publicationId: original,
+        requestId: 'c1',
+        shortText: 'Wrong.',
+        fullText: 'Wrong.',
+      })
+    ).toMatchObject({ accepted: false, reason: 'consultation_return' });
   });
 });
 
 describe('neo.publication.recent', () => {
-  test('lists every Neo reply in the conversation, newest first, marking which are yours', async () => {
-    const { db, insert, call, published } = setup();
-    try {
-      insert(original);
-      insert(sameTurnReply, holder.sessionId);
-      published.add('human:m-3');
-      await call(
-        'neo.publication.correct',
-        { publicationId: original, shortText: 'Correction.', fullText: 'Correction.' },
-        neo(root.sessionId, 'm-3')
-      );
-      const listed = (await call('neo.publication.recent', { limit: 5 })) as {
-        publications: {
-          publicationId: string;
-          producer: string;
-          yours: boolean;
-          corrects?: string;
-          correctedBy?: string;
-        }[];
-      };
-      expect(
-        listed.publications.map((item) => [item.publicationId, item.producer, item.yours])
-      ).toEqual([
-        [humanCorrection, root.sessionId, true],
-        [sameTurnReply, holder.sessionId, false],
-        [original, root.sessionId, true],
-      ]);
-      expect(listed.publications[0].corrects).toBe(original);
-      expect(listed.publications[2].correctedBy).toBe(humanCorrection);
-    } finally {
-      db.close();
-    }
-  });
-});
-
-describe('neo.publication.correct as a reply', () => {
-  test('in a human turn with no reply yet, the correction carries that trigger and ask', async () => {
-    const { db, insert, call } = setup();
-    try {
-      insert(original);
-      const result = (await call(
-        'neo.publication.correct',
+  test('returns current text with earlier revisions on one conversation entry', async () => {
+    await call('edit', { publicationId: original, requestId: 'r1', shortText: 'New.' });
+    expect(await call('recent', {})).toMatchObject({
+      accepted: true,
+      publications: [
         {
           publicationId: original,
-          shortText: 'Correction: PR #12 did not merge.',
-          fullText: 'PR #12 is still open.',
+          shortText: 'New.',
+          yours: true,
+          revisions: [{ shortText: input.shortText }],
         },
-        {
-          source: 'mcp',
-          sessionId: root.sessionId,
-          neoTurn: { messageId: 'm-3', human: true, isLive: () => true },
-        }
-      )) as { publication: { triggerId?: string; askOrigin: { messageId: string } } };
-      expect(result.publication.triggerId).toBe('human:m-3');
-      expect(result.publication.askOrigin.messageId).toBe('ask-of-m-3');
-    } finally {
-      db.close();
-    }
-  });
-});
-
-describe('a correction that answers its turn', () => {
-  const asHuman: OperationCaller = {
-    source: 'mcp',
-    sessionId: root.sessionId,
-    neoTurn: { messageId: 'm-3', human: true, isLive: () => true },
-  };
-
-  test('is the reply of its turn for the fallback and records the routed outcome of the ask', async () => {
-    const { db, publications, insert, call, replies } = setup();
-    try {
-      createNeoRoutingLogTable(db);
-      db.exec(`ALTER TABLE neo_routing_log ADD COLUMN digested_at INTEGER;
-        ALTER TABLE neo_routing_log ADD COLUMN ask_summary TEXT;
-        ALTER TABLE neo_routing_log ADD COLUMN awaiting TEXT`);
-      db.prepare(
-        `INSERT INTO neo_routing_log (message_id, conversation_id, asked_at, ask, destination, signal)
-          VALUES ('ask-of-m-3', ?, 1, 'Fix that reply', 'main', 'test')`
-      ).run(conversation);
-      insert(original);
-      await call(
-        'neo.publication.correct',
-        {
-          publicationId: original,
-          shortText: 'Correction: PR #12 did not merge.',
-          fullText: 'PR #12 is still open.',
-        },
-        asHuman
-      );
-      expect(publications.findByProducer(root.sessionId, 'm-3')?.publicationId).toBe(
-        humanCorrection
-      );
-      expect(replies).toEqual([humanCorrection]);
-      expect(
-        db.prepare("SELECT outcome FROM neo_routing_log WHERE message_id = 'ask-of-m-3'").get()
-      ).toEqual({ outcome: 'Correction: PR #12 did not merge.' });
-    } finally {
-      db.close();
-    }
-  });
-});
-
-describe('neo.publication.edit across sessions', () => {
-  test('a holder can fix the wording of a reply root published, and is recorded as the editor', async () => {
-    const { db, insert, call, publications } = setup();
-    try {
-      insert(original);
-      expect(
-        await call(
-          'neo.publication.edit',
-          { publicationId: original, shortText: 'PR #12 is merged.' },
-          neo(holder.sessionId, 'm-3')
-        )
-      ).toMatchObject({ accepted: true, publication: { editedBy: holder.sessionId } });
-      expect(publications.get(conversation, original)?.producerInput.sessionId).toBe(
-        root.sessionId
-      );
-    } finally {
-      db.close();
-    }
-  });
-});
-
-describe('requireNeoEditable', () => {
-  const publication = {
-    conversationId: conversation,
-    publicationId: original,
-    askOrigin: { sessionId: root.sessionId, messageId: 'm-1' },
-    producerInput: { sessionId: root.sessionId, messageId: 'neo-trigger:outcome:a:x' },
-    shortText: 'Done.',
-    fullText: 'Done.',
-    links: [],
-    triggerId: 'outcome:a:x',
-    sequence: 1,
-    createdAt: '2026-10-14T10:00:00.000Z',
-  };
-  const owned = (messageId: string, extra = {}) =>
-    ({
-      producer: { input: { sessionId: root.sessionId, messageId } },
-      publication: { ...publication, ...extra },
-    }) as unknown as Parameters<typeof requireNeoEditable>[0];
-  const reason = (result: ReturnType<typeof requireNeoEditable>) =>
-    'reason' in result ? result.reason.reason : 'ok';
-  test('a human-triggered turn may fix any message’s wording', () => {
-    expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'Fixed.' }))).toBe('ok');
-  });
-  test('any turn may fix the wording of an answered message', () => {
-    expect(
-      reason(requireNeoEditable(owned('neo-trigger:outcome:a:x'), { shortText: 'Fixed.' }))
-    ).toBe('ok');
-    expect(
-      reason(requireNeoEditable(owned('m-1', { triggerId: 'human:m-1' }), { shortText: 'X.' }))
-    ).toBe('ok');
-  });
-  test('a continuation carrying the human trigger edits a message once, not again', () => {
-    const turn = 'neo-turn-limit:r2';
-    const editedOnce = owned(turn, {
-      editedAt: '2026-10-14T11:00:00.000Z',
-      answerInput: { sessionId: root.sessionId, messageId: turn },
+      ],
     });
-    expect(reason(requireNeoEditable(owned(turn), { shortText: 'First.' }))).toBe('ok');
-    expect(reason(requireNeoEditable(editedOnce, { shortText: 'Second.' }))).toBe('already_edited');
-  });
-  test('an unchanged edit is refused', () => {
-    expect(reason(requireNeoEditable(owned('m-9'), { shortText: 'Done.' }))).toBe('edit_unchanged');
   });
 });
 
 describe('neoDerivedId', () => {
-  test('is a stable, valid UUID for one seed and differs for another', () => {
-    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-    expect(neoDerivedId('a')).toMatch(uuid);
-    expect(neoDerivedId('a')).toBe(neoDerivedId('a'));
-    expect(neoDerivedId('a')).not.toBe(neoDerivedId('b'));
+  test('operation identity is stable and does not collapse distinct requests', () => {
+    expect(neoDerivedId('r1')).toBe(neoDerivedId('r1'));
+    expect(neoDerivedId('r1')).not.toBe(neoDerivedId('r2'));
   });
 });

@@ -12,7 +12,6 @@ import { NEO_ASK_REFUSAL_BUDGET } from '../../../../src/lib/neo/ask-views.ts';
 import { neoCardGroup } from '../../../../src/lib/neo/card-phase.ts';
 import {
   coverNeoAskTriggers,
-  isNeoAskAnsweredByReply,
   isNeoAskReportUnsettled,
   isNeoCardFailedForGood,
   isNeoHumanOwnTurn,
@@ -23,7 +22,6 @@ import {
   neoAskTriggerConcern,
   neoAskTriggerKeys,
   neoHumanTurnOrigin,
-  neoReplyOriginKey,
   neoTriggerMessageId,
   neoTriggerNote,
   neoTriggerRetryStatuses,
@@ -392,15 +390,6 @@ describe('planNeoTriggerRetry', () => {
 describe('neoTriggerMessageId', () => {
   test('a retried note keeps its trigger id', () => {
     expect(neoTriggerMessageId('outcome:a1:x', 1)).toBe('neo-trigger:outcome:a1:x#2');
-  });
-});
-
-describe('isNeoAskAnsweredByReply', () => {
-  test('a reply covers only the ask it answered', () => {
-    const covers = new Set([neoReplyOriginKey({ sessionId: root, messageId: 'm0' })]);
-    expect(isNeoAskAnsweredByReply(ask, covers)).toBe(true);
-    expect(isNeoAskAnsweredByReply({ ...ask, originMessageId: 'other' }, covers)).toBe(false);
-    expect(isNeoAskAnsweredByReply({ ...ask, originMessageId: null }, covers)).toBe(false);
   });
 });
 
@@ -970,7 +959,7 @@ describe('NeoService notification triggers', () => {
     expect(mailbox()[0].messageUuid).toMatch(/^neo-trigger:action:a1:/);
   });
 
-  test('the human reply that covers an ask’s new question leaves no trigger note behind', async () => {
+  test('a human reply does not blanket-cover a newly recorded question', async () => {
     seed();
     const opened = open();
     human(m1, 'ship it when ready');
@@ -1013,7 +1002,8 @@ describe('NeoService notification triggers', () => {
     ).toMatchObject({ value: { accepted: true } });
     sweep();
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(mailbox()).toEqual([]);
+    expect(mailbox()).toHaveLength(1);
+    expect(mailbox()[0].message.message.content).toContain('needs the human');
   });
 });
 

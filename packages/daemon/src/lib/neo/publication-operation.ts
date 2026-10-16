@@ -11,6 +11,7 @@ import type { NeoAskOrigin } from './ask-origin.ts';
 import { NeoPublicationSchema } from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { requirePublicationTrigger } from './notification-triggers.ts';
+import { neoDerivedId } from './derived-id.ts';
 
 const Draft = NeoPublicationSchema.omit({
   conversationId: true,
@@ -21,9 +22,9 @@ const Draft = NeoPublicationSchema.omit({
   editedBy: true,
   answerInput: true,
   languageMismatch: true,
-  corrects: true,
-  correctedBy: true,
-});
+  revisionId: true,
+  revisions: true,
+}).extend({ requestId: z.string().min(1).max(160) });
 type Draft = z.infer<typeof Draft>;
 type Rejection = { accepted: false; reason: string; detail?: string };
 type Receipt = NeoPublicationAppendResult | Rejection;
@@ -51,7 +52,6 @@ interface NeoPublicationRuntime {
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   append(input: NeoPublicationInput): Receipt;
   inputTrigger(input: NeoAskOrigin): string | null;
-  newId(): string;
   notify(): void;
 }
 
@@ -207,15 +207,19 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe((proof: Proof) => runtime.inputTrigger(proof.input), 'publication', 'trigger')
     .pipe(requirePublicationTrigger, ['publication', 'draft', 'trigger'], 'result:publication')
     .pipe(
-      (draft: Draft, proof: Triggered) =>
-        runtime.append({
-          ...draft,
-          publicationId: runtime.newId(),
+      (draft: Draft, proof: Triggered) => {
+        const { requestId, ...message } = draft;
+        return runtime.append({
+          ...message,
+          publicationId: neoDerivedId(
+            `neo.publication.publish:${proof.input.sessionId}:${proof.input.messageId}:${requestId}`
+          ),
           triggerId: proof.triggerId,
           conversationId: proof.root.sessionId.slice(4),
           askOrigin: proof.ask,
           producerInput: proof.input,
-        }),
+        });
+      },
       ['draft', 'publication'],
       'publication'
     )
@@ -237,7 +241,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Publish a message for a notification trigger: the reply to the human message this turn answers, a new fact for it, or the sentence a daemon trigger note asks for (an ask outcome, what the human must do, or what broke). Write it in the reply language this turn names. When the human asked for a reply in another language, pass requestedLanguage naming it. Pass the note\'s triggerId, or omit it; the runtime derives the trigger from this turn and supplies the human ask and producer. A new fact for a trigger can always be told, but never repeat yourself: a message identical to one already posted for the trigger returns that one instead of posting again. While a holder you consulted for it has not returned, posting is refused (consultation_pending): its answer comes back to you, and you answer the human from it. Speak only when there is something new for the human (a result, a change, something they must do, or something that broke): a bare acknowledgement ("收到", "got it") or a progress update is refused (no_news). When refused, end the turn. The daemon assigns the publication id and returns it; an identical retry posts nothing new. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. The runtime derives publication identity, original request and producer. Scene references must exist and belong to the request. Acceptance records delivery, not work completion.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: z.union([

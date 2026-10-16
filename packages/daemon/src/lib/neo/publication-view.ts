@@ -32,11 +32,11 @@ export function neoPublicationViewNote(
   seen: readonly NeoPublication[],
   reset: boolean
 ): string | null {
-  const items = seen.filter((item) => !item.interim);
+  const items = seen;
   if (!items.length) return null;
   const lines = items.map(
     (item) =>
-      `- ${item.createdAt}${item.askSummary ? `, on "${item.askSummary}"` : ''}${item.corrects ? ' (correction)' : ''}: ${item.shortText}`
+      `- ${item.createdAt}${item.askSummary ? `, on "${item.askSummary}"` : ''}${item.editedAt ? ' (revised)' : ''}: ${item.shortText}`
   );
   return [
     reset

@@ -28,7 +28,6 @@ export const NeoPublicationSchema = z
       )
       .max(16)
       .default([]),
-    interim: z.literal(true).optional(),
     triggerId: text(200).optional(),
     askSummary: text(300).optional(),
     awaiting: text(500).optional(),
@@ -37,8 +36,21 @@ export const NeoPublicationSchema = z
     answerInput: origin.optional(),
     languageMismatch: text(120).optional(),
     requestedLanguage: text(60).optional(),
-    corrects: z.string().uuid().optional(),
-    correctedBy: z.string().uuid().optional(),
+    revisionId: z.uuid().optional(),
+    revisions: z
+      .array(
+        z
+          .object({
+            revisionId: z.uuid(),
+            shortText: text(2000),
+            fullText: text(16000),
+            createdAt: z.string().datetime(),
+            producerInput: origin,
+            awaiting: text(500).optional(),
+          })
+          .strict()
+      )
+      .optional(),
   })
   .strict();
 
