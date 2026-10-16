@@ -59,6 +59,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   private messageHandlers: Set<(message: HubMessage) => void> = new Set();
   private connectionHandlers: Set<ConnectionStateHandler> = new Set();
+  private pendingInitializeAborts: Set<(error: Error) => void> = new Set();
 
   private readonly maxOutboundMessageSize = 32 * 1024 * 1024;
   private readonly maxInboundMessageSize = 40 * 1024 * 1024;
@@ -81,7 +82,27 @@ export class WebSocketClientTransport implements IMessageTransport {
   }
 
   async initialize(): Promise<void> {
-    return this.connect();
+    if (!this.autoReconnect || this.closed) return this.connect();
+    return new Promise((resolve, reject) => {
+      const off = this.onConnectionChange((state) => {
+        if (state === 'connected') settle();
+        else if (state === 'failed')
+          settle(new Error(`WebSocket to ${this.url} failed to connect`));
+      });
+      const settle = (error?: Error) => {
+        off();
+        this.pendingInitializeAborts.delete(settle);
+        if (error) reject(error);
+        else resolve();
+      };
+      this.pendingInitializeAborts.add(settle);
+      this.connect().then(
+        () => {
+          if (this.isReady()) settle();
+        },
+        () => {}
+      );
+    });
   }
 
   private async connect(): Promise<void> {
@@ -138,9 +159,14 @@ export class WebSocketClientTransport implements IMessageTransport {
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         this.setState('error', err);
+        this.abortPendingInitialize(err);
         reject(err);
       }
     });
+  }
+
+  private abortPendingInitialize(error: Error): void {
+    for (const abort of this.pendingInitializeAborts) abort(error);
   }
 
   private handleDisconnect(): void {
@@ -212,6 +238,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.abortPendingInitialize(new Error(`WebSocket to ${this.url} closed before connecting`));
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);

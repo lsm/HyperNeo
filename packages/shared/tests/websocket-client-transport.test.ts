@@ -465,9 +465,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         stateChanges.push(state);
       });
 
-      const _initPromise = transport.initialize();
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await expect(transport.initialize()).rejects.toThrow('closed before open');
 
       expect(stateChanges).toContain('connecting');
       expect(['error', 'disconnected']).toContain(transport.getState());
@@ -710,12 +708,85 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         reconnectDelay: 50,
       });
 
-      transport.initialize();
+      await expect(transport.initialize()).rejects.toThrow('failed to connect');
 
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(connectionAttempts).toBe(maxAttempts + 1);
+    });
 
-      expect(connectionAttempts).toBeGreaterThanOrEqual(1);
-      expect(connectionAttempts).toBeLessThanOrEqual(maxAttempts + 3);
+    it('waits through a failed first attempt until a reconnect opens', async () => {
+      let connectionAttempts = 0;
+      global.WebSocket = vi.fn(function () {
+        connectionAttempts++;
+        const ws = new MockWebSocket('ws://localhost:9999', connectionAttempts > 1);
+        if (connectionAttempts === 1) {
+          setTimeout(() => {
+            ws.readyState = MockWebSocket.CLOSED;
+            ws.onclose?.(new CloseEvent('close'));
+          }, 5);
+        }
+        return ws as unknown as WebSocket;
+      }) as unknown as typeof WebSocket;
+
+      transport = new WebSocketClientTransport({
+        url: 'ws://localhost:9999',
+        autoReconnect: true,
+        maxReconnectAttempts: 3,
+        reconnectDelay: 10,
+      });
+
+      await transport.initialize();
+
+      expect(connectionAttempts).toBe(2);
+      expect(transport.getState()).toBe('connected');
+    });
+
+    it('rejects a pending initialize when the transport is closed', async () => {
+      global.WebSocket = vi.fn(function () {
+        return new MockWebSocket('ws://localhost:9999', false) as unknown as WebSocket;
+      }) as unknown as typeof WebSocket;
+
+      transport = new WebSocketClientTransport({ url: 'ws://localhost:9999', autoReconnect: true });
+
+      const initializing = transport.initialize();
+      await transport.close();
+
+      await expect(initializing).rejects.toThrow('closed before connecting');
+    });
+
+    it('rejects initialize when the socket cannot be constructed', async () => {
+      global.WebSocket = vi.fn(function () {
+        throw new SyntaxError('Invalid URL');
+      }) as unknown as typeof WebSocket;
+
+      transport = new WebSocketClientTransport({ url: 'not a url', autoReconnect: true });
+
+      await expect(transport.initialize()).rejects.toThrow('Invalid URL');
+      expect(transport.getState()).toBe('error');
+    });
+
+    it('rejects a pending initialize when closed during a reconnect backoff', async () => {
+      global.WebSocket = vi.fn(function () {
+        const ws = new MockWebSocket('ws://localhost:9999', false);
+        setTimeout(() => {
+          ws.readyState = MockWebSocket.CLOSED;
+          ws.onclose?.(new CloseEvent('close'));
+        }, 5);
+        return ws as unknown as WebSocket;
+      }) as unknown as typeof WebSocket;
+
+      transport = new WebSocketClientTransport({
+        url: 'ws://localhost:9999',
+        autoReconnect: true,
+        maxReconnectAttempts: 5,
+        reconnectDelay: 10_000,
+      });
+
+      const initializing = transport.initialize();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(transport.getState()).toBe('disconnected');
+      await transport.close();
+
+      await expect(initializing).rejects.toThrow('closed before connecting');
     });
 
     it('retries at once, then backs off with full jitter up to the cap', () => {
