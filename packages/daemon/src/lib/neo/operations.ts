@@ -1044,6 +1044,7 @@ export function neoReorganizeRuntime(
       return { merged: [...backfilled, ...merged, ...settled.merged], asked: settled.asked };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
+    retiredHolders: () => service.repo.retiredHolders(),
     machine: () => hostname(),
     cleanup: createNeoProjectCleanupApply(service),
     mirroredAliases: async (folders) => {

@@ -225,6 +225,7 @@ describe('neo.projects.reorganize', () => {
       mergeProjects: async () => ({ merged, asked: [] }),
       projectFacts: () => [],
       machine: () => 'here',
+      retiredHolders: () => [],
       cleanup: async (step) => {
         cleaned.push(step.projectId);
         if (step.projectId === 'stuck') throw new Error('busy');
@@ -297,6 +298,7 @@ describe('neo.projects.reorganize', () => {
         routed: 0,
         holderMessages: 0,
         archived: false,
+        holder: null,
         aliases: [],
       },
     ];
@@ -308,6 +310,39 @@ describe('neo.projects.reorganize', () => {
     deps.mirroredAliases = async () => null;
     expect(await invoke(deps)).toMatchObject({ ok: true, cleanupPlanned: [] });
     expect(logged).toContain('neo reorganize: no project cleanup, the places could not be read');
+  });
+
+  test('a merged holder mid-turn waits for a later pass; a human-named archive is still planned', async () => {
+    const { deps } = runtime([], {}, ['holder:busy', 'retired:busy']);
+    deps.retiredHolders = () => [
+      { projectId: 'old', title: 'Old', sessionId: 'retired:busy', spoke: true },
+      { projectId: 'idle', title: 'Idle', sessionId: 'retired:idle', spoke: true },
+    ];
+    deps.projectFacts = () => [
+      {
+        id: 'named',
+        title: 'Named',
+        createdAt: 1,
+        section: false,
+        context: 1,
+        asks: 0,
+        liveAsks: 0,
+        work: [],
+        liveWork: 0,
+        routed: 0,
+        holderMessages: 0,
+        archived: false,
+        holder: 'holder:busy',
+        aliases: [],
+      },
+    ];
+    expect(await invoke(deps, neoCaller, { archive: ['named'] })).toMatchObject({
+      ok: true,
+      cleanupPlanned: [
+        { action: 'archive', projectId: 'named', title: 'Named', sessionId: 'holder:busy' },
+        { action: 'archive', projectId: 'idle', title: 'Idle', sessionId: 'retired:idle' },
+      ],
+    });
   });
 
   test('apply runs the same plan, logs each step and reports the ones that failed', async () => {
@@ -325,6 +360,7 @@ describe('neo.projects.reorganize', () => {
       routed: 0,
       holderMessages: 0,
       archived: false,
+      holder: null,
       aliases: [],
     });
     deps.projectFacts = () => [empty('empty'), empty('stuck')];
