@@ -201,8 +201,9 @@ beforeEach(() => {
     unscopedSessionSubscriptions: unscopedSubscriptions,
     isSessionTopicCovered: (_sessionId, topic) => coveredTopics.includes(topic),
     watchSessionRepo: async (owner, repo) => {
-      if (watchFails) throw new Error('watch store unavailable');
+      if (watchFails) return "The daemon's GitHub token can't read Acme/Widgets.";
       watchedRepos.push(`${owner}/${repo}`);
+      return null;
     },
     refreshSessionSubscription: (_spaceId, subscriptionId) => {
       sessionRefreshed.push(subscriptionId);
@@ -844,10 +845,13 @@ describe('a session outside any Space', () => {
     expect(watchedRepos).toEqual(['Acme/Widgets']);
   });
 
-  test('a repo watch that fails rejects watch_failed and keeps the subscription to retry', async () => {
+  test('a repo watch that fails answers why and keeps the subscription to retry', async () => {
     const caller = plainSession('s-unwatched');
     watchFails = true;
-    expect(await runParsed('event.external.subscribe', { prUrl: PR }, caller)).toBe('watch_failed');
+    expect(await runParsed('event.external.subscribe', { prUrl: PR }, caller)).toEqual({
+      ok: false,
+      error: "The daemon's GitHub token can't read Acme/Widgets.",
+    });
     expect(unscopedSubscriptions.listBySession('s-unwatched').map((row) => row.topic)).toEqual([
       PR_TOPIC,
     ]);

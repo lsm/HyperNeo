@@ -26,6 +26,7 @@ describe('neoHealthDigest', () => {
           { id: 'a1', title: 'Old', status: 'waiting', updatedAt: since - 1 },
           { id: 'a2', title: 'Fresh', status: 'open', updatedAt: since + 1 },
         ],
+        unreadRepos: [{ repo: 'lsm/private', error: 'Not Found' }],
       },
       {
         cleanupPlanned: [
@@ -49,6 +50,7 @@ describe('neoHealthDigest', () => {
       'Operation refusals at the agent door by operation and reason: neo.ask.open invalid_input 3.',
       'Triggers that got more than one final reply: neo-turn-limit:r1 4.',
       `Live asks: a1 "Old" waiting, last changed ${new Date(since - 1).toISOString()} (untouched since the last digest); a2 "Fresh" open, last changed ${new Date(since + 1).toISOString()}.`,
+      'Watched GitHub repos whose last poll failed: lsm/private: Not Found.',
     ]);
   });
 });
@@ -73,7 +75,22 @@ describe('NeoRepository.healthFacts', () => {
       routing: [{ signal: 'classifier-failed', count: 1 }],
       refusals: [],
       liveAsks: [],
+      unreadRepos: [],
     });
+  });
+
+  test('lists watched repos whose last poll failed, and only those still polled', () => {
+    const repo = new NeoRepository(db.getDatabase());
+    const insert = db.getDatabase().prepare(
+      `INSERT INTO space_github_watched_repos (id, space_id, owner, repo, enabled, polling_enabled, poll_cursor, created_at, updated_at)
+        VALUES (?, 'sessions', 'lsm', ?, 1, ?, ?, 0, 0)`
+    );
+    insert.run('w1', 'private', 1, JSON.stringify({ lastPollError: 'Not Found' }));
+    insert.run('w2', 'open', 1, JSON.stringify({ lastPollError: null }));
+    insert.run('w3', 'off', 0, JSON.stringify({ lastPollError: 'Not Found' }));
+    expect(repo.healthFacts(since).unreadRepos).toEqual([
+      { repo: 'lsm/private', error: 'Not Found' },
+    ]);
   });
 
   test('groups door refusals since a time and finds triggers with several final replies', () => {

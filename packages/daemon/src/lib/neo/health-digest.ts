@@ -11,6 +11,7 @@ export type NeoHealthFacts = {
   doorRefusals: { operation: string; reason: string; count: number }[];
   repeatedReplies: { trigger: string; count: number }[];
   liveAsks: { id: string; title: string; status: string; updatedAt: number }[];
+  unreadRepos: { repo: string; error: string }[];
 };
 
 export type NeoHealthRun = {
@@ -48,6 +49,11 @@ export function neoHealthDigest(facts: NeoHealthFacts, run: NeoHealthRun, since:
                 `${ask.id} "${ask.title}" ${ask.status}, last changed ${new Date(ask.updatedAt).toISOString()}${ask.updatedAt < since ? ' (untouched since the last digest)' : ''}`
             )
             .join('; ')
+        : 'none'
+    }.`,
+    `Watched GitHub repos whose last poll failed: ${
+      facts.unreadRepos.length
+        ? facts.unreadRepos.map((entry) => `${entry.repo}: ${entry.error}`).join('; ')
         : 'none'
     }.`,
   ].join('\n');
