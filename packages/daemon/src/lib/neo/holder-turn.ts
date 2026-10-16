@@ -1,6 +1,5 @@
 import type { Database } from '../../storage/database.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
 import { neoHumanTurnOrigin } from './notification-triggers.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
@@ -13,14 +12,12 @@ import {
 export class NeoHolderTurn {
   private bound = false;
   private closed = false;
-  private timer?: ReturnType<typeof setTimeout>;
   private turn?: OperationCaller['neoTurn'];
 
   constructor(
     private readonly db: Database,
     private readonly sessionId: string,
-    private readonly attempt: { isLive(): boolean },
-    private readonly expire: () => void
+    private readonly attempt: { isLive(): boolean }
   ) {}
 
   bind(messageId: string): boolean {
@@ -28,11 +25,10 @@ export class NeoHolderTurn {
     this.bound = true;
     const item = this.db
       .getDatabase()
-      .prepare(`SELECT id, status, created_at AS createdAt
+      .prepare(`SELECT id, status
       FROM neo_consultations WHERE session_id = ? AND 'neo-consult:' || id || ':request' = ?`)
-      .get(this.sessionId, messageId) as { id: string; status: string; createdAt: number } | null;
-    const remaining = item ? item.createdAt + CONSULTATION_TIMEOUT_MS - Date.now() : 0;
-    if (item && (item.status !== 'pending' || remaining <= 0)) {
+      .get(this.sessionId, messageId) as { id: string; status: string } | null;
+    if (item && item.status !== 'pending') {
       this.closed = true;
       return false;
     }
@@ -58,14 +54,6 @@ export class NeoHolderTurn {
       human,
       isLive: () => !this.closed && this.attempt.isLive(),
     };
-    if (item) {
-      this.timer = setTimeout(() => {
-        const live = this.attempt.isLive();
-        this.dispose();
-        if (live) this.expire();
-      }, remaining);
-      this.timer.unref?.();
-    }
     return true;
   }
 
@@ -86,6 +74,5 @@ export class NeoHolderTurn {
 
   dispose(): void {
     this.closed = true;
-    if (this.timer) clearTimeout(this.timer);
   }
 }

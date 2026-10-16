@@ -32,11 +32,7 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation, isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
 import { listOperationSummaries } from '../../../../src/lib/operations/discovery.ts';
-import {
-  CONSULTATION_EXPIRED,
-  CONSULTATION_STOPPED,
-  CONSULTATION_TIMEOUT_MS,
-} from '../../../../src/lib/neo/consultation-policy.ts';
+import { CONSULTATION_STOPPED } from '../../../../src/lib/neo/consultation-policy.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token.ts';
@@ -761,7 +757,7 @@ describe('Neo MVP', () => {
       service.repo.saveProject(project, 0);
       const sessionId = await service.open(scope);
       const attempts = new QueryAttemptRegistry();
-      const first = new NeoHolderTurn(db, sessionId, attempts.allocate(), () => {});
+      const first = new NeoHolderTurn(db, sessionId, attempts.allocate());
       const turns = [first];
       const registry = createOperationRegistry(createNeoOperations(service));
       const handler = (turn: NeoHolderTurn) =>
@@ -810,7 +806,7 @@ describe('Neo MVP', () => {
           },
         });
         expect(JSON.parse((await handler(first)(request)).content[0].text)).toEqual(receipt);
-        const next = new NeoHolderTurn(db, sessionId, attempts.allocate(), () => {});
+        const next = new NeoHolderTurn(db, sessionId, attempts.allocate());
         turns.push(next);
         next.bind('ask-B');
         expect(JSON.parse((await handler(first)(request)).content[0].text)).toMatchObject({
@@ -1134,7 +1130,7 @@ describe('Neo MVP', () => {
     expect(jobs).toHaveLength(2);
   });
 
-  test.each(['reported', 'failed', 'expired', 'stopped'])(
+  test.each(['reported', 'failed', 'stopped'])(
     'preserves a newer human correction across a %s work review and recovery',
     async (outcome) => {
       const { work } = await concernWork();
@@ -1171,11 +1167,7 @@ describe('Neo MVP', () => {
           value: { ok: true },
         });
       } else {
-        if (outcome === 'expired') {
-          sqlite
-            .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
-            .run(Date.now() - CONSULTATION_TIMEOUT_MS - 1, review.id);
-        } else terminalSessions!.add(review.sessionId);
+        terminalSessions!.add(review.sessionId);
         await service.syncConsultation(review.id);
       }
       expect(service.repo.getProject(project.id)).toEqual(corrected);
@@ -1571,7 +1563,7 @@ describe('Neo MVP', () => {
     service.repo.saveProject({ ...project, id: 'research' }, 0);
     const root = await service.open(null);
     const attempts = new QueryAttemptRegistry();
-    const first = new NeoHolderTurn(db, root, attempts.allocate(), () => {});
+    const first = new NeoHolderTurn(db, root, attempts.allocate());
     const turns = [first];
     const registry = createOperationRegistry(createNeoOperations(service));
     const handler = (current: NeoHolderTurn) =>
@@ -1598,7 +1590,7 @@ describe('Neo MVP', () => {
         ok: true,
         consultation: { originMessageId: 'ask-A', originSessionId: root },
       });
-      const next = new NeoHolderTurn(db, root, attempts.allocate(), () => {});
+      const next = new NeoHolderTurn(db, root, attempts.allocate());
       turns.push(next);
       next.bind('ask-B');
       const independent = {
@@ -1932,50 +1924,37 @@ describe('Neo MVP', () => {
     });
   });
 
-  test('expires a stuck consultation during recovery and lets a reworded question ask again', async () => {
-    const { item, caller, input } = await consultation();
-    sqlite
-      .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
-      .run(Date.now() - CONSULTATION_TIMEOUT_MS, item.id);
+  test('old consultations survive recovery and return their late answer once', async () => {
+    const { item, caller, input, holder } = await consultation();
+    sqlite.prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?').run(item.id);
     await service.recoverConsultations();
-    expect(service.consultations.get(item.id)).toMatchObject({
-      status: 'failed',
-      answer: CONSULTATION_EXPIRED,
+    expect(service.consultations.get(item.id)).toMatchObject({ status: 'pending', answer: null });
+    expect(jobs).toHaveLength(1);
+    expect(await invoke('neo.project.consult', input, caller)).toMatchObject({
+      value: { ok: true, consultation: { id: item.id, status: 'pending' } },
     });
-    expect(jobs).toHaveLength(2);
+    expect(
+      await invoke('neo.project.respond', { id: item.id, answer: 'Still useful' }, holder)
+    ).toMatchObject({
+      value: { ok: true, consultation: { status: 'reported', answer: 'Still useful' } },
+    });
     await service.recoverConsultations();
     expect(jobs).toHaveLength(2);
     expect(interrupt).not.toHaveBeenCalled();
-    expect(await invoke('neo.project.consult', input, caller)).toMatchObject({
-      value: { consultation: { id: item.id, status: 'failed' } },
-    });
-    expect(
-      await invoke(
-        'neo.project.consult',
-        { ...input, question: `${input.question} Again.` },
-        caller
-      )
-    ).toMatchObject({
-      value: { ok: true, consultation: { status: 'pending' } },
-    });
-    expect(created).toHaveLength(2);
   });
 
-  test('rejects an answer past its deadline even before recovery runs', async () => {
+  test('accepts an old answer before recovery runs', async () => {
     const { item, holder } = await consultation();
-    sqlite
-      .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
-      .run(Date.now() - CONSULTATION_TIMEOUT_MS - 1, item.id);
+    sqlite.prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?').run(item.id);
     expect(
-      await invoke('neo.project.respond', { id: item.id, answer: 'Too late' }, holder)
+      await invoke('neo.project.respond', { id: item.id, answer: 'Still useful' }, holder)
     ).toMatchObject({
-      value: { ok: true, replyGuidance: expect.stringContaining('Already settled') },
+      value: { ok: true, consultation: { status: 'reported', answer: 'Still useful' } },
     });
-    expect(service.consultations.get(item.id)?.answer).toBe(CONSULTATION_EXPIRED);
-    expect(JSON.stringify(jobs[1])).toContain(CONSULTATION_EXPIRED);
+    expect(JSON.stringify(jobs[1])).toContain('Still useful');
   });
 
-  test('stopping or expiring a completed request cannot replace its answer', async () => {
+  test('stopping or recovering a completed request cannot replace its answer', async () => {
     const { item, holder } = await consultation();
     await invoke('neo.project.respond', { id: item.id, answer: 'Timely answer' }, holder);
     sqlite.prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?').run(item.id);

@@ -97,7 +97,7 @@ describe('Neo existing trusted human work input', () => {
     ).toBe(true);
   }
   function caller(sessionId = root, messageId = ask): OperationCaller {
-    const turn = new NeoHolderTurn(db, sessionId, attempts.allocate(), () => {});
+    const turn = new NeoHolderTurn(db, sessionId, attempts.allocate());
     turns.push(turn);
     expect(turn.bind(messageId)).toBe(true);
     return { source: 'mcp', sessionId, neoTurn: turn.identity() };

@@ -123,8 +123,8 @@ describe('createMailboxDeliveryHandler', () => {
       getDatabase: () => mailbox.db,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
     } as unknown as Database;
-    const directTurn = new NeoHolderTurn(db, SESSION_ID, { isLive: () => true }, () => {});
-    const injectedTurn = new NeoHolderTurn(db, SESSION_ID, { isLive: () => true }, () => {});
+    const directTurn = new NeoHolderTurn(db, SESSION_ID, { isLive: () => true });
+    const injectedTurn = new NeoHolderTurn(db, SESSION_ID, { isLive: () => true });
     try {
       directTurn.bind('direct-chat');
       injectedTurn.bind('agent-inject');

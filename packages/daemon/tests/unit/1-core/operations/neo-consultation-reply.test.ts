@@ -7,10 +7,7 @@ import {
 import type { NeoService } from '../../../../src/lib/neo/service.ts';
 import { Database } from '../../../../src/storage/database.ts';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
-import {
-  CONSULTATION_EXPIRED,
-  CONSULTATION_STOPPED,
-} from '../../../../src/lib/neo/consultation-policy.ts';
+import { CONSULTATION_STOPPED } from '../../../../src/lib/neo/consultation-policy.ts';
 
 const identity = Object.freeze({
   id: 'context-A',
@@ -83,7 +80,7 @@ describe('presentNeoConsultationReply', () => {
     }
   );
 
-  test.each([CONSULTATION_EXPIRED, CONSULTATION_STOPPED, 'Other failure', null])(
+  test.each(['A legacy timeout reason', CONSULTATION_STOPPED, 'Other failure', null])(
     'failure guidance preserves the actual reason without reclassifying it: %j',
     (answer) => {
       const recorded = Object.freeze({ ...consultation('failed'), answer });

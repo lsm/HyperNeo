@@ -1,6 +1,5 @@
 import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
-import { CONSULTATION_TIMEOUT_MS } from '../../lib/neo/consultation-policy.ts';
 import type { NeoHealthFacts } from '../../lib/neo/health-digest.ts';
 import type { NeoProjectFacts, NeoRetiredHolder } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -392,7 +391,7 @@ export class NeoRepository {
             JOIN neo_session_bindings b ON b.session_id = c.session_id
             WHERE c.id = ? AND c.session_id = ? AND c.concern_id = neo_concerns.id
               AND b.kind = 'project' AND b.concern_id = c.concern_id
-              AND c.status = 'pending' AND c.created_at > ?
+              AND c.status = 'pending'
               AND g.context_revision = neo_concerns.revision
           ) RETURNING ${concernColumns}`)
         .get(
@@ -403,8 +402,7 @@ export class NeoRepository {
           input.id,
           expectedRevision,
           consultationId,
-          holderSessionId,
-          now - CONSULTATION_TIMEOUT_MS
+          holderSessionId
         ) as NeoProject | null;
       if (row)
         this.db
