@@ -81,7 +81,27 @@ export class WebSocketClientTransport implements IMessageTransport {
   }
 
   async initialize(): Promise<void> {
-    return this.connect();
+    if (!this.autoReconnect || this.closed) return this.connect();
+    return new Promise((resolve, reject) => {
+      const off = this.onConnectionChange((state) => {
+        if (state === 'connected') settle();
+        else if (state === 'failed')
+          settle(new Error(`WebSocket to ${this.url} failed to connect`));
+        else if (this.closed)
+          settle(new Error(`WebSocket to ${this.url} closed before connecting`));
+      });
+      const settle = (error?: Error) => {
+        off();
+        if (error) reject(error);
+        else resolve();
+      };
+      this.connect().then(
+        () => {
+          if (this.isReady()) settle();
+        },
+        () => {}
+      );
+    });
   }
 
   private async connect(): Promise<void> {
