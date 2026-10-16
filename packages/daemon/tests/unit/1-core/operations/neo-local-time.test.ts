@@ -5,8 +5,8 @@ import { restrictNeoQuery } from '../../../../src/lib/neo/session-policy.ts';
 
 describe('neoLocalNow', () => {
   test('names the local day when UTC has already rolled over', () => {
-    const line = neoLocalNow(new Date('2026-10-16T02:15:00Z'), 'America/Los_Angeles');
-    expect(line).toContain('Thursday 2026-10-15 19:15 (America/Los_Angeles, GMT-07:00)');
+    const line = neoLocalNow(new Date('2026-10-16T02:15:00Z'), 'America/New_York');
+    expect(line).toContain('Thursday 2026-10-15 22:15 (America/New_York, GMT-04:00)');
     expect(line).toContain('timestamps in tool results are UTC');
   });
 });
@@ -25,5 +25,10 @@ describe('restrictNeoQuery', () => {
         additionalContext: expect.stringContaining("The human's local time is"),
       },
     });
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(
+      (output as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput
+        .additionalContext
+    ).toContain(`(${zone}, `);
   });
 });
