@@ -29,6 +29,7 @@ import {
   neoTriggerWatchSessions,
   noteNeoAskTrigger,
   planNeoAskTrigger,
+  planNeoSettledReports,
   planNeoTriggerRetry,
   requireNeoTriggerUnheard,
   shouldPreemptNeoTurn,
@@ -194,6 +195,18 @@ describe('trigger keys of an ask', () => {
         () => false
       )
     ).toBe(true);
+  });
+
+  test('a report whose processing failed stays unsettled, so idle waits for the next sweep', () => {
+    const settled = planNeoSettledReports(
+      [
+        { id: 'done', status: 'reported', updatedAt: 1 },
+        { id: 'failed', status: 'reported', updatedAt: 2 },
+        { id: 'running', status: 'queued', updatedAt: 3 },
+      ],
+      new Set(['failed'])
+    );
+    expect([...settled]).toEqual([['done', 1]]);
   });
 
   test('an idle ask is never quiet: Neo is told to move the work, then to ask the human', () => {

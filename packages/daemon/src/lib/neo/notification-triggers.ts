@@ -230,6 +230,17 @@ export function neoAskOutcomeKey(ask: Pick<NeoAsk, 'doneItems'>): string {
   return `${neoAskOutcomeBase(ask)}${open ? `:q${open}` : ''}`;
 }
 
+export function planNeoSettledReports(
+  cards: readonly Pick<NeoWork, 'id' | 'status' | 'updatedAt'>[],
+  unprocessed: ReadonlySet<string>
+): Map<string, number> {
+  return new Map(
+    cards
+      .filter((card) => card.status === 'reported' && !unprocessed.has(card.id))
+      .map((card) => [card.id, card.updatedAt])
+  );
+}
+
 export function isNeoAskReportUnsettled(
   ask: Pick<NeoAsk, 'workIds'>,
   work: (id: string) => Card | null,

@@ -265,6 +265,7 @@ import {
   neoTriggerWatchSessions,
   neoTriggerWorkProblem,
   noteNeoAskTrigger,
+  planNeoSettledReports,
   planNeoTriggerRetry,
   shouldPreemptNeoTurn,
   shouldRetryNeoTrigger,
@@ -2209,11 +2210,13 @@ export class NeoService {
         this.log.warn('Card opened pull request read pending', error)
       );
     }
+    const unprocessed = new Set<string>();
     for (const { work } of cards) {
       if (work.status !== 'reported') continue;
-      await this.followWork(work, Date.now()).catch((error) =>
-        this.log.warn('Reported work follow-up pending', error)
-      );
+      await this.followWork(work, Date.now()).catch((error) => {
+        unprocessed.add(work.id);
+        this.log.warn('Reported work follow-up pending', error);
+      });
     }
     try {
       this.endUnfollowedCardTopics(Date.now());
@@ -2235,21 +2238,22 @@ export class NeoService {
       try {
         this.runAskPackTicks(ask.id);
       } catch (error) {
+        for (const id of ask.workIds) unprocessed.add(id);
         this.log.warn('Neo ask ticks pending', error);
       }
-      await this.runAskReadTicks(this.askRecords.get(ask.id) ?? ask).catch((error) =>
-        this.log.warn('Neo ask read ticks pending', error)
-      );
+      await this.runAskReadTicks(this.askRecords.get(ask.id) ?? ask).catch((error) => {
+        for (const id of ask.workIds) unprocessed.add(id);
+        this.log.warn('Neo ask read ticks pending', error);
+      });
       await this.checkAskEvidence(ask, Date.now()).catch((error) =>
         this.log.warn('Ask evidence check pending', error)
       );
     }
-    this.settledReports = new Map(
+    this.settledReports = planNeoSettledReports(
       this.askRecords
         .listLive()
-        .flatMap((ask) => ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []))
-        .filter((work) => work.status === 'reported')
-        .map((work) => [work.id, work.updatedAt])
+        .flatMap((ask) => ask.workIds.flatMap((id) => this.repo.getWork(id) ?? [])),
+      unprocessed
     );
     this.scheduleTriggerSweep();
     for (const ask of this.askRecords.listLive()) {
