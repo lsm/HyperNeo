@@ -125,6 +125,22 @@ describe('NeoWorkCard with drivers work', () => {
     expect(container.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
   });
 
+  it.each(['open', 'answer'] as const)(
+    'keeps the in-app chat opener when a %s card also has a driver link',
+    (kind) => {
+      const onOpen = vi.fn();
+      const native = { ...work, sessionId: 'native-session' };
+      renderCard(codex({ primary: { kind, label: 'Driver', link: null } }), {
+        work: native,
+        onOpen,
+      });
+      expect(screen.queryByRole('link', { name: 'Open Bigger font' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Open chat' }));
+      expect(onOpen).toHaveBeenCalledExactlyOnceWith('w1');
+      if (kind === 'answer') expect(screen.getByText('Waiting for your answer')).toBeTruthy();
+    }
+  );
+
   it('shows the PR label and number from the card', () => {
     const reported = { ...work, status: 'reported' as const };
     renderCard(

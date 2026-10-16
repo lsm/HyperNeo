@@ -83,7 +83,8 @@ export function NeoWorkCard({
   const autoStart = neoCardAutoStarts(card);
   const tone = neoCardTone(card, work, waiting);
   const active = work.status === 'queued';
-  const answering = (waiting || card.primary.kind === 'answer') && !card.open.link;
+  const openLink = work.sessionId ? null : card.open.link;
+  const answering = (waiting || card.primary.kind === 'answer') && !openLink;
   const meta = neoCardMeta(card, work);
   const configuration = [card.model, card.effort && `${card.effort} effort`]
     .filter(Boolean)
@@ -138,8 +139,8 @@ export function NeoWorkCard({
     />
   );
   const metaText = meta && <span class="shrink-0 text-xs text-fg-faint">{meta}</span>;
-  const link = card.open.link ? (
-    <a href={card.open.link} class={neoSecondaryClass} aria-label={`Open ${work.title}`}>
+  const link = openLink ? (
+    <a href={openLink} class={neoSecondaryClass} aria-label={`Open ${work.title}`}>
       <NeoAppMark logo={logo} />
       {neoCardOpenLabel(card)}
     </a>
