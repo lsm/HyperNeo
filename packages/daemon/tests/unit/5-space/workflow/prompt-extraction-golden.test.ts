@@ -18,10 +18,7 @@ import {
   getPresetAgentTemplates,
   LEGACY_REVIEWER_PROMPT,
 } from '../../../../src/lib/agents/seed-agents.ts';
-import {
-  QA_SYSTEM_CONTRACT,
-  REVIEWER_SYSTEM_CONTRACT,
-} from '../../../../src/lib/agents/system-contracts.ts';
+import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '../../../helpers/system-contracts.ts';
 import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
 import { buildPromptTooLongContinueNag } from '../../../../src/lib/session/prompt-too-long-recovery.ts';
 import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';

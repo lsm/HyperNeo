@@ -1,11 +1,9 @@
 import type { SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { Logger } from '../logger.ts';
 import { arraysEqual } from '../utils/array-utils.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import { requireDependencyExecutionBlock } from '../space/tools/update-task-fields.ts';
 
-const log = new Logger('SpaceTaskFields');
 export interface SpaceTaskFieldEffects {
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'updateTask'>;
   blockExecution?: (
@@ -43,19 +41,6 @@ export function selectSpaceTaskFieldWrite(
   if ('taskAgentSessionId' in fields) deferred.taskAgentSessionId = fields.taskAgentSessionId;
   if ('workflowRunId' in fields) deferred.workflowRunId = fields.workflowRunId;
   return { fields: safe, deferred };
-}
-
-export async function publishSpaceTaskFieldUpdate(
-  emit: (spaceId: string, task: SpaceTask) => void | Promise<void>,
-  spaceId: string,
-  task: SpaceTask
-) {
-  try {
-    await emit(spaceId, task);
-  } catch (error) {
-    log.warn('Failed to emit space.task.updated:', error);
-  }
-  return task;
 }
 
 export async function persistSpaceTaskFields(
