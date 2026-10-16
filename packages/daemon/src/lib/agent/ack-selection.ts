@@ -20,17 +20,6 @@ export function selectPersistedAckRow(args: {
 
 export type YieldedAckSelection = { action: 'consume'; status: AckSendStatus } | { action: 'none' };
 
-export function selectYieldedAckRow(args: {
-  enqueued: boolean;
-  submitted: boolean;
-  deferred: boolean;
-}): YieldedAckSelection {
-  if (args.enqueued) return { action: 'consume', status: 'enqueued' };
-  if (args.submitted) return { action: 'consume', status: 'submitted' };
-  if (args.deferred) return { action: 'consume', status: 'deferred' };
-  return { action: 'none' };
-}
-
 export function isTurnEndAckEligible(args: {
   uuid: string;
   activeMessageId: string | null;
