@@ -70,6 +70,26 @@ describe('combineFindResults', () => {
       combineFindResults(local, remote, { ...input, id: 'archived' }).places[0].work[0].ref.id
     ).toBe('archived');
   });
+
+  test("the calling project's own place comes first even when text hits would push it past the limit", () => {
+    const hits = [1, 2, 3].map((at) => group('laptop', `/qa/${at}`, 'claude-code', 100 + at));
+    const own = group('laptop', '/focus/app', 'hyperneo', 1);
+    const local = { groups: [...hits, own], unreachable: [] };
+    const input = { includeClosed: false, limit: 2, localOnly: true };
+    const remote = { groups: [], unreachable: [] };
+    expect(
+      combineFindResults(local, remote, input).places.map((place) => place.place.folder)
+    ).toEqual(['/qa/3', '/qa/2']);
+    expect(
+      combineFindResults(
+        local,
+        remote,
+        input,
+        undefined,
+        new Set(['laptop\u0000/focus/app'])
+      ).places.map((place) => place.place.folder)
+    ).toEqual(['/focus/app', '/qa/3']);
+  });
 });
 
 describe('mergePlaceGroups', () => {

@@ -3,7 +3,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation } from '../operations/registry.ts';
 import { readWorkspaceIdentity, identifyWorkspaces } from './code-identity.ts';
-import { mergePlaceGroups, stampDaemon } from './places.ts';
+import { mergePlaceGroups, placeKey, stampDaemon } from './places.ts';
+import type { OperationCaller } from '../operations/registry.ts';
 import { PlaceGroupSchema, type FindQuery, type PlaceGroup, type WorkAdapter } from './types.ts';
 
 export const FindWorkInputSchema = z.object({
@@ -56,6 +57,7 @@ export interface FindWorkDeps {
   remote: RemoteDaemons;
   mirrorProjects?(groups: readonly PlaceGroup[]): void;
   namedFolder?: NamedFolderDeps;
+  ownPlaces?(caller: OperationCaller): ReadonlySet<string>;
 }
 
 function describe(error: unknown): string {
@@ -244,14 +246,27 @@ export function fitFindBudget(
   return { places: kept, more };
 }
 
+export function ownPlacesFirst(
+  groups: readonly PlaceGroup[],
+  own: ReadonlySet<string>
+): PlaceGroup[] {
+  const mine = (group: PlaceGroup) =>
+    (group.workspaces ?? [group.place]).some((place) => own.has(placeKey(place)));
+  return [...groups.filter(mine), ...groups.filter((group) => !mine(group))];
+}
+
 export function combineFindResults(
   local: SourceOutcome,
   remote: SourceOutcome,
   input: FindInput,
-  budget = FIND_RESULT_BUDGET_CHARS
+  budget = FIND_RESULT_BUDGET_CHARS,
+  own: ReadonlySet<string> = new Set()
 ): FindResult {
   const merged = keepFindId(
-    mergePlaceGroups([...local.groups, ...remote.groups], input.id ? 51 : input.limit + 1),
+    ownPlacesFirst(
+      mergePlaceGroups([...local.groups, ...remote.groups], Number.MAX_SAFE_INTEGER),
+      own
+    ).slice(0, input.id ? 51 : input.limit + 1),
     input.id
   );
   const open =
@@ -270,7 +285,7 @@ export function combineFindResults(
 }
 
 const runFindWork = (superpipe({})('find-work') as PipelineAPI)
-  .input(['input', 'deps', 'budget'])
+  .input(['input', 'deps', 'budget', 'own'])
   .pipe(selectFindAdapters, ['input', 'deps'], 'adapters')
   .pipe(askRemotely, ['input', 'deps'], 'asked')
   .pipe(expandFindFolder, ['input', 'deps'], 'input')
@@ -289,7 +304,7 @@ const runFindWork = (superpipe({})('find-work') as PipelineAPI)
     'local'
   )
   .pipe((asked: { pending: Promise<SourceOutcome> }) => asked.pending, 'asked', 'remote')
-  .pipe(combineFindResults, ['local', 'remote', 'input', 'budget'], 'result')
+  .pipe(combineFindResults, ['local', 'remote', 'input', 'budget', 'own'], 'result')
   .pipe(
     (result: FindResult, deps: FindWorkDeps) => {
       deps.mirrorProjects?.(result.places);
@@ -301,14 +316,15 @@ const runFindWork = (superpipe({})('find-work') as PipelineAPI)
   .endAsync('result') as (
   input: FindInput,
   deps: FindWorkDeps,
-  budget: number
+  budget: number,
+  own: ReadonlySet<string>
 ) => Promise<FindResult>;
 
 export function createFindWorkOperation(deps: FindWorkDeps) {
   return defineOperation({
     name: 'work.find',
     description:
-      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. With id, it returns only the work whose ref id matches, closed or not, for example to turn a session id into its ref and place; id takes precedence over text, which is then ignored. The lookup covers the 50 most recent places and each place’s most recent work, so a long-idle item may not be found. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. folder takes a path as the human wrote it (~ allowed); an existing directory there is returned as a place even when no work has run in it yet, so a folder the human names can always be started in. Snippet handles are for work.read only; to send or propose work, use the item ref.',
+      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, the calling Neo project’s own folders ahead of the rest, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. With id, it returns only the work whose ref id matches, closed or not, for example to turn a session id into its ref and place; id takes precedence over text, which is then ignored. The lookup covers the 50 most recent places and each place’s most recent work, so a long-idle item may not be found. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. folder takes a path as the human wrote it (~ allowed); an existing directory there is returned as a place even when no work has run in it yet, so a folder the human names can always be started in. Snippet handles are for work.read only; to send or propose work, use the item ref.',
     inputSchema: FindWorkInputSchema,
     resultSchema: FindWorkResultSchema,
     policy: { safetyClass: 'read' },
@@ -316,7 +332,8 @@ export function createFindWorkOperation(deps: FindWorkDeps) {
       runFindWork(
         input,
         deps,
-        caller.source === 'mcp' ? FIND_AGENT_RESULT_BUDGET_CHARS : FIND_RESULT_BUDGET_CHARS
+        caller.source === 'mcp' ? FIND_AGENT_RESULT_BUDGET_CHARS : FIND_RESULT_BUDGET_CHARS,
+        deps.ownPlaces?.(caller) ?? new Set()
       ),
   });
 }
