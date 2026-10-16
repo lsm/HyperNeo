@@ -150,11 +150,17 @@ describe('judgeNeoWatchTicks for coding.pr_merged', () => {
     ).toEqual([]);
     expect(
       judgeNeoWatchTicks(watched, [
-        issueState(2, { state: 'CLOSED', done: true, closedBy: pull(1) }),
+        issueState(2, {
+          state: 'CLOSED',
+          done: true,
+          closedBy: pull(1),
+          defaultBase: 'dev',
+          merges: [{ url: pull(1), base: 'dev', at: 5_000 }],
+        }),
         prState(4, 'MERGED'),
       ])
     ).toEqual([
-      { id: 'i1', evidence: `Watched: ${issueUrl(2)} closed as completed by ${pull(1)}` },
+      { id: 'i1', evidence: `Watched: ${issueUrl(2)} closed as completed by ${pull(1)} into dev` },
       { id: 'i2', evidence: `Watched: ${pull(4)} merged` },
     ]);
   });
@@ -166,18 +172,26 @@ describe('judgeNeoWatchTicks for coding.pr_merged', () => {
       done: true,
       closedBy: pull(1),
       merges: [
-        { url: pull(1), base: 'feature' },
-        { url: pull(5), base: 'release' },
+        { url: pull(1), base: 'feature', at: 5_000 },
+        { url: pull(5), base: 'release', at: 5_000 },
       ],
     });
     expect(
-      judgeNeoWatchTicks(watched, [base(closed, 'feature'), base(prState(4, 'MERGED'), 'dev')])
+      judgeNeoWatchTicks(
+        watched,
+        [base(closed, 'feature'), base(prState(4, 'MERGED'), 'dev')],
+        undefined,
+        undefined,
+        () => 1_000
+      )
     ).toEqual([{ id: 'i2', evidence: `Watched: ${pull(4)} merged into dev` }]);
     expect(
       judgeNeoWatchTicks(
         watched,
         [base(closed, 'feature'), base(prState(4, 'MERGED'), 'dev')],
-        () => 'release'
+        () => 'release',
+        undefined,
+        () => 1_000
       )
     ).toEqual([
       {
@@ -198,11 +212,86 @@ describe('judgeNeoWatchTicks for coding.pr_merged', () => {
     expect(neoWatchRefs(watched, cardPrs)).toEqual([{ owner: 'lsm', repo: 'HyperNeo', number: 9 }]);
     expect(neoWatchTopics(watched, cardPrs)).toHaveLength(1);
     expect(
-      judgeNeoWatchTicks(watched, [base(prState(9, 'MERGED'), 'dev')], () => null, cardPrs)
+      judgeNeoWatchTicks(
+        watched,
+        [base(prState(9, 'MERGED'), 'dev')],
+        () => null,
+        cardPrs,
+        () => 1_000
+      )
     ).toEqual([{ id: 'i1', evidence: `Watched: ${pull(9)} merged into dev` }]);
     expect(
-      judgeNeoWatchTicks(watched, [base(prState(9, 'MERGED'), 'feature')], () => null, cardPrs)
+      judgeNeoWatchTicks(
+        watched,
+        [base(prState(9, 'MERGED'), 'feature')],
+        () => null,
+        cardPrs,
+        () => 1_000
+      )
     ).toEqual([]);
+  });
+
+  test.each([null, 999, 1_000])('never accepts a PR merged at %s against kickoff 1000', (at) => {
+    const watched = ask([item('i1', [pull(4)], bound)]);
+    expect(
+      judgeNeoWatchTicks(
+        watched,
+        [{ ...base(prState(4, 'MERGED'), 'dev'), at }],
+        undefined,
+        undefined,
+        () => 1_000
+      )
+    ).toEqual([]);
+    expect(
+      judgeNeoWatchTicks(
+        watched,
+        [{ ...base(prState(4, 'MERGED'), 'dev'), at: 1_001 }],
+        undefined,
+        undefined,
+        () => 1_000
+      )
+    ).toHaveLength(1);
+    expect(judgeNeoWatchTicks(watched, [base(prState(4, 'MERGED'), 'dev')])).toEqual([]);
+  });
+
+  test('an issue closed now by an old merge does not count as new coding work', () => {
+    const watched = ask([item('i1', [issueUrl(2)], bound)]);
+    const state = issueState(2, {
+      state: 'CLOSED',
+      done: true,
+      at: 9_000,
+      closedBy: pull(1),
+      defaultBase: 'dev',
+      merges: [{ url: pull(1), base: 'dev', at: 999 }],
+    });
+    expect(judgeNeoWatchTicks(watched, [state], undefined, undefined, () => 1_000)).toEqual([]);
+  });
+
+  test('an unbound watch uses execution kickoff rather than the earlier proposal time', () => {
+    const watched = { ...ask([item('i1', [pull(4)], merged)]), workIds: ['late-card'] };
+    expect(
+      judgeNeoWatchTicks(watched, [prState(4, 'MERGED')], undefined, undefined, () => 6_000)
+    ).toEqual([]);
+    expect(judgeNeoWatchTicks(watched, [prState(4, 'MERGED')])).toEqual([]);
+    expect(
+      judgeNeoWatchTicks(watched, [prState(4, 'MERGED')], undefined, undefined, () => 4_000)
+    ).toHaveLength(1);
+  });
+
+  test('a late merge event independently reads the merge time instead of using wake time', async () => {
+    const watched = ask([item('i1', [pull(4)], bound)]);
+    const event = {
+      id: 'late',
+      topic: 'github/lsm/HyperNeo/pull_request/4.closed',
+      summary: 'merged',
+      occurredAt: 10_000,
+      payload: { merged: true },
+    };
+    const read = vi.fn(async () => [{ ...base(prState(4, 'MERGED'), 'dev'), at: 999 }]);
+    expect(
+      await readNeoWatchEventTicks(watched, event as never, read, undefined, undefined, () => 1_000)
+    ).toEqual([]);
+    expect(read).toHaveBeenCalledWith([{ owner: 'lsm', repo: 'HyperNeo', number: 4 }]);
   });
 
   test('a merge event without its base ticks an unbound outcome but not a bound one', async () => {
@@ -214,9 +303,9 @@ describe('judgeNeoWatchTicks for coding.pr_merged', () => {
       occurredAt: 6_000,
       payload: { merged: true },
     };
-    expect(await readNeoWatchEventTicks(watched, event as never, async () => [])).toEqual([
-      { id: 'i1', evidence: `Watched: ${pull(4)} merged (event e1: merged)` },
-    ]);
+    expect(
+      await readNeoWatchEventTicks(watched, event as never, async () => [prState(4, 'MERGED')])
+    ).toEqual([{ id: 'i1', evidence: `Watched: ${pull(4)} merged (event e1: merged)` }]);
   });
 });
 
@@ -226,7 +315,7 @@ describe('codingPrMergedCheck', () => {
     expect(codingPrMergedCheck(item('i1', [], { deliveredBy: 'card-a' }), done)).toEqual({
       reason: 'watch_required',
     });
-    expect(codingPrMergedCheck(item('i1', []), done)).toEqual({ value: `Merged: ${pull(1)}` });
+    expect(codingPrMergedCheck(item('i1', []), done)).toEqual({ reason: 'watch_required' });
   });
 });
 
@@ -275,12 +364,16 @@ describe('readNeoWatchTicks for a card-bound merge', () => {
     let recorded: 'OPEN' | 'MERGED' = 'OPEN';
     const cardPrs = () => [{ url: pull(9), state: recorded }];
     const read = vi.fn(async () => [{ ...prState(9, recorded), base: 'dev', defaultBase: 'dev' }]);
-    expect(await readNeoWatchTicks(watched, read, 10_000, undefined, cardPrs)).toEqual([]);
+    expect(await readNeoWatchTicks(watched, read, 10_000, undefined, cardPrs, () => 1_000)).toEqual(
+      []
+    );
     recorded = 'MERGED';
-    expect(await readNeoWatchTicks(watched, read, 11_000, undefined, cardPrs)).toEqual([
-      { id: 'i1', evidence: `Watched: ${pull(9)} merged into dev` },
-    ]);
-    expect(await readNeoWatchTicks(watched, read, 12_000, undefined, cardPrs)).toEqual([]);
+    expect(await readNeoWatchTicks(watched, read, 11_000, undefined, cardPrs, () => 1_000)).toEqual(
+      [{ id: 'i1', evidence: `Watched: ${pull(9)} merged into dev` }]
+    );
+    expect(await readNeoWatchTicks(watched, read, 12_000, undefined, cardPrs, () => 1_000)).toEqual(
+      []
+    );
     expect(read).toHaveBeenCalledTimes(2);
   });
 });
@@ -549,8 +642,8 @@ describe('refreshDriverWork watch ticks', () => {
     expect(opened.doneItems?.[0].watch).toEqual([pull(67, 'lsm/neo-ios'), pull(6647)]);
     expect(opened.doneItems?.[1].watch).toBeUndefined();
     service.readRefStates = async () => [
-      prState(67, 'MERGED', 'lsm/neo-ios'),
-      prState(6647, 'MERGED'),
+      { ...prState(67, 'MERGED', 'lsm/neo-ios'), at: Date.now() + 1 },
+      { ...prState(6647, 'MERGED'), at: Date.now() + 1 },
     ];
     Object.assign(service, { deliver: async () => {} });
     await service.refreshDriverWork();
@@ -602,7 +695,7 @@ describe('refreshDriverWork watch ticks', () => {
       Date.now()
     );
     const read = vi.fn(async () => [
-      { ...prState(7200, 'MERGED'), base: 'dev', defaultBase: 'dev' },
+      { ...prState(7200, 'MERGED'), at: Date.now() + 1, base: 'dev', defaultBase: 'dev' },
     ]);
     service.readRefStates = read;
     Object.assign(service, { deliver: async () => {}, refreshWorkPrs: async () => {} });

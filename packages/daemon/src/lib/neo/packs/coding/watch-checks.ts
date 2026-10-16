@@ -11,6 +11,7 @@ import { CODING_CHECK_DEPLOYED } from './deploy-checks.ts';
 import type { NeoAskTick } from './issue-checks.ts';
 
 export const CODING_CHECK_PR_MERGED = 'coding.pr_merged';
+type NeoCardStartedAt = (workId: string) => number | null;
 type NeoCardBase = (workId: string) => string | null;
 type NeoCardPrs = (workId: string) => readonly Pick<NeoWorkPr, 'url' | 'state'>[];
 const noCardPrs: NeoCardPrs = () => [];
@@ -80,18 +81,34 @@ export function neoWatchRefs(ask: NeoAsk, cardPrs: NeoCardPrs = noCardPrs): NeoR
   return [...refs.values()].slice(0, NEO_ASK_WATCH_MAX);
 }
 
-function settledAs(state: NeoRefState, item: NeoAskItem, cardBase: NeoCardBase): string | null {
+function settledAs(
+  state: NeoRefState,
+  item: NeoAskItem,
+  cardBase: NeoCardBase,
+  since: number | null
+): string | null {
   if (state.kind === 'pr' && state.state !== 'MERGED') return null;
   if (state.kind === 'issue' && (state.state !== 'CLOSED' || !state.done)) return null;
   const merged = state.kind === 'pr' ? 'merged' : `closed as completed by ${state.closedBy}`;
+  if (
+    state.kind === 'pr' &&
+    (since === null ||
+      !Number.isFinite(since) ||
+      state.at === null ||
+      !Number.isFinite(state.at) ||
+      state.at <= since)
+  )
+    return null;
   if (item.check !== CODING_CHECK_PR_MERGED)
     return state.kind === 'pr' || state.closedBy ? merged : 'closed as completed';
-  if (state.kind === 'issue' && !state.closedBy) return null;
-  if (!item.deliveredBy) return merged;
-  const required = cardBase(item.deliveredBy) ?? state.defaultBase;
+  if (since === null || !Number.isFinite(since)) return null;
+  if (!item.deliveredBy && state.kind === 'pr') return merged;
+  const required = (item.deliveredBy ? cardBase(item.deliveredBy) : null) ?? state.defaultBase;
   if (!required) return null;
   if (state.kind === 'pr') return state.base === required ? `merged into ${required}` : null;
-  const landed = (state.merges ?? []).find((merge) => merge.base === required);
+  const landed = (state.merges ?? []).find(
+    (merge) => merge.base === required && merge.at != null && merge.at > since
+  );
   return landed ? `closed as completed by ${landed.url} into ${required}` : null;
 }
 
@@ -99,7 +116,8 @@ export function judgeNeoWatchTicks(
   ask: NeoAsk,
   states: readonly NeoRefState[],
   cardBase: NeoCardBase = () => null,
-  cardPrs: NeoCardPrs = noCardPrs
+  cardPrs: NeoCardPrs = noCardPrs,
+  cardStartedAt: NeoCardStartedAt = () => null
 ): NeoAskTick[] {
   const byKey = new Map(states.map((state) => [refKey(state.url), state]));
   return (ask.doneItems ?? [])
@@ -108,9 +126,23 @@ export function judgeNeoWatchTicks(
       const watched = [
         ...new Map(neoItemWatchUrls(item, cardPrs).map((url) => [refKey(url), url])).values(),
       ];
+      const starts = (item.deliveredBy ? [item.deliveredBy] : ask.workIds)
+        .map(cardStartedAt)
+        .filter((at): at is number => at !== null && Number.isFinite(at));
+      const since =
+        item.deliveredBy || ask.workIds.length
+          ? starts.length
+            ? Math.min(...starts)
+            : null
+          : ask.createdAt;
       const read = watched.map((url) => {
         const state = byKey.get(refKey(url));
-        return state ? { url: state.url, settled: settledAs(state, item, cardBase) } : null;
+        return state
+          ? {
+              url: state.url,
+              settled: settledAs(state, item, cardBase, since),
+            }
+          : null;
       });
       if (read.some((entry) => !entry?.settled)) return [];
       return [
@@ -127,7 +159,8 @@ export async function readNeoWatchTicks(
   readRefStates: NeoRefStateReader,
   now: number,
   cardBase?: NeoCardBase,
-  cardPrs: NeoCardPrs = noCardPrs
+  cardPrs: NeoCardPrs = noCardPrs,
+  cardStartedAt?: NeoCardStartedAt
 ): Promise<NeoAskTick[]> {
   const refs = neoWatchRefs(ask, cardPrs);
   const merged = neoCardMergedKey(ask, cardPrs);
@@ -136,7 +169,7 @@ export async function readNeoWatchTicks(
     return [];
   lastRead.set(ask.id, now);
   if (merged) lastMerged.set(ask.id, merged);
-  return judgeNeoWatchTicks(ask, await readRefStates(refs), cardBase, cardPrs);
+  return judgeNeoWatchTicks(ask, await readRefStates(refs), cardBase, cardPrs, cardStartedAt);
 }
 
 export function neoWatchTopics(ask: NeoAsk, cardPrs: NeoCardPrs = noCardPrs): string[] {
@@ -166,7 +199,8 @@ export async function readNeoWatchEventTicks(
   event: ExternalEvent,
   readRefStates: NeoRefStateReader,
   cardBase?: NeoCardBase,
-  cardPrs: NeoCardPrs = noCardPrs
+  cardPrs: NeoCardPrs = noCardPrs,
+  cardStartedAt?: NeoCardStartedAt
 ): Promise<NeoAskTick[]> {
   const merge = neoWatchEventMerge(event);
   if (!merge) return [];
@@ -177,16 +211,14 @@ export async function readNeoWatchEventTicks(
   );
   if (!items.length) return [];
   const urls = items.flatMap((item) => neoItemWatchUrls(item, cardPrs));
-  const watched = urls.find((url) => refKey(url) === refKey(merge.url));
-  const merged = { ...merge, url: watched ?? merge.url };
   const others = new Map<string, NeoRef>();
   for (const url of urls) {
     const ref = parseGitHubRefUrl(url);
-    if (ref && refKey(url) !== refKey(merge.url)) others.set(refKey(url), ref);
+    if (ref) others.set(refKey(url), ref);
   }
   const states = others.size ? await readRefStates([...others.values()]) : [];
   const ids = new Set(items.map((item) => item.id));
-  return judgeNeoWatchTicks(ask, [...states, merged], cardBase, cardPrs)
+  return judgeNeoWatchTicks(ask, states, cardBase, cardPrs, cardStartedAt)
     .filter((tick) => ids.has(tick.id))
     .map((tick) => ({
       ...tick,

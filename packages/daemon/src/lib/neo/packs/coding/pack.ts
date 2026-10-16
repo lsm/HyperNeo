@@ -61,13 +61,7 @@ export const CODING_PACK_BRIEF: NeoPackBrief = {
   guidance: NEO_PACK_CODING_INSTRUCTIONS,
 };
 
-export const codingPrMergedCheck: NeoPackCheck = (item, evidence: readonly NeoEvidence[]) => {
-  if (item.deliveredBy) return { reason: 'watch_required' };
-  const prs = evidence.filter((item) => /^https?:\/\//.test(item.key));
-  return prs.length && evidence.every((item) => item.state === 'done')
-    ? { value: `Merged: ${prs.map((item) => item.key).join(', ')}` }
-    : { reason: 'not_merged' };
-};
+export const codingPrMergedCheck: NeoPackCheck = () => ({ reason: 'watch_required' });
 
 const CODING_CHECK_PR_OPENED = 'coding.pr_opened';
 
@@ -257,9 +251,11 @@ export function createCodingPack(
     readDeploys: NeoDeployReader;
     readMergeCommit: (url: string) => Promise<string | null>;
     cardBase: (workId: string) => string | null;
+    cardStartedAt?: (workId: string) => number | null;
   }
 ): NeoPack {
   const cardPrs = (workId: string) => deps.workPrs.get(workId)?.prs ?? [];
+  const { readRefStates, cardBase, cardStartedAt } = deps;
   return {
     ...CODING_PACK_BRIEF,
     prepareExecution: prepareCodingExecution,
@@ -318,9 +314,9 @@ export function createCodingPack(
       )),
     ],
     readAskWatchTicks: (ask: NeoAsk) =>
-      readNeoWatchTicks(ask, deps.readRefStates, Date.now(), deps.cardBase, cardPrs),
+      readNeoWatchTicks(ask, readRefStates, Date.now(), cardBase, cardPrs, cardStartedAt),
     readAskEventTicks: (ask: NeoAsk, event: ExternalEvent) =>
-      readNeoWatchEventTicks(ask, event, deps.readRefStates, deps.cardBase, cardPrs),
+      readNeoWatchEventTicks(ask, event, readRefStates, cardBase, cardPrs, cardStartedAt),
     askTopics: (ask: NeoAsk) => neoWatchTopics(ask, cardPrs),
     readAskEvidence: async (ask: NeoAsk) => {
       const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));

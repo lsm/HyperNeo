@@ -114,3 +114,6 @@ another cause. To merge, the working session runs `gh pr merge <number>
 A lasting rule about code work is worth saving as it is learned, for example
 "Saved: HyperNeo code is done when merged to dev after CI and bot approval, as
 with #5555."
+
+A PR merged before the delivering card’s kickoff is prior context, not this work’s result.
+Merge outcomes use an explicit watch or their delivering card’s PRs, independently read with merge times.

@@ -3,7 +3,6 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
-import { neoCardOpenLabel } from './card-view.ts';
 import {
   NeoAppMark,
   NeoChatMark,
@@ -23,7 +22,6 @@ import {
   isNeoAskQuestionItem,
   neoAskItemActions,
   neoAskOpenTarget,
-  neoAskOutcomeCount,
 } from './neo-asks.ts';
 import type { NeoScene, NeoSceneCards } from './neo-scenes.ts';
 import { neoAppLabel, neoAppLogo, neoSessionLink } from './work-driver.ts';
@@ -47,7 +45,15 @@ function stepGlyph(scene: NeoScene, done: boolean): { mark: string; color: strin
   return { mark: '!', color: 'text-warning' };
 }
 
-function StepRow({ scene, done }: { scene: NeoScene; done: boolean }) {
+function StepRow({
+  scene,
+  done,
+  control,
+}: {
+  scene: NeoScene;
+  done: boolean;
+  control?: ComponentChildren;
+}) {
   const glyph = stepGlyph(scene, done);
   const title = scene.receipt.kind === 'work' ? scene.receipt.title : scene.label;
   return (
@@ -65,6 +71,7 @@ function StepRow({ scene, done }: { scene: NeoScene; done: boolean }) {
         </span>
         <span class="block truncate text-xs text-fg-faint">{scene.label}</span>
       </span>
+      {control}
     </div>
   );
 }
@@ -150,7 +157,7 @@ const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> =
   pending: { mark: '○', color: 'text-fg-faint' },
 };
 
-function ItemRow({ item, above }: { item: NeoAskItem; above?: NeoAskItemAction['kind'] }) {
+function ItemRow({ item, waitingForPr }: { item: NeoAskItem; waitingForPr?: boolean }) {
   const glyph = itemGlyphs[item.state];
   const tags = [
     item.removed && 'removed',
@@ -173,20 +180,7 @@ function ItemRow({ item, above }: { item: NeoAskItem; above?: NeoAskItemAction['
           {item.text}
         </span>
         {tags.length > 0 && <span class="ml-2 text-xs text-fg-faint">{tags.join(' · ')}</span>}
-        {above && (
-          <button
-            type="button"
-            class="ml-2 text-xs text-accent hover:underline"
-            onClick={(event) =>
-              event.currentTarget
-                .closest('[data-ask]')
-                ?.querySelector(`[data-ask-needs-you] [data-ask-item="${item.id}"]`)
-                ?.scrollIntoView({ block: 'nearest' })
-            }
-          >
-            Question above
-          </button>
-        )}
+        {waitingForPr && <span class="block text-xs text-fg-faint">等 PR 开出来</span>}
         {item.removed && item.removedReason && (
           <span class="block break-words text-xs text-fg-faint">{item.removedReason}</span>
         )}
@@ -203,16 +197,26 @@ function ItemRow({ item, above }: { item: NeoAskItem; above?: NeoAskItemAction['
 function Checklist({
   items,
   label,
-  answerable,
+  cards,
 }: {
   items: readonly NeoAskItem[];
   label: string;
-  answerable?: ReadonlyMap<string, NeoAskItemAction['kind']>;
+  cards?: NeoSceneCards;
 }) {
   return (
     <ul aria-label={label} class="space-y-1.5">
       {items.map((item) => (
-        <ItemRow key={item.id} item={item} above={answerable?.get(item.id)} />
+        <ItemRow
+          key={item.id}
+          item={item}
+          waitingForPr={
+            !item.removed &&
+            item.state !== 'met' &&
+            item.check === 'coding.pr_merged' &&
+            !item.watch?.length &&
+            !cards?.get(item.deliveredBy ?? '')?.pr
+          }
+        />
       ))}
     </ul>
   );
@@ -278,7 +282,6 @@ export function NeoAskCard({
   onExpand,
   detailFailed = false,
   detailEpoch = 0,
-  renderCard,
 }: {
   view: NeoAskView;
   cards?: NeoSceneCards;
@@ -291,7 +294,6 @@ export function NeoAskCard({
   onExpand?: () => void;
   detailFailed?: boolean;
   detailEpoch?: number;
-  renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
   const [open, setOpen] = useState(false);
   const { ask } = view;
@@ -310,35 +312,32 @@ export function NeoAskCard({
         : view.group === 'outcomes'
           ? 'ended'
           : 'running';
-  const steps = view.scenes.length;
-  const single = steps === 1 ? view.scenes[0] : undefined;
   const itemActions = neoAskItemActions(view);
-  const count = neoAskOutcomeCount(view.items);
   const outcomes = view.items.filter((item) => !isNeoAskQuestionItem(item));
-  const questions = view.items.filter(isNeoAskQuestionItem);
-  const answerable = new Map(itemActions.map((action) => [action.itemId, action.kind]));
-  const target = neoAskOpenTarget(view, cards);
-  const openName = `Open ${ask.title}`;
-  const openControl =
-    target &&
-    (target.link ? (
-      <a href={target.link} class={neoSecondaryClass} aria-label={openName}>
+  const questions = view.items.filter(
+    (item) => isNeoAskQuestionItem(item) && (item.state !== 'needs_you' || item.removed)
+  );
+  const openControl = (scene: NeoScene) => {
+    const target = neoAskOpenTarget({ ...view, scenes: [scene] }, cards);
+    if (!target) return null;
+    const name = `Open ${target.work.title}`;
+    return target.link ? (
+      <a href={target.link} class={neoSecondaryClass} aria-label={name}>
         <NeoAppMark logo={neoAppLogo(target.card?.adapter)} />
-        {neoCardOpenLabel(target.card)}
+        Open
       </a>
-    ) : (
-      onOpen && (
-        <button
-          type="button"
-          class={neoSecondaryClass}
-          aria-label={openName}
-          onClick={() => onOpen(target.work.id)}
-        >
-          <NeoChatMark />
-          Open chat
-        </button>
-      )
-    ));
+    ) : onOpen ? (
+      <button
+        type="button"
+        class={neoSecondaryClass}
+        aria-label={name}
+        onClick={() => onOpen(target.work.id)}
+      >
+        <NeoChatMark />
+        Open
+      </button>
+    ) : null;
+  };
   return (
     <article aria-label={ask.title} data-ask={ask.id} class={neoCardClass}>
       <div class="flex min-h-7 items-center gap-2">
@@ -349,16 +348,6 @@ export function NeoAskCard({
           pulse={tone === 'running'}
         />
         <span class="flex-1" />
-        {!view.settled &&
-          count &&
-          (!view.scenes.length ||
-            view.scenes.some(
-              (scene) => scene.receipt.kind === 'work' && scene.receipt.status !== 'proposed'
-            )) && (
-            <span class="shrink-0 text-xs text-fg-muted">
-              {count.verified} of {count.total} outcomes verified
-            </span>
-          )}
         {onSettle && ask.status !== 'achieved' && ask.status !== 'abandoned' && (
           <Dropdown
             position="right"
@@ -402,15 +391,26 @@ export function NeoAskCard({
           </ul>
         </div>
       )}
-      {steps > 0 && (
+      <div class="mt-3 text-sm text-fg-muted" hidden={summarized}>
+        <p class="text-xs font-medium text-fg-faint">To-dos</p>
+        {outcomes.length > 0 ? (
+          <div class="mt-1.5">
+            <Checklist items={outcomes} label="To-dos" cards={cards} />
+          </div>
+        ) : (
+          <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
+        )}
+      </div>
+      {view.scenes.length > 0 && (
         <div class="mt-3 space-y-2 border-l-2 border-line pl-3">
-          {view.scenes.map((scene) =>
-            scene.group === 'attention' ? (
-              renderCard?.(scene)
-            ) : (
-              <StepRow key={scene.ref.id} scene={scene} done={view.doneIds.has(scene.ref.id)} />
-            )
-          )}
+          {view.scenes.map((scene) => (
+            <StepRow
+              key={scene.ref.id}
+              scene={scene}
+              done={view.doneIds.has(scene.ref.id)}
+              control={openControl(scene)}
+            />
+          ))}
         </div>
       )}
       {view.sessions.length > 0 && (
@@ -435,21 +435,11 @@ export function NeoAskCard({
                 Loading details…
               </p>
             ))}
-          <div class="text-sm text-fg-muted" hidden={summarized}>
-            <p class="text-xs font-medium text-fg-faint">Done when</p>
-            {outcomes.length > 0 ? (
-              <div class="mt-1.5">
-                <Checklist items={outcomes} label="Done when" />
-              </div>
-            ) : (
-              <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
-            )}
-          </div>
           {questions.length > 0 && (
             <div class="text-sm text-fg-muted">
-              <p class="text-xs font-medium text-fg-faint">Questions</p>
+              <p class="text-xs font-medium text-fg-faint">Answered questions</p>
               <div class="mt-1.5">
-                <Checklist items={questions} label="Questions" answerable={answerable} />
+                <Checklist items={questions} label="Answered questions" />
               </div>
             </div>
           )}
@@ -459,11 +449,9 @@ export function NeoAskCard({
               <p class="mt-1 whitespace-pre-wrap break-words">{ask.outcome}</p>
             </div>
           )}
-          {single && single.group !== 'attention' && renderCard?.(single)}
         </div>
       )}
       <div class={neoFooterClass}>
-        {openControl}
         <span class="flex-1" />
         <button
           type="button"

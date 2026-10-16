@@ -156,7 +156,7 @@ const Item = z.object({
 const Open = z
   .object({
     projectId: z.string().min(1).nullable().default(null),
-    title: z.string().trim().min(1).max(160),
+    title: z.string().trim().min(1).max(160).describe('Use the human’s language.'),
     ask: z.string().trim().min(1).max(4000),
     doneWhen: z.string().trim().min(1).max(2000).optional(),
     doneItems: z.array(Item).min(1).optional(),

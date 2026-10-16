@@ -428,7 +428,7 @@ describe('readGithubRefStates', () => {
         done: true,
         closedBy: url(9001),
         base: 'dev',
-        merges: [{ url: url(9001), base: 'dev' }],
+        merges: [{ url: url(9001), base: 'dev', at: null }],
         defaultBase: 'dev',
         createdAt: null,
         parent: null,

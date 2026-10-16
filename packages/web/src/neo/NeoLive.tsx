@@ -747,7 +747,6 @@ export function NeoLive() {
                     detailEpoch={neo.askDetailEpoch}
                     onOpen={(id) => openScene({ kind: 'work', id })}
                     onOpenSession={(sessionId, title) => setChat({ sessionId, title })}
-                    renderCard={(scene) => renderScene(scene, ask.group)}
                   />
                 ))}
                 {group.scenes.map((scene) => renderScene(scene, group.key))}
