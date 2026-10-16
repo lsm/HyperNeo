@@ -3903,7 +3903,18 @@ describe('planNeoAskTickStatus', () => {
       { status: 'unchanged' },
     ],
   ])('%s', (_label, overrides, plan) => {
-    expect(planNeoAskTickStatus({ ...ask, ...overrides })).toEqual(plan);
+    expect(planNeoAskTickStatus({ ...ask, ...overrides }, { met: true, cardLive: false })).toEqual(
+      plan
+    );
+  });
+
+  test('removing the last pending item never settles the ask achieved', () => {
+    expect(
+      planNeoAskTickStatus(
+        { ...ask, doneItems: [item('i1', 'pending', true), item('i2', 'met')] },
+        { met: false, cardLive: false }
+      )
+    ).toEqual({ status: 'unchanged' });
   });
 });
 
@@ -4234,10 +4245,7 @@ describe('neoPrompt dropped items', () => {
     expect(neoPrompt(null)).toContain('Only the human drops unfinished work');
   });
 
-  test('settles an ask the human drops whole as abandoned, not by removing its items', () => {
-    expect(neoPrompt(null)).toContain(
-      'When the human drops the whole ask, settle it abandoned with neo.ask.settle instead of removing its items'
-    );
+  test('lists abandoned among the settle outcomes', () => {
     expect(neoPrompt(null)).toContain('"abandoned" when the human dropped it');
   });
 });

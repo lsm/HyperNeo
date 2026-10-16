@@ -1306,7 +1306,7 @@ export function planNeoAskEdit(
 
 export function planNeoAskTickStatus(
   ask: NeoAsk,
-  settle: { cardLive: boolean; outcome?: string } = { cardLive: false }
+  settle: { met: boolean; cardLive: boolean; outcome?: string } = { met: false, cardLive: false }
 ):
   | { status: 'achieved'; outcome: string; evidence: string }
   | { status: 'waiting'; outcome: string; item: string }
@@ -1315,7 +1315,13 @@ export function planNeoAskTickStatus(
   if (isFinal(ask)) return { status: 'unchanged' };
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
   const held = ask.status === 'waiting' && !ask.waitingItem;
-  if (!held && !settle.cardLive && items.length && items.every((item) => item.state === 'met')) {
+  if (
+    settle.met &&
+    !held &&
+    !settle.cardLive &&
+    items.length &&
+    items.every((item) => item.state === 'met')
+  ) {
     const evidence = [...new Set(items.map((item) => item.evidence ?? item.text))].join('; ');
     return { status: 'achieved', outcome: settle.outcome ?? evidence, evidence };
   }
@@ -1454,7 +1460,10 @@ export function createNeoAskOperations(
     name: string,
     verb: string
   ) => NeoAsk | Rejection;
-  const replanAsk = (receipt: AskReceipt) => ({ ask: service.writeAskStatus(receipt.ask) });
+  const replanAsk = (receipt: AskReceipt) => ({ ask: service.writeAskStatus(receipt.ask, false) });
+  const replanMetAsk = (receipt: AskReceipt) => ({
+    ask: service.writeAskStatus(receipt.ask, true),
+  });
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -1777,7 +1786,7 @@ export function createNeoAskOperations(
       'ticked'
     )
     .pipe(requireNeoAskWritten, 'ticked', 'result:admission')
-    .pipe(replanAsk, 'admission', 'written')
+    .pipe(replanMetAsk, 'admission', 'written')
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
     .pipe(
       async (input: z.infer<typeof Tick>, receipt: AskReceipt, wakes: boolean) => {
@@ -1851,7 +1860,7 @@ export function createNeoAskOperations(
       'answered'
     )
     .pipe(requireNeoAskWritten, 'answered', 'result:admission')
-    .pipe(replanAsk, 'admission', 'written')
+    .pipe(replanMetAsk, 'admission', 'written')
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
     .endAsync('admission') as (
     input: z.infer<typeof Answer>,
