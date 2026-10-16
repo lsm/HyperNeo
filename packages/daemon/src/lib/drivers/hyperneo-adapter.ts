@@ -5,6 +5,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { MailboxHandoffOutcome } from '../mailbox/handoff.ts';
+import type { MailboxDeliveryMode } from '../mailbox/entry.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
 import { ModelUnavailableError } from '../session/session-lifecycle.ts';
 import { matchChatsBy } from './match-chats.ts';
@@ -94,7 +95,8 @@ export interface HyperneoAdapterDeps {
     sessionId: string,
     message: string,
     from: string,
-    messageUuid: string
+    messageUuid: string,
+    deliveryMode?: MailboxDeliveryMode
   ) => Promise<MailboxHandoffOutcome>;
   sessions: HyperneoSessionControl;
   neoFolder: () => string;
@@ -477,15 +479,17 @@ export async function deliverToHyperneo(
   row: HyperneoSessionRow,
   message: string,
   context: WorkCallContext,
-  deps: HyperneoAdapterDeps
+  deps: HyperneoAdapterDeps,
+  deliveryMode?: MailboxDeliveryMode
 ): Promise<Result<WorkDelivery>> {
   const inputId = crypto.randomUUID();
-  const outcome = await deps.handoff(row.id, message, context.from, inputId);
+  const outcome = await deps.handoff(row.id, message, context.from, inputId, deliveryMode);
   if (outcome.kind === 'rejected') return reject('not_delivered', outcome.reason);
   return {
     ok: true,
     value: {
-      delivered: !hyperneoSessionBusy(row),
+      delivered: deliveryMode !== 'defer' && !hyperneoSessionBusy(row),
+      ...(deliveryMode === 'defer' ? { queuedSubmissionId: outcome.id } : {}),
       receipt: { executionId: row.id, inputId },
     },
   };
@@ -653,15 +657,16 @@ const runHyperneoStatus = (superpipe({})('hyperneo-work-status') as PipelineAPI)
 ) => Result<WorkDetail>;
 
 const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
-  .input(['ref', 'message', 'context', 'deps'])
+  .input(['ref', 'message', 'context', 'deps', 'deliveryMode'])
   .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
   .pipe(requireOpenHyperneoSession, 'outcome', 'result:outcome')
-  .pipe(deliverToHyperneo, ['outcome', 'message', 'context', 'deps'], 'outcome')
+  .pipe(deliverToHyperneo, ['outcome', 'message', 'context', 'deps', 'deliveryMode'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,
   context: WorkCallContext,
-  deps: HyperneoAdapterDeps
+  deps: HyperneoAdapterDeps,
+  deliveryMode?: MailboxDeliveryMode
 ) => Promise<Result<WorkDelivery>>;
 
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
@@ -672,6 +677,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       'find',
       'start',
       'send',
+      'queue',
       'status',
       'stop',
       ...(deps.sessions.archive ? ['archive' as const] : []),
@@ -684,6 +690,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       ),
     start: (request, context) => runHyperneoStart(request, context, deps),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
+    queue: (ref, message, context) => runHyperneoSend(ref, message, context, deps, 'defer'),
     status: async (ref, since, receipt) => runHyperneoStatus(ref, deps, since, receipt),
     stop: async (ref) => runHyperneoStop(ref, deps),
     archive: async (ref, admit) => {
