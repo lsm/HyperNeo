@@ -146,6 +146,23 @@ describe('ToolResultCard Component', () => {
 
       const svg = document.querySelector('svg');
       expect(svg).toBeTruthy();
+      const path = svg?.querySelector('path');
+      const original = render(
+        <svg>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M6 18L18 6M6 6l12 12"
+          />
+        </svg>
+      );
+      const attributes = (element: Element | null | undefined) =>
+        Array.from(element?.attributes ?? [], (attribute) => [
+          attribute.name,
+          attribute.value,
+        ]).sort();
+      expect(attributes(path)).toEqual(attributes(original.container.querySelector('path')));
     });
   });
 
