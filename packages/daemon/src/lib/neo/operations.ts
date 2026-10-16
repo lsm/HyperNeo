@@ -944,7 +944,7 @@ function admitNeoCaller(
       : isNeoHumanTurn(service, caller))
   )
     return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
-  if (['neo.open', 'neo.receipt.read', 'neo.project.cancel', 'neo.session.track'].includes(name))
+  if (['neo.open', 'neo.project.cancel', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'project' && projectId !== undefined && projectId !== binding.projectId)
     return { reason: { ok: false, reason: 'This context holder cannot access another project.' } };
@@ -1541,6 +1541,19 @@ export function createNeoOperations(service: NeoService) {
       ['input', 'admission'],
       'result:admission'
     )
+    .pipe(
+      (input: ConsultRequest, origin: NeoConsultationOrigin) => {
+        const item = service.consultationFor(
+          { sessionId: origin.originSessionId, messageId: origin.originMessageId },
+          input.projectId
+        );
+        return item
+          ? { reason: presentNeoConsultationReply({ ok: true as const, consultation: item }) }
+          : { value: origin };
+      },
+      ['input', 'admission'],
+      'result:admission'
+    )
     .pipe((input: ConsultRequest) => service.open(input.projectId), 'input', 'sessionId')
     .pipe(
       (origin: NeoConsultationOrigin, caller: OperationCaller) =>
@@ -1653,10 +1666,22 @@ export function createNeoOperations(service: NeoService) {
   const readReceipt = path(
     'neo.receipt.read',
     (_input: z.infer<typeof ReceiptRead>) => undefined,
-    (input) => {
+    (input, caller) => {
       const work = 'workId' in input ? service.repo.getWork(input.workId) : null;
       const consultation =
         'consultationId' in input ? service.consultations.get(input.consultationId) : null;
+      if (caller.source !== 'rpc' || caller.principal !== 'local') {
+        const binding = caller.sessionId
+          ? service.repo.getBindingBySession(caller.sessionId)
+          : null;
+        if (
+          !consultation ||
+          binding?.kind !== 'neo' ||
+          consultation.originSessionId !== caller.sessionId ||
+          !caller.neoTurn?.isLive()
+        )
+          return { ok: false as const, reason: 'This action needs the user.' };
+      }
       if (work) return { ok: true as const, work };
       if (consultation) return { ok: true as const, consultation };
       return { ok: false as const, reason: 'Receipt not found.' };
@@ -2484,12 +2509,11 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.consult',
       description:
-        'Ask a context holder a bounded question from the current root input. Returns a correlated durable receipt; the answer arrives asynchronously. The daemon keys it to this turn, so a retry of the same question returns the same consultation.',
+        'Ask a context holder a question from the current root input. Returns a durable receipt; its answer arrives asynchronously. Repeating a completed consultation for the same human request returns its recorded receipt and full answer. Identical in-flight retries reuse their receipt.',
       inputSchema: Consult,
       resultSchema: ConsultationResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) =>
-        service.triggerWorkProblem(caller, input.projectId) ??
         consult(
           {
             ...input,
@@ -2518,10 +2542,10 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.receipt.read',
       description:
-        'Read one work item or consultation in full, by workId or consultationId, for a row the snapshot sent summarized.',
+        'Read a receipt in full by workId or consultationId. Root Neo can read consultations it started; the human can read any receipt.',
       inputSchema: ReceiptRead,
       resultSchema: ReceiptResult,
-      policy: { safetyClass: 'human_only' },
+      policy: { safetyClass: 'read', roles: ['neo'] },
       execute: readReceipt,
     }),
     defineOperation({
@@ -2594,8 +2618,6 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (proposal, caller) => {
-        const closed = service.triggerWorkProblem(caller);
-        if (closed) return closed;
         const input = {
           ...proposal,
           requestKey: neoTurnRequestKey(caller, 'neo.work.propose', proposal),

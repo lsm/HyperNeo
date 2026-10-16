@@ -1,10 +1,5 @@
 import type { NeoConsultation } from '@hyperneo/shared/types/neo-context';
 import type { Database } from '../sqlite-compat.ts';
-import {
-  CONSULTATION_EXPIRED,
-  CONSULTATION_TIMEOUT_MS,
-} from '../../lib/neo/consultation-policy.ts';
-
 const columns = `id, request_key AS requestKey, concern_id AS projectId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
   session_id AS sessionId, question, status,
@@ -35,6 +30,14 @@ export class NeoConsultationRepository {
       ${projectId ? 'WHERE concern_id = ?' : ''}
       ORDER BY (status = 'pending') DESC, created_at DESC LIMIT 20`)
       .all(...(projectId ? [projectId] : [])) as NeoConsultation[];
+  }
+
+  startedBy(originSessionId: string, projectId: string): NeoConsultation[] {
+    return this.db
+      .prepare(`SELECT ${columns} FROM neo_consultations
+      WHERE origin_session_id = ? AND concern_id = ? AND status = 'reported'
+      ORDER BY created_at DESC`)
+      .all(originSessionId, projectId) as NeoConsultation[];
   }
 
   unsettled(): NeoConsultation[] {
@@ -72,20 +75,10 @@ export class NeoConsultationRepository {
   }
 
   finish(id: string, status: 'reported' | 'failed', answer: string): NeoConsultation | null {
-    if (status === 'reported') this.expire(id);
     const result = this.db
       .prepare(`UPDATE neo_consultations SET status = ?, answer = ?
       WHERE id = ? AND status = 'pending'`)
       .run(status, answer, id);
-    if (result.changes) this.notify();
-    return this.get(id);
-  }
-
-  expire(id: string): NeoConsultation | null {
-    const result = this.db
-      .prepare(`UPDATE neo_consultations SET status = 'failed', answer = ?
-      WHERE id = ? AND status = 'pending' AND created_at <= ?`)
-      .run(CONSULTATION_EXPIRED, id, Date.now() - CONSULTATION_TIMEOUT_MS);
     if (result.changes) this.notify();
     return this.get(id);
   }

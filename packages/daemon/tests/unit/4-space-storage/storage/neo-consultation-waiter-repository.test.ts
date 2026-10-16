@@ -11,7 +11,6 @@ import { runMigration285 } from '../../../../src/storage/schema/m285-neo-consult
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../../../src/storage/repositories/neo-consultation-waiter-repository.ts';
-import { CONSULTATION_TIMEOUT_MS } from '../../../../src/lib/neo/consultation-policy.ts';
 
 const request = (id: string, projectId = 'club') => ({
   id,
@@ -114,9 +113,9 @@ describe('NeoConsultationWaiterRepository', () => {
     expect(consultations.reserve({ ...request('overlap'), projectId: 'club' })).toBeNull();
   });
 
-  test('starts the original deadline and captures the current revision only at admission', () => {
+  test('captures the current revision only at admission', () => {
     waiters.enqueue(request('correction'));
-    const queuedAt = Date.now() - 2 * CONSULTATION_TIMEOUT_MS;
+    const queuedAt = 0;
     db.prepare('UPDATE neo_consultation_waiters SET created_at = ?').run(queuedAt);
     expect(db.prepare('SELECT * FROM neo_context_write_grants').all()).toHaveLength(0);
     const current = projects.saveProject(
@@ -127,7 +126,7 @@ describe('NeoConsultationWaiterRepository', () => {
     const admitted = waiters.admitNext('club')!;
     expect(admitted.createdAt).toBeGreaterThanOrEqual(beforeAdmission);
     expect(waiters.get('correction')?.createdAt).toBe(queuedAt);
-    expect(consultations.expire('correction')?.status).toBe('pending');
+    expect(consultations.get('correction')?.status).toBe('pending');
     expect(db.prepare('SELECT * FROM neo_context_write_grants').all()).toEqual([
       { consultation_id: 'correction', context_revision: current.revision },
     ]);

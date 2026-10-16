@@ -473,13 +473,11 @@ describe('Neo forwarding delivery', () => {
     };
     const content = [{ type: 'text' as const, text: 'Fix this pump' }, image];
     const abort = new AbortController();
-    const sender = new NeoHolderTurn(
-      db,
-      garden.sessionId,
-      { isLive: () => true, yield: () => abort.abort() },
-      () => {}
-    );
-    const receiver = new NeoHolderTurn(db, pond.sessionId, { isLive: () => true }, () => {});
+    const sender = new NeoHolderTurn(db, garden.sessionId, {
+      isLive: () => true,
+      yield: () => abort.abort(),
+    });
+    const receiver = new NeoHolderTurn(db, pond.sessionId, { isLive: () => true });
     try {
       for (const binding of [garden, pond, main]) {
         if (binding.projectId)
@@ -751,7 +749,7 @@ describe('NeoAskForwardRepository', () => {
         'human:ask-1'
       );
       expect(service.ownsHumanMessage(human)).toBe(false);
-      const holder = new NeoHolderTurn(db, pond.sessionId, { isLive: () => true }, () => {});
+      const holder = new NeoHolderTurn(db, pond.sessionId, { isLive: () => true });
       expect(holder.bind('neo-forward:ask-1:0')).toBe(true);
       const forwarded = holder.identity()!;
       expect(forwarded.human).toBe(true);
