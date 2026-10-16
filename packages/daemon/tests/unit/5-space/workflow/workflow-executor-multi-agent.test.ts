@@ -561,34 +561,4 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
       })
     ).toThrow('reserved for a built-in agent');
   });
-
-  test('channels for start step are stored in run config after startWorkflowRun()', async () => {
-    const startNode = {
-      id: STEP_A,
-      name: 'Parallel With Channels',
-      agents: [
-        { agentId: AGENT_CODER, name: 'coder' },
-        { agentId: AGENT_REVIEWER, name: 'reviewer' },
-      ],
-    };
-    const { nodes, endNodeId } = appendSyntheticEnd([startNode], AGENT_CODER);
-    const workflow = workflowManager.createWorkflow({
-      spaceId: SPACE_ID,
-      name: `Channel Start Step ${Date.now()}`,
-      nodes,
-      transitions: [],
-      startNodeId: STEP_A,
-      endNodeId,
-      rules: [],
-      tags: [],
-      completionAutonomyLevel: 3,
-    });
-
-    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-
-    expect(tasks).toHaveLength(1);
-
-    const channels = runtime.getRunWorkflowChannels(run.id);
-    expect(channels).toHaveLength(0);
-  });
 });

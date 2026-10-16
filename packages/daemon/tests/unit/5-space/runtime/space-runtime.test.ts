@@ -778,7 +778,9 @@ describe('SpaceRuntime', () => {
       ]);
 
       const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Pinned Run');
-      const pinnedChannelCount = runtime.getWorkflowChannels(run.id).length;
+      const pinnedChannels = () =>
+        workflowManager.getWorkflowForRun(workflowRunRepo.getRun(run.id)!)?.channels ?? [];
+      const pinnedChannelCount = pinnedChannels().length;
 
       const head = workflowManager.getWorkflow(workflow.id)!;
       workflowManager.updateWorkflow(workflow.id, {
@@ -791,7 +793,7 @@ describe('SpaceRuntime', () => {
       expect(workflowManager.getWorkflow(workflow.id)?.channels ?? []).toHaveLength(
         pinnedChannelCount + 1
       );
-      expect(runtime.getWorkflowChannels(run.id)).toHaveLength(pinnedChannelCount);
+      expect(pinnedChannels()).toHaveLength(pinnedChannelCount);
     });
 
     test('creates initial SpaceTask for the start step', async () => {
@@ -1982,80 +1984,6 @@ describe('SpaceRuntime', () => {
 
       const updatedRun = workflowRunRepo.getRun(run.id)!;
       expect(updatedRun.status).toBe('blocked');
-    });
-  });
-
-  describe('channel topology resolution', () => {
-    test('storeWorkflowChannels: step with channels stores channels in memory', async () => {
-      const AGENT_REVIEWER = 'agent-reviewer';
-      seedAgentRow(db, AGENT_REVIEWER, SPACE_ID, 'Reviewer');
-
-      const workflow = workflowManager.createWorkflow({
-        spaceId: SPACE_ID,
-        name: `Channel Step ${Date.now()}`,
-        nodes: [
-          { id: STEP_A, name: 'Code', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
-          {
-            id: 'step-review',
-            name: 'Review',
-            agents: [{ agentId: AGENT_REVIEWER, name: 'reviewer' }],
-          },
-        ],
-        channels: [{ id: 'ch-1', from: 'Code', to: 'Review', label: 'submit' }],
-        startNodeId: STEP_A,
-        tags: [],
-        completionAutonomyLevel: 3,
-      });
-
-      const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-
-      const channels = runtime.getRunWorkflowChannels(run.id);
-      expect(Array.isArray(channels)).toBe(true);
-      expect(channels.length).toBeGreaterThan(0);
-      expect(channels[0].from).toBe('Code');
-      expect(channels[0].to).toBe('Review');
-    });
-
-    test('storeWorkflowChannels: workflow without channels returns empty array', async () => {
-      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-        { id: STEP_A, name: 'No Channels', agentId: AGENT_CODER },
-      ]);
-
-      const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-
-      const channels = runtime.getRunWorkflowChannels(run.id);
-      expect(Array.isArray(channels)).toBe(true);
-      expect(channels.length).toBe(0);
-    });
-
-    test('storeWorkflowChannels: no auto-generated channels for multi-agent step', async () => {
-      const AGENT_CODER_2 = 'agent-coder-2-duplicate-role';
-      seedAgentRow(db, AGENT_CODER_2, SPACE_ID, 'Coder 2');
-
-      const stepId = `step-dedup-${Date.now()}`;
-      const startNode = {
-        id: stepId,
-        name: 'Two Coders',
-        agents: [
-          { agentId: AGENT_CODER, name: 'coder' },
-          { agentId: AGENT_CODER_2, name: 'coder-2' },
-        ],
-      };
-      const { nodes, endNodeId } = appendSyntheticEnd([startNode], AGENT_CODER);
-      const workflow = workflowManager.createWorkflow({
-        spaceId: SPACE_ID,
-        name: 'Duplicate Role Test',
-        nodes,
-        startNodeId: stepId,
-        endNodeId,
-        completionAutonomyLevel: 3,
-      });
-
-      const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-
-      const channels = runtime.getRunWorkflowChannels(run.id);
-      expect(Array.isArray(channels)).toBe(true);
-      expect(channels.length).toBe(0);
     });
   });
 });
