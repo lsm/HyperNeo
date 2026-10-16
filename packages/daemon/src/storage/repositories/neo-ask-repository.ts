@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { readNeoAskAnswerAt, readNeoAskAnswerChoice } from '../../lib/neo/ask-answer-evidence.ts';
 import { neoOutcomeBindingPolicy } from '../../lib/neo/outcome-binding-policy.ts';
 import {
   type NeoAsk,
@@ -36,6 +37,7 @@ export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check' | 'watch' | 'del
   Partial<Pick<NeoAskItem, 'outcomeKind'>>;
 type NeoAskItemRow = Omit<
   NeoAskItem,
+  | 'answer'
   | 'removed'
   | 'removedReason'
   | 'options'
@@ -848,6 +850,16 @@ export class NeoAskRepository {
             ...item
           }) => ({
             ...item,
+            ...(item.state === 'met' &&
+            item.metBy === 'human' &&
+            (decision === 1 || question || ['decision', 'action', 'approval'].includes(kind ?? ''))
+              ? {
+                  answer: {
+                    choice: readNeoAskAnswerChoice(item.evidence),
+                    at: readNeoAskAnswerAt(item.evidence),
+                  },
+                }
+              : {}),
             removed: removed === 1,
             ...(removedReason ? { removedReason } : {}),
             ...(options ? { options: JSON.parse(options) as string[] } : {}),

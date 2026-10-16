@@ -1,4 +1,8 @@
-import type { NeoAskItem, NeoAskSessionView } from '@hyperneo/shared/types/neo-snapshot';
+import type {
+  NeoAskItem,
+  NeoAskSessionView,
+  NeoCardView,
+} from '@hyperneo/shared/types/neo-snapshot';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
@@ -35,13 +39,18 @@ const tones = {
   ended: 'text-fg-muted bg-fill-soft',
 };
 
-function stepGlyph(scene: NeoScene, done: boolean): { mark: string; color: string } {
+function stepGlyph(
+  scene: NeoScene,
+  done: boolean,
+  card?: NeoCardView
+): { mark: string; color: string } {
+  if (scene.receipt.kind === 'work' && scene.receipt.status === 'proposed')
+    return { mark: '○', color: 'text-fg-faint' };
   if (done) return { mark: '✓', color: 'text-success' };
   if (scene.group === 'attention') return { mark: '!', color: 'text-warning' };
-  if (scene.group === 'running') return { mark: '●', color: 'text-accent' };
-  if (scene.receipt.kind === 'work' && scene.receipt.status === 'cancelled')
-    return { mark: '–', color: 'text-fg-faint' };
-  return { mark: '!', color: 'text-warning' };
+  if (scene.group === 'running' && card && ['running', 'checking', 'pr_open'].includes(card.phase))
+    return { mark: '●', color: 'text-accent' };
+  return { mark: '○', color: 'text-fg-faint' };
 }
 
 function StepRow({
@@ -57,7 +66,12 @@ function StepRow({
   todos: readonly NeoAskItem[];
   cards?: NeoSceneCards;
 }) {
-  const glyph = stepGlyph(scene, done);
+  const owned = todos.filter((item) => !item.removed && item.deliveredBy === scene.ref.id);
+  const glyph = stepGlyph(
+    scene,
+    owned.length ? owned.every((item) => item.state === 'met') : done,
+    cards?.get(scene.ref.id)
+  );
   const title = scene.receipt.kind === 'work' ? scene.receipt.title : scene.label;
   return (
     <div
@@ -72,7 +86,11 @@ function StepRow({
         <span class="line-clamp-2 break-words" title={title}>
           {title}
         </span>
-        <span class="block break-words text-xs text-fg-faint">{scene.label}</span>
+        <span class="block break-words text-xs text-fg-faint">
+          {scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'
+            ? '等你决定'
+            : scene.label}
+        </span>
         <Checklist
           items={todos}
           step={{ id: scene.ref.id, title }}
@@ -162,7 +180,7 @@ function SessionRow({
 const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> = {
   met: { mark: '✓', color: 'text-success' },
   needs_you: { mark: '!', color: 'text-warning' },
-  reported: { mark: '?', color: 'text-warning' },
+  reported: { mark: '○', color: 'text-fg-faint' },
   pending: { mark: '○', color: 'text-fg-faint' },
 };
 
@@ -211,6 +229,22 @@ function ItemRow({
           </span>
         )}
       </span>
+    </li>
+  );
+}
+
+function AnsweredQuestion({ item }: { item: NeoAskItem }) {
+  const answer = item.answer;
+  return (
+    <li data-ask-answer={item.id} class="flex min-w-0 flex-wrap gap-x-2 text-sm text-fg-muted">
+      <span>{answer?.choice ?? '选择未记录'}</span>
+      {answer?.at != null ? (
+        <time dateTime={new Date(answer.at).toISOString()} class="text-xs text-fg-faint">
+          {new Date(answer.at).toLocaleString()}
+        </time>
+      ) : (
+        <span class="text-xs text-fg-faint">时间未记录</span>
+      )}
     </li>
   );
 }
@@ -380,11 +414,11 @@ export function NeoAskCard({
   const openControl = (scene: NeoScene) => {
     const target = neoAskOpenTarget({ ...view, scenes: [scene] }, cards);
     if (!target) return null;
-    const name = `Open ${target.work.title}`;
+    const name = `打开 ${target.work.title}`;
     return target.link ? (
       <a href={target.link} class={neoSecondaryClass} aria-label={name}>
         <NeoAppMark logo={neoAppLogo(target.card?.adapter)} />
-        Open
+        打开
       </a>
     ) : onOpen ? (
       <button
@@ -394,7 +428,7 @@ export function NeoAskCard({
         onClick={() => onOpen(target.work.id)}
       >
         <NeoChatMark />
-        Open
+        打开
       </button>
     ) : null;
   };
@@ -501,10 +535,12 @@ export function NeoAskCard({
             ))}
           {questions.length > 0 && (
             <div class="text-sm text-fg-muted">
-              <p class="text-xs font-medium text-fg-faint">Answered questions</p>
-              <div class="mt-1.5">
-                <Checklist items={questions} label="Answered questions" />
-              </div>
+              <p class="text-xs font-medium text-fg-faint">已回答</p>
+              <ul class="mt-1.5 space-y-1.5" aria-label="已回答">
+                {questions.map((item) => (
+                  <AnsweredQuestion key={item.id} item={item} />
+                ))}
+              </ul>
             </div>
           )}
           {ask.outcome && ask.outcome.trim() !== view.summary && (
