@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { NEO_UNFINISHED_REPLY } from '../../../../src/lib/neo/direct-reply-fallback.ts';
 import { adoptNeoFilePacks } from '../../../../src/lib/neo/packs/index.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { vi } from 'vitest';
@@ -63,7 +62,6 @@ import { neoTurnRequestKey } from '../../../../src/lib/neo/request-key.ts';
 import { neoAskItemAction } from '../../../../src/lib/neo/ask-views.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
-import { isNeoHumanOwnTurn } from '../../../../src/lib/neo/notification-triggers.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -3079,28 +3077,6 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test('a turn that hit its limit gets one note listing the asks it already opened', async () => {
-    const results = db.getSDKMessageRepo();
-    const save = (uuid: string, subtype: string) =>
-      results.saveSDKMessage('root', {
-        type: 'result',
-        subtype,
-        uuid,
-        session_id: 'root',
-      } as unknown as SDKUserMessage);
-    save('r1', 'success');
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    const askId = await openAsk();
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    save('r2', 'error_max_turns');
-    const delivered = mock(async (..._args: unknown[]) => {});
-    (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
-    await service.noteTurnLimit('root');
-    expect(delivered).toHaveBeenCalledTimes(1);
-    expect(delivered.mock.calls[0]?.[1]).toBe('neo-turn-limit:r2');
-    expect(delivered.mock.calls[0]?.[2]).toContain(`- ask ${askId} "${opening.title}" (open`);
-  });
-
   test('an answer item is reported from its card and met only by the answer published for its trigger', async () => {
     const opened = await invoke('neo.ask.open', {
       ...opening,
@@ -3147,13 +3123,6 @@ describe('neo.ask operations', () => {
     });
     expect(service.askRecords.get(askId)?.status).toBe('open');
     internals.notePublishedAnswer({
-      publicationId: 'p-unfinished',
-      triggerId: `outcome:${askId}:x`,
-      askOrigin: { sessionId: 'root', messageId: 'elsewhere' },
-      shortText: NEO_UNFINISHED_REPLY,
-    });
-    expect(service.askRecords.get(askId)?.status).toBe('open');
-    internals.notePublishedAnswer({
       publicationId: 'p1',
       triggerId: `outcome:${askId}:x`,
       askOrigin: { sessionId: 'root', messageId: 'elsewhere' },
@@ -3166,76 +3135,6 @@ describe('neo.ask operations', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(service.repo.getWork(spare)?.status).toBe('cancelled');
-  });
-
-  test('a turn-limit note continues the cut-off turn, so it keeps that turn’s ask and trigger', async () => {
-    const messages = db.getSDKMessageRepo();
-    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
-    messages.saveSDKMessage('root', {
-      type: 'result',
-      subtype: 'success',
-      uuid: 'r1',
-      session_id: 'root',
-    } as unknown as SDKUserMessage);
-    await pause();
-    messages.saveSDKMessage('root', {
-      type: 'user',
-      uuid: 'h1',
-      session_id: 'root',
-      parent_tool_use_id: null,
-      inputKind: 'human',
-      message: { role: 'user', content: 'dev' },
-    } as unknown as SDKUserMessage);
-    await pause();
-    messages.saveSDKMessage('root', {
-      type: 'result',
-      subtype: 'error_max_turns',
-      uuid: 'r2',
-      session_id: 'root',
-    } as unknown as SDKUserMessage);
-    await service.noteTurnLimit('root');
-    const note = { sessionId: 'root', messageId: 'neo-turn-limit:human:r2' };
-    expect(service.inputTrigger(note)).toBe('human:h1');
-    expect(isNeoHumanOwnTurn(note.messageId, 'human:h1')).toBe(true);
-    expect(service.resolveAskOrigin(note)).toEqual({ sessionId: 'root', messageId: 'h1' });
-  });
-
-  test('a turn-limit note that continues a nudge is not the human’s own turn', async () => {
-    const messages = db.getSDKMessageRepo();
-    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
-    messages.saveSDKMessage('root', {
-      type: 'result',
-      subtype: 'success',
-      uuid: 'r1',
-      session_id: 'root',
-    } as unknown as SDKUserMessage);
-    await pause();
-    messages.saveSDKMessage('root', {
-      type: 'user',
-      uuid: 'neo-nudge:h1',
-      session_id: 'root',
-      parent_tool_use_id: null,
-      inputKind: 'system',
-      message: { role: 'user', content: 'Publish your answer.' },
-    } as unknown as SDKUserMessage);
-    service.inputOrigins.record(
-      { sessionId: 'root', messageId: 'neo-nudge:h1' },
-      { sessionId: 'root', messageId: 'h1' },
-      0,
-      'human:h1'
-    );
-    await pause();
-    messages.saveSDKMessage('root', {
-      type: 'result',
-      subtype: 'error_max_turns',
-      uuid: 'r2',
-      session_id: 'root',
-    } as unknown as SDKUserMessage);
-    const delivered = mock(async (..._args: unknown[]) => {});
-    (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
-    await service.noteTurnLimit('root');
-    expect(delivered.mock.calls[0]?.[1]).toBe('neo-turn-limit:r2');
-    expect(isNeoHumanOwnTurn('neo-turn-limit:r2', 'human:h1')).toBe(false);
   });
 
   test('a restart-recovery note continues the cut-off turn; an unbound session gets no stamp', async () => {
@@ -3254,77 +3153,6 @@ describe('neo.ask operations', () => {
     const loose = { sessionId: 'plain', messageId: 'restart-recovery:p1' };
     service.stampContinuation(loose, { sessionId: 'plain', messageId: 'p1' });
     expect(service.inputTrigger(loose)).toBeNull();
-  });
-
-  test('a cut-off nudge turn whose trigger is already answered gets no turn-limit note', async () => {
-    const messages = db.getSDKMessageRepo();
-    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
-    messages.saveSDKMessage('root', {
-      type: 'result',
-      subtype: 'success',
-      uuid: 'r1',
-      session_id: 'root',
-    } as unknown as SDKUserMessage);
-    await pause();
-    messages.saveSDKMessage('root', {
-      type: 'user',
-      uuid: 'neo-nudge:h1',
-      session_id: 'root',
-      parent_tool_use_id: null,
-      inputKind: 'system',
-      message: { role: 'user', content: 'Publish your answer.' },
-    } as unknown as SDKUserMessage);
-    service.inputOrigins.record(
-      { sessionId: 'root', messageId: 'neo-nudge:h1' },
-      { sessionId: 'root', messageId: 'h1' },
-      0,
-      'human:h1'
-    );
-    await pause();
-    messages.saveSDKMessage('root', {
-      type: 'result',
-      subtype: 'error_max_turns',
-      uuid: 'r2',
-      session_id: 'root',
-    } as unknown as SDKUserMessage);
-    service.publications.hasTrigger = (_conversation: string, triggerId: string) =>
-      triggerId === 'human:h1';
-    const delivered = mock(async (..._args: unknown[]) => {});
-    (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
-    await service.noteTurnLimit('root');
-    expect(delivered).not.toHaveBeenCalled();
-  });
-
-  test('a dropped turn-limit note does not stop the next cut-off turn from getting its own', async () => {
-    const results = db.getSDKMessageRepo();
-    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
-    const save = (uuid: string, type: 'result' | 'user', subtype?: string) =>
-      results.saveSDKMessage('root', {
-        type,
-        subtype,
-        uuid,
-        session_id: 'root',
-        ...(type === 'user'
-          ? {
-              inputKind: 'system',
-              message: { role: 'user', content: 'Your last turn hit its turn limit.' },
-            }
-          : {}),
-      } as unknown as SDKUserMessage);
-    save('r1', 'result', 'error_max_turns');
-    await pause();
-    save('neo-turn-limit:r1', 'user');
-    await pause();
-    save('r2', 'result', 'error_max_turns');
-    const delivered = mock(async (..._args: unknown[]) => {});
-    (service as unknown as { deliverToOrigin: typeof delivered }).deliverToOrigin = delivered;
-    await service.noteTurnLimit('root');
-    expect(delivered).not.toHaveBeenCalled();
-    db.getDatabase()
-      .prepare("UPDATE sdk_messages SET send_status = 'failed' WHERE sdk_uuid = ?")
-      .run('neo-turn-limit:r1');
-    await service.noteTurnLimit('root');
-    expect(delivered.mock.calls.map((call) => call[1])).toEqual(['neo-turn-limit:r2']);
   });
 
   test('edits the checklist in view: removed items stay listed, and dropping a question reopens the ask', async () => {

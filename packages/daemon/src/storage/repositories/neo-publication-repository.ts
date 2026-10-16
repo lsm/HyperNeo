@@ -295,21 +295,4 @@ export class NeoPublicationRepository {
         .all(conversationId, limit) as Row[]
     ).map(decode);
   }
-
-  findByProducer(sessionId: string, messageId: string): NeoPublication | null {
-    const row = this.db
-      .prepare(
-        `SELECT ${columns} FROM neo_publications
-        WHERE (json_extract(payload_json, '$.producerInput.sessionId') = ?
-          AND json_extract(payload_json, '$.producerInput.messageId') = ?)
-          OR (json_extract(payload_json, '$.answerInput.sessionId') = ?
-          AND json_extract(payload_json, '$.answerInput.messageId') = ?)
-          OR EXISTS (SELECT 1 FROM json_each(payload_json, '$.revisions') r
-            WHERE json_extract(r.value, '$.producerInput.sessionId') = ?
-              AND json_extract(r.value, '$.producerInput.messageId') = ?)
-          ORDER BY sequence LIMIT 1`
-      )
-      .get(sessionId, messageId, sessionId, messageId, sessionId, messageId) as Row | null;
-    return row ? decode(row) : null;
-  }
 }

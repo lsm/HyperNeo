@@ -167,7 +167,7 @@ describe('Neo world briefing delivery', () => {
       expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools());
       expect(options.settingSources).toEqual([]);
       expect(options.model).toBe('fixture-model');
-      expect(options.maxTurns).toBe(17);
+      expect(options.maxTurns).toBeUndefined();
       expect(prompt).toContain(
         projectId ? 'For every consultation request' : 'For every new user request'
       );
