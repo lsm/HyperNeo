@@ -242,7 +242,11 @@ describe('Neo quote reply through live chat and durable intake', () => {
           },
         };
       });
-      const input = await open();
+      sessionId.value = null;
+      render(<NeoLive />);
+      expect(screen.getByText('Reply in chat').closest('button')?.disabled).toBe(true);
+      sessionId.value = root;
+      const input = (await screen.findByRole('textbox')) as HTMLTextAreaElement;
       type(draft);
       quote('You');
       const sheet = screen.queryByRole('button', { name: /^Your work/ });
