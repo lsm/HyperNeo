@@ -135,6 +135,19 @@ describe('chooseNeoRoute explicit identity', () => {
     expect(runtime.classify).not.toHaveBeenCalled();
   });
 
+  test('does not replace an unavailable named owner with an available affinity match', async () => {
+    const runtime = deps();
+    expect(
+      await chooseNeoRoute('Book Club', {
+        ...runtime,
+        holders: () => [coding],
+        facts: (text) => selectNeoNamedRouteFacts(readNeoNamedProjectFacts(text, projects)),
+      })
+    ).toEqual({ choice: null, fallback: 'facts:root' });
+    expect(runtime.classify).not.toHaveBeenCalled();
+    expect(runtime.embed).not.toHaveBeenCalled();
+  });
+
   test('preserves exact record ownership ahead of incidental project words', async () => {
     expect(
       (

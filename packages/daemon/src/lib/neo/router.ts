@@ -577,7 +577,11 @@ export function createNeoRouter(
       const facts = recorded.length ? recorded : readNamedRouteFacts(text, named);
       if (facts.some((fact) => fact.projectId === undefined) && refreshFacts) {
         await refreshFacts(text);
-        return readNeoSectionFacts(text, readNeoProjectFacts(db.getDatabase(), text), projects);
+        return readNeoSectionFacts(
+          text,
+          readNeoProjectFacts(db.getDatabase(), text),
+          repo.listProjects()
+        );
       }
       return readNeoSectionFacts(text, facts, projects);
     },
