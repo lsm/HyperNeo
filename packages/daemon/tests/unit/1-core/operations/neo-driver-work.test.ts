@@ -73,6 +73,7 @@ import {
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
+import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
 const retryVia = async (service: NeoService, id = 'work-1') => {
@@ -2460,6 +2461,50 @@ describe('Neo work with a drivers target', () => {
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
       expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('records the PR its HyperNeo worker session subscribes to', async () => {
+    const ref = { adapter: 'hyperneo', id: 'worker' };
+    const at = Date.now() + 10_000;
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: {
+        ref,
+        status: 'done',
+        lastActivityAt: at + 2,
+        exchange: [
+          { at, role: 'user', text: work.instruction },
+          { at: at + 2, role: 'agent', text: 'Done.' },
+        ],
+      },
+    }));
+    const url = 'https://github.com/lsm/hyperneo-review-test/pull/18';
+    service.readPrs = async (urls) =>
+      urls.map((item) => ({
+        url: item,
+        state: 'OPEN' as const,
+        checks: 'pending' as const,
+        review: 'none' as const,
+        createdAt: at + 1,
+      }));
+    service.readBranchPrs = async () => [];
+    service.readCheckoutPrs = async () => [];
+    Object.assign(service, { deliver: async () => {} });
+    db.createSession(createTestSession('neo:root'));
+    db.createSession(createTestSession('worker'));
+    new SessionEventSubscriptionRepository(db.getDatabase()).upsert({
+      sessionId: 'worker',
+      topic: 'github/lsm/hyperneo-review-test/pull_request/18.*',
+    });
+    service.workGoals.record('work-1', 'Open a PR', '- merged to dev');
+    fileUnderAsk(service);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);
     } finally {
       db.close();
     }
