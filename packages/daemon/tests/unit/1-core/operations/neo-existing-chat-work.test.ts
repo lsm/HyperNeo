@@ -1,3 +1,4 @@
+import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
 import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
@@ -570,10 +571,9 @@ describe('Neo existing chat work', () => {
       name: 'neo.work.report',
       input: { id: work.id, status: 'reported', report: `Evidence ${work.title}` },
     });
-    expect(JSON.parse((await foreign(request(a))).content[0].text)).toMatchObject({
-      accepted: false,
-      reason: 'recipient_mismatch',
-    });
+    expect(JSON.parse((await foreign(request(a))).content[0].text)).toEqual(
+      explainNeoRefusal({ accepted: false, reason: 'recipient_mismatch' })
+    );
     for (const work of [b, a]) {
       expect(JSON.parse((await report(request(work))).content[0].text)).toMatchObject({
         accepted: true,
