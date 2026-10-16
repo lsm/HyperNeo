@@ -108,6 +108,7 @@ export const WorkInputReceiptSchema = z.object({
 
 export const WorkDeliverySchema = z.object({
   delivered: z.boolean(),
+  unconfirmed: z.literal(true).optional(),
   receipt: WorkInputReceiptSchema.optional(),
   queuedSubmissionId: z.string().min(1).optional(),
   steeredIntoTurnId: z.string().min(1).optional(),
