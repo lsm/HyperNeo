@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -87,8 +88,9 @@ describe('NeoService extracted consultation request delivery', () => {
 describe('neoConsultationRequestContent', () => {
   test('every consultation answers Neo with neo.project.respond, never a publication to the human', () => {
     const request = neoConsultationRequestContent(item);
-    expect(request).toContain('Answer with neo.project.respond {id, answer}');
-    expect(request).toContain('Never publish to the human');
     expect(request).not.toContain('neo.publication.publish');
+    expect(neoPrompt('research')).toContain(
+      "A consultation's answer goes back to Neo and never to the human"
+    );
   });
 });

@@ -242,10 +242,10 @@ describe('neoForwardedText', () => {
 
 describe('neoForwardContent', () => {
   test('tells a project receiver it may still forward to main, and main or the last one nothing', () => {
-    expect(neoForwardContent('Garden', true, 'Fix the pond pump')).toContain('forward it to main');
-    expect(neoForwardContent('Pond', false, 'Fix the pond pump')).toContain(
-      'neo.publication.publish'
+    expect(neoForwardContent('Garden', true, 'Fix the pond pump')).toContain(
+      'forwarded on only to main'
     );
+    expect(neoForwardContent('Pond', false, 'Fix the pond pump')).not.toContain('main');
     expect(neoForwardContent('Pond', false, 'Fix the pond pump')).not.toContain(
       'forward it to main'
     );
@@ -384,8 +384,8 @@ describe('neo.ask.forward', () => {
       value: { ok: true, hop: 0, to: 'main' },
     });
     const content = (delivered[0] as unknown[])[2] as string;
-    expect(content).toContain('neo.publication.publish');
-    expect(content).not.toContain('forward it to main');
+    expect(content).toContain('The runtime binds the original ask.');
+    expect(content).not.toContain('forwarded on only to main');
   });
 
   test('refuses a project that does not exist', async () => {
