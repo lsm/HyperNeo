@@ -1,5 +1,7 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { NeoAskHumanAction } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoQuote } from './neo-intake.ts';
 
 type Origin = { sessionId: string; messageId: string; replyId: string };
 type Matched = Origin & { ask: ChatMessage };
@@ -81,4 +83,15 @@ export const projectNeoReplyContext = (superpipe({})('neo-reply-context') as Pip
 
 export function neoMessageAnchor(sessionId: string, messageId: string): string {
   return `neo-message-${encodeURIComponent(sessionId)}-${encodeURIComponent(messageId)}`;
+}
+
+export function neoQuestionReply(
+  askId: string,
+  question: Pick<NeoAskHumanAction, 'itemId' | 'question'>
+): NeoQuote {
+  return {
+    author: 'Neo',
+    text: question.question,
+    anchor: `neo-question-${encodeURIComponent(askId)}-${encodeURIComponent(question.itemId)}`,
+  };
 }
