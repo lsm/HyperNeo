@@ -1107,11 +1107,6 @@ export class AgentSession
     return this.queryModeHandler.replayPendingMessagesForAutomaticTurnEnd(options);
   }
 
-  async replayAllPendingMessages(): Promise<void> {
-    this.reconcilerProvisioned = true;
-    await this.queryModeHandler.replayPendingMessagesForImmediateMode();
-  }
-
   async sendEnqueuedMessagesOnTurnEnd(options?: {
     pendingTaskInput?: boolean;
     skipResetCoordination?: boolean;
@@ -1181,10 +1176,6 @@ export class AgentSession
       await this.lifecycleManager.startQueryAndEnqueue(held.uuid, held.content, undefined, {
         prepend: true,
       });
-  }
-
-  removeQueuedMessage(messageId: string): boolean {
-    return this.messageQueue.remove(messageId);
   }
 
   async revokePendingDelivery(
@@ -1747,21 +1738,10 @@ export class AgentSession
     this.logger.info(`mcp.attach ${JSON.stringify(payload)}`);
   }
 
-  async updateUserMcpServers(servers: Record<string, McpServerConfig>): Promise<void> {
-    await this.sessionConfigHandler.updateUserMcpServers(servers);
-  }
-
   setRuntimeSystemPrompt(systemPrompt: SystemPromptConfig): void {
     this.session.config = {
       ...this.session.config,
       systemPrompt,
-    };
-  }
-
-  setRuntimeModel(model: string): void {
-    this.session.config = {
-      ...this.session.config,
-      model,
     };
   }
 
@@ -1779,10 +1759,6 @@ export class AgentSession
 
   getContextInfo(): ContextInfo | null {
     return this.contextTracker.getContextInfo();
-  }
-
-  getQueryObject(): QueryLike | null {
-    return this.queryObject;
   }
 
   getSdkCapabilities(): ReadonlySet<string> {
@@ -1827,52 +1803,6 @@ export class AgentSession
   getSDKSessionId(): string | null {
     if (!this.queryObject || !('sessionId' in this.queryObject)) return null;
     return this.queryObject.sessionId as string;
-  }
-
-  async awaitSdkSessionCaptured(timeoutMs = 15000): Promise<string> {
-    if (this.session.sdkSessionId) return this.session.sdkSessionId;
-
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      let unsubscribe: (() => void) | null = null;
-
-      const finish = (err: Error | null, id?: string) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (unsubscribe) unsubscribe();
-        if (err) reject(err);
-        else resolve(id as string);
-      };
-
-      const timer = setTimeout(() => {
-        finish(
-          new Error(
-            `Timed out after ${timeoutMs}ms waiting for sdkSessionId on session ${this.session.id}`
-          )
-        );
-      }, timeoutMs);
-
-      unsubscribe = this.internalEventBus.subscribe(
-        'session.updated',
-        (payload) => {
-          if (payload.sessionId && payload.sessionId !== this.session.id) return;
-
-          const payloadId = payload.session?.sdkSessionId;
-          if (typeof payloadId === 'string' && payloadId.length > 0) {
-            finish(null, payloadId);
-            return;
-          }
-          if (this.session.sdkSessionId) {
-            finish(null, this.session.sdkSessionId);
-          }
-        },
-        { sessionId: this.session.id, subscriberName: 'AgentSession.waitForSdkSessionId' }
-      );
-      if (this.session.sdkSessionId) {
-        finish(null, this.session.sdkSessionId);
-      }
-    });
   }
 
   async getSlashCommands(): Promise<string[]> {

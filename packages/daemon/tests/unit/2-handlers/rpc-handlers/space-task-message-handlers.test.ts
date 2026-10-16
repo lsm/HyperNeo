@@ -2663,7 +2663,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         task?: SpaceTask | null;
         declared?: string[];
         resolutionOutcome?: Awaited<ReturnType<SessionEnsurer>>;
-        liveSession?: { session: { id: string } } | null;
       } = {}
     ) {
       const mh = createMockMessageHub();
@@ -2683,7 +2682,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         injectSubSessionMessage: mock(async (sid: string, msg: string) => {
           injectCalls.push({ sessionId: sid, message: msg });
         }),
-        getSubSessionByAgentName: mock(async () => opts.liveSession ?? null),
         getWorkflowDeclaredAgentNamesForTask: mock(() => declared),
       };
 
@@ -2781,7 +2779,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         injectCalls,
       } = setupActivate({
         resolutionOutcome: { kind: 'resolved', sessionId: 'sess-live-reviewer', created: false },
-        liveSession: { session: { id: 'sess-live-reviewer' } },
       });
       const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
