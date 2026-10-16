@@ -113,7 +113,7 @@ Neo reaches every adapter through one set of operations:
 
 | Operation | What it does |
 | --- | --- |
-| `work.find {text?, folder?, spaceId?, adapters?, includeClosed?, limit?, localOnly?}` | Asks every local adapter and, unless `localOnly` is set, every attached daemon; merges the results by place and returns the groups most recent first, plus any source that could not answer. |
+| `work.find {text?, folder?, spaceId?, adapters?, includeClosed?, limit?, localOnly?}` | Asks every local adapter and, unless `localOnly` is set, every attached daemon; merges the results by place and returns the groups most recent first, with a calling Neo project's own folders ahead of the rest (except for an `id` lookup), plus any source that could not answer. |
 | `work.start {adapter, place, title, message}` | Starts new work in a place and records a work item. |
 | `work.send {ref, message}` | Sends to existing work, confirms delivery, and records a work item. |
 | `work.status {ref}` | Returns the current status, the last reply and the link. |

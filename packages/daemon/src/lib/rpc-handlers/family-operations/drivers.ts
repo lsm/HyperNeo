@@ -3,6 +3,7 @@ import {
   type WorkExecutionPreparer,
 } from '../../drivers/start-preparation.ts';
 import { mirrorNeoWorkspaceProjects } from '../../neo/project-mirror.ts';
+import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
@@ -456,6 +457,19 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           return false;
         }
       },
+    },
+    ownPlaces: (caller: OperationCaller) => {
+      const repo = new NeoRepository(db());
+      const projectId = caller.sessionId
+        ? repo.getBindingBySession(caller.sessionId)?.projectId
+        : null;
+      return new Set(
+        projectId
+          ? repo
+              .workspaceAliases(projectId)
+              .flatMap((alias) => (alias.startsWith('folder:') ? [alias.slice(7)] : []))
+          : []
+      );
     },
     mirrorProjects: (groups: readonly PlaceGroup[]) => {
       if (mirrorNeoWorkspaceProjects(db(), groups))
