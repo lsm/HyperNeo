@@ -178,9 +178,7 @@ export function getSpaceEvolveFromPath(path: string): string | null {
   return forgeMatch ? forgeMatch[1] : null;
 }
 
-export function getSpaceForgeFromPath(path: string): string | null {
-  return getSpaceEvolveFromPath(path);
-}
+export const getSpaceForgeFromPath = getSpaceEvolveFromPath;
 
 export function getSpaceTasksFromPath(path: string): string | null {
   const match = path.match(SPACE_TASKS_ROUTE_PATTERN);
@@ -264,9 +262,7 @@ export function createSpaceEvolvePath(spaceId: string): string {
   return `/space/${spaceId}/evolve`;
 }
 
-export function createSpaceForgePath(spaceId: string): string {
-  return createSpaceEvolvePath(spaceId);
-}
+export const createSpaceForgePath = createSpaceEvolvePath;
 
 export function createSpaceTasksPath(spaceId: string, tab?: string): string {
   return tab ? `/space/${spaceId}/tasks/${tab}` : `/space/${spaceId}/tasks`;
@@ -554,9 +550,7 @@ export function navigateToSpaceEvolve(spaceId: string, replace = false): void {
   navSectionSignal.value = 'spaces';
 }
 
-export function navigateToSpaceForge(spaceId: string, replace = false): void {
-  navigateToSpaceEvolve(spaceId, replace);
-}
+export const navigateToSpaceForge = navigateToSpaceEvolve;
 
 export function navigateToSpaceTasks(
   spaceId: string,

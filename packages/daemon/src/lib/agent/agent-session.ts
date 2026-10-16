@@ -1166,15 +1166,26 @@ export class AgentSession
 
   async revokePendingDelivery(
     messageDbId: string,
-    mode: 'remove' | 'defer'
+    mode: 'remove' | 'defer',
+    expectedStatus?: 'deferred',
+    commitRemoval?: () => void
   ): Promise<
     { changed: false } | { changed: true; dbId: string; uuid: string; removedFromMemory: boolean }
   > {
     const result = await withSessionLock(this.session.id, async () => {
-      const result =
+      const remove = () =>
         mode === 'remove'
-          ? this.db.deletePendingUserMessage(this.session.id, messageDbId)
+          ? expectedStatus
+            ? this.db.deletePendingUserMessage(this.session.id, messageDbId, expectedStatus)
+            : this.db.deletePendingUserMessage(this.session.id, messageDbId)
           : this.db.deferEnqueuedUserMessage(this.session.id, messageDbId);
+      const result = commitRemoval
+        ? this.db.getDatabase().transaction(() => {
+            const removed = remove();
+            if (removed?.uuid) commitRemoval();
+            return removed;
+          })()
+        : remove();
       if (!result?.uuid) return { changed: false as const };
 
       this.db.getJobQueueRepo().cancelDelivery(this.session.id, result.uuid);

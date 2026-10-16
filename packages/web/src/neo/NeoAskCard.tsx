@@ -20,7 +20,6 @@ import {
   type NeoAskOutcome,
   type NeoAskView,
   isNeoAskQuestionItem,
-  neoAskItemActions,
   neoAskOpenTarget,
 } from './neo-asks.ts';
 import type { NeoScene, NeoSceneCards } from './neo-scenes.ts';
@@ -312,7 +311,7 @@ export function NeoAskCard({
         : view.group === 'outcomes'
           ? 'ended'
           : 'running';
-  const itemActions = neoAskItemActions(view);
+  const itemActions = [...view.humanActions];
   const outcomes = view.items.filter((item) => !isNeoAskQuestionItem(item));
   const questions = view.items.filter((item) => isNeoAskQuestionItem(item) && item.state === 'met');
   const openControl = (scene: NeoScene) => {

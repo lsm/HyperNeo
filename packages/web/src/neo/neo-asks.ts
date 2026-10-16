@@ -149,7 +149,3 @@ export function isNeoAskQuestionItem(
 }
 
 export type NeoAskItemAction = NeoAskHumanAction;
-
-export function neoAskItemActions(view: Pick<NeoAskView, 'humanActions'>): NeoAskItemAction[] {
-  return [...view.humanActions];
-}
