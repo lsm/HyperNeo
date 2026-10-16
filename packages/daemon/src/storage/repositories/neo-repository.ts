@@ -125,6 +125,13 @@ export class NeoRepository {
     ).map((row) => ({ ...row, spoke: !!row.spoke }));
   }
 
+  unbindHolder(sessionId: string): void {
+    const unbound = this.db
+      .prepare("DELETE FROM neo_session_bindings WHERE session_id = ? AND kind = 'project'")
+      .run(sessionId);
+    if (unbound.changes) this.notify();
+  }
+
   sessionSpoke(sessionId: string): boolean {
     return !!this.db
       .prepare('SELECT 1 FROM sdk_messages WHERE session_id = ? LIMIT 1')

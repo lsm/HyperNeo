@@ -23,7 +23,7 @@ const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProje
   routed: 0,
   holderMessages: 0,
   archived: false,
-  holder: `holder:${id}`,
+  holder: null,
   aliases: [],
   ...overrides,
 });
@@ -110,12 +110,15 @@ describe('project cleanup plan', () => {
 
   test('a project the human asked to archive is archived, even with a repository', () => {
     expect(
-      planNeoProjectCleanup([project('kept', { aliases: [repo], asks: 1 })], {
-        pinned: new Set(),
-        machine: 'here',
-        mirrored: new Set(),
-        archive: new Set(['kept']),
-      })
+      planNeoProjectCleanup(
+        [project('kept', { aliases: [repo], asks: 1, holder: 'holder:kept' })],
+        {
+          pinned: new Set(),
+          machine: 'here',
+          mirrored: new Set(),
+          archive: new Set(['kept']),
+        }
+      )
     ).toEqual([{ action: 'archive', projectId: 'kept', title: 'kept', sessionId: 'holder:kept' }]);
   });
 
@@ -137,7 +140,7 @@ describe('project cleanup plan', () => {
     expect(
       planNeoProjectCleanup(
         [
-          project('home', { title: 'App', aliases: [repo] }),
+          project('home', { title: 'App', aliases: [repo], holder: 'holder:home' }),
           project('topic', { title: 'App', ...oneOff }),
         ],
         { pinned: new Set(), machine: 'here', mirrored: new Set(), archive: new Set(['home']) }
@@ -167,6 +170,23 @@ describe('project cleanup plan', () => {
   test('an empty project only on another machine is deleted, since the mirror ignores attached daemons', () => {
     expect(plan([project('remote', { aliases: ['folder:tts\u0000/x'] })])).toEqual([
       { action: 'delete', projectId: 'remote', title: 'remote' },
+    ]);
+  });
+
+  test('a kept project whose holder never spoke has the holder dropped; the project stays', () => {
+    expect(
+      plan([
+        project('quiet', { aliases: [repo], holder: 'h1' }),
+        project('talked', {
+          aliases: ['repository:github.com/lsm/x'],
+          holder: 'h2',
+          holderMessages: 3,
+        }),
+        project('empty', { holder: 'h3' }),
+      ])
+    ).toEqual([
+      { action: 'drop', projectId: 'quiet', title: 'quiet', sessionId: 'h1' },
+      { action: 'delete', projectId: 'empty', title: 'empty' },
     ]);
   });
 
@@ -318,6 +338,7 @@ describe('createNeoProjectCleanupApply', () => {
       repo: {
         deleteEmptyProject: (id: string) => (calls.push(['dropped', id]), 'holder:a'),
         sessionSpoke: (id: string) => id === 'spoke',
+        unbindHolder: (id: string) => calls.push(['unbound', id]),
         getProject: project,
         projectMerges: {
           merge: (input: unknown) => (calls.push(['merge', input]), { ok: true }),
@@ -366,6 +387,7 @@ describe('createNeoProjectCleanupApply', () => {
       ],
       ['archived', 'holder:d', 'ui_session_archive'],
       ['deleted', 'silent', 'ui_session_delete'],
+      ['unbound', 'silent'],
     ]);
   });
 });

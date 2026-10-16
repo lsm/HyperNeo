@@ -35,6 +35,7 @@ export function createNeoProjectCleanupApply(
       requireIdle(step.sessionId);
       if (service.repo.sessionSpoke(step.sessionId)) throw new Error('the holder has spoken');
       await service.sessions.deleteSessionResources(step.sessionId, 'ui_session_delete');
+      service.repo.unbindHolder(step.sessionId);
     },
     archive: async (step: Step<'archive'>) => {
       requireIdle(step.sessionId);

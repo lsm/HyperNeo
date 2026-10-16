@@ -117,21 +117,28 @@ export function planNeoProjectCleanup(
         ...holder,
       })
     );
+  const decide = (project: NeoProjectFacts): NeoProjectCleanup[] => {
+    const named = { projectId: project.id, title: project.title };
+    if (scope.archive?.has(project.id))
+      return project.holder ? [{ action: 'archive', ...named, sessionId: project.holder }] : [];
+    if (repositories(project).length) return [];
+    if (isEmpty(project))
+      return project.aliases.some((alias) => scope.mirrored.has(alias))
+        ? []
+        : [{ action: 'delete', ...named }];
+    if (isElsewhere(project, scope.machine)) return [];
+    const target = home(project, homes);
+    return target ? [{ action: 'merge', ...named, targetId: target.id }] : [];
+  };
   const steps = projects
     .filter((project) => !scope.pinned.has(project.id) && !project.section && !project.archived)
     .flatMap((project): NeoProjectCleanup[] => {
-      const named = { projectId: project.id, title: project.title };
       if (isLive(project)) return [];
-      if (scope.archive?.has(project.id))
-        return project.holder ? [{ action: 'archive', ...named, sessionId: project.holder }] : [];
-      if (repositories(project).length) return [];
-      if (isEmpty(project))
-        return project.aliases.some((alias) => scope.mirrored.has(alias))
-          ? []
-          : [{ action: 'delete', ...named }];
-      if (isElsewhere(project, scope.machine)) return [];
-      const target = home(project, homes);
-      return target ? [{ action: 'merge', ...named, targetId: target.id }] : [];
+      const decided = decide(project);
+      const { holder } = project;
+      return !decided.length && holder && !project.holderMessages && idle(holder)
+        ? [{ action: 'drop', projectId: project.id, title: project.title, sessionId: holder }]
+        : decided;
     });
   return [...steps, ...retired];
 }
