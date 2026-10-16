@@ -22,7 +22,6 @@ import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-to
 import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner.ts';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue.ts';
 import type { QueryLike } from '../../../../src/lib/agent/query-like.ts';
-import { CONSULTATION_TIMEOUT_MS } from '../../../../src/lib/neo/consultation-policy.ts';
 
 describe('Neo isolated holder turns', () => {
   let sqlite: SQLite;
@@ -87,8 +86,8 @@ describe('Neo isolated holder turns', () => {
     sqlite.close();
     vi.useRealTimers();
   });
-  function turn(expire = () => {}) {
-    const result = new NeoHolderTurn(db, 'neo:holder', attempts.allocate(), expire);
+  function turn() {
+    const result = new NeoHolderTurn(db, 'neo:holder', attempts.allocate());
     turns.push(result);
     return result;
   }
@@ -152,37 +151,28 @@ describe('Neo isolated holder turns', () => {
     await sent;
   });
 
-  test.each(['settled', 'expired'] as const)(
-    'drains a %s queued consultation once and leaves the next input runnable',
-    async (state) => {
-      if (state === 'settled') service.consultations.finish('a', 'failed', 'Stopped');
-      else
-        sqlite
-          .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
-          .run(Date.now() - CONSULTATION_TIMEOUT_MS, 'a');
-      const firstSent = queue.enqueueWithId('neo-consult:a:request', 'Stale', false, {
-        durable: true,
-      });
-      const nextSent = queue.enqueueWithId('human-input', 'Current', false, { durable: true });
-      const expired = mock(() => {});
-      const stale = turn(expired);
-      const input = runner.createMessageGeneratorWrapper(1, undefined, stale);
-      expect(await input.next()).toMatchObject({ done: true });
-      await firstSent;
-      expect(stale.identity()).toBeUndefined();
-      expect(expired).not.toHaveBeenCalled();
-      expect(queue.size()).toBe(1);
-      queue.stop();
-      queue.start();
-      const successor = turn();
-      const next = runner.createMessageGeneratorWrapper(2, undefined, successor);
-      expect((await next.next()).value?.uuid).toBe('human-input');
-      expect((await next.next()).done).toBe(true);
-      await nextSent;
-      expect(successor.identity()?.human).toBe(true);
-      expect(queue.size()).toBe(0);
-    }
-  );
+  test('drains a settled queued consultation once and leaves the next input runnable', async () => {
+    service.consultations.finish('a', 'failed', 'Stopped');
+    const firstSent = queue.enqueueWithId('neo-consult:a:request', 'Stale', false, {
+      durable: true,
+    });
+    const nextSent = queue.enqueueWithId('human-input', 'Current', false, { durable: true });
+    const stale = turn();
+    const input = runner.createMessageGeneratorWrapper(1, undefined, stale);
+    expect(await input.next()).toMatchObject({ done: true });
+    await firstSent;
+    expect(stale.identity()).toBeUndefined();
+    expect(queue.size()).toBe(1);
+    queue.stop();
+    queue.start();
+    const successor = turn();
+    const next = runner.createMessageGeneratorWrapper(2, undefined, successor);
+    expect((await next.next()).value?.uuid).toBe('human-input');
+    expect((await next.next()).done).toBe(true);
+    await nextSent;
+    expect(successor.identity()?.human).toBe(true);
+    expect(queue.size()).toBe(0);
+  });
 
   test('MCP writes use the server-bound request, ignoring forged input provenance', async () => {
     const current = turn();
@@ -267,15 +257,23 @@ describe('Neo isolated holder turns', () => {
     ).toEqual([expect.objectContaining({ text: expect.stringContaining('"ok":true') })]);
   });
 
-  test('deadline abort releases a stuck SDK iterator without waiting for its cleanup', async () => {
+  test('slow consultation turns remain live without a deadline timer', async () => {
     vi.useFakeTimers();
+    sqlite.prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?').run('a');
+    const active = turn();
+    expect(active.bind('neo-consult:a:request')).toBe(true);
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    expect(active.identity()?.isLive()).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect((await save(active, { context: 'A slow but useful answer' })).content).toEqual([
+      expect.objectContaining({ text: expect.stringContaining('"ok":true') }),
+    ]);
+    active.dispose();
+    expect(active.identity()?.isLive()).toBe(false);
+  });
+
+  test('explicit abort releases a stuck SDK iterator without waiting for its cleanup', async () => {
     const abort = new AbortController();
-    sqlite
-      .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
-      .run(Date.now() - CONSULTATION_TIMEOUT_MS + 100, 'a');
-    const expired = mock(() => abort.abort());
-    const active = turn(expired);
-    active.bind('neo-consult:a:request');
     const never = new Promise<IteratorResult<unknown>>(() => {});
     const cleanup = mock(() => never);
     const sdk = {
@@ -283,24 +281,8 @@ describe('Neo isolated holder turns', () => {
     } as unknown as QueryLike;
     const stream = runner.createAbortableQuery(sdk, abort.signal);
     const completion = stream.next();
-    await vi.advanceTimersByTimeAsync(100);
+    abort.abort();
     expect(await completion).toMatchObject({ done: true });
-    expect(expired).toHaveBeenCalledTimes(1);
     expect(cleanup).toHaveBeenCalledTimes(1);
-    expect(active.identity()?.isLive()).toBe(false);
-  });
-
-  test('old deadlines cannot interrupt a successor and disposal releases timers', async () => {
-    vi.useFakeTimers();
-    const expired = mock(() => {});
-    const old = turn(expired);
-    old.bind('neo-consult:a:request');
-    const next = turn();
-    next.bind('human-input');
-    await vi.advanceTimersByTimeAsync(CONSULTATION_TIMEOUT_MS);
-    expect(expired).not.toHaveBeenCalled();
-    expect(next.identity()?.isLive()).toBe(true);
-    expect(old.identity()?.isLive()).toBe(false);
-    expect(vi.getTimerCount()).toBe(0);
   });
 });

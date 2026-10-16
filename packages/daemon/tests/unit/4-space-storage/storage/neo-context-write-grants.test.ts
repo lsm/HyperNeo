@@ -9,7 +9,6 @@ import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consult
 import { runMigration280 } from '../../../../src/storage/schema/m280-neo-context-write-grants.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
-import { CONSULTATION_TIMEOUT_MS } from '../../../../src/lib/neo/consultation-policy.ts';
 
 const concern = { id: 'club', title: 'Club', summary: 'Sunday', context: 'Six people' };
 const request = {
@@ -81,14 +80,10 @@ describe('Neo request-bound context storage', () => {
     ).toMatchObject({ revision: 3, context: corrected.context });
   });
 
-  test.each(['reported', 'failed', 'expired'])(
+  test.each(['reported', 'failed'])(
     'rejects %s requests without changing context or grant',
     (status) => {
-      if (status === 'expired')
-        db.prepare('UPDATE neo_consultations SET created_at = ?').run(
-          Date.now() - CONSULTATION_TIMEOUT_MS
-        );
-      else consultations.finish('check', status as 'reported' | 'failed', 'Settled');
+      consultations.finish('check', status as 'reported' | 'failed', 'Settled');
       const before = repo.getProject('club');
       expect(
         repo.saveConsultationContext({ ...concern, context: 'Overwrite' }, 1, 'check', 'holder')
@@ -100,6 +95,13 @@ describe('Neo request-bound context storage', () => {
       });
     }
   );
+
+  test('an old pending consultation keeps its revision-bound context grant', () => {
+    db.prepare('UPDATE neo_consultations SET created_at = 0').run();
+    expect(
+      repo.saveConsultationContext({ ...concern, context: 'Slow answer' }, 1, 'check', 'holder')
+    ).toMatchObject({ revision: 2, context: 'Slow answer' });
+  });
 
   test('rejects wrong holders, missing receipts, other projects and worker bindings', () => {
     repo.saveProject({ ...concern, id: 'other' }, 0);

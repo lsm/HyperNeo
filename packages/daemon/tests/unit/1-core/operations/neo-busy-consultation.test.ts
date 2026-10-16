@@ -15,7 +15,6 @@ import {
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
-import { CONSULTATION_TIMEOUT_MS } from '../../../../src/lib/neo/consultation-policy.ts';
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const rootId = 'neo:10000000-0000-4000-8000-000000000001';
@@ -272,21 +271,15 @@ describe('Neo durable busy consultation intake', () => {
     expect(jobs(a.sessionId, `neo-consult:${id}:request`)).toEqual([]);
     expect(getSessionAsync).not.toHaveBeenCalled();
   });
-  test.each(['stop', 'expire', 'terminal'] as const)(
-    'advances the queue after active %s without spending queued deadline',
+  test.each(['stop', 'terminal'] as const)(
+    'advances the queue after active %s regardless of queued age',
     async (mode) => {
       const a = (await consult(0)).receipt.consultation!;
       const b = (await consult(1)).receipt.waiter!;
       db.getDatabase()
         .prepare('UPDATE neo_consultation_waiters SET created_at = ? WHERE id = ?')
-        .run(Date.now() - CONSULTATION_TIMEOUT_MS * 2, b.id);
+        .run(0, b.id);
       if (mode === 'stop') await invoke('neo.project.cancel', { id: a.id });
-      if (mode === 'expire') {
-        db.getDatabase()
-          .prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?')
-          .run(a.id);
-        await service.recoverConsultations();
-      }
       if (mode === 'terminal') {
         const terminal = spyOn(db.getSDKMessageRepo(), 'hasTerminalResultAfter').mockImplementation(
           (_session, id) => id === `neo-consult:${a.id}:request`
@@ -354,7 +347,7 @@ describe('Neo durable busy consultation intake', () => {
     });
     expect(jobs(waiter.sessionId, `neo-consult:${waiter.id}:request`)).toHaveLength(1);
   });
-  test('snapshot exposes queued receipts as distinct from active deadline-bearing consultations', async () => {
+  test('snapshot exposes queued receipts as distinct from active consultations', async () => {
     await consult(0);
     const b = (await consult(1)).receipt.waiter!;
     const result = await invoke('neo.snapshot', {}, human);
