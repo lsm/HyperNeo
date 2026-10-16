@@ -3,6 +3,7 @@ import { CLAUDE_DESKTOP_OPENING, CLAUDE_DESKTOP_RELAY, fillPrompt } from '@hyper
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
@@ -42,6 +43,7 @@ import { matchChatsBy } from './match-chats.ts';
 import { claudeOpenedPrs } from './opened-prs.ts';
 import { readTailLines } from './transcript-tail.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
+import { readClaudeSessionOwner, type ClaudeSessionOwner } from './claude-session-owner.ts';
 
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
@@ -69,6 +71,7 @@ const RecordSchema = z.object({
 
 const LiveSessionSchema = z.object({
   sessionId: z.string(),
+  pid: z.number().int().positive().optional(),
   status: z.string(),
   name: z
     .string()
@@ -79,6 +82,8 @@ const LiveSessionSchema = z.object({
 export type ClaudeDesktopRecord = z.infer<typeof RecordSchema>;
 export interface ClaudeLiveSession {
   sessionId: string;
+  pid?: number;
+  owner?: ClaudeSessionOwner;
   status: string;
   name?: string;
 }
@@ -153,7 +158,10 @@ export async function readClaudeDesktopRecords(
   return (await Promise.all(files.map((path) => readRecord(path, cache)))).flat();
 }
 
-export async function readLiveClaudeSessions(spawn: SpawnFn): Promise<ClaudeLiveSession[]> {
+export async function readLiveClaudeSessions(
+  spawn: SpawnFn,
+  registrationsDir = join(homedir(), '.claude', 'sessions')
+): Promise<ClaudeLiveSession[]> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const proc = spawn(['claude', 'agents', '--json'], { stdout: 'pipe', stderr: 'ignore' });
@@ -162,13 +170,20 @@ export async function readLiveClaudeSessions(spawn: SpawnFn): Promise<ClaudeLive
         proc.kill('SIGKILL');
       } catch {}
     }, LIVE_TIMEOUT_MS);
-    const [output] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    const [output, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    if (code !== 0) throw new Error(`claude agents --json exited with ${code}.`);
     const listed = z.array(z.unknown()).safeParse(JSON.parse(output));
     if (!listed.success) throw new Error('claude agents --json answered in an unknown shape.');
-    return listed.data.flatMap((entry) => {
+    const sessions = listed.data.flatMap((entry) => {
       const live = LiveSessionSchema.safeParse(entry);
       return live.success ? [live.data] : [];
     });
+    return Promise.all(
+      sessions.map(async (live) => ({
+        ...live,
+        owner: await readClaudeSessionOwner(live, registrationsDir),
+      }))
+    );
   } finally {
     clearTimeout(timer);
   }
