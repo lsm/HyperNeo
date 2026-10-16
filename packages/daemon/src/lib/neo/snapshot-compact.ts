@@ -287,7 +287,7 @@ function withSkeleton(snapshot: NeoSnapshot): NeoSnapshot {
           evidence: null,
         })),
     })),
-    askViews: snapshot.askViews.map(({ answer: _answer, humanActions: _actions, ...view }) => ({
+    askViews: snapshot.askViews.map(({ humanActions: _actions, ...view }) => ({
       ...view,
       summary: null,
       sessions: [],

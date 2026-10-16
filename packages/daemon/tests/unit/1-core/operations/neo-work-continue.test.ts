@@ -563,7 +563,7 @@ describe('neo.work.continue', () => {
     });
   });
 
-  test('a stalled card puts Approve on its ask, and approving resets the stall', async () => {
+  test('a stall remains a fact without an approval action, and human approval resets it', async () => {
     const work = reportedWork();
     const opened = service.askRecords.open({
       id: 'ask-stall',
@@ -579,19 +579,27 @@ describe('neo.work.continue', () => {
     service.askRecords.link(opened.id, work.id);
     service.askRecords.approve(opened.id, Date.now());
     stallCard(work.id);
-    const actions = async () => {
+    const facts = async () => {
       const snapshot = await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.snapshot',
         {},
         human
       );
-      const views = (
-        snapshot as { value?: { askViews?: { askId: string; humanActions?: unknown[] }[] } }
-      ).value?.askViews;
-      return views?.find((view) => view.askId === opened.id)?.humanActions;
+      const value = (
+        snapshot as {
+          value?: {
+            asks?: { id: string; stalledWorkIds?: string[] }[];
+            askViews?: { askId: string; humanActions?: unknown[] }[];
+          };
+        }
+      ).value;
+      return {
+        stalledWorkIds: value?.asks?.find((ask) => ask.id === opened.id)?.stalledWorkIds ?? [],
+        humanActions: value?.askViews?.find((view) => view.askId === opened.id)?.humanActions,
+      };
     };
-    expect(await actions()).toEqual([{ kind: 'approve', reason: 'stalled', workIds: [work.id] }]);
+    expect(await facts()).toEqual({ stalledWorkIds: [work.id], humanActions: [] });
     expect(
       await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
@@ -602,7 +610,7 @@ describe('neo.work.continue', () => {
     ).toMatchObject({ value: { ok: true } });
     expect(service.workWakes.get(work.id)).toMatchObject({ stalled: 0 });
     expect(service.isContinueStalled(work.id)).toBe(false);
-    expect(await actions()).toEqual([]);
+    expect(await facts()).toEqual({ stalledWorkIds: [], humanActions: [] });
     expect(await invoke({ id: work.id, message: 'Go on.' }, neo)).toMatchObject({
       value: { ok: true },
     });

@@ -391,7 +391,7 @@ const item = (id: string, state: NeoAskItem['state'], removed = false): NeoAskIt
 });
 
 describe('projectNeoAskViews', () => {
-  test('an open ask needs you when a live card does, and skips a superseded failure', () => {
+  test('an open ask keeps worker status separate from questions and skips a superseded failure', () => {
     const input = parts({
       work: [
         work('old', 'failed'),
@@ -407,17 +407,16 @@ describe('projectNeoAskViews', () => {
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
     expect(views[0]).toEqual({
       askId: 'a1',
-      group: 'attention',
-      label: 'Needs you',
+      group: 'running',
+      label: 'Working on it',
       settled: false,
-      needsYou: true,
+      needsYou: false,
       done: 1,
       total: 3,
       workIds: ['new', 'done', 'replied'],
       doneWorkIds: ['done'],
       summary: null,
       sessions: [],
-      answer: null,
       humanActions: [],
     });
   });
@@ -588,8 +587,13 @@ describe('projectNeoAskViews', () => {
       projectNeoCardViews(input),
       input.prs
     )[0];
-    expect(asked).toMatchObject({ group: 'attention', label: 'Waiting on you' });
-    expect(asked.answer).toMatchObject({ itemId: 'q', options: ['Use Codex', 'Stop'] });
+    expect(asked).toMatchObject({ group: 'attention', label: 'Needs you' });
+    expect(asked.humanActions).toContainEqual({
+      kind: 'question',
+      itemId: 'q',
+      question: 'q',
+      options: ['Use Codex', 'Stop'],
+    });
     expect(asked).not.toHaveProperty('idle');
   });
 
@@ -622,14 +626,16 @@ describe('projectNeoAskViews', () => {
       ],
     });
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
-    expect(views[0]?.answer).toEqual({
-      itemId: 'b',
-      question: decision.text,
-      label: 'Answer in chat',
-      options: ['Yes', 'No'],
-    });
+    expect(views[0]?.humanActions).toEqual([
+      {
+        kind: 'question',
+        itemId: 'b',
+        question: decision.text,
+        options: ['Yes', 'No'],
+      },
+    ]);
     expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
-    expect(views[1]?.answer).toBeNull();
+    expect(views[1]?.humanActions).toEqual([]);
   });
 
   test('an achieved ask with a long outcome summarizes its merged PRs', () => {
@@ -647,110 +653,59 @@ describe('projectNeoAskViews', () => {
     });
   });
 
-  test('human actions come from cards, approval and items, never from item prose', () => {
-    const input = parts({
-      work: [work('p', 'proposed'), work('r', 'failed'), work('q', 'queued')],
-      drivers: [driver('r', 'failed', { retryable: true }), driver('q', 'running')],
-      asks: [
+  test('legacy waiting facts and reported outcomes do not invent questions', () => {
+    const [view] = projectNeoAskViews(
+      [
         ask({
-          workIds: ['p', 'r', 'q'],
-          approvalSpent: 'expired',
           doneItems: [
-            { ...item('d', 'needs_you'), options: ['A', 'B'], kind: 'decision' },
-            {
-              ...item('s', 'needs_you'),
-              kind: 'action',
-              question: '这一步成功了吗？',
-              options: ['成功了', '没成功'],
-            },
-            { ...item('g', 'needs_you'), kind: 'action' },
-            {
-              ...item('o', 'needs_you'),
-              kind: 'action',
-              question: 'o',
-              options: ['It hid', 'Still showing'],
-            },
-            { ...item('c', 'needs_you'), kind: 'action', waitCard: 'p' },
-            item('m', 'reported'),
-            { ...item('w', 'needs_you'), kind: 'wait' },
-            item('x', 'pending'),
+            item('legacy', 'needs_you'),
+            { ...item('wait', 'needs_you'), kind: 'wait' },
+            item('reported', 'reported'),
           ],
         }),
       ],
-    });
-    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
-    expect(views[0]?.humanActions).toEqual([
-      { kind: 'start', workId: 'p' },
-      { kind: 'retry', workId: 'r' },
-      { kind: 'approve', reason: 'expired' },
-      { kind: 'answer', itemId: 'd', step: null, question: 'd', options: ['A', 'B'] },
-      {
-        kind: 'answer',
-        itemId: 's',
-        step: 's',
-        question: '这一步成功了吗？',
-        options: ['成功了', '没成功'],
-      },
-      {
-        kind: 'answer',
-        itemId: 'o',
-        step: null,
-        question: 'o',
-        options: ['It hid', 'Still showing'],
-      },
-      { kind: 'confirm', itemId: 'm', step: 'm' },
-    ]);
-    expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
+      [],
+      []
+    );
+    expect(view.humanActions).toEqual([]);
   });
 
-  test('the old continue-count stall no longer asks for Approve', () => {
+  test('only explicit open questions create human actions; failures, expiry and stalls are facts', () => {
+    const question = {
+      ...item('q', 'needs_you'),
+      kind: 'decision' as const,
+      question: 'Start?',
+      options: ['Later', 'Start'],
+    };
     const input = parts({
-      work: [work('q', 'queued')],
-      drivers: [driver('q', 'running')],
-      asks: [ask({ workIds: ['q'], approvedAt: 5, approvalSpent: 'continues' })],
-    });
-    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
-    expect(views[0]?.humanActions).toEqual([]);
-  });
-
-  test('a card stalled by three wakes without progress asks for Approve, naming the card', () => {
-    const input = parts({
-      work: [work('q', 'queued'), work('r', 'queued')],
-      drivers: [driver('q', 'running'), driver('r', 'running')],
-      asks: [ask({ workIds: ['q', 'r'], approvedAt: 5, stalledWorkIds: ['r'] })],
-    });
-    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
-    expect(views[0]?.humanActions).toEqual([
-      { kind: 'approve', reason: 'stalled', workIds: ['r'] },
-    ]);
-    expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
-  });
-
-  test('an expired approval asks once, even with a stalled card', () => {
-    const input = parts({
-      work: [work('q', 'queued')],
-      drivers: [driver('q', 'running')],
-      asks: [ask({ workIds: ['q'], approvalSpent: 'expired', stalledWorkIds: ['q'] })],
-    });
-    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
-    expect(views[0]?.humanActions).toEqual([{ kind: 'approve', reason: 'expired' }]);
-  });
-
-  test('a proposed card under an approved ask keeps Start, and a settled ask asks nothing', () => {
-    const input = parts({
-      work: [work('p', 'proposed'), work('q', 'queued')],
-      drivers: [driver('q', 'running', { abandoned: true })],
+      work: [work('p', 'proposed'), work('r', 'failed')],
+      drivers: [driver('r', 'failed', { retryable: true })],
       asks: [
-        ask({ workIds: ['p', 'q'], approvedAt: 5 }),
-        ask({ id: 'a2', status: 'achieved', workIds: ['p'], approvalSpent: 'expired' }),
+        ask({
+          workIds: ['p', 'r'],
+          approvalSpent: 'expired',
+          stalledWorkIds: ['r'],
+          doneItems: [
+            question,
+            item('reported', 'reported'),
+            item('pending', 'pending'),
+            { ...question, id: 'removed', removed: true },
+          ],
+        }),
+        ask({ id: 'settled', status: 'achieved', doneItems: [question] }),
       ],
     });
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
     expect(views[0]?.humanActions).toEqual([
-      { kind: 'start', workId: 'p' },
-      { kind: 'close', workId: 'q' },
+      { kind: 'question', itemId: 'q', question: 'Start?', options: ['Later', 'Start'] },
     ]);
     expect(views[1]?.humanActions).toEqual([]);
+    expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
+    expect(
+      NeoAskViewSchema.shape.humanActions
+        .unwrap()
+        .element.safeParse({ kind: 'confirm', itemId: 'q', step: 'Start?' }).success
+    ).toBe(false);
   });
 
   test('the snapshot schema keeps every ask view field', () => {
