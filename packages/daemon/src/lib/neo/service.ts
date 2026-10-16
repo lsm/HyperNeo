@@ -3568,15 +3568,13 @@ export class NeoService {
       window,
       report: work.report,
       follows: work.follows,
-      branch: [
-        ...(cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id)),
-        ...(worker
-          ? this.sessionSubscriptions
-              .listBySession(worker)
-              .reverse()
-              .flatMap((row) => pullRequestUrlOfTopic(row.topic) ?? [])
-          : []),
-      ],
+      subscribed: worker
+        ? this.sessionSubscriptions
+            .listBySession(worker)
+            .filter((row) => row.createdAt >= work.createdAt)
+            .flatMap((row) => pullRequestUrlOfTopic(row.topic) ?? [])
+        : [],
+      branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),
       opened: this.cardOpenedPrs.get(work.id) ?? [],
       stored: stored?.prs ?? [],
       mentioned: await this.cardPrRefs(work, outcome),

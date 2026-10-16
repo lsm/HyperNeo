@@ -35,13 +35,17 @@ export function planNeoCardPrCandidates(input: {
   window?: PrWindow | null;
   report: string | null;
   follows?: string | null;
+  subscribed?: readonly string[];
   branch: readonly string[];
   opened?: readonly string[];
   stored: readonly { url: string }[];
   mentioned?: readonly string[];
 }): NeoCardPrCandidate[] {
   const pr = input.follows ? parsePrUrl(input.follows) : null;
-  const followed = pr ? [`https://${pr.host}/${pr.owner}/${pr.repo}/pull/${pr.number}`] : [];
+  const followed = [
+    ...(pr ? [`https://${pr.host}/${pr.owner}/${pr.repo}/pull/${pr.number}`] : []),
+    ...(input.subscribed ?? []),
+  ];
   const named = new Set(followed.map(key));
   const onBranch = new Set(input.branch.map(key));
   const opened = new Set((input.opened ?? []).map(key));

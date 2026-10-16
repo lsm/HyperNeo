@@ -2466,7 +2466,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('records the PR its HyperNeo worker session subscribes to, not an older one it watches', async () => {
+  test('records the PR its HyperNeo worker subscribes to during the card, not one it already watched', async () => {
     const ref = { adapter: 'hyperneo', id: 'worker' };
     const at = Date.now() + 10_000;
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
@@ -2496,11 +2496,8 @@ describe('Neo work with a drivers target', () => {
     db.createSession(createTestSession('neo:root'));
     db.createSession(createTestSession('worker'));
     const subscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
-    for (const number of [3, 4, 5])
-      subscriptions.upsert({
-        sessionId: 'worker',
-        topic: `github/lsm/HyperNeo/pull_request/${number}.*`,
-      });
+    subscriptions.upsert({ sessionId: 'worker', topic: 'github/lsm/HyperNeo/pull_request/3.*' });
+    db.getDatabase().prepare('UPDATE session_event_subscriptions SET created_at = 1').run();
     subscriptions.upsert({
       sessionId: 'worker',
       topic: 'github/lsm/hyperneo-review-test/pull_request/18.*',

@@ -400,6 +400,23 @@ describe('PRs the worker session opened', () => {
   });
 });
 
+describe('a PR its worker session subscribes to', () => {
+  test('is named by the card like its follow, once', () => {
+    const candidates = planNeoCardPrCandidates({
+      window: { start: 0, end: null },
+      report: null,
+      follows: pull(5),
+      subscribed: [pull(5), pull(6)],
+      branch: [],
+      stored: [],
+    });
+    expect(candidates.map((item) => [item.url, item.claim])).toEqual([
+      [pull(5), 'named'],
+      [pull(6), 'named'],
+    ]);
+  });
+});
+
 describe('a PR the card follows', () => {
   const follower = { id: 'follow-up', createdAt: 300 };
   const opener = {
