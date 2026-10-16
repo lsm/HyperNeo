@@ -681,7 +681,8 @@ export class NeoAskRepository {
       because?: NeoAskQuestionBecause;
       options?: readonly string[];
     } | null = null,
-    decided = false
+    decided = false,
+    dropped: string | null = null
   ): NeoAsk | null {
     const now = Date.now();
     const lost = new Error('neo-ask-settle-lost');
@@ -724,6 +725,11 @@ export class NeoAskRepository {
           ).changes === 0
       )
         throw lost;
+      if (settled && dropped !== null)
+        this.db
+          .prepare(`UPDATE neo_ask_items SET state = 'met', evidence = ?, met_by = 'human', updated_at = ?
+            WHERE ask_id = ? AND state = 'needs_you' AND removed = 0`)
+          .run(dropped, now, expected.id);
       if (settled && !decision && decided && waitingItem)
         this.db
           .prepare(`UPDATE neo_ask_items SET decision = 1, updated_at = ?

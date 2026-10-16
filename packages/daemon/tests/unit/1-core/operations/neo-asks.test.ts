@@ -1725,6 +1725,58 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true, ask: { status: 'abandoned' } } });
   });
 
+  test('the human dropping an ask in their own turn settles the ask they reply to or name, in one call, and a refusal writes nothing', async () => {
+    const askId = await openAsk();
+    await invoke('neo.ask.question', {
+      askId,
+      question: 'Which NOTICE text?',
+      options: ['Mine', 'A short generic one'],
+      kind: 'decision',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const other = (
+      await invoke(
+        'neo.ask.open',
+        { ...opening, requestKey: 'release', title: 'Ship the release', ask: 'Ship it tonight' },
+        nextMessage
+      )
+    ).value!.ask!.id;
+    await invoke(
+      'neo.ask.question',
+      { askId: other, question: 'Ship tonight?', options: ['Yes', 'No'], kind: 'decision' },
+      nextMessage
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    humanSays('不用了，放弃', 'drop');
+    const drop = { id: askId, outcome: 'abandoned', summary: 'Dropped.', evidence: 'Dropped.' };
+    const dropTurn: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'drop' } };
+    const before = service.askRecords.get(askId);
+    for (const caller of [
+      dropTurn,
+      { ...dropTurn, neoTurn: { ...dropTurn.neoTurn!, human: false } },
+      { ...dropTurn, neoTurn: { ...dropTurn.neoTurn!, messageId: 'ask-1' } },
+    ])
+      expect(await invoke('neo.ask.settle', drop, caller)).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('decision_open') },
+      });
+    expect(service.askRecords.get(askId)).toEqual(before);
+    expect(await invoke('neo.ask.settle', { ...drop, id: other }, dropTurn)).toMatchObject({
+      value: { ok: true, ask: { status: 'abandoned' } },
+    });
+    humanSays('不用了，放弃 Fix the login bug', 'named');
+    const namedTurn: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, messageId: 'named' } };
+    expect(await invoke('neo.ask.settle', drop, namedTurn)).toMatchObject({
+      value: { ok: true, ask: { status: 'abandoned' } },
+    });
+    const items = service.askRecords.get(askId)!.doneItems!;
+    expect(items).toHaveLength(before!.doneItems!.length);
+    expect(items.find((item) => item.question === 'Which NOTICE text?')).toMatchObject({
+      state: 'met',
+      metBy: 'human',
+      evidence: 'The human dropped this ask: "不用了，放弃 Fix the login bug"',
+    });
+  });
+
   test('a settle never carries a gate: waiting needs something the human can act on', async () => {
     const askId = await openAsk();
     const waiting = {
@@ -3469,6 +3521,10 @@ describe('neo.ask operations', () => {
         options: ['Tonight', 'Tomorrow'],
       })
     ).toMatchObject({ value: { ok: true, ask: { waitingItem: 'i4' } } });
+    expect(service.askRecords.get(askId)).toMatchObject({
+      outcome: 'Waiting on the release date.',
+      evidence: 'Asked.',
+    });
     expect(service.askRecords.get(askId)!.doneItems!.filter((item) => item.decision)).toEqual([
       expect.objectContaining({ id: 'i3' }),
       expect.objectContaining({
