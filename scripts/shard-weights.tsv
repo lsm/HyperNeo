@@ -404,7 +404,6 @@
 65	packages/daemon/tests/unit/1-core/providers/shared/model-list.test.ts
 11	packages/daemon/tests/unit/1-core/providers/shared/normalize-upstream-error.test.ts
 543	packages/daemon/tests/unit/1-core/schedule/schedule-service.test.ts
-5	packages/daemon/tests/unit/1-core/session-resolution/actor-target.test.ts
 8	packages/daemon/tests/unit/1-core/session-resolution/agent-session-config.test.ts
 11	packages/daemon/tests/unit/1-core/session-resolution/default-deps.test.ts
 6	packages/daemon/tests/unit/1-core/session-resolution/ensure-long-term-agent-session.test.ts
@@ -495,7 +494,6 @@
 6	packages/daemon/tests/unit/2-handlers/job-handlers/session-title-handler.test.ts
 8	packages/daemon/tests/unit/2-handlers/job-handlers/skill-validate.handler.test.ts
 289	packages/daemon/tests/unit/2-handlers/job-handlers/task-schedule-fire.handler.test.ts
-301	packages/daemon/tests/unit/2-handlers/mcp/import-scanner.test.ts
 957	packages/daemon/tests/unit/2-handlers/mcp/mcp-import-service.test.ts
 3	packages/daemon/tests/unit/2-handlers/mcp/mcp-server-namespace.test.ts
 5	packages/daemon/tests/unit/2-handlers/mcp/resolve-mcp-servers.test.ts
@@ -874,7 +872,6 @@
 40	packages/daemon/tests/unit/4-space-storage/storage/workflow-hook-state-repository.test.ts
 96	packages/daemon/tests/unit/4-space-storage/storage/workflow-run-artifact-repository.test.ts
 4	packages/daemon/tests/unit/5-space/actions/description-generator.test.ts
-9	packages/daemon/tests/unit/5-space/actions/mark-complete-operation.test.ts
 10	packages/daemon/tests/unit/5-space/actions/task-message-delivery.test.ts
 128	packages/daemon/tests/unit/5-space/actor-registry.test.ts
 5	packages/daemon/tests/unit/5-space/agent-handle.test.ts
