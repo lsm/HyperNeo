@@ -84,6 +84,7 @@ const LiveSessionSchema = z.object({
 });
 
 export type ClaudeDesktopRecord = z.infer<typeof RecordSchema>;
+type ClaudeTranscriptLocation = Pick<ClaudeDesktopRecord, 'cliSessionId' | 'cwd' | 'originCwd'>;
 export interface ClaudeLiveSession {
   sessionId: string;
   pid?: number;
@@ -306,7 +307,7 @@ export async function loadLiveClaudeSessions(
 }
 
 export async function probeLiveClaudeSessions(
-  deps: ClaudeDesktopAdapterDeps
+  deps: Pick<ClaudeDesktopAdapterDeps, 'liveSessions'>
 ): Promise<Gate<readonly ClaudeLiveSession[]>> {
   try {
     return { value: await deps.liveSessions() };
@@ -314,7 +315,7 @@ export async function probeLiveClaudeSessions(
     return {
       reason: reject(
         'not_delivered',
-        `Could not tell whether Claude Code Desktop runs this session: ${error instanceof Error ? error.message : String(error)}`
+        `Could not inspect live Claude sessions: ${error instanceof Error ? error.message : String(error)}`
       ),
     };
   }
@@ -348,7 +349,7 @@ const runClaudeDesktopFind = (superpipe({})('claude-desktop-find-work') as Pipel
 
 export function claudeTranscriptPath(
   projectsDir: string,
-  record: ClaudeDesktopRecord
+  record: ClaudeTranscriptLocation
 ): string | null {
   const cwd = record.cwd ?? record.originCwd;
   if (!cwd || !record.cliSessionId) return null;
@@ -492,8 +493,8 @@ export function requireClaudeRecord(
 }
 
 export async function readClaudeTranscript(
-  record: ClaudeDesktopRecord,
-  deps: ClaudeDesktopAdapterDeps,
+  record: ClaudeTranscriptLocation,
+  deps: Pick<ClaudeDesktopAdapterDeps, 'projectsDir'>,
   since?: number
 ): Promise<ClaudeTranscriptState | null> {
   const path = claudeTranscriptPath(deps.projectsDir, record);
@@ -651,8 +652,8 @@ export function claudeInputEvidence(
 }
 
 export async function readClaudeInputEvidence(
-  record: ClaudeDesktopRecord,
-  deps: ClaudeDesktopAdapterDeps,
+  record: ClaudeTranscriptLocation,
+  deps: Pick<ClaudeDesktopAdapterDeps, 'projectsDir'>,
   receipt: ClaudeReceipt | undefined
 ): Promise<ClaudeInputEvidence | null> {
   if (!receipt) return null;

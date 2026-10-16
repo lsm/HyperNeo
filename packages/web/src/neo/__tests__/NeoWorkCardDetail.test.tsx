@@ -277,7 +277,7 @@ describe('NeoWorkCard goal', () => {
     };
     const { unmount } = render(<NeoWorkCard {...props} />);
     expect(screen.getByText('A full iOS app')).toBeTruthy();
-    expect(screen.getByText('Done when')).toBeTruthy();
+    expect(screen.getByText('Todos')).toBeTruthy();
     expect(screen.getByText('- runs in the simulator')).toBeTruthy();
     unmount();
 
@@ -455,7 +455,7 @@ describe('NeoWorkCard dependency waits', () => {
   const proposed = (extra: Partial<NeoCardView>) =>
     testCard(work('ui', 'proposed'), {
       phase: 'proposed',
-      primary: { kind: 'start', label: 'Start work', link: null },
+      primary: { kind: 'none', label: null, link: null },
       waitingFor: [
         api,
         { ...api, workId: 'old', title: 'Old card', reason: 'prerequisite_cancelled' },

@@ -833,6 +833,7 @@ export class NeoService {
         readDeploys: (urls) => this.readDeploys(urls),
         readMergeCommit: (url) => this.readMergeCommit(url),
         cardBase: (workId) => codingCardBase(this.driverTargets.get(workId)),
+        cardStartedAt: (workId) => this.repo.workStartedAt(workId),
       }),
       createLifeAdminPack(),
     ];

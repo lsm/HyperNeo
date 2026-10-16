@@ -551,7 +551,7 @@ describe('claude-desktop adapter against the app session records', () => {
       {
         ok: false,
         reason: 'not_delivered',
-        detail: 'Could not tell whether Claude Code Desktop runs this session: timed out',
+        detail: 'Could not inspect live Claude sessions: timed out',
       }
     );
     expect(spawned).toEqual([]);

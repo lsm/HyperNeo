@@ -294,7 +294,7 @@ export function NeoWorkCard({
       )}
       {presentation === 'detail' && doneWhen && (
         <details class="mt-1 text-sm text-fg-muted">
-          <summary class="cursor-pointer select-none">Done when</summary>
+          <summary class="cursor-pointer select-none">Todos</summary>
           <p class="mt-1 whitespace-pre-wrap break-words">{doneWhen}</p>
         </details>
       )}

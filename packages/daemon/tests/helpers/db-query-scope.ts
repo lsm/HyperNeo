@@ -41,6 +41,7 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'operation_refusals',
   'neo_work_checks',
   'neo_work_refusals',
+  'neo_work_control_failures',
   'neo_work_dependencies',
   'neo_work_start_intents',
   'neo_ask_checks',

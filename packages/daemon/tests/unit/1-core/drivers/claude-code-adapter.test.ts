@@ -62,6 +62,79 @@ describe('buildClaudeCodeGroups', () => {
 });
 
 describe('createClaudeCodeAdapter', () => {
+  test('registers live owner-verified status with the existing transcript folder lookup', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-status-wire-'));
+    const sessionId = crypto.randomUUID();
+    const inputId = crypto.randomUUID();
+    const ref = { adapter: 'claude-code', id: sessionId };
+    const receipt = { executionId: sessionId, inputId };
+    let owner: 'cli' | 'desktop' | 'unknown' = 'cli';
+    let status = 'busy';
+    try {
+      mkdirSync(join(dir, '-focus-project'));
+      writeFileSync(
+        join(dir, '-focus-project', `${sessionId}.jsonl`),
+        [
+          JSON.stringify({
+            cwd: '/focus/project',
+            type: 'user',
+            uuid: inputId,
+            timestamp: '2026-10-16T20:00:00Z',
+            message: { content: 'question' },
+          }),
+          JSON.stringify({
+            type: 'assistant',
+            timestamp: '2026-10-16T20:00:01Z',
+            message: { content: [{ type: 'text', text: 'answer' }], stop_reason: 'end_turn' },
+          }),
+        ].join('\n')
+      );
+      const adapter = createClaudeCodeAdapter({
+        projectsDir: dir,
+        machine: 'laptop',
+        searchChats: async () => [],
+        desktopSessions: async () => new Set(),
+        liveSessions: async () => [{ sessionId, pid: 456, owner, status }],
+      });
+      expect(adapter.capabilities).toEqual(['find', 'status']);
+      expect(await adapter.status!(ref, 0, receipt)).toMatchObject({
+        ok: true,
+        value: {
+          ref,
+          status: 'running',
+          place: { folder: '/focus/project' },
+          inputEvidence: { receipt, state: 'observed' },
+          lastReply: 'answer',
+        },
+      });
+      owner = 'desktop';
+      expect(await adapter.status!(ref)).toMatchObject({ ok: false, reason: 'unsupported' });
+      owner = 'unknown';
+      expect(await adapter.status!(ref)).toMatchObject({ ok: false, reason: 'unreachable' });
+      owner = 'cli';
+      status = 'future-status';
+      expect(await adapter.status!(ref)).toMatchObject({ ok: false, reason: 'unreachable' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('returns a typed refusal when live CLI discovery fails', async () => {
+    const adapter = createClaudeCodeAdapter({
+      machine: 'laptop',
+      searchChats: async () => [],
+      desktopSessions: async () => new Set(),
+      liveSessions: async () => {
+        throw new Error('CLI timed out or is unavailable');
+      },
+    });
+    expect(await adapter.status!({ adapter: 'claude-code', id: 'session' })).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'Could not inspect live Claude sessions: CLI timed out or is unavailable',
+    });
+  });
+
   test('discovers CLI folders without a search and links content hits to their actual folder', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'claude-places-'));
     try {

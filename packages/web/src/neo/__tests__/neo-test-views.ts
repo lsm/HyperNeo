@@ -15,7 +15,7 @@ const byStatus: Record<
     group: 'attention',
     tone: 'accent',
     label: 'Your call',
-    actions: ['start', 'cancel'],
+    actions: [],
   },
   queued: {
     phase: 'handed',
@@ -57,7 +57,7 @@ export function testCard(
     hidden: work.status === 'cancelled' && !work.sessionId,
     primary:
       work.status === 'proposed'
-        ? { kind: 'start', label: 'Start work', link: null }
+        ? { kind: 'none', label: null, link: null }
         : work.sessionId
           ? { kind: 'chat', label: 'Open chat', link: null }
           : { kind: 'none', label: null, link: null },

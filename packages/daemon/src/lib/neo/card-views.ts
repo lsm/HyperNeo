@@ -131,7 +131,7 @@ export function neoCardPrimary(
   driver: NeoWorkDriverReceipt | undefined,
   talk = false
 ): NeoCardPrimary {
-  if (work.status === 'proposed') return { kind: 'start', label: 'Start work', link: null };
+  if (work.status === 'proposed') return { kind: 'none', label: null, link: null };
   const link = work.sessionId ? null : neoCardSessionLink(driver);
   if (talk)
     return work.sessionId
@@ -193,7 +193,7 @@ export function neoSessionOpenTarget(session: {
 }
 
 export function neoCardActions(work: NeoWork, retryable: boolean): NeoCardAction[] {
-  if (work.status === 'proposed') return ['start', 'cancel'];
+  if (work.status === 'proposed') return [];
   const closable = work.status === 'queued' || work.status === 'failed';
   return [
     ...(retryable ? (['retry'] as const) : []),

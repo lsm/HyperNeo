@@ -219,6 +219,7 @@ function claudeCodeAdapters(
   return [
     createClaudeCodeAdapter({
       projectsDir: join(homedir(), '.claude', 'projects'),
+      liveSessions: () => readLiveClaudeSessions(spawnProcess),
       ownedSessions,
       machine: hostname(),
       searchChats: (text) => searchChats(text, ['claude']),
