@@ -106,49 +106,12 @@ export function neoTriggerNote(ask: NeoAsk, trigger: NeoAskTrigger): string {
 
 const titled = (card: Card | null, workId: string) => `card "${card?.title ?? workId}"`;
 
-export function neoActionTriggerKey(
-  ask: Pick<NeoAsk, 'approvedAt'>,
-  action: NeoAskHumanAction,
-  work: (id: string) => Card | null
-): NeoTriggerKey {
-  const at = (id: string) => work(id)?.updatedAt ?? 0;
-  const key = (key: string, line: string): NeoTriggerKey => ({ key, kind: 'action', line });
-  switch (action.kind) {
-    case 'start':
-      return key(
-        `start:${action.workId}`,
-        `${titled(work(action.workId), action.workId)} waits for Start`
-      );
-    case 'retry':
-      return key(
-        `retry:${action.workId}:${at(action.workId)}`,
-        `${titled(work(action.workId), action.workId)} failed and can be retried`
-      );
-    case 'close':
-      return key(
-        `close:${action.workId}`,
-        `${titled(work(action.workId), action.workId)} can be closed`
-      );
-    case 'approve':
-      return key(
-        `approve:${action.reason}:${ask.approvedAt ?? 0}:${(action.workIds ?? []).join(',')}`,
-        action.reason === 'expired'
-          ? 'the ask’s approval expired and needs approving again'
-          : 'a card stalled and the ask needs approving again'
-      );
-    case 'answer':
-      return key(
-        `answer:${action.itemId}`,
-        `question: ${action.question} (options: ${action.options.join(' / ')})`
-      );
-    case 'confirm':
-      return key(`confirm:${action.itemId}`, `step to confirm: ${action.step}`);
-    case 'talk':
-      return key(
-        `talk:${action.workId}:${action.what}`,
-        `${titled(work(action.workId), action.workId)} needs the human to tell it directly: ${action.what}`
-      );
-  }
+export function neoActionTriggerKey(action: NeoAskHumanAction): NeoTriggerKey {
+  return {
+    key: `question:${action.itemId}`,
+    kind: 'action',
+    line: `question: ${action.question}${action.options.length ? ` (options: ${action.options.join(' / ')})` : ' (reply in chat)'}`,
+  };
 }
 
 export function isNeoCardFailedForGood(card: NeoCardView, pending: boolean): boolean {
@@ -221,7 +184,7 @@ export function neoAskTriggerKeys(
           ask.status === 'achieved'
             ? 'the ask is achieved'
             : answer
-              ? 'the answer is ready: publish it for this trigger and the daemon completes the ask'
+              ? 'the answer is ready'
               : 'every item of the ask is met',
       },
     ];
@@ -236,6 +199,17 @@ export function neoAskTriggerKeys(
         line: `${titled(work(card.workId), card.workId)} failed with no retry left`,
       })
     );
+  const refused: NeoTriggerKey[] = live.flatMap((card) =>
+    card.talk
+      ? [
+          {
+            key: `refused:${card.workId}:${card.talk}`,
+            kind: 'failed' as const,
+            line: `${titled(work(card.workId), card.workId)} declined the instruction: ${card.talk}`,
+          },
+        ]
+      : []
+  );
   const idle: NeoTriggerKey[] =
     read.view.idle && !isNeoAskReportUnsettled(ask, work, settled)
       ? [
@@ -248,10 +222,9 @@ export function neoAskTriggerKeys(
       : [];
   return [
     ...failed,
+    ...refused,
     ...idle,
-    ...(read.view.humanActions ?? [])
-      .filter((action) => action.kind !== 'close')
-      .map((action) => neoActionTriggerKey(ask, action, work)),
+    ...(read.view.humanActions ?? []).map(neoActionTriggerKey),
   ];
 }
 

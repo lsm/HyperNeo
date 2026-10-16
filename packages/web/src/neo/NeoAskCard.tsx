@@ -21,8 +21,6 @@ import {
   type NeoAskOutcome,
   type NeoAskView,
   isNeoAskQuestionItem,
-  neoAskApproval,
-  neoAskApprovalBadge,
   neoAskItemActions,
   neoAskOpenTarget,
   neoAskOutcomeCount,
@@ -184,7 +182,7 @@ function ItemRow({ item, above }: { item: NeoAskItem; above?: NeoAskItemAction['
                 ?.scrollIntoView({ block: 'nearest' })
             }
           >
-            {above === 'confirm' ? 'Confirm above' : 'Answer above'}
+            Question above
           </button>
         )}
         {item.removed && item.removedReason && (
@@ -220,52 +218,33 @@ function Checklist({
 
 function ActionRow({
   action,
-  onDone,
   onAnswer,
   disabled,
 }: {
   action: NeoAskItemAction;
-  onDone?: (itemId: string) => void;
   onAnswer?: (itemId: string, choice: string) => void;
   disabled?: boolean;
 }) {
-  const text = action.kind === 'confirm' ? action.step : (action.step ?? action.question);
-  const question = action.kind === 'answer' && action.step ? action.question : null;
   return (
-    <li data-ask-item={action.itemId} class="flex min-w-0 items-baseline gap-2 text-sm">
-      <span aria-hidden="true" class="w-3 shrink-0 text-center text-xs text-warning">
-        !
-      </span>
-      <span class="min-w-0 flex-1">
-        <span class="break-words text-fg">{text}</span>
-        {question && <span class="block break-words text-xs text-fg-muted">{question}</span>}
-        {action.kind === 'answer' && onAnswer && (
-          <span class="mt-1.5 flex flex-wrap gap-1.5">
-            {action.options.map((option) => (
-              <button
-                key={option}
-                type="button"
-                class={`${neoSecondaryClass} max-w-full whitespace-normal break-words text-left`}
-                disabled={disabled}
-                aria-label={`Answer ${question ?? text}: ${option}`}
-                onClick={() => onAnswer(action.itemId, option)}
-              >
-                {option}
-              </button>
-            ))}
-          </span>
-        )}
-      </span>
-      {action.kind === 'confirm' && onDone && (
-        <button
-          type="button"
-          class={`${neoSecondaryClass} shrink-0`}
-          disabled={disabled}
-          aria-label={`Confirm: ${text}`}
-          onClick={() => onDone(action.itemId)}
-        >
-          Confirm
-        </button>
+    <li data-ask-item={action.itemId} class="min-w-0 text-sm">
+      <p class="break-words font-medium text-fg">{action.question}</p>
+      {action.options.length > 0 ? (
+        <div class="mt-2 flex flex-wrap justify-end gap-2">
+          {action.options.map((option, index) => (
+            <button
+              key={option}
+              type="button"
+              class={`${index === action.options.length - 1 ? neoPrimaryClass : neoSecondaryClass} max-w-full whitespace-normal break-words text-left`}
+              disabled={disabled || !onAnswer}
+              aria-label={`Answer ${action.question}: ${option}`}
+              onClick={() => onAnswer?.(action.itemId, option)}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p class="mt-2 text-fg-muted">Reply in chat…</p>
       )}
     </li>
   );
@@ -276,11 +255,7 @@ export function NeoAskCard({
   cards,
   disabled = false,
   onSettle,
-  onDone,
   onAnswer,
-  onAnswerInChat,
-  onApprove,
-  onRetry,
   onOpen,
   onOpenSession,
   onExpand,
@@ -292,11 +267,7 @@ export function NeoAskCard({
   cards?: NeoSceneCards;
   disabled?: boolean;
   onSettle?: (outcome: NeoAskOutcome) => void;
-  onDone?: (itemId: string) => void;
   onAnswer?: (itemId: string, choice: string) => void;
-  onAnswerInChat?: (question: string) => void;
-  onApprove?: () => void;
-  onRetry?: (workId: string) => void;
   onOpen?: (workId: string) => void;
   onOpenSession?: (sessionId: string, title: string) => void;
   onExpand?: () => void;
@@ -324,24 +295,10 @@ export function NeoAskCard({
   const steps = view.scenes.length;
   const single = steps === 1 ? view.scenes[0] : undefined;
   const itemActions = neoAskItemActions(view);
-  const canApprove = view.humanActions.some((action) => action.kind === 'start');
-  const approveAgain = view.humanActions.some((action) => action.kind === 'approve');
-  const retries = view.humanActions.flatMap((action) => {
-    if (action.kind !== 'retry') return [];
-    const scene = view.scenes.find((item) => item.ref.id === action.workId);
-    const title = scene?.receipt.kind === 'work' ? scene.receipt.title : (scene?.label ?? '');
-    return [{ workId: action.workId, title }];
-  });
-  const approval = neoAskApproval(ask, view.humanActions);
-  const badge = neoAskApprovalBadge(ask, view.humanActions);
   const count = neoAskOutcomeCount(view.items);
   const outcomes = view.items.filter((item) => !isNeoAskQuestionItem(item));
   const questions = view.items.filter(isNeoAskQuestionItem);
   const answerable = new Map(itemActions.map((action) => [action.itemId, action.kind]));
-  const answeredAbove = itemActions.some(
-    (action) =>
-      action.kind === 'answer' && action.itemId === view.answer?.itemId && action.options.length > 0
-  );
   const target = neoAskOpenTarget(view, cards);
   const openName = `Open ${ask.title}`;
   const openControl =
@@ -374,19 +331,16 @@ export function NeoAskCard({
           pulse={tone === 'running'}
         />
         <span class="flex-1" />
-        {!view.settled && badge && (
-          <span
-            class={`shrink-0 text-xs ${badge.label === 'Approved' ? 'text-fg-muted' : 'text-warning'}`}
-            title={badge.title}
-          >
-            {badge.label}
-          </span>
-        )}
-        {!view.settled && count && (
-          <span class="shrink-0 text-xs text-fg-muted">
-            {count.verified} of {count.total} outcomes verified
-          </span>
-        )}
+        {!view.settled &&
+          count &&
+          (!view.scenes.length ||
+            view.scenes.some(
+              (scene) => scene.receipt.kind === 'work' && scene.receipt.status !== 'proposed'
+            )) && (
+            <span class="shrink-0 text-xs text-fg-muted">
+              {count.verified} of {count.total} outcomes verified
+            </span>
+          )}
         {onSettle && ask.status !== 'achieved' && ask.status !== 'abandoned' && (
           <Dropdown
             position="right"
@@ -421,7 +375,6 @@ export function NeoAskCard({
               <ActionRow
                 key={action.itemId}
                 action={action}
-                onDone={onDone}
                 onAnswer={onAnswer}
                 disabled={disabled}
               />
@@ -480,12 +433,6 @@ export function NeoAskCard({
               </div>
             </div>
           )}
-          {!view.settled && approval && (
-            <div class="text-sm text-fg-muted">
-              <p class="text-xs font-medium text-fg-faint">Approval</p>
-              <p class="mt-1">{approval.line}</p>
-            </div>
-          )}
           {ask.outcome && ask.outcome.trim() !== view.summary && (
             <div class="text-sm text-fg-muted">
               <p class="text-xs font-medium text-fg-faint">Outcome</p>
@@ -496,55 +443,7 @@ export function NeoAskCard({
         </div>
       )}
       <div class={neoFooterClass}>
-        {view.answer && onAnswerInChat && !answeredAbove ? (
-          <button
-            type="button"
-            class={neoPrimaryClass}
-            disabled={disabled}
-            onClick={() => onAnswerInChat(view.answer?.question ?? '')}
-          >
-            <NeoChatMark />
-            {view.answer.label}
-          </button>
-        ) : (
-          openControl
-        )}
-        {onRetry &&
-          retries.map((retry) => (
-            <button
-              key={retry.workId}
-              type="button"
-              class={neoPrimaryClass}
-              disabled={disabled}
-              aria-label={`Retry ${retry.title}`}
-              title="This step failed before it started. Retry sends the same instruction again."
-              onClick={() => onRetry(retry.workId)}
-            >
-              Retry
-            </button>
-          ))}
-        {approveAgain && onApprove && (
-          <button
-            type="button"
-            class={neoPrimaryClass}
-            disabled={disabled}
-            title={badge?.title}
-            onClick={onApprove}
-          >
-            Approve again
-          </button>
-        )}
-        {canApprove && onApprove && (
-          <button
-            type="button"
-            class={neoPrimaryClass}
-            disabled={disabled}
-            title="Let Neo start this ask's steps without asking for each one. Deploys and destructive steps still ask you."
-            onClick={onApprove}
-          >
-            Approve all steps
-          </button>
-        )}
+        {openControl}
         <span class="flex-1" />
         <button
           type="button"

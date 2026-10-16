@@ -32,7 +32,6 @@ import {
   neoHumanTickWakes,
   type NeoDaemonTickPath,
 } from './needs-you.ts';
-import { isNeoAskOutcomeItem } from './ask-views.ts';
 import { NeoAskStateViewSchema } from './card-view-schema.ts';
 import { isNeoAnswerItem } from './answer-outcome.ts';
 import { neoOutcomeBindingPolicy } from './outcome-binding-policy.ts';
@@ -232,7 +231,12 @@ const Question = z.object({
   question: z.string().trim().min(1).max(200),
   decides: Decides,
   because: Because.optional(),
-  options: Options,
+  options: z
+    .union([z.tuple([]), Options])
+    .default([])
+    .describe(
+      'Optional choices in display order: decline/negative first (left), agree/positive last (right). Omit or pass [] for an open question answered in chat.'
+    ),
   kind: z.enum(NEO_ASK_ITEM_KINDS),
 });
 
@@ -846,7 +850,7 @@ export function requireNeoSettleKeepsOutcomeCards<T>(
 
 const NEO_HUMAN_TASK_REFUSALS = {
   approval:
-    "approval_on_ask: re-approving continued work is the ask's Approve, not a question. The daemon shows Approve itself when the approval expires or a card stalls; approving it wakes you.",
+    'approval_on_ask: expiry and stalled work are facts, not a new human decision. Ask a question only when the human must decide what happens next.',
   wait: 'not_the_human: a wait on a PR, merge, CI, deploy, card or anything else the daemon reads is not the human’s step. Keep the item pending; the daemon wakes you when cards report, and you tick it met once you read it.',
 } as const;
 
@@ -926,7 +930,7 @@ export function planNeoAskRestate(
   because: NeoAskQuestionBecause | null;
 } | null {
   const decides = asked?.decides ?? input.decides;
-  if (!asked || !decides || !input.question || !input.options) return null;
+  if (!asked || !decides || !input.question) return null;
   const kind = input.kind ?? asked.kind ?? 'decision';
   const because = input.because ?? asked.because ?? null;
   const same =
@@ -934,7 +938,7 @@ export function planNeoAskRestate(
     JSON.stringify(asked.because ?? null) === JSON.stringify(because) &&
     asked.text === input.question &&
     asked.kind === kind &&
-    JSON.stringify(asked.options ?? []) === JSON.stringify(input.options);
+    JSON.stringify(asked.options ?? []) === JSON.stringify(input.options ?? []);
   return same
     ? null
     : {
@@ -942,7 +946,7 @@ export function planNeoAskRestate(
         text: input.question,
         question: input.question,
         kind,
-        options: [...input.options],
+        options: [...(input.options ?? [])],
         decides,
         because,
       };
@@ -972,7 +976,7 @@ export function planNeoAskQuestion(
     question: input.question,
     ...(input.decides ? { decides: input.decides } : {}),
     ...(input.because ? { because: input.because } : {}),
-    options: [...input.options],
+    options: [...(input.options ?? [])],
   };
 }
 
@@ -1217,13 +1221,7 @@ export function requireNeoAskQuestion(
     return {
       reason: fail(`item_not_waiting: ${item.id} is ${item.state}, not waiting on an answer.`),
     };
-  return isNeoAskOutcomeItem(item) && !item.options?.includes(input.choice)
-    ? {
-        reason: fail(
-          `choice_not_offered: ${item.id} is a step the human did; answer ${item.options?.join(' or ')}.`
-        ),
-      }
-    : { value: { ask, item } };
+  return { value: { ask, item } };
 }
 
 export function neoAnswerCitation(
@@ -1275,13 +1273,10 @@ export function requireNeoAnswerProvenance(
       };
 }
 
-export function readNeoAskReply(
-  input: z.infer<typeof Answer>,
-  target: { item: NeoAskItem }
-): { choice: string; met: boolean } {
+export function readNeoAskReply(input: z.infer<typeof Answer>): { choice: string; met: boolean } {
   return {
     choice: input.choice,
-    met: !isNeoAskOutcomeItem(target.item) || input.choice === target.item.options?.[0],
+    met: true,
   };
 }
 
@@ -1928,7 +1923,7 @@ export function createNeoAskOperations(
       'cited'
     )
     .pipe(requireNeoAnswerProvenance, ['input', 'admission', 'caller', 'cited'], 'result:admission')
-    .pipe(readNeoAskReply, ['input', 'admission'], 'reply')
+    .pipe(readNeoAskReply, 'input', 'reply')
     .pipe(
       async (
         target: { ask: NeoAsk; item: NeoAskItem },
@@ -2254,7 +2249,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.question',
       description:
-        'Ask the human one question about this ask: the only way a decision, or a check only they can make, reaches them. question is one short question worded for this step; options are 2-4 short answers, which become their buttons; kind is required, decision (any answer settles it) or action (a check of the result of a step, met only on its first option). The question becomes its own checklist item and the ask waits on it; their answer ticks it met and is sent back to you, so act on it then. For a step only the human can check (on a device, or a machine the daemon cannot read), ask about its result with kind action and options written for that step in its own words, success first ("这一步成功了吗？" with "成功了" and "没成功"): the first option ticks it met, any other keeps it open and tells you. Never ask for re-approval: the daemon shows Approve itself when the approval expires or a card stalls. decides names the decision it asks: asking the same decision again, in any words, restates its open question (new wording and options) instead of adding another, and a different decision is its own question. When a card under this ask is why you ask, pass because {card, reason}: the daemon withdraws the question as no longer needed once that reason is gone (never as answered), and a late answer to it is refused. Only the Neo session that opened the ask or the user can ask on it.',
+        'Ask the human one question about this ask: the only way a decision, or a check only they can make, reaches them. question is one short question worded for this step; options are optional 2-4 short answers, ordered negative/decline first (left), positive/agree last (right), which become their buttons; omit options for an open question answered in chat; kind is required, decision (any answer settles it) or action (a question about the result of a step). The question becomes its own checklist item and the ask waits on it; their answer ticks it met and is sent back to you, so act on it then. For a step only the human can check (on a device, or a machine the daemon cannot read), ask about its result with kind action and options written for that step in its own words, negative first and positive last ("这一步成功了吗？" with "没成功" and "成功了"): every answer completes this question; ask a new question only if a new decision is needed. Approval expiry and stalled cards do not create a separate human control. decides names the decision it asks: asking the same decision again, in any words, restates its open question (new wording and options) instead of adding another, and a different decision is its own question. When a card under this ask is why you ask, pass because {card, reason}: the daemon withdraws the question as no longer needed once that reason is gone (never as answered), and a late answer to it is refused. Only the Neo session that opened the ask or the user can ask on it.',
       inputSchema: Question,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -2263,7 +2258,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.answer',
       description:
-        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met. From the Answer control it is sent to the Neo session that opened the ask, which acts on it. When the human answers in chat instead, Neo records it here in the turn their message started (or passes humanMessageId, the id of an earlier human message that answered it): the daemon accepts it only in the live turn the human's message started, only if that message is the human's own, in this ask's conversation and sent after the question, and only if choice appears in what they wrote (pass their own words), so never ask them to repeat it in a control and never open a second ask for it. A question about a step's result (kind action) is answered with one of its own options: the first ticks it met, any other keeps it open.",
+        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met. From the Answer control it is sent to the Neo session that opened the ask, which acts on it. When the human answers in chat instead, Neo records it here in the turn their message started (or passes humanMessageId, the id of an earlier human message that answered it): the daemon accepts it only in the live turn the human's message started, only if that message is the human's own, in this ask's conversation and sent after the question, and only if choice appears in what they wrote (pass their own words), so never ask them to repeat it in a control and never open a second ask for it. Every answer, including a negative result, completes the question with no confirmation step.",
       inputSchema: Answer,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

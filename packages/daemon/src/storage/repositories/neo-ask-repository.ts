@@ -222,16 +222,6 @@ export class NeoAskRepository {
     return this.withWork(rows);
   }
 
-  achievedSince(since: number): NeoAsk[] {
-    const rows = this.db
-      .prepare(
-        `SELECT ${askColumns} FROM neo_asks WHERE status = 'achieved' AND settled_at > ?
-          ORDER BY settled_at DESC, id`
-      )
-      .all(since) as NeoAskRow[];
-    return this.withWork(rows);
-  }
-
   list(projectId?: string | null): NeoAsk[] {
     const condition = projectId === undefined ? '' : 'WHERE concern_id IS ?';
     const rows = this.db

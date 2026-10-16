@@ -1,7 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoAsk,
-  NeoAskAnswer,
   NeoAskHumanAction,
   NeoAskItem,
   NeoAskSessionView,
@@ -22,7 +21,6 @@ export type NeoAskView = {
   readonly summary: string | null;
   readonly items: readonly NeoAskItem[];
   readonly sessions: readonly NeoAskSessionView[];
-  readonly answer: NeoAskAnswer | null;
   readonly humanActions: readonly NeoAskHumanAction[];
   readonly idleReason?: string;
 };
@@ -76,7 +74,6 @@ export function describeNeoAskFromView(
     summary: published.summary,
     items: neoAskItems(ask),
     sessions: published.sessions ?? [],
-    answer: published.answer ?? null,
     humanActions: published.settled ? [] : (published.humanActions ?? []),
     ...(published.idleReason && !published.label.includes(published.idleReason)
       ? { idleReason: published.idleReason }
@@ -140,39 +137,6 @@ export function neoAskOpenTarget(
   );
 }
 
-export function neoAskApproval(
-  ask: Pick<NeoAsk, 'approvedAt' | 'approvedContinues' | 'approvedContinueLimit'>,
-  actions: readonly NeoAskHumanAction[]
-): { line: string; spent: boolean } | null {
-  if (!ask.approvedAt) return null;
-  const used = ask.approvedContinues ?? 0;
-  const limit = ask.approvedContinueLimit;
-  const approve = actions.find((action) => action.kind === 'approve');
-  const spent = !!approve;
-  const count =
-    limit !== undefined ? `${used} of ${limit} continues used` : `${used} continues used`;
-  const why = approve?.reason === 'stalled' ? 'a step stalled' : 'approval ran out';
-  return { line: spent ? `${count} · ${why}` : count, spent };
-}
-
-export type NeoAskApprovalBadge = { label: string; title: string };
-
-export function neoAskApprovalBadge(
-  ask: Pick<NeoAsk, 'approvedAt'>,
-  actions: readonly NeoAskHumanAction[]
-): NeoAskApprovalBadge | null {
-  const approve = actions.find((action) => action.kind === 'approve');
-  if (approve?.reason === 'expired')
-    return { label: 'Approval expired', title: 'The approval ran out. Approve again to continue.' };
-  if (approve?.reason === 'stalled')
-    return { label: 'Stalled', title: 'A step stalled. Approve again to continue.' };
-  if (!ask.approvedAt) return null;
-  return {
-    label: 'Approved',
-    title: 'You approved this ask: Neo starts its steps without asking again.',
-  };
-}
-
 export function isNeoAskQuestionItem(
   item: Pick<NeoAskItem, 'kind' | 'question' | 'options' | 'decision'>
 ): boolean {
@@ -195,10 +159,8 @@ export function neoAskOutcomeCount(
   };
 }
 
-export type NeoAskItemAction = Extract<NeoAskHumanAction, { kind: 'answer' | 'confirm' }>;
+export type NeoAskItemAction = NeoAskHumanAction;
 
 export function neoAskItemActions(view: Pick<NeoAskView, 'humanActions'>): NeoAskItemAction[] {
-  return view.humanActions.filter(
-    (action): action is NeoAskItemAction => action.kind === 'answer' || action.kind === 'confirm'
-  );
+  return [...view.humanActions];
 }

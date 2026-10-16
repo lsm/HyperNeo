@@ -268,23 +268,20 @@ describe('trigger keys of an ask', () => {
     const read = {
       view: view({
         humanActions: [
-          { kind: 'start', workId: 'w1' },
+          { kind: 'question', itemId: 'proposal', question: 'Start?', options: ['Later', 'Start'] },
           {
-            kind: 'answer',
+            kind: 'question',
             itemId: 'i3',
-            step: null,
             question: 'Ship it?',
             options: ['Yes', 'No'],
           },
-          { kind: 'talk', workId: 'w1', what: 'update the iMac' },
         ],
       }),
       cards: [card()],
     };
     expect(keys(ask, read)).toEqual([
-      ['action', 'start:w1'],
-      ['action', 'answer:i3'],
-      ['action', 'talk:w1:update the iMac'],
+      ['action', 'question:proposal'],
+      ['action', 'question:i3'],
     ]);
   });
 
@@ -299,7 +296,10 @@ describe('trigger keys of an ask', () => {
   });
 
   test('an optional Close is not a reason to interrupt the human', () => {
-    const read = { view: view({ humanActions: [{ kind: 'close', workId: 'w1' }] }), cards: [] };
+    const read = {
+      view: view(),
+      cards: [card({ primary: { kind: 'close', label: 'Close', link: null } })],
+    };
     expect(keys(ask, read)).toEqual([]);
   });
 
@@ -369,11 +369,13 @@ describe('planNeoAskTrigger', () => {
   });
 
   test('names the most important new kind, with an id stable for the same transition', () => {
-    const keys = [key('action', 'start:w1'), key('failed', 'failed:w2:1')];
+    const keys = [key('action', 'question:proposal'), key('failed', 'failed:w2:1')];
     const id = (planned: ReturnType<typeof planNeoAskTrigger>) =>
       'value' in planned ? planned.value.triggerId : null;
     const first = planNeoAskTrigger(ask, keys, new Set());
-    expect(first).toMatchObject({ value: { kind: 'failed', keys: ['start:w1', 'failed:w2:1'] } });
+    expect(first).toMatchObject({
+      value: { kind: 'failed', keys: ['question:proposal', 'failed:w2:1'] },
+    });
     expect(id(planNeoAskTrigger(ask, [...keys].reverse(), new Set()))).toBe(id(first));
     expect(id(first)).toMatch(/^failed:a1:/);
   });
@@ -401,13 +403,20 @@ describe('noteNeoAskTrigger', () => {
     };
     return { deps, wakes, delivery };
   }
-  const startRead = { view: view({ humanActions: [{ kind: 'start', workId: 'w1' }] }), cards: [] };
+  const startRead = {
+    view: view({
+      humanActions: [
+        { kind: 'question', itemId: 'proposal', question: 'Start?', options: ['Later', 'Start'] },
+      ],
+    }),
+    cards: [],
+  };
 
   test('wakes Neo once per transition: a repeated sweep of the same state never wakes again', async () => {
     const { deps, wakes } = sweepDeps(startRead);
     expect(await noteNeoAskTrigger(ask, deps)).toMatchObject({
       kind: 'action',
-      keys: ['start:w1'],
+      keys: ['question:proposal'],
     });
     await settle();
     expect(await noteNeoAskTrigger(ask, deps)).toMatchObject({ triggerId: wakes[0].triggerId });
@@ -430,18 +439,28 @@ describe('noteNeoAskTrigger', () => {
   });
 
   test('a new action on the same ask is a new trigger with its own id', async () => {
-    const read = { view: view({ humanActions: [{ kind: 'start', workId: 'w1' }] }), cards: [] };
+    const read = {
+      view: view({
+        humanActions: [
+          { kind: 'question', itemId: 'proposal', question: 'Start?', options: ['Later', 'Start'] },
+        ],
+      }),
+      cards: [],
+    };
     const { deps, wakes } = sweepDeps(read);
     await noteNeoAskTrigger(ask, deps);
     await settle();
     read.view = view({
       humanActions: [
-        { kind: 'start', workId: 'w1' },
-        { kind: 'answer', itemId: 'i3', step: null, question: 'Ship it?', options: ['Yes', 'No'] },
+        { kind: 'question', itemId: 'proposal', question: 'Start?', options: ['Later', 'Start'] },
+        { kind: 'question', itemId: 'i3', question: 'Ship it?', options: ['Yes', 'No'] },
       ],
     });
     await noteNeoAskTrigger(ask, deps);
-    expect(wakes.map((wake) => wake.keys)).toEqual([['start:w1'], ['start:w1', 'answer:i3']]);
+    expect(wakes.map((wake) => wake.keys)).toEqual([
+      ['question:proposal'],
+      ['question:proposal', 'question:i3'],
+    ]);
     expect(wakes[1].lines).toContain('question: Ship it? (options: Yes / No)');
     expect(wakes[0].triggerId).not.toBe(wakes[1].triggerId);
   });
@@ -740,7 +759,7 @@ describe('NeoService notification triggers', () => {
     expect(mailbox().filter((note) => note.messageUuid.includes('action:'))).toEqual([]);
   });
 
-  test('a session that refused the card wakes Neo with a talk trigger', async () => {
+  test('a session refusal wakes Neo with the recorded fact and no invented question', async () => {
     const opened = open();
     const work = service.repo.proposeWork({
       id: 'w-talk',
@@ -762,7 +781,7 @@ describe('NeoService notification triggers', () => {
     await sweep();
     await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
     expect(JSON.stringify(mailbox()[0].message)).toContain(
-      'needs the human to tell it directly: update the iMac on Neo request'
+      'declined the instruction: update the iMac on Neo request'
     );
   });
 

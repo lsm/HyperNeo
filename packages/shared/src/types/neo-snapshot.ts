@@ -291,32 +291,14 @@ export interface NeoAskView {
   doneWorkIds: string[];
   summary: string | null;
   sessions?: NeoAskSessionView[];
-  answer?: NeoAskAnswer | null;
   humanActions?: NeoAskHumanAction[];
 }
 
-export type NeoAskHumanAction =
-  | { kind: 'start'; workId: string }
-  | { kind: 'approve'; reason: 'expired' | 'stalled'; workIds?: string[] }
-  | {
-      kind: 'answer';
-      itemId: string;
-      step: string | null;
-      question: string;
-      options: string[];
-    }
-  | { kind: 'confirm'; itemId: string; step: string }
-  | { kind: 'retry'; workId: string }
-  | { kind: 'close'; workId: string }
-  | { kind: 'talk'; workId: string; what: string };
-
-export interface NeoAskAnswer {
+export interface NeoAskHumanAction {
+  kind: 'question';
   itemId: string;
   question: string;
-  label: 'Answer in chat';
   options: string[];
-  action?: string;
-  kind?: NeoAskItemKind;
 }
 
 export interface NeoReceiptAskOrigin {
