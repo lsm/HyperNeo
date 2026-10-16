@@ -47,7 +47,6 @@ import { ToolProgressCard } from './tools';
 	toolInput={{ file_path: '/path/to/file.ts' }}
 	elapsedTime={1.5}
 	toolUseId="tool_abc123"
-	variant="default"
 />;
 ```
 
@@ -62,7 +61,6 @@ import { ToolResultCard } from './tools';
 	input={{ file_path: '/path/to/file.ts', content: '...' }}
 	output={{ success: true }}
 	isError={false}
-	variant="default"
 />;
 ```
 
@@ -86,14 +84,14 @@ registerTool('MyCustomTool', {
 
 ## Variants
 
-All card components support multiple display variants:
+Tool progress uses one display. Result and authentication cards support display variants:
 
 ### `compact`
 
 Minimal single-line display, ideal for mobile:
 
 ```tsx
-<ToolProgressCard variant="compact" {...props} />
+<ToolResultCard variant="compact" {...props} />
 ```
 
 ### `default`
@@ -101,7 +99,7 @@ Minimal single-line display, ideal for mobile:
 Standard display with icon, summary, and metadata:
 
 ```tsx
-<ToolProgressCard variant="default" {...props} />
+<ToolProgressCard {...props} />
 ```
 
 ### `detailed`
@@ -117,7 +115,7 @@ Full information including tool IDs and extra metadata:
 Inline display for text flow:
 
 ```tsx
-<ToolProgressCard variant="inline" {...props} />
+<ToolResultCard variant="inline" {...props} />
 ```
 
 ## Category Colors
@@ -191,10 +189,9 @@ registerTool('MyTool', {
 
 Old components have been refactored:
 
-### SDKToolProgressMessage
+### Tool progress in SDKMessageRenderer
 
-**Before:** Custom implementation with hardcoded icons/summaries
-**After:** Uses `ToolProgressCard`
+`SDKMessageRenderer` renders `ToolProgressCard` directly.
 
 ### ToolUseBlock (in SDKAssistantMessage)
 
@@ -206,8 +203,6 @@ Old components have been refactored:
 **Before:** Inline JSX
 **After:** Uses `AuthStatusCard`
 
-Legacy code is marked with `@deprecated` and can be removed after testing.
-
 ## Mobile Responsiveness
 
 Use the `compact` variant for mobile displays:
@@ -215,7 +210,7 @@ Use the `compact` variant for mobile displays:
 ```tsx
 const isMobile = window.innerWidth < 768;
 
-<ToolProgressCard variant={isMobile ? 'compact' : 'default'} {...props} />;
+<ToolResultCard variant={isMobile ? 'compact' : 'default'} {...props} />;
 ```
 
 ## Examples
@@ -239,7 +234,6 @@ const isMobile = window.innerWidth < 768;
 	toolId="tool_456"
 	input={{ pattern: 'useState', glob: '*.tsx' }}
 	output="Found 42 matches in 15 files"
-	variant="default"
 />
 ```
 
@@ -265,7 +259,6 @@ const isMobile = window.innerWidth < 768;
 | `elapsedTime`     | `number`          | Elapsed time in seconds         |
 | `toolUseId`       | `string`          | Unique tool execution ID        |
 | `parentToolUseId` | `string?`         | Parent tool ID (for sub-agents) |
-| `variant`         | `ToolCardVariant` | Display variant                 |
 | `className`       | `string?`         | Additional CSS classes          |
 
 ### ToolResultCard Props

@@ -1,8 +1,21 @@
+import {
+  requireAutomationGoal,
+  requireActiveAutomationGoal,
+  requireAutomationScope,
+  requireAutomationEvidence,
+  requireEnabledAutomation,
+  requireAutomationThreshold,
+  requireNoActiveAutomationReview,
+  requireUnlockedAutomation,
+} from '../../../../src/lib/job-handlers/goal-automation-execute-admission';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import { GOAL_AUTOMATION_EXECUTE } from '../../../../src/lib/job-queue-constants';
-import { handleGoalAutomationExecute } from '../../../../src/lib/job-handlers/goal-automation-execute.handler';
+import {
+  handleGoalAutomationExecute,
+  type GoalAutomationExecutePayload,
+} from '../../../../src/lib/job-handlers/goal-automation-execute.handler';
 import {
   GoalAutomationService,
   externalEventTriggerKey,
@@ -1373,6 +1386,171 @@ describe('handleGoalAutomationExecute', () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  describe('automation admission gates', () => {
+    it('keeps each admission gate pure and preserves its skip reason and count', () => {
+      const goal = goalRepo.create({ spaceId, title: 'Gate inputs', type: 'recurring' });
+      const scope = evolutionRepo.createScope({
+        spaceId,
+        spaceGoalId: goal.id,
+        kind: 'mission',
+        name: 'Gate inputs',
+        objective: 'Review',
+      });
+      const evidence = evolutionRepo.createEvidence({
+        scopeId: scope.id,
+        kind: 'task_result',
+        sourceId: 'completed-task',
+        summary: 'Completed',
+      });
+      const task = taskRepo.createTask({ spaceId, title: 'Review' });
+      const facts = {
+        goal,
+        scope,
+        policy: { completedTaskThreshold: 1 },
+        maxEvidence: 1,
+        dueEvidence: [evidence],
+        evidence: [evidence],
+        triggerEvidence: evidence,
+      };
+      const payload: GoalAutomationExecutePayload = {
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+      };
+      const gates = [
+        {
+          name: 'goal',
+          run: () => requireAutomationGoal(null),
+          admitted: () => requireAutomationGoal(goal),
+          value: goal,
+          reason: { skipReason: 'missing_goal' },
+        },
+        {
+          name: 'active goal',
+          run: () => requireActiveAutomationGoal({ ...goal, status: 'completed' }),
+          admitted: () => requireActiveAutomationGoal(goal),
+          value: goal,
+          reason: { skipReason: 'inactive_goal' },
+        },
+        {
+          name: 'scope',
+          run: () => requireAutomationScope({ ...scope, spaceId: 'other' }, goal),
+          admitted: () => requireAutomationScope(scope, goal),
+          value: scope,
+          reason: { skipReason: 'missing_scope' },
+        },
+        {
+          name: 'evidence',
+          run: () => requireAutomationEvidence({ ...facts, evidence: [] }),
+          admitted: () => requireAutomationEvidence(facts),
+          value: facts,
+          reason: { skipReason: 'no_evidence' },
+        },
+        {
+          name: 'enabled',
+          run: () =>
+            requireEnabledAutomation(
+              { ...facts, goal: { ...goal, type: 'one_shot' }, policy: {} },
+              payload
+            ),
+          admitted: () => requireEnabledAutomation(facts, payload),
+          value: facts,
+          reason: { skipReason: 'disabled' },
+        },
+        {
+          name: 'threshold',
+          run: () =>
+            requireAutomationThreshold(
+              { ...facts, policy: { completedTaskThreshold: 2 } },
+              payload
+            ),
+          admitted: () => requireAutomationThreshold(facts, payload),
+          value: facts,
+          reason: { skipReason: 'below_threshold', evidenceCount: 1 },
+        },
+        {
+          name: 'active review',
+          run: () => requireNoActiveAutomationReview(facts, payload, task),
+          admitted: () => requireNoActiveAutomationReview(facts, payload, null),
+          value: facts,
+          reason: { skipReason: 'active_review', evidenceCount: 1 },
+        },
+        {
+          name: 'lock',
+          run: () => requireUnlockedAutomation(facts, payload, true),
+          admitted: () => requireUnlockedAutomation(facts, payload, false),
+          value: facts,
+          reason: { skipReason: 'active_review', evidenceCount: 1 },
+        },
+      ];
+      const before = structuredClone(facts);
+      for (const gate of gates) {
+        expect(gate.run(), gate.name).toEqual({ reason: gate.reason });
+        expect(gate.admitted(), gate.name).toEqual({ value: gate.value });
+      }
+      expect(facts).toEqual(before);
+      const selfNag = { ...payload, triggerKind: 'self_nag' as const };
+      expect(
+        requireEnabledAutomation(
+          { ...facts, goal: { ...goal, type: 'one_shot' }, policy: {} },
+          selfNag
+        )
+      ).toHaveProperty('value');
+      expect(
+        requireAutomationThreshold(
+          { ...facts, policy: { completedTaskAutomationEnabled: false } },
+          selfNag
+        )
+      ).toEqual({ value: { ...facts, policy: { completedTaskAutomationEnabled: false } } });
+      expect(requireNoActiveAutomationReview(facts, selfNag, task)).toEqual({ value: facts });
+      expect(requireUnlockedAutomation(facts, selfNag, true)).toEqual({ value: facts });
+    });
+  });
+
+  it('preserves a repository rejection without starting later admission reads', async () => {
+    const failure = { detail: 'repository failed' };
+    let laterReads = 0;
+    const goalRead = goalRepo.getById;
+    const scopeRead = evolutionRepo.getScope;
+    goalRepo.getById = () => {
+      throw failure;
+    };
+    evolutionRepo.getScope = () => {
+      laterReads += 1;
+      return null;
+    };
+    try {
+      await expect(
+        handleGoalAutomationExecute(
+          createAutomationJob({
+            goalId: 'goal',
+            scopeId: 'scope',
+            triggerKind: 'self_nag',
+            triggerKey: 'schedule',
+            reason: 'self_nag',
+          }),
+          {
+            goalRepo,
+            evolutionRepo,
+            cursorRepo,
+            taskRepo,
+            episodeService: {
+              createFromEvidence: async () => {
+                throw new Error('unexpected episode');
+              },
+            },
+          }
+        )
+      ).rejects.toBe(failure);
+      expect(laterReads).toBe(0);
+    } finally {
+      goalRepo.getById = goalRead;
+      evolutionRepo.getScope = scopeRead;
+    }
   });
 
   it('generates a draft episode, review task, and cursor from selected evidence', async () => {

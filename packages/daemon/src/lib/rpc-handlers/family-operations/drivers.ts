@@ -167,10 +167,14 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       if (session)
         internalEventBus.publish('session.created', { sessionId, session }).catch(() => {});
     },
-    interrupt: (sessionId) => {
-      if (!sessionManager.getCachedSession(sessionId)) return false;
-      internalEventBus.publish('agent.interruptRequest', { sessionId }).catch(() => {});
-      return true;
+    interrupt: async (sessionId) => {
+      const session = sessionManager.getCachedSession(sessionId);
+      if (!session) return false;
+      await internalEventBus.publish('agent.interruptRequest', { sessionId });
+      return (
+        sessionManager.getCachedSession(sessionId) === session &&
+        ['idle', 'interrupted'].includes(session.getProcessingState().status)
+      );
     },
   };
 }
@@ -418,7 +422,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       db,
       machine,
       searchChats: ownChats,
-      handoff: (sessionId, message, from, messageUuid) =>
+      handoff: (sessionId, message, from, messageUuid, deliveryMode) =>
         handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
           message: {
@@ -428,6 +432,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           },
           origin: from,
           messageUuid,
+          deliveryMode,
           jobQueue: context.deps.jobQueue,
         }),
       sessions: hyperneoSessionControl(context),
