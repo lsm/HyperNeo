@@ -1,0 +1,375 @@
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
+import type { TableChangeScope } from '../../../storage/reactive-database.ts';
+import { activeDeliveryJobsCtes } from './task-delivery.ts';
+import { capMessageOutput } from '../../rpc-handlers/message-output-cap.ts';
+import { thinMessage } from '../../rpc-handlers/message-thinning.ts';
+import { sendStatusToDeliveryStatus } from '@hyperneo/shared';
+
+export const DEBOUNCE_SDK_MESSAGES_MS = 250;
+
+const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
+  ...HIDDEN_SYSTEM_SUBTYPES,
+  'thinking_tokens',
+]);
+
+const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
+
+const BACKGROUND_TASK_METADATA_BATCH_SIZE = 300;
+
+const BACKGROUND_TASK_METADATA_SOURCE_SUBTYPES: ReadonlySet<string> = new Set([
+  ...BACKGROUND_TASK_METADATA_SUBTYPES,
+  'task_progress',
+]);
+
+export function mayChangeBackgroundTaskMetadata(scope: TableChangeScope): boolean {
+  if (scope.messageSubtype === undefined) return true;
+  return (
+    scope.messageSubtype !== null &&
+    BACKGROUND_TASK_METADATA_SOURCE_SUBTYPES.has(scope.messageSubtype)
+  );
+}
+
+export const MAX_MESSAGES_BY_SESSION_WINDOW = 200;
+
+function toSqlStringList(subtypes: Iterable<string>): string {
+  return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
+}
+
+const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
+  (subtype) => `SELECT * FROM (
+    SELECT
+      id,
+      sdk_message,
+      timestamp,
+      send_status,
+      origin,
+      rowid AS rowid,
+      COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+        task_id
+      ) AS task_id
+    FROM sdk_messages
+    WHERE session_id = ?
+      AND parent_tool_use_id IS NULL
+      AND message_subtype_norm = '${subtype.replace(/'/g, "''")}'
+    ORDER BY timestamp DESC, rowid DESC
+    LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+  )`
+).join(`
+  UNION ALL
+`);
+
+export const BACKGROUND_TASK_METADATA_SQL = `
+WITH recent_metadata AS (
+  SELECT * FROM (
+    ${BACKGROUND_TASK_METADATA_ARMS_SQL}
+  )
+  ORDER BY timestamp DESC, rowid DESC
+  LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+),
+recent_progress AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid AS rowid,
+    COALESCE(
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
+    ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND message_subtype_norm = 'task_progress'
+  ORDER BY timestamp DESC, rowid DESC
+  LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+),
+terminal_task_ids AS MATERIALIZED (
+  SELECT DISTINCT COALESCE(
+    CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+    task_id
+  ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND message_subtype_norm = 'task_notification'
+),
+recent_task_ids AS (
+  SELECT DISTINCT candidate.task_id
+  FROM (
+    SELECT task_id FROM recent_metadata
+    UNION ALL
+    SELECT task_id FROM recent_progress
+  ) candidate
+  WHERE candidate.task_id IS NOT NULL AND candidate.task_id != ''
+    AND candidate.task_id NOT IN (
+      SELECT task_id FROM terminal_task_ids WHERE task_id IS NOT NULL
+    )
+),
+task_starts AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid AS rowid,
+    COALESCE(
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
+    ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND message_subtype_norm = 'task_started'
+    AND COALESCE(
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
+    ) IN (SELECT task_id FROM recent_task_ids)
+    AND id NOT IN (SELECT id FROM recent_metadata)
+),
+latest_progress AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid AS rowid,
+    task_id
+  FROM (
+    SELECT
+      id,
+      sdk_message,
+      timestamp,
+      send_status,
+      origin,
+      rowid AS rowid,
+      COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+        task_id
+      ) AS task_id,
+      ROW_NUMBER() OVER (
+        PARTITION BY COALESCE(
+          CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
+          ''
+        )
+        ORDER BY timestamp DESC, rowid DESC
+      ) AS rn
+    FROM sdk_messages
+    WHERE session_id = ?
+      AND parent_tool_use_id IS NULL
+      AND message_subtype_norm = 'task_progress'
+      AND COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
+        ''
+      ) != ''
+      AND COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+        task_id
+      ) IN (SELECT task_id FROM recent_task_ids)
+  )
+  WHERE rn = 1
+)
+SELECT
+  id,
+  sdk_message                                                     AS content,
+  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)  AS timestamp,
+  send_status                                                     AS sendStatus,
+  origin                                                          AS origin
+FROM (
+  SELECT * FROM recent_metadata
+  UNION ALL
+  SELECT * FROM task_starts
+  UNION ALL
+  SELECT * FROM latest_progress
+)
+ORDER BY timestamp DESC, rowid DESC
+`.trim();
+
+export const MESSAGES_BY_SESSION_SQL = `
+WITH latest_shutdown_boundary AS MATERIALIZED (
+  SELECT id
+  FROM sdk_messages
+  WHERE session_id = ?1
+    AND parent_tool_use_id IS NULL
+    AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+  ORDER BY timestamp DESC, id DESC
+  LIMIT 1
+),
+${activeDeliveryJobsCtes(`AND json_extract(jq.payload, '$.sessionId') = ?1`)},
+active_delivery_ranked AS (
+  SELECT
+    message_uuid,
+    json_object(
+      'count', retry_count,
+      'runAt', run_at,
+      'max', max_retries
+    ) AS deliveryRetryInfo,
+    ROW_NUMBER() OVER (
+      PARTITION BY message_uuid
+      ORDER BY retry_count DESC, job_rowid DESC
+    ) AS retry_rank
+  FROM active_delivery_candidates
+),
+active_delivery_retry AS MATERIALIZED (
+  SELECT message_uuid, deliveryRetryInfo
+  FROM active_delivery_ranked
+  WHERE retry_rank = 1
+),
+top_level AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid AS rowid,
+    message_type,
+    active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
+  FROM sdk_messages
+  LEFT JOIN active_delivery_retry ON active_delivery_retry.message_uuid = sdk_messages.sdk_uuid
+  WHERE session_id = ?1
+    AND parent_tool_use_id IS NULL
+    -- Task #862: surface ALL user-message delivery states (deferred / enqueued
+    -- / submitted / consumed / failed) so the UI can badge queued / processing
+    -- / retrying explicitly instead of inferring from system/init. Daemon-side
+    -- reads (SDKMessageRepository.getSDKMessages) keep the consumed/failed
+    -- visibility filter, so prompt context / rewind are unaffected; only the
+    -- web transcript feed widens.
+    AND message_subtype_norm NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
+    AND (
+      message_type != 'system'
+      OR message_subtype_norm != 'informational'
+      OR NOT json_valid(sdk_message)
+      OR COALESCE(
+        CASE
+          WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.level')
+        END,
+        ''
+      ) != 'info'
+    )
+    AND (
+      message_type != 'system'
+      OR message_subtype_norm != 'worker_shutting_down'
+      OR id = (SELECT id FROM latest_shutdown_boundary)
+    )
+  -- Cap window orders by (timestamp, rowid) so a LiveQuery limit that cuts
+  -- through same-millisecond hook_started/progress/response rows keeps the
+  -- later phases (insertion order) instead of dropping the terminal response
+  -- by random UUID. The planner falls back to idx_sdk_messages_session_timestamp_id + a
+  -- bounded temp sort (rowid isn't in the composite index) — acceptable for a
+  -- capped window, and correctness beats the micro-optimisation here.
+  ORDER BY timestamp DESC, rowid DESC
+  LIMIT ?2
+),
+tool_use_ids AS (
+  SELECT DISTINCT json_extract(je.value, '$.id') AS id
+  FROM top_level,
+       json_each(
+         CASE
+           WHEN json_valid(top_level.sdk_message)
+            AND json_extract(top_level.sdk_message, '$.type') = 'assistant'
+           THEN json_extract(top_level.sdk_message, '$.message.content')
+           ELSE '[]'
+         END
+       ) AS je
+  WHERE json_valid(top_level.sdk_message)
+    AND json_extract(top_level.sdk_message, '$.type') = 'assistant'
+    AND json_extract(je.value, '$.type') = 'tool_use'
+    AND json_extract(je.value, '$.id') IS NOT NULL
+),
+subagent AS (
+  SELECT
+    sm.id AS id,
+    sm.sdk_message AS sdk_message,
+    sm.timestamp AS timestamp,
+    sm.send_status AS send_status,
+    sm.origin AS origin,
+    sm.rowid AS rowid,
+    sm.message_type AS message_type,
+    NULL AS deliveryRetryInfo
+  FROM sdk_messages sm
+  WHERE sm.session_id = ?1
+    AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
+    AND sm.message_subtype_norm != 'thinking_tokens'
+)
+SELECT
+  id,
+  sdk_message                                                       AS content,
+  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
+  send_status                                                       AS sendStatus,
+  origin                                                            AS origin,
+  rowid                                                             AS rowid,
+  message_type                                                      AS messageType,
+  deliveryRetryInfo                                                 AS deliveryRetryInfo
+FROM top_level
+UNION ALL
+SELECT
+  id,
+  sdk_message                                                       AS content,
+  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
+  send_status                                                       AS sendStatus,
+  origin                                                            AS origin,
+  rowid                                                             AS rowid,
+  message_type                                                      AS messageType,
+  deliveryRetryInfo                                                 AS deliveryRetryInfo
+FROM subagent
+ORDER BY timestamp ASC, rowid ASC
+`.trim();
+
+export function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
+  return mapMessageRowAs(row, capMessageOutput);
+}
+
+export function mapThinMessageRow(row: Record<string, unknown>): Record<string, unknown> {
+  return mapMessageRowAs(row, thinMessage);
+}
+
+function mapMessageRowAs(
+  row: Record<string, unknown>,
+  shape: (message: Record<string, unknown>) => Record<string, unknown>
+): Record<string, unknown> {
+  const contentRaw = row.content;
+  let parsed: Record<string, unknown> = {};
+  if (typeof contentRaw === 'string') {
+    try {
+      parsed = JSON.parse(contentRaw) as Record<string, unknown>;
+    } catch {
+      parsed = { type: 'unknown', rawContent: contentRaw };
+    }
+  }
+
+  const extras: Record<string, unknown> = {
+    id: row.id,
+    timestamp: typeof row.timestamp === 'number' ? row.timestamp : Number(row.timestamp ?? 0),
+    rowid: typeof row.rowid === 'number' ? row.rowid : Number(row.rowid ?? 0),
+    origin: row.origin != null ? row.origin : undefined,
+  };
+  if (parsed.type === 'user') {
+    let retryCount = 0;
+    let retryInfo: { count?: number; runAt?: number; max?: number } | null = null;
+    const raw = row.deliveryRetryInfo;
+    if (typeof raw === 'string' && raw.length > 0) {
+      try {
+        retryInfo = JSON.parse(raw) as { count?: number; runAt?: number; max?: number };
+        retryCount = Number(retryInfo?.count ?? 0);
+      } catch {}
+    }
+    const deliveryStatus = sendStatusToDeliveryStatus(row.sendStatus as string | null, {
+      retrying: retryCount > 0,
+    });
+    if (deliveryStatus) extras.deliveryStatus = deliveryStatus;
+    if (retryCount > 0 && retryInfo) {
+      extras.deliveryRetry = {
+        count: retryCount,
+        runAt: typeof retryInfo.runAt === 'number' ? retryInfo.runAt : undefined,
+        maxRetries: typeof retryInfo.max === 'number' ? retryInfo.max : undefined,
+      };
+    }
+  }
+
+  return { ...shape(parsed), ...extras };
+}
