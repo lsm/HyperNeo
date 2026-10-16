@@ -517,9 +517,13 @@ describe('neoTriggerNote', () => {
       keys: ['outcome:0'],
       lines: ['the ask is achieved'],
     });
-    expect(note).toContain('Notification trigger outcome:a1:x: the ask reached its outcome');
+    expect(note).toMatch(/^Ask progress on ask a1 ".*": the ask reached its outcome\. /);
     expect(note).toContain('passes triggerId "outcome:a1:x"');
-    expect(note).toContain('- the ask is achieved');
+    expect(JSON.parse(note.slice(note.indexOf('\n') + 1)).trigger).toEqual({
+      id: 'outcome:a1:x',
+      kind: 'outcome',
+      state: ['the ask is achieved'],
+    });
     expect(note).not.toMatch(/Tell the human|only message/);
     expect(note).not.toContain('language');
   });

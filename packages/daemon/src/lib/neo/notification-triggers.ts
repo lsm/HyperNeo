@@ -1,4 +1,5 @@
 import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
+import { neoAskProgressNote } from './ask-progress.ts';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoAsk,
@@ -141,14 +142,15 @@ const TRIGGER_WORDS: Record<NeoTriggerKind, string> = {
   idle: 'nothing is running for the ask and its outcome is not met',
   action: 'the ask needs the human',
 };
-export function neoTriggerNote(ask: Pick<NeoAsk, 'id' | 'title'>, trigger: NeoAskTrigger): string {
-  return fillPrompt(NEO_TRIGGER_NOTE, {
-    triggerId: trigger.triggerId,
-    askId: ask.id,
-    title: ask.title,
-    lines: trigger.lines.map((line) => `- ${line}`).join('\n'),
-    what: TRIGGER_WORDS[trigger.kind],
-  });
+export function neoTriggerNote(ask: NeoAsk, trigger: NeoAskTrigger): string {
+  return neoAskProgressNote(
+    ask,
+    fillPrompt(NEO_TRIGGER_NOTE, {
+      triggerId: trigger.triggerId,
+      what: TRIGGER_WORDS[trigger.kind],
+    }),
+    { trigger: { id: trigger.triggerId, kind: trigger.kind, state: trigger.lines } }
+  );
 }
 
 const titled = (card: Card | null, workId: string) => `card "${card?.title ?? workId}"`;
