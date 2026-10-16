@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { NEO_UNFINISHED_REPLY } from '../../../../src/lib/neo/direct-reply-fallback.ts';
 import { adoptNeoFilePacks } from '../../../../src/lib/neo/packs/index.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
