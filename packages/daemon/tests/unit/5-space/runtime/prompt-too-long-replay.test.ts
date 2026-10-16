@@ -19,8 +19,9 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedRuntimeSession } from '../../helpers/seed-runtime-session.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 const RESULT_ENCODINGS: Array<{ name: string; message: unknown; detected: boolean }> = [
@@ -202,6 +203,7 @@ function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createTables(db);
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (
 			id TEXT PRIMARY KEY,
@@ -339,6 +341,7 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
   function makeRecordingTam(injections: Array<{ sessionId: string; message: string }>): unknown {
     const inject = async (sessionId: string, message: string): Promise<string> => {
       injections.push({ sessionId, message });
+      seedRuntimeSession(db, sessionId);
       sdkMessageRepo.saveSDKMessage(sessionId, {
         type: 'user',
         message: { role: 'user', content: message },
@@ -391,6 +394,7 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
           : [],
       result: isError ? '' : 'ok',
     };
+    seedRuntimeSession(db, sessionId);
     sdkMessageRepo.saveSDKMessage(sessionId, message as never);
     const minutesAgo = opts.minutesAgo ?? 20;
     const ts = new Date(Date.now() - minutesAgo * 60_000).toISOString();
@@ -567,6 +571,7 @@ describe('prompt-too-long replay — terminal-error row deferral', () => {
     const injections: Array<{ sessionId: string; message: string }> = [];
     const inject = async (sessionId: string, message: string): Promise<string> => {
       injections.push({ sessionId, message });
+      seedRuntimeSession(db, sessionId);
       sdkMessageRepo.saveSDKMessage(sessionId, {
         type: 'user',
         message: { role: 'user', content: message },
@@ -602,6 +607,7 @@ describe('prompt-too-long replay — terminal-error row deferral', () => {
     const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
     const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
     nodeExecutionRepo.update(execution.id, { status: 'idle', agentSessionId: 'session:defer' });
+    seedRuntimeSession(db, 'session:defer');
     sdkMessageRepo.saveSDKMessage('session:defer', {
       type: 'result',
       subtype: 'error_during_execution',

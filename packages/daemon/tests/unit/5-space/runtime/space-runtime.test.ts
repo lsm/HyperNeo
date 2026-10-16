@@ -12,14 +12,16 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedRuntimeSession } from '../../helpers/seed-runtime-session.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createTables(db);
 
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
 		id TEXT PRIMARY KEY,
@@ -226,6 +228,7 @@ describe('SpaceRuntime', () => {
         agentSessionId: 'session:stuck-before-recover',
         startedAt: Date.now() - 20 * 60_000,
       });
+      seedRuntimeSession(db, 'session:stuck-before-recover');
       sdkMessageRepo.saveSDKMessage('session:stuck-before-recover', {
         type: 'assistant',
         message: {
@@ -250,6 +253,7 @@ describe('SpaceRuntime', () => {
         agentSessionId: 'session:stuck-after-recover',
         startedAt: Date.now() - 20 * 60_000,
       });
+      seedRuntimeSession(db, 'session:stuck-after-recover');
       sdkMessageRepo.saveSDKMessage('session:stuck-after-recover', {
         type: 'assistant',
         message: {
@@ -407,6 +411,7 @@ describe('SpaceRuntime', () => {
         result: 'Same-session recovery failed; manual handoff required',
         data: { handoffRequired: true },
       });
+      seedRuntimeSession(db, 'session:predecessor');
       new SDKMessageRepository(db).saveSDKMessage('session:predecessor', {
         type: 'assistant',
         message: {
