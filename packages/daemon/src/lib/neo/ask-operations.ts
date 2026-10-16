@@ -639,17 +639,39 @@ export function requireNeoAskSettleable(input: z.infer<typeof Settle>, ask: NeoA
   return isNeoAskReplay(ask, input) ? { value: ask } : requireNeoAskLive(ask);
 }
 
+export const neoAskOpenDecisions = (ask: NeoAsk) =>
+  (ask.doneItems ?? []).filter((item) => !item.removed && item.state === 'needs_you');
+
+export function isNeoHumanDrop(
+  caller: OperationCaller,
+  owns: boolean,
+  asked: readonly Pick<NeoAskItem, 'addedAt'>[],
+  prompt: { at: number } | null
+): boolean {
+  const turn = caller.neoTurn;
+  return (
+    caller.source === 'mcp' &&
+    owns &&
+    !!turn?.human &&
+    !turn.consultationId &&
+    turn.isLive() &&
+    !!prompt &&
+    asked.every((item) => item.addedAt !== null && prompt.at > item.addedAt)
+  );
+}
+
 function requireNeoAskChecklistMet(
   input: z.infer<typeof Settle>,
   ask: NeoAsk,
-  caller: OperationCaller
+  caller: OperationCaller,
+  drop: { text: string } | null
 ): Gate<NeoAsk> {
   const open = (ask.doneItems ?? []).filter((item) => !item.removed && item.state !== 'met');
-  const asked = open.filter((item) => item.state === 'needs_you');
-  if (caller.source === 'mcp' && input.outcome === 'abandoned' && asked.length)
+  const asked = neoAskOpenDecisions(ask);
+  if (caller.source === 'mcp' && input.outcome === 'abandoned' && asked.length && !drop)
     return {
       reason: fail(
-        `decision_open: ${asked.map((item) => `${item.id} "${item.text}"`).join('; ')} waits on the human. Settle waiting until they answer; only they can drop it.`
+        `decision_open: ${asked.map((item) => `${item.id} "${item.text}"`).join('; ')} waits on the human. Settle waiting until they answer, or settle abandoned in the turn the human's own message drops the ask.`
       ),
     };
   return input.outcome === 'achieved' && caller.source === 'mcp' && open.length
@@ -1622,7 +1644,25 @@ export function createNeoAskOperations(
       'result:admission'
     )
     .pipe(requireNeoAskSettleable, ['input', 'admission'], 'result:admission')
-    .pipe(requireNeoAskChecklistMet, ['input', 'admission', 'caller'], 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Settle>, ask: NeoAsk, caller: OperationCaller) => {
+        if (input.outcome !== 'abandoned' || !caller.neoTurn) return null;
+        const prompt = service.db
+          .getSDKMessageRepo()
+          .getHumanPrompt(ask.originSessionId, caller.neoTurn.messageId);
+        return isNeoHumanDrop(
+          caller,
+          service.ownsHumanMessage(caller),
+          neoAskOpenDecisions(ask),
+          prompt
+        )
+          ? { text: prompt!.text }
+          : null;
+      },
+      ['input', 'admission', 'caller'],
+      'drop'
+    )
+    .pipe(requireNeoAskChecklistMet, ['input', 'admission', 'caller', 'drop'], 'result:admission')
     .pipe(
       (ask: NeoAsk) => ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
       'admission',
@@ -1678,21 +1718,28 @@ export function createNeoAskOperations(
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Settle>, ask: NeoAsk, plan: NeoAskSettlePlan) => {
+      (
+        input: z.infer<typeof Settle>,
+        ask: NeoAsk,
+        plan: NeoAskSettlePlan,
+        drop: { text: string } | null
+      ) => {
         if (isNeoAskReplay(ask, input)) return { ask };
-        if (plan.restate) service.askRecords.restateQuestion(ask.id, plan.restate, Date.now());
-        return {
-          ask: service.askRecords.settle(
-            ask,
-            input.outcome,
-            neoAskSummary(input),
-            input.evidence,
-            plan.waitingItem,
-            plan.item
-          ),
-        };
+        const settled = service.askRecords.settle(
+          ask,
+          input.outcome,
+          neoAskSummary(input),
+          input.evidence,
+          plan.waitingItem,
+          plan.item,
+          false,
+          drop && `The human dropped this ask: "${drop.text}"`
+        );
+        if (settled && plan.restate)
+          service.askRecords.restateQuestion(ask.id, plan.restate, Date.now());
+        return { ask: settled };
       },
-      ['input', 'admission', 'plan'],
+      ['input', 'admission', 'plan', 'drop'],
       'written'
     )
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
@@ -2180,7 +2227,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        'Settle an ask when its outcome is decided: achieved when every checklist item is ticked met with neo.ask.tick (refused otherwise; the user\'s close still overrides); waiting when the next step is the human\'s, never achieved or abandoned while a question waits on them; blocked when only the human can unblock it; abandoned when it is no longer wanted. waiting and blocked need something the human can act on: an open question, work offered for Start, a reported item, a failed or stalled card, or an expired approval. Otherwise pass question, decides (the decision it asks) and options (2-4 short answers), which ask it as neo.ask.question does, with kind decision or action (approval and wait are refused); a settle never carries a free-text gate. Asking for renewed approval is refused while the approval is active and no card has stalled. summary is one short sentence the ask shows ("Merged in #6099.", "Start the composer redesign?"). evidence holds the proof (PR state, commits, checks), which the ask does not show. Achieved and abandoned are final and stop the ask\'s live work: queued work items close (done for achieved, cancelled for abandoned) and proposed work items are cancelled. Proposing, starting or continuing work under a waiting or blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user\'s close button calls this too.',
+        "Settle an ask when its outcome is decided: achieved when every checklist item is ticked met with neo.ask.tick (refused otherwise; the user's close still overrides); waiting when the next step is the human's, never achieved while a question waits on them, and abandoned then only in the turn the human's own message drops the ask, which closes their open questions with their words; blocked when only the human can unblock it; abandoned when it is no longer wanted. waiting and blocked need something the human can act on: an open question, work offered for Start, a reported item, a failed or stalled card, or an expired approval. Otherwise pass question, decides (the decision it asks) and options (2-4 short answers), which ask it as neo.ask.question does, with kind decision or action (approval and wait are refused); a settle never carries a free-text gate. Asking for renewed approval is refused while the approval is active and no card has stalled. summary is one short sentence the ask shows (\"Merged in #6099.\", \"Start the composer redesign?\"). evidence holds the proof (PR state, commits, checks), which the ask does not show. Achieved and abandoned are final and stop the ask's live work: queued work items close (done for achieved, cancelled for abandoned) and proposed work items are cancelled. Proposing, starting or continuing work under a waiting or blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user's close button calls this too.",
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
