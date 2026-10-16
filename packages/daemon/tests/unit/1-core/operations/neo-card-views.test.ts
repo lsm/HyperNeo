@@ -637,6 +637,24 @@ describe('projectNeoAskViews', () => {
     expect(views[1]?.humanActions).toEqual([]);
   });
 
+  test.each(['open', 'waiting', 'blocked'] as const)(
+    'an unfinished %s ask does not repeat its question as a summary',
+    (status) => {
+      const input = parts({ asks: [ask({ status, outcome: '开始这 1 步？' })] });
+      const [view] = projectNeoAskViews(input.asks, [], []);
+      expect(view.summary).toBeNull();
+    }
+  );
+
+  test.each(['achieved', 'abandoned'] as const)(
+    'a settled %s ask keeps its result summary',
+    (status) => {
+      const input = parts({ asks: [ask({ status, outcome: '完成了。' })] });
+      const [view] = projectNeoAskViews(input.asks, [], []);
+      expect(view.summary).toBe('完成了。');
+    }
+  );
+
   test('an achieved ask with a long outcome summarizes its merged PRs', () => {
     const input = parts({
       work: [work('w', 'reported')],
