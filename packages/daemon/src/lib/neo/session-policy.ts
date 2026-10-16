@@ -1,3 +1,4 @@
+import { neoLocalNow } from './local-time.ts';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../storage/database.ts';
 import type { Session } from '@hyperneo/shared';
@@ -139,6 +140,22 @@ export function restrictNeoQuery(
   options.disallowedTools = [...(options.disallowedTools ?? []), ...neoCoordinatorDeniedReads()];
   options.hooks = {
     ...options.hooks,
+    UserPromptSubmit: [
+      {
+        hooks: [
+          async () => ({
+            hookSpecificOutput: {
+              hookEventName: 'UserPromptSubmit' as const,
+              additionalContext: neoLocalNow(
+                new Date(),
+                Intl.DateTimeFormat().resolvedOptions().timeZone
+              ),
+            },
+          }),
+        ],
+      },
+      ...(options.hooks?.UserPromptSubmit ?? []),
+    ],
     PreToolUse: [
       {
         hooks: [
