@@ -10,7 +10,7 @@ import { decideClaimAdmission } from './claim-admission-gates.ts';
 import { recordGoalEvent } from './event-recording.ts';
 import { combineOutcomeMetrics } from './metrics-rollup.ts';
 import { requireGoal, runAtomic } from './persistence.ts';
-import { decideReportableTerminal } from './reportable-terminal-gates.ts';
+import { classifyReportableTerminal } from './reportable-terminal-gates.ts';
 import type {
   ApplyOutcomeGoalUpdateParams,
   ClaimOutcomeNotificationParams,
@@ -37,7 +37,7 @@ export function recordOutcomeNotification(
   const priorPending = deps.outcomeNotificationRepo
     .listPendingByGoal(goal.id)
     .filter((n) => n.taskId === task.id);
-  const decision = decideReportableTerminal({
+  const decision = classifyReportableTerminal({
     fromStatus: transition.fromStatus ?? null,
     toStatus: task.status,
     hasStartGeneration,
