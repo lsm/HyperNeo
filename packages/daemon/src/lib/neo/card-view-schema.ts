@@ -95,6 +95,7 @@ const HumanAction = z.object({
   itemId: z.string(),
   question: z.string(),
   options: z.array(z.string()),
+  steps: z.array(z.object({ id: z.string(), title: z.string() })).optional(),
 });
 
 export const NeoAskViewSchema = z.object({
