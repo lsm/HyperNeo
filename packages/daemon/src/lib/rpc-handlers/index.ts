@@ -1752,13 +1752,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   return {
     cleanup: async () => {
-      await claudeInbox.close();
-      await neoService.dispose();
-      inactivityRunNowCancelled = true;
-      await Promise.allSettled(pendingInactivityRunNow);
-      unsubLiveQuery();
-      await spaceRuntimeService.stop();
-      fileIndex.dispose();
+      try {
+        await claudeInbox.close();
+      } finally {
+        await neoService.dispose();
+        inactivityRunNowCancelled = true;
+        await Promise.allSettled(pendingInactivityRunNow);
+        unsubLiveQuery();
+        await spaceRuntimeService.stop();
+        fileIndex.dispose();
+      }
     },
     spaceRuntimeService,
     taskAgentManager,
