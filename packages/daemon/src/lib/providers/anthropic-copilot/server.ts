@@ -1,3 +1,4 @@
+import { sendNodeJsonError as sendJsonError } from '../shared/json-error-response.js';
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { isAbsolute, normalize } from 'node:path';
@@ -25,7 +26,6 @@ import { runSessionStreaming, resumeSessionStreaming } from './streaming.js';
 import { collectMessageResponse } from './non-streaming.js';
 import { ContextUsageStore, countTokensResponse, estimateRequestUsage } from './context-usage.js';
 import { Logger } from '../../logger.js';
-import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
 
 const logger = new Logger('anthropic-copilot-server');
 
@@ -76,16 +76,6 @@ function readBody(req: IncomingMessage): Promise<string> {
     });
     req.on('error', reject);
   });
-}
-
-function sendJsonError(
-  res: ServerResponse,
-  status: number,
-  type: AnthropicErrorType,
-  message: string
-): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(createAnthropicErrorBody(type, message));
 }
 
 function sendJson(res: ServerResponse, status: number, body: object): void {
