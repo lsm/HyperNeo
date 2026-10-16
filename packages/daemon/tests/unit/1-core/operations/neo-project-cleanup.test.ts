@@ -23,6 +23,7 @@ const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProje
   routed: 0,
   holderMessages: 0,
   archived: false,
+  holder: null,
   aliases: [],
   ...overrides,
 });
@@ -109,13 +110,16 @@ describe('project cleanup plan', () => {
 
   test('a project the human asked to archive is archived, even with a repository', () => {
     expect(
-      planNeoProjectCleanup([project('kept', { aliases: [repo], asks: 1 })], {
-        pinned: new Set(),
-        machine: 'here',
-        mirrored: new Set(),
-        archive: new Set(['kept']),
-      })
-    ).toEqual([{ action: 'archive', projectId: 'kept', title: 'kept' }]);
+      planNeoProjectCleanup(
+        [project('kept', { aliases: [repo], asks: 1, holder: 'holder:kept' })],
+        {
+          pinned: new Set(),
+          machine: 'here',
+          mirrored: new Set(),
+          archive: new Set(['kept']),
+        }
+      )
+    ).toEqual([{ action: 'archive', projectId: 'kept', title: 'kept', sessionId: 'holder:kept' }]);
   });
 
   test('an archived or to-be-archived project is no merge home, and a live project is not archived even when asked', () => {
@@ -136,12 +140,54 @@ describe('project cleanup plan', () => {
     expect(
       planNeoProjectCleanup(
         [
-          project('home', { title: 'App', aliases: [repo] }),
+          project('home', { title: 'App', aliases: [repo], holder: 'holder:home' }),
           project('topic', { title: 'App', ...oneOff }),
         ],
         { pinned: new Set(), machine: 'here', mirrored: new Set(), archive: new Set(['home']) }
       )
-    ).toEqual([{ action: 'archive', projectId: 'home', title: 'App' }]);
+    ).toEqual([{ action: 'archive', projectId: 'home', title: 'App', sessionId: 'holder:home' }]);
+  });
+
+  test('the holder of a merged project is dropped when it never spoke and archived when it has history; a busy one waits', () => {
+    expect(
+      planNeoProjectCleanup([], {
+        pinned: new Set(),
+        machine: 'here',
+        mirrored: new Set(),
+        retired: [
+          { projectId: 'silent', title: 'Silent', sessionId: 's1', spoke: false },
+          { projectId: 'talked', title: 'Talked', sessionId: 's2', spoke: true },
+          { projectId: 'turning', title: 'Turning', sessionId: 's3', spoke: true },
+        ],
+        busy: new Set(['s3']),
+      })
+    ).toEqual([
+      { action: 'drop', projectId: 'silent', title: 'Silent', sessionId: 's1' },
+      { action: 'archive', projectId: 'talked', title: 'Talked', sessionId: 's2' },
+    ]);
+  });
+
+  test('an empty project only on another machine is deleted, since the mirror ignores attached daemons', () => {
+    expect(plan([project('remote', { aliases: ['folder:tts\u0000/x'] })])).toEqual([
+      { action: 'delete', projectId: 'remote', title: 'remote' },
+    ]);
+  });
+
+  test('a kept project whose holder never spoke has the holder dropped; the project stays', () => {
+    expect(
+      plan([
+        project('quiet', { aliases: [repo], holder: 'h1' }),
+        project('talked', {
+          aliases: ['repository:github.com/lsm/x'],
+          holder: 'h2',
+          holderMessages: 3,
+        }),
+        project('empty', { holder: 'h3' }),
+      ])
+    ).toEqual([
+      { action: 'drop', projectId: 'quiet', title: 'quiet', sessionId: 'h1' },
+      { action: 'delete', projectId: 'empty', title: 'empty' },
+    ]);
   });
 
   test('live, section, already archived, pinned and other-machine projects are left alone', () => {
@@ -193,6 +239,27 @@ describe('NeoRepository.projectCleanupFacts', () => {
         mirrored: new Set(),
       })
     ).toEqual([{ action: 'delete', projectId: 'child', title: 'Child' }]);
+  });
+
+  test('retiredHolders lists merged projects whose holder session is not archived', () => {
+    repo.saveProject({ id: 'gone', title: 'Gone', summary: '', context: '' }, 0);
+    repo.saveProject({ id: 'done', title: 'Done', summary: '', context: '' }, 0);
+    repo.saveProject({ id: 'home', title: 'Home', summary: '', context: '' }, 0);
+    const raw = db.getDatabase();
+    const session =
+      raw.prepare(`INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+      VALUES (?, 'holder', '2026-01-01', '2026-01-01', ?, '{}', '{}')`);
+    session.run('s-gone', 'active');
+    session.run('s-done', 'archived');
+    const merge =
+      raw.prepare(`INSERT INTO neo_project_merges (source_id, target_id, source_session_id, merged_at)
+      VALUES (?, 'home', ?, 1)`);
+    merge.run('gone', 's-gone');
+    merge.run('done', 's-done');
+    expect(repo.retiredHolders()).toEqual([
+      { projectId: 'gone', title: 'Gone', sessionId: 's-gone', spoke: false },
+    ]);
+    expect(repo.sessionSpoke('s-gone')).toBe(false);
   });
 
   test('deleteEmptyProject removes an empty project with its binding and aliases, and refuses one with content', () => {
@@ -264,13 +331,14 @@ describe('neoCleanupFolders', () => {
 });
 
 describe('createNeoProjectCleanupApply', () => {
-  test('delete drops the empty project then its holder; merge is human-approved; archive archives an idle holder', async () => {
+  test('delete drops the empty project then its holder; merge is human-approved; archive archives an idle holder; drop deletes a silent one', async () => {
     const calls: unknown[] = [];
     const project = (id: string) => ({ id, revision: 3 });
     const apply = createNeoProjectCleanupApply({
       repo: {
         deleteEmptyProject: (id: string) => (calls.push(['dropped', id]), 'holder:a'),
-        getBindingForProject: (id: string) => ({ sessionId: `holder:${id}` }),
+        sessionSpoke: (id: string) => id === 'spoke',
+        unbindHolder: (id: string) => calls.push(['unbound', id]),
         getProject: project,
         projectMerges: {
           merge: (input: unknown) => (calls.push(['merge', input]), { ok: true }),
@@ -291,10 +359,17 @@ describe('createNeoProjectCleanupApply', () => {
     } as never);
     await apply({ action: 'delete', projectId: 'a', title: 'A' });
     await apply({ action: 'merge', projectId: 'b', title: 'B', targetId: 'c' });
-    await apply({ action: 'archive', projectId: 'd', title: 'D' });
-    await expect(apply({ action: 'archive', projectId: 'busy', title: 'Busy' })).rejects.toThrow(
-      'the holder is mid-turn'
-    );
+    await apply({ action: 'archive', projectId: 'd', title: 'D', sessionId: 'holder:d' });
+    await expect(
+      apply({ action: 'archive', projectId: 'busy', title: 'Busy', sessionId: 'holder:busy' })
+    ).rejects.toThrow('the holder is mid-turn');
+    await apply({ action: 'drop', projectId: 'e', title: 'E', sessionId: 'silent' });
+    await expect(
+      apply({ action: 'drop', projectId: 'f', title: 'F', sessionId: 'spoke' })
+    ).rejects.toThrow('the holder has spoken');
+    await expect(
+      apply({ action: 'drop', projectId: 'g', title: 'G', sessionId: 'holder:busy' })
+    ).rejects.toThrow('the holder is mid-turn');
     expect(calls).toEqual([
       ['dropped', 'a'],
       ['deleted', 'holder:a', 'ui_session_delete'],
@@ -311,6 +386,8 @@ describe('createNeoProjectCleanupApply', () => {
         },
       ],
       ['archived', 'holder:d', 'ui_session_archive'],
+      ['deleted', 'silent', 'ui_session_delete'],
+      ['unbound', 'silent'],
     ]);
   });
 });
