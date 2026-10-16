@@ -233,7 +233,7 @@ export async function openClaudeInbox(
   }
   return {
     path,
-    write(submission) {
+    async write(submission) {
       if (closed) return Promise.reject(new Error('Claude reply inbox is closed.'));
       const frame = claudeInboxFrame(target, path, submission);
       const existing = writes.get(submission.messageId);

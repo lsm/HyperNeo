@@ -249,6 +249,18 @@ describe('openClaudeInbox', () => {
     expect(await inbox.write(submission())).toEqual({ written: true });
   });
 
+  test.each([{ text: '' }, { inputId: 'invalid' }, { text: 'x'.repeat(1_048_576) }])(
+    'write rejects invalid submissions through its Promise %j',
+    async (invalid) => {
+      inbox = await openClaudeInbox(session, (event) => events.push(event));
+      const failed = await inbox
+        .write({ ...submission(), ...invalid })
+        .catch((error: Error) => error.message);
+      expect(typeof failed).toBe('string');
+      expect(frames).toEqual([]);
+    }
+  );
+
   test('closing removes its endpoint and refuses further writes without removing the target', async () => {
     inbox = await openClaudeInbox(session, (event) => events.push(event));
     const path = inbox.path;
