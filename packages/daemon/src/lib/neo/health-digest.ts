@@ -1,4 +1,4 @@
-import { isNeoContentlessCleanup, type NeoProjectCleanup } from './project-cleanup.ts';
+import { isNeoUnattendedCleanup, type NeoProjectCleanup } from './project-cleanup.ts';
 
 export type NeoHealthFacts = {
   projects: number;
@@ -22,9 +22,9 @@ const counts = (entries: readonly { key: string; count: number }[]) =>
 export function neoHealthDigest(facts: NeoHealthFacts, run: NeoHealthRun, since: number): string {
   const failed = new Set(run.cleanupFailed.map((entry) => entry.projectId));
   const done = run.cleanupPlanned.filter(
-    (step) => isNeoContentlessCleanup(step) && !failed.has(step.projectId)
+    (step) => isNeoUnattendedCleanup(step) && !failed.has(step.projectId)
   );
-  const left = run.cleanupPlanned.filter((step) => !isNeoContentlessCleanup(step));
+  const left = run.cleanupPlanned.filter((step) => !isNeoUnattendedCleanup(step));
   const step = (entry: NeoProjectCleanup) =>
     `${entry.action} ${entry.title} (${entry.projectId})${'targetId' in entry ? ` into ${entry.targetId}` : ''}`;
   return [
@@ -33,7 +33,7 @@ export function neoHealthDigest(facts: NeoHealthFacts, run: NeoHealthRun, since:
     `Project holder sessions: ${facts.holders} live, ${facts.holdersOpened} opened.`,
     `Cleanup done tonight: ${done.length ? done.map(step).join('; ') : 'none'}.`,
     `Cleanup failed tonight: ${run.cleanupFailed.length ? run.cleanupFailed.map((entry) => `${entry.projectId}: ${entry.reason}`).join('; ') : 'none'}.`,
-    `Cleanup that touches content, not applied: ${left.length ? left.map(step).join('; ') : 'none'}.`,
+    `Merges asked of the human, not applied: ${left.length ? left.map(step).join('; ') : 'none'}.`,
     `Routing by signal: ${counts(facts.routing.map(({ signal, count }) => ({ key: signal, count })))}.`,
     `Card refusals by what was refused: ${counts(facts.refusals.map(({ what, count }) => ({ key: what, count })))}.`,
     `Live asks: ${

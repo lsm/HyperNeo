@@ -40,7 +40,7 @@ describe('neoHealthDigest', () => {
       'Project holder sessions: 5 live, 2 opened.',
       'Cleanup done tonight: drop P (p).',
       'Cleanup failed tonight: x: busy.',
-      'Cleanup that touches content, not applied: merge Q (q) into r.',
+      'Merges asked of the human, not applied: merge Q (q) into r.',
       'Routing by signal: classifier-failed 31, facts 7.',
       'Card refusals by what was refused: none.',
       `Live asks: a1 "Old" waiting, last changed ${new Date(since - 1).toISOString()} (untouched since the last digest); a2 "Fresh" open, last changed ${new Date(since + 1).toISOString()}.`,

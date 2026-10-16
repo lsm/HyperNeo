@@ -1697,7 +1697,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     runNeoNightlyReorganize(job, deps.jobQueue, {
       now: () => Date.now(),
       lastHumanAt: () => routingLog.recent(1)[0]?.askedAt ?? null,
-      reorganize: () => reorganizeTopics({ apply: 'contentless' }),
+      reorganize: () => reorganizeTopics({ apply: 'unattended' }),
       digest: async (run, since) => {
         const root = neoService.repo.getBindingForProject(null)?.sessionId;
         if (root)

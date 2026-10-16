@@ -85,7 +85,7 @@ describe('runNeoNightlyReorganize', () => {
     expect(runs).toBe(1);
     expect(digests).toEqual([now - NEO_REORGANIZE_EVERY_MS]);
     expect(lines).toEqual([
-      'neo reorganize: nightly run merged 1 project(s), moved 1 ask(s), left 1 with main, cleaned up 1 empty project(s) or holder(s), left 1 cleanup step(s) for the human',
+      'neo reorganize: nightly run merged 1 project(s), moved 1 ask(s), left 1 with main, applied 1 cleanup step(s), asked the human about 1 merge(s)',
     ]);
     expect(pending()).toHaveLength(1);
     expect(pending()[0].payload).toEqual({ scope: 'neo', lastRunAt: now });
