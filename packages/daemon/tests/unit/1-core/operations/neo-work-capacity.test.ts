@@ -116,17 +116,37 @@ async function setup(workers = ['x', 'y']) {
       true
     );
   };
+  const approveReserved = async (id: string) => {
+    const ask = service.askRecords.forWork(id)!;
+    const item = ask.doneItems!.find((entry) => !entry.removed && entry.state === 'needs_you')!;
+    expect(item.options).toEqual(['先不做', '开始']);
+    expect(service.proposalApproval(id)).toBe(false);
+    service.askRecords.tickItem(
+      ask.id,
+      {
+        ...item,
+        state: 'met',
+        evidence: 'The human answered: 开始',
+        metBy: 'human',
+      },
+      Date.now(),
+      item,
+      true
+    );
+    await service.answerStartQuestion(ask, item, '开始');
+    expect(service.proposalApproval(id)).toBe(true);
+  };
   const workerOf = (id: string) => service.driverTargets.readRef(id)?.id ?? null;
   const settle = (id: string) => {
     service.repo.transitionWork(id, service.repo.getWork(id)!, { status: 'reported' });
     busy.delete(workerOf(id) ?? '');
   };
-  return { db, service, answer, workerOf, settle };
+  return { db, service, answer, workerOf, settle, approveReserved };
 }
 
 describe('NeoWorkDriverTargetRepository.occupiedWorkers', () => {
   test('a card blocked on prerequisites does not hold its worker against other cards', async () => {
-    const { db, service, workerOf } = await setup();
+    const { db, service, workerOf, approveReserved } = await setup();
     try {
       service.repo.transitionWork('c', service.repo.getWork('c')!, {
         status: 'proposed',
@@ -140,7 +160,9 @@ describe('NeoWorkDriverTargetRepository.occupiedWorkers', () => {
           .occupiedWorkers(service.repo, 'c', new Set(['b']))
           .has(neoWorkerRefKey(ref('x')))
       ).toBe(false);
-      expect(await service.admitWork('c', true)).toEqual({ ok: true, handoff: 'started' });
+      expect(await service.admitWork('c', true)).toEqual({ ok: true, handoff: 'not_started' });
+      expect(workerOf('c')).toBeNull();
+      await approveReserved('c');
       expect(workerOf('c')).toBe('x');
     } finally {
       db.close();
@@ -190,15 +212,18 @@ describe('NeoWorkDriverTargetRepository.occupiedWorkers for other targets', () =
 
 describe('NeoService.admitWork after a prerequisite is met', () => {
   test('a card whose reserved worker was taken while it waited moves to an idle one', async () => {
-    const { db, service, answer, workerOf } = await setup();
+    const { db, service, answer, workerOf, approveReserved } = await setup();
     try {
       service.repo.transitionWork('c', service.repo.getWork('c')!, {
         status: 'proposed',
         report: NEO_WORK_AWAITING_WORKER,
       });
       await service.admitWork('c', true);
+      await approveReserved('c');
       answer();
-      expect(await service.admitWork('b', true)).toEqual({ ok: true, handoff: 'started' });
+      expect(await service.admitWork('b', true)).toEqual({ ok: true, handoff: 'not_started' });
+      expect(workerOf('b')).toBeNull();
+      await approveReserved('b');
       expect(workerOf('c')).toBe('x');
       expect(workerOf('b')).toBe('y');
     } finally {
@@ -207,13 +232,14 @@ describe('NeoService.admitWork after a prerequisite is met', () => {
   });
 
   test('a card whose only worker was taken gets it back once that worker is free again', async () => {
-    const { db, service, answer, workerOf, settle } = await setup(['x']);
+    const { db, service, answer, workerOf, settle, approveReserved } = await setup(['x']);
     try {
       service.repo.transitionWork('c', service.repo.getWork('c')!, {
         status: 'proposed',
         report: NEO_WORK_AWAITING_WORKER,
       });
       await service.admitWork('c', true);
+      await approveReserved('c');
       answer();
       await service.admitWork('b', true);
       expect(service.repo.getWork('b')).toMatchObject({
@@ -221,7 +247,9 @@ describe('NeoService.admitWork after a prerequisite is met', () => {
         report: NEO_WORK_AWAITING_WORKER,
       });
       settle('c');
-      expect(await service.admitWork('b', true)).toEqual({ ok: true, handoff: 'started' });
+      expect(await service.admitWork('b', true)).toEqual({ ok: true, handoff: 'not_started' });
+      expect(workerOf('b')).toBeNull();
+      await approveReserved('b');
       expect(workerOf('b')).toBe('x');
     } finally {
       db.close();

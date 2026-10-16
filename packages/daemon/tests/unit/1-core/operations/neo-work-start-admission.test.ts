@@ -194,7 +194,7 @@ describe('neo.work.start', () => {
     }
   });
 
-  test('an archived send target is retargeted to an idle worker in the same project', async () => {
+  test('an archived send target proposes a replacement that needs its own question', async () => {
     const archived: WorkRef = { adapter: 'claude-desktop', id: 'archived' };
     const worker = (id: string) => ({
       ref: { ...archived, id },
@@ -228,12 +228,16 @@ describe('neo.work.start', () => {
     );
     try {
       expect(await start('a')).toMatchObject({
-        value: { ok: true, work: { id: 'a', status: 'queued' } },
+        value: { ok: true, work: { id: 'a', status: 'proposed' } },
       });
-      expect(service.driverTargets.readRef('a')).toEqual({ ...archived, id: 'fresh' });
+      expect(service.driverTargets.readRef('a')).toBeNull();
+      expect(service.askRecords.forWork('a')?.doneItems?.at(-1)).toMatchObject({
+        state: 'needs_you',
+        question: '开始这 1 步？',
+      });
+      expect(await start('a')).toMatchObject({ value: { ok: false, reason: 'not_approved' } });
       expect(driverCalls(calls).map((call) => (call.input.ref as WorkRef).id)).toEqual([
         'archived',
-        'fresh',
       ]);
     } finally {
       db.close();

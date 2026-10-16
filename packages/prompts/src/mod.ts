@@ -36,7 +36,6 @@ import mdcoordinatorVcs from './coordinator/vcs.md' with { type: 'text' };
 import mdcoordinatorVerifier from './coordinator/verifier.md' with { type: 'text' };
 import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with { type: 'text' };
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
-import mdneoCatchUp from './neo/catch-up.md' with { type: 'text' };
 import mdneoConsultationReceiptClosed from './neo/consultation/receipt-closed.md' with {
   type: 'text',
 };
@@ -61,7 +60,6 @@ import mdneoConsultationSettledStopped from './neo/consultation/settled-stopped.
   type: 'text',
 };
 import mdneoAskForwarded from './neo/ask-forwarded.md' with { type: 'text' };
-import mdneoRecentConversation from './neo/recent-conversation.md' with { type: 'text' };
 import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text' };
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
@@ -354,7 +352,6 @@ const registry: Record<string, string> = {
   'github/security-system-prompt.md': mdgithubSecuritySystemPrompt,
   'neo/capabilities.md': mdneoCapabilities,
   'neo/speaking-policy.md': mdneoSpeakingPolicy,
-  'neo/catch-up.md': mdneoCatchUp,
   'neo/consultation/receipt-closed.md': mdneoConsultationReceiptClosed,
   'neo/consultation/receipt-pending.md': mdneoConsultationReceiptPending,
   'neo/consultation/receipt-returned.md': mdneoConsultationReceiptReturned,
@@ -365,7 +362,6 @@ const registry: Record<string, string> = {
   'neo/consultation/settled-stopped.md': mdneoConsultationSettledStopped,
   'neo/consultation/settled.md': mdneoConsultationSettled,
   'neo/ask-forwarded.md': mdneoAskForwarded,
-  'neo/recent-conversation.md': mdneoRecentConversation,
   'neo/route-classifier.md': mdneoRouteClassifier,
   'neo/waiting-reminder.md': mdneoWaitingReminder,
   'neo/session-track.md': mdneoSessionTrack,
@@ -545,7 +541,6 @@ export const {
   NEO_CAPABILITIES_BRIEFING,
   NEO_SPEAKING_POLICY,
   NEO_DONE_CHECK_STEPS,
-  NEO_CATCH_UP_HEADER,
   NEO_CONSULTATION_RECEIPT_CLOSED,
   NEO_CONSULTATION_RECEIPT_PENDING,
   NEO_CONSULTATION_RECEIPT_RETURNED,
@@ -558,7 +553,6 @@ export const {
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_ASK_FORWARDED,
-  NEO_RECENT_CONVERSATION_HEADER,
   NEO_ROUTE_PROMPT,
   NEO_WAITING_REMINDER,
   NEO_SESSION_TRACK,

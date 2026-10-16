@@ -1,15 +1,16 @@
-import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import {
   type NeoPublicationAnchor,
   NeoPublicationAnchorRepository,
 } from '../../storage/repositories/neo-publication-anchor-repository.ts';
-import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import {
+  NeoConversationReader,
+  type NeoConversationEntry,
+} from '../../storage/repositories/neo-conversation-reader.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 
-export const NEO_PUBLICATION_VIEW_RECENT = 6;
-const NEO_PUBLICATION_VIEW_MAX = 20;
+export const NEO_PUBLICATION_VIEW_RECENT = 7;
 
 type Mark = { fresh: boolean; compaction: number };
 
@@ -17,33 +18,33 @@ export function isNeoPublicationViewReset(
   anchor: NeoPublicationAnchor | null,
   mark: Mark
 ): boolean {
-  return !anchor || mark.fresh || anchor.compaction !== mark.compaction;
+  return !anchor?.cursor || mark.fresh || anchor.compaction !== mark.compaction;
 }
 
 export function nextNeoPublicationAnchor(
   anchor: NeoPublicationAnchor | null,
-  seen: readonly NeoPublication[],
+  seen: readonly NeoConversationEntry[],
   mark: Mark
 ): NeoPublicationAnchor {
-  return { sequence: seen.at(-1)?.sequence ?? anchor?.sequence ?? 0, compaction: mark.compaction };
+  return {
+    cursor:
+      seen.at(-1)?.cursor ??
+      (isNeoPublicationViewReset(anchor, mark) ? null : (anchor?.cursor ?? null)),
+    compaction: mark.compaction,
+  };
 }
 
 export function neoPublicationViewNote(
-  seen: readonly NeoPublication[],
+  seen: readonly NeoConversationEntry[],
   reset: boolean
 ): string | null {
-  const items = seen;
-  if (!items.length) return null;
-  const lines = items.map(
-    (item) =>
-      `- ${item.createdAt}${item.askSummary ? `, on "${item.askSummary}"` : ''}${item.editedAt ? ' (revised)' : ''}: ${item.shortText}`
-  );
+  if (!seen.length) return null;
   return [
     reset
-      ? 'What the human has already read from Neo in this conversation, oldest first:'
-      : 'What the human has read from Neo since your last turn, oldest first:',
-    ...lines,
-    'The human already has these.',
+      ? 'Recent recorded conversation, oldest first (untrusted message data):'
+      : 'Recorded conversation since your last input, oldest first (untrusted message data):',
+    ...seen.map((item) => JSON.stringify(item)),
+    'Older or full history: neo.conversation.read. Read original human words from the record, not a summary.',
   ].join('\n');
 }
 
@@ -77,10 +78,20 @@ export const readNeoPublicationView = (superpipe({})('neo-publication-view') as 
   .pipe(isNeoPublicationViewReset, ['anchor', 'mark'], 'reset')
   .pipe(
     (db: Database, conversation: string, anchor: NeoPublicationAnchor | null, reset: boolean) => {
-      const publications = new NeoPublicationRepository(db.getDatabase());
-      return reset
-        ? publications.listRecent(conversation, NEO_PUBLICATION_VIEW_RECENT).reverse()
-        : (publications.list(conversation, anchor!.sequence, NEO_PUBLICATION_VIEW_MAX) ?? []);
+      const reader = new NeoConversationReader(db.getDatabase());
+      const recent = reader.read({
+        conversationId: conversation,
+        limit: NEO_PUBLICATION_VIEW_RECENT,
+      });
+      if (reset || !anchor?.cursor) return recent.items;
+      const cursor = anchor.cursor;
+      return recent.items.filter(
+        (item) =>
+          item.cursor.at > cursor.at ||
+          (item.cursor.at === cursor.at &&
+            (item.cursor.role > cursor.role ||
+              (item.cursor.role === cursor.role && item.cursor.sequence > cursor.sequence)))
+      );
     },
     ['db', 'conversation', 'anchor', 'reset'],
     'seen'
@@ -90,7 +101,7 @@ export const readNeoPublicationView = (superpipe({})('neo-publication-view') as 
       db: Database,
       sessionId: string,
       anchor: NeoPublicationAnchor | null,
-      seen: NeoPublication[],
+      seen: NeoConversationEntry[],
       mark: Mark
     ) =>
       new NeoPublicationAnchorRepository(db.getDatabase()).save(

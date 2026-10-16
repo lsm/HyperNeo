@@ -18,6 +18,7 @@ type NeoAdmissionSnapshot = {
   card: NeoDriverTargetCard | null;
   blockers: NeoAdmissionBlocker[];
   bootedAt: number;
+  approval: boolean | null;
 };
 type Admissible = NeoAdmissionSnapshot & { work: NeoWork };
 
@@ -25,6 +26,7 @@ export interface NeoAdmissionDeps {
   bootedAt: number;
   readWork(id: string): NeoWork | null;
   readAsk(id: string): NeoAsk | null;
+  readApproval?(id: string): boolean | null;
   readCard(id: string): NeoDriverTargetCard | null;
   readBlockers(id: string): NeoAdmissionBlocker[];
   claim(id: string, admitted: () => boolean): boolean;
@@ -75,6 +77,7 @@ function readNeoAdmission(workId: string, deps: NeoAdmissionDeps): NeoAdmissionS
     card: work ? deps.readCard(workId) : null,
     blockers: work ? deps.readBlockers(workId) : [],
     bootedAt: deps.bootedAt,
+    approval: deps.readApproval?.(workId) ?? null,
   };
 }
 
@@ -112,7 +115,13 @@ export function isNeoAdmissionApproved(ask: NeoAsk | null, _now: number): boolea
 
 function requireNeoAdmissionAuthorized(snapshot: Admissible, authorized: boolean, _now: number) {
   const { ask } = snapshot;
-  const refused = authorized ? null : neoAskApprovalRefusal(ask, null);
+  const refused =
+    snapshot.approval === false
+      ? 'not_approved'
+      : authorized || snapshot.approval === true
+        ? null
+        : neoAskApprovalRefusal(ask, null);
+
   return refused ? refuse(refused) : { value: snapshot };
 }
 

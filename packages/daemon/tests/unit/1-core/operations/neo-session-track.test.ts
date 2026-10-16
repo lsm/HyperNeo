@@ -7,7 +7,6 @@ import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   findNeoSessionNotice,
-  isNeoTrackedFollowUp,
   keepNeoTrackedSessions,
   NEO_SESSION_TRACK_MS,
   requireNeoTrackRoot,
@@ -39,31 +38,6 @@ const notice = (overrides: Partial<NeoSessionNotice> = {}): NeoSessionNotice => 
   kind: 'failed',
   at: 1,
   ...overrides,
-});
-
-describe('isNeoTrackedFollowUp', () => {
-  const open = { workIds: ['w1', 'w2'], approvedAt: null, status: 'open' as const };
-  const adopted = new Map([
-    ['w1', { verb: 'adopt' as const, ref }],
-    ['w2', null],
-  ]);
-  const other = { adapter: 'codex-desktop', id: 't2' };
-
-  test('approves an ask that holds an adopted card, or whose new card continues a tracked session', () => {
-    expect(isNeoTrackedFollowUp(open, adopted, undefined, [ref])).toBe(true);
-    expect(isNeoTrackedFollowUp(open, adopted, undefined, [])).toBe(false);
-    expect(isNeoTrackedFollowUp(open, new Map(), { verb: 'send', ref }, [ref])).toBe(true);
-  });
-
-  test('leaves other asks, approved ones and settled ones alone', () => {
-    expect(isNeoTrackedFollowUp(open, new Map(), { verb: 'send', ref: other }, [ref])).toBe(false);
-    expect(isNeoTrackedFollowUp(open, new Map(), undefined, [ref])).toBe(false);
-    expect(isNeoTrackedFollowUp({ ...open, approvedAt: 5 }, adopted, undefined, [])).toBe(false);
-    expect(isNeoTrackedFollowUp({ ...open, status: 'achieved' }, adopted, undefined, [])).toBe(
-      false
-    );
-    expect(isNeoTrackedFollowUp(null, adopted, undefined, [ref])).toBe(false);
-  });
 });
 
 describe('reserveNeoAdoption', () => {
@@ -231,7 +205,7 @@ describe('neo.session.track', () => {
     expect(service.repo.getWork(card.id)?.status).toBe('reported');
   });
 
-  test('a follow-up card on a tracked session is approved, so Neo starts it without a Start click', async () => {
+  test('a tracked-session follow-up waits for its exact target question and starts on its answer', async () => {
     const neo = {
       source: 'mcp' as const,
       sessionId: 'neo:root',
@@ -284,10 +258,29 @@ describe('neo.session.track', () => {
       const card = (proposed as { value: { work: { id: string } } }).value.work;
       return service.askRecords.forWork(card.id);
     };
-    expect((await propose('follow-up', ref))?.approvedAt).not.toBeNull();
+    const followUp = (await propose('follow-up', ref))!;
+    const question = followUp.doneItems!.find(
+      (item) => item.state === 'needs_you' && !item.removed
+    )!;
+    expect(question).toMatchObject({ kind: 'approval', options: ['先不做', '开始'] });
+    const followUpId = followUp.workIds.find(
+      (id) => service.driverTargets.get(id)?.verb === 'send'
+    )!;
+    expect(service.proposalApproval(followUpId)).toBe(false);
+    expect(service.repo.getWork(followUpId)?.status).toBe('proposed');
+    expect(sent).not.toHaveBeenCalled();
     expect(
-      (await propose('elsewhere', { adapter: 'codex-desktop', id: 't9' }))?.approvedAt ?? null
-    ).toBeNull();
+      await invokeOperation(
+        registry,
+        'neo.ask.approve',
+        {
+          askId: followUp.id,
+          expectedRevision: followUp.revision,
+        },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true } });
+    expect(sent).not.toHaveBeenCalled();
     const card = service.repo.getWork(
       (adopted as { value: { work: { id: string } } }).value.work.id
     )!;
@@ -295,6 +288,28 @@ describe('neo.session.track', () => {
       status: 'reported',
       report: NEO_WORK_CLOSED_DONE,
     });
+    const revision = service.askRecords.get(followUp.id)!.revision;
+    expect(
+      await invokeOperation(
+        registry,
+        'neo.ask.answer',
+        {
+          askId: followUp.id,
+          itemId: question.id,
+          choice: '开始',
+          expectedRevision: revision,
+        },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true } });
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect(service.repo.getWork(followUpId)?.status).toBe('queued');
+    service.repo.transitionWork(followUpId, service.repo.getWork(followUpId)!, {
+      status: 'reported',
+    });
+    expect(
+      (await propose('elsewhere', { adapter: 'codex-desktop', id: 't9' }))?.approvedAt ?? null
+    ).toBeNull();
     expect(service.driverTargets.adoptedRefs(0)).toEqual([]);
     expect((await propose('after-close', ref))?.approvedAt ?? null).toBeNull();
   });

@@ -245,6 +245,7 @@ const Answer = z.object({
   askId: z.string().min(1),
   itemId: z.string().min(1),
   choice: z.string().trim().min(1).max(1000),
+  option: z.string().optional(),
   humanMessageId: z.string().min(1).max(200).optional(),
 });
 
@@ -1217,6 +1218,8 @@ export function requireNeoAskQuestion(
         `item_not_found: ${input.itemId} is not on this checklist. ${neoKnownIds('items on it', checklist(ask))}`
       ),
     };
+  if (input.option && !item.options?.includes(input.option))
+    return { reason: fail('answer_option_unknown: use an option from this question.') };
   if (item.state !== 'needs_you')
     return {
       reason: fail(`item_not_waiting: ${item.id} is ${item.state}, not waiting on an answer.`),
@@ -1870,10 +1873,15 @@ export function createNeoAskOperations(
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Tick>, target: { ask: NeoAsk }, caller: OperationCaller) => {
+      (
+        input: z.infer<typeof Tick>,
+        target: { ask: NeoAsk; item: NeoAskItem },
+        caller: OperationCaller
+      ) => {
         const written = service.askRecords.tickItem(
           target.ask.id,
           {
+            ...target.item,
             id: input.itemId,
             state: input.state,
             evidence: input.evidence ?? null,
@@ -1923,6 +1931,7 @@ export function createNeoAskOperations(
       'cited'
     )
     .pipe(requireNeoAnswerProvenance, ['input', 'admission', 'caller', 'cited'], 'result:admission')
+    .pipe((target: { ask: NeoAsk; item: NeoAskItem }) => target, 'admission', 'answerTarget')
     .pipe(readNeoAskReply, 'input', 'reply')
     .pipe(
       async (
@@ -1938,7 +1947,7 @@ export function createNeoAskOperations(
     .pipe(
       (
         input: z.infer<typeof Answer>,
-        target: { ask: NeoAsk },
+        target: { ask: NeoAsk; item: NeoAskItem },
         reply: { choice: string; met: boolean },
         cited: { id: string | null }
       ) => {
@@ -1947,9 +1956,10 @@ export function createNeoAskOperations(
           service.askRecords.tickItem(
             target.ask.id,
             {
+              ...target.item,
               id: input.itemId,
               state: 'met',
-              evidence: neoAskAnswerEvidence(reply.choice, cited.id),
+              evidence: neoAskAnswerEvidence(reply.choice, cited.id, input.option),
               metBy: 'human',
             },
             Date.now(),
@@ -1962,6 +1972,12 @@ export function createNeoAskOperations(
       'answered'
     )
     .pipe(requireNeoAskWritten, 'answered', 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Answer>, target: { ask: NeoAsk; item: NeoAskItem }) =>
+        service.answerStartQuestion(target.ask, target.item, input.option ?? input.choice),
+      ['input', 'answerTarget'],
+      'started'
+    )
     .pipe(replanAsk, 'admission', 'written')
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
     .endAsync('admission') as (
@@ -2222,7 +2238,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; every doneItem declares check: a registered check kind the daemon ticks it from, or null when you tick it yourself (doneWhen alone is refused, because its lines declare no check); doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; every doneItem declares check: a registered check kind the daemon ticks it from, or null when you tick it yourself (doneWhen alone is refused, because its lines declare no check); doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An item that waits on GitHub pull requests or issues passes watch, their URLs: the daemon ticks it met itself when every watched pull request has merged (on the merge event) and every watched issue has closed, with the event or read states as evidence. A deploy item passes check coding.deployed (watch optionally names the pull requests; otherwise the ask’s card PRs): the daemon ticks it once every daemon, this one and each attached one, runs a commit containing their merge commits. Propose every work item for this request with its askId. An ask opened in a turn the human sent records approval of that plan revision. Execution proposals still require the grouped start question’s answer for their exact cards and targets. Approval never covers deploying to production, deleting data or other destructive steps.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -2258,7 +2274,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.answer',
       description:
-        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met. From the Answer control it is sent to the Neo session that opened the ask, which acts on it. When the human answers in chat instead, Neo records it here in the turn their message started (or passes humanMessageId, the id of an earlier human message that answered it): the daemon accepts it only in the live turn the human's message started, only if that message is the human's own, in this ask's conversation and sent after the question, and only if choice appears in what they wrote (pass their own words), so never ask them to repeat it in a control and never open a second ask for it. Every answer, including a negative result, completes the question with no confirmation step.",
+        "Answer a question on an ask (neo.ask.question): the human's choice (one of its options, or their own words) ticks the item met. From the Answer control it is sent to the Neo session that opened the ask, which acts on it. When the human answers in chat instead, Neo records it here in the turn their message started (or passes humanMessageId, the id of an earlier human message that answered it): the daemon accepts it only in the live turn the human's message started, only if that message is the human's own, in this ask's conversation and sent after the question, and only if choice appears in what they wrote (pass their own words), so never ask them to repeat it in a control and never open a second ask for it. For a grouped start question, pass option with the question label matching their own words, keeping choice verbatim; omit option when their meaning is unclear, so execution consent stays pending. Every answer, including a negative result, completes the question with no confirmation step.",
       inputSchema: Answer,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -2267,7 +2283,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.approve',
       description:
-        "Approve an open ask: the daemon starts its proposed work items at once, and Neo starts the ones proposed under it later without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. Its approval remains tied to the approved plan revision. An approval never covers deploying to production, deleting data or other destructive steps.",
+        'Approve the current plan revision of an open ask. Only the user can call this operation. Proposed cards with grouped start questions still require their own neo.ask.answer receipt for the exact cards and targets; ask-wide approval does not answer those questions or approve later proposals or changed targets. The daemon starts only cards already admitted by their recorded consent. An approval never covers deploying to production, deleting data or other destructive steps.',
       inputSchema: Approve,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },

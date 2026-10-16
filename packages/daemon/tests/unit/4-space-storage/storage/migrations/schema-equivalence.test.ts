@@ -141,6 +141,7 @@ describe('database schema equivalence', () => {
       legacyDev.exec(
         readFileSync(new URL('./fixtures/schema-baseline/dev-383.sql', import.meta.url), 'utf8')
       );
+      migrate(legacyDev);
       const legacySchema = fullSchema(legacyDev);
       fresh.exec('PRAGMA foreign_keys = ON');
       upgraded.exec('PRAGMA foreign_keys = ON');

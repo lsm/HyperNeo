@@ -102,39 +102,20 @@ export class NeoRoutingLogRepository {
     replace = false
   ): void {
     if (!this.ready()) return;
-    const answered = this.db
+    this.db
       .prepare(
-        `UPDATE neo_routing_log SET outcome = ?, outcome_at = ?, digested_at = NULL,
+        `UPDATE neo_routing_log SET outcome = ?, outcome_at = ?,
            ask_summary = ?, awaiting = ?
-          WHERE message_id = ? AND (outcome IS NULL OR ?) RETURNING id, destination`
+          WHERE message_id = ? AND (outcome IS NULL OR ?)`
       )
-      .get(
+      .run(
         clip(outcome),
         at,
         notes.askSummary ? clip(notes.askSummary) : null,
         notes.awaiting ? clip(notes.awaiting) : null,
         messageId,
         replace ? 1 : 0
-      ) as { id: number; destination: string } | null;
-    if (answered?.destination !== 'main') return;
-    this.db
-      .prepare(
-        `UPDATE neo_routing_log SET digested_at = ?
-          WHERE destination != 'main' AND digested_at IS NULL AND id < ?`
-      )
-      .run(at, answered.id);
-  }
-
-  undigested(limit: number): NeoRoute[] {
-    if (!this.ready()) return [];
-    return this.db
-      .prepare(
-        `SELECT ${columns} FROM neo_routing_log
-          WHERE destination != 'main' AND digested_at IS NULL
-          ORDER BY id DESC LIMIT ?`
-      )
-      .all(limit)
-      .reverse() as NeoRoute[];
+      );
   }
 
   find(messageId: string): NeoRoute | null {

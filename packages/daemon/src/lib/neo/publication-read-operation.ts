@@ -8,6 +8,11 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { NeoPublicationSchema } from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 
+export const NeoStoredPublicationSchema = NeoPublicationSchema.extend({
+  sequence: z.number().int().positive(),
+  createdAt: z.iso.datetime(),
+});
+
 export const NeoConversationPageShape = z
   .object({
     conversationId: z.uuid(),
@@ -36,7 +41,10 @@ export function requirePublicationReader(page: Page, caller: OperationCaller): G
     : { reason: { ok: false, reason: 'human_only' } };
 }
 
-export function requirePublicationConversation(page: Page, root: NeoBinding | null): Gate {
+export function requirePublicationConversation<Page extends { conversationId: string }>(
+  page: Page,
+  root: NeoBinding | null
+): { value: Page } | { reason: Failure } {
   return isMainNeoBinding(root) && root.sessionId === `neo:${page.conversationId}`
     ? { value: page }
     : { reason: { ok: false, reason: 'conversation_not_found' } };
@@ -95,14 +103,7 @@ export function createNeoPublicationReadOperation(
       z.object({
         ok: z.literal(true),
         conversationId: z.uuid(),
-        items: z
-          .array(
-            NeoPublicationSchema.extend({
-              sequence: z.number().int().positive(),
-              createdAt: z.iso.datetime(),
-            })
-          )
-          .max(100),
+        items: z.array(NeoStoredPublicationSchema).max(100),
         nextAfter: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       }),
     ]),

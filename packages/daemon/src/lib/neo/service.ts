@@ -38,6 +38,12 @@ import {
   type NeoAskCheckRow,
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
+import {
+  neoQuestionStartTargets,
+  neoStartDecision,
+  neoStartChoice,
+  planNeoStartQuestion,
+} from './start-question.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
@@ -228,7 +234,6 @@ import {
   planNeoNeedsYouCleared,
   planNeoQuestionsWithdrawn,
 } from './needs-you.ts';
-import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
 import {
   NEO_TRIGGER_DELIVERY_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
@@ -540,7 +545,6 @@ export class NeoService {
   private readonly noteWorking: () => void;
   private workingKey = '';
   readonly notifyPublicationsChanged: (conversationId: string) => void;
-  private readonly noteQueue: NeoNoteQueueDeps;
   private readonly triggers: NeoNotificationTriggerRepository;
   private readonly triggerDeps: NeoTriggerSweepDeps;
   private triggerTimer?: ReturnType<typeof setTimeout>;
@@ -777,11 +781,6 @@ export class NeoService {
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
       wake: (ask, trigger) => this.deliverAskTrigger(ask, trigger),
     };
-    this.noteQueue = createNeoNoteQueueDeps(db, (sessionId, messageIds) => {
-      void events
-        .publish('messages.statusChanged', { sessionId, messageIds, status: 'failed' })
-        .catch(() => {});
-    });
     this.sessionWatcher = new NeoSessionWatcher({
       db,
       rootSessionId: () => this.repo.getBindingForProject(null)?.sessionId,
@@ -1538,6 +1537,54 @@ export class NeoService {
     });
   }
 
+  private startTarget(workId: string) {
+    const work = this.repo.getWork(workId);
+    return {
+      workId,
+      title: work?.title,
+      target: JSON.stringify(
+        this.driverTargets.get(workId) ??
+          this.agentTargets.get(workId) ??
+          work?.targetSessionId ??
+          null
+      ),
+    };
+  }
+
+  proposalApproval(workId: string): boolean | null {
+    const ask = this.askRecords.forWork(workId);
+    const decision = ask && neoStartDecision(ask, this.startTarget(workId));
+    return decision === null ? null : decision === 'approved';
+  }
+
+  proposeStartQuestion(workId: string): void {
+    const ask = this.askRecords.forWork(workId);
+    if (!ask) return;
+    const proposed = ask.workIds
+      .filter(
+        (id) =>
+          this.repo.getWork(id)?.status === 'proposed' &&
+          !['read', 'adopt'].includes(this.driverTargets.get(id)?.verb ?? '')
+      )
+      .map((id) => this.startTarget(id));
+    const question = planNeoStartQuestion(ask, proposed);
+    if (question) this.askRecords.proposeStartQuestion(ask.id, question, Date.now());
+  }
+
+  async answerStartQuestion(ask: NeoAsk, item: NeoAskItem, choice: string): Promise<void> {
+    const targets = neoQuestionStartTargets(item);
+    const ids = targets
+      .filter((entry) => entry.target === this.startTarget(entry.workId).target)
+      .map((entry) => entry.workId);
+    if (!ids.length) return;
+    if (neoStartChoice(item, choice) === 'approved') {
+      this.askRecords.approve(ask.id, Date.now(), this.askRecords.get(ask.id)?.revision ?? 0);
+      await this.startApprovedWork(ids);
+    } else if (neoStartChoice(item, choice) === 'declined') {
+      await Promise.all(ids.map((id) => this.cancel(id)));
+    } else this.proposeStartQuestion(ids[0]);
+  }
+
   async startApprovedWork(workIds: readonly string[]): Promise<void> {
     const startable = workIds.filter(
       (id) => this.repo.getWork(id)?.status === 'proposed' && this.resolveWorkTarget(id).accepted
@@ -1549,6 +1596,7 @@ export class NeoService {
     const admitted = await admitNeoWork(id, authorized, now, {
       bootedAt: this.bootedAt,
       readWork: (workId: string) => this.repo.getWork(workId),
+      readApproval: (workId: string) => this.proposalApproval(workId),
       readAsk: (workId: string) => this.askRecords.forWork(workId),
       readCard: (workId: string) => this.driverTargets.readCard(workId),
       readBlockers: (workId: string) => this.dependencyBlockers(workId),
@@ -1588,8 +1636,9 @@ export class NeoService {
         this.driverTargets.readStartInterrupted(id);
       if (!blockers.length && !uncertain) return [];
       const authorized =
-        this.dependencies.hasStartIntent(id) ||
-        isNeoAdmissionApproved(this.askRecords.forWork(id), now);
+        this.proposalApproval(id) ??
+        (this.dependencies.hasStartIntent(id) ||
+          isNeoAdmissionApproved(this.askRecords.forWork(id), now));
       return [
         {
           workId: id,
@@ -1844,7 +1893,11 @@ export class NeoService {
       find: (input) => this.invokeAsCard(work, 'work.find', input),
       reserve: (current, candidates) =>
         this.driverTargets.reassign(this.repo, current, candidates, this.waitingCardIds()),
-      start: (next, target) => this.startDriverWork(next, target, tried),
+      start: async (next, target) => {
+        this.proposeStartQuestion(next.id);
+        if (this.proposalApproval(next.id) !== false)
+          await this.startDriverWork(next, target, tried);
+      },
       returnToNeo: async (next, place) => {
         await this.deliver(
           next.originSessionId,
@@ -3760,7 +3813,6 @@ export class NeoService {
         .length
     )
       return;
-    if (!issueNeoNote(this.noteQueue, sessionId, messageId).issue) return;
     const outcome = await handoffPromptToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
       origin: renderAddress({ kind: 'session', sessionId: originSessionId }),
