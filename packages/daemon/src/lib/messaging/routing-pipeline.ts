@@ -1,6 +1,5 @@
 import { parseAddress } from '../../../../messaging/src/address.ts';
 import type { ResolveNodeAgentTargetsOutcome } from './routing-gates.ts';
-import superpipe, { type PipelineAPI } from 'superpipe';
 
 export type AgentMessageRoutingDecision =
   | { action: 'delegateGeneric' }
@@ -52,8 +51,3 @@ export function classifyAgentMessageRouting(
   }
   return { action: 'failUnknownTarget', reason: input.resolution.reason };
 }
-
-export const decideAgentMessageRouting = (superpipe({})('agent-message-routing') as PipelineAPI)
-  .input(['input'])
-  .pipe(classifyAgentMessageRouting, 'input', 'decision')
-  .end('decision') as (input: AgentMessageRoutingInput) => AgentMessageRoutingDecision;

@@ -8,7 +8,6 @@ import {
   type AgentMessageRoutingDecision,
   type AgentMessageRoutingInput,
   classifyAgentMessageRouting,
-  decideAgentMessageRouting,
   isGenericAddress,
 } from '../../../../src/lib/messaging/routing-pipeline';
 
@@ -121,13 +120,13 @@ describe('agent message routing decision pipeline', () => {
 
   for (const [label, overrides, expected] of cases) {
     test(label, () => {
-      expect(decideAgentMessageRouting(makeInput(overrides))).toEqual(expected);
+      expect(classifyAgentMessageRouting(makeInput(overrides))).toEqual(expected);
     });
   }
 
   describe('gate precedence — first decision wins', () => {
     test('generic dispatch beats the topology guard', () => {
-      const decision = decideAgentMessageRouting(
+      const decision = classifyAgentMessageRouting(
         makeInput({
           target: '@coordinator',
           requestedTargets: ['@coordinator'],
@@ -144,7 +143,7 @@ describe('agent message routing decision pipeline', () => {
         permittedTargets: ['reviewer'],
         canSend: () => false,
       });
-      const decision = decideAgentMessageRouting(makeInput({ resolution }));
+      const decision = classifyAgentMessageRouting(makeInput({ resolution }));
       expect(decision).toEqual({
         action: 'failUnknownTarget',
         reason:
@@ -155,7 +154,7 @@ describe('agent message routing decision pipeline', () => {
 
     test('live peer beats node group beats declared beats topology-declared', () => {
       const route = (resolution: ResolveNodeAgentTargetsOutcome) =>
-        decideAgentMessageRouting(
+        classifyAgentMessageRouting(
           makeInput({ target: 'review', requestedTargets: ['review'], resolution })
         );
 

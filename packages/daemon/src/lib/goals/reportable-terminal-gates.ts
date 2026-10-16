@@ -1,5 +1,4 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
 
 export const TERMINAL_TASK_STATUSES: readonly SpaceTaskStatus[] = [
   'done',
@@ -47,8 +46,3 @@ export function classifyReportableTerminal(
   }
   return { action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION };
 }
-
-export const decideReportableTerminal = (superpipe({})('reportable-terminal') as PipelineAPI)
-  .input(['input'])
-  .pipe(classifyReportableTerminal, 'input', 'decision')
-  .end('decision') as (input: ReportableTerminalInput) => ReportableTerminalDecision;

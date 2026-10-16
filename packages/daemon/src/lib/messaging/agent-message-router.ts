@@ -18,7 +18,7 @@ import {
   foldAgentMessageResult,
   resolveNodeAgentTargets,
 } from './routing-gates.ts';
-import { decideAgentMessageRouting } from './routing-pipeline.ts';
+import { classifyAgentMessageRouting } from './routing-pipeline.ts';
 import type { SessionInjectionOutcome } from './session-message-delivery.ts';
 
 export type { AgentMessageResult };
@@ -114,7 +114,7 @@ export class AgentMessageRouter {
     let peers = peerSnapshot.peers;
 
     const permittedTargets = resolver.getPermittedTargets(fromNodeName);
-    const routing = decideAgentMessageRouting({
+    const routing = classifyAgentMessageRouting({
       target,
       requestedTargets,
       topologyEmpty: resolver.isEmpty(),
