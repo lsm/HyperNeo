@@ -156,10 +156,10 @@ export function planNeoAskForward(
     (latest, forward) => (!latest || forward.hop > latest.hop ? forward : latest),
     null
   );
+  const messageId = resumedPromptUuid(holder.input.messageId);
   const owns = last
-    ? last.toSessionId === holder.sessionId &&
-      holder.input.messageId === neoForwardMessageId(ask, last.hop)
-    : ask.sessionId === holder.sessionId && holder.input.messageId === ask.messageId;
+    ? last.toSessionId === holder.sessionId && messageId === neoForwardMessageId(ask, last.hop)
+    : ask.sessionId === holder.sessionId && messageId === ask.messageId;
   return owns ? { value: { hop: last ? last.hop + 1 : 0, to: input.to } } : refuse('not_your_ask');
 }
 

@@ -3843,14 +3843,6 @@ export class NeoService {
     }
   }
 
-  private triggerAnswered(parent: NeoAskOrigin | null): boolean {
-    const trigger = this.parentTrigger(parent);
-    const root = this.repo.getBindingForProject(null);
-    return (
-      !!trigger && !!root && this.publications.hasTrigger(root.sessionId.slice(4), trigger, '')
-    );
-  }
-
   private parentTrigger(parent: NeoAskOrigin | null): string | null {
     return parent ? this.inputTrigger(parent) : null;
   }

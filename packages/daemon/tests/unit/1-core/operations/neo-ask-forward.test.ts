@@ -85,6 +85,27 @@ describe('requireForwardingHolder', () => {
 
 describe('planNeoAskForward', () => {
   const holder = { sessionId: garden.sessionId, projectId: 'garden', input: ask };
+  test.each(['restart-recovery:', 'restart-recovery:restart-recovery:'])(
+    '%s preserves forwarding for the current owner after an interruption',
+    (prefix) => {
+      const original = { ...holder, input: { ...ask, messageId: `${prefix}${ask.messageId}` } };
+      expect(planNeoAskForward({ to: 'pond' }, original, ask, [])).toEqual({
+        value: { hop: 0, to: 'pond' },
+      });
+      const current = {
+        sessionId: pond.sessionId,
+        projectId: 'pond',
+        input: { sessionId: pond.sessionId, messageId: `${prefix}neo-forward:ask-1:7` },
+      };
+      const forwards = [{ hop: 7, toSessionId: pond.sessionId }];
+      expect(planNeoAskForward({ to: 'main' }, current, ask, forwards)).toEqual({
+        value: { hop: 8, to: 'main' },
+      });
+      expect(planNeoAskForward({ to: 'pond' }, original, ask, forwards)).toEqual({
+        reason: { ok: false, reason: 'not_your_ask' },
+      });
+    }
+  );
   test('only the original request owner can make the first forward', () => {
     expect(planNeoAskForward({ to: 'pond' }, holder, ask, [])).toEqual({
       value: { hop: 0, to: 'pond' },
