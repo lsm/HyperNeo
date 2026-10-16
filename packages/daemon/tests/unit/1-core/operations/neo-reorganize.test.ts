@@ -227,6 +227,7 @@ describe('neo.projects.reorganize', () => {
       projectFacts: () => [],
       machine: () => 'here',
       retiredHolders: () => [],
+      askMerge: async () => 'asked the human',
       cleanup: async (step) => {
         cleaned.push(step.projectId);
         if (step.projectId === 'stuck') throw new Error('busy');
@@ -346,20 +347,59 @@ describe('neo.projects.reorganize', () => {
     });
   });
 
-  test('the nightly mode applies only steps that touch no content and leaves the rest planned', async () => {
+  test('the nightly mode applies every step but a merge, and asks the human about each merge', async () => {
     const { deps, logged, cleaned } = runtime([], {});
+    const asked: string[] = [];
+    deps.askMerge = async (step) => {
+      asked.push(step.projectId);
+      return 'asked the human';
+    };
     deps.retiredHolders = () => [
       { projectId: 'silent', title: 'Silent', sessionId: 's1', spoke: false },
       { projectId: 'talked', title: 'Talked', sessionId: 's2', spoke: true },
     ];
-    const result = await createNeoProjectsReorganizer(deps)({ apply: 'contentless' });
-    expect(result.cleanupPlanned.map((step) => step.action)).toEqual(['drop', 'archive']);
-    expect(result.cleanupApplied).toBe(true);
-    expect(cleaned).toEqual(['silent']);
+    deps.projectFacts = () => [
+      {
+        id: 'home',
+        title: 'Topic',
+        createdAt: 1,
+        section: false,
+        context: 0,
+        asks: 0,
+        liveAsks: 0,
+        work: [],
+        liveWork: 0,
+        routed: 0,
+        holderMessages: 1,
+        archived: false,
+        holder: null,
+        aliases: ['repository:github.com/lsm/app'],
+      },
+      {
+        id: 'topic',
+        title: 'Topic',
+        createdAt: 2,
+        section: false,
+        context: 5,
+        asks: 1,
+        liveAsks: 0,
+        work: [],
+        liveWork: 0,
+        routed: 1,
+        holderMessages: 1,
+        archived: false,
+        holder: null,
+        aliases: [],
+      },
+    ];
+    const result = await createNeoProjectsReorganizer(deps)({ apply: 'unattended' });
+    expect(result.cleanupPlanned.map((step) => step.action)).toEqual(['merge', 'drop', 'archive']);
+    expect(cleaned).toEqual(['silent', 'talked']);
+    expect(asked).toEqual(['topic']);
     expect(logged).toEqual(
       expect.arrayContaining([
-        'neo reorganize: did drop project silent (Silent) holder s1',
-        'neo reorganize: would archive project talked (Talked) holder s2',
+        'neo reorganize: asked the human about merge project topic (Topic) into home',
+        'neo reorganize: did archive project talked (Talked) holder s2',
       ])
     );
   });
