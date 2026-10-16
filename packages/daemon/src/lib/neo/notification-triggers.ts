@@ -135,15 +135,11 @@ export function neoHumanTriggerMessageId(triggerId: string | undefined): string 
     : null;
 }
 
-const TRIGGER_WORDS: Record<NeoTriggerKind, { what: string; sentence: string }> = {
-  outcome: { what: 'the ask reached its outcome', sentence: 'name the outcome.' },
-  failed: { what: 'a card failed with no retry left', sentence: 'say what broke.' },
-  idle: {
-    what: 'nothing is running for the ask and its outcome is not met',
-    sentence:
-      'first get the work moving another way, or, when the line below says so, ask the human its question with neo.ask.question; then say which you did.',
-  },
-  action: { what: 'the ask needs the human', sentence: 'say what is needed from them.' },
+const TRIGGER_WORDS: Record<NeoTriggerKind, string> = {
+  outcome: 'the ask reached its outcome',
+  failed: 'a card failed with no retry left',
+  idle: 'nothing is running for the ask and its outcome is not met',
+  action: 'the ask needs the human',
 };
 export function neoTriggerNote(ask: Pick<NeoAsk, 'id' | 'title'>, trigger: NeoAskTrigger): string {
   return fillPrompt(NEO_TRIGGER_NOTE, {
@@ -151,7 +147,7 @@ export function neoTriggerNote(ask: Pick<NeoAsk, 'id' | 'title'>, trigger: NeoAs
     askId: ask.id,
     title: ask.title,
     lines: trigger.lines.map((line) => `- ${line}`).join('\n'),
-    ...TRIGGER_WORDS[trigger.kind],
+    what: TRIGGER_WORDS[trigger.kind],
   });
 }
 

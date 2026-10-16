@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoAskView, NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
@@ -509,7 +510,7 @@ describe('noteNeoAskTrigger', () => {
 });
 
 describe('neoTriggerNote', () => {
-  test('names the trigger and what to tell the human, leaving the language to the turn', () => {
+  test('states the trigger and its fact, with no command and no language', () => {
     const note = neoTriggerNote(ask, {
       triggerId: 'outcome:a1:x',
       kind: 'outcome',
@@ -517,13 +518,13 @@ describe('neoTriggerNote', () => {
       lines: ['the ask is achieved'],
     });
     expect(note).toContain('Notification trigger outcome:a1:x: the ask reached its outcome');
-    expect(note).toContain('triggerId: "outcome:a1:x"');
+    expect(note).toContain('passes triggerId "outcome:a1:x"');
     expect(note).toContain('- the ask is achieved');
-    expect(note).toContain('name the outcome.');
+    expect(note).not.toMatch(/Tell the human|only message/);
     expect(note).not.toContain('language');
   });
 
-  test('an idle trigger asks Neo to move the work or ask the human, never to settle or report a failure', () => {
+  test('an idle trigger states that nothing runs; the system prompt says how to move the work', () => {
     const note = neoTriggerNote(ask, {
       triggerId: 'idle:a1:x',
       kind: 'idle',
@@ -531,8 +532,8 @@ describe('neoTriggerNote', () => {
       lines: ['nothing is running'],
     });
     expect(note).toContain('nothing is running for the ask and its outcome is not met');
-    expect(note).toContain('get the work moving another way');
-    expect(note).toContain('ask the human its question with neo.ask.question');
+    expect(note).not.toContain('neo.ask.question');
+    expect(neoPrompt(null)).toContain('get the work moving another way');
     expect(note).not.toContain('settle');
     expect(note).not.toContain('failed');
   });

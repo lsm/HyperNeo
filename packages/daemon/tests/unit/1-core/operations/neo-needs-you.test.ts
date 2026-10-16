@@ -273,7 +273,7 @@ describe('neoHumanTickWakes', () => {
 });
 
 describe('neoAskTickedNote', () => {
-  test('names what is still open, or says to settle when nothing is', () => {
+  test('names what is still open, or that every item is met', () => {
     const open = {
       ...ask,
       title: 'Ship it',
@@ -283,7 +283,7 @@ describe('neoAskTickedNote', () => {
       'Still open: i2 "Item i2" (pending)'
     );
     const done = { ...open, doneItems: [item('i1', 'met')] };
-    expect(neoAskTickedNote(done, item('i1', 'met'))).toContain('settle the ask achieved');
+    expect(neoAskTickedNote(done, item('i1', 'met'))).toContain('Every item is met.');
   });
 });
 
