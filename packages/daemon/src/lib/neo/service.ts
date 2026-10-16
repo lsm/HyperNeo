@@ -42,6 +42,7 @@ import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forw
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
+import { pullRequestUrlOfTopic } from '../github/parse-pr-url.ts';
 import { NeoCardPrRelayRepository } from '../../storage/repositories/neo-card-pr-relay-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
@@ -3567,10 +3568,14 @@ export class NeoService {
       window,
       report: work.report,
       follows: work.follows,
-      subscribed: worker
-        ? this.sessionSubscriptions.listBySession(worker).map((row) => row.topic)
-        : [],
-      branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),
+      branch: [
+        ...(cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id)),
+        ...(worker
+          ? this.sessionSubscriptions
+              .listBySession(worker)
+              .flatMap((row) => pullRequestUrlOfTopic(row.topic) ?? [])
+          : []),
+      ],
       opened: this.cardOpenedPrs.get(work.id) ?? [],
       stored: stored?.prs ?? [],
       mentioned: await this.cardPrRefs(work, outcome),

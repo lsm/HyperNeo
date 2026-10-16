@@ -2,7 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoCardPrUrls } from './branch-prs.ts';
 import { extractNeoWorkPrUrls, neoTextRefs } from './work-prs.ts';
-import { githubUrlKey, parsePrUrl, pullRequestUrlOfTopic } from '../../../github/parse-pr-url.ts';
+import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 
 export type NeoPrClaim = 'branch' | 'opened' | 'named' | 'mentioned';
 type PrWindow = { start: number; end: number | null };
@@ -35,17 +35,13 @@ export function planNeoCardPrCandidates(input: {
   window?: PrWindow | null;
   report: string | null;
   follows?: string | null;
-  subscribed?: readonly string[];
   branch: readonly string[];
   opened?: readonly string[];
   stored: readonly { url: string }[];
   mentioned?: readonly string[];
 }): NeoCardPrCandidate[] {
   const pr = input.follows ? parsePrUrl(input.follows) : null;
-  const followed = [
-    ...(pr ? [`https://${pr.host}/${pr.owner}/${pr.repo}/pull/${pr.number}`] : []),
-    ...(input.subscribed ?? []).flatMap((topic) => pullRequestUrlOfTopic(topic) ?? []),
-  ];
+  const followed = pr ? [`https://${pr.host}/${pr.owner}/${pr.repo}/pull/${pr.number}`] : [];
   const named = new Set(followed.map(key));
   const onBranch = new Set(input.branch.map(key));
   const opened = new Set((input.opened ?? []).map(key));

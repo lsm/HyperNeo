@@ -2466,7 +2466,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('records the PR its HyperNeo worker session subscribes to', async () => {
+  test('records the PR its HyperNeo worker session subscribes to, not an older one it watches', async () => {
     const ref = { adapter: 'hyperneo', id: 'worker' };
     const at = Date.now() + 10_000;
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
@@ -2488,14 +2488,16 @@ describe('Neo work with a drivers target', () => {
         state: 'OPEN' as const,
         checks: 'pending' as const,
         review: 'none' as const,
-        createdAt: at + 1,
+        createdAt: item === url ? at + 1 : 1,
       }));
     service.readBranchPrs = async () => [];
     service.readCheckoutPrs = async () => [];
     Object.assign(service, { deliver: async () => {} });
     db.createSession(createTestSession('neo:root'));
     db.createSession(createTestSession('worker'));
-    new SessionEventSubscriptionRepository(db.getDatabase()).upsert({
+    const subscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
+    subscriptions.upsert({ sessionId: 'worker', topic: 'github/lsm/HyperNeo/pull_request/3.*' });
+    subscriptions.upsert({
       sessionId: 'worker',
       topic: 'github/lsm/hyperneo-review-test/pull_request/18.*',
     });

@@ -400,29 +400,6 @@ describe('PRs the worker session opened', () => {
   });
 });
 
-describe('a PR its worker session subscribes to', () => {
-  test('is named by the card, once, and other subscribed topics are ignored', () => {
-    expect(
-      planNeoCardPrCandidates({
-        report: null,
-        follows: pull(5),
-        subscribed: [
-          'github/lsm/HyperNeo/pull_request/5.*',
-          'github/lsm/HyperNeo/pull_request/6.*',
-          'github/lsm/HyperNeo/pull_request/*',
-          'github/lsm/HyperNeo/issues/7',
-          'slack/general',
-        ],
-        branch: [],
-        stored: [],
-      })
-    ).toEqual([
-      { url: pull(5), claim: 'named' },
-      { url: pull(6), claim: 'named' },
-    ]);
-  });
-});
-
 describe('a PR the card follows', () => {
   const follower = { id: 'follow-up', createdAt: 300 };
   const opener = {
