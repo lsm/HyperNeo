@@ -1,4 +1,3 @@
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoDriverTarget } from './driver-work.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { neoSessionKey, type NeoSessionNotice } from './session-watch.ts';
@@ -6,25 +5,6 @@ import { neoSessionKey, type NeoSessionNotice } from './session-watch.ts';
 export const NEO_SESSION_TRACK_MS = 60 * 60_000;
 
 type Rejection = { ok: false; reason: string };
-
-export function isNeoTrackedFollowUp(
-  ask: Pick<NeoAsk, 'workIds' | 'approvedAt' | 'status'> | null,
-  targets: ReadonlyMap<string, NeoDriverTarget | null>,
-  next: NeoDriverTarget | undefined,
-  tracked: readonly WorkRef[]
-): boolean {
-  if (!ask || ask.approvedAt != null || ask.status === 'achieved' || ask.status === 'abandoned')
-    return false;
-  const live = (ref: WorkRef) => tracked.some((item) => neoSessionKey(item) === neoSessionKey(ref));
-  if (
-    ask.workIds.some((id) => {
-      const target = targets.get(id);
-      return target?.verb === 'adopt' && live(target.ref);
-    })
-  )
-    return true;
-  return next?.verb === 'send' && live(next.ref);
-}
 
 export function requireNeoTrackRoot(
   root: string | undefined

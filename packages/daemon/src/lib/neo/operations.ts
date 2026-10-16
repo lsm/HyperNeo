@@ -173,7 +173,6 @@ import {
 } from './session-watch.ts';
 import {
   findNeoSessionNotice,
-  isNeoTrackedFollowUp,
   requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
@@ -206,7 +205,6 @@ import { projectNeoCardViews } from './card-views.ts';
 import { NeoAskStateViewSchema, NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
 import { projectNeoAskViews } from './ask-views.ts';
 import { busyNeoAskSessions, unmutedNeoAskSessions } from './session-ask-links.ts';
-import { NEO_WORK_FOLLOW_MAX_AGE_MS } from './work-follow.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -2089,27 +2087,18 @@ export function createNeoOperations(service: NeoService) {
       'goalRecorded'
     )
     .pipe(
-      async (input: ProposeRequest, ask: { askId?: string }, receipt: { work: NeoWork }) => {
+      (receipt: { work: NeoWork }) => service.proposeStartQuestion(receipt.work.id),
+      'admission',
+      'question'
+    )
+    .pipe(
+      async (input: ProposeRequest, receipt: { work: NeoWork }) => {
         if (input.work?.verb === 'read') {
           await service.start(receipt.work.id);
           receipt.work = service.repo.getWork(receipt.work.id)!;
           return;
         }
         if (input.work?.verb !== 'adopt') {
-          const owned = ask.askId ? service.askRecords.get(ask.askId) : null;
-          const targets = new Map(
-            (owned?.workIds ?? []).map((id) => [id, service.driverTargets.get(id)] as const)
-          );
-          if (
-            owned &&
-            isNeoTrackedFollowUp(
-              owned,
-              targets,
-              input.work,
-              service.driverTargets.adoptedRefs(Date.now() - NEO_WORK_FOLLOW_MAX_AGE_MS)
-            )
-          )
-            service.askRecords.approve(owned.id, Date.now(), owned.revision ?? 0);
           await service.startApprovedWork([receipt.work.id]);
           receipt.work = service.repo.getWork(receipt.work.id)!;
           return;
@@ -2119,7 +2108,7 @@ export function createNeoOperations(service: NeoService) {
         service.trackedSessions = tracked;
         await service.admitWork(receipt.work.id, true);
       },
-      ['input', 'ask', 'admission']
+      ['input', 'admission']
     )
     .endAsync('admission') as (
     input: ProposeRequest,
@@ -2140,7 +2129,10 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (found: NeoWorkStartFound, caller: OperationCaller) => ({
-        approved: !!found.work && isNeoAskStartApproved(found.work, found.ask, caller),
+        approved:
+          !!found.work &&
+          (service.proposalApproval(found.work.id) ??
+            isNeoAskStartApproved(found.work, found.ask, caller)),
       }),
       ['found', 'caller'],
       'authority'

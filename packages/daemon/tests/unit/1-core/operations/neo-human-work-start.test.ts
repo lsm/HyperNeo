@@ -193,7 +193,7 @@ describe('Neo existing trusted human work input', () => {
       value: {
         askViews: expect.arrayContaining([
           expect.objectContaining({
-            humanActions: [],
+            humanActions: expect.arrayContaining([expect.objectContaining({ kind: 'question' })]),
           }),
         ]),
         cards: expect.arrayContaining([
@@ -269,7 +269,7 @@ describe('Neo existing trusted human work input', () => {
   });
 
   test.each([root, holder])(
-    'starts only the exact current real human input of %s through existing delivery',
+    'starts the approved cards for %s through existing delivery',
     async (sessionId) => {
       storeInput(sessionId);
       const source = caller(sessionId);
@@ -283,6 +283,16 @@ describe('Neo existing trusted human work input', () => {
         targetSessionId: target,
       });
       expect(jobs(work.id)).toEqual([]);
+      const owner = service.askRecords.forWork(work.id)!;
+      const question = owner.doneItems!.find((item) => item.state === 'needs_you')!;
+      expect(
+        await invoke('neo.ask.answer', {
+          askId: owner.id,
+          itemId: question.id,
+          choice: '开始',
+          expectedRevision: owner.revision,
+        })
+      ).toMatchObject({ value: { ok: true } });
       expect(await invoke('neo.work.start', { id: work.id }, source)).toMatchObject({
         kind: 'completed',
         value: { ok: true, work: { status: 'queued', sessionId: target } },
@@ -336,7 +346,7 @@ describe('Neo existing trusted human work input', () => {
     });
   });
 
-  test('approving an ask starts its proposed cards; one that cannot start stays proposed, with no Start for the human', async () => {
+  test('answering the grouped question starts its exact cards and leaves unavailable work proposed', async () => {
     storeInput();
     const first = await propose(caller());
     const opened = service.askRecords.forWork(first.id)!;
@@ -378,7 +388,18 @@ describe('Neo existing trusted human work input', () => {
     });
     expect(service.repo.getWork(first.id)?.status).toBe('proposed');
 
-    expect(await invoke('neo.ask.approve', { askId: opened.id })).toMatchObject({
+    const pending = service.askRecords.get(opened.id)!;
+    const question = pending.doneItems!.find(
+      (item) => !item.removed && item.state === 'needs_you'
+    )!;
+    expect(
+      await invoke('neo.ask.answer', {
+        askId: opened.id,
+        itemId: question.id,
+        choice: '开始',
+        expectedRevision: pending.revision,
+      })
+    ).toMatchObject({
       value: { ok: true, ask: { id: opened.id, approvedAt: expect.any(Number) } },
     });
     for (const work of [first, second]) {
@@ -427,7 +448,7 @@ describe('Neo existing trusted human work input', () => {
     expect(jobs(work.id)).toEqual([]);
   });
 
-  test('the human’s answer note acts for their message: it may start work and drop what their answer named, not what Neo wrote around it', async () => {
+  test('the human’s answer note preserves their scope choice without approving unrelated work', async () => {
     storeInput();
     const opened = service.askRecords.open(
       {
@@ -473,7 +494,7 @@ describe('Neo existing trusted human work input', () => {
     const answering = caller(root, noteId);
     expect(answering.neoTurn).toMatchObject({ human: true, origin: ask });
     expect(await invoke('neo.work.start', { id: work.id }, answering)).toMatchObject({
-      value: { ok: true },
+      value: { ok: false },
     });
     expect(
       await invoke(
@@ -502,7 +523,7 @@ describe('Neo existing trusted human work input', () => {
     expect(service.askRecords.get(opened.id)!.doneItems![0]).toMatchObject({ removed: true });
   });
 
-  test('a continuation of the human’s own turn may start its work; a plain continuation may not', async () => {
+  test('a human continuation still needs the proposal question answered', async () => {
     storeInput();
     const work = await propose(caller());
     const continuation = (messageId: string) => {
@@ -521,7 +542,7 @@ describe('Neo existing trusted human work input', () => {
     expect(service.repo.getWork(work.id)?.status).toBe('proposed');
     expect(
       await invoke('neo.work.start', { id: work.id }, continuation('neo-turn-limit:human:r2'))
-    ).toMatchObject({ value: { ok: true, work: { status: 'queued' } } });
+    ).toMatchObject({ value: { ok: false } });
   });
 
   test('rejects a new human ask trying to start a previous ask’s proposal', async () => {

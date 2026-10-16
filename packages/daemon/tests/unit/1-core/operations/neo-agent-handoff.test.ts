@@ -269,6 +269,16 @@ describe('Neo existing Space-agent handoff operation', () => {
     });
     expect(service.repo.getWork(saved.id)?.status).toBe('proposed');
     expect(jobs(saved.id)).toEqual([]);
+    const ask = service.askRecords.forWork(saved.id)!;
+    const question = ask.doneItems!.find((item) => !item.removed && item.state === 'needs_you')!;
+    expect(
+      await invokeOperation(
+        registry,
+        'neo.ask.answer',
+        { askId: ask.id, itemId: question.id, choice: '开始', expectedRevision: ask.revision },
+        human
+      )
+    ).toMatchObject({ value: { ok: true } });
     expect(
       await invokeOperation(registry, 'neo.work.start', { id: saved.id }, human)
     ).toMatchObject({

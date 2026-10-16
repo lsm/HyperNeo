@@ -145,6 +145,18 @@ describe('dependency planning fixtures', () => {
     return { askId, cards };
   }
 
+  async function approvePlan(askId: string) {
+    const ask = service.askRecords.get(askId)!;
+    const question = ask.doneItems!.find((item) => !item.removed && item.state === 'needs_you')!;
+    expect(
+      await invoke(
+        'neo.ask.answer',
+        { askId, itemId: question.id, choice: '开始', expectedRevision: ask.revision },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true } });
+  }
+
   test('the coding guidance teaches the staged order Q2 enforces', () => {
     const steps = [
       'check coding.pr_merged, watch the card',
@@ -160,9 +172,12 @@ describe('dependency planning fixtures', () => {
   test('a staged epic plan is valid before any pull request exists', async () => {
     const { askId, cards } = await planEpic();
     const [first, second, third] = cards;
-    expect(service.askRecords.get(askId)?.doneItems?.map((item) => item.deliveredBy)).toEqual(
-      cards
-    );
+    expect(
+      service.askRecords
+        .get(askId)
+        ?.doneItems?.filter((item) => !item.decision)
+        .map((item) => item.deliveredBy)
+    ).toEqual(cards);
     const blocked = (prerequisite: string) => ({
       value: {
         ok: false,
@@ -176,13 +191,20 @@ describe('dependency planning fixtures', () => {
         { workId: third, prerequisiteId: second },
       ])
     );
+    expect(started).toEqual([]);
+    expect(
+      service.askRecords
+        .get(askId)
+        ?.doneItems?.filter((item) => !item.removed && item.state === 'needs_you')
+    ).toHaveLength(1);
+    await approvePlan(askId);
     expect(started).toEqual([expect.stringContaining(issue(6757))]);
     expect(service.repo.getWork(first)?.status).toBe('queued');
     expect([second, third].map((card) => service.repo.getWork(card)?.status)).toEqual([
       'proposed',
       'proposed',
     ]);
-    expect(service.askRecords.get(askId)?.approvedAt ?? null).toBeNull();
+    expect(service.askRecords.get(askId)?.approvedAt).toEqual(expect.any(Number));
     expect(await invoke('neo.work.start', { id: second })).toMatchObject(blocked(first));
     expect(await invoke('neo.work.start', { id: second, dependsOn: [third] })).toMatchObject({
       value: { ok: false, reason: 'dependency_cycle' },
@@ -212,9 +234,7 @@ describe('dependency planning fixtures', () => {
 
   test('with automatic dispatch on, a verified prerequisite starts the next card with Neo idle', async () => {
     const { askId, cards } = await planEpic();
-    expect(
-      await invoke('neo.ask.approve', { askId }, { source: 'rpc', principal: 'local' })
-    ).toMatchObject({ value: { ok: true } });
+    await approvePlan(askId);
     db.updateGlobalSettings({ neo: { autoDispatch: true } });
     const item = service.askRecords.get(askId)!.doneItems![0];
     service.askRecords.tickItem(
