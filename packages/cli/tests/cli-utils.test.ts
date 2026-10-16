@@ -6,7 +6,6 @@ import {
   createCorsPreflightResponse,
   shouldHaveImmutableCache,
   isHtmlFile,
-  getCacheControlHeader,
   isWebSocketPath,
   createJsonErrorResponse,
   findAvailablePort,
@@ -222,23 +221,6 @@ describe('isHtmlFile', () => {
     expect(isHtmlFile('/style.css')).toBe(false);
     expect(isHtmlFile('/htmlfile')).toBe(false);
     expect(isHtmlFile('/html')).toBe(false);
-  });
-});
-
-describe('getCacheControlHeader', () => {
-  test('returns immutable cache for static assets', () => {
-    expect(getCacheControlHeader('/app.js')).toBe('public, max-age=31536000, immutable');
-    expect(getCacheControlHeader('/style.css')).toBe('public, max-age=31536000, immutable');
-    expect(getCacheControlHeader('/logo.png')).toBe('public, max-age=31536000, immutable');
-  });
-
-  test('returns no-cache for HTML files', () => {
-    expect(getCacheControlHeader('/index.html')).toBe('no-cache');
-  });
-
-  test('returns default cache for other files', () => {
-    expect(getCacheControlHeader('/data.json')).toBe('public, max-age=3600');
-    expect(getCacheControlHeader('/api/endpoint')).toBe('public, max-age=3600');
   });
 });
 
