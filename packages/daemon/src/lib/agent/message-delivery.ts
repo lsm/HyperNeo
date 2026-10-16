@@ -105,8 +105,6 @@ export function flattenDeliveryText(content: DeliveryContent): string | null {
   return texts.length > 0 ? texts.join('\n') : null;
 }
 
-export type ReclaimTerminationDecision = 'terminated' | 'redrive' | 'live';
-
 export function asMessageDeliveryPayload(
   payload: Record<string, unknown>
 ): MessageDeliveryPayload | null {

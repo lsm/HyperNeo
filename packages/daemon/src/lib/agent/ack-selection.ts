@@ -18,8 +18,6 @@ export function selectPersistedAckRow(args: {
   return { action: 'none' };
 }
 
-export type YieldedAckSelection = { action: 'consume'; status: AckSendStatus } | { action: 'none' };
-
 export function isTurnEndAckEligible(args: {
   uuid: string;
   activeMessageId: string | null;
