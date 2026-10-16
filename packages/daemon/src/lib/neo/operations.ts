@@ -104,7 +104,7 @@ import {
   settleNeoProjectQuestions,
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
-import { neoSessionStatus } from './direct-reply-fallback.ts';
+import { neoSessionStatus } from './session-status.ts';
 import {
   createNeoRouter,
   type NeoRouter,
@@ -2439,6 +2439,7 @@ export function createNeoOperations(service: NeoService) {
       isConsultationReturn: (conversationId, publicationId) =>
         service.consultations.returnsPublication(conversationId, publicationId),
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
+      resolveHumanAskOrigin: (input) => service.resolveHumanAskOrigin(input),
       notify: (conversationId) => {
         service.notifyChanged();
         service.notifyPublicationsChanged(conversationId);

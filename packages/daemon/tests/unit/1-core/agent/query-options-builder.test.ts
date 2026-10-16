@@ -1982,7 +1982,7 @@ describe('QueryOptionsBuilder', () => {
           const options = resumedBuilder.addSessionStateOptions(await resumedBuilder.build());
           expect(options.resume).toBe(mockSession.sdkSessionId);
           expect(options.model).toBe('default');
-          expect(options.maxTurns).toBe(Infinity);
+          expect(options.maxTurns).toBe(kind === 'worker' ? Infinity : undefined);
           expect(options.tools).toEqual([...tools]);
           expect(options.allowedTools?.includes('AskUserQuestion')).toBe(kind === 'worker');
           if (kind !== 'worker') {

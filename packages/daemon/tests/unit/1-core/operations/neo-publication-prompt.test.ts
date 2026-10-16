@@ -22,7 +22,11 @@ describe('Neo speaking policy delivery', () => {
   test.each([null, 'research'])(
     'reaches the actual %s coordinator query without a second speaking protocol',
     (projectId) => {
-      const options: Options = { systemPrompt: 'Stored old protocol', model: 'fixture-model' };
+      const options: Options = {
+        systemPrompt: 'Stored old protocol',
+        model: 'fixture-model',
+        maxTurns: 17,
+      };
       restrictNeoQuery(options, projectId);
       const prompt = (options.systemPrompt as { prompt: string }).prompt;
       expect(prompt).toBe(neoPrompt(projectId));
@@ -33,6 +37,7 @@ describe('Neo speaking policy delivery', () => {
       expect(prompt).not.toContain('A wrong fact is never fixed by an edit');
       expect(prompt).not.toContain('neo.publication.correct');
       expect(options.model).toBe('fixture-model');
+      expect(options.maxTurns).toBeUndefined();
       expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools());
     }
   );

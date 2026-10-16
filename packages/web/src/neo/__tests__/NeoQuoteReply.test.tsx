@@ -1,5 +1,5 @@
 import type { MessageHub, SessionState } from '@hyperneo/shared';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +8,7 @@ import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
 import { createNeoIntakeClient, type NeoPendingAsk } from '../neo-intake.ts';
 import type { NeoPublicConversation } from '../public-conversation.ts';
+import { testAskView } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
@@ -146,6 +147,7 @@ afterEach(async () => {
   await store.destroy();
   connectionState.value = originalConnection;
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function open() {
@@ -189,6 +191,89 @@ function deferredSend() {
 }
 
 describe('Neo quote reply through live chat and durable intake', () => {
+  it.each([
+    { desktop: false, draft: '' },
+    { desktop: true, draft: '' },
+    { desktop: false, draft: 'My existing draft' },
+    { desktop: true, draft: 'My existing draft' },
+  ])(
+    'replies to an open question with desktop=$desktop and draft="$draft"',
+    async ({ desktop, draft }) => {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: query === '(min-width: 1120px)' && desktop,
+        addEventListener() {},
+        removeEventListener() {},
+      }));
+      const ask: NeoAsk = {
+        id: 'question-ask',
+        requestKey: 'question-ask',
+        projectId: null,
+        originSessionId: root,
+        originMessageId: 'original-ask',
+        title: 'Choose a repo',
+        ask: 'Investigate the repository',
+        doneWhen: 'Repository selected',
+        doneSource: 'human',
+        status: 'waiting',
+        outcome: null,
+        workIds: [],
+        createdAt: 1,
+        updatedAt: 1,
+        settledAt: null,
+      };
+      const previous = useNeoMock.getMockImplementation()!;
+      useNeoMock.mockImplementation(() => {
+        const model = previous();
+        return {
+          ...model,
+          askDetailFailed: () => false,
+          askDetailEpoch: 0,
+          snapshot: {
+            ...model.snapshot,
+            asks: [ask],
+            askViews: [
+              testAskView(ask, {
+                needsYou: true,
+                humanActions: [
+                  { kind: 'question', itemId: 'i3', question: 'Which repo?', options: [] },
+                ],
+              }),
+            ],
+          },
+        };
+      });
+      sessionId.value = null;
+      render(<NeoLive />);
+      expect(screen.getByText('Reply in chat').closest('button')?.disabled).toBe(true);
+      sessionId.value = root;
+      const input = (await screen.findByRole('textbox')) as HTMLTextAreaElement;
+      type(draft);
+      quote('You');
+      const sheet = screen.queryByRole('button', { name: /^Your work/ });
+      if (sheet) fireEvent.click(sheet);
+      const scroll = desktop ? document.querySelector('.neo-chat-rail')! : screen.getByRole('main');
+      Object.defineProperty(scroll, 'scrollHeight', { value: 1600 });
+      const scrollTo = vi.spyOn(scroll, 'scrollTo');
+      const intoView = vi.spyOn(input, 'scrollIntoView');
+      fireEvent.click(screen.getByRole('button', { name: 'Reply in chat' }));
+      await waitFor(() => expect(document.activeElement).toBe(input));
+      expect(screen.getByRole('region', { name: /^Replying to Neo:/ }).textContent).toContain(
+        'Which repo?'
+      );
+      expect(input.value).toBe(draft);
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1600, behavior: 'smooth' });
+      expect(intoView).toHaveBeenCalledWith({ block: 'nearest' });
+      if (sheet) expect(sheet.getAttribute('aria-expanded')).toBe('false');
+      expect(calls()).toHaveLength(0);
+      if (!draft) type('Use lsm/HyperNeo.');
+      submit();
+      await waitFor(() => expect(calls()).toHaveLength(1));
+      expect(calls()[0][1].input.content).toBe(
+        `Replying to Neo:\n> Which repo?\n\n${draft || 'Use lsm/HyperNeo.'}`
+      );
+    }
+  );
+
   it('selects either author, keeps drafts on replacement and quotes full collapsed replies', async () => {
     const input = await open();
     type('My existing draft');

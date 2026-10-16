@@ -204,7 +204,7 @@ describe('consultation runtime', () => {
       );
       expect(options.resume).toBe(session.sdkSessionId);
       expect(options.model).toBe('default');
-      expect(options.maxTurns).toBe(17);
+      expect(options.maxTurns).toBe(kind === 'worker' ? 17 : undefined);
       if (kind === 'worker') {
         expect(options.systemPrompt).toEqual({
           type: 'custom',
