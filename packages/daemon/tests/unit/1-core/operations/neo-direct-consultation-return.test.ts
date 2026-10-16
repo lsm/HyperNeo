@@ -90,7 +90,7 @@ describe('NeoService direct consultation return', () => {
     const messageId = `neo-consult:${id}:request`;
     prompt(holder, messageId, 'system');
     stampRequest(id);
-    const turn = new NeoHolderTurn(db, holder, { isLive: () => true }, () => {});
+    const turn = new NeoHolderTurn(db, holder, { isLive: () => true });
     turns.push(turn);
     expect(turn.bind(messageId)).toBe(true);
     expect(
@@ -190,38 +190,42 @@ describe('NeoService direct consultation return', () => {
     ).toMatchObject({ value: { accepted: true, created: true } });
   });
 
-  test('any turn may still start work after a consulted holder answered', async () => {
+  test('root reads its full consultation answer on a later live turn', async () => {
     await respond();
-    expect(service.triggerWorkProblem(rootCaller())).toBeNull();
-    const continued = 'neo-turn-limit:human:result-1';
-    prompt(root, continued, 'system');
-    service.inputOrigins.record(
-      { sessionId: root, messageId: continued },
-      ask,
-      0,
-      `human:${ask.messageId}`
-    );
-    expect(service.triggerWorkProblem(rootCaller(continued, false))).toBeNull();
-    const nudgeContinued = 'neo-turn-limit:result-2';
-    prompt(root, nudgeContinued, 'system');
-    service.inputOrigins.record(
-      { sessionId: root, messageId: nudgeContinued },
-      ask,
-      0,
-      `human:${ask.messageId}`
-    );
-    expect(service.triggerWorkProblem(rootCaller(nudgeContinued, false))).toBeNull();
-    prompt(root, 'neo-nudge:later', 'system');
-    service.inputOrigins.record(
-      { sessionId: root, messageId: 'neo-nudge:later' },
-      ask,
-      0,
-      `human:${ask.messageId}`
-    );
-    expect(service.triggerWorkProblem(rootCaller('neo-nudge:later', false))).toBeNull();
+    expect(
+      await invokeOperation(ops(), 'neo.receipt.read', { consultationId: 'check' }, rootCaller())
+    ).toMatchObject({ value: { ok: true, consultation: { id: 'check', answer: draft.fullText } } });
+    expect(
+      await invokeOperation(
+        ops(),
+        'neo.receipt.read',
+        { consultationId: 'check' },
+        {
+          source: 'mcp',
+          sessionId: holder,
+          neoTurn: rootCaller().neoTurn,
+        }
+      )
+    ).toMatchObject({ value: { ok: false } });
+    const dead = { ...rootCaller(), neoTurn: { ...rootCaller().neoTurn!, isLive: () => false } };
+    expect(
+      await invokeOperation(ops(), 'neo.receipt.read', { consultationId: 'check' }, dead)
+    ).toMatchObject({ value: { ok: false } });
+    service.consultations.reserve({
+      id: 'foreign',
+      requestKey: 'foreign',
+      projectId: 'fictional',
+      originSessionId: 'other-root',
+      originMessageId: 'other-ask',
+      sessionId: holder,
+      question: 'Other?',
+    });
+    expect(
+      await invokeOperation(ops(), 'neo.receipt.read', { consultationId: 'foreign' }, rootCaller())
+    ).toMatchObject({ value: { ok: false } });
   });
 
-  test('after the holder’s answer a later turn may post a new fact and edit, but not re-consult that holder', async () => {
+  test('after the holder’s answer a later turn may post a new fact and edit, and read its existing receipt on repeat consultation', async () => {
     await respond();
     await invokeOperation(
       ops(),
@@ -264,14 +268,14 @@ describe('NeoService direct consultation return', () => {
         { projectId: 'fictional', question: 'Again?' },
         later
       )
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('already_consulted') } });
+    ).toMatchObject({ value: { ok: true, consultation: { id: 'check', answer: draft.fullText } } });
     expect(service.publications.list(conversationId)?.map((item) => item.shortText)).toEqual([
       'Reworded.',
       'A later fact.',
     ]);
   });
 
-  test('C: a holder that already returned for this message is not consulted again', async () => {
+  test('a repeat consultation returns its stored receipt instead of starting another', async () => {
     service.consultations.finish('check', 'reported', 'Legacy answer');
     expect(
       await invokeOperation(
@@ -280,7 +284,36 @@ describe('NeoService direct consultation return', () => {
         { projectId: 'fictional', question: 'Again?' },
         rootCaller()
       )
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('already_consulted') } });
+    ).toMatchObject({
+      value: { ok: true, consultation: { id: 'check', answer: 'Legacy answer' } },
+    });
+  });
+
+  test('replays an older consultation beyond the snapshot window without dispatching again', async () => {
+    service.consultations.finish('check', 'reported', 'The original answer');
+    db.getDatabase()
+      .prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?')
+      .run('check');
+    for (let index = 0; index < 21; index++) {
+      const id = `other-${index}`;
+      reserve(id, id);
+      service.consultations.finish(id, 'reported', 'Unrelated answer');
+    }
+    const deliver = vi.spyOn(service, 'deliver');
+    expect(
+      await invokeOperation(
+        ops(),
+        'neo.project.consult',
+        {
+          projectId: 'fictional',
+          question: 'Again?',
+        },
+        rootCaller()
+      )
+    ).toMatchObject({
+      value: { ok: true, consultation: { id: 'check', answer: 'The original answer' } },
+    });
+    expect(deliver).not.toHaveBeenCalled();
   });
 
   test('a waiting human message ends a root turn answering a daemon note', async () => {
@@ -436,7 +469,7 @@ describe('NeoService direct consultation return', () => {
     const messageId = `neo-consult:${id}:request`;
     prompt(holder, messageId, 'system');
     stampRequest(id);
-    const turn = new NeoHolderTurn(db, holder, { isLive: () => true }, () => {});
+    const turn = new NeoHolderTurn(db, holder, { isLive: () => true });
     turns.push(turn);
     expect(turn.bind(messageId)).toBe(true);
     expect(

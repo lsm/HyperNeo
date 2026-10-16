@@ -386,12 +386,6 @@ export function isNeoHumanOwnTurn(messageId: string, trigger: string | null): bo
   return neoHumanTurnOrigin(messageId, trigger, (id) => id === human) !== null;
 }
 
-export function neoTriggerWorkProblem(trigger: string | null, consulted: boolean): string | null {
-  return trigger && consulted
-    ? 'already_consulted: this holder already returned for this message. Use its answer instead of asking again.'
-    : null;
-}
-
 export function shouldRetryNeoTrigger(
   ask: Pick<NeoAsk, 'status'>,
   kind: string,

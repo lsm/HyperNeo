@@ -874,18 +874,13 @@ export class QueryRunner {
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
       if (neoCoordinatorBinding(this.ctx.db, session.id)) {
         if (!this.ctx.createNeoTurnMcpServer) throw new Error('Neo turn isolation unavailable.');
-        holderTurn = new NeoHolderTurn(
-          this.ctx.db,
-          session.id,
-          {
-            isLive: () =>
-              attemptToken.isLive() &&
-              this.ctx.getQueryGeneration() === queryGeneration &&
-              !runAbortController?.signal.aborted &&
-              !this.ctx.isCleaningUp(),
-          },
-          () => runAbortController?.abort()
-        );
+        holderTurn = new NeoHolderTurn(this.ctx.db, session.id, {
+          isLive: () =>
+            attemptToken.isLive() &&
+            this.ctx.getQueryGeneration() === queryGeneration &&
+            !runAbortController?.signal.aborted &&
+            !this.ctx.isCleaningUp(),
+        });
         const isolated = holderTurn;
         const neo = new NeoRepository(this.ctx.db.getDatabase());
         const inputOrigins = new NeoInputOriginRepository(this.ctx.db.getDatabase());

@@ -208,12 +208,12 @@ describe('stampNeoResponseInput', () => {
   test('an obsolete turn retains only its own input, not a newer input or authorization', async () => {
     const db = await createTestDb();
     const attempts = new QueryAttemptRegistry();
-    const first = new NeoHolderTurn(db, 'neo:root', attempts.allocate(), () => {});
+    const first = new NeoHolderTurn(db, 'neo:root', attempts.allocate());
     let second: NeoHolderTurn | undefined;
     try {
       first.bind('ask-A');
       expect(first.identity()?.isLive()).toBe(true);
-      second = new NeoHolderTurn(db, 'neo:root', attempts.allocate(), () => {});
+      second = new NeoHolderTurn(db, 'neo:root', attempts.allocate());
       second.bind('ask-B');
       first.dispose();
       expect(first.identity()?.isLive()).toBe(false);

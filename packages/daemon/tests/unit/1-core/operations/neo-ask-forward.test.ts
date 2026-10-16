@@ -607,7 +607,7 @@ describe('NeoAskForwardRepository', () => {
         'human:ask-1'
       );
       expect(service.ownsHumanMessage(human)).toBe(false);
-      const holder = new NeoHolderTurn(db, pond.sessionId, { isLive: () => true }, () => {});
+      const holder = new NeoHolderTurn(db, pond.sessionId, { isLive: () => true });
       expect(holder.bind('neo-forward:ask-1:0')).toBe(true);
       const forwarded = holder.identity()!;
       expect(forwarded.human).toBe(true);

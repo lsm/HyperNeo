@@ -118,7 +118,7 @@ describe('consultation runtime', () => {
     savePrompt(holder, requestId, neoConsultationRequestContent(item));
     await service.recoverConsultations();
     expect(mailbox(holder)).toEqual([]);
-    const turn = new NeoHolderTurn(db, holder, { isLive: () => true }, () => {});
+    const turn = new NeoHolderTurn(db, holder, { isLive: () => true });
     turns.push(turn);
     expect(turn.bind(requestId)).toBe(true);
     const answer = await invokeOperation(
