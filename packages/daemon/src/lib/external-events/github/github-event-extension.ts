@@ -1079,7 +1079,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     return true;
   }
 
-  async watchSessionRepo(owner: string, repo: string): Promise<void> {
+  async watchSessionRepo(owner: string, repo: string): Promise<string | null> {
     const existing = this.repo.getWatchedRepo(SESSION_EVENT_SCOPE, owner, repo);
     if (!existing?.enabled || !existing.pollingEnabled)
       this.repo.upsertWatchedRepo({
@@ -1091,9 +1091,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         webhookEnabled: false,
       });
     const context = this.context;
-    if (!context || this.getPollIntervalMs() <= 0) return;
-    await this.enablePollingCapability(context);
-    this.ensurePollingActive();
+    if (context && this.getPollIntervalMs() > 0) {
+      await this.enablePollingCapability(context);
+      this.ensurePollingActive();
+    }
+    return this.githubFetch(`/repos/${gitHubRepoPath(owner, repo)}`).then(
+      () => null,
+      (error: unknown) => sessionRepoWatchFailure(owner, repo, error)
+    );
   }
 
   async refreshPollingInterval(): Promise<void> {
@@ -3414,6 +3419,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     return count;
   }
+}
+
+function sessionRepoWatchFailure(owner: string, repo: string, error: unknown): string {
+  const status = error instanceof GitHubApiError ? error.status : null;
+  return status === 401 || status === 403 || status === 404
+    ? `The daemon's GitHub token can't read ${owner}/${repo} (GitHub answered ${status}), so none of its events arrive.`
+    : `The daemon could not start watching ${owner}/${repo}: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 class GitHubApiError extends Error {

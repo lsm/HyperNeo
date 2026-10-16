@@ -245,7 +245,7 @@ function createGoalAutomationSelfNagSchedules(
 }
 
 export interface RPCHandlerDependencies {
-  watchSessionRepo?: (owner: string, repo: string) => Promise<void>;
+  watchSessionRepo?: (owner: string, repo: string) => Promise<string | null>;
   followSessionTopics?: (
     source: () => readonly { topic: string; session?: string | null }[]
   ) => void;

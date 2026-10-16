@@ -67,7 +67,10 @@ describe('watchSessionRepo', () => {
 
   test('watching an already watched repo turns polling back on if it was switched off', async () => {
     const db = freshDb();
-    const created = new GitHubEventExtension(db, 'token', { getPollIntervalMs: () => 60_000 });
+    const created = new GitHubEventExtension(db, 'token', {
+      getPollIntervalMs: () => 60_000,
+      fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
+    });
     extension = created;
     const config = new ExternalEventExtensionConfigStore(db);
     await created.start({
@@ -84,10 +87,32 @@ describe('watchSessionRepo', () => {
 
   test('records the watch before the extension has started, so start polls it', async () => {
     const db = freshDb();
-    extension = new GitHubEventExtension(db, 'token', { getPollIntervalMs: () => 0 });
+    extension = new GitHubEventExtension(db, 'token', {
+      getPollIntervalMs: () => 0,
+      fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
+    });
     await extension.watchSessionRepo('acme', 'widgets');
     expect(extension.repo.listPollingRepos(SESSION_EVENT_SCOPE).map((row) => row.repo)).toEqual([
       'widgets',
+    ]);
+  });
+
+  test('answers that the token cannot read a repo GitHub hides from it, and keeps the watch', async () => {
+    const db = freshDb();
+    const urls: string[] = [];
+    extension = new GitHubEventExtension(db, 'token', {
+      getPollIntervalMs: () => 0,
+      fetchImpl: (async (url: string) => {
+        urls.push(url);
+        return new Response('{"message":"Not Found"}', { status: 404 });
+      }) as unknown as typeof fetch,
+    });
+    expect(await extension.watchSessionRepo('acme', 'private')).toBe(
+      "The daemon's GitHub token can't read acme/private (GitHub answered 404), so none of its events arrive."
+    );
+    expect(urls).toEqual(['https://api.github.com/repos/acme/private']);
+    expect(extension.repo.listPollingRepos(SESSION_EVENT_SCOPE).map((row) => row.repo)).toEqual([
+      'private',
     ]);
   });
 });
@@ -115,7 +140,10 @@ describe('the first poll of a session watch', () => {
     const db = freshDb();
     const topics: string[] = [];
     const pullsPages: string[] = [];
-    const github = new GitHubEventExtension(db, 'token', { getPollIntervalMs: () => 0 });
+    const github = new GitHubEventExtension(db, 'token', {
+      getPollIntervalMs: () => 0,
+      fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
+    });
     extension = github;
     const config = new ExternalEventExtensionConfigStore(db);
     await config.setGlobalConfig('github', {
@@ -173,7 +201,10 @@ describe('the first poll of a session watch', () => {
     const db = freshDb();
     const topics: string[] = [];
     const pullsPages: string[] = [];
-    const github = new GitHubEventExtension(db, 'token', { getPollIntervalMs: () => 0 });
+    const github = new GitHubEventExtension(db, 'token', {
+      getPollIntervalMs: () => 0,
+      fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
+    });
     extension = github;
     const config = new ExternalEventExtensionConfigStore(db);
     await config.setGlobalConfig('github', {
