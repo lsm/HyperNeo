@@ -13,6 +13,71 @@ import {
   hyperneoSessionControl,
 } from '../../../../src/lib/rpc-handlers/family-operations/drivers.ts';
 
+describe('hyperneoSessionControl interrupt', () => {
+  test.each(['idle', 'interrupted', 'processing', 'missing', 'replaced'])(
+    'checks the same live runtime after interrupt acknowledgement (%s)',
+    async (after) => {
+      let state = 'processing';
+      const runtime = { getProcessingState: () => ({ status: state }) };
+      let current: typeof runtime | undefined = runtime;
+      const controls = hyperneoSessionControl({
+        deps: {
+          sessionManager: { getCachedSession: () => current },
+          internalEventBus: {
+            publish: async () => {
+              state = after;
+              if (after === 'missing') current = undefined;
+              if (after === 'replaced')
+                current = { getProcessingState: () => ({ status: 'idle' }) };
+            },
+          },
+        },
+      } as never);
+      expect(await controls.interrupt('session')).toBe(after === 'idle' || after === 'interrupted');
+    }
+  );
+
+  test('waits for the handler and propagates its failure', async () => {
+    let fail: (error: Error) => void = () => {};
+    const handling = new Promise<void>((_resolve, reject) => {
+      fail = reject;
+    });
+    const controls = hyperneoSessionControl({
+      deps: {
+        sessionManager: {
+          getCachedSession: () => ({ getProcessingState: () => ({ status: 'processing' }) }),
+        },
+        internalEventBus: { publish: () => handling },
+      },
+    } as never);
+    let settled = false;
+    const result = Promise.resolve(controls.interrupt('session')).finally(() => {
+      settled = true;
+    });
+    const rejected = expect(result).rejects.toThrow('interrupt refused');
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    fail(new Error('interrupt refused'));
+    await rejected;
+  });
+
+  test('does not restore an uncached runtime', async () => {
+    const published: string[] = [];
+    const controls = hyperneoSessionControl({
+      deps: {
+        sessionManager: { getCachedSession: () => undefined },
+        internalEventBus: {
+          publish: async () => {
+            published.push('interrupt');
+          },
+        },
+      },
+    } as never);
+    expect(await controls.interrupt('session')).toBe(false);
+    expect(published).toEqual([]);
+  });
+});
+
 describe('hyperneoSessionControl archive', () => {
   test.each(['idle', 'busy', 'clones', 'late_refusal', 'archived'])(
     'uses the preserving lifecycle only for an admitted idle session (%s)',

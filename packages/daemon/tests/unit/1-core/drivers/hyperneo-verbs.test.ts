@@ -614,4 +614,34 @@ describe('hyperneo adapter start and stop', () => {
     });
     expect(events).toEqual(['interrupt busy']);
   });
+
+  test('stop waits for an asynchronous interruption result', async () => {
+    let finish: (stopped: boolean) => void = () => {};
+    const interrupted = new Promise<boolean>((resolve) => {
+      finish = resolve;
+    });
+    let settled = false;
+    const stopping = adapter({ interrupt: () => interrupted }).stop!(
+      { adapter: 'hyperneo', id: 'busy' },
+      from
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish(false);
+    expect(await stopping).toEqual({ ok: true, value: { stopped: false } });
+  });
+
+  test('stop preserves interruption errors instead of reporting success', async () => {
+    const driver = adapter({
+      interrupt: async () => {
+        throw new Error('SDK interrupt failed');
+      },
+    });
+    await expect(driver.stop!({ adapter: 'hyperneo', id: 'busy' }, from)).rejects.toThrow(
+      'SDK interrupt failed'
+    );
+  });
 });

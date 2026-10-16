@@ -81,7 +81,7 @@ export interface HyperneoSessionControl {
   model(sessionId: string): string | null;
   chooseWorktree(sessionId: string): Promise<void>;
   announce(sessionId: string): void;
-  interrupt(sessionId: string): boolean;
+  interrupt(sessionId: string): boolean | Promise<boolean>;
 }
 
 export interface HyperneoAdapterDeps {
@@ -589,13 +589,13 @@ export async function openHyperneoWork(
   };
 }
 
-export function stopHyperneoWork(
+export async function stopHyperneoWork(
   row: HyperneoSessionRow,
   deps: HyperneoAdapterDeps
-): Result<{ stopped: boolean }> {
+): Promise<Result<{ stopped: boolean }>> {
   return {
     ok: true,
-    value: { stopped: hyperneoSessionBusy(row) && deps.sessions.interrupt(row.id) },
+    value: { stopped: hyperneoSessionBusy(row) && (await deps.sessions.interrupt(row.id)) },
   };
 }
 
@@ -617,7 +617,10 @@ const runHyperneoStop = (superpipe({})('hyperneo-stop-work') as PipelineAPI)
   .input(['ref', 'deps'])
   .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
   .pipe(stopHyperneoWork, ['outcome', 'deps'], 'outcome')
-  .end('outcome') as (ref: WorkRef, deps: HyperneoAdapterDeps) => Result<{ stopped: boolean }>;
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  deps: HyperneoAdapterDeps
+) => Promise<Result<{ stopped: boolean }>>;
 
 export function withHyperneoInputEvidence(
   outcome: Result<WorkDetail>,
