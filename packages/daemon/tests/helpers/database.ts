@@ -28,8 +28,6 @@ export async function createTestInternalEventBus(
   return createDaemonInternalEventBus();
 }
 
-export const createTestDaemonHub = createTestInternalEventBus;
-
 export function createTestSession(id: string): Session {
   return {
     id,

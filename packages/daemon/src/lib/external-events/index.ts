@@ -1,11 +1,5 @@
-export {
-  ExternalEventExtensionConfigStore,
-  ensureExternalEventExtensionConfigTables,
-} from './extension-config-store.ts';
-export {
-  ExternalEventExtensionManager,
-  type RegisteredRoute,
-} from './extension-manager.ts';
+export { ExternalEventExtensionConfigStore } from './extension-config-store.ts';
+export { type RegisteredRoute } from './extension-manager.ts';
 export {
   type ExternalEventPublishedPayload,
   type ExternalEventPublisher,
@@ -14,18 +8,9 @@ export {
   type PublishResult,
   routeExternalEventPublisher,
 } from './external-event-service.ts';
-export {
-  ExternalEventStore,
-  ExternalEventValidationError,
-} from './external-event-store.ts';
+export { ExternalEventStore } from './external-event-store.ts';
 export { SessionExternalEventStore } from './session-external-event-store.ts';
-export { isReceivingStatus, TopicTrie } from './topic-trie.ts';
-export {
-  KNOWN_SOURCES,
-  type ValidationResult,
-  validateGlobPattern,
-  validateSource,
-} from './topic-validator.ts';
+export { type ValidationResult } from './topic-validator.ts';
 export {
   type DeliveryFailure,
   type DeliveryTarget,
@@ -43,6 +28,4 @@ export {
   type RpcExternalEventExtension,
   type SpaceExternalEventSourceConfig,
   type StoreResult,
-  TERMINAL_DELIVERY_STATES,
-  TERMINAL_EVENT_STATES,
 } from './types.ts';

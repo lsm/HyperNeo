@@ -3,5 +3,3 @@ export type { ValidationResult } from './app-mcp-lifecycle-manager.ts';
 export { seedDefaultMcpEntries } from './seed-defaults.ts';
 export { McpImportService } from './mcp-import-service.ts';
 export type { ImportResult } from './mcp-import-service.ts';
-export { resolveWorkspaceMcpServerName } from './mcp-server-namespace.ts';
-export { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
