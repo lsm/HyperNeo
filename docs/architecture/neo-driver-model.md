@@ -234,8 +234,18 @@ Constraints:
 
 - `claude --desktop` refuses to run without a terminal, so the adapter launches it under a pseudo-terminal (`script -q /dev/null claude --desktop --resume <uuid>` works).
 - Never resume a session headlessly while the app runs it: the two writers could fork the conversation. Use the relay whenever `claude agents --json` lists the session.
-- A relayed message arrives as a message from another session, which the receiving Claude treats as a teammate's request. Sessions in bypass-permissions mode hold such messages and the app cannot show the approval dialog, so they expire after five minutes. Sessions Neo drives run in auto or default mode.
+- A relayed message arrives as a message from another session, which the receiving Claude treats as a teammate's request. The relay uses the app's recorded permission class, including `bypassPermissions` when the app reports it; the CLI bootstrap's mode does not establish the desktop session's mode.
 - The first turn runs headless before the session reaches the app. Keep it short, open the session in the app, then send the real task through the relay so the work happens where the user can watch it.
+
+### Creation permission defaults
+
+New work started through HyperNeo requests Full Access through the supported permission parameters:
+
+- Codex: `thread/start` sends `approvalPolicy: "never"` and `sandbox: "danger-full-access"`. The opening turn request carries the public `turn/start` fields `approvalPolicy: "never"` and `sandboxPolicy: {type: "dangerFullAccess"}` so desktop handoff does not lose the requested permissions. The pre-existing undocumented desktop ownership/IPC handoff is unchanged; no private permission setter, session database edit or global configuration change is introduced. A server policy rejection is returned without a weaker-permission retry.
+- Claude Code CLI: the opening `claude -p --session-id …` invocation passes `--permission-mode bypassPermissions`. If the new session is not yet running in Desktop, the initial task's headless `--resume` invocation passes the same flag. Sends to pre-existing sessions keep their existing behavior.
+- Claude Code Desktop: `claude --desktop --resume` accepts no permission flag. The app starts its own process and uses its configured permission mode; the CLI bootstrap does not prove Desktop is in bypass mode. The `claude-code` discovery-only adapter has no creation API. To default new local Desktop sessions through supported settings, enable Bypass permissions where the app/account permits it and set `permissions.defaultMode` to `"bypassPermissions"` in the user's Claude settings. A mode previously selected for a folder takes precedence, so select Bypass permissions in that folder as needed. Organization restrictions still apply. HyperNeo does not edit private app records or silently rewrite the user's settings.
+
+Interface evidence (2026-10-16): both `codex-cli 0.160.1` and the desktop-bundled `codex-cli 0.162.0-alpha.17.2` public `codex app-server generate-json-schema` outputs include both permission fields and the above sandbox enum values; `claude 2.1.295 --help` exposes `--permission-mode`. See the official [Codex App Server protocol](https://learn.chatgpt.com/docs/app-server), [Codex Full Access definition](https://learn.chatgpt.com/docs/sandboxing), [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), and [Desktop permission settings](https://code.claude.com/docs/en/desktop#choose-a-permission-mode). Unit tests exercise the real adapter creation functions with recorded transport/process arguments; they do not establish that a live Desktop application accepted or displayed the requested mode.
 
 ### Status mapping
 
