@@ -90,25 +90,12 @@ export const NeoCardViewSchema = z.object({
   retryable: z.boolean(),
 } satisfies ZodShape<NeoCardView>);
 
-const HumanAction = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('start'), workId: z.string() }),
-  z.object({
-    kind: z.literal('approve'),
-    reason: z.enum(['expired', 'stalled']),
-    workIds: z.array(z.string()).optional(),
-  }),
-  z.object({
-    kind: z.literal('answer'),
-    itemId: z.string(),
-    step: z.string().nullable(),
-    question: z.string(),
-    options: z.array(z.string()),
-  }),
-  z.object({ kind: z.literal('confirm'), itemId: z.string(), step: z.string() }),
-  z.object({ kind: z.literal('retry'), workId: z.string() }),
-  z.object({ kind: z.literal('close'), workId: z.string() }),
-  z.object({ kind: z.literal('talk'), workId: z.string(), what: z.string() }),
-]);
+const HumanAction = z.object({
+  kind: z.literal('question'),
+  itemId: z.string(),
+  question: z.string(),
+  options: z.array(z.string()),
+});
 
 export const NeoAskViewSchema = z.object({
   askId: z.string(),
@@ -134,17 +121,6 @@ export const NeoAskViewSchema = z.object({
         open: OpenTarget,
       } satisfies ZodShape<NeoAskSessionView>)
     )
-    .optional(),
-  answer: z
-    .object({
-      itemId: z.string(),
-      question: z.string(),
-      label: z.literal('Answer in chat'),
-      options: z.array(z.string()),
-      action: z.string().optional(),
-      kind: z.enum(['decision', 'action', 'approval', 'wait']).optional(),
-    })
-    .nullable()
     .optional(),
   humanActions: z.array(HumanAction).optional(),
 } satisfies ZodShape<NeoAskView>);

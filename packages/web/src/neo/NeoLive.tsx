@@ -726,16 +726,9 @@ export function NeoLive() {
                     cards={cards}
                     disabled={!connected || !!neo.busyWork}
                     onSettle={(outcome) => void neo.settleAsk(ask.ask.id, outcome)}
-                    onDone={(itemId) => void neo.tickAskItem(ask.ask.id, itemId)}
                     onAnswer={(itemId, choice) =>
                       void neo.answerAskItem(ask.ask.id, itemId, choice)
                     }
-                    onAnswerInChat={(question) => {
-                      writeDraft(
-                        [draft?.trim(), `Re "${question}": `].filter(Boolean).join('\n\n')
-                      );
-                      shell.current?.querySelector('textarea')?.focus();
-                    }}
                     onExpand={
                       isNeoSummarized(ask.ask)
                         ? () => void neo.loadAskDetail(ask.ask.id)
@@ -743,8 +736,6 @@ export function NeoLive() {
                     }
                     detailFailed={neo.askDetailFailed(ask.ask.id)}
                     detailEpoch={neo.askDetailEpoch}
-                    onApprove={() => void neo.approveAsk(ask.ask.id)}
-                    onRetry={(id) => void neo.act(id, 'retry')}
                     onOpen={(id) => openScene({ kind: 'work', id })}
                     onOpenSession={(sessionId, title) => setChat({ sessionId, title })}
                     renderCard={(scene) => renderScene(scene, ask.group)}
