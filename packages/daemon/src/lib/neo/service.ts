@@ -792,7 +792,9 @@ export class NeoService {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
       this.scheduleTriggerSweep();
-      this.alignHolderTitles();
+      void Promise.resolve()
+        .then(() => this.alignHolderTitles())
+        .catch((error) => this.log.warn(`Neo holder titles not aligned: ${error}`));
     };
     this.notifyPublicationsChanged = (conversationId) => {
       hub.event('neo.publications.changed', { conversationId });
@@ -1415,7 +1417,7 @@ export class NeoService {
     }
   }
 
-  private alignHolderTitles(): void {
+  private async alignHolderTitles(): Promise<void> {
     if (!this.repo) return;
     const fixes = planNeoHolderTitles(
       this.repo.listProjectTitles().flatMap((project) => {
@@ -1431,10 +1433,7 @@ export class NeoService {
           : [];
       })
     );
-    for (const fix of fixes)
-      void this.sessions
-        .updateSession(fix.sessionId, { title: fix.title })
-        .catch((error) => this.log.warn(`Neo holder ${fix.sessionId} keeps its title: ${error}`));
+    for (const fix of fixes) await this.sessions.updateSession(fix.sessionId, { title: fix.title });
   }
 
   private async alignModelPreference(sessionId: string): Promise<void> {
