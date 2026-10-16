@@ -69,7 +69,7 @@ function StepRow({
         <span class="line-clamp-2 break-words" title={title}>
           {title}
         </span>
-        <span class="block truncate text-xs text-fg-faint">{scene.label}</span>
+        <span class="block break-words text-xs text-fg-faint">{scene.label}</span>
       </span>
       {control}
     </div>

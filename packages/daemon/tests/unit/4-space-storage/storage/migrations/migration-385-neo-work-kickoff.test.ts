@@ -58,6 +58,26 @@ describe('runMigration385', () => {
 });
 
 describe('NeoRepository.workStartedAt', () => {
+  test('uses legacy driver admission or the exact native handoff receipt, never proposal time', () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec(`CREATE TABLE neo_work(id TEXT, started_at INTEGER, session_id TEXT);
+        CREATE TABLE neo_work_driver_targets(work_id TEXT, claimed_at INTEGER, started_at INTEGER);
+        CREATE TABLE sdk_messages(session_id TEXT, sdk_message TEXT, timestamp TEXT);
+        INSERT INTO neo_work VALUES ('driver', NULL, NULL), ('native', NULL, 'worker'), ('unknown', NULL, NULL);
+        INSERT INTO neo_work_driver_targets VALUES ('driver', 2000, 1000);
+        INSERT INTO sdk_messages VALUES ('worker', '{"uuid":"other"}', '2026-10-16T12:00:00.000Z'),
+          ('worker', '{"uuid":"native"}', '2026-10-16T12:00:01.123Z')`);
+      const repo = new NeoRepository(db);
+      expect(repo.workStartedAt('driver')).toBe(2000);
+      expect(repo.workStartedAt('native')).toBe(Date.parse('2026-10-16T12:00:01.123Z'));
+      expect(repo.workStartedAt('unknown')).toBeNull();
+      expect(repo.workStartedAt('absent')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   test('records the first successful kickoff, preserving it through reports and retries', async () => {
     const db = await createTestDb();
     try {
