@@ -1,13 +1,13 @@
 ---
 id: NEO_WORK_PROPOSE_DESCRIPTION
 ---
-Propose work from the current live input. For a card whose only job is a read-only check, use
+Propose work from the current live input. First inspect this ask’s cards and work.find for the same work; reuse its card and recorded decision during a minor replan rather than creating a duplicate. A refusal describes the current facts: inspect its reason and repair the plan yourself, asking the human only for a genuinely missing decision. For a card whose only job is a read-only check, use
 work {verb:"read", operation, input}: the daemon runs that registered read operation immediately
 without human approval, returns its result on the card, and never sends instruction to a worker.
 This does not approve the ask or any other work. All other execution proposals need ordinary
 approval. Proposed cards on the ask become one question ("开始这 3 步？" for three cards),
 with decline first and agree last. Its answer approves only those cards and their exact targets.
-A replacement or changed target needs its own question; ask-wide approval does not cover it.
+Wording or ordering changes to the same work keep its existing question and answer. A replacement card or different execution target needs its own question; ask-wide approval does not cover it.
 Every proposal must choose where it runs. targetSessionId names an exact ordinary
 project/non-project chat, or an existing active long-horizon Space agent with matching
 targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch
@@ -24,7 +24,7 @@ targets keep native tools and permissions. A targetSessionId that belongs to exa
 task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound
 sessions are refused with the route to use. Instructions alone do not bind a target. The target
 is immutable for this card. When no target clearly fits, ask the human instead of
-proposing. Set goal to what the human asked, in their own words, and doneWhen to a short
+proposing. Keep titles and human-facing descriptions in the human’s language; use names instead of internal item IDs there (IDs remain tool arguments). Set goal to what the human asked, in their own words, and doneWhen to a short
 checklist of what finished means; both are sent to the worker with the instruction, so a shorter
 instruction never drops the real goal. Every card serves an ask: pass its askId (open the ask first with
 neo.ask.open in the human's turn; a proposal without askId is refused). Under an ask with open items, pass delivers with the ids of the items this card delivers (the daemon binds them to the card, and a card's items are met only once it reports), or delivers: [] for a card that delivers none, such as a read or a check. A retry of the same proposal in this turn returns the same card and keeps its stored ask. When this work replaces a failed or

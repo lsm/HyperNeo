@@ -227,7 +227,7 @@ describe('Neo world briefing delivery', () => {
       expect(prompt).toContain(
         'Do not use other operations to bypass the existing human approval for starting or changing execution'
       );
-      expect(prompt).toContain('the Start work button is the approval to execute');
+      expect(prompt).toContain('the ask’s start question is the decision control for execution');
       expect(prompt).not.toContain(
         'Coordinate existing execution resources through their discovered operations when appropriate'
       );
