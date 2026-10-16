@@ -74,7 +74,7 @@ Consultation saves now use migration 280’s grant: the assigned holder, live re
 
 Single-user local use. Execution can reuse an exact existing ordinary chat or create a self-contained scratch session; consultations reuse the project coordinator. No automatic import/linking of existing Spaces or task histories, project merge/archive, scheduling or proactive reminders. Consultation routing and interpretation are model-directed and may still be wrong; inspect the saved context and correct it conversationally. This UI shows the 50 newest work receipts plus up to 50 older proposed or running receipts; consultations are limited to 20. Full history remains in HyperNeo, but older active cards beyond this display cap are not shown. Holder review uses the same consultation lifecycle and does not automatically retry a settled failed review. This is bounded Neo↔holder coordination, not continuous autonomous project management.
 
-The old `NeoPreview` component remains a test fixture, not the live entry. No sample projects are seeded in the live app.
+No sample projects are seeded in the live app.
 
 Neo's session has no selected workspace. Its SDK process uses an internal, per-session runtime directory instead of inheriting the daemon's launch folder or worktree. The coordinator prompt treats that directory as plumbing, answers at conversational length by default, and asks what a vague request such as “brief” refers to when the snapshot has no clear subject. Delegated execution sessions retain their own separate workspace rules.
 
