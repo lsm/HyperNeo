@@ -80,6 +80,17 @@ export interface NeoWorkspaceProject {
   title: string;
 }
 
+export function neoProjectFolders(
+  aliases: readonly string[]
+): { machine: string; folder: string }[] {
+  return aliases.flatMap((alias) => {
+    const at = alias.indexOf('\u0000');
+    return alias.startsWith('folder:') && at > 0
+      ? [{ machine: alias.slice('folder:'.length, at), folder: alias.slice(at + 1) }]
+      : [];
+  });
+}
+
 export function neoRepositoryIdentity(remote: string | undefined): string | null {
   const path = remote
     ?.trim()

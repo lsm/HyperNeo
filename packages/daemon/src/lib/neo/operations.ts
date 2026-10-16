@@ -1,7 +1,11 @@
 import { neoTurnRequestKey } from './request-key.ts';
 import { NeoWorkBlockerSchema } from './work-blocker.ts';
 import { hostname } from 'node:os';
-import { backfillNeoRepositoryIdentities, isNeoPlumbingFolder } from './project-mirror.ts';
+import {
+  backfillNeoRepositoryIdentities,
+  isNeoPlumbingFolder,
+  neoProjectFolders,
+} from './project-mirror.ts';
 import { neoFolderPath } from './folder.ts';
 import { isTempCwd } from '../drivers/claude-feed.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
@@ -217,6 +221,12 @@ const Project = z.object({
   epicUrl: z.string().nullable().optional(),
   workspaceAliases: z.array(z.string()).optional(),
   repository: z.string().optional(),
+  folders: z
+    .array(z.object({ machine: z.string(), folder: z.string() }))
+    .optional()
+    .describe(
+      "The project's own folders: start and propose its work in one of these, not in a place found by text search."
+    ),
   revision: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -1022,6 +1032,7 @@ export function neoReorganizeRuntime(
       return { merged: [...backfilled, ...merged, ...settled.merged], asked: settled.asked };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
+    retiredHolders: () => service.repo.retiredHolders(),
     machine: () => hostname(),
     cleanup: createNeoProjectCleanupApply(service),
     mirroredAliases: async (folders) => {
@@ -1171,9 +1182,10 @@ export function createNeoOperations(service: NeoService) {
     const detailed = caller.source === 'rpc' || binding?.kind === 'project';
     const cardDetail = detailed || !!focus;
     const compact = caller.source !== 'rpc' && !focus;
-    const projects = service.repo
-      .listProjects()
-      .filter((item) => (focus ? item.id === focus.projectId : !scope || item.id === scope));
+    const all = service.repo.listProjects();
+    const projects = all.filter((item) =>
+      focus ? item.id === focus.projectId : !scope || item.id === scope
+    );
     const repositories = service.repo.repositories();
     const work = focus
       ? focus.workIds.flatMap((id) => service.repo.getWork(id) ?? [])
@@ -1248,12 +1260,17 @@ export function createNeoOperations(service: NeoService) {
               ) ?? ''
             )
           : undefined,
-      projects: projects.map((item) => ({
-        ...item,
-        ...(item.epicUrl ? { workspaceAliases: service.repo.workspaceAliases(item.id) } : {}),
-        ...(repositories.get(item.id) ? { repository: repositories.get(item.id) } : {}),
-        context: detailed ? item.context : '',
-      })),
+      projects: projects.map((item) => {
+        const aliases = service.repo.workspaceAliases(item.id, all);
+        const folders = neoProjectFolders(aliases);
+        return {
+          ...item,
+          ...(item.epicUrl ? { workspaceAliases: aliases } : {}),
+          ...(repositories.get(item.id) ? { repository: repositories.get(item.id) } : {}),
+          ...(folders.length ? { folders } : {}),
+          context: detailed ? item.context : '',
+        };
+      }),
       consultations: consultations.map((item) =>
         detailed ? item : { ...item, question: '', answer: null }
       ),
