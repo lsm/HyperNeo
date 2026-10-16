@@ -10,8 +10,13 @@ import {
   neoAskItems,
   neoAskOpenTarget,
 } from '../neo-asks.ts';
-import type { NeoProjectBoard } from '../neo-project-board.ts';
-import { classifyNeoScenes, groupNeoScenes, type NeoScene } from '../neo-scenes.ts';
+import { type NeoProjectBoard, projectNeoProjectBoard } from '../neo-project-board.ts';
+import {
+  classifyNeoScenes,
+  groupNeoScenes,
+  projectNeoScenes,
+  type NeoScene,
+} from '../neo-scenes.ts';
 import { testAskView, testCard } from './neo-test-views.ts';
 
 afterEach(cleanup);
@@ -79,6 +84,56 @@ const describeAsk = (value: NeoAsk, owned: readonly NeoScene[], extra: Partial<N
   describeNeoAskFromView(value, owned, testAskView(value, extra));
 
 describe('groupNeoAsks', () => {
+  it.each([false, true, undefined])(
+    'keeps daemon-visible cancelled work openable (%j)',
+    (hidden) => {
+      const receipt = work('external', 'cancelled');
+      if (receipt.kind !== 'work') throw new Error('Expected work');
+      const cancelled = { ...receipt, sessionId: null };
+      const card = testCard(cancelled, {
+        hidden: hidden ?? true,
+        label: 'Cancelled · stop unsupported',
+        controlFailure: {
+          operation: 'stop',
+          reason: 'unsupported',
+          detail: 'Desktop owns it.',
+          at: 2,
+        },
+        open: {
+          link: 'claude://claude.ai/epitaxy/local_one',
+          remoteLink: null,
+          sessionId: null,
+          daemon: null,
+        },
+      });
+      const cards = new Map(hidden === undefined ? [] : [[cancelled.id, card]]);
+      const board = projectNeoProjectBoard(
+        {
+          ok: true,
+          sessionId: 'root',
+          projects: [],
+          work: [cancelled],
+          consultations: [],
+          cards: [],
+          askViews: [],
+        },
+        null,
+        null
+      );
+      const value = ask('external-ask', 'open', [cancelled.id]);
+      const projected = projectNeoScenes(board, new Map(), new Map(), cards);
+      const grouped = groupNeoAsks([value], projected, [testAskView(value)], cards);
+      const view = grouped.asks.running[0];
+      expect(view.scenes).toHaveLength(hidden === false ? 1 : 0);
+      if (hidden === false) {
+        expect(view.scenes[0].label).toBe('Cancelled · stop unsupported');
+        expect(neoAskOpenTarget(view, cards)?.link).toBe(card.open.link);
+      } else {
+        expect(neoAskOpenTarget(view, cards)).toBeNull();
+      }
+    }
+  );
+
   it('nests each ask’s cards under it and leaves the rest where they were', () => {
     const asks = [
       ask('a', 'open', ['a1', 'a2']),

@@ -155,18 +155,21 @@ export function selectNeoScene(
   return { reason: 'unknown_scene' };
 }
 
-export function hideNeoInternalReceipts(receipts: readonly NeoBoardReceipt[]): NeoBoardReceipt[] {
+export function hideNeoInternalReceipts(
+  receipts: readonly NeoBoardReceipt[],
+  cards: NeoSceneCards
+): NeoBoardReceipt[] {
   return receipts.filter(
     (receipt) =>
       receipt.kind !== 'consultation' &&
-      !(receipt.kind === 'work' && receipt.status === 'cancelled' && !receipt.sessionId)
+      !(cards.get(receipt.id)?.hidden ?? (receipt.status === 'cancelled' && !receipt.sessionId))
   );
 }
 
 const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
   .input(['board', 'questions', 'unavailableSessions', 'cards'])
   .pipe(admitNeoSceneReceipts, 'board', 'result:scenes')
-  .pipe(hideNeoInternalReceipts, 'scenes', 'visible')
+  .pipe(hideNeoInternalReceipts, ['scenes', 'cards'], 'visible')
   .pipe(classifyNeoScenes, 'visible', 'classified')
   .pipe(describeNeoCardScenes, ['classified', 'cards'], 'carded')
   .pipe(promoteNeoQuestionScenes, ['carded', 'questions'], 'promoted')
