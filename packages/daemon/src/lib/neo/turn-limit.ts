@@ -33,8 +33,8 @@ export function neoTurnLimitNote(
   return [
     'Your last turn hit its turn limit before it finished.',
     done.length
-      ? `It already created these, and they stay as they are:\n${done.join('\n')}\nContinue them: edit or start them, and never open or propose them again.`
+      ? `It already created these, and they stay as they are:\n${done.join('\n')}`
       : 'It created no asks or cards.',
-    'Read neo.snapshot and finish only what is left of that turn. Anything the human has already read is listed after this; do not tell them it again.',
+    'What the human has read since then follows as its own note when there is any.',
   ].join('\n');
 }

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { neoTurnLimitNote, planNeoTurnLimitNote } from '../../../../src/lib/neo/turn-limit.ts';
 
 const result = (uuid: string, subtype: string, timestamp: string) => ({ uuid, subtype, timestamp });
@@ -29,13 +30,15 @@ describe('planNeoTurnLimitNote', () => {
 });
 
 describe('neoTurnLimitNote', () => {
-  test('lists what the cut-off turn created so it is continued, not reopened', () => {
+  test('lists what the cut-off turn created, and holds whether or not a publication view follows', () => {
     const note = neoTurnLimitNote(
       [{ id: 'da9506d1', title: 'Fix settle-path', status: 'open' }],
       [{ id: 'w1', title: 'Guard it', status: 'proposed' }]
     );
     expect(note).toContain('- ask da9506d1 "Fix settle-path" (open)');
     expect(note).toContain('- card w1 "Guard it" (proposed)');
-    expect(note).toContain('never open or propose them again.');
+    expect(note).toContain('follows as its own note when there is any');
+    expect(note).not.toMatch(/listed after this|never open/);
+    expect(neoPrompt(null)).toContain('never open or propose them again');
   });
 });

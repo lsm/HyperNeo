@@ -24,8 +24,8 @@ export function neoAskAnswerNote(
     `The human answered ${met ? 'a decision' : 'how a step went'} on ask ${ask.id} ("${oneLine(ask.title)}"), item ${item.id}: "${oneLine(item.text)}".`,
     `${NEO_ASK_ANSWER_LINE}${oneLine(choice)}`,
     met
-      ? 'The daemon ticked that item met with their answer. Act on it now: continue or propose the work it calls for under this ask, or settle the ask if nothing is left. Tell the human only what they need to know.'
-      : 'The item stays open: it did not work, or the result is not what they wanted. Find out why and fix it under this ask. Tell the human only what they need to know.',
+      ? 'The daemon ticked that item met with their answer.'
+      : 'The item stays open: it did not work, or the result is not what they wanted.',
   ].join('\n');
 }
 
@@ -150,7 +150,6 @@ export function neoNeedsYouClearedNote(
       (entry) =>
         `- ${entry.id} "${items.find((item) => item.id === entry.id)?.text ?? ''}": ${entry.why}.`
     ),
-    'Check each one now: tick it met if it is done, ask the human with neo.ask.question if they still have to decide it, keep the work moving if not, or remove it if it no longer applies.',
   ].join('\n');
 }
 
@@ -186,8 +185,7 @@ export function neoAskTickedNote(
   return [
     `The human marked item ${item.id} met on ask ${ask.id} ("${ask.title}"): "${item.text}".`,
     open.length
-      ? `Still open: ${open.map((entry) => `${entry.id} "${entry.text}" (${entry.state})`).join('; ')}. Continue the work this unblocks now.`
-      : 'Every item is met: settle the ask achieved with neo.ask.settle.',
-    'Tell the human only what they need to know.',
+      ? `Still open: ${open.map((entry) => `${entry.id} "${entry.text}" (${entry.state})`).join('; ')}.`
+      : 'Every item is met.',
   ].join('\n');
 }
