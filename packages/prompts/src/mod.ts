@@ -70,6 +70,7 @@ import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text'
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
+import mdneoAskProgress from './neo/ask-progress.md' with { type: 'text' };
 import mdneoAskIdle from './neo/ask-idle.md' with { type: 'text' };
 import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
 import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
@@ -370,6 +371,7 @@ const registry: Record<string, string> = {
   'neo/waiting-reminder.md': mdneoWaitingReminder,
   'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-evidence.md': mdneoAskEvidence,
+  'neo/ask-progress.md': mdneoAskProgress,
   'neo/ask-idle.md': mdneoAskIdle,
   'neo/ask-moved.md': mdneoAskMoved,
   'neo/ask-stalled.md': mdneoAskStalled,
@@ -561,6 +563,7 @@ export const {
   NEO_WAITING_REMINDER,
   NEO_SESSION_TRACK,
   NEO_ASK_EVIDENCE,
+  NEO_ASK_PROGRESS,
   NEO_ASK_STALLED,
   NEO_TRIGGER_NOTE,
   NEO_WORK_REVIEW_REQUEST,

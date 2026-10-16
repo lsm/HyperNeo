@@ -1,11 +1,8 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
-import { NEO_ASK_EVIDENCE } from '@hyperneo/prompts';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
-import { neoAskEvidenceMessageId } from '../../../../src/lib/neo/ask-origin.ts';
 import {
-  neoAskEvidenceNote,
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,
   NEO_ASK_EVIDENCE_READ_MS,
@@ -544,22 +541,6 @@ describe('planNeoAskEvidenceNote', () => {
     expect(planNeoAskEvidenceNote([news(1)], { signature: 'not json' })).toMatchObject({
       value: { evidence: [news(1)] },
     });
-  });
-});
-
-describe('neoAskEvidenceNote', () => {
-  test('names the ask and what changed', () => {
-    const note = neoAskEvidenceNote(ask, [news(6159)]);
-    expect(note.startsWith(NEO_ASK_EVIDENCE)).toBe(true);
-    expect(JSON.parse(note.slice(NEO_ASK_EVIDENCE.length + 1))).toEqual({
-      askId: 'a1',
-      title: ask.title,
-      status: 'waiting',
-      summary: ask.outcome,
-      changed: [{ key: url(6159), summary: 'merged' }],
-    });
-    expect(neoAskEvidenceMessageId('a1', 'x')).toBe(neoAskEvidenceMessageId('a1', 'x'));
-    expect(neoAskEvidenceMessageId('a1', 'x')).not.toBe(neoAskEvidenceMessageId('a1', 'y'));
   });
 });
 
