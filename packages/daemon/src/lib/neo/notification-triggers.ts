@@ -1,3 +1,4 @@
+import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoAsk,
@@ -5,15 +6,15 @@ import type {
   NeoAskView,
   NeoCardView,
 } from '@hyperneo/shared/types/neo-snapshot';
-import { fillPrompt, NEO_TRIGGER_NOTE } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
-import { NEO_HUMAN_TURN_LIMIT_PREFIX } from './turn-limit.ts';
 import { NEO_ASK_ANSWER_PREFIX } from './ask-origin.ts';
+import { NEO_HUMAN_TURN_LIMIT_PREFIX } from './turn-limit.ts';
 
 const NEO_HUMAN_CONTINUATIONS = [NEO_HUMAN_TURN_LIMIT_PREFIX, NEO_ASK_ANSWER_PREFIX];
-import { isNeoCardInPlay, NEO_ASK_REFUSAL_BUDGET } from './ask-views.ts';
+
 import { isNeoAskAnswerReady } from './answer-outcome.ts';
+import { isNeoCardInPlay, NEO_ASK_REFUSAL_BUDGET } from './ask-views.ts';
 
 export const NEO_TRIGGER_PREFIX = 'neo-trigger:';
 export const NEO_HUMAN_TRIGGER_PREFIX = 'human:';
@@ -37,7 +38,7 @@ export interface NeoAskTriggerRead {
   view: NeoAskView;
   cards: readonly NeoCardView[];
 }
-type Card = Pick<NeoWork, 'id' | 'title' | 'updatedAt'>;
+type Card = Pick<NeoWork, 'id' | 'title' | 'updatedAt' | 'status'>;
 type Rejection = { accepted: false; reason: string; detail: string };
 
 export interface NeoTriggerSweepDeps {
@@ -45,6 +46,7 @@ export interface NeoTriggerSweepDeps {
   read(ask: NeoAsk): NeoAskTriggerRead | null;
   work(id: string): Card | null;
   deliveryRetryPending(workId: string): boolean;
+  reportSettled(workId: string, updatedAt: number): boolean;
   told(askId: string): Set<string>;
   heard(ask: NeoAsk): boolean;
   record(askId: string, keys: readonly string[], triggerId: string | null): void;
@@ -228,11 +230,23 @@ export function neoAskOutcomeKey(ask: Pick<NeoAsk, 'doneItems'>): string {
   return `${neoAskOutcomeBase(ask)}${open ? `:q${open}` : ''}`;
 }
 
+export function isNeoAskReportUnsettled(
+  ask: Pick<NeoAsk, 'workIds'>,
+  work: (id: string) => Card | null,
+  settled: (workId: string, updatedAt: number) => boolean
+): boolean {
+  return ask.workIds.some((id) => {
+    const card = work(id);
+    return card?.status === 'reported' && !settled(card.id, card.updatedAt);
+  });
+}
+
 export function neoAskTriggerKeys(
   ask: NeoAsk,
   read: NeoAskTriggerRead,
   work: (id: string) => Card | null,
-  pending: (workId: string) => boolean
+  pending: (workId: string) => boolean,
+  settled: (workId: string, updatedAt: number) => boolean
 ): NeoTriggerKey[] {
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
   const answer = isNeoAskAnswerReady(ask);
@@ -264,15 +278,16 @@ export function neoAskTriggerKeys(
         line: `${titled(work(card.workId), card.workId)} failed with no retry left`,
       })
     );
-  const idle: NeoTriggerKey[] = read.view.idle
-    ? [
-        {
-          key: `idle:${Math.max(ask.createdAt, ...ask.workIds.map((id) => work(id)?.updatedAt ?? 0))}:${ask.refusedCount ?? 0}`,
-          kind: 'idle',
-          line: neoAskIdleLine(ask),
-        },
-      ]
-    : [];
+  const idle: NeoTriggerKey[] =
+    read.view.idle && !isNeoAskReportUnsettled(ask, work, settled)
+      ? [
+          {
+            key: `idle:${Math.max(ask.createdAt, ...ask.workIds.map((id) => work(id)?.updatedAt ?? 0))}:${ask.refusedCount ?? 0}`,
+            kind: 'idle',
+            line: neoAskIdleLine(ask),
+          },
+        ]
+      : [];
   return [
     ...failed,
     ...idle,
@@ -401,7 +416,8 @@ const readKeys = (ask: NeoAsk, read: NeoAskTriggerRead, deps: NeoTriggerSweepDep
     ask,
     read,
     (id) => deps.work(id),
-    (id) => deps.deliveryRetryPending(id)
+    (id) => deps.deliveryRetryPending(id),
+    (id, updatedAt) => deps.reportSettled(id, updatedAt)
   );
 
 export const noteNeoAskTrigger = (superpipe({})('neo-ask-trigger') as PipelineAPI)

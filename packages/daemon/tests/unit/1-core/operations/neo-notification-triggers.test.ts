@@ -1,39 +1,39 @@
-import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
-import { NEO_ASK_REFUSAL_BUDGET } from '../../../../src/lib/neo/ask-views.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoAskView, NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
+import { vi } from 'vitest';
 import {
-  InternalEventBus,
   type DaemonInternalEventMap,
+  InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
+import { NEO_ASK_REFUSAL_BUDGET } from '../../../../src/lib/neo/ask-views.ts';
+import { neoCardGroup } from '../../../../src/lib/neo/card-phase.ts';
 import {
   coverNeoAskTriggers,
   isNeoAskAnsweredByReply,
+  isNeoAskReportUnsettled,
   isNeoCardFailedForGood,
-  neoReplyOriginKey,
-  neoAskTriggerConcern,
-  neoTriggerMessageId,
-  shouldPreemptNeoTurn,
-  planNeoTriggerRetry,
-  neoTriggerRetryStatuses,
-  requireNeoTriggerUnheard,
-  shouldRetryNeoTrigger,
   isNeoHumanOwnTurn,
-  neoHumanTurnOrigin,
-  neoTriggerWatchSessions,
   NEO_TRIGGER_RETRY_MS,
-  neoAskTriggerKeys,
-  neoAskIdleLine,
-  neoTriggerNote,
-  noteNeoAskTrigger,
-  planNeoAskTrigger,
   type NeoAskTrigger,
   type NeoTriggerSweepDeps,
+  neoAskIdleLine,
+  neoAskTriggerConcern,
+  neoAskTriggerKeys,
+  neoHumanTurnOrigin,
+  neoReplyOriginKey,
+  neoTriggerMessageId,
+  neoTriggerNote,
+  neoTriggerRetryStatuses,
+  neoTriggerWatchSessions,
+  noteNeoAskTrigger,
+  planNeoAskTrigger,
+  planNeoTriggerRetry,
+  requireNeoTriggerUnheard,
+  shouldPreemptNeoTurn,
+  shouldRetryNeoTrigger,
 } from '../../../../src/lib/neo/notification-triggers.ts';
-import { neoCardGroup } from '../../../../src/lib/neo/card-phase.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -44,6 +44,7 @@ import {
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { NeoNotificationTriggerRepository } from '../../../../src/storage/repositories/neo-notification-trigger-repository.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import { withMintedPublicationId } from '../../../helpers/neo-minted-publication.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = `neo:${conversationId}`;
@@ -79,7 +80,12 @@ const card = (overrides: Partial<NeoCardView> = {}) =>
   }) as unknown as NeoCardView;
 const view = (overrides: Partial<NeoAskView> = {}) =>
   ({ askId: 'a1', workIds: ['w1'], humanActions: [], ...overrides }) as unknown as NeoAskView;
-const work = (id: string) => ({ id, title: `Card ${id}`, updatedAt: 500 });
+const work = (id: string) => ({
+  id,
+  title: `Card ${id}`,
+  updatedAt: 500,
+  status: 'cancelled' as const,
+});
 const item = (id: string, state: 'met' | 'pending') => ({
   id,
   text: `Item ${id}`,
@@ -128,7 +134,13 @@ describe('shouldPreemptNeoTurn', () => {
 
 describe('trigger keys of an ask', () => {
   const keys = (target: NeoAsk, read = { view: view(), cards: [card()] }, pending = false) =>
-    neoAskTriggerKeys(target, read, work, () => pending).map((key) => [key.kind, key.key]);
+    neoAskTriggerKeys(
+      target,
+      read,
+      work,
+      () => pending,
+      () => true
+    ).map((key) => [key.kind, key.key]);
 
   test('an ask with nothing running wakes Neo once per ended card and once per refused propose', () => {
     const idle = {
@@ -140,6 +152,48 @@ describe('trigger keys of an ask', () => {
     expect(keys({ ...ask, workIds: [], refused: 'No adapter.', refusedCount: 2 }, idle)).toEqual([
       ['idle', 'idle:10:2'],
     ]);
+  });
+
+  test('replays ask 7fedf43a: the report at 01:43:52 wakes no idle trigger until the daemon has processed it', () => {
+    const at = (time: string) => Date.parse(`2026-10-16T${time}Z`);
+    const reportedAt = at('01:43:52.579');
+    const card = (id: string) => ({
+      id,
+      title: `Card ${id}`,
+      updatedAt: reportedAt,
+      status: 'reported' as const,
+    });
+    const idle = { view: view({ idle: true, humanActions: [] }), cards: [] };
+    const settled = new Map<string, number>();
+    const sweep = () =>
+      neoAskTriggerKeys(
+        ask,
+        idle,
+        card,
+        () => false,
+        (id, updatedAt) => settled.get(id) === updatedAt
+      ).map((key) => key.kind);
+    expect(sweep()).toEqual([]);
+    settled.set('w1', at('01:43:26.010'));
+    expect(sweep()).toEqual([]);
+    settled.set('w1', reportedAt);
+    expect(sweep()).toEqual(['idle']);
+    expect(
+      neoAskTriggerKeys(
+        { ...ask, status: 'achieved' },
+        idle,
+        card,
+        () => false,
+        () => false
+      ).map((key) => key.kind)
+    ).toEqual(['outcome']);
+    expect(
+      isNeoAskReportUnsettled(
+        { workIds: ['w1', 'w2'] },
+        (id) => (id === 'w2' ? work(id) : card(id)),
+        () => false
+      )
+    ).toBe(true);
   });
 
   test('an idle ask is never quiet: Neo is told to move the work, then to ask the human', () => {
@@ -154,7 +208,8 @@ describe('trigger keys of an ask', () => {
         },
         idle,
         work,
-        () => false
+        () => false,
+        () => true
       ).find((key) => key.kind === 'idle')?.line;
     expect(line(1)).toContain('Get the work moving another way');
     expect(line(1)).toContain('The claude-code adapter cannot start work.');
@@ -370,6 +425,7 @@ describe('noteNeoAskTrigger', () => {
       read: () => read,
       work,
       deliveryRetryPending: () => false,
+      reportSettled: () => true,
       told: (askId) => new Set(told.get(askId)),
       heard: () => false,
       record: (askId, keys) => told.set(askId, new Set([...(told.get(askId) ?? []), ...keys])),

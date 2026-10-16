@@ -507,6 +507,7 @@ export class NeoService {
   private readonly askEvidenceReads = new Map<string, number>();
   private readonly cardPrRelays: NeoCardPrRelayRepository;
   private askIdleSeen: NeoAskIdleSeen = new Map();
+  private settledReports = new Map<string, number>();
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -814,6 +815,7 @@ export class NeoService {
       read: (ask) => readNeoAskTriggerView(this, ask),
       work: (id) => this.repo.getWork(id),
       deliveryRetryPending: (id) => isNeoDeliveryRetryPending(this.db.getJobQueueRepo(), id),
+      reportSettled: (id, updatedAt) => this.settledReports.get(id) === updatedAt,
       told: (askId) => this.triggers.told(askId),
       heard: (ask) => this.heardOutcome(ask),
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
@@ -2242,6 +2244,14 @@ export class NeoService {
         this.log.warn('Ask evidence check pending', error)
       );
     }
+    this.settledReports = new Map(
+      this.askRecords
+        .listLive()
+        .flatMap((ask) => ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []))
+        .filter((work) => work.status === 'reported')
+        .map((work) => [work.id, work.updatedAt])
+    );
+    this.scheduleTriggerSweep();
     for (const ask of this.askRecords.listLive()) {
       await this.noteAskStall(ask, Date.now()).catch((error) =>
         this.log.warn('Ask stall note pending', error)
