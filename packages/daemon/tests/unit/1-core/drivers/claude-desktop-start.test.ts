@@ -59,6 +59,7 @@ describe('claude-desktop start', () => {
     twin?: boolean;
     checkout?: { repo: string; linked: boolean };
     resumeExit?: number;
+    owner?: 'desktop' | 'cli' | 'unknown';
   }) {
     const transcripts = join(dir, 'projects', '-focus-dolmen');
     mkdirSync(transcripts, { recursive: true });
@@ -74,7 +75,13 @@ describe('claude-desktop start', () => {
         polls++;
         return options.appearsAfter !== undefined && polls > options.appearsAfter
           ? [
-              { sessionId: 'u1', status: 'idle', name: 'Bigger font' },
+              {
+                sessionId: 'u1',
+                status: 'idle',
+                name: 'Bigger font',
+                pid: 1,
+                owner: options.owner ?? 'desktop',
+              },
               ...(options.twin
                 ? [{ sessionId: 'other', status: 'idle', name: 'Bigger font' }]
                 : []),
@@ -182,8 +189,10 @@ describe('claude-desktop start', () => {
     expect(spawned).toEqual([]);
   });
 
-  test('opens a named session, hands it to the app and relays the task', async () => {
-    expect(await adapter({ appearsAfter: 0, relayWrites: true }).start?.(request, user)).toEqual({
+  test('sends only when the newly created session has a confirmed live CLI owner', async () => {
+    expect(
+      await adapter({ appearsAfter: 0, relayWrites: true, owner: 'cli' }).start?.(request, user)
+    ).toEqual({
       ok: true,
       value: {
         ref: { adapter: 'claude-desktop', id: 'local_u1' },
@@ -220,7 +229,7 @@ describe('claude-desktop start', () => {
   });
 
   test.each([undefined, 'default', 'acceptEdits', 'bypassPermissions'])(
-    'keeps the desktop relay in the app permission class %s after a Full Access CLI bootstrap',
+    'preserves the existing CLI relay permission class %s for a confirmed CLI owner',
     async (permissionMode) => {
       mkdirSync(join(dir, 'sessions', 'acct', 'scope'), { recursive: true });
       writeFileSync(
@@ -233,7 +242,7 @@ describe('claude-desktop start', () => {
           permissionMode,
         })
       );
-      await adapter({ appearsAfter: 0, relayWrites: true }).start?.(request, user);
+      await adapter({ appearsAfter: 0, relayWrites: true, owner: 'cli' }).start?.(request, user);
       expect(spawned[0]).toContain('bypassPermissions');
       expect(spawned[1]).not.toContain('--permission-mode');
       expect(spawned[2].includes('bypassPermissions')).toBe(permissionMode === 'bypassPermissions');
@@ -285,7 +294,9 @@ describe('claude-desktop start', () => {
   });
 
   test('refuses to relay when another live session has the same name', async () => {
-    expect(await adapter({ appearsAfter: 0, twin: true }).start?.(request, user)).toEqual({
+    expect(
+      await adapter({ appearsAfter: 0, twin: true, owner: 'cli' }).start?.(request, user)
+    ).toEqual({
       ok: false,
       reason: 'not_delivered',
       detail:
@@ -303,29 +314,29 @@ describe('claude-desktop start', () => {
     expect(spawned).toHaveLength(1);
   });
 
-  test('sends the task to a session the app has not started yet, which wakes it', async () => {
+  test('does not resume when the new session has no live owner', async () => {
     expect(await adapter({}).start?.(request, user)).toMatchObject({
-      ok: true,
-      value: { ref: { adapter: 'claude-desktop', id: 'local_u1' }, status: 'running' },
+      ok: false,
+      reason: 'not_delivered',
+      detail: expect.stringContaining('ownership is unknown'),
     });
-    expect(spawned[2]).toEqual([
-      'claude',
-      '-p',
-      '--resume',
-      'u1',
-      '--permission-mode',
-      'bypassPermissions',
-      '--',
-      request.message,
-    ]);
+    expect(spawned).toHaveLength(2);
+    expect(spawned.some((args) => args[0] === 'claude' && args.includes('--resume'))).toBe(false);
     expect(clock).toBe(1_000);
   });
 
-  test('reports not_delivered only when that send fails', async () => {
-    expect(await adapter({ resumeExit: 1 }).start?.(request, user)).toEqual({
-      ok: false,
-      reason: 'not_delivered',
-      detail: 'local_u1 was created, but the task did not reach it: no auth',
-    });
-  });
+  test.each(['desktop', 'unknown'] as const)(
+    'reports partial creation without task delivery for a live %s owner',
+    async (owner) => {
+      expect(await adapter({ appearsAfter: 0, owner }).start?.(request, user)).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+        detail: expect.stringContaining(
+          owner === 'desktop' ? 'Desktop owns' : 'ownership is unknown'
+        ),
+      });
+      expect(spawned).toHaveLength(2);
+      expect(spawned.some((args) => args.includes('HyperNeo relay'))).toBe(false);
+    }
+  );
 });
