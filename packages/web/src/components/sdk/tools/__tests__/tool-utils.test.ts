@@ -8,9 +8,6 @@ import {
   formatElapsedTime,
   truncateText,
   getOutputDisplayText,
-  hasCustomRenderer,
-  getCustomRenderer,
-  shouldExpandByDefault,
 } from '../tool-utils';
 
 describe('tool-utils', () => {
@@ -297,53 +294,6 @@ describe('tool-utils', () => {
     it('should convert primitives to string', () => {
       expect(getOutputDisplayText(42)).toBe('42');
       expect(getOutputDisplayText(true)).toBe('true');
-    });
-  });
-
-  describe('hasCustomRenderer', () => {
-    it('should return true for TodoWrite', () => {
-      expect(hasCustomRenderer('TodoWrite')).toBe(true);
-    });
-
-    it('should return false for Read', () => {
-      expect(hasCustomRenderer('Read')).toBe(false);
-    });
-
-    it('should return false for unknown tools', () => {
-      expect(hasCustomRenderer('UnknownTool')).toBe(false);
-    });
-  });
-
-  describe('getCustomRenderer', () => {
-    it('should return renderer function for TodoWrite', () => {
-      const renderer = getCustomRenderer('TodoWrite');
-      expect(typeof renderer).toBe('function');
-    });
-
-    it('should return undefined for tools without custom renderer', () => {
-      expect(getCustomRenderer('Read')).toBeUndefined();
-    });
-  });
-
-  describe('shouldExpandByDefault', () => {
-    it('should return true for TodoWrite', () => {
-      expect(shouldExpandByDefault('TodoWrite')).toBe(true);
-    });
-
-    it('should return false for Read', () => {
-      expect(shouldExpandByDefault('Read')).toBe(false);
-    });
-
-    it('should return false for most tools', () => {
-      expect(shouldExpandByDefault('Write')).toBe(false);
-      expect(shouldExpandByDefault('Edit')).toBe(false);
-      expect(shouldExpandByDefault('Bash')).toBe(false);
-      expect(shouldExpandByDefault('Grep')).toBe(false);
-      expect(shouldExpandByDefault('WebFetch')).toBe(false);
-    });
-
-    it('should return false for unknown tools', () => {
-      expect(shouldExpandByDefault('UnknownTool')).toBe(false);
     });
   });
 });

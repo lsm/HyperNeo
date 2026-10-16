@@ -1,3 +1,4 @@
+import { CheckGlyph } from './icons/common-glyphs.tsx';
 import { useState } from 'preact/hooks';
 import { Modal } from './ui/Modal.tsx';
 import { Collapsible } from './ui/Collapsible.tsx';
@@ -185,14 +186,7 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
           >
             {copied ? (
               <>
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
+                <CheckGlyph class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
                 Copied!
               </>
             ) : (

@@ -1,3 +1,4 @@
+import { CheckGlyph } from './icons/common-glyphs.tsx';
 import type { RefObject } from 'preact';
 import { useRef } from 'preact/hooks';
 import type { ModelInfo, SessionFeatures } from '@hyperneo/shared';
@@ -137,19 +138,17 @@ export function InputActionsMenu({
                 <span class="text-sm">Coordinator Mode</span>
               </span>
               {coordinatorMode && (
-                <svg
+                <CheckGlyph
                   class="w-4 h-4 text-cat-purple"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2.5}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
+                  pathProps={{
+                    'stroke-linecap': 'round',
+                    'stroke-linejoin': 'round',
+                    'stroke-width': 2.5,
+                  }}
+                />
               )}
             </button>
           )}
@@ -178,19 +177,17 @@ export function InputActionsMenu({
                 <span class="text-sm">Sandbox Mode</span>
               </span>
               {sandboxEnabled && (
-                <svg
+                <CheckGlyph
                   class="w-4 h-4 text-success"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2.5}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
+                  pathProps={{
+                    'stroke-linecap': 'round',
+                    'stroke-linejoin': 'round',
+                    'stroke-width': 2.5,
+                  }}
+                />
               )}
             </button>
           )}

@@ -1,4 +1,4 @@
-import { signal, computed, type Signal } from '@preact/signals';
+import { signal, computed, type Signal, type ReadonlySignal } from '@preact/signals';
 import type { MessageHub } from '@hyperneo/shared';
 import type { Session, AuthStatus, HealthStatus, ContextInfo } from '@hyperneo/shared';
 import type {
@@ -209,19 +209,13 @@ class ApplicationState {
 export const appState = new ApplicationState();
 
 /** @public - Preact signal accessed via .value in components */
-export const sessions = computed<Session[]>(() => {
-  return globalStore.sessions.value;
-});
+export const sessions: ReadonlySignal<Session[]> = globalStore.sessions;
 
 /** @public - Preact signal accessed via .value in components */
-export const hasArchivedSessions = computed<boolean>(() => {
-  return globalStore.hasArchivedSessions.value;
-});
+export const hasArchivedSessions: ReadonlySignal<boolean> = globalStore.hasArchivedSessions;
 
 /** @public - Preact signal accessed via .value in components */
-export const systemState = computed<SystemState | null>(() => {
-  return globalStore.systemState.value;
-});
+export const systemState: ReadonlySignal<SystemState | null> = globalStore.systemState;
 
 /** @public - Preact signal accessed via .value in components */
 export const authStatus = computed<AuthStatus | null>(() => {
@@ -244,14 +238,12 @@ export const apiConnectionStatus = computed<import('@hyperneo/shared').ApiConnec
 );
 
 /** @public - Preact signal accessed via .value in components */
-export const credentialStoreStatus = computed<CredentialStoreStatus | null>(() => {
-  return globalStore.credentialStoreStatus.value;
-});
+export const credentialStoreStatus: ReadonlySignal<CredentialStoreStatus | null> =
+  globalStore.credentialStoreStatus;
 
 /** @public - Preact signal accessed via .value in components */
-export const globalSettings = computed<import('@hyperneo/shared').GlobalSettings | null>(() => {
-  return globalStore.settings.value;
-});
+export const globalSettings: ReadonlySignal<import('@hyperneo/shared').GlobalSettings | null> =
+  globalStore.settings;
 
 const currentSessionState = computed<SessionState | null>(() => {
   const sessionId = appState['currentSessionIdSignal'].value;

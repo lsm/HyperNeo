@@ -1,3 +1,4 @@
+import { ChevronDownGlyph, ChevronUpGlyph } from '../icons/common-glyphs.tsx';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
@@ -222,38 +223,26 @@ export function SyntheticMessageBlock({
             >
               {isExpanded ? (
                 <>
-                  <svg
+                  <ChevronUpGlyph
                     class="w-3.5 h-3.5"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
                     aria-hidden="true"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 15l7-7 7 7"
-                    />
-                  </svg>
+                    pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+                  />
                   Show less
                 </>
               ) : (
                 <>
-                  <svg
+                  <ChevronDownGlyph
                     class="w-3.5 h-3.5"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
                     aria-hidden="true"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 9l-7 7-7-7"
-                    />
-                  </svg>
+                    pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+                  />
                   Show more
                 </>
               )}

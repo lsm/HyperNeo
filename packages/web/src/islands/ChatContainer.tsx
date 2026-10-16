@@ -1,3 +1,4 @@
+import { ChevronLeftGlyph } from '../components/icons/common-glyphs.tsx';
 import type {
   AgentProcessingState,
   ChatDisplayMode,
@@ -1113,14 +1114,12 @@ export default function ChatContainer({
               class="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg-soft transition-colors flex-shrink-0"
               aria-label="Back"
             >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M15 19l-7-7 7-7"
-                />
-              </svg>
+              <ChevronLeftGlyph
+                class="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              />
             </button>
           )}
           <div class="min-w-0 flex-1">

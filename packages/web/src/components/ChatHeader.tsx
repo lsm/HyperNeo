@@ -1,3 +1,4 @@
+import { ChevronLeftGlyph } from './icons/common-glyphs.tsx';
 import type { ChatDisplayMode, Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { sessionStore } from '../lib/session-store.ts';
@@ -91,15 +92,14 @@ export function ChatHeader({
             aria-label="Back"
             data-testid="chat-header-back"
           >
-            <svg
+            <ChevronLeftGlyph
               class="w-5 h-5"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
               stroke-width={2}
-            >
-              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
-            </svg>
+              pathProps={{ 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }}
+            />
           </button>
         ) : (
           <MobileMenuButton />

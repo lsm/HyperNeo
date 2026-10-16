@@ -1,3 +1,4 @@
+import { CheckGlyph } from '../icons/common-glyphs.tsx';
 import { useEffect, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
@@ -105,19 +106,12 @@ export function OAuthModal({
                 <Button variant="secondary" size="sm" onClick={copyUserCode}>
                   {copied ? (
                     <>
-                      <svg
+                      <CheckGlyph
                         class="w-4 h-4 mr-1.5"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width={2}
-                          d="M5 13l4 4L19 7"
-                        />
-                      </svg>
+                      />
                       Copied!
                     </>
                   ) : (

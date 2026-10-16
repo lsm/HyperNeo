@@ -1,3 +1,5 @@
+import { CheckGlyph, ChevronDownGlyph, CloseGlyph } from '../../icons/common-glyphs.tsx';
+import { getToolConfig } from './tool-registry.ts';
 import { useEffect, useState } from 'preact/hooks';
 import type { ToolResultCardProps } from './tool-types.ts';
 import { ToolIcon } from './ToolIcon.tsx';
@@ -5,14 +7,7 @@ import { ToolSummary } from './ToolSummary.tsx';
 import { TaskProgressLine } from './TaskProgressLine.tsx';
 import { DiffViewer } from './DiffViewer.tsx';
 import { CodeViewer } from './CodeViewer.tsx';
-import {
-  getToolDisplayName,
-  getToolColors,
-  getOutputDisplayText,
-  hasCustomRenderer,
-  getCustomRenderer,
-  shouldExpandByDefault,
-} from './tool-utils.ts';
+import { getToolDisplayName, getToolColors, getOutputDisplayText } from './tool-utils.ts';
 import { isFileReadOutput, isFileEditOutput, isFileWriteOutput } from './sdk-tool-types.ts';
 import { cn } from '../../../lib/utils.ts';
 import { connectionManager } from '../../../lib/connection-manager.ts';
@@ -147,12 +142,16 @@ function ToolResultCardBody({
   const displayName = getToolDisplayName(toolName);
   const folded = useFoldedActivity();
   const shouldExpand =
-    defaultExpanded !== undefined ? defaultExpanded : !folded && shouldExpandByDefault(toolName);
+    defaultExpanded !== undefined
+      ? defaultExpanded
+      : !folded && (getToolConfig(toolName).defaultExpanded || false);
   const [isExpanded, setIsExpanded] = useState(shouldExpand);
   useEffect(() => setIsExpanded(shouldExpand), [shouldExpand]);
   const [deleting, setDeleting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const customRenderer = hasCustomRenderer(toolName) ? getCustomRenderer(toolName) : null;
+  const customRenderer = getToolConfig(toolName).customRenderer
+    ? getToolConfig(toolName).customRenderer
+    : null;
 
   const handleDeleteClick = () => {
     if (!messageUuid || !sessionId) {
@@ -196,19 +195,13 @@ function ToolResultCardBody({
         <ToolIcon toolName={toolName} size="sm" />
         <span class={cn('text-xs font-medium truncate', colors.text)}>{displayName}</span>
         {isError && (
-          <svg
+          <CloseGlyph
             class="w-3 h-3 text-danger ml-auto flex-shrink-0"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
+            pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+          />
         )}
       </div>
     );
@@ -326,23 +319,17 @@ function ToolResultCardBody({
         <div class="flex items-center gap-2 flex-shrink-0">
           {lineCountDisplay}
           {notificationIsSuccess && (
-            <svg
+            <CheckGlyph
               class="w-4 h-4 text-success"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
               aria-label="task completed"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+            />
           )}
           {showErrorIcon && (
-            <svg
+            <CloseGlyph
               class="w-4 h-4 text-danger"
               fill="none"
               stroke="currentColor"
@@ -354,17 +341,11 @@ function ToolResultCardBody({
                     : 'task failed'
                   : undefined
               }
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+            />
           )}
           {!disableExpand && (
-            <svg
+            <ChevronDownGlyph
               class={cn(
                 'w-5 h-5 transition-transform',
                 colors.iconColor,
@@ -373,14 +354,8 @@ function ToolResultCardBody({
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 9l-7 7-7-7"
-              />
-            </svg>
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+            />
           )}
         </div>
       </button>

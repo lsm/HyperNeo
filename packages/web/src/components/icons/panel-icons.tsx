@@ -1,3 +1,9 @@
+import {
+  ChevronRightGlyph,
+  ChevronDownGlyph,
+  ChevronUpGlyph,
+  CloseGlyph,
+} from './common-glyphs.tsx';
 import { cn } from '../../lib/utils.ts';
 
 const outlineAttributes = { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor' } as const;
@@ -37,12 +43,11 @@ export function GitCopyIcon() {
 
 export function GitChevronIcon({ open }: { open: boolean }) {
   return (
-    <svg
+    <ChevronRightGlyph
       class={cn('h-3 w-3 flex-shrink-0 text-fg-faint transition-transform', open && 'rotate-90')}
       {...outlineAttributes}
-    >
-      <path {...roundedPathAttributes} stroke-width={2.5} d="M9 5l7 7-7 7" />
-    </svg>
+      pathProps={{ 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': 2.5 }}
+    />
   );
 }
 
@@ -155,27 +160,15 @@ export function ModelPlusIcon() {
 }
 
 export function ModelXIcon({ class: cls }: { class?: string }) {
-  return (
-    <svg class={cls ?? 'w-4 h-4 text-fg-muted'} {...outlineAttributes}>
-      <path {...roundedPathAttributes} stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-    </svg>
-  );
+  return <CloseGlyph class={cls ?? 'w-4 h-4 text-fg-muted'} {...outlineAttributes} />;
 }
 
 export function ModelChevronDownIcon() {
-  return (
-    <svg class="w-4 h-4 text-fg-muted" {...outlineAttributes}>
-      <path {...roundedPathAttributes} stroke-width="2" d="M19 9l-7 7-7-7" />
-    </svg>
-  );
+  return <ChevronDownGlyph class="w-4 h-4 text-fg-muted" {...outlineAttributes} />;
 }
 
 export function ModelChevronUpIcon() {
-  return (
-    <svg class="w-4 h-4 text-fg-muted" {...outlineAttributes}>
-      <path {...roundedPathAttributes} stroke-width="2" d="M5 15l7-7 7 7" />
-    </svg>
-  );
+  return <ChevronUpGlyph class="w-4 h-4 text-fg-muted" {...outlineAttributes} />;
 }
 
 export function QueueMoveToNextIcon() {

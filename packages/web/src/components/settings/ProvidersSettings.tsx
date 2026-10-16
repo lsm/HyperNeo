@@ -1,3 +1,4 @@
+import { ChevronDownGlyph } from '../icons/common-glyphs.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
@@ -1010,19 +1011,12 @@ export function ProvidersSettings() {
                           />
                         </button>
 
-                        <svg
+                        <ChevronDownGlyph
                           class={`w-4 h-4 text-fg-faint transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width={2}
-                            d="M19 9l-7 7-7-7"
-                          />
-                        </svg>
+                        />
                       </div>
                     </div>
 

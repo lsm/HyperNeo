@@ -98,10 +98,20 @@ vi.mock('../tool-utils.ts', () => ({
   }),
   getOutputDisplayText: (output: unknown) =>
     typeof output === 'string' ? output : JSON.stringify(output, null, 2),
-  hasCustomRenderer: (name: string) => name === 'TodoWrite',
-  getCustomRenderer: () => () => <div data-testid="custom-renderer">Custom</div>,
-  shouldExpandByDefault: (name: string) => name === 'Thinking',
 }));
+
+vi.mock('../tool-registry.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../tool-registry.ts')>();
+  return {
+    ...actual,
+    getToolConfig: (name: string) => ({
+      ...actual.getToolConfig(name),
+      customRenderer:
+        name === 'TodoWrite' ? () => <div data-testid="custom-renderer">Custom</div> : undefined,
+      defaultExpanded: name === 'Thinking',
+    }),
+  };
+});
 
 describe('ToolResultCard Component', () => {
   beforeEach(() => {
@@ -146,6 +156,23 @@ describe('ToolResultCard Component', () => {
 
       const svg = document.querySelector('svg');
       expect(svg).toBeTruthy();
+      const path = svg?.querySelector('path');
+      const original = render(
+        <svg>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M6 18L18 6M6 6l12 12"
+          />
+        </svg>
+      );
+      const attributes = (element: Element | null | undefined) =>
+        Array.from(element?.attributes ?? [], (attribute) => [
+          attribute.name,
+          attribute.value,
+        ]).sort();
+      expect(attributes(path)).toEqual(attributes(original.container.querySelector('path')));
     });
   });
 

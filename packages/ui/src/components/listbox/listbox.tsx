@@ -1,3 +1,5 @@
+import { insertOptionInDomOrder, removeOption } from '../../internal/options.ts';
+import { resolveCompare } from '../../internal/compare.ts';
 import { useTransitionAttrs } from '../../internal/use-transition-attrs.ts';
 import type { RefObject, VNode } from 'preact';
 import { createContext, createElement, Fragment } from 'preact';
@@ -19,16 +21,6 @@ import { useId } from '../../internal/use-id.ts';
 import { useOutsideClick } from '../../internal/use-outside-click.ts';
 import { useTextValue } from '../../internal/use-text-value.ts';
 import { useTrackedPointer } from '../../internal/use-tracked-pointer.ts';
-
-function resolveCompare<T>(by?: string | ((a: T, b: T) => boolean)): (a: T, b: T) => boolean {
-  if (typeof by === 'function') return by;
-  if (typeof by === 'string') {
-    const key = by;
-    return (a: T, b: T) =>
-      (a as Record<string, unknown>)[key] === (b as Record<string, unknown>)[key];
-  }
-  return (a: T, b: T) => a === b;
-}
 
 interface ListboxOptionData {
   id: string;
@@ -130,23 +122,12 @@ function ListboxFn<T>({
   const registerOption = useCallback((option: ListboxOptionData) => {
     setOptions((prev) => {
       if (prev.find((o) => o.id === option.id)) return prev;
-      if (option.ref.current && optionsRef.current) {
-        const allOptions = Array.from(
-          optionsRef.current.querySelectorAll<HTMLElement>('[role="option"]')
-        );
-        const index = allOptions.indexOf(option.ref.current);
-        if (index !== -1) {
-          const next = [...prev];
-          next.splice(index, 0, option);
-          return next;
-        }
-      }
-      return [...prev, option];
+      return insertOptionInDomOrder(prev, option, optionsRef.current);
     });
   }, []);
 
   const unregisterOption = useCallback((id: string) => {
-    setOptions((prev) => prev.filter((o) => o.id !== id));
+    setOptions((prev) => removeOption(prev, id));
   }, []);
 
   const setValue = useCallback(
