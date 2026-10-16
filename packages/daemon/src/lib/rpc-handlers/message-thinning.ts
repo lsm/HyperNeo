@@ -1,12 +1,9 @@
+import { isRecord } from '../record.ts';
 import { TOOL_SUMMARY_INPUT_FIELDS, WHOLE_INPUT_TOOLS } from '@hyperneo/shared';
 
 type Json = Record<string, unknown>;
 
 const SUMMARY_FIELD_CHARS = 500;
-
-function isRecord(value: unknown): value is Json {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
 
 function summaryInput(input: unknown): Json {
   if (!isRecord(input)) return {};

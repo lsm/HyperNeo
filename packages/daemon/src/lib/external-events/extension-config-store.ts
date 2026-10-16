@@ -1,3 +1,4 @@
+import { isRecord } from '../record.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type {
   ExternalEventExtensionConfig,
@@ -222,8 +223,4 @@ function validateSpaceId(spaceId: string): void {
   if (!spaceId || spaceId.trim().length === 0 || spaceId !== spaceId.trim()) {
     throw new Error('Space id must be non-empty and must not include edge whitespace');
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

@@ -1,3 +1,4 @@
+import { isRecord } from '../../lib/record.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 
@@ -451,10 +452,6 @@ function parseExecutionData(raw: string | null | undefined): Record<string, unkn
   } catch {
     return {};
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isRecoverableToolUseStatus(status: ToolContinuationStatus): boolean {
