@@ -212,12 +212,14 @@ const CLAUDE_DESKTOP_SESSIONS = join(
 
 function claudeCodeAdapters(
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
-  ownedSessions: () => ReadonlySet<string>
+  ownedSessions: () => ReadonlySet<string>,
+  inbox: FamilyOperationContext['claudeInbox']
 ): WorkAdapter[] {
   if (!existsSync(join(homedir(), '.claude', 'projects'))) return [];
   const cache: ClaudeRecordCache = new Map();
   return [
     createClaudeCodeAdapter({
+      sendInbox: inbox?.send,
       projectsDir: join(homedir(), '.claude', 'projects'),
       liveSessions: () => readLiveClaudeSessions(spawnProcess),
       ownedSessions,
@@ -478,7 +480,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     }),
     ...codexDesktopAdapters(searchChats, prepareExecution),
     ...claudeDesktopAdapters(searchChats, prepareExecution, context.claudeInbox),
-    ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db())),
+    ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db()), context.claudeInbox),
     ...acpAgentAdapters(
       () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId))
     ),

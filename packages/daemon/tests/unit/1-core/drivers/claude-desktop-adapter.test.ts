@@ -131,10 +131,15 @@ describe('claude-desktop adapter against the app session records', () => {
       calls.push(args);
       return reply;
     });
-    expect(
-      await driver.send!({ adapter: 'claude-desktop', id: 'local_a1' }, 'exact text', context)
-    ).toEqual(reply);
-    expect(calls).toEqual([['cli-a1', 'exact text', context]]);
+    for (const verb of ['send', 'steer'] as const) {
+      expect(
+        await driver[verb]!({ adapter: 'claude-desktop', id: 'local_a1' }, 'exact text', context)
+      ).toEqual(reply);
+    }
+    expect(calls).toEqual([
+      ['cli-a1', 'exact text', context],
+      ['cli-a1', 'exact text', context],
+    ]);
     expect(spawned).toEqual([]);
   });
 
@@ -498,6 +503,12 @@ describe('claude-desktop adapter against the app session records', () => {
       ]);
       expect(
         await driver.send?.({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user)
+      ).toMatchObject({
+        ok: false,
+        reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
+      });
+      expect(
+        await driver.steer!({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user)
       ).toMatchObject({
         ok: false,
         reason: owner === 'desktop' ? 'unsupported' : 'unreachable',

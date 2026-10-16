@@ -916,7 +916,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
   return {
     id: 'claude-desktop',
     supportsStartPreparation: !!deps.prepareExecution,
-    capabilities: ['find', 'start', 'send', 'status', 'archive'],
+    capabilities: ['find', 'start', 'send', 'steer', 'status', 'archive'],
     find: async (query) =>
       runClaudeDesktopFind(
         query,
@@ -926,6 +926,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
       ),
     start: (request, context) => runClaudeDesktopStart(request, deps, context),
     send: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
+    steer: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     status: (ref, since, receipt) => runClaudeDesktopStatus(ref, reused, cache, since, receipt),
     archive: (ref, admit) => archiveClaudeSession(ref, admit, deps),
   };
