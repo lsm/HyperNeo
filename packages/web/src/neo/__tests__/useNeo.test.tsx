@@ -3,14 +3,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useNeo } from '../useNeo.ts';
 
 const request = vi.hoisted(() => vi.fn());
-const neoEvents = vi.hoisted(() => ({ changed: null as (() => void) | null }));
+const neoEvents = vi.hoisted(() => ({
+  changed: null as (() => void) | null,
+  working: null as ((event: { working: unknown[] }) => void) | null,
+}));
 const selectGate = vi.hoisted(() => ({ wait: null as Promise<void> | null }));
 vi.mock('../../lib/connection-manager.ts', () => ({
   connectionManager: {
     getHub: async () => ({
       request,
-      onEvent: (_name: string, callback: () => void) => {
-        neoEvents.changed = callback;
+      onEvent: (name: string, callback: (event: { working: unknown[] }) => void) => {
+        if (name === 'neo.working') {
+          neoEvents.working = callback;
+          return () => {};
+        }
+        if (name !== 'neo.changed') return () => {};
+        neoEvents.changed = callback as () => void;
         return () => {
           neoEvents.changed = null;
         };
@@ -41,6 +49,7 @@ function ViewProbe() {
       <button onClick={() => void neo.open()}>Open Neo</button>
       <p>Overview work: {neo.snapshot?.work.map((item) => item.id).join(',') ?? 'loading'}</p>
       <p>Session: {neo.sessionId ?? 'none'}</p>
+      <p>Working: {neo.snapshot?.working?.map((item) => item.sessionId).join(',') ?? 'none'}</p>
       <p>
         Board work:{' '}
         {neo
@@ -88,6 +97,24 @@ describe('useNeo intake client', () => {
 });
 
 describe('useNeo root conversation', () => {
+  it('shows who is working from the snapshot, then from each neo.working event', async () => {
+    request.mockImplementation(async () => ({
+      ok: true,
+      sessionId: 'root',
+      projects: [],
+      work: [],
+      working: [{ sessionId: 'root', projectId: null, title: 'Neo', status: 'processing' }],
+    }));
+    render(<ViewProbe />);
+    await waitFor(() => expect(screen.getByText('Working: root')).toBeTruthy());
+    act(() =>
+      neoEvents.working?.({
+        working: [{ sessionId: 'holder', projectId: 'p', title: 'App', status: 'queued' }],
+      })
+    );
+    await waitFor(() => expect(screen.getByText('Working: holder')).toBeTruthy());
+  });
+
   it('shows the snapshot neo.open returns without reading it again, then refreshes on change', async () => {
     let version = 'global';
     request.mockImplementation(async () => ({

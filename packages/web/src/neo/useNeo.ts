@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { NeoResult, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import type {
+  NeoResult,
+  NeoSnapshot,
+  NeoWorkingEvent,
+  NeoWorkingSession,
+} from '@hyperneo/shared/types/neo-snapshot';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { SessionStore } from '../lib/session-store.ts';
@@ -24,13 +29,18 @@ export function useNeo() {
     []
   );
   const [received, setSnapshot] = useState<NeoSnapshot | null>(null);
+  const [working, setWorking] = useState<NeoWorkingSession[] | null>(null);
+  useEffect(() => setWorking(null), [received]);
   const [askDetails, setAskDetails] = useState<ReadonlyMap<string, NeoSnapshot>>(new Map());
   const askDetailReads = useRef(new Map<string, string>());
   const [askDetailFailures, setAskDetailFailures] = useState<ReadonlySet<string>>(new Set());
   const [askDetailEpoch, setAskDetailEpoch] = useState(0);
   const latest = useRef(received);
   latest.current = received;
-  const snapshot = useMemo(() => mergeNeoAskDetails(received, askDetails), [received, askDetails]);
+  const snapshot = useMemo(() => {
+    const merged = mergeNeoAskDetails(received, askDetails);
+    return merged && working ? { ...merged, working } : merged;
+  }, [received, askDetails, working]);
   const publications = useNeoPublications(snapshot?.sessionId ?? null);
   const asks = useNeoConversationAsks(snapshot?.sessionId ?? null);
   useEffect(() => {
@@ -102,9 +112,13 @@ export function useNeo() {
           });
         const offChanged = hub.onEvent('neo.changed', update);
         const offNotices = hub.onEvent('neo.session.notices', update);
+        const offWorking = hub.onEvent<NeoWorkingEvent>('neo.working', (event) => {
+          if (event?.working) setWorking(event.working);
+        });
         unsubscribe = () => {
           offChanged();
           offNotices();
+          offWorking();
         };
         reconnect = hub.onConnection((state) => {
           if (state === 'connected') update();

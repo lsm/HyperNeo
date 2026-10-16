@@ -4,18 +4,6 @@ export function neoWorkAnchorSelector(id: string): string {
   return `[data-neo-work="${id.replace(/["\\]/g, '\\$&')}"]`;
 }
 
-export function neoAskAnchorSelector(id: string): string {
-  return `[data-ask="${id.replace(/["\\]/g, '\\$&')}"]`;
-}
-
-export function revealNeoAsk(
-  root: ParentNode | null | undefined,
-  id: string,
-  later: (run: () => void, ms: number) => unknown = setTimeout
-): boolean {
-  return revealNeoTarget(root?.querySelector<HTMLElement>(neoAskAnchorSelector(id)), later);
-}
-
 export function revealNeoWork(
   root: ParentNode | null | undefined,
   id: string,

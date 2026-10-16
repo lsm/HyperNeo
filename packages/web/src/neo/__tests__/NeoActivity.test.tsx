@@ -6,6 +6,7 @@ import { URL as NodeURL } from 'node:url';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoActivity, neoActivityItems } from '../NeoActivity.tsx';
+import { NeoBusyRow } from '../NeoBusyRow.tsx';
 import { NEO_BUSY_WORDS } from '../processing-activity.ts';
 import {
   classifyNeoScene,
@@ -132,22 +133,6 @@ describe('NeoActivity', () => {
     expect(result.container.querySelectorAll('button, a, input')).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('puts the busy line first, cycling its words, and keeps what else runs', () => {
-    render(
-      <NeoActivity scenes={[workScene('one')]} projects={projects} enabled busy={NEO_BUSY_WORDS} />
-    );
-    const line = screen.getByRole('note', { name: 'Neo activity' });
-    expect(line.textContent).toContain('Neo is working…');
-    expect(line.textContent).toContain('1/2');
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
-    expect(line.textContent).toContain('Syncing…');
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
-    expect(line.textContent).toContain('Handed to HyperNeo · Compare one');
-  });
   it('rotates stable scene identities without taking focus from a draft', () => {
     const result = render(
       <>
@@ -258,18 +243,34 @@ describe('NeoActivity', () => {
   it('scopes the soft shimmer to supported normal-motion styling with readable theme fallbacks', () => {
     const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
     expect(css).toMatch(/\.neo-activity\s*\{[^}]*height:\s*28px;[^}]*color:\s*var\(--fg-muted\);/s);
-    expect(css).toMatch(/\.neo-activity\[hidden\]\s*\{[^}]*visibility:\s*hidden;/s);
     expect(css).toMatch(
       /@media\s*\(prefers-reduced-motion:\s*no-preference\)\s*\{\s*@supports\s*\(background-clip:\s*text\)\s*\{\s*\.neo-activity-text\s*\{[^}]*animation:\s*neo-activity-sweep/s
     );
     expect(css).not.toContain('--color-fg');
   });
-  it('restores tooltip hit-testing on the activity line inside the non-interactive dock', () => {
+  it('sits inside the composer above a divider and takes no space when idle', () => {
     const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
-    const rule = /(?:^|\n)\.neo-activity\s*\{[^}]*pointer-events:\s*auto;/;
-    expect(css).toMatch(rule);
-    expect(css.replace('pointer-events: auto;\n  height: 28px;', 'height: 28px;')).not.toMatch(
-      rule
-    );
+    expect(css).toMatch(/\.neo-activity\s*\{[^}]*border-bottom:\s*1px solid var\(--line\);/s);
+    expect(css).toMatch(/\.neo-activity\[hidden\]\s*\{[^}]*display:\s*none;/s);
+  });
+});
+
+describe('NeoBusyRow', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  it('cycles the busy words every three seconds beside the dots', () => {
+    const result = render(<NeoBusyRow words={NEO_BUSY_WORDS} />);
+    const row = screen.getByRole('status');
+    expect(row.textContent).toBe('Neo is working…');
+    expect(result.container.querySelectorAll('.neo-progress-dots i')).toHaveLength(3);
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(row.textContent).toBe('Syncing…');
+  });
+  it('holds a single word without a timer', () => {
+    render(<NeoBusyRow words={['Waiting to retry…']} />);
+    expect(screen.getByRole('status').textContent).toBe('Waiting to retry…');
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

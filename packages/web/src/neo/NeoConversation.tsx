@@ -1,3 +1,4 @@
+import { NeoBusyRow } from './NeoBusyRow.tsx';
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -73,8 +74,10 @@ export function NeoConversation({
   onEditUndelivered,
   mute,
   onQuote,
+  busy,
 }: {
   store: SessionStore;
+  busy?: readonly string[] | null;
   onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
   onEditUndelivered?: NeoEditUndelivered;
@@ -146,16 +149,6 @@ export function NeoConversation({
     onProgress?.(progressLabel);
   }, [progressLabel, onProgress]);
   useEffect(() => () => onProgress?.(null), [onProgress]);
-  const renderProgress = (label: string) => (
-    <div role="status" class="neo-progress" aria-live="polite">
-      <span class="neo-progress-dots" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-      </span>
-      <span>{label}</span>
-    </div>
-  );
   return (
     <>
       <section aria-label="Conversation with Neo" class="space-y-6">
@@ -189,7 +182,9 @@ export function NeoConversation({
           .map((ask) => (
             <PendingAsk key={ask.requestId} ask={ask} onRetry={onRetryAsk} onEdit={onEditAsk} />
           ))}
-        {progressLabel && !onProgress && renderProgress(progressLabel)}
+        {busy !== undefined
+          ? !!busy?.length && <NeoBusyRow words={busy} />
+          : progressLabel && !onProgress && <NeoBusyRow words={[progressLabel]} />}
         {pending && epoch && (
           <QuestionPrompt
             pendingHeading="A quick choice"
