@@ -586,11 +586,14 @@ describe('refreshDriverWork', () => {
         title: 'Split the packs',
         instruction: 'Do rungs d to g.',
       },
-      { verb: 'send', ref: { adapter: 'hyperneo', id: 'card-session' } }
+      { verb: 'send', ref: { adapter: 'hyperneo-sessions', id: 'card-session' } }
     );
     service.repo.transitionWork('w-split', service.repo.getWork('w-split')!, { status: 'queued' });
     service.askRecords.link(opened.id, 'w-split');
-    service.driverTargets.recordRef('w-split', { adapter: 'hyperneo', id: 'card-session' });
+    service.driverTargets.recordRef('w-split', {
+      adapter: 'hyperneo-sessions',
+      id: 'card-session',
+    });
     db.createSession({
       ...createTestSession('card-session'),
       worktree: {

@@ -177,7 +177,7 @@ describe('Neo read-only work cards', () => {
 
   test.each([
     { ...proposal, work: { ...target, operation: 'missing.read' } },
-    { ...proposal, work: { ...target, ref: { adapter: 'hyperneo', id: 'worker' } } },
+    { ...proposal, work: { ...target, ref: { adapter: 'hyperneo-sessions', id: 'worker' } } },
     { ...proposal, targetSessionId: 'worker' },
   ])('rejects missing or mixed execution targets', async (input) => {
     const result = await invoke('neo.work.propose', input);

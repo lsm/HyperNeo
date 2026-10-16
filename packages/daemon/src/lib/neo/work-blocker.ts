@@ -50,7 +50,7 @@ export function planNeoEnvironmentMove(
       (adapter) =>
         adapter.id !== target.adapter &&
         adapter.capabilities.includes('start') &&
-        (adapter.id === 'space') === !!place.spaceId
+        (adapter.id === 'hyperneo-spaces') === !!place.spaceId
     )
     .map((adapter) => adapter.id);
   return others.length ? { value: { failure: blocker.what, adapters: others } } : { reason: null };

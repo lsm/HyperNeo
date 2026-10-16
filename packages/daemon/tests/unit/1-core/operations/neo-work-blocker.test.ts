@@ -26,8 +26,8 @@ const adapters = [
   { id: 'codex-desktop', capabilities: ['find', 'start', 'send'] },
   { id: 'claude-desktop', capabilities: ['find', 'start', 'send'] },
   { id: 'claude-code', capabilities: ['find', 'send'] },
-  { id: 'hyperneo', capabilities: ['find', 'start', 'send'] },
-  { id: 'space', capabilities: ['find', 'start'] },
+  { id: 'hyperneo-sessions', capabilities: ['find', 'start', 'send'] },
+  { id: 'hyperneo-spaces', capabilities: ['find', 'start'] },
 ];
 
 describe('readNeoWorkBlocker', () => {
@@ -117,7 +117,7 @@ describe('the brief asks the worker to declare a blocker', () => {
 describe('planNeoEnvironmentMove', () => {
   test('an environment blocker offers the other adapters that can start in the same folder', () => {
     expect(planNeoEnvironmentMove(environment, start, adapters)).toEqual({
-      value: { failure: environment.what, adapters: ['claude-desktop', 'hyperneo'] },
+      value: { failure: environment.what, adapters: ['claude-desktop', 'hyperneo-sessions'] },
     });
   });
 
@@ -125,10 +125,10 @@ describe('planNeoEnvironmentMove', () => {
     expect(
       planNeoEnvironmentMove(
         environment,
-        { verb: 'start', adapter: 'hyperneo', place: { ...place, spaceId: 's1' } },
+        { verb: 'start', adapter: 'hyperneo-sessions', place: { ...place, spaceId: 's1' } },
         adapters
       )
-    ).toEqual({ value: { failure: environment.what, adapters: ['space'] } });
+    ).toEqual({ value: { failure: environment.what, adapters: ['hyperneo-spaces'] } });
   });
 
   test('a needs_human blocker, no blocker, no started place, no adapters or no alternative means no move', () => {
@@ -152,7 +152,7 @@ describe('neoEnvironmentMoveNote', () => {
   test('states the failure and the adapters; the system prompt says to propose the move', () => {
     const note = neoEnvironmentMoveNote({
       failure: environment.what,
-      adapters: ['claude-desktop', 'hyperneo'],
+      adapters: ['claude-desktop', 'hyperneo-sessions'],
     });
     expect(note).toContain(environment.what);
     expect(note).toContain('claude-desktop, hyperneo');
@@ -162,7 +162,10 @@ describe('neoEnvironmentMoveNote', () => {
   });
 
   test('the done-check note carries the move line', () => {
-    const move = neoEnvironmentMoveNote({ failure: environment.what, adapters: ['hyperneo'] });
+    const move = neoEnvironmentMoveNote({
+      failure: environment.what,
+      adapters: ['hyperneo-sessions'],
+    });
     const note = driverDoneCheckNote(
       { id: 'w1', title: 'Open a PR', report: roundSix, originSessionId: 'neo:root' },
       { goal: 'Open a PR', doneWhen: '- PR open' },

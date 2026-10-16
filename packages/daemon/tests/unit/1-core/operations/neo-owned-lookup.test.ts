@@ -6,7 +6,7 @@ import {
   ownedLookupSessionId,
 } from '../../../../src/lib/neo/operations.ts';
 
-const ref = { adapter: 'space', id: 'task-1' };
+const ref = { adapter: 'hyperneo-spaces', id: 'task-1' };
 
 describe('ownedLookupSessionId', () => {
   test.each([

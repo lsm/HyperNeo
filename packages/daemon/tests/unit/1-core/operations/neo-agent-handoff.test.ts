@@ -409,7 +409,7 @@ describe('Neo existing Space-agent handoff operation', () => {
     expect(reply.value.ok).toBe(true);
     expect(service.driverTargets.get(reply.value.work.id)).toEqual({
       verb: 'send',
-      ref: { adapter: 'space', id: 'agent:manager-A' },
+      ref: { adapter: 'hyperneo-spaces', id: 'agent:manager-A' },
     });
   });
 

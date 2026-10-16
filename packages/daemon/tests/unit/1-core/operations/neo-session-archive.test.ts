@@ -168,7 +168,7 @@ describe('neo.session.archive', () => {
       instruction: 'Finish',
       targetSessionId: 'worker',
     });
-    expect(await invoke({ adapter: 'hyperneo', id: 'worker' })).toMatchObject({
+    expect(await invoke({ adapter: 'hyperneo-sessions', id: 'worker' })).toMatchObject({
       value: { ok: false, reason: 'live_card' },
     });
   });

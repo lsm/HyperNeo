@@ -57,7 +57,7 @@ const LANDED_INPUT = `message_type = 'user' AND parent_tool_use_id IS NULL
   AND COALESCE(json_extract(sdk_message, '$.inputKind'), '') <> 'system'
   AND COALESCE(json_extract(sdk_message, '$.message.content[0].type'), 'text') = 'text'`;
 
-export interface HyperneoPlaceRow {
+export interface HyperNeoSessionsPlaceRow {
   folder: string | null;
   openCount: number;
   archivedCount: number;
@@ -65,7 +65,7 @@ export interface HyperneoPlaceRow {
   lastActiveAt: string | null;
 }
 
-export interface HyperneoSessionRow {
+export interface HyperNeoSessionsRow {
   id: string;
   title: string;
   status: string;
@@ -74,7 +74,7 @@ export interface HyperneoSessionRow {
   lastActiveAt: string | null;
 }
 
-export interface HyperneoSessionControl {
+export interface HyperNeoSessionsControl {
   archive?: WorkAdapter['archive'];
   create(workspacePath: string, title: string, model?: string): Promise<string>;
   resolveModel(model: string): Promise<string | null>;
@@ -84,7 +84,7 @@ export interface HyperneoSessionControl {
   interrupt(sessionId: string): boolean;
 }
 
-export interface HyperneoAdapterDeps {
+export interface HyperNeoSessionsAdapterDeps {
   prepareExecution?: WorkExecutionPreparer;
   projects?: () => NonNullable<WorkspaceHistoryEntry['project']>[];
   db: () => BunDatabase;
@@ -96,7 +96,7 @@ export interface HyperneoAdapterDeps {
     from: string,
     messageUuid: string
   ) => Promise<MailboxHandoffOutcome>;
-  sessions: HyperneoSessionControl;
+  sessions: HyperNeoSessionsControl;
   neoFolder: () => string;
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
@@ -104,7 +104,7 @@ export interface HyperneoAdapterDeps {
   liveCards?: () => ReadonlyMap<string, number>;
 }
 
-export interface HyperneoLastResult {
+export interface HyperNeoSessionsLastResult {
   reply: string | null;
   failed: number | null;
   at: string | null;
@@ -112,7 +112,7 @@ export interface HyperneoLastResult {
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
 
-export function hyperneoWorkStatus(status: string, processing: string | null): WorkStatus {
+export function hyperNeoSessionsWorkStatus(status: string, processing: string | null): WorkStatus {
   if (status === 'archived' || status === 'ended' || processing === 'interrupted') return 'stopped';
   if (processing === 'interrupted_by_restart') return 'queued';
   if (status === 'pending_worktree_choice' || processing === 'waiting_for_input')
@@ -130,7 +130,7 @@ function placeName(folder: string | null): string {
   return folder ? basename(folder.replace(/[\\/]+$/, '')) || folder : 'Chats';
 }
 
-export function readHyperneoPlaces(db: BunDatabase): HyperneoPlaceRow[] {
+export function readHyperNeoSessionsPlaces(db: BunDatabase): HyperNeoSessionsPlaceRow[] {
   return db
     .prepare(
       `SELECT folder, SUM(open) AS openCount, SUM(archived) AS archivedCount, MAX(known) AS known,
@@ -146,13 +146,13 @@ export function readHyperneoPlaces(db: BunDatabase): HyperneoPlaceRow[] {
          )
         GROUP BY folder`
     )
-    .all() as HyperneoPlaceRow[];
+    .all() as HyperNeoSessionsPlaceRow[];
 }
 
-export function readHyperneoSessions(
+export function readHyperNeoSessions(
   db: BunDatabase,
   includeClosed: boolean
-): HyperneoSessionRow[] {
+): HyperNeoSessionsRow[] {
   return db
     .prepare(
       `SELECT * FROM (
@@ -163,7 +163,7 @@ export function readHyperneoSessions(
            ORDER BY lastActiveAt DESC LIMIT ${CLOSED_SESSIONS}))
        ORDER BY lastActiveAt DESC`
     )
-    .all(includeClosed ? 1 : 0) as HyperneoSessionRow[];
+    .all(includeClosed ? 1 : 0) as HyperNeoSessionsRow[];
 }
 
 export function withSessionLoad(work: WorkSummary, liveCards: number): WorkSummary {
@@ -175,22 +175,22 @@ export function withSessionLoad(work: WorkSummary, liveCards: number): WorkSumma
   };
 }
 
-function toWork(row: HyperneoSessionRow, machine: string): WorkSummary {
+function toWork(row: HyperNeoSessionsRow, machine: string): WorkSummary {
   return {
-    ref: { adapter: 'hyperneo', id: row.id },
+    ref: { adapter: 'hyperneo-sessions', id: row.id },
     title: row.title,
     place: { machine, ...(row.folder ? { folder: row.folder } : {}), name: placeName(row.folder) },
-    status: hyperneoWorkStatus(row.status, row.processing),
+    status: hyperNeoSessionsWorkStatus(row.status, row.processing),
     lastActivityAt: timestamp(row.lastActiveAt),
     link: `/session/${row.id}`,
   };
 }
 
-export function buildHyperneoGroups(
-  places: readonly HyperneoPlaceRow[],
-  sessions: readonly HyperneoSessionRow[],
+export function buildHyperNeoSessionsGroups(
+  places: readonly HyperNeoSessionsPlaceRow[],
+  sessions: readonly HyperNeoSessionsRow[],
   query: FindQuery,
-  deps: Pick<HyperneoAdapterDeps, 'machine'>,
+  deps: Pick<HyperNeoSessionsAdapterDeps, 'machine'>,
   matched: ReadonlyMap<string, WorkChatMatch>,
   liveCards: ReadonlyMap<string, number> = new Map(),
   projects: NonNullable<WorkspaceHistoryEntry['project']>[] = []
@@ -238,7 +238,7 @@ export function buildHyperneoGroups(
           lastActivityAt: timestamp(place.lastActiveAt),
           openCount: place.openCount,
           archivedCount: place.archivedCount,
-          adapters: ['hyperneo'],
+          adapters: ['hyperneo-sessions'],
           work: work.map((item) => ({
             ...item,
             place: { ...item.place, ...(toolProject ? { toolProject } : {}) },
@@ -248,18 +248,20 @@ export function buildHyperneoGroups(
     });
 }
 
-export function loadHyperneoPlaces(deps: HyperneoAdapterDeps): HyperneoPlaceRow[] {
-  return readHyperneoPlaces(deps.db());
+export function loadHyperNeoSessionsPlaces(
+  deps: HyperNeoSessionsAdapterDeps
+): HyperNeoSessionsPlaceRow[] {
+  return readHyperNeoSessionsPlaces(deps.db());
 }
 
-export function loadHyperneoSessions(
+export function loadHyperNeoSessions(
   query: FindQuery,
-  deps: HyperneoAdapterDeps
-): HyperneoSessionRow[] {
-  return readHyperneoSessions(deps.db(), query.includeClosed);
+  deps: HyperNeoSessionsAdapterDeps
+): HyperNeoSessionsRow[] {
+  return readHyperNeoSessions(deps.db(), query.includeClosed);
 }
 
-export function matchHyperneoSessions(
+export function matchHyperNeoSessions(
   chats: readonly WorkChatMatch[]
 ): ReadonlyMap<string, WorkChatMatch> {
   return matchChatsBy(chats, (chat) => (chat.taskId === null ? chat.sessionId : null));
@@ -274,10 +276,10 @@ function insideNeo(folder: string | null, root: string): boolean {
 }
 
 export function foldNeoPlaces(
-  places: readonly HyperneoPlaceRow[],
+  places: readonly HyperNeoSessionsPlaceRow[],
   root: string
-): HyperneoPlaceRow[] {
-  const folded = new Map<string | null, HyperneoPlaceRow>();
+): HyperNeoSessionsPlaceRow[] {
+  const folded = new Map<string | null, HyperNeoSessionsPlaceRow>();
   for (const place of places) {
     const folder = insideNeo(place.folder, root) ? root : place.folder;
     const seen = folded.get(folder);
@@ -301,52 +303,55 @@ export function foldNeoPlaces(
 }
 
 export function foldNeoSessions(
-  sessions: readonly HyperneoSessionRow[],
+  sessions: readonly HyperNeoSessionsRow[],
   root: string
-): HyperneoSessionRow[] {
+): HyperNeoSessionsRow[] {
   return sessions.map((session) =>
     insideNeo(session.folder, root) ? { ...session, folder: root } : session
   );
 }
 
-const runHyperneoFind = (superpipe({})('hyperneo-find-work') as PipelineAPI)
+const runHyperNeoSessionsFind = (superpipe({})('hyperneo-find-work') as PipelineAPI)
   .input(['query', 'deps', 'chats'])
   .pipe(skipSpaceQuery, 'query', 'result:groups')
-  .pipe(loadHyperneoPlaces, 'deps', 'rawPlaces')
-  .pipe(loadHyperneoSessions, ['query', 'deps'], 'rawSessions')
-  .pipe((deps: HyperneoAdapterDeps) => deps.neoFolder(), 'deps', 'neoRoot')
+  .pipe(loadHyperNeoSessionsPlaces, 'deps', 'rawPlaces')
+  .pipe(loadHyperNeoSessions, ['query', 'deps'], 'rawSessions')
+  .pipe((deps: HyperNeoSessionsAdapterDeps) => deps.neoFolder(), 'deps', 'neoRoot')
   .pipe(foldNeoPlaces, ['rawPlaces', 'neoRoot'], 'places')
   .pipe(foldNeoSessions, ['rawSessions', 'neoRoot'], 'sessions')
-  .pipe(matchHyperneoSessions, 'chats', 'matched')
-  .pipe((deps: HyperneoAdapterDeps) => deps.liveCards?.() ?? new Map(), 'deps', 'liveCards')
-  .pipe((deps: HyperneoAdapterDeps) => deps.projects?.() ?? [], 'deps', 'projects')
+  .pipe(matchHyperNeoSessions, 'chats', 'matched')
+  .pipe((deps: HyperNeoSessionsAdapterDeps) => deps.liveCards?.() ?? new Map(), 'deps', 'liveCards')
+  .pipe((deps: HyperNeoSessionsAdapterDeps) => deps.projects?.() ?? [], 'deps', 'projects')
   .pipe(
-    buildHyperneoGroups,
+    buildHyperNeoSessionsGroups,
     ['places', 'sessions', 'query', 'deps', 'matched', 'liveCards', 'projects'],
     'groups'
   )
   .end('groups') as (
   query: FindQuery,
-  deps: HyperneoAdapterDeps,
+  deps: HyperNeoSessionsAdapterDeps,
   chats: readonly WorkChatMatch[]
 ) => PlaceGroup[];
 
-export function hyperneoSessionBusy(row: HyperneoSessionRow): boolean {
-  const status = hyperneoWorkStatus(row.status, row.processing);
+export function hyperNeoSessionsSessionBusy(row: HyperNeoSessionsRow): boolean {
+  const status = hyperNeoSessionsWorkStatus(row.status, row.processing);
   return status === 'running' || status === 'queued';
 }
 
-export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessionRow | null {
+export function readHyperNeoSession(db: BunDatabase, id: string): HyperNeoSessionsRow | null {
   const row = db
     .prepare(
       `SELECT id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
          ${PROCESSING} AS processing FROM sessions WHERE id = ? AND ${OWN_SESSIONS}`
     )
-    .get(id) as HyperneoSessionRow | null | undefined;
+    .get(id) as HyperNeoSessionsRow | null | undefined;
   return row ?? null;
 }
 
-export function readHyperneoLastResult(db: BunDatabase, id: string): HyperneoLastResult | null {
+export function readHyperNeoSessionsLastResult(
+  db: BunDatabase,
+  id: string
+): HyperNeoSessionsLastResult | null {
   const row = db
     .prepare(
       `SELECT json_extract(sdk_message, '$.result') AS reply, json_extract(sdk_message, '$.is_error') AS failed,
@@ -355,11 +360,11 @@ export function readHyperneoLastResult(db: BunDatabase, id: string): HyperneoLas
           AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
         ORDER BY timestamp DESC LIMIT 1`
     )
-    .get(id) as HyperneoLastResult | null | undefined;
+    .get(id) as HyperNeoSessionsLastResult | null | undefined;
   return row ?? null;
 }
 
-export function hyperneoInputText(message: string): string {
+export function hyperNeoSessionsInputText(message: string): string {
   const content = (JSON.parse(message) as { message?: { content?: unknown } }).message?.content;
   if (typeof content === 'string') return content;
   return Array.isArray(content)
@@ -371,7 +376,11 @@ export function hyperneoInputText(message: string): string {
     : '';
 }
 
-export function readHyperneoInputs(db: BunDatabase, id: string, since?: number): WorkInput[] {
+export function readHyperNeoSessionsInputs(
+  db: BunDatabase,
+  id: string,
+  since?: number
+): WorkInput[] {
   const rows = (
     since === undefined
       ? db
@@ -392,7 +401,7 @@ export function readHyperneoInputs(db: BunDatabase, id: string, since?: number):
   const inputs = rows.flatMap((row) => {
     const input = workInput(
       workEntryTime(row.timestamp),
-      hyperneoInputText(row.message),
+      hyperNeoSessionsInputText(row.message),
       JSON.parse(row.message).inputKind === 'human'
     );
     return input ? [input] : [];
@@ -400,13 +409,13 @@ export function readHyperneoInputs(db: BunDatabase, id: string, since?: number):
   return recentWorkInputs(inputs, since);
 }
 
-type HyperneoExchangeRow = { timestamp: string; message: string; message_type: string };
+type HyperNeoSessionsExchangeRow = { timestamp: string; message: string; message_type: string };
 
-function projectHyperneoExchange(rows: HyperneoExchangeRow[], since: number) {
+function projectHyperNeoSessionsExchange(rows: HyperNeoSessionsExchangeRow[], since: number) {
   const entries = rows.flatMap((row) => {
     const user = row.message_type === 'user';
     const raw = user
-      ? hyperneoInputText(row.message)
+      ? hyperNeoSessionsInputText(row.message)
       : (JSON.parse(row.message).result as string | undefined);
     const text = raw?.trim() || (user ? '[Non-text input]' : '[No written result]');
     const entry = exchangeEntry(workEntryTime(row.timestamp), user ? 'user' : 'agent', text, since);
@@ -415,7 +424,7 @@ function projectHyperneoExchange(rows: HyperneoExchangeRow[], since: number) {
   return boundExchange(entries, rows.length > 40);
 }
 
-export function readHyperneoExchange(db: BunDatabase, id: string, since: number) {
+export function readHyperNeoSessionsExchange(db: BunDatabase, id: string, since: number) {
   const rows = db
     .prepare(
       `SELECT timestamp, sdk_message AS message, message_type FROM sdk_messages
@@ -427,19 +436,19 @@ export function readHyperneoExchange(db: BunDatabase, id: string, since: number)
       ORDER BY timestamp DESC, rowid DESC LIMIT 41`
     )
     .all(id, new Date(since).toISOString())
-    .reverse() as HyperneoExchangeRow[];
-  return projectHyperneoExchange(rows, since);
+    .reverse() as HyperNeoSessionsExchangeRow[];
+  return projectHyperNeoSessionsExchange(rows, since);
 }
 
-export function requireHyperneoSession(
+export function requireHyperNeoSessions(
   ref: WorkRef,
-  deps: HyperneoAdapterDeps
-): Gate<HyperneoSessionRow> {
-  const row = readHyperneoSession(deps.db(), ref.id);
+  deps: HyperNeoSessionsAdapterDeps
+): Gate<HyperNeoSessionsRow> {
+  const row = readHyperNeoSession(deps.db(), ref.id);
   return row ? { value: row } : { reason: reject('not_found', `No HyperNeo session ${ref.id}.`) };
 }
 
-export function requireOpenHyperneoSession(row: HyperneoSessionRow): Gate<HyperneoSessionRow> {
+export function requireOpenHyperNeoSessions(row: HyperNeoSessionsRow): Gate<HyperNeoSessionsRow> {
   return sessionUnavailable(row.status)
     ? {
         reason: reject(
@@ -450,13 +459,13 @@ export function requireOpenHyperneoSession(row: HyperneoSessionRow): Gate<Hypern
     : { value: row };
 }
 
-export function describeHyperneoWork(
-  row: HyperneoSessionRow,
-  deps: HyperneoAdapterDeps,
+export function describeHyperNeoSessionsWork(
+  row: HyperNeoSessionsRow,
+  deps: HyperNeoSessionsAdapterDeps,
   since?: number
 ): Result<WorkDetail> {
   const work = toWork(row, deps.machine);
-  const last = readHyperneoLastResult(deps.db(), row.id);
+  const last = readHyperNeoSessionsLastResult(deps.db(), row.id);
   return {
     ok: true,
     value: {
@@ -465,19 +474,19 @@ export function describeHyperneoWork(
       ...(last?.reply
         ? { lastReply: last.reply.slice(0, REPLY_LIMIT), lastReplyAt: timestamp(last.at) }
         : {}),
-      recentInputs: readHyperneoInputs(deps.db(), row.id, since),
+      recentInputs: readHyperNeoSessionsInputs(deps.db(), row.id, since),
       ...withExchange(
-        since === undefined ? undefined : readHyperneoExchange(deps.db(), row.id, since)
+        since === undefined ? undefined : readHyperNeoSessionsExchange(deps.db(), row.id, since)
       ),
     },
   };
 }
 
-export async function deliverToHyperneo(
-  row: HyperneoSessionRow,
+export async function deliverToHyperNeoSessions(
+  row: HyperNeoSessionsRow,
   message: string,
   context: WorkCallContext,
-  deps: HyperneoAdapterDeps
+  deps: HyperNeoSessionsAdapterDeps
 ): Promise<Result<WorkDelivery>> {
   const inputId = crypto.randomUUID();
   const outcome = await deps.handoff(row.id, message, context.from, inputId);
@@ -485,22 +494,25 @@ export async function deliverToHyperneo(
   return {
     ok: true,
     value: {
-      delivered: !hyperneoSessionBusy(row),
+      delivered: !hyperNeoSessionsSessionBusy(row),
       receipt: { executionId: row.id, inputId },
     },
   };
 }
 
-export function selectStartFolder(request: StartRequest, deps: HyperneoAdapterDeps): Gate<string> {
+export function selectStartFolder(
+  request: StartRequest,
+  deps: HyperNeoSessionsAdapterDeps
+): Gate<string> {
   const admitted = workStartPreparation.admit(request.preparation, !!deps.prepareExecution);
   if ('reason' in admitted) return admitted;
   return selectLocalStartFolder(request, deps, 'Start new work in a project folder or a Space.');
 }
 
-export async function createHyperneoSession(
+export async function createHyperNeoSessions(
   folder: string,
   request: StartRequest,
-  deps: HyperneoAdapterDeps
+  deps: HyperNeoSessionsAdapterDeps
 ): Promise<Gate<string>> {
   const prepared = request.preparation
     ? await deps.prepareExecution!(request.preparation, {
@@ -523,16 +535,16 @@ export async function createHyperneoSession(
   } finally {
     if (!sessionId) await prepared?.value.release();
   }
-  if (readHyperneoSession(deps.db(), sessionId)?.status === 'pending_worktree_choice') {
+  if (readHyperNeoSession(deps.db(), sessionId)?.status === 'pending_worktree_choice') {
     await deps.sessions.chooseWorktree(sessionId);
   }
   deps.sessions.announce(sessionId);
   return { value: sessionId };
 }
 
-async function requireHyperneoStartConfiguration(
+async function requireHyperNeoSessionsStartConfiguration(
   request: StartRequest,
-  deps: HyperneoAdapterDeps
+  deps: HyperNeoSessionsAdapterDeps
 ): Promise<Gate<StartRequest>> {
   if (request.effort !== undefined)
     return { reason: reject('unsupported_effort', 'HyperNeo cannot confirm a requested effort.') };
@@ -543,10 +555,10 @@ async function requireHyperneoStartConfiguration(
     : { reason: reject('unsupported_model', `No available model matches ${request.model}.`) };
 }
 
-function confirmHyperneoStart(
+function confirmHyperNeoSessionsStart(
   sessionId: string,
   request: StartRequest,
-  deps: HyperneoAdapterDeps
+  deps: HyperNeoSessionsAdapterDeps
 ): Gate<{ sessionId: string; model: string | null }> {
   const model = deps.sessions.model(sessionId);
   const confirmed = workStartConfiguration.confirm(request, model ? { model } : {});
@@ -560,11 +572,11 @@ function confirmHyperneoStart(
       };
 }
 
-export async function openHyperneoWork(
+export async function openHyperNeoSessionsWork(
   confirmed: { sessionId: string; model: string | null },
   request: StartRequest,
   context: WorkCallContext,
-  deps: HyperneoAdapterDeps
+  deps: HyperNeoSessionsAdapterDeps
 ): Promise<Result<WorkStarted>> {
   const { sessionId, model } = confirmed;
   const inputId = crypto.randomUUID();
@@ -575,7 +587,7 @@ export async function openHyperneoWork(
       `Session ${sessionId} started without its message: ${outcome.reason}`
     );
   }
-  const row = readHyperneoSession(deps.db(), sessionId);
+  const row = readHyperNeoSession(deps.db(), sessionId);
   if (!row) return reject('not_found', `Session ${sessionId} is gone.`);
   const work = toWork(row, deps.machine);
   return {
@@ -589,40 +601,43 @@ export async function openHyperneoWork(
   };
 }
 
-export function stopHyperneoWork(
-  row: HyperneoSessionRow,
-  deps: HyperneoAdapterDeps
+export function stopHyperNeoSessionsWork(
+  row: HyperNeoSessionsRow,
+  deps: HyperNeoSessionsAdapterDeps
 ): Result<{ stopped: boolean }> {
   return {
     ok: true,
-    value: { stopped: hyperneoSessionBusy(row) && deps.sessions.interrupt(row.id) },
+    value: { stopped: hyperNeoSessionsSessionBusy(row) && deps.sessions.interrupt(row.id) },
   };
 }
 
-const runHyperneoStart = (superpipe({})('hyperneo-start-work') as PipelineAPI)
+const runHyperNeoSessionsStart = (superpipe({})('hyperneo-start-work') as PipelineAPI)
   .input(['request', 'context', 'deps'])
-  .pipe(requireHyperneoStartConfiguration, ['request', 'deps'], 'result:outcome')
+  .pipe(requireHyperNeoSessionsStartConfiguration, ['request', 'deps'], 'result:outcome')
   .pipe((request: StartRequest) => request, 'outcome', 'configured')
   .pipe(selectStartFolder, ['configured', 'deps'], 'result:outcome')
-  .pipe(createHyperneoSession, ['outcome', 'configured', 'deps'], 'result:outcome')
-  .pipe(confirmHyperneoStart, ['outcome', 'configured', 'deps'], 'result:outcome')
-  .pipe(openHyperneoWork, ['outcome', 'configured', 'context', 'deps'], 'outcome')
+  .pipe(createHyperNeoSessions, ['outcome', 'configured', 'deps'], 'result:outcome')
+  .pipe(confirmHyperNeoSessionsStart, ['outcome', 'configured', 'deps'], 'result:outcome')
+  .pipe(openHyperNeoSessionsWork, ['outcome', 'configured', 'context', 'deps'], 'outcome')
   .endAsync('outcome') as (
   request: StartRequest,
   context: WorkCallContext,
-  deps: HyperneoAdapterDeps
+  deps: HyperNeoSessionsAdapterDeps
 ) => Promise<Result<WorkStarted>>;
 
-const runHyperneoStop = (superpipe({})('hyperneo-stop-work') as PipelineAPI)
+const runHyperNeoSessionsStop = (superpipe({})('hyperneo-stop-work') as PipelineAPI)
   .input(['ref', 'deps'])
-  .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
-  .pipe(stopHyperneoWork, ['outcome', 'deps'], 'outcome')
-  .end('outcome') as (ref: WorkRef, deps: HyperneoAdapterDeps) => Result<{ stopped: boolean }>;
+  .pipe(requireHyperNeoSessions, ['ref', 'deps'], 'result:outcome')
+  .pipe(stopHyperNeoSessionsWork, ['outcome', 'deps'], 'outcome')
+  .end('outcome') as (
+  ref: WorkRef,
+  deps: HyperNeoSessionsAdapterDeps
+) => Result<{ stopped: boolean }>;
 
-export function withHyperneoInputEvidence(
+export function withHyperNeoSessionsInputEvidence(
   outcome: Result<WorkDetail>,
-  row: HyperneoSessionRow,
-  deps: HyperneoAdapterDeps,
+  row: HyperNeoSessionsRow,
+  deps: HyperNeoSessionsAdapterDeps,
   receipt: WorkDelivery['receipt']
 ): Result<WorkDetail> {
   return outcome.ok && receipt
@@ -636,34 +651,34 @@ export function withHyperneoInputEvidence(
     : outcome;
 }
 
-const runHyperneoStatus = (superpipe({})('hyperneo-work-status') as PipelineAPI)
+const runHyperNeoSessionsStatus = (superpipe({})('hyperneo-work-status') as PipelineAPI)
   .input(['ref', 'deps', 'since', 'receipt'])
-  .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
-  .pipe((row: HyperneoSessionRow) => row, 'outcome', 'row')
-  .pipe(describeHyperneoWork, ['row', 'deps', 'since'], 'outcome')
-  .pipe(withHyperneoInputEvidence, ['outcome', 'row', 'deps', 'receipt'], 'outcome')
+  .pipe(requireHyperNeoSessions, ['ref', 'deps'], 'result:outcome')
+  .pipe((row: HyperNeoSessionsRow) => row, 'outcome', 'row')
+  .pipe(describeHyperNeoSessionsWork, ['row', 'deps', 'since'], 'outcome')
+  .pipe(withHyperNeoSessionsInputEvidence, ['outcome', 'row', 'deps', 'receipt'], 'outcome')
   .end('outcome') as (
   ref: WorkRef,
-  deps: HyperneoAdapterDeps,
+  deps: HyperNeoSessionsAdapterDeps,
   since?: number,
   receipt?: WorkDelivery['receipt']
 ) => Result<WorkDetail>;
 
-const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
+const runHyperNeoSessionsSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
   .input(['ref', 'message', 'context', 'deps'])
-  .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
-  .pipe(requireOpenHyperneoSession, 'outcome', 'result:outcome')
-  .pipe(deliverToHyperneo, ['outcome', 'message', 'context', 'deps'], 'outcome')
+  .pipe(requireHyperNeoSessions, ['ref', 'deps'], 'result:outcome')
+  .pipe(requireOpenHyperNeoSessions, 'outcome', 'result:outcome')
+  .pipe(deliverToHyperNeoSessions, ['outcome', 'message', 'context', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,
   context: WorkCallContext,
-  deps: HyperneoAdapterDeps
+  deps: HyperNeoSessionsAdapterDeps
 ) => Promise<Result<WorkDelivery>>;
 
-export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
+export function createHyperNeoSessionsAdapter(deps: HyperNeoSessionsAdapterDeps): WorkAdapter {
   return {
-    id: 'hyperneo',
+    id: 'hyperneo-sessions',
     supportsStartPreparation: !!deps.prepareExecution,
     capabilities: [
       'find',
@@ -674,21 +689,21 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       ...(deps.sessions.archive ? ['archive' as const] : []),
     ],
     find: async (query) =>
-      runHyperneoFind(
+      runHyperNeoSessionsFind(
         query,
         deps,
         query.text && !query.spaceId ? await deps.searchChats(query.text) : []
       ),
-    start: (request, context) => runHyperneoStart(request, context, deps),
-    send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
-    status: async (ref, since, receipt) => runHyperneoStatus(ref, deps, since, receipt),
-    stop: async (ref) => runHyperneoStop(ref, deps),
+    start: (request, context) => runHyperNeoSessionsStart(request, context, deps),
+    send: (ref, message, context) => runHyperNeoSessionsSend(ref, message, context, deps),
+    status: async (ref, since, receipt) => runHyperNeoSessionsStatus(ref, deps, since, receipt),
+    stop: async (ref) => runHyperNeoSessionsStop(ref, deps),
     archive: async (ref, admit) => {
       const check = () => {
-        const found = requireHyperneoSession(ref, deps);
+        const found = requireHyperNeoSessions(ref, deps);
         if ('reason' in found) return found.reason;
         return ['running', 'queued', 'needs_you'].includes(
-          hyperneoWorkStatus(found.value.status, found.value.processing)
+          hyperNeoSessionsWorkStatus(found.value.status, found.value.processing)
         )
           ? reject('busy', 'The HyperNeo session still has a live turn.')
           : admit();

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { createSpaceAdapter } from '../../../../src/lib/drivers/space-adapter.ts';
+import { createHyperNeoSpacesAdapter } from '../../../../src/lib/drivers/hyperneo-spaces-adapter.ts';
 import type { WorkDelivery } from '../../../../src/lib/drivers/types.ts';
 import {
   NEO_WORK_UNVERIFIED_REPLY_NOTE,
@@ -78,7 +78,7 @@ function write(id: string, type: string, seq: number | null, text: string, sessi
 }
 
 async function status(input: Receipt | undefined = receipt) {
-  const adapter = createSpaceAdapter({
+  const adapter = createHyperNeoSpacesAdapter({
     db: () => db,
     machine: 'imac',
     searchChats: async () => [],
@@ -89,7 +89,7 @@ async function status(input: Receipt | undefined = receipt) {
       messageAgent: async () => ({ accepted: true }),
     },
   });
-  const result = await adapter.status!({ adapter: 'space', id: 't1' }, undefined, input);
+  const result = await adapter.status!({ adapter: 'hyperneo-spaces', id: 't1' }, undefined, input);
   return { kind: 'completed' as const, value: result };
 }
 

@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import { hyperneoWorkStatus } from '../drivers/hyperneo-adapter.ts';
+import { hyperNeoSessionsWorkStatus } from '../drivers/hyperneo-sessions-adapter.ts';
 import type { NeoSessionLoad } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoDriverTarget } from './driver-work.ts';
 
@@ -23,7 +23,7 @@ const IDLE_LIMIT = 3;
 
 function busyStatus(status: string | null, processing: string | null): boolean {
   if (!status) return false;
-  const work = hyperneoWorkStatus(status, processing);
+  const work = hyperNeoSessionsWorkStatus(status, processing);
   return work === 'running' || work === 'queued';
 }
 
@@ -60,7 +60,7 @@ export function readNeoSessionLoad(db: BunDatabase, excludeRequestKey?: string):
            SELECT COALESCE(json_extract(t.ref, '$.id'), json_extract(t.target, '$.ref.id'))
              FROM neo_work w JOIN neo_work_driver_targets t ON t.work_id = w.id
             WHERE w.status IN ('proposed', 'queued') AND w.request_key IS NOT ?
-              AND COALESCE(json_extract(t.ref, '$.adapter'), json_extract(t.target, '$.ref.adapter')) = 'hyperneo'
+              AND COALESCE(json_extract(t.ref, '$.adapter'), json_extract(t.target, '$.ref.adapter')) = 'hyperneo-sessions'
               AND COALESCE(json_extract(t.ref, '$.daemon'), json_extract(t.target, '$.ref.daemon')) IS NULL
          ) live
          LEFT JOIN sessions s ON s.id = live.sessionId
@@ -109,7 +109,7 @@ export function neoTargetSessionId(
   work: NeoDriverTarget | undefined
 ): string | null {
   if (targetSessionId) return targetSessionId;
-  if (work?.verb === 'send' && work.ref.adapter === 'hyperneo' && !work.ref.daemon) {
+  if (work?.verb === 'send' && work.ref.adapter === 'hyperneo-sessions' && !work.ref.daemon) {
     return work.ref.id;
   }
   return null;

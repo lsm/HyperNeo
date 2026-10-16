@@ -1,5 +1,5 @@
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { spaceTaskControl } from '../../../../src/lib/rpc-handlers/family-operations/drivers';
+import { hyperNeoSpacesTaskControl } from '../../../../src/lib/rpc-handlers/family-operations/drivers';
 import {
   NEO_WORK_UNVERIFIED_REPLY_NOTE,
   readDriverFollowUp,
@@ -7,10 +7,10 @@ import {
 } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
-  createSpaceAdapter,
+  createHyperNeoSpacesAdapter,
   spaceTaskCaller,
   taskOperationRejection,
-} from '../../../../src/lib/drivers/space-adapter';
+} from '../../../../src/lib/drivers/hyperneo-spaces-adapter';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { readSessionInputEvidence } from '../../../../src/lib/drivers/space-input-evidence';
 
@@ -60,7 +60,7 @@ describe('space adapter start, status and stop', () => {
   afterEach(() => db.close());
 
   function adapter(refuse?: string) {
-    return createSpaceAdapter({
+    return createHyperNeoSpacesAdapter({
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -83,7 +83,7 @@ describe('space adapter start, status and stop', () => {
     });
   }
 
-  const ref = (id: string) => ({ adapter: 'space', id });
+  const ref = (id: string) => ({ adapter: 'hyperneo-spaces', id });
   const rpc = { source: 'rpc' as const };
   const space = { machine: 'imac', spaceId: 'sp1', name: 'dev-neokai' };
 
@@ -313,7 +313,7 @@ describe('space adapter send', () => {
   afterEach(() => db.close());
 
   function adapter() {
-    return createSpaceAdapter({
+    return createHyperNeoSpacesAdapter({
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
@@ -334,7 +334,7 @@ describe('space adapter send', () => {
     });
   }
 
-  const ref = (id: string) => ({ adapter: 'space', id });
+  const ref = (id: string) => ({ adapter: 'hyperneo-spaces', id });
   const neo = {
     from: 'session:neo%3Aroot',
     caller: { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const },
@@ -610,7 +610,7 @@ describe('space adapter send', () => {
         sdk_message TEXT, timestamp TEXT, send_status TEXT)`);
       const repository = new SDKMessageRepository(db);
       const injections: unknown[] = [];
-      const control = spaceTaskControl({
+      const control = hyperNeoSpacesTaskControl({
         deps: { db: { getSDKMessageRepo: () => repository } },
         spaceRuntimeService: {
           ensureToolTargetSession: async () => ({ kind: 'resolved', sessionId: 's-rebound' }),
@@ -636,7 +636,7 @@ describe('space adapter send', () => {
           },
         },
       } as never);
-      const actual = createSpaceAdapter({
+      const actual = createHyperNeoSpacesAdapter({
         db: () => db,
         machine: 'imac',
         searchChats: async () => [],

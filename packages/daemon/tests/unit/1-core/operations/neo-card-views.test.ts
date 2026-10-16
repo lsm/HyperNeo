@@ -322,7 +322,7 @@ describe('projectNeoCardViews', () => {
     const cards = projectNeoCardViews(
       parts({
         work: [work('w', 'queued', 's1')],
-        drivers: [driver('w', 'needs_you', { adapter: 'hyperneo', link: '/session/s1' })],
+        drivers: [driver('w', 'needs_you', { adapter: 'hyperneo-sessions', link: '/session/s1' })],
       })
     );
     expect(cards[0].primary).toEqual({ kind: 'answer', label: 'Answer in chat', link: null });
@@ -333,7 +333,7 @@ describe('projectNeoCardViews', () => {
       parts({
         work: [work('h', 'queued'), work('c', 'queued', 's9')],
         drivers: [
-          driver('h', 'running', { adapter: 'hyperneo', link: '/session/abc-1' }),
+          driver('h', 'running', { adapter: 'hyperneo-sessions', link: '/session/abc-1' }),
           driver('c', 'running', {
             adapter: 'claude-desktop',
             daemon: 'imac',

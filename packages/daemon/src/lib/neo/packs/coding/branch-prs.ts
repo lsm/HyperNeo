@@ -54,7 +54,7 @@ export function localCodingExecutionDirectory(
 }
 
 export function localCodingSessionId(ref: WorkRef | null): string | null {
-  return ref?.adapter === 'hyperneo' && !ref.daemon ? ref.id : null;
+  return ref?.adapter === 'hyperneo-sessions' && !ref.daemon ? ref.id : null;
 }
 
 export function currentCodingExecutionDirectory(

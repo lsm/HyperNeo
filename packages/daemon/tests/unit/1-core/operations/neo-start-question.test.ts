@@ -323,7 +323,7 @@ describe('grouped card start question', () => {
   test('a replacement with a different target never inherits an earlier approval', async () => {
     propose('one');
     await answer('开始');
-    const replacement = { ...target, adapter: 'hyperneo' };
+    const replacement = { ...target, adapter: 'hyperneo-sessions' };
     propose('replacement', replacement);
     expect(service.proposalApproval('replacement')).toBe(false);
     expect(questions()).toHaveLength(1);
@@ -381,7 +381,7 @@ describe('grouped card start question', () => {
     expect(service.proposalApproval('one')).toBe(true);
     db.getDatabase()
       .prepare('UPDATE neo_work_driver_targets SET target = ? WHERE work_id = ?')
-      .run(JSON.stringify({ ...target, adapter: 'hyperneo' }), 'one');
+      .run(JSON.stringify({ ...target, adapter: 'hyperneo-sessions' }), 'one');
     expect(service.proposalApproval('one')).toBe(false);
     service.proposeStartQuestion('one');
     expect(questions()).toHaveLength(1);

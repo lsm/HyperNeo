@@ -9,7 +9,7 @@ import type { SpawnFn } from '../runtime-spawn/index.ts';
 import type { CodexAppServer } from './codex-app-server.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 import { workStartConfiguration } from './start-configuration.ts';
-import { skipSpaceQuery } from './hyperneo-adapter.ts';
+import { skipSpaceQuery } from './hyperneo-sessions-adapter.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
 import { selectLocalStartFolder } from './start-folder.ts';

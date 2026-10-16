@@ -144,7 +144,7 @@ describe('NeoWorkCard with drivers work', () => {
   });
 
   it('marks the Open link with the app it opens', () => {
-    const logos = ['codex-desktop', 'claude-desktop', 'hyperneo'].map((adapter) => {
+    const logos = ['codex-desktop', 'claude-desktop', 'hyperneo-sessions'].map((adapter) => {
       const { unmount } = renderCard(
         testCard(work, {
           adapter,

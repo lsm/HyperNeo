@@ -18,7 +18,7 @@ import { PlaceGroupSchema, type Place, type PlaceGroup } from '../../../../src/l
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 
-function group(place: Place, adapter = 'hyperneo'): PlaceGroup {
+function group(place: Place, adapter = 'hyperneo-sessions'): PlaceGroup {
   return {
     place,
     adapters: [adapter],
@@ -142,7 +142,7 @@ describe('git history workspace discovery', () => {
     );
     const registry = createOperationRegistry([
       createFindWorkOperation({
-        adapters: () => [{ id: 'hyperneo', capabilities: ['find'], find: () => [local] }],
+        adapters: () => [{ id: 'hyperneo-sessions', capabilities: ['find'], find: () => [local] }],
         remote: {
           list: () => [{ daemonId: 'cloud-daemon' }],
           invoke: async () => ({ places: [remote], unreachable: [] }),

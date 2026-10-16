@@ -91,8 +91,10 @@ export class NeoWorkDriverTargetRepository {
         const agent = agents.get(other.id);
         return [
           ...(ref ? [neoWorkerRefKey(ref)] : []),
-          ...(local ? [neoWorkerRefKey({ adapter: 'hyperneo', id: local })] : []),
-          ...(agent ? [neoWorkerRefKey({ adapter: 'space', id: `agent:${agent.agentId}` })] : []),
+          ...(local ? [neoWorkerRefKey({ adapter: 'hyperneo-sessions', id: local })] : []),
+          ...(agent
+            ? [neoWorkerRefKey({ adapter: 'hyperneo-spaces', id: `agent:${agent.agentId}` })]
+            : []),
         ];
       })
     );

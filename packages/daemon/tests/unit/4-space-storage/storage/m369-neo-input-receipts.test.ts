@@ -11,7 +11,7 @@ describe('NeoWorkDriverTargetRepository input receipt storage', () => {
     const dir = mkdtempSync(join(tmpdir(), 'neo-receipt-'));
     const file = join(dir, 'receipt.db');
     let db = new Database(file);
-    const ref = { adapter: 'space', id: 'task', daemon: 'remote' };
+    const ref = { adapter: 'hyperneo-spaces', id: 'task', daemon: 'remote' };
     const anchor = { inputBefore: 10, opening: 'Continue' };
     const receipt = { executionId: 'worker', inputId: 'input' };
     try {

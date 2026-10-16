@@ -10,16 +10,16 @@ import {
 import {
   createDriverSession,
   newestAvailableModel,
-  hyperneoSessionControl,
+  hyperNeoSessionsControl,
 } from '../../../../src/lib/rpc-handlers/family-operations/drivers.ts';
 
-describe('hyperneoSessionControl archive', () => {
+describe('hyperNeoSessionsControl archive', () => {
   test.each(['idle', 'busy', 'clones', 'late_refusal', 'archived'])(
     'uses the preserving lifecycle only for an admitted idle session (%s)',
     async (state) => {
       const archived: string[] = [];
       const session = { id: 'session', status: state === 'archived' ? 'archived' : 'active' };
-      const controls = hyperneoSessionControl({
+      const controls = hyperNeoSessionsControl({
         deps: {
           db: { listChildSessions: () => (state === 'clones' ? [{ id: 'child' }] : []) },
           sessionManager: {
@@ -33,7 +33,7 @@ describe('hyperneoSessionControl archive', () => {
           },
         },
       } as never);
-      const result = await controls.archive!({ adapter: 'hyperneo', id: 'session' }, () =>
+      const result = await controls.archive!({ adapter: 'hyperneo-sessions', id: 'session' }, () =>
         state === 'late_refusal' ? { ok: false, reason: 'live_card', detail: 'new' } : null
       );
       expect(result.ok).toBe(state === 'idle' || state === 'archived');
@@ -66,7 +66,7 @@ describe('hyperneoSessionControl archive', () => {
       const dirtyPath = dirty === 'base' ? repo : worktree;
       writeFileSync(join(dirtyPath, 'keep.txt'), 'unsaved work');
       const archived: string[] = [];
-      const controls = hyperneoSessionControl({
+      const controls = hyperNeoSessionsControl({
         deps: {
           db: { listChildSessions: () => [] },
           sessionManager: {
@@ -89,7 +89,10 @@ describe('hyperneoSessionControl archive', () => {
           },
         },
       } as never);
-      const result = await controls.archive!({ adapter: 'hyperneo', id: 'session' }, () => null);
+      const result = await controls.archive!(
+        { adapter: 'hyperneo-sessions', id: 'session' },
+        () => null
+      );
       expect(result).toMatchObject(
         dirty === 'base'
           ? { ok: true, value: { archived: true } }

@@ -238,7 +238,7 @@ describe('describeNeoAskSessions', () => {
     const sessions = [
       listed('t1', { remoteLink: 'https://claude.ai/code/session_1' }),
       listed('t2'),
-      { ...listed('h1'), ref: { adapter: 'hyperneo', id: 'h1' }, link: '/session/h1' },
+      { ...listed('h1'), ref: { adapter: 'hyperneo-sessions', id: 'h1' }, link: '/session/h1' },
     ];
     const views = describeNeoAskSessions(
       [
@@ -268,7 +268,7 @@ describe('describeNeoAskSessions', () => {
     ]);
     expect(views.get('b')).toEqual([
       expect.objectContaining({
-        adapter: 'hyperneo',
+        adapter: 'hyperneo-sessions',
         open: { link: '/session/h1', remoteLink: null, sessionId: 'h1', daemon: null },
       }),
     ]);
@@ -393,7 +393,7 @@ describe('NeoService session ask links', () => {
         title: 'Ship the fix',
         instruction: 'Fix it.',
       },
-      { verb: 'send', ref: { adapter: 'hyperneo', id: 'card-session' } }
+      { verb: 'send', ref: { adapter: 'hyperneo-sessions', id: 'card-session' } }
     );
     const queued = service.repo.transitionWork('w1', service.repo.getWork('w1')!, {
       status: 'queued',

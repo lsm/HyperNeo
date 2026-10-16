@@ -245,7 +245,7 @@ describe('neo.work.start', () => {
   });
 
   test('an adopted session is tracked through admission without sending it anything', async () => {
-    const ref: WorkRef = { adapter: 'hyperneo', id: 'adopted' };
+    const ref: WorkRef = { adapter: 'hyperneo-sessions', id: 'adopted' };
     const { db, service, calls, start } = await setup(
       () => ({ ok: true, value: { status: 'running', lastActivityAt: 10 } }),
       { verb: 'adopt', ref }

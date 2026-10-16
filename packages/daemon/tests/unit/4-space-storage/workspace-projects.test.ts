@@ -10,7 +10,7 @@ import { createOperationRegistry } from '../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../src/lib/operations/invoke';
 import { createFindWorkOperation } from '../../../src/lib/drivers/find-operation';
 import type { PlaceGroup } from '../../../src/lib/drivers/types';
-import { buildHyperneoGroups } from '../../../src/lib/drivers/hyperneo-adapter';
+import { buildHyperNeoSessionsGroups } from '../../../src/lib/drivers/hyperneo-sessions-adapter';
 
 describe('workspace project folders', () => {
   let db: Database;
@@ -156,7 +156,7 @@ describe('workspace project folders', () => {
       archivedCount: 0,
       lastActiveAt: null,
     }));
-    const groups = buildHyperneoGroups(
+    const groups = buildHyperNeoSessionsGroups(
       places,
       [],
       { text: 'Product', includeClosed: false, limit: 20 },
@@ -174,7 +174,7 @@ describe('workspace project folders', () => {
     );
     const registry = createOperationRegistry([
       createFindWorkOperation({
-        adapters: () => [{ id: 'hyperneo', capabilities: ['find'], find: () => groups }],
+        adapters: () => [{ id: 'hyperneo-sessions', capabilities: ['find'], find: () => groups }],
         remote: {
           list: () => [],
           invoke: async () => {
