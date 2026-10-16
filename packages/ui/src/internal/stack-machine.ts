@@ -1,4 +1,4 @@
-import { Machine, shallowEqual } from './machine.ts';
+import { Machine } from './machine.ts';
 import { match } from './match.ts';
 import { DefaultMap } from './default-map.ts';
 
@@ -75,5 +75,3 @@ class StackMachine extends Machine<State, Actions> {
 }
 
 export const stackMachines = new DefaultMap<Scope, StackMachine>(() => StackMachine.new());
-
-export { shallowEqual };

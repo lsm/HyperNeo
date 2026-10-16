@@ -37,11 +37,6 @@ export function isMultiAgentNode(node: NodeDraft): boolean {
   return Array.isArray(node.agents) && node.agents.length > 1;
 }
 
-export interface ConditionDraft {
-  type: 'always' | 'human' | 'condition' | 'task_result';
-  expression?: string;
-}
-
 export interface AgentTaskState {
   agentName: string | null;
   status: NodeExecutionStatus;

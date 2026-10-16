@@ -41,10 +41,6 @@ const interactive =
 
 export type NeoWorkAction = 'start' | 'cancel' | 'done' | 'close' | 'retry';
 
-export function sceneOpenSelector(id: string): string {
-  return `[data-scene-open="${id.replace(/["\\]/g, '\\$&')}"]`;
-}
-
 function insideUserSelection(scope: Element): boolean {
   const selection = document.getSelection?.();
   if (!selection || selection.isCollapsed) return false;

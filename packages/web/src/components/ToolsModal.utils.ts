@@ -1,9 +1,4 @@
-import type {
-  AppMcpServer,
-  AppSkill,
-  McpEffectiveEnablementSource,
-  SessionMcpServerEntry,
-} from '@hyperneo/shared';
+import type { AppMcpServer, AppSkill, SessionMcpServerEntry } from '@hyperneo/shared';
 
 export function computeSkillGroupState(items: { enabled: boolean }[]): {
   allEnabled: boolean;
@@ -155,16 +150,6 @@ export function getSkillSourceBadge(skill: AppSkill): SourceBadgeStyle {
     case 'mcp_server':
       return { label: 'MCP', className: 'text-warning/80 bg-warning/10' };
   }
-}
-
-const MCP_SOURCE_LABELS: Record<McpEffectiveEnablementSource, SourceBadgeStyle> = {
-  session: { label: 'Session override', className: 'text-info/80 bg-sky-400/10' },
-  space: { label: 'Inherited from space', className: 'text-fuchsia-400/80 bg-fuchsia-400/10' },
-  registry: { label: 'Registry default', className: 'text-fg-muted/80 bg-fg-muted/10' },
-};
-
-export function getMcpServerSourceBadge(source: McpEffectiveEnablementSource): SourceBadgeStyle {
-  return MCP_SOURCE_LABELS[source];
 }
 
 export function getMcpServerProvenanceBadge(server: AppMcpServer): SourceBadgeStyle {
