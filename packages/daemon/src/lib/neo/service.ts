@@ -69,7 +69,6 @@ import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-re
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
-import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import type { WorkRef } from '../drivers/types.ts';
@@ -137,7 +136,7 @@ import {
   planNeoCardSend,
   planNeoCardTopicsEnded,
   planNeoProjectEventHolders,
-  planNeoSessionTopicsHandedOver,
+  neoCardWorkerSession,
 } from './card-events.ts';
 import { planNeoDaemonCardSettle, requireNeoCardTurn } from './card-settle.ts';
 import type { NeoCardWait } from './card-views.ts';
@@ -497,7 +496,6 @@ export class NeoService {
   readonly workPrs: NeoWorkPrRepository;
   readonly cardEvents: NeoCardEventSubscriptionRepository;
   private readonly sessionEvents: SessionExternalEventStore;
-  private readonly sessionSubscriptions: SessionEventSubscriptionRepository;
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
   readonly workPrClaims: NeoWorkPrClaimRepository;
   readonly workRefusals: NeoWorkRefusalRepository;
@@ -888,7 +886,6 @@ export class NeoService {
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
     this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
-    this.sessionSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     this.cardPrRelays = new NeoCardPrRelayRepository(db.getDatabase());
     this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
@@ -2765,12 +2762,6 @@ export class NeoService {
     const work = this.repo.getWork(workId);
     if (!work || !isNeoCardLive(work)) return;
     const topics = this.packs().flatMap((pack) => pack.externalTopics?.(work) ?? []);
-    if (work.sessionId)
-      for (const row of planNeoSessionTopicsHandedOver(
-        this.sessionSubscriptions.listBySession(work.sessionId),
-        topics
-      ))
-        this.sessionSubscriptions.delete(row.sessionId, row.topic);
     for (const topic of topics) {
       if (!this.cardEvents.subscribe(workId, topic, Date.now())) continue;
       void this.watchExternalTopic?.(topic).catch((error) =>
@@ -2811,10 +2802,21 @@ export class NeoService {
     return this.packs().some((pack) => !!pack.externalTopics);
   }
 
-  followedTopics(): string[] {
+  followedTopics(): { topic: string; session: string | null }[] {
     return [
-      ...this.cardEvents.listActive().map((row) => row.topic),
-      ...neoPackAskTopics(this.packs(), this.askRecords.listLive()),
+      ...this.cardEvents.listActive().map((row) => ({
+        topic: row.topic,
+        session: neoCardWorkerSession(
+          planNeoCardSend({
+            work: this.repo.getWork(row.workId),
+            ref: this.driverTargets.readRef(row.workId),
+          })
+        ),
+      })),
+      ...neoPackAskTopics(this.packs(), this.askRecords.listLive()).map((topic) => ({
+        topic,
+        session: null,
+      })),
     ];
   }
 
@@ -2877,14 +2879,23 @@ export class NeoService {
     )
     .pipe(
       async (event: ExternalEvent, route: NeoPackEventRoute) => {
+        const delivered: string[] = [];
         for (const workId of route.workIds)
-          await this.sendToCard(
-            workId,
-            `neo-card-event:${workId}:${event.id}`,
-            sessionEventText(event)
-          ).catch((error) => this.log.warn('Card event not delivered', error));
+          if (
+            await this.sendToCard(
+              workId,
+              `neo-card-event:${workId}:${event.id}`,
+              sessionEventText(event)
+            ).catch((error) => {
+              this.log.warn('Card event not delivered', error);
+              return false;
+            })
+          )
+            delivered.push(workId);
+        return delivered;
       },
-      ['event', 'route']
+      ['event', 'route'],
+      'delivered'
     )
     .pipe(
       (route: NeoPackEventRoute) =>
@@ -2917,26 +2928,33 @@ export class NeoService {
       ['event', 'holders']
     )
     .pipe(
-      async (event: ExternalEvent, route: NeoPackEventRoute) => {
+      async (event: ExternalEvent, route: NeoPackEventRoute, delivered: string[]) => {
         for (const workId of new Set([...route.workIds, ...route.ending.map((row) => row.workId)]))
           await this.refreshWorkPrs(workId, Date.now(), event.occurredAt).catch((error) =>
             this.log.warn('Card evidence refresh after its event pending', error)
           );
+        for (const workId of delivered) {
+          const told = neoPackCardAttention(this.installedPacks(), workId).attention;
+          if (told) this.cardPrRelays.markTold(workId, told.signature, Date.now());
+        }
       },
-      ['event', 'route']
+      ['event', 'route', 'delivered']
     )
     .pipe((route: NeoPackEventRoute) => {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
     }, 'route')
     .endAsync('route') as (payload: ExternalEventPublishedPayload) => Promise<unknown>;
 
-  async sendToCard(workId: string, key: string, text: string): Promise<void> {
+  async sendToCard(workId: string, key: string, text: string): Promise<boolean> {
     const work = this.repo.getWork(workId);
     const send = planNeoCardSend({ work, ref: this.driverTargets.readRef(workId) });
-    if (!work || send.via === 'none') return;
-    if (send.via === 'session')
-      return this.deliver(send.sessionId, key, text, work.originSessionId);
-    await this.invokeAsCard(work, 'work.send', { ref: send.ref, message: text });
+    if (!work || send.via === 'none') return false;
+    if (send.via === 'session') {
+      await this.deliver(send.sessionId, key, text, work.originSessionId);
+      return true;
+    }
+    const sent = await this.invokeAsCard(work, 'work.send', { ref: send.ref, message: text });
+    return sent.kind === 'completed' && (sent.value as { ok?: unknown } | null)?.ok === true;
   }
 
   private async settleDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {

@@ -41,6 +41,7 @@ import {
 } from './lib/internal-command-bus.ts';
 import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
+import { isSessionTopicCovered } from './lib/external-events/topic-trie.ts';
 import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
 import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
 import { createWebSocketHandlers } from './routes/setup-websocket.ts';
@@ -814,8 +815,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       internalEventBus
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
-    const sessionTopicSources: (() => readonly string[])[] = [];
-    const followedSessionTopics = () => sessionTopicSources.flatMap((source) => source());
+    const sessionTopicSources: (() => readonly { topic: string; session?: string | null }[])[] = [];
+    const followedSessionTopics = () =>
+      sessionTopicSources.flatMap((source) => source().map((row) => row.topic));
+    const coveredSessionTopic = (sessionId: string, topic: string) =>
+      isSessionTopicCovered(
+        sessionTopicSources.flatMap((source) => source()),
+        sessionId,
+        topic
+      );
     const spaceSessionEventSubscriptions = new SpaceSessionEventSubscriptionRepository(
       db.getDatabase()
     );
@@ -840,6 +848,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           );
       },
       removeSubscription: (sessionId, topic) => sessionEventSubscriptions.delete(sessionId, topic),
+      isTopicCovered: coveredSessionTopic,
     };
     internalEventBus.subscribe(
       'externalEvent.published',
@@ -1014,6 +1023,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const rpcHandlers = setupRPCHandlers({
       watchSessionRepo: async (owner, repo) => githubEventExtension?.watchSessionRepo(owner, repo),
       followSessionTopics: (source) => sessionTopicSources.push(source),
+      isSessionTopicCovered: coveredSessionTopic,
       messageHub,
       sessionManager,
       authManager,

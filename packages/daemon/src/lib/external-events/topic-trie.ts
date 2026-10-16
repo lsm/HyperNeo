@@ -121,6 +121,14 @@ export function segmentMatches(pattern: string, segment: string): boolean {
   return regex.test(segment);
 }
 
+export function isSessionTopicCovered(
+  followed: readonly { topic: string; session?: string | null }[],
+  sessionId: string,
+  topic: string
+): boolean {
+  return followed.some((row) => row.session === sessionId && topicMatchesPattern(row.topic, topic));
+}
+
 export function topicMatchesPattern(pattern: string, topic: string): boolean {
   const want = pattern.toLowerCase().split('/');
   const have = topic.toLowerCase().split('/');

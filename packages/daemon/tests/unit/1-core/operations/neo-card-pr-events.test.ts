@@ -12,7 +12,8 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { planNeoCardSend } from '../../../../src/lib/neo/card-events.ts';
+import { neoCardWorkerSession, planNeoCardSend } from '../../../../src/lib/neo/card-events.ts';
+import { isSessionTopicCovered } from '../../../../src/lib/external-events/topic-trie.ts';
 import {
   isNeoCardPrActionable,
   neoCardPrTopics,
@@ -79,6 +80,34 @@ describe('planNeoCardSend', () => {
   });
 });
 
+describe('neoCardWorkerSession', () => {
+  test('names a local HyperNeo worker or the target session, never another tool', () => {
+    expect(neoCardWorkerSession({ via: 'driver', ref: { adapter: 'hyperneo', id: 's9' } })).toBe(
+      's9'
+    );
+    expect(
+      neoCardWorkerSession({ via: 'driver', ref: { adapter: 'hyperneo', daemon: 'tts', id: 's9' } })
+    ).toBeNull();
+    expect(neoCardWorkerSession({ via: 'driver', ref })).toBeNull();
+    expect(neoCardWorkerSession({ via: 'session', sessionId: 'native' })).toBe('native');
+    expect(neoCardWorkerSession({ via: 'none' })).toBeNull();
+  });
+});
+
+describe('isSessionTopicCovered', () => {
+  const followed = [{ session: 's9', topic: 'github/lsm/HyperNeo/pull_request/7.*' }];
+  test.each([
+    ['the same PR pattern', 's9', 'github/lsm/hyperneo/pull_request/7.*', true],
+    ['one of its events', 's9', 'github/lsm/hyperneo/pull_request/7.review_submitted', true],
+    ['a narrower pattern', 's9', 'github/lsm/hyperneo/pull_request/7.review_*', true],
+    ['another PR', 's9', 'github/lsm/hyperneo/pull_request/8.*', false],
+    ['every PR', 's9', 'github/lsm/hyperneo/pull_request/*', false],
+    ['another session', 's1', 'github/lsm/hyperneo/pull_request/7.*', false],
+  ] as const)('%s: %s', (_label, session, topic, covered) => {
+    expect(isSessionTopicCovered(followed, session, topic)).toBe(covered);
+  });
+});
+
 describe('Neo card pull request events', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let bus: InternalEventBus<DaemonInternalEventMap>;
@@ -86,12 +115,14 @@ describe('Neo card pull request events', () => {
   let publisher: ExternalEventService;
   let sent: { ref: unknown; message: string }[];
   let watched: string[];
+  let sendFails = false;
 
   beforeEach(async () => {
     db = await createTestDb();
     for (const id of ['root', 'native']) db.createSession(createTestSession(id));
     sent = [];
     watched = [];
+    sendFails = false;
     const registry = createOperationRegistry([
       defineOperation({
         name: 'work.send',
@@ -101,7 +132,9 @@ describe('Neo card pull request events', () => {
         policy: { safetyClass: 'mutate' },
         execute: async (input: { ref: unknown; message: string }) => {
           sent.push(input);
-          return { ok: true, value: { delivered: true } };
+          return sendFails
+            ? { ok: false, reason: 'unreachable' }
+            : { ok: true, value: { delivered: true } };
         },
       }),
     ]);
@@ -207,7 +240,9 @@ describe('Neo card pull request events', () => {
     const work = desktopCard();
     attach(work);
     expect(watched).toEqual(['github/lsm/HyperNeo/pull_request/7.*']);
-    expect(service.followedTopics()).toEqual(['github/lsm/HyperNeo/pull_request/7.*']);
+    expect(service.followedTopics().map((row) => row.topic)).toEqual([
+      'github/lsm/HyperNeo/pull_request/7.*',
+    ]);
 
     await event('review_submitted', 'Review: APPROVED', { state: 'approved' });
     await event('reaction_added', 'Reaction: +1', { content: '+1' });
@@ -385,7 +420,7 @@ describe('Neo card pull request events', () => {
     expect(watched).toHaveLength(2);
   });
 
-  test('a session that subscribed to its pull request itself hands that subscription to the card', async () => {
+  test("a session's own subscription to its card's pull request is covered, and stays stored", async () => {
     const proposed = service.repo.proposeWork({
       id: 'w-legacy',
       requestKey: 'root:legacy',
@@ -405,15 +440,73 @@ describe('Neo card pull request events', () => {
     );
     await event('reaction_added', 'Reaction: +1', { content: '+1' });
 
-    expect(own.listBySession('native').map((row) => row.topic)).toEqual([
-      'github/lsm/HyperNeo/pull_request/9.*',
-    ]);
+    expect(own.listBySession('native')).toHaveLength(2);
+    expect(
+      isSessionTopicCovered(
+        service.followedTopics(),
+        'native',
+        'github/lsm/hyperneo/pull_request/7.*'
+      )
+    ).toBe(true);
+    expect(
+      isSessionTopicCovered(
+        service.followedTopics(),
+        'native',
+        'github/lsm/HyperNeo/pull_request/9.*'
+      )
+    ).toBe(false);
     expect(
       db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'native' })
     ).toHaveLength(1);
   });
 
-  test("a finished card neither follows its pull request nor takes the session's own subscription", async () => {
+  test('a HyperNeo driver card covers its worker session, which the card reaches by work.send', async () => {
+    const { work } = service.driverTargets.propose(
+      service.repo,
+      {
+        id: 'w-hyperneo',
+        requestKey: 'root:hyperneo',
+        projectId: null,
+        originSessionId: 'root',
+        title: 'Fix the bug',
+        instruction: 'Fix it and merge.',
+      },
+      { verb: 'start', adapter: 'hyperneo', place: { machine: 'm5', name: 'hyperneo' } }
+    );
+    service.driverTargets.recordRef(work.id, { adapter: 'hyperneo', id: 'worker-s' }, Date.now());
+    attach(service.repo.transitionWork(work.id, work, { status: 'queued' })!);
+    expect(
+      isSessionTopicCovered(
+        service.followedTopics(),
+        'worker-s',
+        'github/lsm/hyperneo/pull_request/7.*'
+      )
+    ).toBe(true);
+    await event('review_submitted', 'Review: changes requested');
+    expect(sent).toHaveLength(1);
+  });
+
+  test('a PR state a raw event already carried to the card is not relayed again', async () => {
+    const work = desktopCard();
+    service.workPrs.record(work.id, [{ ...open, checks: 'failing' }], Date.now());
+    service.followCardTopics(work.id);
+    await event('check_failed', 'Check failed: lint');
+    expect(sent).toHaveLength(1);
+    expect(service['cardPrRelays'].get(work.id)).not.toBeNull();
+    await service['relayCardPr'](work.id);
+    expect(sent).toHaveLength(1);
+  });
+
+  test('a PR state the worker never received is still relayed', async () => {
+    const work = desktopCard();
+    service.workPrs.record(work.id, [{ ...open, checks: 'failing' }], Date.now());
+    service.followCardTopics(work.id);
+    sendFails = true;
+    await event('check_failed', 'Check failed: lint');
+    expect(service['cardPrRelays'].get(work.id)).toBeNull();
+  });
+
+  test("a finished card neither follows its pull request nor covers the session's own subscription", async () => {
     const proposed = service.repo.proposeWork({
       id: 'w-done',
       requestKey: 'root:done',
@@ -436,6 +529,13 @@ describe('Neo card pull request events', () => {
 
     expect(subscriptions()).toEqual([]);
     expect(own.listBySession('native')).toHaveLength(1);
+    expect(
+      isSessionTopicCovered(
+        service.followedTopics(),
+        'native',
+        'github/lsm/HyperNeo/pull_request/7.*'
+      )
+    ).toBe(false);
   });
 
   test('a PR read as merged stays followed until its merge event reaches the card', async () => {
