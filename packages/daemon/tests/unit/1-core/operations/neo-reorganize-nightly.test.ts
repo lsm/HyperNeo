@@ -55,6 +55,7 @@ describe('runNeoNightlyReorganize', () => {
 
   test('reorganizes while the human is away and schedules the next day', async () => {
     const lines: string[] = [];
+    const digests: number[] = [];
     let runs = 0;
     const result = await runNeoNightlyReorganize(claim(null), mailbox.jobQueue, {
       now: () => now,
@@ -74,11 +75,15 @@ describe('runNeoNightlyReorganize', () => {
           cleanupFailed: [],
         };
       },
+      digest: async (_run, since) => {
+        digests.push(since);
+      },
       log: (line) => lines.push(line),
     });
 
     expect(result).toEqual({ ran: true, moved: 1, stayed: 1 });
     expect(runs).toBe(1);
+    expect(digests).toEqual([now - NEO_REORGANIZE_EVERY_MS]);
     expect(lines).toEqual([
       'neo reorganize: nightly run merged 1 project(s), moved 1 ask(s), left 1 with main, cleaned up 1 empty project(s) or holder(s), left 1 cleanup step(s) for the human',
     ]);
@@ -107,6 +112,7 @@ describe('runNeoNightlyReorganize', () => {
             cleanupFailed: [],
           };
         },
+        digest: async () => {},
         log: () => {},
       }
     );
