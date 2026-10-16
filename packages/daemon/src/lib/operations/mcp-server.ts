@@ -1,20 +1,25 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
-import { createOperationMcpHandler, OperationMcpInvocationSchema } from './mcp-adapter.ts';
+import {
+  createOperationMcpHandler,
+  OperationMcpInvocationSchema,
+  type OperationRefusal,
+} from './mcp-adapter.ts';
 import type { CallerIdentity } from './caller.ts';
 import type { OperationRegistrySource } from './registry.ts';
 
 export function createOperationMcpServer(
   registry: OperationRegistrySource,
   resolveCaller: () => CallerIdentity | Promise<CallerIdentity>,
-  signatures = ''
+  signatures = '',
+  recordRefusal?: (refusal: OperationRefusal) => void
 ) {
   const tools = [
     tool(
       'invoke',
       `Invoke a daemon operation by name. Call operations.list with no input to discover operations, then operations.describe with input {name} for its schema. A message.send acceptance means durable mailbox persistence, not an agent reply.${signatures ? `\n\nInput fields of the core operations (? marks optional); call operations.describe only for others:\n${signatures}` : ''}`,
       OperationMcpInvocationSchema.shape,
-      createOperationMcpHandler(registry, resolveCaller)
+      createOperationMcpHandler(registry, resolveCaller, recordRefusal)
     ),
   ];
   return { ...createSdkMcpServer({ name: OPERATIONS_MCP_SERVER_NAME, tools }), tools };

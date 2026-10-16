@@ -1,6 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
-import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
+import {
+  createOperationMcpHandler,
+  operationRefusal,
+  type OperationRefusal,
+} from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
 
 function fixture() {
@@ -88,5 +92,40 @@ describe('generic operation MCP adapter', () => {
       message: 'caller unavailable',
     });
     expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('operationRefusal', () => {
+  test.each([
+    [{ kind: 'failed', code: 'invalid_input', message: 'bad' }, 'invalid_input'],
+    [{ kind: 'completed', value: { accepted: false, reason: 'busy' } }, 'busy'],
+    [{ kind: 'completed', value: { ok: false, reason: 'not_found' } }, 'not_found'],
+    [{ kind: 'completed', value: { accepted: true, jobId: 'j' } }, null],
+    [{ kind: 'completed', value: { accepted: false } }, null],
+    [{ kind: 'completed', value: null }, null],
+  ] as const)('reads %j as refusal %s', (outcome, reason) => {
+    expect(operationRefusal('op', outcome)).toEqual(reason ? { operation: 'op', reason } : null);
+  });
+});
+
+describe('createOperationMcpHandler refusal recording', () => {
+  test('the door records a refusal and not a success', async () => {
+    const definition = defineOperation({
+      name: 'example',
+      description: 'Example',
+      inputSchema: z.object({ text: z.string() }),
+      resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
+      execute: async ({ text }) =>
+        text === 'no' ? { accepted: false, reason: 'refused' } : { accepted: true },
+    });
+    const record = mock((_refusal: OperationRefusal) => {});
+    const handler = createOperationMcpHandler(
+      createOperationRegistry([definition]),
+      async () => ({ sessionId: 's' }),
+      record
+    );
+    await handler({ name: 'example', input: { text: 'yes' } });
+    await handler({ name: 'example', input: { text: 'no' } });
+    expect(record.mock.calls).toEqual([[{ operation: 'example', reason: 'refused' }]]);
   });
 });

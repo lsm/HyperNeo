@@ -8,6 +8,8 @@ export type NeoHealthFacts = {
   holdersOpened: number;
   routing: { signal: string; count: number }[];
   refusals: { what: string; count: number }[];
+  doorRefusals: { operation: string; reason: string; count: number }[];
+  repeatedReplies: { trigger: string; count: number }[];
   liveAsks: { id: string; title: string; status: string; updatedAt: number }[];
 };
 
@@ -36,6 +38,8 @@ export function neoHealthDigest(facts: NeoHealthFacts, run: NeoHealthRun, since:
     `Merges asked of the human, not applied: ${left.length ? left.map(step).join('; ') : 'none'}.`,
     `Routing by signal: ${counts(facts.routing.map(({ signal, count }) => ({ key: signal, count })))}.`,
     `Card refusals by what was refused: ${counts(facts.refusals.map(({ what, count }) => ({ key: what, count })))}.`,
+    `Operation refusals at the agent door by operation and reason: ${counts(facts.doorRefusals.map(({ operation, reason, count }) => ({ key: `${operation} ${reason}`, count })))}.`,
+    `Triggers that got more than one final reply: ${counts(facts.repeatedReplies.map(({ trigger, count }) => ({ key: trigger, count })))}.`,
     `Live asks: ${
       facts.liveAsks.length
         ? facts.liveAsks
