@@ -181,19 +181,21 @@ import {
   reserveNeoAdoption,
 } from './session-track.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
+import { createNeoAskOperations } from './ask-operations.ts';
+import { NeoAskSchema } from './ask-inputs.ts';
 import {
-  createNeoAskOperations,
-  NeoAskSchema,
   planNeoAskQuestion,
   projectNeoSnapshotAsks,
-  requireNeoWorkAsk,
   planNeoProposalBindings,
+  neoAsksOpenedBy,
+} from './ask-plans.ts';
+import {
+  requireNeoWorkAsk,
   requireNeoProposalDelivers,
   requireNeoWorkAskLink,
   requireNeoWorkAskLive,
   requireNeoWorkAskOwner,
-  neoAsksOpenedBy,
-} from './ask-operations.ts';
+} from './ask-guards.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import { neoWaitingOnHuman } from './waiting-reminders.ts';
 import {

@@ -4,7 +4,7 @@ import {
   isNeoAskAnswerReady,
   planNeoAnswerPublished,
 } from '../../../../src/lib/neo/answer-outcome.ts';
-import { neoAskHasHumanAction } from '../../../../src/lib/neo/ask-operations.ts';
+import { neoAskHasHumanAction } from '../../../../src/lib/neo/ask-plans.ts';
 import { neoAskItemAction } from '../../../../src/lib/neo/ask-views.ts';
 
 const item = (id: string, state: NeoAskItem['state'], extra: Partial<NeoAskItem> = {}) =>

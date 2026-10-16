@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { neoAskAnswerEvidence } from '../../../../src/lib/neo/ask-answer-evidence.ts';
-import { planNeoAskQuestion } from '../../../../src/lib/neo/ask-operations.ts';
+import { planNeoAskQuestion } from '../../../../src/lib/neo/ask-plans.ts';
 import { neoReorganizeRuntime } from '../../../../src/lib/neo/operations.ts';
 import {
   NEO_PROJECT_SAME,
