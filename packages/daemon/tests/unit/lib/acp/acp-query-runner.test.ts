@@ -15,6 +15,7 @@ import type { AcpClient, AcpClientOptions } from '../../../../src/lib/acp/acp-cl
 import { getAcpCommandIdentityDigest } from '../../../../src/lib/acp/acp-command';
 import { AcpQueryAdapter } from '../../../../src/lib/acp/acp-query-adapter';
 import {
+  acpPromptContext,
   AcpQueryRunner,
   convertMcpServersForAcp,
   parseAcpCommand,
@@ -4573,5 +4574,28 @@ describe('AcpQueryRunner', () => {
 
     releasePrompt();
     await ctx.queryPromise;
+  });
+});
+
+describe('acpPromptContext', () => {
+  test('turns each UserPromptSubmit hook context into a prompt block', async () => {
+    const blocks = await acpPromptContext(
+      [
+        {
+          hooks: [
+            async () => ({
+              hookSpecificOutput: {
+                hookEventName: 'UserPromptSubmit' as const,
+                additionalContext: "The human's local time is Thursday",
+              },
+            }),
+            async () => ({}),
+          ],
+        },
+      ],
+      'session'
+    );
+    expect(blocks).toEqual([{ type: 'text', text: "The human's local time is Thursday" }]);
+    expect(await acpPromptContext(undefined, 'session')).toEqual([]);
   });
 });
