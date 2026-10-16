@@ -317,6 +317,20 @@ describe('neo.ask operations', () => {
     const askId = opened.value!.ask!.id;
     expect(opened.value!.ask!.doneItems?.[0]).not.toHaveProperty('outcomeKind');
     expect(
+      await invoke('neo.ask.settle', {
+        id: askId,
+        outcome: 'achieved',
+        summary: 'Counted.',
+        evidence: 'Counted the files.',
+      })
+    ).toMatchObject({
+      value: {
+        ok: false,
+        reason:
+          'checklist_incomplete: i1 "Merged" is pending; i2 "How many .md files" is pending, and is met when its answer reaches the human. First tick i1 met with neo.ask.tick and tick i2 reported with the result, or settle waiting or blocked.',
+      },
+    });
+    expect(
       await invoke('neo.ask.edit', {
         askId,
         add: [{ text: 'Which files', outcomeKind: 'answer', check: null }],
@@ -2544,6 +2558,20 @@ describe('neo.ask operations', () => {
       step: reported.text,
     });
     expect(
+      await invoke('neo.ask.settle', {
+        id: askId,
+        outcome: 'achieved',
+        summary: 'Booked.',
+        evidence: 'Confirmation: id=abc',
+      })
+    ).toMatchObject({
+      value: {
+        ok: false,
+        reason:
+          'checklist_incomplete: i1 "Booking confirmation arrives" is reported, and waits on the human to confirm it. None of these is Neo’s to tick; settle waiting or blocked until they are met.',
+      },
+    });
+    expect(
       await invoke(
         'neo.ask.tick',
         { askId, itemId: 'i1', state: 'met', evidence: 'Confirmed by the user.' },
@@ -2581,6 +2609,28 @@ describe('neo.ask operations', () => {
         },
       });
     expect(await tick('i2', 'reported')).toMatchObject({ value: { ok: true } });
+    const settle = (id: string) =>
+      invoke('neo.ask.settle', {
+        id,
+        outcome: 'achieved',
+        summary: 'Merged.',
+        evidence: 'The fix merged.',
+      });
+    expect(await settle(askId)).toMatchObject({
+      value: {
+        ok: false,
+        reason:
+          'checklist_incomplete: i1 "Fix merged to dev" is pending, and the daemon ticks it itself from what it reads; i2 "lsm/HyperNeo#6700 merged and deployed" is reported. First tick i2 met with neo.ask.tick, or settle waiting or blocked.',
+      },
+    });
+    expect(await tick('i2', 'met')).toMatchObject({ value: { ok: true } });
+    expect(await settle(askId)).toMatchObject({
+      value: {
+        ok: false,
+        reason:
+          'checklist_incomplete: i1 "Fix merged to dev" is pending, and the daemon ticks it itself from what it reads. None of these is Neo’s to tick; settle waiting or blocked until they are met.',
+      },
+    });
   });
 
   describe('obsolete PR question reconciliation', () => {

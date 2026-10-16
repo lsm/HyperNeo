@@ -692,13 +692,33 @@ function requireNeoAskChecklistMet(
         `decision_open: ${asked.map((item) => `${item.id} "${item.text}"`).join('; ')} waits on the human. Settle waiting until they answer, or settle abandoned in the turn the human's own message drops the ask.`
       ),
     };
-  return input.outcome === 'achieved' && caller.source === 'mcp' && open.length
-    ? {
-        reason: fail(
-          `checklist_incomplete: ${open.map((item) => `${item.id} "${item.text}" is ${item.state}`).join('; ')}. Tick each item met with neo.ask.tick first, or settle waiting or blocked.`
-        ),
-      }
-    : { value: ask };
+  if (input.outcome !== 'achieved' || caller.source !== 'mcp' || !open.length)
+    return { value: ask };
+  const daemon = (item: NeoAskItem) => (isNeoAnswerItem(item) ? null : neoDaemonTickPath(item));
+  const fact = (item: NeoAskItem) => {
+    const path = daemon(item);
+    if (isNeoAnswerItem(item)) return ', and is met when its answer reaches the human';
+    if (!path) return '';
+    return item.state === 'reported'
+      ? ', and waits on the human to confirm it'
+      : `, and ${NEO_DAEMON_TICKS[path]}`;
+  };
+  const ids = (items: NeoAskItem[]) => items.map((item) => item.id).join(', ');
+  const tickable = open.filter((item) => !daemon(item) && !isNeoAnswerItem(item));
+  const answers = open.filter((item) => isNeoAnswerItem(item) && item.state !== 'reported');
+  const steps = [
+    ...(tickable.length ? [`tick ${ids(tickable)} met with neo.ask.tick`] : []),
+    ...(answers.length ? [`tick ${ids(answers)} reported with the result`] : []),
+  ];
+  return {
+    reason: fail(
+      `checklist_incomplete: ${open.map((item) => `${item.id} "${item.text}" is ${item.state}${fact(item)}`).join('; ')}. ${
+        steps.length
+          ? `First ${steps.join(' and ')}, or settle waiting or blocked.`
+          : 'None of these is Neo’s to tick; settle waiting or blocked until they are met.'
+      }`
+    ),
+  };
 }
 
 const NEO_DAEMON_TICKS: Record<NeoDaemonTickPath, string> = {
