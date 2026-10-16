@@ -34,6 +34,7 @@ export const NeoPublicationSchema = z
     editedAt: z.string().datetime().optional(),
     editedBy: text(160).optional(),
     answerInput: origin.optional(),
+    answerOrigin: origin.optional(),
     languageMismatch: text(120).optional(),
     requestedLanguage: text(60).optional(),
     revisionId: z.uuid().optional(),
@@ -46,6 +47,7 @@ export const NeoPublicationSchema = z
             fullText: text(16000),
             createdAt: z.string().datetime(),
             producerInput: origin,
+            askOrigin: origin.optional(),
             awaiting: text(500).optional(),
           })
           .strict()

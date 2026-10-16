@@ -12,6 +12,7 @@ export interface NeoPublicationRevision {
   readonly fullText: string;
   readonly createdAt: string;
   readonly producerInput: NeoInputOrigin;
+  readonly askOrigin?: NeoInputOrigin;
   readonly awaiting?: string;
 }
 
@@ -29,6 +30,7 @@ export interface NeoPublicationInput {
   readonly editedAt?: string;
   readonly editedBy?: string;
   readonly answerInput?: NeoInputOrigin;
+  readonly answerOrigin?: NeoInputOrigin;
   readonly languageMismatch?: string;
   readonly requestedLanguage?: string;
   readonly revisionId?: string;

@@ -80,6 +80,7 @@ function appendImmutable(
       editedAt: _editedAt,
       editedBy: _editedBy,
       answerInput: _answerInput,
+      answerOrigin: _answerOrigin,
       ...original
     } = current;
     const initial = first
@@ -161,7 +162,8 @@ export class NeoPublicationRepository {
     at: string,
     by: string,
     input: NeoInputOrigin,
-    revisionId: string
+    revisionId: string,
+    answerOrigin: NeoInputOrigin = input
   ): NeoPublicationChangeResult {
     return this.db.transaction((): NeoPublicationChangeResult => {
       const reserved = this.db
@@ -180,6 +182,7 @@ export class NeoPublicationRepository {
         fullText: message.fullText,
         createdAt: message.editedAt ?? message.createdAt,
         producerInput: message.answerInput ?? message.producerInput,
+        askOrigin: message.answerOrigin ?? message.askOrigin,
         ...(message.awaiting ? { awaiting: message.awaiting } : {}),
       });
       const prior = [...(current.revisions ?? []), version(current)].find(
@@ -210,6 +213,7 @@ export class NeoPublicationRepository {
         editedAt: at,
         editedBy: by,
         answerInput: input,
+        answerOrigin,
       });
       if ('reason' in next) return { accepted: false, reason: 'publication_conflict' };
       this.db

@@ -32,8 +32,12 @@ export function neoPublicationAnswerOrigins(publication: NeoPublication) {
   return [
     publication.askOrigin,
     publication.producerInput,
+    ...(publication.answerOrigin ? [publication.answerOrigin] : []),
     ...(publication.answerInput ? [publication.answerInput] : []),
-    ...(publication.revisions?.map((revision) => revision.producerInput) ?? []),
+    ...(publication.revisions?.flatMap((revision) => [
+      revision.producerInput,
+      ...(revision.askOrigin ? [revision.askOrigin] : []),
+    ]) ?? []),
   ].filter((origin) => !!origin);
 }
 

@@ -21,6 +21,7 @@ const Draft = NeoPublicationSchema.omit({
   editedAt: true,
   editedBy: true,
   answerInput: true,
+  answerOrigin: true,
   languageMismatch: true,
   revisionId: true,
   revisions: true,
@@ -212,7 +213,12 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         return runtime.append({
           ...message,
           publicationId: neoDerivedId(
-            `neo.publication.publish:${proof.input.sessionId}:${proof.input.messageId}:${requestId}`
+            JSON.stringify([
+              'neo.publication.publish',
+              proof.input.sessionId,
+              proof.input.messageId,
+              requestId,
+            ])
           ),
           triggerId: proof.triggerId,
           conversationId: proof.root.sessionId.slice(4),

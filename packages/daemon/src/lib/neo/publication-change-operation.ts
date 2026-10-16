@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { neoDerivedId } from './derived-id.ts';
+import type { NeoAskOrigin } from './ask-origin.ts';
 import { NeoPublicationSchema } from './publication.ts';
 import {
   requirePublicationLifetime,
@@ -57,6 +58,7 @@ export interface NeoPublicationChangeRuntime {
   getRootBinding(): NeoBinding | null;
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent'>;
   isConsultationReturn(conversationId: string, publicationId: string): boolean;
+  resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   notify(conversationId: string): void;
 }
 
@@ -188,8 +190,14 @@ export function createNeoPublicationChangeOperations(
           owned.producer.input.sessionId,
           owned.producer.input,
           neoDerivedId(
-            `${name}:${owned.producer.input.sessionId}:${owned.producer.input.messageId}:${input.requestId}`
-          )
+            JSON.stringify([
+              name,
+              owned.producer.input.sessionId,
+              owned.producer.input.messageId,
+              input.requestId,
+            ])
+          ),
+          runtime.resolveAskOrigin(owned.producer.input) ?? owned.producer.input
         )
     );
   const edit = revise('neo.publication.edit', EditInput);

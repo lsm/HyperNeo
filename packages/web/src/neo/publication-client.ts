@@ -41,11 +41,21 @@ export function admitPublicationLifetime(current: boolean): { value: true } | { 
   return current ? { value: true } : { reason: { state: 'stale' } };
 }
 
+function optionalOrigin(value: unknown): NeoPublication['askOrigin'] | null | undefined {
+  if (value === undefined) return undefined;
+  const row = object(value);
+  return row && text(row.sessionId, 160) && text(row.messageId, 160)
+    ? { sessionId: row.sessionId, messageId: row.messageId }
+    : null;
+}
+
 function revision(value: unknown): NonNullable<NeoPublication['revisions']>[number] | null {
   const row = object(value);
   const producer = object(row?.producerInput);
+  const ask = optionalOrigin(row?.askOrigin);
   if (
     !row ||
+    ask === null ||
     typeof row.revisionId !== 'string' ||
     !uuid.test(row.revisionId) ||
     !text(row.shortText, 2000) ||
@@ -64,6 +74,7 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
     fullText: row.fullText,
     createdAt: row.createdAt,
     producerInput: { sessionId: producer.sessionId, messageId: producer.messageId },
+    ...(ask ? { askOrigin: ask } : {}),
     ...(typeof row.awaiting === 'string' ? { awaiting: row.awaiting } : {}),
   };
 }
@@ -73,7 +84,8 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
   if (!row) return null;
   const ask = object(row.askOrigin);
   const producer = object(row.producerInput);
-  const answer = row.answerInput === undefined ? undefined : object(row.answerInput);
+  const answer = optionalOrigin(row.answerInput);
+  const answerOrigin = optionalOrigin(row.answerOrigin);
   if (
     row.conversationId !== page.conversationId ||
     typeof row.publicationId !== 'string' ||
@@ -96,8 +108,8 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     (row.editedAt !== undefined &&
       (!text(row.editedAt, 40) || !Number.isFinite(Date.parse(row.editedAt)))) ||
     (row.editedBy !== undefined && !text(row.editedBy, 160)) ||
-    (answer !== undefined &&
-      (!answer || !text(answer.sessionId, 160) || !text(answer.messageId, 160))) ||
+    answer === null ||
+    answerOrigin === null ||
     (row.revisionId !== undefined &&
       (typeof row.revisionId !== 'string' || !uuid.test(row.revisionId))) ||
     (row.revisions !== undefined && !Array.isArray(row.revisions))
@@ -140,14 +152,8 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     links,
     ...(typeof row.editedAt === 'string' ? { editedAt: row.editedAt } : {}),
     ...(typeof row.editedBy === 'string' ? { editedBy: row.editedBy } : {}),
-    ...(answer
-      ? {
-          answerInput: {
-            sessionId: answer.sessionId as string,
-            messageId: answer.messageId as string,
-          },
-        }
-      : {}),
+    ...(answer ? { answerInput: answer } : {}),
+    ...(answerOrigin ? { answerOrigin } : {}),
     ...(typeof row.revisionId === 'string' ? { revisionId: row.revisionId } : {}),
     ...(row.revisions !== undefined ? { revisions } : {}),
   };

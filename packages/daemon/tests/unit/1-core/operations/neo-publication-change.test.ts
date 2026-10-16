@@ -63,6 +63,7 @@ beforeEach(() => {
         getRootBinding: () => root,
         publications,
         isConsultationReturn: () => consultationReturn,
+        resolveAskOrigin: () => ({ sessionId: root.sessionId, messageId: 'new-human-question' }),
         notify: () => notified++,
       },
       () => new Date('2026-10-16T10:00:00.000Z')
@@ -130,6 +131,35 @@ describe('neo.publication.edit', () => {
         producerInput: input.producerInput,
         answerInput: { sessionId: holder.sessionId, messageId: 'm-2' },
       },
+    });
+  });
+
+  test('a forwarded revision preserves its actor and the human question it answers', async () => {
+    const who = caller(holder.sessionId);
+    const forwarded = {
+      ...who,
+      neoTurn: { ...who.neoTurn!, messageId: 'neo-forward:new-human-question:0' },
+    };
+    await call(
+      'edit',
+      { publicationId: original, requestId: 'forwarded-revision', shortText: 'Corrected.' },
+      forwarded
+    );
+    const revised = publications.get(conversation, original)!;
+    expect(revised).toMatchObject({
+      askOrigin: input.askOrigin,
+      answerInput: { sessionId: holder.sessionId, messageId: 'neo-forward:new-human-question:0' },
+      answerOrigin: { sessionId: root.sessionId, messageId: 'new-human-question' },
+    });
+    await call('edit', {
+      publicationId: original,
+      requestId: 'next-revision',
+      shortText: 'Latest.',
+    });
+    expect(publications.get(conversation, original)?.revisions?.[1]).toMatchObject({
+      producerInput: revised.answerInput,
+      askOrigin: revised.answerOrigin,
+      shortText: 'Corrected.',
     });
   });
 

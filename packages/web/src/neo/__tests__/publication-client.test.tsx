@@ -293,6 +293,7 @@ describe('presentPublicationPage revisions', () => {
     fullText: original.fullText,
     createdAt: original.createdAt,
     producerInput: original.producerInput,
+    askOrigin: original.askOrigin,
     awaiting: 'The review is pending.',
   };
   const revised = () => ({
@@ -300,7 +301,8 @@ describe('presentPublicationPage revisions', () => {
     revisionId: '30000000-0000-4000-8000-000000000003',
     editedAt: '2026-09-30T09:00:00.000Z',
     editedBy: 'holder:research',
-    answerInput: { sessionId: 'holder:research', messageId: 'follow-up-ask' },
+    answerInput: { sessionId: 'holder:research', messageId: 'neo-forward:follow-up-ask:0' },
+    answerOrigin: { sessionId: 'neo', messageId: 'follow-up-ask' },
     shortText: 'Updated summary',
     fullText: 'Updated **detail**',
     revisions: [saved],
@@ -315,6 +317,8 @@ describe('presentPublicationPage revisions', () => {
   it.each([
     { revisionId: 'invalid' },
     { answerInput: { sessionId: '' } },
+    { answerOrigin: { sessionId: '' } },
+    { revisions: [{ ...saved, askOrigin: { sessionId: '' } }] },
     { revisions: {} },
     { revisions: [null] },
     { revisions: [{ ...saved, revisionId: 'invalid' }] },

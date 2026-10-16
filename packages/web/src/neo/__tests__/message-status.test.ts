@@ -151,6 +151,23 @@ describe('neoRepliedAsks', () => {
       'C',
     ]);
   });
+  it('recognizes human origins behind current and earlier forwarded revisions', () => {
+    const revised = {
+      ...reply('A'),
+      publication: {
+        askOrigin: { sessionId: 'neo', messageId: 'A' },
+        answerInput: { sessionId: 'holder', messageId: 'neo-forward:C:0' },
+        answerOrigin: { sessionId: 'neo', messageId: 'C' },
+        revisions: [
+          {
+            producerInput: { sessionId: 'holder', messageId: 'neo-forward:B:0' },
+            askOrigin: { sessionId: 'neo', messageId: 'B' },
+          },
+        ],
+      },
+    } as unknown as NeoPublicEntry;
+    expect([...neoRepliedAsks([ask('A'), revised, ask('B'), ask('C')])]).toEqual(['A', 'B', 'C']);
+  });
 });
 
 describe('placeNeoMessageTurn', () => {
