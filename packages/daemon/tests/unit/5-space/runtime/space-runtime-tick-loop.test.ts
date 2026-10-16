@@ -30,6 +30,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedRuntimeSession } from '../../helpers/seed-runtime-session.ts';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 import { createPinnedWorkflowRun } from '../../helpers/create-pinned-workflow-run.ts';
 
@@ -37,6 +38,7 @@ function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createTables(db);
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (
 			id TEXT PRIMARY KEY,
@@ -267,6 +269,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
         stop_reason: opts.terminal ? 'end_turn' : null,
       },
     };
+    seedRuntimeSession(db, sessionId);
     sdkMessageRepo.saveSDKMessage(sessionId, message as never);
     const timestamp = new Date(Date.now() - opts.minutesAgo * 60_000).toISOString();
     db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?`).run(
@@ -294,6 +297,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
         content: [{ type: 'text', text: '[Runtime recovery notice]' }],
       },
     };
+    seedRuntimeSession(db, sessionId);
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal) VALUES (?, ?, 'user', ?, ?, 'consumed', 'system', 1, 0)`
     ).run(
@@ -3682,6 +3686,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
         agentSessionId: erroredSession,
         completedAt: Date.now(),
       });
+      seedRuntimeSession(db, erroredSession);
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
          VALUES (?, ?, 'result', 'error_during_execution', ?, ?, 'consumed', 'system', 1, 1)`
