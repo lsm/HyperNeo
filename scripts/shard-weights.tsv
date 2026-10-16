@@ -193,7 +193,6 @@
 6	packages/daemon/tests/unit/1-core/lib/fill-prompt.test.ts
 8	packages/daemon/tests/unit/1-core/lib/model-settlement-pipeline.test.ts
 8	packages/daemon/tests/unit/1-core/lib/model-settlement-routing.test.ts
-8812	packages/daemon/tests/unit/1-core/lib/node-execution-manager.test.ts
 8	packages/daemon/tests/unit/1-core/lib/runtime-descriptor.test.ts
 6	packages/daemon/tests/unit/1-core/lib/runtime-hash.test.ts
 903	packages/daemon/tests/unit/1-core/lib/space-manager.test.ts
