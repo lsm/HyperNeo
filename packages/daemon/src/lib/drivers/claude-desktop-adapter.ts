@@ -964,7 +964,14 @@ export async function startClaudeSession(
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   }
-  const live = await deps.liveSessions().catch((): readonly ClaudeLiveSession[] => []);
+  const probed = await probeLiveClaudeSessions(deps);
+  if ('reason' in probed) {
+    return reject(
+      'not_delivered',
+      `${sessionId} was created, but the task did not reach it: ${probed.reason.detail}`
+    );
+  }
+  const live = probed.value;
   const session = live.find((candidate) => candidate.sessionId === cliSessionId);
   const appRecord = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
     (candidate) => candidate.sessionId === sessionId
