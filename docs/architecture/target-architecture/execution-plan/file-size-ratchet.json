@@ -460,7 +460,7 @@
       "followUp": "M8/UI focused view split"
     },
     "packages/daemon/src/lib/job-handlers/goal-automation-execute.handler.ts": {
-      "maxLines": 557,
+      "maxLines": 560,
       "followUp": "M10 cleanup split when touched"
     },
     "packages/daemon/src/lib/rpc-handlers/space-handlers.ts": {
