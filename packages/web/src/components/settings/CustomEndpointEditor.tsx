@@ -21,11 +21,7 @@ import {
   formControlClass,
 } from '../ui/FormField.tsx';
 import { Modal } from '../ui/Modal.tsx';
-import {
-  CUSTOM_ENDPOINT_PRESETS,
-  type CustomEndpointPreset,
-  findPreset,
-} from './customEndpointPresets.ts';
+import { CUSTOM_ENDPOINT_PRESETS, type CustomEndpointPreset } from './customEndpointPresets.ts';
 
 const TYPE_OPTIONS: Array<{ value: CustomEndpointType; label: string }> = [
   { value: 'openai-chat', label: 'OpenAI Chat Completions' },
@@ -699,14 +695,3 @@ export function PresetPicker({ onPick, onClose }: PresetPickerProps) {
     </Modal>
   );
 }
-
-export const __test__ = {
-  resolveCapabilities,
-  parseHeaders,
-  editorToConfig,
-  validateEditor,
-  presetToEditor,
-  existingToEditor,
-  findPreset,
-  makeModelDraft,
-};

@@ -110,7 +110,3 @@ export const CUSTOM_ENDPOINT_PRESETS: CustomEndpointPreset[] = [
     },
   },
 ];
-
-export function findPreset(key: string): CustomEndpointPreset | undefined {
-  return CUSTOM_ENDPOINT_PRESETS.find((p) => p.key === key);
-}
