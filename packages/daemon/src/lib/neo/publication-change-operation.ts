@@ -43,6 +43,7 @@ export interface NeoPublicationChangeRuntime {
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent'>;
   isConsultationReturn(conversationId: string, publicationId: string): boolean;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
+  resolveHumanAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   notify(conversationId: string): void;
 }
 
@@ -148,7 +149,7 @@ function changePipeline(
         return withNeoPublicationAnswer(
           result,
           result.accepted
-            ? runtime.resolveAskOrigin(
+            ? runtime.resolveHumanAskOrigin(
                 result.publication.answerOrigin ?? result.publication.askOrigin
               )
             : null

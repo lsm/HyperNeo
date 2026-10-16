@@ -2439,6 +2439,7 @@ export function createNeoOperations(service: NeoService) {
       isConsultationReturn: (conversationId, publicationId) =>
         service.consultations.returnsPublication(conversationId, publicationId),
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
+      resolveHumanAskOrigin: (input) => service.resolveHumanAskOrigin(input),
       notify: (conversationId) => {
         service.notifyChanged();
         service.notifyPublicationsChanged(conversationId);

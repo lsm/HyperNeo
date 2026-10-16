@@ -179,6 +179,10 @@ describe('runtime-bound publication operation', () => {
       getWork: (id) => repo.getWork(id),
       getConsultation: (id) => consultations.get(id),
       resolveAskOrigin: resolve,
+      resolveHumanAskOrigin: (input) => {
+        const origin = resolve(input);
+        return origin && isHuman(origin) ? origin : null;
+      },
       append: createNeoPublicationCommit({
         commit: (input) => ledger.append(input),
         published: () => {},
@@ -218,6 +222,11 @@ describe('runtime-bound publication operation', () => {
 
   test('an unbound event delivery does not invent an answered human question', async () => {
     prompt(root.sessionId, 'event', 'system');
+    stamp(
+      { sessionId: root.sessionId, messageId: 'event' },
+      { sessionId: root.sessionId, messageId: 'event' },
+      null
+    );
     expect(await invoke(draft, caller(root.sessionId, 'event', false))).toMatchObject({
       kind: 'completed',
       value: { accepted: true, answered: null },

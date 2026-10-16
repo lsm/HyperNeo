@@ -55,6 +55,7 @@ interface NeoPublicationRuntime {
   getWork(id: string): NeoWork | null;
   getConsultation(id: string): NeoConsultation | null;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
+  resolveHumanAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   append(input: NeoPublicationInput): Receipt;
   inputTrigger(input: NeoAskOrigin): string | null;
   notify(): void;
@@ -238,7 +239,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         if (receipt.accepted) runtime.notify();
         return withNeoPublicationAnswer(
           receipt,
-          receipt.accepted ? runtime.resolveAskOrigin(receipt.publication.askOrigin) : null
+          receipt.accepted ? runtime.resolveHumanAskOrigin(receipt.publication.askOrigin) : null
         );
       },
       'publication',

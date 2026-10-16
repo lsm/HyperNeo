@@ -204,15 +204,14 @@ describe('direct human publication prompt', () => {
   });
 });
 
-describe('neoPrompt edit, correct or reply', () => {
-  test('teaches the method by what changes, for a request or a mistake Neo notices', () => {
+describe('neoPrompt message revisions', () => {
+  test('exposes one revision operation for wording and factual corrections', () => {
     const prompt = neoPrompt(null);
-    expect(prompt).toContain('Choose by what changes, not by how the human phrases it');
-    expect(prompt).toContain('edit it in place with neo.publication.edit');
-    expect(prompt).toContain('revise it with neo.publication.edit');
-    expect(prompt).toContain('that correction is your reply to it, so publish nothing else');
-    expect(prompt).toContain('Read the conversation with neo.publication.recent first');
-    expect(prompt).toContain('any Neo reply in this conversation can be fixed');
-    expect(prompt).toContain("never a session's messages");
+    expect(prompt).toContain('neo.publication.edit {publicationId,requestId,shortText?,fullText?}');
+    expect(prompt).toContain('including factual corrections');
+    expect(prompt).not.toContain('neo.publication.correct');
+    expect(prompt).not.toContain(
+      "Then answer the human's message in one sentence saying what you changed"
+    );
   });
 });

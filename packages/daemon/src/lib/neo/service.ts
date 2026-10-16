@@ -927,6 +927,7 @@ export class NeoService {
       getWork: (id) => this.repo.getWork(id),
       getConsultation: (id) => this.consultations.get(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
+      resolveHumanAskOrigin: (input) => this.resolveHumanAskOrigin(input),
       inputTrigger: (input) => this.inputTrigger(input),
       append: (input) => this.commitPublication(input),
       notify: notifyPublication,
@@ -1101,6 +1102,11 @@ export class NeoService {
   }) {
     for (const old of [...evict, key]) this.savedRules.delete(old);
     this.savedRules.set(key, note);
+  }
+
+  resolveHumanAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null {
+    const origin = this.resolveAskOrigin(input);
+    return origin && this.isHumanInput(origin) ? origin : null;
   }
 
   private isHumanInput(input: NeoAskOrigin): boolean {

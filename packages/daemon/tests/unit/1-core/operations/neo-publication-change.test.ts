@@ -64,6 +64,10 @@ beforeEach(() => {
         publications,
         isConsultationReturn: () => consultationReturn,
         resolveAskOrigin: () => ({ sessionId: root.sessionId, messageId: 'new-human-question' }),
+        resolveHumanAskOrigin: () => ({
+          sessionId: root.sessionId,
+          messageId: 'new-human-question',
+        }),
         notify: () => notified++,
       },
       () => new Date('2026-10-16T10:00:00.000Z')
