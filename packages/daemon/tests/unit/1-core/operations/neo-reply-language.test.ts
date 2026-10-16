@@ -19,6 +19,7 @@ describe('Neo speaking context', () => {
 
   test('retains root and holder context boundaries', () => {
     expect(neoPrompt(null)).toContain('Detailed context belongs to the holder');
+    expect(neoPrompt(null)).toContain('Empty redacted context, instruction or report fields');
     const holder = neoPrompt('mixed-name-project');
     expect(holder).toContain('context holder for project "mixed-name-project"');
     expect(holder).toContain('You cannot consult other holders');
