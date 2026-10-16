@@ -654,7 +654,23 @@ export function driverDoneCheckNote(
   const items = owned && ask ? neoNoteChecklist(ask) : [];
   const restates = (doneWhen: string | null | undefined) =>
     !!ask && items.length > 0 && isNeoDoneWhenRestated(doneWhen ?? '', ask);
-  return `${fillPrompt(NEO_WORK_DONE_CHECK, { facts: facts ? ` ${facts.text}` : '', ask: owner, next })}${move}${packNote}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, ...(restates(goal.doneWhen) ? {} : { doneWhen: goal.doneWhen }), continued, report: work.report?.slice(0, 12000) ?? null, ...facts?.data, ...(ask ? { ask: { id: ask.id, ...(restates(ask.doneWhen) ? {} : { doneWhen: ask.doneWhen }), status: ask.status, ...(owned ? { cards: neoNoteCards(cards), items } : {}) } } : {}) })}`;
+  return neoAskProgressNote(
+    ask ?? null,
+    `${fillPrompt(NEO_WORK_DONE_CHECK, { work_id: work.id, title: work.title, facts: facts ? ` ${facts.text}` : '', ask: owner, next })}${move}${packNote}`,
+    {
+      card: {
+        id: work.id,
+        title: work.title,
+        goal: goal.goal,
+        ...(restates(goal.doneWhen) ? {} : { doneWhen: goal.doneWhen }),
+        continued,
+        report: work.report?.slice(0, 12000) ?? null,
+        ...facts?.data,
+      },
+      ...(ask && !restates(ask.doneWhen) ? { askDoneWhen: ask.doneWhen } : {}),
+      ...(owned ? { cards: neoNoteCards(cards) } : { items: undefined }),
+    }
+  );
 }
 
 export function neoWorkDoneGoal(

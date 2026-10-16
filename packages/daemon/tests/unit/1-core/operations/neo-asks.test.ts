@@ -4250,13 +4250,15 @@ describe('driverDoneCheckNote', () => {
   test('shows the owning session the whole ask, and another session only whose ask it is', () => {
     const owned = driverDoneCheckNote(work, goal, 0, null, { ask, cards: [sibling] });
     expect(owned).toContain('which you opened');
-    expect(JSON.parse(owned.slice(owned.indexOf('\n{'))).ask.cards).toEqual([sibling]);
+    expect(JSON.parse(owned.slice(owned.indexOf('\n{'))).cards).toEqual([sibling]);
+    expect(owned).toMatch(/^Ask progress on ask .*: card w "Fix it" went idle and reported\./);
     const other = driverDoneCheckNote({ ...work, originSessionId: 'holder' }, goal, 0, null, {
       ask,
       cards: [sibling],
     });
     expect(other).toContain('which another Neo session opened and settles');
-    expect(JSON.parse(other.slice(other.indexOf('\n{'))).ask.cards).toBeUndefined();
+    expect(JSON.parse(other.slice(other.indexOf('\n{')))).not.toHaveProperty('cards');
+    expect(JSON.parse(other.slice(other.indexOf('\n{')))).not.toHaveProperty('items');
   });
 
   test('states a spent budget as a fact, with no command', () => {

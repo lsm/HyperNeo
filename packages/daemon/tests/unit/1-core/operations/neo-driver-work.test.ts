@@ -218,13 +218,13 @@ describe('done-check note data', () => {
       }
     );
     const data = JSON.parse(note.slice(note.indexOf('\n{')));
-    expect(data.ask.items).toEqual([
+    expect(data.items).toEqual([
       { id: 'i1', state: 'met' },
       { id: 'i2', state: 'pending', text: 'deployed' },
     ]);
-    expect(data.doneWhen).toBeUndefined();
-    expect(data.ask.doneWhen).toBeUndefined();
-    expect(data.prs).toEqual([
+    expect(data.card.doneWhen).toBeUndefined();
+    expect(data.askDoneWhen).toBeUndefined();
+    expect(data.card.prs).toEqual([
       { url: 'u', state: 'MERGED', checks: 'passing', review: 'approved' },
     ]);
     expect(note).toContain('more of your wakes for this card bring no new commit');
@@ -243,14 +243,14 @@ describe('done-check note data', () => {
         )
       );
     const own = note('- docs updated', '- merged\n- deployed');
-    expect(own.doneWhen).toBe('- docs updated');
-    expect(own.ask.doneWhen).toBeUndefined();
+    expect(own.card.doneWhen).toBe('- docs updated');
+    expect(own.askDoneWhen).toBeUndefined();
     const preamble = note(
       'Both, on the laptop:\n- merged\n- deployed',
       'Both, on the laptop:\n- merged\n- deployed'
     );
-    expect(preamble.doneWhen).toContain('on the laptop');
-    expect(preamble.ask.doneWhen).toContain('on the laptop');
+    expect(preamble.card.doneWhen).toContain('on the laptop');
+    expect(preamble.askDoneWhen).toContain('on the laptop');
   });
 
   test('another card shows one PR verdict, the first one not done', () => {
@@ -1713,7 +1713,7 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(notes).toHaveLength(1);
-      expect(JSON.parse(notes[0].slice(notes[0].indexOf('\n{'))).ask.cards).toEqual([
+      expect(JSON.parse(notes[0].slice(notes[0].indexOf('\n{'))).cards).toEqual([
         { id: 'work-2', title: 'Ship the docs', status: 'proposed', pr: 'waiting' },
       ]);
       expect(notes[0]).toContain('which you opened');
