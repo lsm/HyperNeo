@@ -265,6 +265,7 @@ import {
   neoTriggerWatchSessions,
   neoTriggerWorkProblem,
   noteNeoAskTrigger,
+  planNeoSettledReports,
   planNeoTriggerRetry,
   shouldPreemptNeoTurn,
   shouldRetryNeoTrigger,
@@ -507,6 +508,7 @@ export class NeoService {
   private readonly askEvidenceReads = new Map<string, number>();
   private readonly cardPrRelays: NeoCardPrRelayRepository;
   private askIdleSeen: NeoAskIdleSeen = new Map();
+  private settledReports = new Map<string, number>();
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -814,6 +816,7 @@ export class NeoService {
       read: (ask) => readNeoAskTriggerView(this, ask),
       work: (id) => this.repo.getWork(id),
       deliveryRetryPending: (id) => isNeoDeliveryRetryPending(this.db.getJobQueueRepo(), id),
+      reportSettled: (id, updatedAt) => this.settledReports.get(id) === updatedAt,
       told: (askId) => this.triggers.told(askId),
       heard: (ask) => this.heardOutcome(ask),
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
@@ -2198,20 +2201,23 @@ export class NeoService {
         const work = this.repo.getWork(card.workId);
         return work ? [{ work, ref: card.ref }] : [];
       });
+    const unprocessed = new Set<string>();
     for (const { work, ref } of cards) {
       if (work.status !== 'queued') continue;
-      await this.settleDriverWork(work, ref).catch((error) =>
-        this.log.warn('Driver work refresh pending', error)
-      );
+      await this.settleDriverWork(work, ref).catch((error) => {
+        unprocessed.add(work.id);
+        this.log.warn('Driver work refresh pending', error);
+      });
       await this.attachOpenedPrs(work.id).catch((error) =>
         this.log.warn('Card opened pull request read pending', error)
       );
     }
     for (const { work } of cards) {
       if (work.status !== 'reported') continue;
-      await this.followWork(work, Date.now()).catch((error) =>
-        this.log.warn('Reported work follow-up pending', error)
-      );
+      await this.followWork(work, Date.now()).catch((error) => {
+        unprocessed.add(work.id);
+        this.log.warn('Reported work follow-up pending', error);
+      });
     }
     try {
       this.endUnfollowedCardTopics(Date.now());
@@ -2233,15 +2239,24 @@ export class NeoService {
       try {
         this.runAskPackTicks(ask.id);
       } catch (error) {
+        for (const id of ask.workIds) unprocessed.add(id);
         this.log.warn('Neo ask ticks pending', error);
       }
-      await this.runAskReadTicks(this.askRecords.get(ask.id) ?? ask).catch((error) =>
-        this.log.warn('Neo ask read ticks pending', error)
-      );
+      await this.runAskReadTicks(this.askRecords.get(ask.id) ?? ask).catch((error) => {
+        for (const id of ask.workIds) unprocessed.add(id);
+        this.log.warn('Neo ask read ticks pending', error);
+      });
       await this.checkAskEvidence(ask, Date.now()).catch((error) =>
         this.log.warn('Ask evidence check pending', error)
       );
     }
+    this.settledReports = planNeoSettledReports(
+      this.askRecords
+        .listLive()
+        .flatMap((ask) => ask.workIds.flatMap((id) => this.repo.getWork(id) ?? [])),
+      unprocessed
+    );
+    this.scheduleTriggerSweep();
     for (const ask of this.askRecords.listLive()) {
       await this.noteAskStall(ask, Date.now()).catch((error) =>
         this.log.warn('Ask stall note pending', error)
