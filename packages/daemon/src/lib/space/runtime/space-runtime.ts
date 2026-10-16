@@ -194,7 +194,6 @@ import {
   MissingWorkflowAgentError,
 } from '../../workflows/node-execution-validation.ts';
 import { canTransition as canTransitionRunStatus } from '../../workflows/run-status-machine.ts';
-import { selectWorkflow } from '../../workflows/workflow-selector.ts';
 import { selectTimedOutExecutions } from '../../workflows/run-tick-admission-gates.ts';
 import type {
   SpaceWorkflowRunTickDeps,
@@ -802,8 +801,6 @@ export class SpaceRuntime {
     }
     this.cacheBlockedRetryCount(runId, count);
   }
-
-  private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
   private nonTerminalIdleStates = new Map<string, NonTerminalIdleState>();
 
@@ -1527,16 +1524,6 @@ export class SpaceRuntime {
     this.workflowEventSubscriptionRepo.deleteByRun(workflowRunId);
     this.topicTrie.remove(
       (target) => isWorkflowSubscriptionTarget(target) && target.workflowRunId === workflowRunId
-    );
-    this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
-  }
-
-  clearRunInterestsPreservingDynamic(workflowRunId: string): void {
-    this.topicTrie.remove(
-      (target) =>
-        isWorkflowSubscriptionTarget(target) &&
-        target.workflowRunId === workflowRunId &&
-        target.subscriptionKind !== 'dynamic'
     );
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
   }
@@ -2873,24 +2860,6 @@ export class SpaceRuntime {
       };
     } catch {
       return null;
-    }
-  }
-
-  emitTaskThreadEvent(sessionId: string, subtype: string, payload: Record<string, unknown>): void {
-    try {
-      const message = {
-        type: 'system',
-        subtype,
-        session_id: sessionId,
-        uuid: `${subtype}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-        ...payload,
-      } as unknown as Parameters<SDKMessageRepository['saveSDKMessage']>[1];
-      this.getSdkMessageRepo().saveSDKMessage(sessionId, message);
-    } catch (err) {
-      log.warn(
-        `[SpaceRuntime] Failed to emit thread event ${subtype} on session ${sessionId}: ` +
-          `${err instanceof Error ? err.message : String(err)}`
-      );
     }
   }
 
@@ -4299,25 +4268,11 @@ export class SpaceRuntime {
       throw err;
     }
 
-    this.storeWorkflowChannels(run.id, workflow.channels ?? []);
-
     return { run, tasks: canonicalTask ? [canonicalTask] : [] };
-  }
-
-  resolveWorkflowForRun(spaceId: string, workflowId?: string): SpaceWorkflow | null {
-    const availableWorkflows = this.config.spaceWorkflowManager
-      .listWorkflows(spaceId)
-      .filter((w) => !w.disabled);
-    return selectWorkflow({ spaceId, availableWorkflows, workflowId });
   }
 
   getExecutor(runId: string): WorkflowExecutor | undefined {
     return this.executors.get(runId);
-  }
-
-  getApprovedPrUrlForRun(runId: string): string | null {
-    const url = this.resolvePrUrlForRun(runId);
-    return typeof url === 'string' && url.length > 0 ? url : null;
   }
 
   async recoverWorkflowBackedTask(
@@ -8798,21 +8753,6 @@ export class SpaceRuntime {
     _workspacePath: string
   ): WorkflowExecutor {
     return new WorkflowExecutor(workflow, run);
-  }
-
-  storeWorkflowChannels(runId: string, channels: WorkflowChannel[]): void {
-    this.workflowChannelsMap.set(runId, channels);
-  }
-
-  getRunWorkflowChannels(runId: string): WorkflowChannel[] {
-    return this.workflowChannelsMap.get(runId) ?? [];
-  }
-
-  getWorkflowChannels(runId: string): WorkflowChannel[] {
-    const run = this.config.workflowRunRepo.getRun(runId);
-    if (!run) return [];
-    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
-    return workflow?.channels ?? [];
   }
 }
 

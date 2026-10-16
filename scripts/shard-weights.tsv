@@ -1144,7 +1144,6 @@
 16	packages/daemon/tests/unit/5-space/workflow/workflow-read-operations.test.ts
 18	packages/daemon/tests/unit/5-space/workflow/workflow-run-operations.test.ts
 4737	packages/daemon/tests/unit/5-space/workflow/workflow-run-status-lifecycle.test.ts
-3	packages/daemon/tests/unit/5-space/workflow/workflow-selector.test.ts
 91	packages/daemon/tests/unit/5-space/workspaces/validation-pipeline.test.ts
 19	packages/daemon/tests/unit/5-space/workspaces/workspace-manager.test.ts
 15656	packages/daemon/tests/unit/5-space/workspaces/worktree-manager.test.ts

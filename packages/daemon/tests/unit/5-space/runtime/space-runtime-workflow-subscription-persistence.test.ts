@@ -226,23 +226,6 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     expect(trieOf(runtime).lookupSubscriptionTargets('github/a/x')).toHaveLength(0);
   });
 
-  test('clearRunInterestsPreservingDynamic keeps dynamic rows in both stores', () => {
-    const runtime = makeRuntime();
-    const { workflow, runId, taskId } = createRun({
-      eventInterests: [{ topic: 'github/static/*' }],
-    });
-    runtime.registerRunInterests(runId, taskId, workflow.nodes);
-    runtime.registerSubscription(runId, taskId, 'code', 'coder', 'github/dynamic/*');
-
-    runtime.clearRunInterestsPreservingDynamic(runId);
-
-    const rows = subscriptionRepo.listBySpace(SPACE_ID);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.subscriptionKind).toBe('dynamic');
-    expect(trieOf(runtime).lookupSubscriptionTargets('github/static/x')).toHaveLength(0);
-    expect(trieOf(runtime).lookupSubscriptionTargets('github/dynamic/x')).toHaveLength(1);
-  });
-
   test('clearTaskInterests removes the task subscriptions from both stores', () => {
     const runtime = makeRuntime();
     const { runId, taskId } = createRun();

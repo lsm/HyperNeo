@@ -92,27 +92,6 @@ describe('SpaceRuntime — disabled workflow filtering', () => {
     });
   }
 
-  test('resolveWorkflowForRun excludes disabled workflows from selection', () => {
-    const enabledWf = createWorkflow('Enabled', ['default']);
-    const disabledWf = createWorkflow('Disabled', ['default'], true);
-
-    const runtime = buildRuntime();
-
-    expect(runtime.resolveWorkflowForRun(SPACE_ID, enabledWf.id)!.id).toBe(enabledWf.id);
-
-    expect(runtime.resolveWorkflowForRun(SPACE_ID, disabledWf.id)).toBeNull();
-  });
-
-  test('resolveWorkflowForRun returns null when all workflows are disabled', () => {
-    createWorkflow('Disabled A', [], true);
-    createWorkflow('Disabled B', [], true);
-
-    const runtime = buildRuntime();
-    const resolved = runtime.resolveWorkflowForRun(SPACE_ID);
-
-    expect(resolved).toBeNull();
-  });
-
   test('attachStandaloneTasksToWorkflows skips disabled workflows', async () => {
     const enabledWf = createWorkflow('Enabled', ['default']);
     createWorkflow('Disabled', ['default'], true);
