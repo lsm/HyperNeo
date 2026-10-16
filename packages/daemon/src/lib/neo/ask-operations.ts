@@ -10,7 +10,6 @@ import {
   type NeoAskItem,
   type NeoAskItemKind,
   type NeoAskQuestionBecause,
-  neoAskApprovalSpent,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -483,7 +482,7 @@ export function projectNeoSnapshotAsks(
   return [...active, ...asks.filter(isFinal).slice(0, settledLimit)].map((ask) => ({
     ...ask,
     pooled: isPooledNeoAsk(ask),
-    approvalSpent: neoAskApprovalSpent(ask, now),
+    approvalSpent: null,
     ...(ask.workIds.some((id) => stalled.has(id))
       ? { stalledWorkIds: ask.workIds.filter((id) => stalled.has(id)) }
       : {}),
@@ -876,10 +875,10 @@ export function requireNeoAskApprovalLapsed<T>(
   now: number,
   value: T
 ): Gate<T> {
-  return ask.approvedAt != null && !stalled && neoAskApprovalSpent(ask, now) === null
+  return ask.approvedAt != null && !stalled
     ? {
         reason: fail(
-          "approval_active: this ask's approval is active and none of its cards has stalled, so there is nothing for the human to approve again. Keep the work moving; the daemon shows Approve itself once the approval expires or a card stalls."
+          'approval_active: this ask already has approval. Authorization follows the approved plan revision.'
         ),
       }
     : { value };
@@ -1036,12 +1035,11 @@ export function planNeoAskSettle(
   };
 }
 
-export function neoAskHasHumanAction(ask: NeoAsk, facts: NeoAskSettleFacts, now: number): boolean {
+export function neoAskHasHumanAction(ask: NeoAsk, facts: NeoAskSettleFacts, _now: number): boolean {
   return (
     facts.offered ||
     facts.stalled ||
     facts.failed ||
-    neoAskApprovalSpent(ask, now) !== null ||
     (ask.doneItems ?? []).some(
       (item) =>
         !item.removed &&
@@ -1736,7 +1734,7 @@ export function createNeoAskOperations(
     .pipe(
       (cards: NeoWork[]): NeoAskSettleFacts => ({
         offered: cards.some((card) => card.status === 'proposed'),
-        stalled: cards.some((card) => service.isContinueStalled(card.id)),
+        stalled: false,
         failed: cards.some((card) => card.status === 'failed'),
       }),
       'cards',
@@ -2274,7 +2272,7 @@ export function createNeoAskOperations(
     defineOperation({
       name: 'neo.ask.approve',
       description:
-        "Approve an open ask: the daemon starts its proposed work items at once, and Neo starts the ones proposed under it later without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. Its work items keep continuing while they make progress, for 48 hours; approving again after that renews the window. An approval never covers deploying to production, deleting data or other destructive steps.",
+        "Approve an open ask: the daemon starts its proposed work items at once, and Neo starts the ones proposed under it later without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. Its approval remains tied to the approved plan revision. An approval never covers deploying to production, deleting data or other destructive steps.",
       inputSchema: Approve,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },

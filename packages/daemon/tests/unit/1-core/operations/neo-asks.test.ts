@@ -9,10 +9,8 @@ import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import {
   isPooledNeoAsk,
-  NEO_ASK_CONTINUE_WINDOW_MS,
   type NeoAsk,
   type NeoAskItem,
-  neoAskApprovalSpent,
   type NeoCardView,
   type NeoSnapshot,
 } from '@hyperneo/shared/types/neo-snapshot';
@@ -1869,48 +1867,6 @@ describe('neo.ask operations', () => {
     });
     expect(requireNeoAskItemKind(undefined, 'v')).toEqual({ value: 'v' });
     expect(requireNeoAskItemKind('action', 'v')).toEqual({ value: 'v' });
-  });
-
-  test('renewed approval is refused while the approval is active and no card has stalled', async () => {
-    const askId = await openAsk();
-    const cardId = (await propose('card-1', askId)).value!.work!.id;
-    service.repo.transitionWork(cardId, service.repo.getWork(cardId)!, { status: 'queued' });
-    expect(service.askRecords.get(askId)?.approvedAt).toEqual(expect.any(Number));
-    const renew = {
-      id: askId,
-      outcome: 'waiting',
-      summary: 'Approve again to keep the login fix going.',
-      evidence: 'The card made 20 continues.',
-    };
-    for (const outcome of ['waiting', 'blocked'])
-      expect(await invoke('neo.ask.settle', { ...renew, outcome })).toMatchObject({
-        value: { ok: false, reason: expect.stringContaining('approval_active') },
-      });
-    expect(
-      await invoke('neo.ask.question', {
-        askId,
-        question: 'Re-approve the login fix?',
-        options: ['Approve', 'Stop'],
-        kind: 'decision',
-      })
-    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('approval_on_ask') } });
-    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
-    const unapproved = await invoke(
-      'neo.ask.open',
-      { ...opening, requestKey: 'never-approved' },
-      { source: 'rpc', principal: 'local' }
-    );
-    const unapprovedId = unapproved.value!.ask!.id;
-    expect(service.askRecords.get(unapprovedId)?.approvedAt).toBeNull();
-    expect(await invoke('neo.ask.settle', { ...renew, id: unapprovedId })).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('question_required') },
-    });
-
-    service.isContinueStalled = (id: string) => id === cardId;
-    expect(await invoke('neo.ask.settle', renew)).toMatchObject({
-      value: { ok: true, ask: { status: 'waiting', waitingItem: null } },
-    });
-    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
   });
 
   test('a decision item is written only by the settle that wins the status check', async () => {
@@ -3831,11 +3787,11 @@ describe('projectNeoSnapshotAsks', () => {
   test('says whether each ask draws on an approved pool and whether that pool is spent', () => {
     const approved = { ...ask, id: 'p1', approvedAt: 0, approvedContinues: 3 };
     expect(
-      projectNeoSnapshotAsks([approved, { ...ask, id: 'n1' }], 0, NEO_ASK_CONTINUE_WINDOW_MS).map(
+      projectNeoSnapshotAsks([approved, { ...ask, id: 'n1' }], 0, 365 * 24 * 60 * 60_000).map(
         ({ id, pooled, approvalSpent }) => ({ id, pooled, approvalSpent })
       )
     ).toEqual([
-      { id: 'p1', pooled: true, approvalSpent: 'expired' },
+      { id: 'p1', pooled: true, approvalSpent: null },
       { id: 'n1', pooled: false, approvalSpent: null },
     ]);
   });
@@ -3868,20 +3824,8 @@ describe('projectNeoSnapshotAsks approval', () => {
   test('a stalled card no longer spends the approval; only its age does', () => {
     expect(projectNeoSnapshotAsks([base], 10, 2_000)[0].approvalSpent).toBeNull();
     expect(
-      projectNeoSnapshotAsks([base], 10, 1_000 + NEO_ASK_CONTINUE_WINDOW_MS)[0].approvalSpent
-    ).toBe('expired');
-  });
-});
-
-describe('neoAskApprovalSpent', () => {
-  test('is spent only once the window has fully passed, however many continues ran', () => {
-    const at = 1_000;
-    expect(neoAskApprovalSpent({ approvedAt: at }, at)).toBeNull();
-    expect(neoAskApprovalSpent({ approvedAt: at }, at + NEO_ASK_CONTINUE_WINDOW_MS - 1)).toBeNull();
-    expect(neoAskApprovalSpent({ approvedAt: at }, at + NEO_ASK_CONTINUE_WINDOW_MS)).toBe(
-      'expired'
-    );
-    expect(neoAskApprovalSpent({ approvedAt: null }, at)).toBeNull();
+      projectNeoSnapshotAsks([base], 10, 1_000 + 365 * 24 * 60 * 60_000)[0].approvalSpent
+    ).toBeNull();
   });
 });
 
@@ -4386,11 +4330,11 @@ describe('driverDoneCheckNote', () => {
   const sibling = { id: 'w2', title: 'Ship the docs', status: 'queued' as const };
 
   test('shows the owning session the whole ask, and another session only whose ask it is', () => {
-    const owned = driverDoneCheckNote(work, goal, 0, null, { ask, cards: [sibling] });
+    const owned = driverDoneCheckNote(work, goal, 0, { ask, cards: [sibling] });
     expect(owned).toContain('which you opened');
     expect(JSON.parse(owned.slice(owned.indexOf('\n{'))).cards).toEqual([sibling]);
     expect(owned).toMatch(/^Ask progress on ask .*: card w "Fix it" went idle and reported\./);
-    const other = driverDoneCheckNote({ ...work, originSessionId: 'holder' }, goal, 0, null, {
+    const other = driverDoneCheckNote({ ...work, originSessionId: 'holder' }, goal, 0, {
       ask,
       cards: [sibling],
     });
@@ -4399,14 +4343,8 @@ describe('driverDoneCheckNote', () => {
     expect(JSON.parse(other.slice(other.indexOf('\n{')))).not.toHaveProperty('items');
   });
 
-  test('states a spent budget as a fact, with no command', () => {
-    const spent = driverDoneCheckNote(work, goal, 5, 'continue_budget_spent', { ask });
-    expect(spent).toContain('continue_budget_spent It can no longer be continued.');
-    expect(spent).not.toMatch(/Do not|Follow the|tell the human/);
-  });
-
   test('names the ask pack and leaves its guidance to the system prompt', () => {
-    const noted = driverDoneCheckNote(work, goal, 0, null, {
+    const noted = driverDoneCheckNote(work, goal, 0, {
       ask: { ...ask, pack: 'coding' },
       pack: { id: 'coding', instructions: NEO_PACK_CODING_INSTRUCTIONS },
     });
@@ -4414,7 +4352,7 @@ describe('driverDoneCheckNote', () => {
       'This ask works under the coding pack; neo.pack.read {id} returns its guidance.'
     );
     expect(noted).not.toContain(NEO_PACK_CODING_INSTRUCTIONS);
-    expect(driverDoneCheckNote(work, goal, 0, null, { ask, pack: null })).not.toContain(
+    expect(driverDoneCheckNote(work, goal, 0, { ask, pack: null })).not.toContain(
       'This ask works under'
     );
   });
@@ -4555,24 +4493,6 @@ describe('neoAsksForApproval', () => {
     ['Pick the release date.', false],
   ])('%s → %s', (text, asks) => {
     expect(neoAsksForApproval(undefined, text)).toBe(asks);
-  });
-});
-
-describe('requireNeoAskApprovalLapsed', () => {
-  const now = 1_000_000_000;
-  test('refuses only while the approval is active and no card has stalled', () => {
-    expect(requireNeoAskApprovalLapsed({ approvedAt: now - 1000 }, false, now, 'v')).toMatchObject({
-      reason: { ok: false, reason: expect.stringContaining('approval_active') },
-    });
-    expect(requireNeoAskApprovalLapsed({ approvedAt: now - 1000 }, true, now, 'v')).toEqual({
-      value: 'v',
-    });
-    expect(
-      requireNeoAskApprovalLapsed({ approvedAt: now - NEO_ASK_CONTINUE_WINDOW_MS }, false, now, 'v')
-    ).toEqual({ value: 'v' });
-    expect(requireNeoAskApprovalLapsed({ approvedAt: null }, false, now, 'v')).toEqual({
-      value: 'v',
-    });
   });
 });
 

@@ -1,14 +1,13 @@
+import { isNeoCardPrAwaited } from '../../../../src/lib/neo/packs/coding/card-facts.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   isNeoCardAwaitingPr,
   isNeoCardDoneWhenMet,
-  isNeoCardPrAwaited,
   isNeoCardPrRoutine,
   isNeoHumanInputSince,
-  neoCardStalledWakes,
   neoCardWakeProgress,
-  requireNeoContinueTurn,
+  neoContinueFacts,
 } from '../../../../src/lib/neo/card-wake.ts';
 import { NeoWorkWakeRepository } from '../../../../src/storage/repositories/neo-work-wake-repository.ts';
 import { runMigration353 } from '../../../../src/storage/schema/m353-neo-work-wakes.ts';
@@ -31,14 +30,6 @@ describe('neoCardWakeProgress', () => {
     expect(neoCardWakeProgress('0|a', items('pending'))).toBe('0|a|0');
     expect(neoCardWakeProgress('0|a', items('met'))).toBe('0|a|1');
     expect(neoCardWakeProgress('0|a', null)).toBe('0|a|0');
-  });
-});
-
-describe('neoCardStalledWakes', () => {
-  test('new human input clears the count', () => {
-    expect(neoCardStalledWakes({ stalled: 3 }, false)).toBe(3);
-    expect(neoCardStalledWakes({ stalled: 3 }, true)).toBe(0);
-    expect(neoCardStalledWakes(null, false)).toBe(0);
   });
 });
 
@@ -104,41 +95,6 @@ describe('isNeoCardDoneWhenMet', () => {
   });
 });
 
-describe('requireNeoContinueTurn', () => {
-  const turn = { guarded: true, human: false, doneWhenMet: false, prs: [], wake: null };
-  const reason = (result: ReturnType<typeof requireNeoContinueTurn>) =>
-    'reason' in result ? result.reason.reason : null;
-
-  test('refuses a met doneWhen, an awaited PR, and a second continue in one wake', () => {
-    expect(requireNeoContinueTurn('t', turn)).toEqual({ value: 't' });
-    expect(reason(requireNeoContinueTurn('t', { ...turn, doneWhenMet: true }))).toContain(
-      'done_when_met'
-    );
-    expect(
-      reason(requireNeoContinueTurn('t', { ...turn, prs: [pr({ checks: 'pending' })] }))
-    ).toContain('waiting on CI');
-    const wake = { wakes: 2, continuedWake: 2, stalled: 0 };
-    expect(reason(requireNeoContinueTurn('t', { ...turn, wake }))).toContain('already_continued');
-    expect(requireNeoContinueTurn('t', { ...turn, wake: { ...wake, wakes: 3 } })).toEqual({
-      value: 't',
-    });
-  });
-
-  test('a continue before any wake was delivered does not block the next one', () => {
-    expect(
-      requireNeoContinueTurn('t', { ...turn, wake: { wakes: 0, continuedWake: 0, stalled: 0 } })
-    ).toEqual({ value: 't' });
-  });
-
-  test('new human input lifts the once-per-wake rule, and daemon relays are not guarded', () => {
-    const wake = { wakes: 2, continuedWake: 2, stalled: 0 };
-    expect(requireNeoContinueTurn('t', { ...turn, wake, human: true })).toEqual({ value: 't' });
-    expect(
-      requireNeoContinueTurn('t', { ...turn, guarded: false, doneWhenMet: true, wake })
-    ).toEqual({ value: 't' });
-  });
-});
-
 describe('NeoWorkWakeRepository', () => {
   function repo() {
     const db = new Database(':memory:');
@@ -154,7 +110,7 @@ describe('NeoWorkWakeRepository', () => {
     wakes.recordWake('w1', 'n1', 'p', 1);
     wakes.recordWake('w1', 'n2', 'p', 2);
     wakes.recordWake('w1', 'n3', 'p', 3);
-    expect(wakes.recordWake('w1', 'n4', 'p', 4)).toMatchObject({ wakes: 4, stalled: 3 });
+    expect(wakes.recordWake('w1', 'n4', 'p', 4)).toMatchObject({ wakes: 4, stalled: 0 });
     expect(wakes.recordWake('w1', 'n5', 'q', 5)).toMatchObject({ wakes: 5, stalled: 0 });
     wakes.recordWake('w1', 'n6', 'q', 6);
     expect(wakes.recordContinue('w1', 'q', true)).toMatchObject({
@@ -170,7 +126,7 @@ describe('NeoWorkWakeRepository', () => {
     wakes.recordWake('w1', 'n2', 'p', 2);
     expect(wakes.recordContinue('w1', 'other', false)).toMatchObject({
       wakes: 2,
-      stalled: 1,
+      stalled: 0,
       progress: 'p',
       continuedWake: 2,
     });
@@ -181,6 +137,35 @@ describe('NeoWorkWakeRepository', () => {
       wakes: 0,
       stalled: 0,
       continuedWake: 0,
+    });
+  });
+});
+
+describe('neoContinueFacts', () => {
+  test('returns waits, completed outcomes and prior sends as facts without refusing', () => {
+    expect(
+      neoContinueFacts(
+        {
+          guarded: true,
+          human: false,
+          doneWhenMet: true,
+          prs: [pr({ checks: 'pending' })],
+          wake: null,
+        },
+        {
+          workId: 'w1',
+          count: 500,
+          continuedAt: 1,
+          lastMessage: 'Next',
+          progress: 'p1',
+          stalled: 100,
+        }
+      )
+    ).toMatchObject({
+      done_when_met: true,
+      prior_sends: 500,
+      progress: 'p1',
+      last_send: { at: 1, message: 'Next' },
     });
   });
 });

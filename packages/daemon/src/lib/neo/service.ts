@@ -22,7 +22,6 @@ import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types
 import {
   isNeoWorkClosedDone,
   NEO_WORK_CLOSED_DONE_PREFIX,
-  NEO_WORK_STALLED_CONTINUES,
   type NeoAsk,
   type NeoAskItem,
   type NeoAskSessionView,
@@ -146,8 +145,8 @@ import type { NeoCardWait } from './card-views.ts';
 import {
   isNeoCardAwaitingPr,
   isNeoCardDoneWhenMet,
+  neoContinueFacts,
   isNeoHumanInputSince,
-  neoCardStalledWakes,
   neoCardWakeProgress,
 } from './card-wake.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
@@ -203,7 +202,6 @@ import {
   type NeoDriverTarget,
   type NeoWorkRetryCard,
   neoCardSent,
-  neoStalledContinues,
   neoWorkDoneGoal,
   neoWorkProgress,
   planNeoStartReceiptAdoption,
@@ -218,7 +216,6 @@ import {
   readDriverSendBaseline,
   readDriverSent,
   readNeoDriverAdapters,
-  readNeoWorkContinueBudget,
   requireNeoWorkRetryable,
   withWorkGoal,
 } from './driver-work.ts';
@@ -243,10 +240,7 @@ import {
 } from './needs-you.ts';
 import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
 import {
-  coverNeoAskTriggers,
   isNeoHumanOwnTurn,
-  NEO_TRIGGER_ACHIEVED_WINDOW_MS,
-  NEO_TRIGGER_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
   type NeoDeliveryTrigger,
   type NeoTriggerSweepDeps,
@@ -257,15 +251,11 @@ import {
   neoHumanTrigger,
   neoHumanTriggerMessageId,
   neoTriggerMessageId,
-  neoTriggerMessageIds,
   neoTriggerNote,
-  neoTriggerRetryStatuses,
   neoTriggerWatchSessions,
   noteNeoAskTrigger,
   planNeoSettledReports,
-  planNeoTriggerRetry,
   shouldPreemptNeoTurn,
-  shouldRetryNeoTrigger,
 } from './notification-triggers.ts';
 import { neoOutcomeCheckPolicy } from './outcome-check-policy.ts';
 import { buildNeoCheckRegistry } from './packs/check-registry.ts';
@@ -679,13 +669,7 @@ export class NeoService {
           !card.stored &&
           this.toldDoneCheck(
             work,
-            neoDoneCheckToldIds(
-              work,
-              card.continued,
-              undefined,
-              followed,
-              this.stalledContinues(work)
-            )
+            neoDoneCheckToldIds(work, card.continued, undefined, followed, 0)
           ),
       }),
       ['work', 'card', 'followed'],
@@ -719,13 +703,7 @@ export class NeoService {
           !!found.row &&
           this.toldDoneCheck(
             work,
-            neoDoneCheckToldIds(
-              work,
-              card.continued,
-              found.row.revision,
-              false,
-              this.stalledContinues(work)
-            )
+            neoDoneCheckToldIds(work, card.continued, found.row.revision, false, 0)
           ),
       }),
       ['work', 'card', 'followed', 'found'],
@@ -812,18 +790,13 @@ export class NeoService {
       work: (id) => this.repo.getWork(id),
       deliveryRetryPending: (id) => isNeoDeliveryRetryPending(this.db.getJobQueueRepo(), id),
       reportSettled: (id, updatedAt) => this.settledReports.get(id) === updatedAt,
-      told: (askId) => this.triggers.told(askId),
-      heard: (ask) => this.heardOutcome(ask),
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
       wake: (ask, trigger) =>
         this.open(this.triggerConcern(ask))
           .then((target) =>
             this.deliver(
               target,
-              neoTriggerMessageId(
-                trigger.triggerId,
-                this.triggers.noteStatuses(target, neoTriggerMessageIds(trigger.triggerId)).length
-              ),
+              neoTriggerMessageId(trigger.triggerId),
               neoTriggerNote(ask, trigger),
               target,
               neoAskParent(ask),
@@ -834,7 +807,7 @@ export class NeoService {
             () => true,
             (error) => {
               this.log.warn('Trigger note pending; the next sweep retries it', error);
-              this.scheduleTriggerSweep(NEO_TRIGGER_RETRY_MS);
+              this.scheduleTriggerSweep();
               return false;
             }
           ),
@@ -1174,10 +1147,7 @@ export class NeoService {
   }
 
   private triggerAsks(): NeoAsk[] {
-    return [
-      ...this.askRecords.listLive(),
-      ...this.askRecords.achievedSince(Date.now() - NEO_TRIGGER_ACHIEVED_WINDOW_MS),
-    ];
+    return this.askRecords.list().filter((ask) => ask.status !== 'abandoned');
   }
 
   private scheduleTriggerSweep(delay = NEO_TRIGGER_SWEEP_MS): void {
@@ -1190,8 +1160,7 @@ export class NeoService {
   }
 
   private async sweepTriggers(): Promise<void> {
-    if (this.disposed || !this.triggers.isSeeded()) return;
-    this.retryUnpublishedTriggers();
+    if (this.disposed) return;
     for (const ask of this.triggerAsks()) {
       try {
         this.reconcilePublishedAnswer(ask);
@@ -1200,52 +1169,6 @@ export class NeoService {
         this.log.warn(`Trigger check for ask ${ask.id} failed`, error);
       }
     }
-  }
-
-  private seedTriggers(): void {
-    if (this.triggers.isSeeded()) return;
-    for (const ask of this.triggerAsks())
-      coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'failed', 'idle', 'action']);
-    this.triggers.markSeeded(Date.now());
-  }
-
-  private retryUnpublishedTriggers(): void {
-    const root = this.repo.getBindingForProject(null);
-    if (!root?.sessionId.startsWith('neo:')) return;
-    const conversationId = root.sessionId.slice(4);
-    for (const { askId, triggerId } of this.triggers.pending(
-      Date.now() - NEO_TRIGGER_ACHIEVED_WINDOW_MS
-    )) {
-      const ask = this.askRecords.get(askId);
-      const target = ask ? this.triggerOwner(ask) : null;
-      if (!ask || !target || this.isTriggerOwnerBusy(ask)) continue;
-      if (!shouldRetryNeoTrigger(ask, triggerId.split(':')[0], this.heardOutcome(ask))) continue;
-      const legacy = this.repo.getBindingForProject(ask.projectId)?.sessionId;
-      const plan = planNeoTriggerRetry(
-        this.publications.hasTrigger(conversationId, triggerId, ''),
-        neoTriggerRetryStatuses(
-          this.triggers.noteStatuses(target, neoTriggerMessageIds(triggerId)),
-          legacy && legacy !== target
-            ? this.triggers.noteStatuses(legacy, neoTriggerMessageIds(triggerId))
-            : []
-        )
-      );
-      if (plan === 'retry') this.triggers.forget(askId, triggerId);
-    }
-  }
-
-  private heardOutcome(ask: NeoAsk): boolean {
-    const root = this.repo.getBindingForProject(null);
-    return (
-      !!ask.settledAt &&
-      !!ask.originMessageId &&
-      !!root?.sessionId.startsWith('neo:') &&
-      this.publications.toldSince(
-        root.sessionId.slice(4),
-        { sessionId: ask.originSessionId, messageId: ask.originMessageId },
-        new Date(ask.settledAt).toISOString()
-      )
-    );
   }
 
   private triggerConcern(ask: NeoAsk): string | null {
@@ -2087,7 +2010,6 @@ export class NeoService {
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     this.resumeDirectReplies();
-    this.seedTriggers();
     await this.recoverConsultations();
     await this.clearStaleNeedsYou().catch((error) =>
       this.log.warn('Stale needs_you check pending', error)
@@ -2976,14 +2898,6 @@ export class NeoService {
     );
   }
 
-  private stalledContinues(work: NeoWork): number {
-    return neoStalledContinues(this.workContinues.get(work.id), this.workProgress(work));
-  }
-
-  private stalledWakes(workId: string): number {
-    return neoCardStalledWakes(this.workWakes.get(workId), false);
-  }
-
   private cardWakeProgress(work: NeoWork): string {
     return neoCardWakeProgress(this.workProgress(work), this.askRecords.forWork(work.id));
   }
@@ -3001,24 +2915,6 @@ export class NeoService {
     }
   }
 
-  isContinueStalled(workId: string): boolean {
-    const work = this.repo.getWork(workId);
-    return (
-      !!work &&
-      (work.status === 'queued' || work.status === 'reported') &&
-      this.stalledWakes(workId) >= NEO_WORK_STALLED_CONTINUES
-    );
-  }
-
-  private continueBudget(work: NeoWork, now: number): string | null {
-    return readNeoWorkContinueBudget(
-      this.stalledWakes(work.id),
-      work.createdAt,
-      this.askRecords.forWork(work.id),
-      now
-    );
-  }
-
   private async noteDriverStall(work: NeoWork, outcome: OperationOutcome): Promise<void> {
     const live = readDriverActivity(outcome);
     if (live?.status !== 'running') {
@@ -3032,7 +2928,6 @@ export class NeoService {
       return;
     }
     if (now - seen.seenAt < NEO_WORK_STALL_MS || !this.db.getSession(work.originSessionId)) return;
-    const budget = this.continueBudget(work, now);
     await this.wakeCards(
       [work.id],
       work.originSessionId,
@@ -3041,8 +2936,7 @@ export class NeoService {
         work,
         this.askRecords.forWork(work.id),
         this.workDoneGoal(work.id),
-        live.lastReply,
-        budget
+        live.lastReply
       ),
       neoWorkParent(work)
     );
@@ -3062,8 +2956,7 @@ export class NeoService {
         this.workDoneGoal(work.id),
         work.updatedAt,
         now,
-        reminder.abandoned,
-        this.continueBudget(work, now)
+        reminder.abandoned
       ),
       neoWorkParent(work)
     );
@@ -3211,7 +3104,7 @@ export class NeoService {
                   {
                     status: work.status,
                     needsYou: this.driverTargets.readNeedsYouSince(id) != null,
-                    stalled: this.isContinueStalled(id),
+                    stalled: false,
                     targetReady: this.resolveWorkTarget(id).accepted,
                   },
                 ] as const,
@@ -3422,7 +3315,6 @@ export class NeoService {
             retries: this.driverTargets.readRetries(work.id),
             continued: this.workContinues.get(work.id)?.count ?? 0,
             prRevision: this.workPrs.get(work.id)?.revision,
-            stalled: this.stalledContinues(work),
           })
         ),
       }),
@@ -3692,33 +3584,24 @@ export class NeoService {
       ) => {
         const continued = this.workContinues.get(work.id)?.count ?? 0;
         return {
-          id: neoDoneCheckMessageId(
-            work.id,
-            continued,
-            found.row?.revision,
-            options.followedAt,
-            this.stalledContinues(work)
-          ),
-          content: driverDoneCheckNote(
-            work,
-            goal,
-            continued,
-            this.continueBudget(work, Date.now()),
-            {
-              stalled: this.stalledWakes(work.id),
-              facts: neoPackCardFacts(this.installedPacks(), work.id, options.stale ?? false),
-              ask: current.ask,
-              pack: this.askPackFragment(current.ask),
-              cards: current.ask
-                ? projectNeoAskCards(
-                    work.id,
-                    current.ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
-                    this.workPrs.list(current.ask.workIds)
-                  )
-                : [],
-              move: move.note,
-            }
-          ),
+          id: neoDoneCheckMessageId(work.id, continued, found.row?.revision, options.followedAt, 0),
+          content: driverDoneCheckNote(work, goal, continued, {
+            continuation: neoContinueFacts(
+              this.continueDeps.readTurn(work, { guarded: false, human: false }),
+              this.workContinues.get(work.id)
+            ),
+            facts: neoPackCardFacts(this.installedPacks(), work.id, options.stale ?? false),
+            ask: current.ask,
+            pack: this.askPackFragment(current.ask),
+            cards: current.ask
+              ? projectNeoAskCards(
+                  work.id,
+                  current.ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+                  this.workPrs.list(current.ask.workIds)
+                )
+              : [],
+            move: move.note,
+          }),
         };
       },
       ['work', 'goal', 'found', 'options', 'current', 'move'],

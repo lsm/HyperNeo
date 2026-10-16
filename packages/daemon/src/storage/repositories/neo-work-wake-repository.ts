@@ -33,8 +33,7 @@ export class NeoWorkWakeRepository {
            VALUES (?, 1, ?, ?, 0, ?)
            ON CONFLICT(work_id) DO UPDATE SET
              wakes = CASE WHEN note IS excluded.note THEN wakes ELSE wakes + 1 END,
-             stalled = CASE WHEN note IS excluded.note THEN stalled
-               WHEN progress IS excluded.progress THEN stalled + 1 ELSE 0 END,
+             stalled = 0,
              woke_at = CASE WHEN note IS excluded.note THEN woke_at ELSE excluded.woke_at END,
              progress = excluded.progress, note = excluded.note`
       )

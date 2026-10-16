@@ -4,13 +4,7 @@ import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { NEO_WORK_CLOSED_DONE_PREFIX, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoRoutingLogRepository } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
-import {
-  neoContinuesLeft,
-  neoStalledContinues,
-  neoWorkProgress,
-  readContinueBudget,
-  readNeoWorkContinueBudget,
-} from '../../../../src/lib/neo/driver-work.ts';
+import { neoWorkProgress } from '../../../../src/lib/neo/driver-work.ts';
 import {
   neoContinuedReport,
   requireNeoAskContinueReserved,
@@ -36,26 +30,6 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 const HOUR = 60 * 60 * 1000;
 const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_ios' };
 
-describe('readContinueBudget', () => {
-  test('stops only after three wakes in a row with no progress, within twelve hours', () => {
-    expect(readContinueBudget(0, 0, HOUR)).toBeNull();
-    expect(readContinueBudget(2, 0, 11 * HOUR)).toBeNull();
-    expect(readContinueBudget(3, 0, HOUR)).toContain(
-      'wakes for this card brought no new commit, PR state, review, report or met item'
-    );
-    expect(readContinueBudget(0, 0, 12 * HOUR)).toContain('continue_budget_spent');
-  });
-});
-
-describe('neoStalledContinues', () => {
-  test('counts on while nothing moved and starts over on any progress', () => {
-    expect(neoStalledContinues(null, '0|a')).toBe(0);
-    expect(neoStalledContinues({ progress: '0|a', stalled: 1 }, '0|a')).toBe(2);
-    expect(neoStalledContinues({ progress: '0|a', stalled: 1 }, '0|b')).toBe(0);
-    expect(neoStalledContinues({ progress: null, stalled: 4 }, '0|a')).toBe(0);
-  });
-});
-
 describe('neoWorkProgress', () => {
   test('moves with a new PR revision or a new worker report, not with Neo reopening the card', () => {
     const reported = { status: 'reported' as const, report: 'Built the skeleton.' };
@@ -64,37 +38,6 @@ describe('neoWorkProgress', () => {
     expect(neoWorkProgress(reported, 3, first)).not.toBe(first);
     expect(neoWorkProgress({ ...reported, report: 'Built chat.' }, 2, first)).not.toBe(first);
     expect(neoWorkProgress({ status: 'queued', report: null }, null, null)).toBe('0|-');
-  });
-});
-
-describe('neoContinuesLeft', () => {
-  test("counts what is left of the card's run without progress", () => {
-    expect(neoContinuesLeft(1)).toBe(2);
-    expect(neoContinuesLeft(9)).toBe(0);
-  });
-});
-
-describe('readNeoWorkContinueBudget', () => {
-  const approved = { status: 'open' as const, approvedAt: 0, approvedContinues: 0 };
-  test('work under an approved ask keeps going while it moves, for 48 hours, with no flat count', () => {
-    expect(
-      readNeoWorkContinueBudget(0, 0, { ...approved, approvedContinues: 500 }, 13 * HOUR)
-    ).toBeNull();
-    expect(readNeoWorkContinueBudget(3, 0, approved, 13 * HOUR)).toContain('brought no new commit');
-    expect(readNeoWorkContinueBudget(0, 0, approved, 48 * HOUR)).toContain(
-      'approved over 48 hours ago'
-    );
-  });
-
-  test('work under an ask not approved, or settled, keeps its own budget', () => {
-    expect(readNeoWorkContinueBudget(3, 0, { ...approved, approvedAt: null }, HOUR)).toContain(
-      'brought no new commit'
-    );
-    expect(readNeoWorkContinueBudget(3, 0, { ...approved, status: 'achieved' }, HOUR)).toContain(
-      'brought no new commit'
-    );
-    expect(readNeoWorkContinueBudget(3, 0, null, HOUR)).toContain('brought no new commit');
-    expect(readNeoWorkContinueBudget(2, 0, null, HOUR)).toBeNull();
   });
 });
 
@@ -153,7 +96,7 @@ describe('requireNeoWorkContinuable', () => {
     expect(requireNeoWorkContinuable(input, HOUR)).toEqual(rejected(reason));
   });
 
-  test('a spent budget is reported before an in-flight continue', () => {
+  test('in-flight protection holds regardless of historical stall counts', () => {
     expect(
       requireNeoWorkContinuable(
         {
@@ -163,7 +106,7 @@ describe('requireNeoWorkContinuable', () => {
         },
         HOUR
       )
-    ).toMatchObject({ reason: { reason: expect.stringContaining('continue_budget_spent') } });
+    ).toMatchObject({ reason: { reason: expect.stringContaining('already being continued') } });
   });
 });
 
@@ -401,7 +344,7 @@ describe('neo.work.continue', () => {
     });
   });
 
-  test('work under an approved ask shares its pool and stops only when the card stalls', async () => {
+  test('approved continuation records sends without a stall limit', async () => {
     const work = reportedWork();
     const opened = service.askRecords.open({
       id: 'ask-ios',
@@ -425,7 +368,6 @@ describe('neo.work.continue', () => {
       });
     expect(service.askRecords.get(opened.id)).toMatchObject({
       approvedContinues: 503,
-      approvedUntil: expect.any(Number),
     });
     expect(service.askRecords.get(opened.id)?.approvedContinueLimit).toBeUndefined();
     unreachable = true;
@@ -436,13 +378,11 @@ describe('neo.work.continue', () => {
     unreachable = false;
     stallCard(work.id);
     expect(await invoke({ id: work.id, message: 'One more.' }, neo)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('brought no new commit') },
+      value: { ok: true },
     });
-    expect(service.isContinueStalled(work.id)).toBe(true);
     expect(service.askRecords.get(opened.id)?.approvalSpent ?? null).toBeNull();
     const stalled = service.repo.getWork(work.id)!;
     service.repo.transitionWork(work.id, stalled, { status: 'failed', report: 'Gave up.' });
-    expect(service.isContinueStalled(work.id)).toBe(false);
   });
 
   test('the idle reply from before a continue does not close the reopened card', async () => {
@@ -524,19 +464,17 @@ describe('neo.work.continue', () => {
     expect(service.repo.getWork(work.id)?.status).toBe('reported');
   });
 
-  test('continues never count toward a stall; three wakes without progress do', async () => {
+  test('repeated wakes and unchanged progress do not exhaust continuation', async () => {
     const work = reportedWork();
     for (let n = 0; n < 5; n++)
       expect(await invoke({ id: work.id, message: `Step ${n}` })).toMatchObject({
         value: { ok: true },
       });
-    expect(service.isContinueStalled(work.id)).toBe(false);
     stallCard(work.id);
-    expect(service.isContinueStalled(work.id)).toBe(true);
     expect(await invoke({ id: work.id, message: 'Step 6' }, neo)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('continue_budget_spent') },
+      value: { ok: true },
     });
-    expect(sent).toHaveLength(5);
+    expect(sent).toHaveLength(6);
   });
 
   test('a report back from an ask-less card is a wake, so Neo can continue it again', async () => {
@@ -559,51 +497,6 @@ describe('neo.work.continue', () => {
       value: { ok: true },
     });
     expect(await invoke({ id: work.id, message: 'Again.' }, neo)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('already_continued') },
-    });
-  });
-
-  test('a stalled card puts Approve on its ask, and approving resets the stall', async () => {
-    const work = reportedWork();
-    const opened = service.askRecords.open({
-      id: 'ask-stall',
-      requestKey: 'root:ask-stall',
-      projectId: null,
-      originSessionId: 'root',
-      originMessageId: null,
-      title: 'Neo iOS app',
-      ask: 'Build the Neo iOS app',
-      doneWhen: '- all screens work',
-      doneSource: 'human',
-    })!;
-    service.askRecords.link(opened.id, work.id);
-    service.askRecords.approve(opened.id, Date.now());
-    stallCard(work.id);
-    const actions = async () => {
-      const snapshot = await invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
-        'neo.snapshot',
-        {},
-        human
-      );
-      const views = (
-        snapshot as { value?: { askViews?: { askId: string; humanActions?: unknown[] }[] } }
-      ).value?.askViews;
-      return views?.find((view) => view.askId === opened.id)?.humanActions;
-    };
-    expect(await actions()).toEqual([{ kind: 'approve', reason: 'stalled', workIds: [work.id] }]);
-    expect(
-      await invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
-        'neo.ask.approve',
-        { askId: opened.id },
-        human
-      )
-    ).toMatchObject({ value: { ok: true } });
-    expect(service.workWakes.get(work.id)).toMatchObject({ stalled: 0 });
-    expect(service.isContinueStalled(work.id)).toBe(false);
-    expect(await actions()).toEqual([]);
-    expect(await invoke({ id: work.id, message: 'Go on.' }, neo)).toMatchObject({
       value: { ok: true },
     });
   });
@@ -616,17 +509,16 @@ describe('neo.work.continue', () => {
       await invoke({ id: work.id, message: 'The human says: keep going.' }, neo)
     ).toMatchObject({ value: { ok: true } });
     expect(service.workWakes.get(work.id)).toMatchObject({ stalled: 0 });
-    expect(service.isContinueStalled(work.id)).toBe(false);
   });
 
-  test('Neo continues a card once per wake; a new wake or new human input allows the next', async () => {
+  test('Neo can send again after a previous send finishes in the same wake', async () => {
     const work = reportedWork();
     service.workWakes.recordWake(work.id, 'note-1', 'p1', Date.now());
     expect(await invoke({ id: work.id, message: 'First.' }, neo)).toMatchObject({
       value: { ok: true },
     });
     expect(await invoke({ id: work.id, message: 'Again.' }, neo)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('already_continued') },
+      value: { ok: true },
     });
     service.workWakes.recordWake(work.id, 'note-2', 'p2', Date.now());
     expect(await invoke({ id: work.id, message: 'Next wake.' }, neo)).toMatchObject({
@@ -636,10 +528,10 @@ describe('neo.work.continue', () => {
     expect(await invoke({ id: work.id, message: 'The human asked again.' }, neo)).toMatchObject({
       value: { ok: true },
     });
-    expect(sent).toHaveLength(3);
+    expect(sent).toHaveLength(4);
   });
 
-  test('refuses Neo while a card PR waits on CI or review, or once doneWhen is met', async () => {
+  test('PR waits and met outcomes do not prohibit an authorized continuation', async () => {
     const work = reportedWork();
     const pr = (extra: Partial<NeoWorkPr>): NeoWorkPr => ({
       url: 'https://github.com/o/r/pull/1',
@@ -650,7 +542,7 @@ describe('neo.work.continue', () => {
     });
     service.workPrs.record(work.id, [pr({})], Date.now());
     expect(await invoke({ id: work.id, message: 'Go.' }, neo)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('waiting on CI') },
+      value: { ok: true },
     });
     service.workPrs.record(
       work.id,
@@ -658,7 +550,7 @@ describe('neo.work.continue', () => {
       Date.now()
     );
     expect(await invoke({ id: work.id, message: 'Go.' }, neo)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('waiting on review') },
+      value: { ok: true },
     });
     service.workPrs.record(work.id, [pr({ checks: 'failing' })], Date.now());
     expect(await invoke({ id: work.id, message: 'Fix CI.' }, neo)).toMatchObject({
@@ -671,7 +563,7 @@ describe('neo.work.continue', () => {
     });
     service.workWakes.recordWake(work.id, 'note-done', 'pd', Date.now());
     expect(await invoke({ id: work.id, message: 'More.' }, neo)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('done_when_met') },
+      value: { ok: true },
     });
   });
 

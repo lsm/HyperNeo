@@ -44,8 +44,6 @@ export function neoForwardKey(
   return `${ask.sessionId}|${ask.messageId}|${toSessionId}`;
 }
 
-export const NEO_WORK_STALLED_CONTINUES = 3;
-export const NEO_ASK_CONTINUE_WINDOW_MS = 48 * 60 * 60 * 1000;
 export const NEO_WORK_CLOSED_DONE_PREFIX = 'Closed as done by ';
 export const NEO_WORK_CLOSED_DONE = `${NEO_WORK_CLOSED_DONE_PREFIX}the user.`;
 
@@ -85,14 +83,6 @@ export function isPooledNeoAsk<T extends Pick<NeoAsk, 'status' | 'approvedAt'>>(
   ask: T | null | undefined
 ): ask is T & { approvedAt: number } {
   return ask?.approvedAt != null && ask.status !== 'achieved' && ask.status !== 'abandoned';
-}
-
-export function neoAskApprovalSpent(
-  ask: Pick<NeoAsk, 'approvedAt'>,
-  now: number
-): NeoAskApprovalSpent | null {
-  if (ask.approvedAt == null) return null;
-  return now - ask.approvedAt >= NEO_ASK_CONTINUE_WINDOW_MS ? 'expired' : null;
 }
 
 export interface NeoAskItem {
