@@ -4,6 +4,7 @@ import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoNudgeMessageId } from './ask-origin.ts';
 import { neoHumanTrigger } from './notification-triggers.ts';
+
 export { NEO_PUBLISH_NUDGE } from '@hyperneo/prompts';
 
 export type NeoTurnReply = {
@@ -15,7 +16,7 @@ export type NeoDirectReplyRuntime = {
   getRootBinding: () => NeoBinding | null;
   recentAsks: (conversationId: string, sessionId: string) => NeoConversationAsk[];
   isPublished: (sessionId: string, messageId: string) => boolean;
-  startedWork: (sessionId: string, messageId: string) => boolean;
+  answeredElsewhere: (sessionId: string, messageId: string) => boolean;
   turnReply: (sessionId: string, messageId: string) => NeoTurnReply;
   hasNudge: (sessionId: string, nudgeId: string) => boolean;
   nudge: (sessionId: string, nudgeId: string) => void;
@@ -83,7 +84,7 @@ export function requireUnpublishedDirectAnswer(
   const messageId = turn.ask.requestId;
   const nudgeId = neoNudgeMessageId(messageId);
   for (const id of [messageId, nudgeId])
-    if (runtime.isPublished(turn.sessionId, id) || runtime.startedWork(turn.sessionId, id))
+    if (runtime.isPublished(turn.sessionId, id) || runtime.answeredElsewhere(turn.sessionId, id))
       return skip;
   const settlement = turn.settlement ?? { settled: false, interrupted: false };
   const reply = runtime.turnReply(turn.sessionId, messageId);

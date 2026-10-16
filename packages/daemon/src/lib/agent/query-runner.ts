@@ -1046,7 +1046,8 @@ export class QueryRunner {
           queryGeneration,
           recoveryState.startGuard,
           holderTurn,
-          questionInputs
+          questionInputs,
+          !queryOptions.resume
         ),
         options: queryOptions,
       });
@@ -2188,9 +2189,11 @@ export class QueryRunner {
     queryGeneration: number,
     startGuard?: () => void,
     holderTurn?: NeoHolderTurn,
-    questionInputs?: QuestionInputScope
+    questionInputs?: QuestionInputScope,
+    freshContext = false
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
+    let fresh = freshContext;
 
     for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
       suppressPreYieldCallback: true,
@@ -2273,12 +2276,11 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      yield holderTurn && !isInternal
-        ? withNeoPublicationView(
-            message,
-            readNeoPublicationView(this.ctx.db, session.id, !session.sdkSessionId)
-          )
+      const viewed = !!holderTurn && !isInternal;
+      yield viewed
+        ? withNeoPublicationView(message, readNeoPublicationView(this.ctx.db, session.id, fresh))
         : message;
+      if (viewed) fresh = false;
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
       if (holderTurn) return;
