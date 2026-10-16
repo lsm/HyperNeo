@@ -22,6 +22,7 @@ export interface OperationCaller {
     readonly consultationId?: string;
     readonly human: boolean;
     readonly isLive: () => boolean;
+    readonly yield?: () => void;
   };
   readonly hookReplay?: {
     readonly targetNode?: string;

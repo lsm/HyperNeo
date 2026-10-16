@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
+import type { MailboxMessageContent } from '../../../../src/lib/mailbox/entry.ts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import {
   createNeoAskForwardOperation,
@@ -84,90 +85,44 @@ describe('requireForwardingHolder', () => {
 
 describe('planNeoAskForward', () => {
   const holder = { sessionId: garden.sessionId, projectId: 'garden', input: ask };
-  const second = {
-    sessionId: pond.sessionId,
-    projectId: 'pond',
-    input: { sessionId: pond.sessionId, messageId: 'neo-forward:ask-1:0' },
-  };
-
-  test('the routed holder forwards once, to another project or main, never to itself', () => {
+  test('only the original request owner can make the first forward', () => {
     expect(planNeoAskForward({ to: 'pond' }, holder, ask, [])).toEqual({
       value: { hop: 0, to: 'pond' },
-    });
-    expect(planNeoAskForward({ to: 'main' }, holder, ask, [])).toEqual({
-      value: { hop: 0, to: 'main' },
     });
     expect(planNeoAskForward({ to: 'garden' }, holder, ask, [])).toEqual({
       reason: { ok: false, reason: 'same_project' },
     });
-    expect(planNeoAskForward({ to: 'garden' }, second, ask, [])).toEqual({
-      reason: { ok: false, reason: 'not_your_ask' },
-    });
+    for (const messageId of ['neo-consult:c1:request', 'neo-nudge:x'])
+      expect(
+        planNeoAskForward({ to: 'pond' }, { ...holder, input: { ...ask, messageId } }, ask, [])
+      ).toEqual({ reason: { ok: false, reason: 'not_your_ask' } });
   });
-
-  test('main forwards once, to a project, and that project cannot forward it on', () => {
-    const mainAsk = { sessionId: root.sessionId, messageId: 'ask-2' };
-    const main = { sessionId: root.sessionId, projectId: null, input: mainAsk };
-    expect(planNeoAskForward({ to: 'pond' }, main, mainAsk, [], root.sessionId)).toEqual({
-      value: { hop: 0, to: 'pond' },
-    });
-    expect(planNeoAskForward({ to: 'main' }, main, mainAsk, [], root.sessionId)).toEqual({
-      reason: { ok: false, reason: 'same_project' },
-    });
-    const receiver = {
-      sessionId: pond.sessionId,
-      projectId: 'pond',
-      input: { sessionId: pond.sessionId, messageId: 'neo-forward:ask-2:0' },
-    };
-    const fromMain = [{ fromSessionId: root.sessionId, toSessionId: pond.sessionId }];
-    expect(planNeoAskForward({ to: 'main' }, receiver, mainAsk, fromMain, root.sessionId)).toEqual({
-      reason: { ok: false, reason: 'forward_limit' },
-    });
-    const toMain = [{ fromSessionId: garden.sessionId, toSessionId: root.sessionId }];
-    const mainReceiver = {
-      sessionId: root.sessionId,
-      projectId: null,
-      input: { sessionId: root.sessionId, messageId: 'neo-forward:ask-1:0' },
-    };
-    expect(planNeoAskForward({ to: 'main' }, mainReceiver, ask, toMain, root.sessionId)).toEqual({
-      reason: { ok: false, reason: 'forward_limit' },
-    });
-  });
-
-  test('only the turn that carries the message itself can forward it, not a consultation or nudge', () => {
-    const consulted = {
-      ...holder,
-      input: { sessionId: garden.sessionId, messageId: 'neo-consult:c1:request' },
-    };
-    expect(planNeoAskForward({ to: 'pond' }, consulted, ask, [])).toEqual({
-      reason: { ok: false, reason: 'not_your_ask' },
-    });
-    const nudged = { ...second, input: { ...second.input, messageId: 'neo-nudge:x' } };
-    expect(
-      planNeoAskForward({ to: 'main' }, nudged, ask, [
-        { fromSessionId: garden.sessionId, toSessionId: pond.sessionId },
-      ])
-    ).toEqual({ reason: { ok: false, reason: 'not_your_ask' } });
-  });
-
-  test('the holder that received it may only send it on to main, and nothing goes further', () => {
-    const forwarded = [{ fromSessionId: garden.sessionId, toSessionId: pond.sessionId }];
-    expect(planNeoAskForward({ to: 'main' }, second, ask, forwarded)).toEqual({
-      value: { hop: 1, to: 'main' },
-    });
-    expect(planNeoAskForward({ to: 'garden' }, second, ask, forwarded)).toEqual({
-      reason: { ok: false, reason: 'main_only' },
-    });
-    expect(planNeoAskForward({ to: 'main' }, holder, ask, forwarded)).toEqual({
-      reason: { ok: false, reason: 'not_your_ask' },
-    });
-    expect(
-      planNeoAskForward({ to: 'main' }, second, ask, [
-        ...forwarded,
-        { fromSessionId: pond.sessionId, toSessionId: root.sessionId },
-      ])
-    ).toEqual({ reason: { ok: false, reason: 'forward_limit' } });
-  });
+  test.each([0, 1, 7])(
+    'the current owner can forward after hop %s without a main-only rule',
+    (hop) => {
+      const forwards = [{ hop, toSessionId: pond.sessionId }];
+      const current = {
+        sessionId: pond.sessionId,
+        projectId: 'pond',
+        input: { sessionId: pond.sessionId, messageId: `neo-forward:ask-1:${hop}` },
+      };
+      for (const to of ['garden', 'main'])
+        expect(planNeoAskForward({ to }, current, ask, forwards)).toEqual({
+          value: { hop: hop + 1, to },
+        });
+      expect(planNeoAskForward({ to: 'main' }, holder, ask, forwards)).toEqual({
+        reason: { ok: false, reason: 'not_your_ask' },
+      });
+      expect(
+        planNeoAskForward(
+          { to: 'main' },
+          { ...current, input: { ...current.input, messageId: 'neo-nudge:x' } },
+          ask,
+          forwards
+        )
+      ).toEqual({ reason: { ok: false, reason: 'not_your_ask' } });
+    }
+  );
 });
 
 describe('neoTurnOwnsMessage', () => {
@@ -219,9 +174,7 @@ describe('neoForwardedText', () => {
         } as never,
         ask
       )
-    ).toBe(
-      'Fix the pond pump\n\n(The human also attached 1 file, not forwarded; ask them to resend it if you need it.)'
-    );
+    ).toBe('Fix the pond pump');
     expect(
       neoForwardedText(
         {
@@ -232,7 +185,7 @@ describe('neoForwardedText', () => {
         } as never,
         ask
       )
-    ).toContain('attached 1 file');
+    ).toBeNull();
     expect(neoForwardedText({ askOrigin: { ...ask, sessionId: 'x' }, content: 'a' }, ask)).toBe(
       null
     );
@@ -241,19 +194,29 @@ describe('neoForwardedText', () => {
 });
 
 describe('neoForwardContent', () => {
-  test('tells a project receiver it may still forward to main, and main or the last one nothing', () => {
-    expect(neoForwardContent('Garden', true, 'Fix the pond pump')).toContain(
-      'forwarded on only to main'
-    );
-    expect(neoForwardContent('Pond', false, 'Fix the pond pump')).not.toContain('main');
-    expect(neoForwardContent('Pond', false, 'Fix the pond pump')).not.toContain(
-      'forward it to main'
-    );
+  test('preserves original attachment blocks without asking the human to resend', () => {
+    const image = {
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'aGVsbG8=' },
+    };
+    const content: MailboxMessageContent = [{ type: 'text', text: 'Fix the pond pump' }, image];
+    const before = structuredClone(content);
+    expect(neoForwardContent('Garden', content)).toEqual([
+      { type: 'text', text: expect.stringContaining('Fix the pond pump') },
+      image,
+    ]);
+    expect(content).toEqual(before);
+    expect(neoForwardContent('Garden', [image])).toEqual([
+      { type: 'text', text: expect.stringContaining('original ask') },
+      image,
+    ]);
+    expect(neoForwardContent('Garden', 'Fix the pond pump')).not.toContain('only to main');
+    expect(JSON.stringify(neoForwardContent('Garden', content))).not.toContain('resend');
   });
 });
 
 describe('neo.ask.forward', () => {
-  function runtime(origin = ask) {
+  function runtime(origin = ask, content: MailboxMessageContent = 'Fix the pond pump') {
     const bindings = new Map([garden, pond, root].map((binding) => [binding.sessionId, binding]));
     const forwards: NeoAskForward[] = [];
     let failDelivery = false;
@@ -268,7 +231,7 @@ describe('neo.ask.forward', () => {
         { id: 'pond', title: 'Pond' },
       ],
       rootSessionId: () => root.sessionId,
-      askText: () => 'Fix the pond pump',
+      askContent: () => content,
       open: async (id) => `neo:${id}`,
       record: (_ask, forward) => {
         if (forwards.some((item) => item.hop === forward.hop)) return false;
@@ -300,6 +263,7 @@ describe('neo.ask.forward', () => {
       );
     return {
       invoke,
+      deps,
       forwards,
       delivered,
       failNextDelivery: (fail: boolean) => {
@@ -308,7 +272,7 @@ describe('neo.ask.forward', () => {
     };
   }
 
-  test('hands the ask on once, then only to main, stamping each hand-off with the ask', async () => {
+  test('hands the ask between owners, stamping every hand-off with the original ask', async () => {
     const { invoke, forwards, delivered } = runtime();
     expect(await invoke(caller(garden.sessionId, 'ask-1'), 'pond')).toMatchObject({
       kind: 'completed',
@@ -330,7 +294,7 @@ describe('neo.ask.forward', () => {
     ]);
   });
 
-  test('main hands the message to a project, which owns it and cannot pass it on', async () => {
+  test('main hands the message to a project, which may transfer ownership again', async () => {
     const mainAsk = { sessionId: root.sessionId, messageId: 'ask-2' };
     const { invoke, forwards, delivered } = runtime(mainAsk);
     expect(await invoke(caller(root.sessionId, 'ask-2'), 'pond')).toMatchObject({
@@ -344,21 +308,107 @@ describe('neo.ask.forward', () => {
     expect(content).toContain('“main”');
     expect(content).not.toContain('forward it to main');
     expect(await invoke(caller(pond.sessionId, 'neo-forward:ask-2:0'), 'main')).toMatchObject({
-      value: { ok: false, reason: 'forward_limit' },
+      value: { ok: true, hop: 1, to: 'main' },
     });
+  });
+
+  test('a successful multi-hop transfer yields each sender and preserves attachments', async () => {
+    const image = {
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'aGVsbG8=' },
+    };
+    const { invoke, delivered, forwards } = runtime(ask, [{ type: 'text', text: 'Fix it' }, image]);
+    for (const [index, from, to] of [
+      [0, garden, 'pond'],
+      [1, pond, 'garden'],
+      [2, garden, 'main'],
+      [3, root, 'pond'],
+    ] as const) {
+      const yieldTurn = mock(() => {});
+      const current = caller(
+        from.sessionId,
+        index === 0 ? 'ask-1' : `neo-forward:ask-1:${index - 1}`
+      );
+      const yielding = { ...current, neoTurn: { ...current.neoTurn!, yield: yieldTurn } };
+      expect(await invoke(yielding, to)).toMatchObject({ value: { ok: true, hop: index, to } });
+      expect(yieldTurn).toHaveBeenCalledTimes(1);
+      expect((delivered[index] as unknown[])[2]).toEqual([
+        { type: 'text', text: expect.stringContaining('Fix it') },
+        image,
+      ]);
+    }
+    expect(forwards).toHaveLength(4);
+  });
+
+  test('a caller superseded while opening the receiver cannot transfer ownership', async () => {
+    const { invoke, deps, delivered, forwards } = runtime();
+    let live = true;
+    const yieldTurn = mock(() => {});
+    deps.open = async () => {
+      live = false;
+      return pond.sessionId;
+    };
+    const current = {
+      ...caller(garden.sessionId, 'ask-1'),
+      neoTurn: {
+        messageId: 'ask-1',
+        human: true,
+        isLive: () => live,
+        yield: yieldTurn,
+      },
+    };
+    expect(await invoke(current, 'pond')).toMatchObject({
+      value: { ok: false, reason: 'coordinator_only' },
+    });
+    expect(forwards).toEqual([]);
+    expect(delivered).toEqual([]);
+    expect(yieldTurn).not.toHaveBeenCalled();
   });
 
   test('a failed delivery takes the hop back, so the holder can forward again', async () => {
     const { invoke, forwards, delivered, failNextDelivery } = runtime();
+    const yieldTurn = mock(() => {});
+    const base = caller(garden.sessionId, 'ask-1');
+    const current = { ...base, neoTurn: { ...base.neoTurn!, yield: yieldTurn } };
     failNextDelivery(true);
-    expect(await invoke(caller(garden.sessionId, 'ask-1'), 'pond')).toMatchObject({
+    expect(await invoke(current, 'pond')).toMatchObject({
       kind: 'failed',
     });
     expect(forwards).toEqual([]);
+    expect(yieldTurn).not.toHaveBeenCalled();
     failNextDelivery(false);
-    expect(await invoke(caller(garden.sessionId, 'ask-1'), 'pond')).toMatchObject({
+    expect(await invoke(current, 'pond')).toMatchObject({
       value: { ok: true, hop: 0 },
     });
+    expect(delivered).toHaveLength(1);
+    expect(yieldTurn).toHaveBeenCalledTimes(1);
+  });
+
+  test('an in-flight forward is not reclaimed as a crashed handoff', async () => {
+    const { invoke, deps, forwards, delivered } = runtime();
+    let finish!: () => void;
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    deps.delivering = () => true;
+    const deliver = deps.deliver;
+    deps.deliver = async (...args) => {
+      started();
+      await pending;
+      await deliver(...args);
+    };
+    const first = invoke(caller(garden.sessionId, 'ask-1'), 'pond');
+    await ready;
+    expect(await invoke(caller(garden.sessionId, 'ask-1'), 'main')).toMatchObject({
+      value: { ok: false, reason: 'not_your_ask' },
+    });
+    expect(forwards).toHaveLength(1);
+    finish();
+    expect(await first).toMatchObject({ value: { ok: true, to: 'pond' } });
     expect(delivered).toHaveLength(1);
   });
 
@@ -384,7 +434,7 @@ describe('neo.ask.forward', () => {
       value: { ok: true, hop: 0, to: 'main' },
     });
     const content = (delivered[0] as unknown[])[2] as string;
-    expect(content).toContain('The runtime binds the original ask.');
+    expect(content).toContain('The runtime binds the original ask and preserves its attachments.');
     expect(content).not.toContain('forwarded on only to main');
   });
 
@@ -401,6 +451,100 @@ describe('neo.ask.forward', () => {
       },
     });
     expect(delivered).toEqual([]);
+  });
+});
+
+describe('Neo forwarding delivery', () => {
+  test('durably transfers original images and ownership before yielding the sender', async () => {
+    const db = await createTestDb();
+    const service = new NeoService(
+      db,
+      {} as never,
+      { event: () => {} } as never,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    const conversationId = '10000000-0000-4000-8000-000000000001';
+    const requestId = '20000000-0000-4000-8000-000000000001';
+    const main = { ...root, sessionId: `neo:${conversationId}` };
+    const origin = { sessionId: garden.sessionId, messageId: requestId };
+    const image = {
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'aGVsbG8=' },
+    };
+    const content = [{ type: 'text' as const, text: 'Fix this pump' }, image];
+    const abort = new AbortController();
+    const sender = new NeoHolderTurn(
+      db,
+      garden.sessionId,
+      { isLive: () => true, yield: () => abort.abort() },
+      () => {}
+    );
+    const receiver = new NeoHolderTurn(db, pond.sessionId, { isLive: () => true }, () => {});
+    try {
+      for (const binding of [garden, pond, main]) {
+        if (binding.projectId)
+          service.repo.saveProject(
+            { id: binding.projectId, title: binding.projectId, summary: '', context: '' },
+            0
+          );
+        db.createSession(createTestSession(binding.sessionId));
+        service.repo.reserveBinding(binding);
+      }
+      service.open = async () => pond.sessionId;
+      expect(
+        service.asks.append({ conversationId, requestId, askOrigin: origin, content }).accepted
+      ).toBe(true);
+      db.getSDKMessageRepo().saveSDKMessage(garden.sessionId, {
+        type: 'user',
+        uuid: requestId,
+        session_id: garden.sessionId,
+        parent_tool_use_id: null,
+        inputKind: 'human',
+        message: { role: 'user', content },
+      } as unknown as SDKUserMessage);
+      sender.bind(requestId);
+      const caller = {
+        source: 'mcp' as const,
+        sessionId: garden.sessionId,
+        neoTurn: sender.identity(),
+      };
+      expect(service.ownsHumanMessage(caller)).toBe(true);
+      expect(
+        await invokeOperation(
+          createOperationRegistry(createNeoOperations(service)),
+          'neo.ask.forward',
+          { to: 'pond' },
+          caller
+        )
+      ).toMatchObject({ value: { ok: true, hop: 0 } });
+      const [delivery] = db
+        .getJobQueueRepo()
+        .listActiveByPayload('mailbox', { 'to.sessionId': pond.sessionId });
+      expect(delivery.payload).toMatchObject({
+        messageUuid: `neo-forward:${requestId}:0`,
+        message: {
+          message: {
+            content: [{ type: 'text', text: expect.stringContaining('Fix this pump') }, image],
+          },
+        },
+      });
+      expect(abort.signal.aborted).toBe(true);
+      expect(service.ownsHumanMessage(caller)).toBe(false);
+      expect(receiver.bind(`neo-forward:${requestId}:0`)).toBe(true);
+      expect(
+        service.ownsHumanMessage({
+          source: 'mcp',
+          sessionId: pond.sessionId,
+          neoTurn: receiver.identity(),
+        })
+      ).toBe(true);
+      expect(service.asks.find(conversationId, requestId)?.content).toEqual(content);
+    } finally {
+      sender.dispose();
+      receiver.dispose();
+      service.dispose();
+      db.close();
+    }
   });
 });
 

@@ -878,6 +878,7 @@ export class QueryRunner {
           this.ctx.db,
           session.id,
           {
+            yield: () => runAbortController?.abort(),
             isLive: () =>
               attemptToken.isLive() &&
               this.ctx.getQueryGeneration() === queryGeneration &&

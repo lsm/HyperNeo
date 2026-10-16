@@ -90,11 +90,7 @@ import {
   createNeoRouteFailureOperation,
   NeoRouteFailureSchema,
 } from './route-failure-operation.ts';
-import {
-  createNeoAskForwardOperation,
-  neoForwardedText,
-  neoForwardHop,
-} from './ask-forward-operation.ts';
+import { createNeoAskForwardOperation, neoForwardHop } from './ask-forward-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import {
   mergeNeoDuplicateProjects,
@@ -2445,10 +2441,14 @@ export function createNeoOperations(service: NeoService) {
       getProject: (id) => service.repo.getProject(id),
       listProjects: () => service.repo.listProjects(),
       rootSessionId: () => service.repo.getBindingForProject(null)?.sessionId ?? null,
-      askText: (ask) => {
+      askContent: (ask) => {
         const root = service.repo.getBindingForProject(null)?.sessionId;
-        return root?.startsWith('neo:')
-          ? neoForwardedText(service.asks.find(root.slice(4), ask.messageId), ask)
+        const stored = root?.startsWith('neo:')
+          ? service.asks.find(root.slice(4), ask.messageId)
+          : null;
+        return stored?.askOrigin.sessionId === ask.sessionId &&
+          stored.askOrigin.messageId === ask.messageId
+          ? stored.content
           : null;
       },
       open: (projectId) =>
@@ -2456,6 +2456,7 @@ export function createNeoOperations(service: NeoService) {
       record: (ask, forward) => service.askForwards.record(ask, forward),
       unrecord: (ask, hop) => service.askForwards.remove(ask, hop),
       delivered: (sessionId, messageId) => service.hasDelivery(sessionId, messageId),
+      delivering: (sessionId, messageId) => service.isDelivering(sessionId, messageId),
       deliver: (sessionId, messageId, content, from, ask) =>
         service.deliverForward(sessionId, messageId, content, from, ask, 'continues'),
     }),

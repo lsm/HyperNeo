@@ -17,6 +17,7 @@ import {
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
+import type { MailboxMessageContent } from '../mailbox/entry.ts';
 import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
   isNeoWorkClosedDone,
@@ -3816,6 +3817,10 @@ export class NeoService {
       );
   }
 
+  isDelivering(sessionId: string, messageId: string): boolean {
+    return this.deliveries.has(`${sessionId}:${messageId}`);
+  }
+
   hasDelivery(sessionId: string, messageId: string): boolean {
     return (
       this.deliveries.has(`${sessionId}:${messageId}`) ||
@@ -3871,7 +3876,7 @@ export class NeoService {
   deliverForward(
     sessionId: string,
     messageId: string,
-    content: string,
+    content: MailboxMessageContent,
     fromSessionId: string,
     ask: NeoAskOrigin | null,
     trigger: NeoDeliveryTrigger
@@ -3906,7 +3911,7 @@ export class NeoService {
   private deliver(
     sessionId: string,
     messageId: string,
-    content: string,
+    content: MailboxMessageContent,
     originSessionId: string,
     parent: NeoAskOrigin | null = null,
     trigger: NeoDeliveryTrigger = null
@@ -4035,7 +4040,7 @@ export class NeoService {
   private async enqueueDelivery(
     sessionId: string,
     messageId: string,
-    content: string,
+    content: MailboxMessageContent,
     originSessionId: string
   ): Promise<void> {
     const queue = this.db.getJobQueueRepo();
