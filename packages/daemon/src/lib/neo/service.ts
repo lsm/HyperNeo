@@ -3564,6 +3564,7 @@ export class NeoService {
     const window = outcome ? readDriverCardExchange(outcome, sent) : null;
     const cwd = currentCodingExecutionDirectory(ref, outcome, hostname(), window?.current === true);
     const worker = neoCardWorkerSession(planNeoCardSend({ work, ref }));
+    const startedAt = this.driverTargets.readStartedAt(work.id) ?? work.createdAt;
     return planNeoCardPrCandidates({
       window,
       report: work.report,
@@ -3571,7 +3572,7 @@ export class NeoService {
       subscribed: worker
         ? this.sessionSubscriptions
             .listBySession(worker)
-            .filter((row) => row.createdAt >= work.createdAt)
+            .filter((row) => row.createdAt >= startedAt)
             .flatMap((row) => pullRequestUrlOfTopic(row.topic) ?? [])
         : [],
       branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),

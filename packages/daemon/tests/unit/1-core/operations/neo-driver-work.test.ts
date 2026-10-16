@@ -2466,7 +2466,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('records the PR its HyperNeo worker subscribes to during the card, not one it already watched', async () => {
+  test('records the PR its HyperNeo worker subscribes to once started, not one from before', async () => {
     const ref = { adapter: 'hyperneo', id: 'worker' };
     const at = Date.now() + 10_000;
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
@@ -2497,7 +2497,10 @@ describe('Neo work with a drivers target', () => {
     db.createSession(createTestSession('worker'));
     const subscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     subscriptions.upsert({ sessionId: 'worker', topic: 'github/lsm/HyperNeo/pull_request/3.*' });
-    db.getDatabase().prepare('UPDATE session_event_subscriptions SET created_at = 1').run();
+    const sql = db.getDatabase();
+    sql
+      .prepare('UPDATE session_event_subscriptions SET created_at = ? WHERE topic LIKE ?')
+      .run(at - 5_000, '%/3.*');
     subscriptions.upsert({
       sessionId: 'worker',
       topic: 'github/lsm/hyperneo-review-test/pull_request/18.*',
@@ -2506,6 +2509,12 @@ describe('Neo work with a drivers target', () => {
     fileUnderAsk(service);
     try {
       await service.start('work-1');
+      sql
+        .prepare('UPDATE neo_work_driver_targets SET started_at = ? WHERE work_id = ?')
+        .run(at - 1_000, 'work-1');
+      sql
+        .prepare('UPDATE session_event_subscriptions SET created_at = ? WHERE topic LIKE ?')
+        .run(at, '%/18.*');
       await service.refreshDriverWork();
       expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);
     } finally {
