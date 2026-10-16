@@ -1,3 +1,4 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { uniqueJobMatchPayload } from '../goals/automation-job-payload.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { EvidenceRef, GoalEvolutionAutomationTriggerKind, SpaceTask } from '@hyperneo/shared';
@@ -87,57 +88,54 @@ export async function handleGoalAutomationExecute(
   deps: GoalAutomationExecuteDeps
 ): Promise<GoalAutomationExecuteResult> {
   const payload = validatePayload(job.payload);
-  const goal = deps.goalRepo.getById(payload.goalId);
-  if (!goal) return skipped(payload, 'missing_goal');
-  if (goal.status !== 'active') return skipped(payload, 'inactive_goal');
-  const scope = deps.evolutionRepo.getScope(payload.scopeId);
-  if (!scope || scope.spaceGoalId !== goal.id || scope.spaceId !== goal.spaceId) {
-    return skipped(payload, 'missing_scope');
+  const admission = (superpipe({})('goal-automation-execute-admission') as PipelineAPI)
+    .input('payload')
+    .pipe(() => deps.goalRepo.getById(payload.goalId), 'payload', 'goal')
+    .pipe(requireAutomationGoal, ['goal'], 'result:admission')
+    .pipe(requireActiveAutomationGoal, ['admission'], 'result:admission')
+    .pipe(() => deps.evolutionRepo.getScope(payload.scopeId), 'payload', 'scope')
+    .pipe(requireAutomationScope, ['scope', 'goal'], 'result:admission')
+    .pipe(
+      (scope, goal) => readAutomationEvidence(deps, payload, scope, goal),
+      ['admission', 'goal'],
+      'facts'
+    )
+    .pipe(requireAutomationEvidence, ['facts'], 'result:admission')
+    .pipe(requireEnabledAutomation, ['admission', 'payload'], 'result:admission')
+    .pipe(requireAutomationThreshold, ['admission', 'payload'], 'result:admission')
+    .pipe(
+      (facts: AutomationFacts) =>
+        payload.triggerKind === 'completed_task_threshold'
+          ? findActiveCompletedTaskReviewTask(deps, facts.scope.id, payload)
+          : null,
+      'admission',
+      'activeReview'
+    )
+    .pipe(
+      requireNoActiveAutomationReview,
+      ['admission', 'payload', 'activeReview'],
+      'result:admission'
+    )
+    .pipe(
+      () =>
+        payload.triggerKind === 'completed_task_threshold' &&
+        activeAutomationLocks.has(automationLockKey(payload)),
+      'payload',
+      'locked'
+    )
+    .pipe(requireUnlockedAutomation, ['admission', 'payload', 'locked'], 'result:admission')
+    .error((error) => {
+      throw error;
+    }, 'error')
+    .end('admission')(payload) as AutomationFacts | AutomationSkip;
+  if ('skipReason' in admission) {
+    return admission.skipReason === 'active_review'
+      ? requeueActiveReview(deps, payload, admission.evidenceCount ?? 0)
+      : skipped(payload, admission.skipReason, admission.evidenceCount);
   }
-  if (payload.externalEvent) {
-    ensureExternalEventEvidence(deps, payload, scope.id);
-  }
-  const cursor =
-    payload.triggerKind === 'completed_task_threshold'
-      ? newestCursor(
-          deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey),
-          deps.cursorRepo.getLatestForTriggerKind(goal.id, scope.id, 'completed_task_threshold')
-        )
-      : deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey);
-  const policy = readAutomationPolicyForScope(scope);
-  const maxEvidence = readMaxEvidence(policy.maxEvidencePerEpisode);
-  const dueEvidence = selectEvidenceAfterCursor(
-    deps.evolutionRepo.listEvidence(scope.id),
-    cursor?.lastEvidenceCreatedAt ?? null,
-    Number.POSITIVE_INFINITY,
-    cursor?.lastEvidenceId ?? null
-  );
-  const evidence = dueEvidence.slice(0, maxEvidence);
-  const triggerEvidence = findTriggerEvidence(dueEvidence, payload);
-  if (evidence.length === 0) {
-    return skipped(payload, 'no_evidence');
-  }
+  const { goal, scope, maxEvidence, dueEvidence, evidence, triggerEvidence } = admission;
   if (payload.triggerKind === 'completed_task_threshold') {
-    if (goal.type !== 'recurring' && policy.completedTaskThreshold === undefined) {
-      return skipped(payload, 'disabled');
-    }
-    const threshold = readCompletedTaskThreshold(policy);
-    const completedTaskIds = new Set(
-      dueEvidence
-        .filter((item) => item.kind === 'task_result' && item.sourceId !== null)
-        .map((item) => item.sourceId as string)
-    );
-    if (!threshold || completedTaskIds.size < threshold) {
-      return skipped(payload, 'below_threshold', dueEvidence.length);
-    }
-    if (findActiveCompletedTaskReviewTask(deps, scope.id, payload)) {
-      return requeueActiveReview(deps, payload, dueEvidence.length);
-    }
-    const lock = automationLockKey(payload);
-    if (activeAutomationLocks.has(lock)) {
-      return requeueActiveReview(deps, payload, dueEvidence.length);
-    }
-    activeAutomationLocks.add(lock);
+    activeAutomationLocks.add(automationLockKey(payload));
   }
 
   try {
@@ -207,6 +205,112 @@ export async function handleGoalAutomationExecute(
       activeAutomationLocks.delete(automationLockKey(payload));
     }
   }
+}
+
+type AutomationGoal = NonNullable<ReturnType<SpaceGoalRepository['getById']>>;
+type AutomationScope = NonNullable<ReturnType<EvolutionRepository['getScope']>>;
+type AutomationSkip = {
+  skipReason: NonNullable<GoalAutomationExecuteResult['skipReason']>;
+  evidenceCount?: number;
+};
+type AutomationFacts = ReturnType<typeof readAutomationEvidence>;
+type AutomationGate<T> = { value: T } | { reason: AutomationSkip };
+
+export function requireAutomationGoal(goal: AutomationGoal | null): AutomationGate<AutomationGoal> {
+  return goal ? { value: goal } : { reason: { skipReason: 'missing_goal' } };
+}
+
+export function requireActiveAutomationGoal(goal: AutomationGoal): AutomationGate<AutomationGoal> {
+  return goal.status === 'active' ? { value: goal } : { reason: { skipReason: 'inactive_goal' } };
+}
+
+export function requireAutomationScope(
+  scope: AutomationScope | null,
+  goal: AutomationGoal
+): AutomationGate<AutomationScope> {
+  return scope && scope.spaceGoalId === goal.id && scope.spaceId === goal.spaceId
+    ? { value: scope }
+    : { reason: { skipReason: 'missing_scope' } };
+}
+
+function readAutomationEvidence(
+  deps: GoalAutomationExecuteDeps,
+  payload: GoalAutomationExecutePayload,
+  scope: AutomationScope,
+  goal: AutomationGoal
+) {
+  if (payload.externalEvent) {
+    ensureExternalEventEvidence(deps, payload, scope.id);
+  }
+  const cursor =
+    payload.triggerKind === 'completed_task_threshold'
+      ? newestCursor(
+          deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey),
+          deps.cursorRepo.getLatestForTriggerKind(goal.id, scope.id, 'completed_task_threshold')
+        )
+      : deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey);
+  const policy = readAutomationPolicyForScope(scope);
+  const maxEvidence = readMaxEvidence(policy.maxEvidencePerEpisode);
+  const dueEvidence = selectEvidenceAfterCursor(
+    deps.evolutionRepo.listEvidence(scope.id),
+    cursor?.lastEvidenceCreatedAt ?? null,
+    Number.POSITIVE_INFINITY,
+    cursor?.lastEvidenceId ?? null
+  );
+  const evidence = dueEvidence.slice(0, maxEvidence);
+  const triggerEvidence = findTriggerEvidence(dueEvidence, payload);
+  return { goal, scope, policy, maxEvidence, dueEvidence, evidence, triggerEvidence };
+}
+
+export function requireAutomationEvidence(facts: AutomationFacts): AutomationGate<AutomationFacts> {
+  return facts.evidence.length ? { value: facts } : { reason: { skipReason: 'no_evidence' } };
+}
+
+export function requireEnabledAutomation(
+  facts: AutomationFacts,
+  payload: GoalAutomationExecutePayload
+): AutomationGate<AutomationFacts> {
+  return payload.triggerKind === 'completed_task_threshold' &&
+    facts.goal.type !== 'recurring' &&
+    facts.policy.completedTaskThreshold === undefined
+    ? { reason: { skipReason: 'disabled' } }
+    : { value: facts };
+}
+
+export function requireAutomationThreshold(
+  facts: AutomationFacts,
+  payload: GoalAutomationExecutePayload
+): AutomationGate<AutomationFacts> {
+  if (payload.triggerKind !== 'completed_task_threshold') return { value: facts };
+  const threshold = readCompletedTaskThreshold(facts.policy);
+  const completedTaskIds = new Set(
+    facts.dueEvidence
+      .filter((item) => item.kind === 'task_result' && item.sourceId !== null)
+      .map((item) => item.sourceId as string)
+  );
+  return !threshold || completedTaskIds.size < threshold
+    ? { reason: { skipReason: 'below_threshold', evidenceCount: facts.dueEvidence.length } }
+    : { value: facts };
+}
+
+export function requireNoActiveAutomationReview(
+  facts: AutomationFacts,
+  payload: GoalAutomationExecutePayload,
+  activeReview: SpaceTask | null
+): AutomationGate<AutomationFacts> {
+  return payload.triggerKind === 'completed_task_threshold' && activeReview
+    ? { reason: { skipReason: 'active_review', evidenceCount: facts.dueEvidence.length } }
+    : { value: facts };
+}
+
+export function requireUnlockedAutomation(
+  facts: AutomationFacts,
+  payload: GoalAutomationExecutePayload,
+  locked: boolean
+): AutomationGate<AutomationFacts> {
+  return payload.triggerKind === 'completed_task_threshold' && locked
+    ? { reason: { skipReason: 'active_review', evidenceCount: facts.dueEvidence.length } }
+    : { value: facts };
 }
 
 function newestCursor<
