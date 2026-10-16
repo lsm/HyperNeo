@@ -90,7 +90,7 @@ describe('neoConsultationRequestContent', () => {
     const request = neoConsultationRequestContent(item);
     expect(request).not.toContain('neo.publication.publish');
     expect(neoPrompt('research')).toContain(
-      "A consultation's answer goes back to Neo and never to the human"
+      'It is delivered to Neo; it does not publish in the human-facing conversation'
     );
   });
 });

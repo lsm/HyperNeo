@@ -237,7 +237,7 @@ import mdmessagingReplyToTask from './messaging/reply-to-task.md' with { type: '
 import mdspaceOperationsDoorListing from './space/operations-door-listing.md' with { type: 'text' };
 import { buildPromptRegistry } from './loader.ts';
 import mdneoCapabilities from './neo/capabilities.md' with { type: 'text' };
-import mdneoResponseFocus from './neo/response-focus.md' with { type: 'text' };
+import mdneoSpeakingPolicy from './neo/speaking-policy.md' with { type: 'text' };
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
 };
@@ -353,7 +353,7 @@ const registry: Record<string, string> = {
   'github/router-system-prompt.md': mdgithubRouterSystemPrompt,
   'github/security-system-prompt.md': mdgithubSecuritySystemPrompt,
   'neo/capabilities.md': mdneoCapabilities,
-  'neo/response-focus.md': mdneoResponseFocus,
+  'neo/speaking-policy.md': mdneoSpeakingPolicy,
   'neo/catch-up.md': mdneoCatchUp,
   'neo/consultation/receipt-closed.md': mdneoConsultationReceiptClosed,
   'neo/consultation/receipt-pending.md': mdneoConsultationReceiptPending,
@@ -543,7 +543,7 @@ export const {
   GITHUB_ROUTER_SYSTEM_PROMPT,
   GITHUB_SECURITY_SYSTEM_PROMPT,
   NEO_CAPABILITIES_BRIEFING,
-  NEO_RESPONSE_FOCUS_BRIEFING,
+  NEO_SPEAKING_POLICY,
   NEO_DONE_CHECK_STEPS,
   NEO_CATCH_UP_HEADER,
   NEO_CONSULTATION_RECEIPT_CLOSED,
