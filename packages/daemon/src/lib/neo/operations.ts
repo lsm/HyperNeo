@@ -1,4 +1,5 @@
 import { neoTurnRequestKey } from './request-key.ts';
+import { readNeoWorking } from './working.ts';
 import { neoKnownIds } from './known-ids.ts';
 import { NeoWorkBlockerSchema } from './work-blocker.ts';
 import { hostname } from 'node:os';
@@ -368,6 +369,17 @@ const SnapshotOk = z.object({
   sessionLoad: z
     .array(z.object({ sessionId: z.string(), liveCards: z.number().int(), busy: z.boolean() }))
     .max(50)
+    .optional(),
+  working: z
+    .array(
+      z.object({
+        sessionId: z.string(),
+        projectId: z.string().nullable(),
+        title: z.string(),
+        status: z.enum(['queued', 'processing', 'rate_limit_cooldown']),
+      })
+    )
+    .max(100)
     .optional(),
   askViews: z.array(NeoAskViewSchema),
   waitingOnHuman: z
@@ -1298,6 +1310,7 @@ export function createNeoOperations(service: NeoService) {
         : {}),
       cards: compact ? compactNeoSnapshotCards(cards) : cards,
       sessionLoad: readNeoSessionLoad(service.db.getDatabase()).slice(0, 50),
+      working: readNeoWorking(service.db.getDatabase()).slice(0, 100),
       askViews: projectNeoAskViews(
         asks,
         cards,

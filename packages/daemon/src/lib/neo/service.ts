@@ -1,4 +1,5 @@
 import { NeoDependencyRepository } from '../../storage/repositories/neo-dependency-repository.ts';
+import { neoWorkingKey, readNeoWorking } from './working.ts';
 import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
 import { runNeoReadWork } from './read-work.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
@@ -37,6 +38,7 @@ import {
   type NeoAskSessionView,
   type NeoWorkGoal,
   type NeoWorkPr,
+  type NeoWorkingEvent,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { hostname } from 'node:os';
 import type { NeoSnapshotRead } from './snapshot-read.ts';
@@ -556,6 +558,8 @@ export class NeoService {
   readonly askForwards: NeoAskForwardRepository;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
+  private readonly noteWorking: () => void;
+  private workingKey = '';
   readonly notifyPublicationsChanged: (conversationId: string) => void;
   private readonly noteQueue: NeoNoteQueueDeps;
   private readonly triggers: NeoNotificationTriggerRepository;
@@ -918,6 +922,15 @@ export class NeoService {
         void hub.event('neo.changed', {});
       } catch {}
     };
+    this.noteWorking = () => {
+      const working = readNeoWorking(this.db.getDatabase());
+      const key = neoWorkingKey(working);
+      if (key === this.workingKey) return;
+      this.workingKey = key;
+      try {
+        void hub.event('neo.working', { working } satisfies NeoWorkingEvent);
+      } catch {}
+    };
     this.publish = createNeoPublisher({
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.getBindingForProject(null),
@@ -1010,6 +1023,8 @@ export class NeoService {
       async ({ sessionId, processingState }) => {
         const status = processingState?.status;
         if (status) this.processingStatus.set(sessionId, status);
+        const bound = status ? this.repo.getBindingBySession(sessionId) : null;
+        if (bound && bound.kind !== 'worker') this.noteWorking();
         if (status === 'interrupted') this.interruptedSessions.add(sessionId);
         else if (status && status !== 'idle') this.interruptedSessions.delete(sessionId);
         if (status !== 'idle') return;
@@ -1063,7 +1078,10 @@ export class NeoService {
     );
     const offDeleted = events.subscribe(
       'session.deleted',
-      ({ sessionId }) => this.forgetSession(sessionId),
+      ({ sessionId }) => {
+        this.forgetSession(sessionId);
+        this.noteWorking();
+      },
       { subscriberName: 'neo-session-forget' }
     );
     const offExternal = events.subscribe(
