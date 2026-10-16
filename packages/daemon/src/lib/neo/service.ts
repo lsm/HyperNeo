@@ -2201,16 +2201,17 @@ export class NeoService {
         const work = this.repo.getWork(card.workId);
         return work ? [{ work, ref: card.ref }] : [];
       });
+    const unprocessed = new Set<string>();
     for (const { work, ref } of cards) {
       if (work.status !== 'queued') continue;
-      await this.settleDriverWork(work, ref).catch((error) =>
-        this.log.warn('Driver work refresh pending', error)
-      );
+      await this.settleDriverWork(work, ref).catch((error) => {
+        unprocessed.add(work.id);
+        this.log.warn('Driver work refresh pending', error);
+      });
       await this.attachOpenedPrs(work.id).catch((error) =>
         this.log.warn('Card opened pull request read pending', error)
       );
     }
-    const unprocessed = new Set<string>();
     for (const { work } of cards) {
       if (work.status !== 'reported') continue;
       await this.followWork(work, Date.now()).catch((error) => {
