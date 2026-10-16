@@ -173,24 +173,19 @@ describe('NeoLive work scene groups', () => {
     expect(reported.textContent).not.toMatch(/verified|accepted/i);
   });
 
-  it('keeps native attention actions wired and single-flight busy', () => {
+  it('keeps proposal decisions off work cards, including while busy', () => {
     const { state, model } = renderLive();
     const card = within(group('Needs your attention')).getByRole('article', {
       name: 'Title a-proposed',
     });
-    const start = within(card).getByRole('button', { name: 'Start work' });
-    const later = within(card).getByRole('button', { name: 'Decline' });
-    fireEvent.click(start);
-    expect(model.act).toHaveBeenCalledWith('a-proposed', 'start');
-    fireEvent.click(later);
-    expect(model.act).toHaveBeenCalledWith('a-proposed', 'cancel');
+    expect(within(card).queryByRole('button', { name: 'Start work' })).toBeNull();
+    expect(within(card).queryByRole('button', { name: 'Decline' })).toBeNull();
     set(state, { busyWork: 'a-proposed' });
     const busy = within(group('Needs your attention')).getByRole('article', {
       name: 'Title a-proposed',
     });
-    const starting = within(busy).getByRole('button', { name: 'Starting…' });
-    expect((starting as HTMLButtonElement).disabled).toBe(true);
-    expect(model.act).toHaveBeenCalledTimes(2);
+    expect(within(busy).queryByRole('button', { name: 'Starting…' })).toBeNull();
+    expect(model.act).not.toHaveBeenCalled();
   });
 
   it('opens the shared work chat from its card without any stop control', () => {

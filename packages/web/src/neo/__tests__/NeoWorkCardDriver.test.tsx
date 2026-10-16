@@ -1,6 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
-import { cleanup, render, screen } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
 import { testCard } from './neo-test-views.ts';
@@ -71,11 +71,11 @@ describe('NeoWorkCard with drivers work', () => {
     const link = screen.getByRole('link', { name: 'Open Bigger font' });
     expect([link.getAttribute('href'), link.textContent]).toEqual([
       'codex://threads/t1',
-      'Answer in Codex',
+      'Open in Codex',
     ]);
   });
 
-  it('offers Close on a card with no result for three days and keeps it openable', () => {
+  it('keeps abandoned work openable with stop in its menu', () => {
     const onAction = vi.fn();
     renderCard(
       codex({
@@ -84,7 +84,9 @@ describe('NeoWorkCard with drivers work', () => {
       }),
       { onAction }
     );
-    screen.getByRole('button', { name: 'Close' }).click();
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Card actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Stop work' }));
     expect(onAction).toHaveBeenCalledWith('w1', 'close');
     const link = screen.getByRole('link', { name: 'Open Bigger font' });
     expect([link.getAttribute('href'), link.textContent]).toEqual([
@@ -123,6 +125,22 @@ describe('NeoWorkCard with drivers work', () => {
     expect(container.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
   });
 
+  it.each(['open', 'answer'] as const)(
+    'keeps the in-app chat opener when a %s card also has a driver link',
+    (kind) => {
+      const onOpen = vi.fn();
+      const native = { ...work, sessionId: 'native-session' };
+      renderCard(codex({ primary: { kind, label: 'Driver', link: null } }), {
+        work: native,
+        onOpen,
+      });
+      expect(screen.queryByRole('link', { name: 'Open Bigger font' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Open chat' }));
+      expect(onOpen).toHaveBeenCalledExactlyOnceWith('w1');
+      if (kind === 'answer') expect(screen.getByText('Waiting for your answer')).toBeTruthy();
+    }
+  );
+
   it('shows the PR label and number from the card', () => {
     const reported = { ...work, status: 'reported' as const };
     renderCard(
@@ -148,6 +166,7 @@ describe('NeoWorkCard with drivers work', () => {
       const { unmount } = renderCard(
         testCard(work, {
           adapter,
+          open: { link: '/session/s1', remoteLink: null, sessionId: null, daemon: null },
           primary: { kind: 'open', label: 'Open', link: '/session/s1' },
         }),
         { presentation: 'summary' }

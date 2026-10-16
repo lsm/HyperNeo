@@ -680,10 +680,7 @@ export function NeoLive() {
                   No setup, no folders to choose. Ask a quick question or tell me about something
                   ongoing.
                 </p>
-                <p class="mt-2 text-xs">
-                  A clear work request can start work. Proposal-only requests wait for their Start
-                  work button.
-                </p>
+                <p class="mt-2 text-xs">Proposed work waits for your answer to its question.</p>
               </div>
             )}
         </div>

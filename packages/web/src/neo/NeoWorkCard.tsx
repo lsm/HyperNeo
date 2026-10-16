@@ -7,7 +7,6 @@ import {
   neoCardLabel,
   neoCardMeta,
   neoCardOpenLabel,
-  neoCardPrimaryAction,
   neoCardTone,
   neoCardAutoStarts,
   neoCardWaitLine,
@@ -22,11 +21,8 @@ import {
   NeoStatusChip,
   neoCardClass,
   neoFooterClass,
-  neoPlainClass,
-  neoPrimaryClass,
   neoSecondaryClass,
 } from './NeoCardParts.tsx';
-import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
 import { neoAppLogo } from './work-driver.ts';
 
@@ -87,8 +83,8 @@ export function NeoWorkCard({
   const autoStart = neoCardAutoStarts(card);
   const tone = neoCardTone(card, work, waiting);
   const active = work.status === 'queued';
-  const primary = neoCardPrimaryAction(card, work, { waiting, chat: !!onOpen });
-  const answering = primary.kind === 'answer' && !primary.link;
+  const openLink = work.sessionId ? null : card.open.link;
+  const answering = (waiting || card.primary.kind === 'answer') && !openLink;
   const meta = neoCardMeta(card, work);
   const configuration = [card.model, card.effort && `${card.effort} effort`]
     .filter(Boolean)
@@ -143,17 +139,12 @@ export function NeoWorkCard({
     />
   );
   const metaText = meta && <span class="shrink-0 text-xs text-fg-faint">{meta}</span>;
-  const link =
-    (primary.kind === 'open' || primary.kind === 'answer') && primary.link ? (
-      <a
-        href={primary.link}
-        class={primary.kind === 'answer' ? neoPrimaryClass : neoSecondaryClass}
-        aria-label={`Open ${work.title}`}
-      >
-        <NeoAppMark logo={logo} />
-        {primary.label}
-      </a>
-    ) : null;
+  const link = openLink ? (
+    <a href={openLink} class={neoSecondaryClass} aria-label={`Open ${work.title}`}>
+      <NeoAppMark logo={logo} />
+      {neoCardOpenLabel(card)}
+    </a>
+  ) : null;
   if (presentation === 'summary' && onOpen)
     return (
       <div
@@ -212,80 +203,13 @@ export function NeoWorkCard({
       Open chat
     </button>
   );
-  const lead =
-    primary.kind === 'retry' ? (
-      <button
-        type="button"
-        disabled={disabled || busy}
-        onClick={() => onAction(work.id, 'retry')}
-        class={neoPrimaryClass}
-      >
-        <NeoIcon name="retry" class="!h-3.5 !w-3.5" />
-        {busy ? 'Retrying…' : primary.label}
-      </button>
-    ) : primary.kind === 'close' ? (
-      <>
-        <button
-          type="button"
-          disabled={disabled || busy}
-          onClick={() => onAction(work.id, 'close')}
-          class={neoPrimaryClass}
-        >
-          {busy ? 'Closing…' : primary.label}
-        </button>
-        {primary.link ? (
-          <a href={primary.link} class={neoSecondaryClass} aria-label={`Open ${work.title}`}>
-            <NeoAppMark logo={logo} />
-            {neoCardOpenLabel(card)}
-          </a>
-        ) : (
-          chatButton
-        )}
-      </>
-    ) : answering ? (
-      <button type="button" onClick={() => onOpen!(work.id)} class={neoPrimaryClass}>
-        <NeoIcon name="external" class="!h-3.5 !w-3.5" />
-        Answer in chat
-      </button>
-    ) : (
-      link || (primary.kind === 'chat' && chatButton)
-    );
-  const footer =
-    primary.kind === 'start' ? (
-      <div class={neoFooterClass}>
-        <button
-          type="button"
-          disabled={disabled || busy}
-          onClick={() => onAction(work.id, 'cancel')}
-          class={`${neoPlainClass} hover:!bg-danger/10 hover:!text-danger`}
-        >
-          {busy ? (autoStart ? 'Cancelling…' : 'Declining…') : autoStart ? 'Cancel' : 'Decline'}
-        </button>
-        <span class="flex-1" />
-        {chatButton}
-        {autoStart ? (
-          <span class="text-xs text-fg-muted">Starts by itself</span>
-        ) : (
-          <button
-            type="button"
-            disabled={disabled || busy}
-            onClick={() => onAction(work.id, 'start')}
-            class={neoPrimaryClass}
-          >
-            <NeoIcon name="arrow" class="!h-3.5 !w-3.5" />
-            {busy ? 'Starting…' : primary.label}
-          </button>
-        )}
-      </div>
-    ) : (
-      (lead || meta) && (
-        <div class={neoFooterClass}>
-          {lead}
-          <span class="flex-1" />
-          {metaText}
-        </div>
-      )
-    );
+  const footer = (link || chatButton || meta) && (
+    <div class={neoFooterClass}>
+      {link || chatButton}
+      <span class="flex-1" />
+      {metaText}
+    </div>
+  );
   return (
     <article
       aria-label={work.title}
@@ -319,12 +243,7 @@ export function NeoWorkCard({
             position="right"
             items={[
               {
-                label: 'Mark done',
-                onClick: () => onAction(work.id, 'done'),
-                disabled: disabled || busy,
-              },
-              {
-                label: 'Cancel work',
+                label: active ? 'Stop work' : 'Close work',
                 onClick: () => onAction(work.id, 'close'),
                 danger: true,
                 disabled: disabled || busy,

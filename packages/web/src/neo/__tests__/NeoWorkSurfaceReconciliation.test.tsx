@@ -1,10 +1,10 @@
 import type { ChatMessage } from '@hyperneo/shared';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { render as renderRoot } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { withNeoViews } from './neo-test-views.ts';
+import { testAskView, testCard, withNeoViews } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
@@ -53,7 +53,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const mount = (originMessageId: string | null, hasProject = true, live = true) => {
+const mount = (
+  originMessageId: string | null,
+  hasProject = true,
+  live = true,
+  question = false
+) => {
   const snapshot: NeoSnapshot = {
     ok: true,
     cards: [],
@@ -111,6 +116,43 @@ const mount = (originMessageId: string | null, hasProject = true, live = true) =
     destroy: vi.fn(),
   };
   const act = vi.fn();
+  const answerAskItem = vi.fn();
+  if (question) {
+    snapshot.work[0].sessionId = null;
+    const ask: NeoAsk = {
+      id: 'legacy-ask',
+      requestKey: 'legacy-ask',
+      projectId: snapshot.work[0].projectId,
+      originSessionId: 'root',
+      originMessageId: null,
+      title: 'Draft the agenda',
+      ask: 'Existing proposal',
+      doneWhen: 'Agenda drafted',
+      doneSource: 'proposal',
+      status: 'waiting',
+      outcome: '开始这 1 步？',
+      evidence: null,
+      workIds: ['work'],
+      createdAt: 1,
+      updatedAt: 2,
+      settledAt: null,
+    };
+    snapshot.asks = [ask];
+    snapshot.cards = [testCard(snapshot.work[0])];
+    snapshot.askViews = [
+      testAskView(ask, {
+        needsYou: true,
+        humanActions: [
+          {
+            kind: 'question',
+            itemId: 'start-question',
+            question: '开始这 1 步？',
+            options: ['先不做', '开始'],
+          },
+        ],
+      }),
+    ];
+  }
   useNeoMock.mockReturnValue(
     withNeoViews({
       sessionId: 'root',
@@ -120,11 +162,13 @@ const mount = (originMessageId: string | null, hasProject = true, live = true) =
       setError: vi.fn(),
       open: vi.fn(),
       act,
+      answerAskItem,
+      askDetailFailed: () => false,
       busyWork: null,
     })
   );
   if (live) render(<NeoLive />);
-  return { act };
+  return { act, answerAskItem };
 };
 
 describe('original work surface reconciled with the live scenes', () => {
@@ -135,10 +179,28 @@ describe('original work surface reconciled with the live scenes', () => {
     expect(screen.getAllByRole('article', { name: 'Draft the agenda', hidden: true })).toHaveLength(
       1
     );
-    expect(screen.getAllByRole('button', { name: 'Start work' })).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
-    expect(act).toHaveBeenCalledExactlyOnceWith('work', 'start');
+    expect(screen.getAllByRole('button', { name: 'Open chat' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
+    expect(act).not.toHaveBeenCalled();
   });
+
+  it.each(['先不做', '开始'])(
+    'routes %s through the owning question for recovered work without a session',
+    (choice) => {
+      const { act, answerAskItem } = mount(null, true, true, true);
+      const buttons = ['先不做', '开始'].map((name) =>
+        screen.getByRole('button', { name: `Answer 开始这 1 步？: ${name}` })
+      );
+      expect(
+        buttons[0].compareDocumentPosition(buttons[1]) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: `Answer 开始这 1 步？: ${choice}` }));
+      expect(answerAskItem).toHaveBeenCalledExactlyOnceWith('legacy-ask', 'start-question', choice);
+      expect(act).not.toHaveBeenCalled();
+    }
+  );
 
   it('opens the work chat without firing a native action and preserves the composer', () => {
     const { act } = mount('ask');
@@ -157,14 +219,15 @@ describe('original work surface reconciled with the live scenes', () => {
     );
   });
 
-  it('keeps orphan decisions on their actionable scene, not an empty projects panel', () => {
+  it('keeps orphan work on its scene with a session opener', () => {
     const { act } = mount('ask', false);
     expect(screen.queryByRole('button', { name: /Work in flight|Your projects/ })).toBeNull();
     expect(screen.queryByRole('complementary', { name: 'Your projects' })).toBeNull();
     const attention = screen.getByRole('region', { name: 'Needs your attention' });
     expect(within(attention).getByRole('article', { name: 'Draft the agenda' })).toBeTruthy();
-    fireEvent.click(within(attention).getByRole('button', { name: 'Decline' }));
-    expect(act).toHaveBeenCalledExactlyOnceWith('work', 'cancel');
+    expect(within(attention).getByRole('button', { name: 'Open chat' })).toBeTruthy();
+    expect(within(attention).queryByRole('button', { name: 'Decline' })).toBeNull();
+    expect(act).not.toHaveBeenCalled();
   });
 
   it('the real Neo entry owns one viewport hook through keyboard resize and cleanup', async () => {

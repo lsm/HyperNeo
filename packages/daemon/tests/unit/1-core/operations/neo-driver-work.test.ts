@@ -85,6 +85,19 @@ const retryVia = async (service: NeoService, id = 'work-1') => {
   );
   return 'value' in outcome ? outcome.value : outcome;
 };
+const approveReplacement = async (service: NeoService, id = 'work-1') => {
+  const ask = service.askRecords.forWork(id)!;
+  const question = ask.doneItems!.find((item) => item.state === 'needs_you' && !item.removed)!;
+  expect(question).toMatchObject({ question: '开始这 1 步？', options: ['先不做', '开始'] });
+  expect(
+    await invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      'neo.ask.answer',
+      { askId: ask.id, itemId: question.id, choice: '开始', expectedRevision: ask.revision },
+      { source: 'rpc', principal: 'local' }
+    )
+  ).toMatchObject({ value: { ok: true } });
+};
 const startTarget: NeoDriverTarget = { verb: 'start', adapter: 'codex-desktop', place };
 const sendTarget: NeoDriverTarget = {
   verb: 'send',
@@ -921,6 +934,9 @@ describe('Neo work with a drivers target', () => {
       try {
         service.workGoals.record('work-1', 'Change the font', '- 16px');
         await service.start('work-1');
+        expect(service.repo.getWork('work-1')?.status).toBe('proposed');
+        expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(1);
+        await approveReplacement(service);
         expect(service.repo.getWork('work-1')).toMatchObject({
           status: 'queued',
           instruction: work.instruction,
@@ -1015,8 +1031,9 @@ describe('Neo work with a drivers target', () => {
       available = true;
       expect(await retryVia(service)).toMatchObject({
         ok: true,
-        work: { id: 'work-1', status: 'queued' },
+        work: { id: 'work-1', status: 'proposed' },
       });
+      await approveReplacement(service);
       expect(
         calls
           .filter((call) => call.name === 'work.send')
@@ -1028,7 +1045,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('does not loop through stale archived candidates or change a card cancelled during discovery', async () => {
+  test('waits for each replacement approval and preserves cancellation during discovery', async () => {
     let cancel: (() => Promise<void>) | undefined;
     const { db, service, calls } = await setup(
       { ok: false, reason: 'not_open', detail: 'archived' },
@@ -1044,11 +1061,13 @@ describe('Neo work with a drivers target', () => {
     try {
       await service.start('work-1');
       expect(service.repo.getWork('work-1')?.status).toBe('proposed');
+      expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(1);
+      await approveReplacement(service);
       expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(2);
       cancel = () => service.cancel('work-1');
-      await retryVia(service);
+      await approveReplacement(service);
       expect(service.repo.getWork('work-1')?.status).toBe('cancelled');
-      expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(2);
+      expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(3);
     } finally {
       db.close();
     }
@@ -1110,6 +1129,9 @@ describe('Neo work with a drivers target', () => {
         available = true;
         if (resume === 'retry') expect(await retryVia(restarted)).toMatchObject({ ok: true });
         else await restarted.start('work-1');
+        expect(restarted.driverTargets.readRef('work-1')).toBeNull();
+        expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(1);
+        await approveReplacement(restarted);
         expect(restarted.driverTargets.readRef('work-1')).toEqual(worker('idle').ref);
         expect(
           calls

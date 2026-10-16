@@ -603,7 +603,21 @@ describe('Neo existing trusted human work input', () => {
   });
 
   test('preserves the local human approval path for an older proposal', async () => {
-    const work = await propose(local);
+    const work = service.agentTargets.propose(
+      service.repo,
+      {
+        id: 'legacy-proposal',
+        requestKey: 'legacy-proposal',
+        projectId: null,
+        originSessionId: root,
+        originMessageId: null,
+        targetSessionId: target,
+        title: 'Older proposal',
+        instruction: 'Use the existing target.',
+      },
+      null
+    ).work;
+    expect(service.askRecords.forWork(work.id)).toBeNull();
     expect(await invoke('neo.work.start', { id: work.id }, local)).toMatchObject({
       value: { ok: true, work: { status: 'queued' } },
     });

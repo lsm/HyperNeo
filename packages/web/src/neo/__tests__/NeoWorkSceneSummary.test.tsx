@@ -145,7 +145,7 @@ describe('NeoWorkCard summary presentation', () => {
     fireEvent.click(row);
     expect(open).not.toHaveBeenCalled();
   });
-  it('preserves full native actions when no detail opener is available', () => {
+  it('keeps status without decision controls when no detail opener is available', () => {
     const action = vi.fn();
     render(
       <NeoWorkCard
@@ -157,9 +157,9 @@ describe('NeoWorkCard summary presentation', () => {
         presentation="summary"
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
-    expect(action).toHaveBeenNthCalledWith(1, 'fictional-work', 'start');
-    expect(action).toHaveBeenNthCalledWith(2, 'fictional-work', 'cancel');
+    expect(screen.getByText('Your call')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
+    expect(action).not.toHaveBeenCalled();
   });
 });

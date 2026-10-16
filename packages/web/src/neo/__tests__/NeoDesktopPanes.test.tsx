@@ -155,8 +155,8 @@ describe('Neo desktop panes', () => {
     expect(screen.queryByTestId('neo-chat-panel')).toBeNull();
     expect(screen.getByRole('region', { name: 'Work scenes' })).toBe(list);
     expect(within(list).getByRole('article', { name: 'Fictional proposal' })).toBeTruthy();
-    fireEvent.click(within(list).getByRole('button', { name: 'Start work' }));
-    expect(model.value.act).toHaveBeenCalledExactlyOnceWith('proposal', 'start');
+    expect(within(list).queryByRole('button', { name: 'Start work' })).toBeNull();
+    expect(model.value.act).not.toHaveBeenCalled();
   });
 
   it('uses the chat scroll owner only at the actual desktop boundary and preserves a reader position', () => {

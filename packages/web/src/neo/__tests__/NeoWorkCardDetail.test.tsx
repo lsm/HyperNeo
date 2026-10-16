@@ -108,11 +108,10 @@ describe('NeoWorkCard detail opening', () => {
     }
   );
 
-  it('gives an actionable proposed card ordered actions and no card click', () => {
+  it('keeps a proposed card openable without decision controls or card click', () => {
     const open = vi.fn();
     const action = vi.fn();
     const item = work('w', 'proposed', { sessionId: 'w-session', report: 'Report w' });
-    const names = ['Decline', 'Start work'];
     render(
       <NeoWorkCard
         work={item}
@@ -129,7 +128,7 @@ describe('NeoWorkCard detail opening', () => {
     const buttons = within(card)
       .getAllByRole('button')
       .map((button) => button.textContent);
-    expect(buttons.filter((name) => name !== 'Open chat')).toEqual(names);
+    expect(buttons).toEqual(['Open chat']);
     expect(buttons.filter((name) => name === 'Open chat')).toHaveLength(1);
     fireEvent.click(within(card).getByRole('heading'));
     fireEvent.keyDown(card, { key: 'Enter' });
@@ -139,19 +138,14 @@ describe('NeoWorkCard detail opening', () => {
     expect(action).not.toHaveBeenCalled();
   });
 
-  it('closes queued work as done or cancelled from its card menu without opening it', () => {
+  it('stops queued work from its menu without opening it', () => {
     const open = vi.fn();
     const action = vi.fn();
-    for (const item of ['Mark done', 'Cancel work']) {
-      const { card } = show(work('q', 'queued'), open, action);
-      fireEvent.click(within(card).getByRole('button', { name: 'Card actions' }));
-      fireEvent.click(screen.getByRole('menuitem', { name: item }));
-      cleanup();
-    }
-    expect(action.mock.calls).toEqual([
-      ['q', 'done'],
-      ['q', 'close'],
-    ]);
+    const { card } = show(work('q', 'queued'), open, action);
+    fireEvent.click(within(card).getByRole('button', { name: 'Card actions' }));
+    expect(screen.queryByRole('menuitem', { name: 'Mark done' })).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Stop work' }));
+    expect(action).toHaveBeenCalledExactlyOnceWith('q', 'close');
     expect(open).not.toHaveBeenCalled();
   });
 
@@ -164,49 +158,37 @@ describe('NeoWorkCard detail opening', () => {
     expect(open).toHaveBeenCalledExactlyOnceWith('f');
   });
 
-  it('retries a hand-off that never started from its footer', () => {
+  it('keeps a failed hand-off as a status with close in its menu', () => {
     const action = vi.fn();
     const failed = work('f', 'failed', {
       sessionId: null,
       report: 'Could not start the execution: logged out',
     });
-    const retryable: Partial<NeoCardView> = {
+    const { card } = show(failed, vi.fn(), action, {
       retryable: true,
       primary: { kind: 'retry', label: 'Retry', link: null },
-    };
-    const { card } = show(failed, vi.fn(), action, retryable);
-    fireEvent.click(within(card).getByRole('button', { name: 'Retry' }));
-    expect(action).toHaveBeenCalledExactlyOnceWith('f', 'retry');
-    cleanup();
-    render(
-      <NeoWorkCard
-        work={failed}
-        card={testCard(failed, retryable)}
-        busy={true}
-        disabled={false}
-        onAction={action}
-      />
-    );
-    expect((screen.getByRole('button', { name: 'Retrying…' }) as HTMLButtonElement).disabled).toBe(
-      true
-    );
+    });
+    expect(within(card).getByText('Failed')).toBeTruthy();
+    expect(within(card).queryByRole('button', { name: 'Retry' })).toBeNull();
+    fireEvent.click(within(card).getByRole('button', { name: 'Card actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Close work' }));
+    expect(action).toHaveBeenCalledExactlyOnceWith('f', 'close');
   });
 
   it('offers no Open chat before the work has a chat', () => {
     const { card } = show(work('p', 'proposed'), vi.fn());
     expect(within(card).queryByRole('button', { name: 'Open chat' })).toBeNull();
-    expect(within(card).getByRole('button', { name: 'Start work' })).toBeTruthy();
+    expect(within(card).queryByRole('button', { name: 'Start work' })).toBeNull();
   });
 
-  it('keeps Start and Decline acting without opening the chat', () => {
+  it('leaves proposal decisions to the grouped question', () => {
     const open = vi.fn();
     const action = vi.fn();
     const { card } = show(work('p', 'proposed', { sessionId: 'p-session' }), open, action);
-    fireEvent.click(within(card).getByRole('button', { name: 'Start work' }));
-    fireEvent.click(within(card).getByRole('button', { name: 'Decline' }));
-    expect(action).toHaveBeenNthCalledWith(1, 'p', 'start');
-    expect(action).toHaveBeenNthCalledWith(2, 'p', 'cancel');
-    expect(open).not.toHaveBeenCalled();
+    expect(names(card)).toEqual(['Open chat']);
+    fireEvent.click(within(card).getByRole('button', { name: 'Open chat' }));
+    expect(action).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledExactlyOnceWith('p');
   });
 
   it('shows the brief inline for proposed work and the reason inline for failed work', () => {
@@ -248,9 +230,9 @@ describe('NeoWorkCard detail opening', () => {
       within(card)
         .getAllByRole('button')
         .map((button) => button.textContent)
-    ).toEqual(['Answer in chat']);
+    ).toEqual(['Open chat']);
     expect(within(card).queryByRole('button', { name: 'Monday' })).toBeNull();
-    fireEvent.click(within(card).getByRole('button', { name: 'Answer in chat' }));
+    fireEvent.click(within(card).getByRole('button', { name: 'Open chat' }));
     expect(open).toHaveBeenCalledExactlyOnceWith('q');
     expect(action).not.toHaveBeenCalled();
   });
@@ -498,7 +480,7 @@ describe('NeoWorkCard dependency waits', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ship the API: PR merged, Deployed' }));
     expect(openWork).toHaveBeenCalledExactlyOnceWith('api');
     expect(screen.getByText('Old card was cancelled').closest('button')).toBeNull();
-    expect(screen.getByRole('button', { name: /Start work/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Start work/ })).toBeNull();
   });
 
   it('a summary card keeps its prerequisite links outside its own button', () => {
@@ -520,7 +502,7 @@ describe('NeoWorkCard dependency waits', () => {
     expect(openWork).toHaveBeenCalledExactlyOnceWith('api');
   });
 
-  it('a card that starts by itself offers only Cancel', () => {
+  it('a card that starts by itself keeps its prerequisite status without decision buttons', () => {
     const act = vi.fn();
     render(
       <NeoWorkCard
@@ -532,13 +514,12 @@ describe('NeoWorkCard dependency waits', () => {
       />
     );
     expect(screen.getByText('Starts by itself once these are done')).toBeTruthy();
-    expect(screen.getByText('Starts by itself')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Start work/ })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(act).toHaveBeenCalledExactlyOnceWith('ui', 'cancel');
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(act).not.toHaveBeenCalled();
   });
 
-  it('a card that may have started warns and offers a check instead of Start', () => {
+  it('an uncertain card keeps its warning and session link', () => {
     render(
       <NeoWorkCard
         work={work('ui', 'proposed')}
@@ -558,7 +539,7 @@ describe('NeoWorkCard dependency waits', () => {
     ).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Start work/ })).toBeNull();
     expect(screen.getByRole('link', { name: 'Open Title ui' }).textContent).toContain(
-      'Check in Codex'
+      'Open in Codex'
     );
   });
 });
