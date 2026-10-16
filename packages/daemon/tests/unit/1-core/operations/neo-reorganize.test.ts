@@ -354,7 +354,7 @@ describe('neo.projects.reorganize', () => {
     ];
     const result = await createNeoProjectsReorganizer(deps)({ apply: 'contentless' });
     expect(result.cleanupPlanned.map((step) => step.action)).toEqual(['drop', 'archive']);
-    expect(result.cleanupApplied).toBe(false);
+    expect(result.cleanupApplied).toBe(true);
     expect(cleaned).toEqual(['silent']);
     expect(logged).toEqual(
       expect.arrayContaining([

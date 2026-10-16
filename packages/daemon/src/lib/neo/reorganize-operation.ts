@@ -290,12 +290,14 @@ export function createNeoProjectsReorganizer(
     if (!mirrored) runtime.log('neo reorganize: no project cleanup, the places could not be read');
     const cleanupPlanned = mirrored ? planNeoProjectCleanupNow(mirrored, archive) : [];
     const cleanupFailed: { projectId: string; reason: string }[] = [];
+    let cleanupRan = false;
     for (const step of cleanupPlanned) {
       const line = `${step.action} project ${step.projectId} (${step.title})${'targetId' in step ? ` into ${step.targetId}` : ''}${'sessionId' in step ? ` holder ${step.sessionId}` : ''}`;
       if (!apply || (apply === 'contentless' && !isNeoContentlessCleanup(step))) {
         runtime.log(`neo reorganize: would ${line}`);
         continue;
       }
+      cleanupRan = true;
       const reason = await runtime.cleanup(step).then(
         () => null,
         (error: unknown) => String(error)
@@ -311,7 +313,7 @@ export function createNeoProjectsReorganizer(
       moved,
       stayed,
       cleanupPlanned,
-      cleanupApplied: apply === true,
+      cleanupApplied: apply === true || cleanupRan,
       cleanupFailed,
     };
   };
