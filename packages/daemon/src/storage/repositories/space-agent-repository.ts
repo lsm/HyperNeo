@@ -9,6 +9,7 @@ import { generateUUID } from '@hyperneo/shared';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/agents/worker-long-horizon-mapper.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
+import { parseObject } from './space-agent-repository-helpers.ts';
 
 const AGENTS_TABLE = 'space_long_horizon_agents';
 
@@ -245,16 +246,4 @@ function toolsFromPermissions(permissions: Record<string, unknown>): string[] | 
   const tools = permissions.tools;
   if (!Array.isArray(tools)) return null;
   return tools.filter((tool): tool is string => typeof tool === 'string');
-}
-
-function parseObject(value: unknown): Record<string, unknown> {
-  if (typeof value !== 'string' || value.length === 0) return {};
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
 }

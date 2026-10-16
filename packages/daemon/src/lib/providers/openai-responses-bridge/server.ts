@@ -1,3 +1,4 @@
+import { sendJsonError, sendRetryableUpstreamError } from '../shared/json-error-response.js';
 import {
   type AnthropicContentBlock,
   type AnthropicContentBlockImage,
@@ -19,7 +20,7 @@ import {
   thinkingDeltaSSE,
 } from '../provider-anthropic-compat/translator.js';
 import { getModelContextWindow as getCodexModelContextWindow } from '../codex-models.js';
-import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
+import type { AnthropicErrorType } from '../shared/error-envelope.js';
 import {
   anthropicErrorTypeForHttpStatus,
   httpStatusForSymbolicErrorType,
@@ -212,28 +213,6 @@ function extractSessionId(req: Request): { sessionId: string; pathname: string }
 
 function continuationKey(sessionId: string, callId: string): string {
   return `${sessionId}\u0000${callId}`;
-}
-
-function sendJsonError(
-  status: number,
-  type: AnthropicErrorType,
-  message: string,
-  extraHeaders?: Record<string, string>
-): Response {
-  return new Response(createAnthropicErrorBody(type, message), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...extraHeaders },
-  });
-}
-
-function sendRetryableUpstreamError(normalized: {
-  type: AnthropicErrorType;
-  status: number;
-  message: string;
-}): Response {
-  return sendJsonError(normalized.status, normalized.type, normalized.message, {
-    'x-should-retry': 'true',
-  });
 }
 
 function stableStringify(value: unknown): string {

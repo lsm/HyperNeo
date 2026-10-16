@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  decideReportableTerminal,
+  classifyReportableTerminal,
   REPORTABLE_TERMINAL_PREDICATE_VERSION,
   type ReportableTerminalInput,
 } from '../../../../src/lib/goals/reportable-terminal-gates';
@@ -15,11 +15,11 @@ function input(overrides: Partial<ReportableTerminalInput> = {}): ReportableTerm
   };
 }
 
-describe('decideReportableTerminal', () => {
+describe('classifyReportableTerminal', () => {
   describe('administrative transitions produce no notification', () => {
     test('archives a queued/draft task with no start generation', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: 'draft', toStatus: 'archived', hasStartGeneration: false })
         )
       ).toEqual({ action: 'none', reason: 'administrative' });
@@ -27,7 +27,7 @@ describe('decideReportableTerminal', () => {
 
     test('cancels a task before execution', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: 'open', toStatus: 'cancelled', hasStartGeneration: false })
         )
       ).toEqual({ action: 'none', reason: 'administrative' });
@@ -35,7 +35,7 @@ describe('decideReportableTerminal', () => {
 
     test('completes an open task with no prior start (open → done)', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: 'open', toStatus: 'done', hasStartGeneration: false })
         )
       ).toEqual({ action: 'none', reason: 'administrative' });
@@ -45,7 +45,7 @@ describe('decideReportableTerminal', () => {
   describe('archival never produces a worker outcome notification', () => {
     test('archives an already-done task', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({
             fromStatus: 'done',
             toStatus: 'archived',
@@ -58,7 +58,7 @@ describe('decideReportableTerminal', () => {
 
     test('archives an already-blocked task', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({
             fromStatus: 'blocked',
             toStatus: 'archived',
@@ -71,7 +71,7 @@ describe('decideReportableTerminal', () => {
 
     test('archives an already-cancelled task', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({
             fromStatus: 'cancelled',
             toStatus: 'archived',
@@ -84,7 +84,7 @@ describe('decideReportableTerminal', () => {
 
     test('reports archiving active work from review', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: 'review', toStatus: 'archived', hasStartGeneration: true })
         )
       ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
@@ -92,7 +92,7 @@ describe('decideReportableTerminal', () => {
 
     test('reports archiving active work from approved', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: 'approved', toStatus: 'archived', hasStartGeneration: true })
         )
       ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
@@ -100,7 +100,7 @@ describe('decideReportableTerminal', () => {
 
     test('archiving active work does not supersede a stale prior generation', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({
             fromStatus: 'review',
             toStatus: 'archived',
@@ -115,7 +115,7 @@ describe('decideReportableTerminal', () => {
   describe('active-work completions notify', () => {
     test('notifies for in_progress → open → done (started, completed from open)', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: 'open', toStatus: 'done', hasStartGeneration: true })
         )
       ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
@@ -123,7 +123,7 @@ describe('decideReportableTerminal', () => {
 
     test('notifies for in_progress → done', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: 'in_progress', toStatus: 'done', hasStartGeneration: true })
         )
       ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
@@ -131,7 +131,7 @@ describe('decideReportableTerminal', () => {
 
     test('notifies for in_progress → cancelled after start', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: 'in_progress', toStatus: 'cancelled', hasStartGeneration: true })
         )
       ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
@@ -139,7 +139,7 @@ describe('decideReportableTerminal', () => {
 
     test('notifies for review → approved → done', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: 'approved', toStatus: 'done', hasStartGeneration: true })
         )
       ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
@@ -149,7 +149,7 @@ describe('decideReportableTerminal', () => {
   describe('outcome-changing terminal-to-terminal transitions supersede + notify', () => {
     test('blocked → done produces a new terminal generation superseding the record', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({
             fromStatus: 'blocked',
             toStatus: 'done',
@@ -165,7 +165,7 @@ describe('decideReportableTerminal', () => {
 
     test('cancelled → done produces a new terminal generation superseding the record', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({
             fromStatus: 'cancelled',
             toStatus: 'done',
@@ -181,7 +181,7 @@ describe('decideReportableTerminal', () => {
 
     test('in_progress → blocked → done supersedes the blocked record', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({
             fromStatus: 'blocked',
             toStatus: 'done',
@@ -199,7 +199,7 @@ describe('decideReportableTerminal', () => {
   describe('same-terminal rewrites produce no new notification', () => {
     test('done → done is a no-op', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({
             fromStatus: 'done',
             toStatus: 'done',
@@ -214,7 +214,7 @@ describe('decideReportableTerminal', () => {
   describe('non-terminal target statuses', () => {
     test('open → in_progress is not terminal', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: 'open', toStatus: 'in_progress', hasStartGeneration: true })
         )
       ).toEqual({ action: 'none', reason: 'not_terminal' });
@@ -222,7 +222,7 @@ describe('decideReportableTerminal', () => {
 
     test('null fromStatus to done with a start is a notify', () => {
       expect(
-        decideReportableTerminal(
+        classifyReportableTerminal(
           input({ fromStatus: null, toStatus: 'done', hasStartGeneration: true })
         )
       ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });

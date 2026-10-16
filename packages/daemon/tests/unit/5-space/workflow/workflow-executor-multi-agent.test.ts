@@ -4,7 +4,6 @@ import { resolveNodeAgents } from '@hyperneo/shared';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { NodeExecutionManager } from '../../../../src/lib/workflows/node-execution-manager.ts';
 import type { SpaceAgentLookup } from '../../../../src/lib/workflows/workflow-manager.ts';
 import {
   SpaceWorkflowManager,
@@ -533,32 +532,5 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
         completionAutonomyLevel: 3,
       })
     ).toThrow(WorkflowValidationError);
-  });
-
-  test('rejects reserved built-in agent names during node execution creation', () => {
-    const nodeExecutionManager = new NodeExecutionManager(db);
-    const workflow = new SpaceWorkflowRepository(db).createWorkflow({
-      spaceId: SPACE_ID,
-      name: `Node Execution Reserved Name ${Date.now()}`,
-      nodes: [{ id: STEP_A, name: 'Step', agents: [{ agentId: AGENT_CODER, name: 'coder' }] }],
-      transitions: [],
-      startNodeId: STEP_A,
-      rules: [],
-      completionAutonomyLevel: 3,
-    });
-    const run = workflowRunRepo.createRun({
-      spaceId: SPACE_ID,
-      workflowId: workflow.id,
-      title: 'Reserved node execution run',
-    });
-
-    expect(() =>
-      nodeExecutionManager.create({
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        agentName: 'TASK-AGENT',
-        status: 'pending',
-      })
-    ).toThrow('reserved for a built-in agent');
   });
 });

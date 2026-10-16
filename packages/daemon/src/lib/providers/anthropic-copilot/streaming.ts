@@ -1,10 +1,11 @@
+import { sendNodeJsonError as sendJsonError } from '../shared/json-error-response.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { CopilotSession, SessionEvent } from '@github/copilot-sdk';
 import type { ToolBridgeRegistry } from './tool-bridge.js';
 import type { ToolResult } from './conversation.js';
 import { AnthropicStreamWriter, estimateTokens } from './sse.js';
 import type { ContextUsageStore, CopilotUsageInfoData } from './context-usage.js';
-import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
+import type { AnthropicErrorType } from '../shared/error-envelope.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('anthropic-copilot-streaming');
@@ -28,16 +29,6 @@ function classifyError(message: string): { status: number; type: AnthropicErrorT
   if (status === 413) return { status, type: 'request_too_large' };
   if (status === 529) return { status, type: 'overloaded_error' };
   return { status, type: 'api_error' };
-}
-
-function sendJsonError(
-  res: ServerResponse,
-  status: number,
-  type: AnthropicErrorType,
-  message: string
-): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(createAnthropicErrorBody(type, message));
 }
 
 function streamSession(

@@ -1021,7 +1021,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.start('rpc handlers + space runtime provision');
     const rpcHandlers = setupRPCHandlers({
-      watchSessionRepo: async (owner, repo) => githubEventExtension?.watchSessionRepo(owner, repo),
+      watchSessionRepo: async (owner, repo) =>
+        (await githubEventExtension?.watchSessionRepo(owner, repo)) ?? null,
       followSessionTopics: (source) => sessionTopicSources.push(source),
       isSessionTopicCovered: coveredSessionTopic,
       messageHub,

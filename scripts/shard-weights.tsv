@@ -54,7 +54,6 @@
 10	packages/daemon/tests/unit/1-core/agent/flag-settings-file.test.ts
 5	packages/daemon/tests/unit/1-core/agent/handler-outcome-routing.test.ts
 7	packages/daemon/tests/unit/1-core/agent/idle-waiter-admission-pipeline.test.ts
-7	packages/daemon/tests/unit/1-core/agent/inject-context-reset-gates.test.ts
 1434	packages/daemon/tests/unit/1-core/agent/interrupt-handler.test.ts
 14	packages/daemon/tests/unit/1-core/agent/limit-error-classifier.test.ts
 219	packages/daemon/tests/unit/1-core/agent/limit-error-llm-classifier.test.ts
@@ -116,7 +115,6 @@
 11	packages/daemon/tests/unit/1-core/agent/startup-watch-pipeline.test.ts
 14237	packages/daemon/tests/unit/1-core/agent/task-notification-requery.test.ts
 10	packages/daemon/tests/unit/1-core/agent/transient-error-patterns.test.ts
-6	packages/daemon/tests/unit/1-core/agent/turn-end-flush-context-reset-gates.test.ts
 7	packages/daemon/tests/unit/1-core/agent/turn-end-pipeline.test.ts
 7	packages/daemon/tests/unit/1-core/agent/turn-end-routing.test.ts
 86	packages/daemon/tests/unit/1-core/agent/usage-accounting-invariants.test.ts
@@ -195,7 +193,6 @@
 6	packages/daemon/tests/unit/1-core/lib/fill-prompt.test.ts
 8	packages/daemon/tests/unit/1-core/lib/model-settlement-pipeline.test.ts
 8	packages/daemon/tests/unit/1-core/lib/model-settlement-routing.test.ts
-8812	packages/daemon/tests/unit/1-core/lib/node-execution-manager.test.ts
 8	packages/daemon/tests/unit/1-core/lib/runtime-descriptor.test.ts
 6	packages/daemon/tests/unit/1-core/lib/runtime-hash.test.ts
 903	packages/daemon/tests/unit/1-core/lib/space-manager.test.ts
@@ -404,7 +401,6 @@
 65	packages/daemon/tests/unit/1-core/providers/shared/model-list.test.ts
 11	packages/daemon/tests/unit/1-core/providers/shared/normalize-upstream-error.test.ts
 543	packages/daemon/tests/unit/1-core/schedule/schedule-service.test.ts
-5	packages/daemon/tests/unit/1-core/session-resolution/actor-target.test.ts
 8	packages/daemon/tests/unit/1-core/session-resolution/agent-session-config.test.ts
 11	packages/daemon/tests/unit/1-core/session-resolution/default-deps.test.ts
 6	packages/daemon/tests/unit/1-core/session-resolution/ensure-long-term-agent-session.test.ts
@@ -495,7 +491,6 @@
 6	packages/daemon/tests/unit/2-handlers/job-handlers/session-title-handler.test.ts
 8	packages/daemon/tests/unit/2-handlers/job-handlers/skill-validate.handler.test.ts
 289	packages/daemon/tests/unit/2-handlers/job-handlers/task-schedule-fire.handler.test.ts
-301	packages/daemon/tests/unit/2-handlers/mcp/import-scanner.test.ts
 957	packages/daemon/tests/unit/2-handlers/mcp/mcp-import-service.test.ts
 3	packages/daemon/tests/unit/2-handlers/mcp/mcp-server-namespace.test.ts
 5	packages/daemon/tests/unit/2-handlers/mcp/resolve-mcp-servers.test.ts
@@ -874,7 +869,6 @@
 40	packages/daemon/tests/unit/4-space-storage/storage/workflow-hook-state-repository.test.ts
 96	packages/daemon/tests/unit/4-space-storage/storage/workflow-run-artifact-repository.test.ts
 4	packages/daemon/tests/unit/5-space/actions/description-generator.test.ts
-9	packages/daemon/tests/unit/5-space/actions/mark-complete-operation.test.ts
 10	packages/daemon/tests/unit/5-space/actions/task-message-delivery.test.ts
 128	packages/daemon/tests/unit/5-space/actor-registry.test.ts
 5	packages/daemon/tests/unit/5-space/agent-handle.test.ts
@@ -980,7 +974,6 @@
 7	packages/daemon/tests/unit/5-space/runtime/admission-gates.test.ts
 13	packages/daemon/tests/unit/5-space/runtime/agent-message-delivery-pipeline.test.ts
 6293	packages/daemon/tests/unit/5-space/runtime/atomic-task-pointer-write.test.ts
-102	packages/daemon/tests/unit/5-space/runtime/bound-task-dependencies.test.ts
 11	packages/daemon/tests/unit/5-space/runtime/built-in-validator-registry.test.ts
 2339	packages/daemon/tests/unit/5-space/runtime/cancel-route.test.ts
 6	packages/daemon/tests/unit/5-space/runtime/cancel-task-gates.test.ts

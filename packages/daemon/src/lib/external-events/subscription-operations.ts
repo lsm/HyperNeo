@@ -49,7 +49,7 @@ export interface SubscriptionDependencies extends AgentSubscriptionDependencies 
     SessionEventSubscriptionRepository,
     'upsert' | 'listBySession' | 'delete'
   >;
-  watchSessionRepo?: (owner: string, repo: string) => Promise<void>;
+  watchSessionRepo?: (owner: string, repo: string) => Promise<string | null>;
 }
 
 export function githubRepoOfTopic(topic: string): { owner: string; repo: string } | null {
@@ -68,7 +68,6 @@ const SUBJECT_REJECTIONS = z.enum([
   'agent_not_found',
   'invalid_pattern',
   'refresh_failed',
-  'watch_failed',
 ]);
 type SubjectRejection = z.infer<typeof SUBJECT_REJECTIONS>;
 
@@ -381,13 +380,12 @@ async function subscribeSession(
       label: input.label,
     });
     const watched = githubRepoOfTopic(topicPattern);
-    const watching = watched
-      ? await subs.watchSessionRepo?.(watched.owner, watched.repo).then(
-          () => true,
-          () => false
-        )
-      : true;
-    return watching === false ? 'watch_failed' : { ok: true, topicPattern };
+    const failure = watched
+      ? await subs
+          .watchSessionRepo?.(watched.owner, watched.repo)
+          .catch((error: unknown) => (error instanceof Error ? error.message : String(error)))
+      : null;
+    return failure ? { ok: false, error: failure } : { ok: true, topicPattern };
   }
   const stored = subs.sessionSubscriptions.upsert({
     spaceId: subject.spaceId,
@@ -512,7 +510,7 @@ export function createSubscriptionOperations(
     defineOperation({
       name: 'event.external.subscribe',
       policy: { safetyClass: 'mutate', roles: SUBSCRIPTION_ROLES },
-      description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*), or pass prUrl instead of topicPattern to follow one GitHub pull request; exactly one of the two is required. A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the same { ok, topicPattern } with the stored record under subscription, rejecting refresh_failed when the trie could not be refreshed. A session outside any Space that subscribes to a GitHub repo topic rejects watch_failed when the repo watch could not start; the subscription is kept, so subscribing again retries the watch. Both subjects answer in the same shape, so a caller reads ok without knowing which subject it passed. A session whose live card already follows the topic is answered covered: true, and its events keep arriving once through the card. ${SUBJECT_DOC}`,
+      description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*), or pass prUrl instead of topicPattern to follow one GitHub pull request; exactly one of the two is required. A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the same { ok, topicPattern } with the stored record under subscription, rejecting refresh_failed when the trie could not be refreshed. A session outside any Space that subscribes to a GitHub repo topic gets { ok: false, error } naming the repo when its watch could not start, such as when the daemon's GitHub token can't read it; the subscription is kept, so subscribing again retries the watch. Both subjects answer in the same shape, so a caller reads ok without knowing which subject it passed. A session whose live card already follows the topic is answered covered: true, and its events keep arriving once through the card. ${SUBJECT_DOC}`,
       inputSchema: SubscribeInput,
       resultSchema: z.union([AgentSubscribeOutcomeSchema, OutcomeSchema, SUBJECT_REJECTIONS]),
       execute: subjectPipeline('subscribe-external-event', subs, subscribeSubject),

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/agents/system-contracts.ts';
+import { REVIEWER_SYSTEM_CONTRACT } from '../../../helpers/system-contracts.ts';
 import {
   CODER_EXTERNAL_GATE_BLOCK,
   CODER_ONLY_MERGE_INSTRUCTIONS,

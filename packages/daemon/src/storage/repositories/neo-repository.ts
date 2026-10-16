@@ -182,6 +182,14 @@ export class NeoRepository {
         .prepare(`SELECT id, title, status, updated_at AS updatedAt FROM neo_asks
           WHERE status IN ('open', 'waiting', 'blocked') ORDER BY updated_at`)
         .all() as NeoHealthFacts['liveAsks'],
+      unreadRepos: this.db
+        .prepare(`SELECT owner || '/' || repo AS repo,
+            json_extract(poll_cursor, '$.lastPollError') AS error
+          FROM space_github_watched_repos
+          WHERE enabled = 1 AND polling_enabled = 1
+            AND json_extract(poll_cursor, '$.lastPollError') IS NOT NULL
+          ORDER BY owner, repo`)
+        .all() as NeoHealthFacts['unreadRepos'],
     };
   }
 

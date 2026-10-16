@@ -1,5 +1,5 @@
 import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
-import { decideReportableTerminal } from '../../../../src/lib/goals/reportable-terminal-gates.ts';
+import { classifyReportableTerminal } from '../../../../src/lib/goals/reportable-terminal-gates.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
@@ -646,7 +646,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(task.status).toBe('done');
       expect(task.startedAt).toBeTypeOf('number');
       expect(
-        decideReportableTerminal({
+        classifyReportableTerminal({
           fromStatus: 'in_progress',
           toStatus: task.status,
           hasStartGeneration: task.startedAt !== null,

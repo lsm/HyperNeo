@@ -4,9 +4,10 @@ import type {
   UpdateSpaceLongHorizonAgentSubscriptionParams,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { composeSubscriptionRouteKey } from '../../lib/external-events/long-horizon-subscription-pattern.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SpaceAgentRepository } from './space-agent-repository.ts';
+import { rowToSubscription } from './space-agent-repository-helpers.ts';
 
 export class SpaceAgentSubscriptionRepository {
   constructor(
@@ -188,31 +189,5 @@ export class SpaceAgentSubscriptionRepository {
     if (agent.spaceId !== spaceId) {
       throw new Error(`Long-horizon agent ${agentId} does not belong to space ${spaceId}`);
     }
-  }
-}
-
-function rowToSubscription(row: Record<string, unknown>): SpaceLongHorizonAgentEventSubscription {
-  return {
-    id: row.id as string,
-    spaceId: row.space_id as string,
-    agentId: row.agent_id as string,
-    source: row.source as string,
-    topic: row.topic as string,
-    filter: parseObject(row.filter_json),
-    status: row.status as SpaceLongHorizonAgentEventSubscription['status'],
-    createdAt: row.created_at as number,
-    updatedAt: row.updated_at as number,
-  };
-}
-
-function parseObject(value: unknown): Record<string, unknown> {
-  if (typeof value !== 'string' || value.length === 0) return {};
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
   }
 }

@@ -1,4 +1,4 @@
-import type { Session, McpServerConfig } from '@hyperneo/shared';
+import type { Session } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
 import { SettingsManager } from '../settings-manager.ts';
@@ -23,29 +23,6 @@ export class SessionConfigHandler {
     const { session, db, internalEventBus } = this.ctx;
 
     session.config = { ...session.config, ...configUpdates };
-    db.updateSession(session.id, { config: session.config });
-
-    await internalEventBus.publish('session.updated', {
-      sessionId: session.id,
-      source: 'config-update',
-      session: { config: session.config },
-    });
-  }
-
-  async updateUserMcpServers(servers: Record<string, McpServerConfig>): Promise<void> {
-    const { session, db, internalEventBus } = this.ctx;
-
-    const existing = (session.config?.mcpServers ?? {}) as Record<string, McpServerConfig>;
-    const runtimeServers: Record<string, McpServerConfig> = {};
-    for (const [name, cfg] of Object.entries(existing)) {
-      if ((cfg as { type?: string }).type === 'sdk') {
-        runtimeServers[name] = cfg;
-      }
-    }
-
-    const merged: Record<string, McpServerConfig> = { ...servers, ...runtimeServers };
-
-    session.config = { ...session.config, mcpServers: merged };
     db.updateSession(session.id, { config: session.config });
 
     await internalEventBus.publish('session.updated', {

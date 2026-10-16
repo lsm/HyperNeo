@@ -2,7 +2,7 @@ import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error
 import { Logger } from '../../logger.js';
 import { createHttpWsServer } from '../../runtime-server/index.js';
 import type { AnthropicRequest } from '../provider-anthropic-compat/translator.js';
-import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
+import { sendJsonError, sendRetryableUpstreamError } from '../shared/json-error-response.js';
 import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
 
 const logger = new Logger('anthropic-messages-bridge-server');
@@ -30,28 +30,6 @@ export type AnthropicMessagesBridgeConfig = {
   models?: AnthropicMessagesBridgeModel[];
   thinkingSupported?: boolean;
 };
-
-function sendJsonError(
-  status: number,
-  type: AnthropicErrorType,
-  message: string,
-  extraHeaders?: Record<string, string>
-): Response {
-  return new Response(createAnthropicErrorBody(type, message), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...extraHeaders },
-  });
-}
-
-function sendRetryableUpstreamError(normalized: {
-  type: AnthropicErrorType;
-  status: number;
-  message: string;
-}): Response {
-  return sendJsonError(normalized.status, normalized.type, normalized.message, {
-    'x-should-retry': 'true',
-  });
-}
 
 export function buildUpstreamUrl(
   input: string,

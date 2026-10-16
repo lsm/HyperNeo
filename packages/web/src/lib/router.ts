@@ -414,10 +414,6 @@ export function navigateToSpaces(): void {
   navigateToSpacesPage();
 }
 
-export function isSpacesPath(path: string): boolean {
-  return SPACES_ROUTE_PATTERN.test(path);
-}
-
 export function navigateToSpacesPage(replace = false): void {
   if (routerState.isNavigating) return;
 
@@ -946,12 +942,4 @@ export function cleanupRouter(): void {
   window.removeEventListener('popstate', handlePopState);
   routerState.isInitialized = false;
   routerState.isNavigating = false;
-}
-
-export function getRouterState(): Readonly<RouterState> {
-  return { ...routerState };
-}
-
-export function isRouterInitialized(): boolean {
-  return routerState.isInitialized;
 }

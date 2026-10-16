@@ -379,10 +379,6 @@ export class GitHubService {
     return this.pollingService.getRepositories();
   }
 
-  getInboxManager(): InboxManager {
-    return this.inboxManager;
-  }
-
   getPendingInboxCount(): number {
     return this.inboxManager.countByStatus().pending;
   }

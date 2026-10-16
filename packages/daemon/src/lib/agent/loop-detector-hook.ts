@@ -239,13 +239,6 @@ function buildPostToolUseFailureCallback(
   };
 }
 
-export function createLoopDetectorHook(config: Partial<LoopDetectorConfig> = {}): HookCallback {
-  const finalConfig = resolveConfig(config);
-  const logger = new Logger('LoopDetectorHook');
-  const state = createState();
-  return buildPreToolUseCallback(state, finalConfig, logger);
-}
-
 export function createLoopDetectorHooks(config: Partial<LoopDetectorConfig> = {}): {
   preToolUse: HookCallback;
   postToolUse: HookCallback;
