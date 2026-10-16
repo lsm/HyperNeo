@@ -90,8 +90,6 @@ export function requireChangeable(
     : { value: owned };
 }
 
-const RecentInput = z.object({ limit: z.number().int().min(1).max(20).default(10) }).strict();
-
 function changePipeline(
   name: string,
   schema: z.ZodType,
@@ -202,61 +200,7 @@ export function createNeoPublicationChangeOperations(
     );
   const edit = revise('neo.publication.edit', EditInput);
   const correct = revise('neo.publication.correct', CorrectInput);
-  const recent = (superpipe({})('neo-publication-recent') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(
-      (input: unknown) => {
-        const parsed = RecentInput.safeParse(input ?? {});
-        return parsed.success
-          ? { value: parsed.data }
-          : { reason: { accepted: false, reason: 'invalid_input' } };
-      },
-      'input',
-      'result:recent'
-    )
-    .pipe((request: z.infer<typeof RecentInput>) => request, 'recent', 'request')
-    .pipe(
-      (caller: OperationCaller) =>
-        requirePublicationProducer(
-          caller,
-          runtime.getBinding(caller.sessionId ?? ''),
-          runtime.getRootBinding()
-        ),
-      'caller',
-      'result:recent'
-    )
-    .pipe(
-      (producer: Producer, request: z.infer<typeof RecentInput>) => ({
-        accepted: true,
-        publications: runtime.publications
-          .listRecent(producer.root.sessionId.slice(4), request.limit)
-          .map((publication) => ({
-            publicationId: publication.publicationId,
-            createdAt: publication.createdAt,
-            shortText: publication.shortText,
-            askMessageId: publication.askOrigin.messageId,
-            producer: publication.producerInput.sessionId,
-            yours: publication.producerInput.sessionId === producer.input.sessionId,
-            ...(publication.editedAt ? { editedAt: publication.editedAt } : {}),
-            ...(publication.editedBy ? { editedBy: publication.editedBy } : {}),
-            revisionId: publication.revisionId ?? publication.publicationId,
-            revisions: publication.revisions ?? [],
-          })),
-      }),
-      ['recent', 'request'],
-      'recent'
-    )
-    .end('recent') as (input: unknown, caller: OperationCaller) => unknown;
   return [
-    defineOperation({
-      name: 'neo.publication.recent',
-      description:
-        'List recent messages in this conversation with their IDs and revision history. Current text is top-level; revisions contains earlier versions, oldest first.',
-      policy: { safetyClass: 'read', roles: ['neo'] },
-      inputSchema: RecentInput,
-      resultSchema: z.unknown(),
-      execute: async (input, caller) => recent(input, caller),
-    }),
     defineOperation({
       name: 'neo.publication.edit',
       description:

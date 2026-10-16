@@ -241,7 +241,6 @@ import {
   planNeoNeedsYouCleared,
   planNeoQuestionsWithdrawn,
 } from './needs-you.ts';
-import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
 import {
   coverNeoAskTriggers,
   isNeoHumanOwnTurn,
@@ -565,7 +564,6 @@ export class NeoService {
   private readonly noteWorking: () => void;
   private workingKey = '';
   readonly notifyPublicationsChanged: (conversationId: string) => void;
-  private readonly noteQueue: NeoNoteQueueDeps;
   private readonly triggers: NeoNotificationTriggerRepository;
   private readonly triggerDeps: NeoTriggerSweepDeps;
   private triggerTimer?: ReturnType<typeof setTimeout>;
@@ -839,11 +837,6 @@ export class NeoService {
             }
           ),
     };
-    this.noteQueue = createNeoNoteQueueDeps(db, (sessionId, messageIds) => {
-      void events
-        .publish('messages.statusChanged', { sessionId, messageIds, status: 'failed' })
-        .catch(() => {});
-    });
     this.sessionWatcher = new NeoSessionWatcher({
       db,
       rootSessionId: () => this.repo.getBindingForProject(null)?.sessionId,
@@ -3975,7 +3968,6 @@ export class NeoService {
         .length
     )
       return;
-    if (!issueNeoNote(this.noteQueue, sessionId, messageId).issue) return;
     const outcome = await handoffPromptToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
       origin: renderAddress({ kind: 'session', sessionId: originSessionId }),

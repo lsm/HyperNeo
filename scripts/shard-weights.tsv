@@ -248,13 +248,12 @@
 5	packages/daemon/tests/unit/1-core/operations/neo-binding-roles.test.ts
 36	packages/daemon/tests/unit/1-core/operations/neo-branch-prs.test.ts
 2905	packages/daemon/tests/unit/1-core/operations/neo-busy-consultation.test.ts
+1644	packages/daemon/tests/unit/1-core/operations/neo-card-attention.test.ts
 4	packages/daemon/tests/unit/1-core/operations/neo-card-check.test.ts
 1107	packages/daemon/tests/unit/1-core/operations/neo-card-pr-claims.test.ts
 2735	packages/daemon/tests/unit/1-core/operations/neo-card-pr-events.test.ts
-1644	packages/daemon/tests/unit/1-core/operations/neo-card-attention.test.ts
 32	packages/daemon/tests/unit/1-core/operations/neo-card-views.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-card-wake.test.ts
-18	packages/daemon/tests/unit/1-core/operations/neo-catch-up.test.ts
 8	packages/daemon/tests/unit/1-core/operations/neo-check-registry.test.ts
 344	packages/daemon/tests/unit/1-core/operations/neo-coding-preparation.test.ts
 7	packages/daemon/tests/unit/1-core/operations/neo-consultation-origin.test.ts
@@ -301,7 +300,6 @@
 96	packages/daemon/tests/unit/1-core/operations/neo-publication-read.test.ts
 12	packages/daemon/tests/unit/1-core/operations/neo-published-consultation-instructions.test.ts
 6568	packages/daemon/tests/unit/1-core/operations/neo-published-consultation-runtime.test.ts
-303	packages/daemon/tests/unit/1-core/operations/neo-query-context.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-reorganize-nightly.test.ts
 326	packages/daemon/tests/unit/1-core/operations/neo-reorganize.test.ts
 6	packages/daemon/tests/unit/1-core/operations/neo-reply-language.test.ts

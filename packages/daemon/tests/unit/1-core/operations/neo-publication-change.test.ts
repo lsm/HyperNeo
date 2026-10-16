@@ -307,23 +307,6 @@ describe('requireChangeable', () => {
   });
 });
 
-describe('neo.publication.recent', () => {
-  test('returns current text with earlier revisions on one conversation entry', async () => {
-    await call('edit', { publicationId: original, requestId: 'r1', shortText: 'New.' });
-    expect(await call('recent', {})).toMatchObject({
-      accepted: true,
-      publications: [
-        {
-          publicationId: original,
-          shortText: 'New.',
-          yours: true,
-          revisions: [{ shortText: input.shortText }],
-        },
-      ],
-    });
-  });
-});
-
 describe('neoDerivedId', () => {
   test('operation identity is stable and does not collapse distinct requests', () => {
     expect(neoDerivedId('r1')).toBe(neoDerivedId('r1'));
