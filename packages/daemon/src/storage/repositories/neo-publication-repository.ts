@@ -141,7 +141,7 @@ export class NeoPublicationRepository {
   append(input: unknown): NeoPublicationAppendResult {
     const result = append(input, this.db);
     if (result === 'invalid_publication') return { accepted: false, reason: result };
-    if (result.accepted && result.created) this.recordReplyOutcome(result.publication);
+    if (result.accepted) this.recordReplyOutcome(result.publication);
     return result;
   }
 
