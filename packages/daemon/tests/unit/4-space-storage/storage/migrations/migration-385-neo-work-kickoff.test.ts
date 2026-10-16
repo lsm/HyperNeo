@@ -8,6 +8,34 @@ import { createTestDb } from '../../../../helpers/database.ts';
 afterEach(() => vi.restoreAllMocks());
 
 describe('runMigration385', () => {
+  test('rolls back the kickoff column if resetting stale outcomes fails, then retries', () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec(`CREATE TABLE neo_work(id TEXT);
+        CREATE TABLE neo_asks(id TEXT, status TEXT, pack TEXT);
+        CREATE TABLE neo_ask_items(ask_id TEXT, check_kind TEXT, state TEXT, met_by TEXT,
+          evidence TEXT, verified_definition_hash TEXT, watch TEXT);
+        INSERT INTO neo_asks VALUES ('active', 'open', 'coding');
+        INSERT INTO neo_ask_items VALUES
+          ('active', 'coding.pr_merged', 'met', 'daemon', 'old proof', 'old hash', NULL);
+        CREATE TRIGGER interrupt_reset BEFORE UPDATE ON neo_ask_items
+          BEGIN SELECT RAISE(ABORT, 'interrupted reset'); END`);
+      expect(() => runMigration385(db)).toThrow('interrupted reset');
+      expect(db.prepare('PRAGMA table_info(neo_work)').all()).not.toContainEqual(
+        expect.objectContaining({ name: 'started_at' })
+      );
+      expect(db.prepare('SELECT state FROM neo_ask_items').get()).toEqual({ state: 'met' });
+      db.exec('DROP TRIGGER interrupt_reset');
+      runMigration385(db);
+      expect(db.prepare('PRAGMA table_info(neo_work)').all()).toContainEqual(
+        expect.objectContaining({ name: 'started_at' })
+      );
+      expect(db.prepare('SELECT state FROM neo_ask_items').get()).toEqual({ state: 'pending' });
+    } finally {
+      db.close();
+    }
+  });
+
   test('allows a fresh database and rechecks only active merge outcomes once', () => {
     const db = new Database(':memory:');
     try {
