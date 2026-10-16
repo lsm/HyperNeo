@@ -267,6 +267,26 @@ describe('Neo MVP', () => {
     expect(titles.get(id)).toBe('Neo · Renamed');
   });
 
+  test('a project snapshot lists the folders the project owns on every machine', async () => {
+    service.repo.saveProject(project, 0);
+    for (const alias of ['folder:laptop\u0000/w/app', 'folder:imac\u0000/x/app', 'git:root'])
+      sqlite
+        .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+        .run(alias, project.id);
+    expect(await invoke('neo.snapshot')).toMatchObject({
+      value: {
+        projects: [
+          {
+            folders: [
+              { machine: 'laptop', folder: '/w/app' },
+              { machine: 'imac', folder: '/x/app' },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
   test('standing rules start empty, the human adds them, and Neo cannot without a human turn', async () => {
     expect(await invoke('neo.snapshot')).toMatchObject({ value: { standingRules: [] } });
     const root = await service.open(null);
