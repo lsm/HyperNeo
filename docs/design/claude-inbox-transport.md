@@ -22,7 +22,10 @@ The daemon binds a private reply socket in the target inbox directory and
 keeps it listening after sending. Claude replies on a new connection. Caller
 provided message/input UUIDs are stable retry identities; repeated identical
 submissions on the same live inbox share one write result, and changed content
-under the same identity is rejected. This cache is not durable across daemon
+under the same identity is rejected. A failure before attempting a socket write
+can retry with the same frame. Once a write was attempted, a failure is uncertain
+and remains cached to prevent blind duplicate delivery.
+This cache is not durable across daemon
 restarts. Closing cancels pending transport effects and releases the inbox.
 
 `write` returns only `{ written: true }`. It makes no delivery, queue or model

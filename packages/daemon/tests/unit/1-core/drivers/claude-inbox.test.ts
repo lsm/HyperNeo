@@ -241,6 +241,24 @@ describe('openClaudeInbox', () => {
     await expect(inbox.write({ ...input, text: 'different' })).rejects.toThrow('reused');
   });
 
+  test('retries a connection refusal with the same identity while still rejecting changed content', async () => {
+    inbox = await openClaudeInbox(session, (event) => events.push(event));
+    const input = submission();
+    const stale = join(dir, 'stale.sock');
+    await rename(session.socketPath, stale);
+    await new Promise<void>((resolve) => peer.close(() => resolve()));
+    await rename(stale, session.socketPath);
+    await expect(inbox.write(input)).rejects.toThrow();
+    expect(frames).toEqual([]);
+    await expect(inbox.write({ ...input, text: 'different' })).rejects.toThrow('reused');
+    await rm(session.socketPath);
+    await new Promise<void>((resolve) => peer.listen(session.socketPath, resolve));
+    await chmod(session.socketPath, 0o600);
+    expect(await inbox.write(input)).toEqual({ written: true });
+    expect(await inbox.write(input)).toEqual({ written: true });
+    expect(frames).toHaveLength(1);
+  });
+
   test('drops malformed and oversized connections while retaining the listener', async () => {
     inbox = await openClaudeInbox(session, (event) => events.push(event));
     await incoming('{bad}\n');

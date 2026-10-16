@@ -134,24 +134,35 @@ export async function removeOwnedClaudeInboxPath(path: string, bound: Stats): Pr
   }
 }
 
+class UncertainClaudeWrite extends Error {}
+
 function writeClaudeFrame(path: string, frame: string, connections: Set<Socket>): Promise<void> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(path);
     connections.add(socket);
     let written = false;
+    let attempted = false;
     let hold: ReturnType<typeof setTimeout> | undefined;
     socket.setTimeout(IO_TIMEOUT_MS, () =>
       socket.destroy(new Error('Claude inbox write timed out.'))
     );
-    socket.once('error', reject);
+    socket.once('error', (error) =>
+      reject(attempted ? new UncertainClaudeWrite(error.message, { cause: error }) : error)
+    );
     socket.once('close', (failed) => {
       connections.delete(socket);
       clearTimeout(hold);
       if (failed) return;
       if (written) resolve();
-      else reject(new Error('Claude inbox closed before writing.'));
+      else
+        reject(
+          attempted
+            ? new UncertainClaudeWrite('Claude inbox write is uncertain.')
+            : new Error('Claude inbox closed before writing.')
+        );
     });
     socket.once('connect', () => {
+      attempted = true;
       socket.write(frame, (error) => {
         if (error) {
           socket.destroy(error);
@@ -187,7 +198,7 @@ export async function openClaudeInbox(
   claudeInboxAddress(path);
   const connections = new Set<Socket>();
   const sent = new Set<string>();
-  const writes = new Map<string, { frame: string; result: Promise<{ written: true }> }>();
+  const writes = new Map<string, { frame: string; result?: Promise<{ written: true }> }>();
   let closed = false;
   const server = createServer((socket) => {
     connections.add(socket);
@@ -237,19 +248,23 @@ export async function openClaudeInbox(
       if (closed) return Promise.reject(new Error('Claude reply inbox is closed.'));
       const frame = claudeInboxFrame(target, path, submission);
       const existing = writes.get(submission.messageId);
-      if (existing)
-        return existing.frame === frame
-          ? existing.result
-          : Promise.reject(
-              new Error('Claude submission identity was reused for different content.')
-            );
+      if (existing && existing.frame !== frame)
+        throw new Error('Claude submission identity was reused for different content.');
+      if (existing?.result) return existing.result;
       const result = requirePrivatePath(target.socketPath, 'socket')
         .then(() => {
           if (closed) throw new Error('Claude reply inbox is closed.');
           sent.add(submission.messageId);
           return writeClaudeFrame(target.socketPath, frame, connections);
         })
-        .then(() => ({ written: true as const }));
+        .then(() => ({ written: true as const }))
+        .catch((error: unknown) => {
+          if (!(error instanceof UncertainClaudeWrite)) {
+            writes.set(submission.messageId, { frame });
+            sent.delete(submission.messageId);
+          }
+          throw error;
+        });
       writes.set(submission.messageId, { frame, result });
       return result;
     },
