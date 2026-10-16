@@ -90,18 +90,11 @@ function settledAs(
   if (state.kind === 'pr' && state.state !== 'MERGED') return null;
   if (state.kind === 'issue' && (state.state !== 'CLOSED' || !state.done)) return null;
   const merged = state.kind === 'pr' ? 'merged' : `closed as completed by ${state.closedBy}`;
-  if (
-    state.kind === 'pr' &&
-    (since === null ||
-      !Number.isFinite(since) ||
-      state.at === null ||
-      !Number.isFinite(state.at) ||
-      state.at <= since)
-  )
-    return null;
   if (item.check !== CODING_CHECK_PR_MERGED)
     return state.kind === 'pr' || state.closedBy ? merged : 'closed as completed';
   if (since === null || !Number.isFinite(since)) return null;
+  if (state.kind === 'pr' && (state.at === null || !Number.isFinite(state.at) || state.at <= since))
+    return null;
   if (!item.deliveredBy && state.kind === 'pr') return merged;
   const required = (item.deliveredBy ? cardBase(item.deliveredBy) : null) ?? state.defaultBase;
   if (!required) return null;

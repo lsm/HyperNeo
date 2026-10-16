@@ -44,10 +44,11 @@ describe('runMigration385', () => {
         CREATE TABLE neo_asks(id TEXT, status TEXT, pack TEXT);
         CREATE TABLE neo_ask_items(ask_id TEXT, check_kind TEXT, state TEXT, met_by TEXT,
           evidence TEXT, verified_definition_hash TEXT, watch TEXT);
-        INSERT INTO neo_asks VALUES ('active', 'open', 'coding'), ('done', 'achieved', 'coding');
+        INSERT INTO neo_asks VALUES ('active', 'open', 'coding'), ('done', 'achieved', 'coding'), ('human', 'open', 'coding');
         INSERT INTO neo_ask_items VALUES
           ('active', 'coding.pr_merged', 'met', 'daemon', 'old proof', 'old hash', NULL),
           ('active', 'life-admin.confirmed', 'met', 'human', 'words', 'hash', NULL),
+          ('human', 'coding.pr_merged', 'met', 'human', 'Confirmed by the human', 'hash', NULL),
           ('done', 'coding.pr_merged', 'met', 'daemon', 'old proof', 'old hash', NULL),
           ('active', NULL, 'met', 'daemon', 'old watch', 'old hash', '["https://github.com/lsm/HyperNeo/pull/1"]')`);
       runMigration385(db);
@@ -68,6 +69,12 @@ describe('runMigration385', () => {
           .prepare("SELECT state FROM neo_ask_items WHERE check_kind = 'life-admin.confirmed'")
           .get()
       ).toEqual({ state: 'met' });
+      expect(
+        db.prepare("SELECT state, evidence FROM neo_ask_items WHERE ask_id = 'human'").get()
+      ).toEqual({
+        state: 'met',
+        evidence: 'Confirmed by the human',
+      });
       expect(db.prepare("SELECT state FROM neo_ask_items WHERE ask_id = 'done'").get()).toEqual({
         state: 'met',
       });

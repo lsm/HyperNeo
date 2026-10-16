@@ -444,72 +444,76 @@ describe('NeoAskCard', () => {
     expect(card.getAllByRole('button', { name: /: 开始调查$/ })).toHaveLength(1);
   });
 
-  it('preserves Chinese titles, waits for a PR and moves answered questions into Details', () => {
-    const scene = {
-      ...scenes.running[0]!,
-      receipt: { ...scenes.running[0]!.receipt, title: '实现会话归属控制' },
-    };
-    const view = describeAsk(
-      {
-        ...ask('mock', 'open', ['a2']),
-        title: '按会话归属改驱动控制',
-        doneItems: [
-          item('merge', 'pending', {
-            text: '这次的 PR 合并进 dev',
-            check: 'coding.pr_merged',
-            deliveredBy: 'a2',
-          }),
-          item('answered', 'met', {
-            text: '开始这 1 步？',
-            decision: true,
-            metBy: 'human',
-            evidence: 'The human answered: 开始',
-          }),
-        ],
-      },
-      [scene]
-    );
-    const card = render(<NeoAskCard view={view} onOpen={vi.fn()} />);
-    expect(card.getByRole('article', { name: '按会话归属改驱动控制' })).toBeTruthy();
-    expect(card.getByText('实现会话归属控制')).toBeTruthy();
-    expect(card.getByText('等 PR 开出来')).toBeTruthy();
-    expect(card.queryByText(/outcomes verified/)).toBeNull();
-    expect(card.queryByText('开始这 1 步？')).toBeNull();
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(
-      within(card.getByRole('list', { name: 'Answered questions' })).getByText('开始这 1 步？')
-    ).toBeTruthy();
-    expect(card.getByText('The human answered: 开始')).toBeTruthy();
-    const openedCard = testCard(
-      { id: 'a2', status: 'queued', sessionId: 'a2-session' },
-      {
-        pr: {
-          number: '7255',
-          label: 'Checks pending',
-          count: 1,
-          inProgress: true,
-          setback: false,
-          merged: [],
+  it.each([undefined, ['https://github.com/lsm/HyperNeo/issues/7264']])(
+    'preserves Chinese titles and waits for a PR with issue watch %s, with answers in Details',
+    (watch) => {
+      const scene = {
+        ...scenes.running[0]!,
+        receipt: { ...scenes.running[0]!.receipt, title: '实现会话归属控制' },
+      };
+      const view = describeAsk(
+        {
+          ...ask('mock', 'open', ['a2']),
+          title: '按会话归属改驱动控制',
+          doneItems: [
+            item('merge', 'pending', {
+              text: '这次的 PR 合并进 dev',
+              check: 'coding.pr_merged',
+              watch,
+              deliveredBy: 'a2',
+            }),
+            item('answered', 'met', {
+              text: '开始这 1 步？',
+              decision: true,
+              metBy: 'human',
+              evidence: 'The human answered: 开始',
+            }),
+          ],
         },
-      }
-    );
-    card.rerender(
-      <NeoAskCard
-        view={{
-          ...view,
-          scenes: [{ ...scene, label: 'PR #7255 · checks pending · waiting for bot approval' }],
-        }}
-        cards={new Map([['a2', openedCard]])}
-        onOpen={vi.fn()}
-      />
-    );
-    expect(card.queryByText('等 PR 开出来')).toBeNull();
-    expect(card.getAllByText('PR #7255 · checks pending · waiting for bot approval')).toHaveLength(
-      1
-    );
-    expect(card.queryByText(/outcomes verified/)).toBeNull();
-    expect(card.getAllByRole('button', { name: 'Open 实现会话归属控制' })).toHaveLength(1);
-  });
+        [scene]
+      );
+      const card = render(<NeoAskCard view={view} onOpen={vi.fn()} />);
+      expect(card.getByRole('article', { name: '按会话归属改驱动控制' })).toBeTruthy();
+      expect(card.getByText('实现会话归属控制')).toBeTruthy();
+      expect(card.getByText('等 PR 开出来')).toBeTruthy();
+      expect(card.queryByText(/outcomes verified/)).toBeNull();
+      expect(card.queryByText('开始这 1 步？')).toBeNull();
+      fireEvent.click(card.getByRole('button', { name: 'Details' }));
+      expect(
+        within(card.getByRole('list', { name: 'Answered questions' })).getByText('开始这 1 步？')
+      ).toBeTruthy();
+      expect(card.getByText('The human answered: 开始')).toBeTruthy();
+      const openedCard = testCard(
+        { id: 'a2', status: 'queued', sessionId: 'a2-session' },
+        {
+          pr: {
+            number: '7255',
+            label: 'Checks pending',
+            count: 1,
+            inProgress: true,
+            setback: false,
+            merged: [],
+          },
+        }
+      );
+      card.rerender(
+        <NeoAskCard
+          view={{
+            ...view,
+            scenes: [{ ...scene, label: 'PR #7255 · checks pending · waiting for bot approval' }],
+          }}
+          cards={new Map([['a2', openedCard]])}
+          onOpen={vi.fn()}
+        />
+      );
+      expect(card.queryByText('等 PR 开出来')).toBeNull();
+      expect(
+        card.getAllByText('PR #7255 · checks pending · waiting for bot approval')
+      ).toHaveLength(1);
+      expect(card.queryByText(/outcomes verified/)).toBeNull();
+      expect(card.getAllByRole('button', { name: 'Open 实现会话归属控制' })).toHaveLength(1);
+    }
+  );
 
   it('disables option submission while busy', () => {
     const view = describeAsk(ask('w', 'waiting', []), [], {

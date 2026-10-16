@@ -340,6 +340,7 @@ describe('Neo ask event ticks', () => {
         originSessionId: 'neo:root',
         originMessageId: 'm0',
         title: 'Land it',
+        pack: 'coding',
         ask: 'Land the fix',
         doneWhen: '- merged',
         doneSource: 'human',

@@ -213,7 +213,7 @@ function Checklist({
             !item.removed &&
             item.state !== 'met' &&
             item.check === 'coding.pr_merged' &&
-            !item.watch?.length &&
+            !item.watch?.some((url) => /\/pull\/\d+/i.test(url)) &&
             !cards?.get(item.deliveredBy ?? '')?.pr
           }
         />

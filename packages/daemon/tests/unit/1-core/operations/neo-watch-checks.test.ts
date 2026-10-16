@@ -100,6 +100,15 @@ describe('judgeNeoWatchTicks', () => {
     ]);
   });
 
+  test('non-coding PR watches retain their settlement behavior regardless of merge time', () => {
+    const watched = { ...ask([item('i1', [pull(1)])]), pack: 'life-admin' };
+    for (const at of [null, watched.createdAt - 1, watched.createdAt]) {
+      expect(judgeNeoWatchTicks(watched, [{ ...prState(1, 'MERGED'), at }])).toEqual([
+        { id: 'i1', evidence: `Watched: ${pull(1)} merged` },
+      ]);
+    }
+  });
+
   test('leaves met, removed, needs_you and unread items alone', () => {
     const watched = ask([
       item('i1', [pull(1)], { state: 'met' }),
