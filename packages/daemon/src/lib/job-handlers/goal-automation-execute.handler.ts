@@ -1,16 +1,38 @@
+import {
+  requireAutomationGoal,
+  requireActiveAutomationGoal,
+  requireAutomationScope,
+  requireAutomationEvidence,
+  requireEnabledAutomation,
+  requireAutomationThreshold,
+  requireNoActiveAutomationReview,
+  requireUnlockedAutomation,
+} from './goal-automation-execute-admission.ts';
+import type {
+  GoalAutomationExternalEventSnapshot,
+  GoalAutomationExecutePayload,
+  GoalAutomationExecuteResult,
+  AutomationGoal,
+  AutomationScope,
+  AutomationSkip,
+  AutomationFacts,
+} from './goal-automation-execute-admission.ts';
+export type {
+  GoalAutomationExternalEventSnapshot,
+  GoalAutomationExecutePayload,
+  GoalAutomationExecuteResult,
+} from './goal-automation-execute-admission.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { uniqueJobMatchPayload } from '../goals/automation-job-payload.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { EvidenceRef, GoalEvolutionAutomationTriggerKind, SpaceTask } from '@hyperneo/shared';
+import type { EvidenceRef, SpaceTask } from '@hyperneo/shared';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
 import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository.ts';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { EvolutionEpisodeService } from '../evolution/episode-service.ts';
-import {
-  readAutomationPolicyForScope,
-  readCompletedTaskThreshold,
-} from '../goals/automation-policy.ts';
+import { readAutomationPolicyForScope } from '../goals/automation-policy.ts';
 import {
   maxCompletedTaskTimestamp,
   maxEvidenceCursor,
@@ -28,29 +50,6 @@ function automationLockKey(payload: GoalAutomationExecutePayload): string {
   return `${payload.goalId}:${payload.scopeId}:${payload.triggerKind}`;
 }
 
-export interface GoalAutomationExternalEventSnapshot {
-  source: string;
-  topic: string;
-  summary: string;
-  externalUrl?: string;
-  payload: Record<string, unknown>;
-  occurredAt: number;
-  ingestedAt: number;
-}
-
-export interface GoalAutomationExecutePayload extends Record<string, unknown> {
-  goalId: string;
-  scopeId: string;
-  triggerKind: GoalEvolutionAutomationTriggerKind;
-  triggerKey: string;
-  reason: 'task_completed' | 'self_nag' | 'external_event';
-  taskId?: string;
-  scheduleId?: string;
-  externalEventId?: string;
-  externalEvent?: GoalAutomationExternalEventSnapshot;
-  activeReviewRequeueCount?: number;
-}
-
 export interface GoalAutomationExecuteDeps {
   db?: BunDatabase;
   goalRepo: SpaceGoalRepository;
@@ -64,80 +63,59 @@ export interface GoalAutomationExecuteDeps {
   jobQueue?: Pick<JobQueueRepository, 'enqueueUniquePending'>;
 }
 
-export interface GoalAutomationExecuteResult extends Record<string, unknown> {
-  goalId: string;
-  scopeId: string;
-  episodeId: string | null;
-  reviewTaskId: string | null;
-  evidenceCount: number;
-  skipped: boolean;
-  skipReason?:
-    | 'missing_goal'
-    | 'inactive_goal'
-    | 'missing_scope'
-    | 'no_evidence'
-    | 'below_threshold'
-    | 'active_review'
-    | 'disabled';
-  requeued?: boolean;
-}
-
 export async function handleGoalAutomationExecute(
   job: Job,
   deps: GoalAutomationExecuteDeps
 ): Promise<GoalAutomationExecuteResult> {
   const payload = validatePayload(job.payload);
-  const goal = deps.goalRepo.getById(payload.goalId);
-  if (!goal) return skipped(payload, 'missing_goal');
-  if (goal.status !== 'active') return skipped(payload, 'inactive_goal');
-  const scope = deps.evolutionRepo.getScope(payload.scopeId);
-  if (!scope || scope.spaceGoalId !== goal.id || scope.spaceId !== goal.spaceId) {
-    return skipped(payload, 'missing_scope');
+  const admission = (superpipe({})('goal-automation-execute-admission') as PipelineAPI)
+    .input('payload')
+    .pipe(() => deps.goalRepo.getById(payload.goalId), 'payload', 'goal')
+    .pipe(requireAutomationGoal, ['goal'], 'result:admission')
+    .pipe(requireActiveAutomationGoal, ['admission'], 'result:admission')
+    .pipe(() => deps.evolutionRepo.getScope(payload.scopeId), 'payload', 'scope')
+    .pipe(requireAutomationScope, ['scope', 'goal'], 'result:admission')
+    .pipe(
+      (scope, goal) => readAutomationEvidence(deps, payload, scope, goal),
+      ['admission', 'goal'],
+      'facts'
+    )
+    .pipe(requireAutomationEvidence, ['facts'], 'result:admission')
+    .pipe(requireEnabledAutomation, ['admission', 'payload'], 'result:admission')
+    .pipe(requireAutomationThreshold, ['admission', 'payload'], 'result:admission')
+    .pipe(
+      (facts: AutomationFacts) =>
+        payload.triggerKind === 'completed_task_threshold'
+          ? findActiveCompletedTaskReviewTask(deps, facts.scope.id, payload)
+          : null,
+      'admission',
+      'activeReview'
+    )
+    .pipe(
+      requireNoActiveAutomationReview,
+      ['admission', 'payload', 'activeReview'],
+      'result:admission'
+    )
+    .pipe(
+      () =>
+        payload.triggerKind === 'completed_task_threshold' &&
+        activeAutomationLocks.has(automationLockKey(payload)),
+      'payload',
+      'locked'
+    )
+    .pipe(requireUnlockedAutomation, ['admission', 'payload', 'locked'], 'result:admission')
+    .error((error) => {
+      throw error;
+    }, 'error')
+    .end('admission')(payload) as AutomationFacts | AutomationSkip;
+  if ('skipReason' in admission) {
+    return admission.skipReason === 'active_review'
+      ? requeueActiveReview(deps, payload, admission.evidenceCount ?? 0)
+      : skipped(payload, admission.skipReason, admission.evidenceCount);
   }
-  if (payload.externalEvent) {
-    ensureExternalEventEvidence(deps, payload, scope.id);
-  }
-  const cursor =
-    payload.triggerKind === 'completed_task_threshold'
-      ? newestCursor(
-          deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey),
-          deps.cursorRepo.getLatestForTriggerKind(goal.id, scope.id, 'completed_task_threshold')
-        )
-      : deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey);
-  const policy = readAutomationPolicyForScope(scope);
-  const maxEvidence = readMaxEvidence(policy.maxEvidencePerEpisode);
-  const dueEvidence = selectEvidenceAfterCursor(
-    deps.evolutionRepo.listEvidence(scope.id),
-    cursor?.lastEvidenceCreatedAt ?? null,
-    Number.POSITIVE_INFINITY,
-    cursor?.lastEvidenceId ?? null
-  );
-  const evidence = dueEvidence.slice(0, maxEvidence);
-  const triggerEvidence = findTriggerEvidence(dueEvidence, payload);
-  if (evidence.length === 0) {
-    return skipped(payload, 'no_evidence');
-  }
+  const { goal, scope, maxEvidence, dueEvidence, evidence, triggerEvidence } = admission;
   if (payload.triggerKind === 'completed_task_threshold') {
-    if (goal.type !== 'recurring' && policy.completedTaskThreshold === undefined) {
-      return skipped(payload, 'disabled');
-    }
-    const threshold = readCompletedTaskThreshold(policy);
-    const completedTaskIds = new Set(
-      dueEvidence
-        .filter((item) => item.kind === 'task_result' && item.sourceId !== null)
-        .map((item) => item.sourceId as string)
-    );
-    if (!threshold || completedTaskIds.size < threshold) {
-      return skipped(payload, 'below_threshold', dueEvidence.length);
-    }
-    if (findActiveCompletedTaskReviewTask(deps, scope.id, payload)) {
-      return requeueActiveReview(deps, payload, dueEvidence.length);
-    }
-    const lock = automationLockKey(payload);
-    if (activeAutomationLocks.has(lock)) {
-      return requeueActiveReview(deps, payload, dueEvidence.length);
-    }
-    activeAutomationLocks.add(lock);
+    activeAutomationLocks.add(automationLockKey(payload));
   }
 
   try {
@@ -207,6 +185,35 @@ export async function handleGoalAutomationExecute(
       activeAutomationLocks.delete(automationLockKey(payload));
     }
   }
+}
+
+function readAutomationEvidence(
+  deps: GoalAutomationExecuteDeps,
+  payload: GoalAutomationExecutePayload,
+  scope: AutomationScope,
+  goal: AutomationGoal
+) {
+  if (payload.externalEvent) {
+    ensureExternalEventEvidence(deps, payload, scope.id);
+  }
+  const cursor =
+    payload.triggerKind === 'completed_task_threshold'
+      ? newestCursor(
+          deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey),
+          deps.cursorRepo.getLatestForTriggerKind(goal.id, scope.id, 'completed_task_threshold')
+        )
+      : deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey);
+  const policy = readAutomationPolicyForScope(scope);
+  const maxEvidence = readMaxEvidence(policy.maxEvidencePerEpisode);
+  const dueEvidence = selectEvidenceAfterCursor(
+    deps.evolutionRepo.listEvidence(scope.id),
+    cursor?.lastEvidenceCreatedAt ?? null,
+    Number.POSITIVE_INFINITY,
+    cursor?.lastEvidenceId ?? null
+  );
+  const evidence = dueEvidence.slice(0, maxEvidence);
+  const triggerEvidence = findTriggerEvidence(dueEvidence, payload);
+  return { goal, scope, policy, maxEvidence, dueEvidence, evidence, triggerEvidence };
 }
 
 function newestCursor<

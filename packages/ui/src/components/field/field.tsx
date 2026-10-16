@@ -170,13 +170,14 @@ function LabelFn({ as: Tag = 'label', passive = false, children, ...rest }: Labe
 
   const id = useId();
 
+  const setLabelId = fieldCtx?.setLabelId;
   useEffect(() => {
-    if (!fieldCtx) return;
-    fieldCtx.setLabelId(id);
+    if (!setLabelId) return;
+    setLabelId(id);
     return () => {
-      fieldCtx.setLabelId(null);
+      setLabelId(null);
     };
-  }, [id, fieldCtx]);
+  }, [id, setLabelId]);
 
   const handleClick = useCallback(
     (e: MouseEvent) => {
@@ -228,13 +229,15 @@ function DescriptionFn({ as: Tag = 'p', children, ...rest }: DescriptionProps) {
 
   const id = useId();
 
+  const addDescriptionId = fieldCtx?.addDescriptionId;
+  const removeDescriptionId = fieldCtx?.removeDescriptionId;
   useEffect(() => {
-    if (!fieldCtx) return;
-    fieldCtx.addDescriptionId(id);
+    if (!addDescriptionId || !removeDescriptionId) return;
+    addDescriptionId(id);
     return () => {
-      fieldCtx.removeDescriptionId(id);
+      removeDescriptionId(id);
     };
-  }, [id, fieldCtx]);
+  }, [id, addDescriptionId, removeDescriptionId]);
 
   const slot = { disabled: isDisabled };
 
@@ -268,15 +271,19 @@ function FieldErrorFn({ as: Tag = 'p', children, ...rest }: FieldErrorProps) {
 
   const id = useId();
 
+  const incrementInvalid = fieldCtx?.incrementInvalid;
+  const addDescriptionId = fieldCtx?.addDescriptionId;
+  const decrementInvalid = fieldCtx?.decrementInvalid;
+  const removeDescriptionId = fieldCtx?.removeDescriptionId;
   useEffect(() => {
-    if (!fieldCtx) return;
-    fieldCtx.incrementInvalid();
-    fieldCtx.addDescriptionId(id);
+    if (!incrementInvalid || !addDescriptionId || !decrementInvalid || !removeDescriptionId) return;
+    incrementInvalid();
+    addDescriptionId(id);
     return () => {
-      fieldCtx.decrementInvalid();
-      fieldCtx.removeDescriptionId(id);
+      decrementInvalid();
+      removeDescriptionId(id);
     };
-  }, [id, fieldCtx]);
+  }, [id, incrementInvalid, addDescriptionId, decrementInvalid, removeDescriptionId]);
 
   const slot = { disabled: isDisabled };
 

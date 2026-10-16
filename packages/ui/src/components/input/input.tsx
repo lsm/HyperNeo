@@ -31,13 +31,14 @@ function InputFn({
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
 
+  const setControlId = fieldCtx?.setControlId;
   useEffect(() => {
-    if (!fieldCtx) return;
-    fieldCtx.setControlId(id);
+    if (!setControlId) return;
+    setControlId(id);
     return () => {
-      fieldCtx.setControlId(null);
+      setControlId(null);
     };
-  }, [id, fieldCtx]);
+  }, [id, setControlId]);
 
   const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
 
@@ -104,13 +105,14 @@ function TextareaFn({
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
 
+  const setControlId = fieldCtx?.setControlId;
   useEffect(() => {
-    if (!fieldCtx) return;
-    fieldCtx.setControlId(id);
+    if (!setControlId) return;
+    setControlId(id);
     return () => {
-      fieldCtx.setControlId(null);
+      setControlId(null);
     };
-  }, [id, fieldCtx]);
+  }, [id, setControlId]);
 
   const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
 
@@ -177,13 +179,14 @@ function SelectFn({
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
 
+  const setControlId = fieldCtx?.setControlId;
   useEffect(() => {
-    if (!fieldCtx) return;
-    fieldCtx.setControlId(id);
+    if (!setControlId) return;
+    setControlId(id);
     return () => {
-      fieldCtx.setControlId(null);
+      setControlId(null);
     };
-  }, [id, fieldCtx]);
+  }, [id, setControlId]);
 
   const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
 

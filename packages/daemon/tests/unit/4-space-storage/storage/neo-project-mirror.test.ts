@@ -23,7 +23,7 @@ import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
 import { isTempCwd } from '../../../../src/lib/drivers/claude-feed.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository.ts';
-import { planNeoAskQuestion } from '../../../../src/lib/neo/ask-operations.ts';
+import { planNeoAskQuestion } from '../../../../src/lib/neo/ask-plans.ts';
 import { NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE } from '../../../../src/lib/neo/project-merge.ts';
 
 const elsewhere = `not-${hostname()}`;

@@ -110,12 +110,8 @@ import {
   requireNeoAskIdle,
   trackNeoAskIdle,
 } from './ask-idle.ts';
-import {
-  neoAskLiveOutcomeCards,
-  planNeoAskTickStatus,
-  planNeoAskWorkStops,
-  writeNeoAskTickStatus,
-} from './ask-operations.ts';
+import { neoAskLiveOutcomeCards, planNeoAskTickStatus, planNeoAskWorkStops } from './ask-plans.ts';
+import { writeNeoAskTickStatus } from './ask-operations.ts';
 import {
   createNeoAskOriginResolver,
   type NeoAskOrigin,

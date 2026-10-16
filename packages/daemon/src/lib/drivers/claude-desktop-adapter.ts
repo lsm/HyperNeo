@@ -3,6 +3,7 @@ import { CLAUDE_DESKTOP_OPENING, CLAUDE_DESKTOP_RELAY, fillPrompt } from '@hyper
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
@@ -42,6 +43,11 @@ import { matchChatsBy } from './match-chats.ts';
 import { claudeOpenedPrs } from './opened-prs.ts';
 import { readTailLines } from './transcript-tail.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
+import {
+  readClaudeSessionOwner,
+  requireClaudeCliOwner,
+  type ClaudeSessionOwner,
+} from './claude-session-owner.ts';
 
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
@@ -49,7 +55,6 @@ const LIVE_REUSE_MS = 5_000;
 const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
 const REPLY_LIMIT = 4_000;
 const RELAY_TIMEOUT_MS = 120_000;
-const RESUME_SETTLE_MS = 3_000;
 const OPEN_WAIT_MS = 60_000;
 const OPEN_POLL_MS = 2_000;
 const OPENING_MESSAGE = CLAUDE_DESKTOP_OPENING;
@@ -69,6 +74,7 @@ const RecordSchema = z.object({
 
 const LiveSessionSchema = z.object({
   sessionId: z.string(),
+  pid: z.number().int().positive().optional(),
   status: z.string(),
   name: z
     .string()
@@ -79,6 +85,8 @@ const LiveSessionSchema = z.object({
 export type ClaudeDesktopRecord = z.infer<typeof RecordSchema>;
 export interface ClaudeLiveSession {
   sessionId: string;
+  pid?: number;
+  owner?: ClaudeSessionOwner;
   status: string;
   name?: string;
 }
@@ -153,7 +161,10 @@ export async function readClaudeDesktopRecords(
   return (await Promise.all(files.map((path) => readRecord(path, cache)))).flat();
 }
 
-export async function readLiveClaudeSessions(spawn: SpawnFn): Promise<ClaudeLiveSession[]> {
+export async function readLiveClaudeSessions(
+  spawn: SpawnFn,
+  registrationsDir = join(homedir(), '.claude', 'sessions')
+): Promise<ClaudeLiveSession[]> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const proc = spawn(['claude', 'agents', '--json'], { stdout: 'pipe', stderr: 'ignore' });
@@ -162,13 +173,20 @@ export async function readLiveClaudeSessions(spawn: SpawnFn): Promise<ClaudeLive
         proc.kill('SIGKILL');
       } catch {}
     }, LIVE_TIMEOUT_MS);
-    const [output] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    const [output, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    if (code !== 0) throw new Error(`claude agents --json exited with ${code}.`);
     const listed = z.array(z.unknown()).safeParse(JSON.parse(output));
     if (!listed.success) throw new Error('claude agents --json answered in an unknown shape.');
-    return listed.data.flatMap((entry) => {
+    const sessions = listed.data.flatMap((entry) => {
       const live = LiveSessionSchema.safeParse(entry);
       return live.success ? [live.data] : [];
     });
+    return Promise.all(
+      sessions.map(async (live) => ({
+        ...live,
+        owner: await readClaudeSessionOwner(live, registrationsDir),
+      }))
+    );
   } finally {
     clearTimeout(timer);
   }
@@ -576,19 +594,6 @@ export function claudeRelayDelivery(
   return { delivered: line !== undefined, ...(receipt ? { receipt } : {}) };
 }
 
-export function claudeResumeReceipt(
-  lines: readonly string[],
-  message: string,
-  executionId: string
-): ClaudeReceipt | null {
-  const opening = messageOpening(message);
-  const line = lines.find((candidate) => {
-    const entry = parseClaudeEntry(candidate);
-    return !!entry && entry.type === 'user' && !!claudeInputText(entry)?.includes(opening);
-  });
-  return claudeReceipt(line, executionId);
-}
-
 function claudeTurnEnded(entry: ClaudeTranscriptEntry): boolean {
   const stop = (entry.message as { stop_reason?: unknown } | undefined)?.stop_reason;
   return typeof stop === 'string' && stop !== 'tool_use';
@@ -750,84 +755,35 @@ async function relayToLiveSession(
   }
 }
 
-export async function sendClaudeMessage(
+async function sendOwnedClaudeMessage(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
   message: string,
-  deps: ClaudeDesktopAdapterDeps,
-  resumePermissionMode?: 'bypassPermissions'
+  deps: ClaudeDesktopAdapterDeps
 ): Promise<Result<WorkDelivery>> {
   const live = liveSessions.find((session) => session.sessionId === record.cliSessionId);
-  if (live) {
-    const name = live.name;
-    if (!name || liveSessions.filter((session) => session.name === name).length > 1) {
-      return reject('not_delivered', `${record.title} has no unique name to relay a message to.`);
-    }
-    return relayToLiveSession(record, name, message, deps);
+  const name = live?.name;
+  if (!name || liveSessions.filter((session) => session.name === name).length > 1) {
+    return reject('not_delivered', `${record.title} has no unique name to relay a message to.`);
   }
-  return resumeClaudeSession(record, message, deps, resumePermissionMode);
+  return relayToLiveSession(record, name, message, deps);
 }
 
-export async function resumeClaudeSession(
+export const sendClaudeMessage = (superpipe({})('claude-owner-send') as PipelineAPI)
+  .input(['record', 'liveSessions', 'message', 'deps'])
+  .pipe(
+    (record: ClaudeDesktopRecord & { cliSessionId: string }) => record.cliSessionId,
+    'record',
+    'cliSessionId'
+  )
+  .pipe(requireClaudeCliOwner, ['cliSessionId', 'liveSessions'], 'result:outcome')
+  .pipe(sendOwnedClaudeMessage, ['record', 'liveSessions', 'message', 'deps'], 'outcome')
+  .endAsync('outcome') as (
   record: ClaudeDesktopRecord & { cliSessionId: string },
+  liveSessions: readonly ClaudeLiveSession[],
   message: string,
-  deps: ClaudeDesktopAdapterDeps,
-  permissionMode?: 'bypassPermissions'
-): Promise<Result<WorkDelivery>> {
-  const folder = record.cwd ?? record.originCwd;
-  if (!folder || !deps.folderExists(folder)) {
-    return reject(
-      'not_delivered',
-      `${record.title} works in ${folder ?? 'no folder'}, which is gone.`
-    );
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const path = claudeTranscriptPath(deps.projectsDir, record);
-  const before = await transcriptSize(path);
-  try {
-    const proc = deps.spawn(
-      [
-        'claude',
-        '-p',
-        '--resume',
-        record.cliSessionId,
-        ...(permissionMode ? ['--permission-mode', permissionMode] : []),
-        '--',
-        message,
-      ],
-      {
-        cwd: folder,
-        stdout: 'pipe',
-        stderr: 'pipe',
-        detached: true,
-      }
-    );
-    const stdout = new Response(proc.stdout).text().catch(() => '');
-    const stderr = new Response(proc.stderr).text().catch(() => '');
-    const early = await Promise.race([
-      proc.exited.catch(() => -1),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), RESUME_SETTLE_MS);
-      }),
-    ]);
-    if (early === null || early === 0) {
-      const appended = path ? await readLinesAfter(path, before).catch(() => []) : [];
-      const receipt = claudeResumeReceipt(appended, message, record.cliSessionId);
-      return {
-        ok: true,
-        value: receipt ? { delivered: true, receipt } : { delivered: early === 0 },
-      };
-    }
-    return claudeCliFailure(
-      { stdout: await stdout, stderr: await stderr },
-      `claude --resume exited with ${early}.`
-    );
-  } catch (error) {
-    return reject('not_delivered', error instanceof Error ? error.message : String(error));
-  } finally {
-    clearTimeout(timer);
-  }
-}
+  deps: ClaudeDesktopAdapterDeps
+) => Promise<Result<WorkDelivery>>;
 
 const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as PipelineAPI)
   .input(['ref', 'message', 'deps', 'cache'])
@@ -985,13 +941,7 @@ export async function startClaudeSession(
     lastActivityAt: deps.now(),
     permissionMode: appRecord?.permissionMode,
   };
-  const sent = await sendClaudeMessage(
-    { ...record, cliSessionId },
-    live,
-    request.message,
-    deps,
-    'bypassPermissions'
-  );
+  const sent = await sendClaudeMessage({ ...record, cliSessionId }, live, request.message, deps);
   if (!sent.ok) {
     return reject(
       'not_delivered',

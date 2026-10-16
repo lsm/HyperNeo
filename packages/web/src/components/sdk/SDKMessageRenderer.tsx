@@ -39,10 +39,9 @@ import { SDKPromptSuggestionMessage } from './SDKPromptSuggestionMessage.tsx';
 import { SDKRateLimitEvent } from './SDKRateLimitEvent.tsx';
 import { SDKResultMessage } from './SDKResultMessage.tsx';
 import { SDKSystemMessage } from './SDKSystemMessage.tsx';
-import { SDKToolProgressMessage } from './SDKToolProgressMessage.tsx';
 import { SDKToolUseSummaryMessage } from './SDKToolUseSummaryMessage.tsx';
 import { SDKUserMessage } from './SDKUserMessage.tsx';
-import { AuthStatusCard } from './tools/index.ts';
+import { AuthStatusCard, ToolProgressCard } from './tools/index.ts';
 import { SDKResumeChoiceMessage } from './SDKResumeChoiceMessage.tsx';
 import { useChatDisplayMode } from './chat-display-mode.ts';
 import type { MessageReplacementStatus } from '../../lib/sdk-message-replacement';
@@ -347,7 +346,15 @@ function SDKMessageRendererImpl({
     );
   } else if (isSDKToolProgressMessage(sdkMessage)) {
     const toolInput = toolInputsMap?.get((sdkMessage as SDKToolProgressMessageType).tool_use_id);
-    renderedMessage = <SDKToolProgressMessage message={sdkMessage} toolInput={toolInput} />;
+    renderedMessage = (
+      <ToolProgressCard
+        toolName={sdkMessage.tool_name}
+        toolInput={toolInput}
+        elapsedTime={sdkMessage.elapsed_time_seconds}
+        toolUseId={sdkMessage.tool_use_id}
+        parentToolUseId={sdkMessage.parent_tool_use_id || undefined}
+      />
+    );
   } else if (isSDKAuthStatusMessage(sdkMessage)) {
     const authMessage = sdkMessage as SDKAuthStatusMessage;
     renderedMessage = (

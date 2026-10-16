@@ -15,20 +15,24 @@ import {
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
   projectNeoSnapshotAsks,
-  requireNeoAskProject,
   isNeoAskReplay,
   planNeoAskItems,
   planNeoAskEdit,
   planNeoAskTickStatus,
   neoAsksForApproval,
-  requireNeoAskApprovalLapsed,
-  requireNeoAskItemKind,
   isNeoAskHandedOver,
   isNeoHumanQuote,
   isNeoQuoteNaming,
   planNeoAskRestate,
-  requireNeoAskEdit,
   planNeoAskWorkStops,
+  neoAskTitleNamedIn,
+  planNeoProposalBindings,
+} from '../../../../src/lib/neo/ask-plans.ts';
+import {
+  requireNeoAskProject,
+  requireNeoAskApprovalLapsed,
+  requireNeoAskItemKind,
+  requireNeoAskEdit,
   requireNeoAskReceipt,
   requireNeoAskSettleable,
   requireNeoAskSummary,
@@ -40,12 +44,10 @@ import {
   requireNeoWorkAskLive,
   requireNeoWorkAskOwner,
   requireNeoWorkAskLink,
-  neoAskTitleNamedIn,
-  planNeoProposalBindings,
   requireNeoMetReadEvidence,
   requireNeoProposalDelivers,
   requireNeoSettleKeepsOutcomeCards,
-} from '../../../../src/lib/neo/ask-operations.ts';
+} from '../../../../src/lib/neo/ask-guards.ts';
 import {
   driverDoneCheckNote,
   driverNeedsYouNote,
