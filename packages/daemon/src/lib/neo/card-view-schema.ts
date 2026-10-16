@@ -37,6 +37,14 @@ const CardPhase = z.enum([
 ]);
 
 export const NeoCardViewSchema = z.object({
+  controlFailure: z
+    .object({
+      operation: z.enum(['stop', 'withdraw']),
+      reason: z.enum(['unsupported', 'unavailable']),
+      detail: z.string(),
+      at: z.number(),
+    })
+    .optional(),
   waitingFor: z
     .array(
       z.object({

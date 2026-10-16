@@ -244,6 +244,7 @@ export interface NeoCardControlFailure {
 }
 
 export interface NeoCardView {
+  controlFailure?: NeoCardControlFailure;
   waitingFor?: NeoCardWaiting[];
   autoStart?: boolean;
   uncertain?: boolean;
