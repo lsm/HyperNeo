@@ -314,9 +314,7 @@ export function NeoAskCard({
           : 'running';
   const itemActions = neoAskItemActions(view);
   const outcomes = view.items.filter((item) => !isNeoAskQuestionItem(item));
-  const questions = view.items.filter(
-    (item) => isNeoAskQuestionItem(item) && (item.state !== 'needs_you' || item.removed)
-  );
+  const questions = view.items.filter((item) => isNeoAskQuestionItem(item) && item.state === 'met');
   const openControl = (scene: NeoScene) => {
     const target = neoAskOpenTarget({ ...view, scenes: [scene] }, cards);
     if (!target) return null;
