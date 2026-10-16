@@ -404,51 +404,18 @@
   }
 }
 .neo-activity {
-  pointer-events: auto;
   height: 28px;
-  margin: 0 8px 8px;
+  margin: -4px 0 10px;
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 0 4px;
+  padding: 0 4px 6px;
+  border-bottom: 1px solid var(--line);
   color: var(--fg-muted);
   font-size: 12px;
-}
-.neo-ask-summary {
-  pointer-events: auto;
-  margin: 0 8px 4px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 4px;
-  min-width: 0;
-  color: var(--fg-muted);
-  font-size: 12px;
-}
-.neo-ask-summary-links {
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.neo-ask-summary-links::-webkit-scrollbar {
-  display: none;
-}
-.neo-ask-summary-link {
-  flex-shrink: 0;
-  max-width: 14rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--accent);
-}
-.neo-ask-summary-link:hover {
-  text-decoration: underline;
 }
 .neo-activity[hidden] {
-  display: flex;
-  visibility: hidden;
+  display: none;
 }
 .neo-activity-text {
   overflow: hidden;

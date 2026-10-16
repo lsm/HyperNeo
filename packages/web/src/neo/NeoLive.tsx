@@ -35,8 +35,7 @@ import {
 import { neoAwaitingReply, neoBusyWords } from './processing-activity.ts';
 import { neoWorkSummaries, neoWorkSummary } from './public-conversation.ts';
 import { resolveNeoProjectId } from './project-redirects.ts';
-import { revealNeoAsk, revealNeoWork } from './reveal-work.ts';
-import { NeoAskSummaryLine, projectNeoAskSummary } from './NeoAskSummary.tsx';
+import { revealNeoWork } from './reveal-work.ts';
 import { useNeo } from './useNeo.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { publicationConversationId } from './useNeoPublications.ts';
@@ -58,7 +57,6 @@ export function NeoLive() {
   const [chat, setChat] = useState<{ sessionId: string; title: string } | null>(null);
   const closeChat = useCallback(() => setChat(null), []);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
-  const [replyProgress, setReplyProgress] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
   const [quoted, setQuoted] = useState<{
@@ -412,12 +410,6 @@ export function NeoLive() {
     neo.publications.refresh();
   }
 
-  function openAsk(askId: string) {
-    setChat(null);
-    setScenesOpen(true);
-    requestAnimationFrame(() => revealNeoAsk(sceneSheet.current, askId));
-  }
-
   function sceneShown(id: string) {
     return sceneGroups.some(
       (group) =>
@@ -589,7 +581,18 @@ export function NeoLive() {
               publicConversation={publicConversation}
               onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
               onRetryPublic={retryPublicConversation}
-              onProgress={setReplyProgress}
+              busy={neoBusyWords(
+                neo.snapshot?.working ?? [],
+                !!(
+                  connected &&
+                  publicConversation &&
+                  conversationLoaded &&
+                  neo.store.agentState.value.status !== 'waiting_for_input' &&
+                  !neo.store.error.value &&
+                  !scenes?.attention.some((scene) => scene.label === NEO_QUICK_CHOICE_LABEL) &&
+                  neoAwaitingReply(publicConversation.entries)
+                )
+              )}
               pendingAsks={neo.pendingAsks}
               onRetryAsk={(requestId) =>
                 void neo
@@ -773,35 +776,19 @@ export function NeoLive() {
               bottomClass="bottom-full mb-2 pointer-events-auto"
             />
           )}
-          {connected && conversationReady && (
-            <NeoAskSummaryLine
-              summary={projectNeoAskSummary(askGroups, cards)}
-              onOpenAsk={openAsk}
-            />
-          )}
-          <NeoActivity
-            key={sceneScope}
-            redirects={view?.projectRedirects}
-            scenes={(scenes?.running ?? []).filter(
-              (scene) => !askGroups.settledWork.has(scene.ref.id)
-            )}
-            projects={projects}
-            enabled={connected && conversationReady}
-            busy={neoBusyWords(
-              replyProgress,
-              !!(
-                connected &&
-                publicConversation &&
-                conversationLoaded &&
-                neo.store.agentState.value.status !== 'waiting_for_input' &&
-                !neo.store.error.value &&
-                !scenes?.attention.some((scene) => scene.label === NEO_QUICK_CHOICE_LABEL) &&
-                neoAwaitingReply(publicConversation.entries)
-              )
-            )}
-          />
           {ready && neo.sessionId && (
             <NeoComposer
+              activity={
+                <NeoActivity
+                  key={sceneScope}
+                  redirects={view?.projectRedirects}
+                  scenes={(scenes?.running ?? []).filter(
+                    (scene) => !askGroups.settledWork.has(scene.ref.id)
+                  )}
+                  projects={projects}
+                  enabled={connected && conversationReady}
+                />
+              }
               quote={quote}
               onCancelQuote={() => setQuoted(null)}
               key={neo.sessionId}

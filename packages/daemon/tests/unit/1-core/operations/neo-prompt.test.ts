@@ -26,27 +26,19 @@ const NEO_TOOLS = [
 ];
 
 describe('neoCoordinatorNativeTools', () => {
-  test.each(['saas', 'family'])('gives the %s holder questions and every tool', (projectId) => {
-    expect(neoCoordinatorNativeTools(projectId)).toEqual(['AskUserQuestion', ...NEO_TOOLS]);
-  });
-
-  test('gives root Neo the same tools as a topic, without questions', () => {
-    expect(neoCoordinatorNativeTools(null)).toEqual(NEO_TOOLS);
+  test('gives every Neo session the same tools and no SDK question tool', () => {
+    expect(neoCoordinatorNativeTools()).toEqual(NEO_TOOLS);
+    expect(neoCoordinatorNativeTools()).not.toContain('AskUserQuestion');
   });
 });
 
 describe('neoCoordinatorAllowedTools', () => {
   test('approves whole tools for root and topic alike, leaving the line to the guard', () => {
-    expect(neoCoordinatorAllowedTools('saas')).toEqual([
-      'AskUserQuestion',
+    expect(neoCoordinatorAllowedTools()).toEqual([
       ...NEO_TOOLS,
       'mcp__hyperneo-operations__invoke',
     ]);
-    expect(neoCoordinatorAllowedTools(null)).toEqual([
-      ...NEO_TOOLS,
-      'mcp__hyperneo-operations__invoke',
-    ]);
-    expect(neoCoordinatorAllowedTools('saas').some((tool) => tool.startsWith('Bash('))).toBe(false);
+    expect(neoCoordinatorAllowedTools().some((tool) => tool.startsWith('Bash('))).toBe(false);
   });
 });
 
@@ -170,9 +162,9 @@ describe('Neo world briefing delivery', () => {
       const prompt = (options.systemPrompt as { prompt: string }).prompt;
       expect(prompt).toContain(NEO_RESPONSE_FOCUS_BRIEFING);
       expect(prompt).not.toContain('Legacy stored coordinator wording');
-      expect(options.tools).toEqual(neoCoordinatorNativeTools(projectId));
+      expect(options.tools).toEqual(neoCoordinatorNativeTools());
       expect(options.mcpServers).toEqual({ 'hyperneo-operations': operations });
-      expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(projectId));
+      expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools());
       expect(options.settingSources).toEqual([]);
       expect(options.model).toBe('fixture-model');
       expect(options.maxTurns).toBe(17);
@@ -240,7 +232,7 @@ describe('Neo world briefing delivery', () => {
     const prompt = (options.systemPrompt as { prompt: string }).prompt;
     expect(prompt).toContain('daemon.snapshot');
     expect(prompt).not.toContain('Ambient project');
-    expect(options.tools).toEqual(neoCoordinatorNativeTools(projectId));
+    expect(options.tools).toEqual(neoCoordinatorNativeTools());
   });
 
   test.each([null, 'saas'])(
@@ -280,7 +272,7 @@ describe('Neo world briefing delivery', () => {
     expect(root).toContain('then end this input turn without waiting for the human');
     expect(root).toContain('The human’s reply will arrive as a new input');
     expect(holder).not.toContain('then end this input turn without waiting for the human');
-    expect(holder).toContain('Do not call AskUserQuestion during a consultation');
+    expect(holder).not.toContain('AskUserQuestion');
     expect(holder).toContain('When the human speaks to you directly, answer normally');
   });
 });

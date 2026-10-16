@@ -41,32 +41,17 @@ export function NeoActivity({
   scenes,
   projects,
   enabled,
-  busy,
   redirects,
 }: {
   redirects?: NeoSnapshot['projectRedirects'];
   scenes: readonly NeoScene[];
   projects: readonly Project[];
   enabled: boolean;
-  busy?: readonly string[] | null;
 }) {
-  const [word, setWord] = useState(0);
   const [activeKey, setActiveKey] = useState<string | null>(null);
-  const items = [
-    ...(busy?.length ? [{ key: 'neo-busy', text: busy[word % busy.length] }] : []),
-    ...(enabled ? projectActivity(scenes, projects, redirects) : []),
-  ];
+  const items = enabled ? projectActivity(scenes, projects, redirects) : [];
   const fingerprint = JSON.stringify(items.map((item) => item.key));
   const current = items.find((item) => item.key === activeKey) ?? items[0];
-  useEffect(() => {
-    setWord(0);
-    if ((busy?.length ?? 0) < 2) return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'hidden') return;
-      setWord((previous) => previous + 1);
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [busy]);
   useEffect(() => {
     if (items.length < 2) return;
     const timer = window.setInterval(() => {

@@ -59,7 +59,7 @@ describe('neoPrompt', () => {
     );
     expect(holder).toContain('do not call neo.publication.publish for it');
     expect(holder).not.toContain('legacy');
-    expect(holder).toContain('Do not call AskUserQuestion during a consultation');
+    expect(holder).not.toContain('AskUserQuestion');
   });
   test('root answers the human itself from a returned consultation', () => {
     const root = neoPrompt(null);

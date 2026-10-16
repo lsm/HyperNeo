@@ -102,12 +102,12 @@ export function neoCoordinatorDeniedReads(): string[] {
   return neoSecretReadRules();
 }
 
-export function neoCoordinatorNativeTools(projectId: string | null): string[] {
-  return projectId ? ['AskUserQuestion', ...NEO_TOOLS] : [...NEO_TOOLS];
+export function neoCoordinatorNativeTools(): string[] {
+  return [...NEO_TOOLS];
 }
 
-export function neoCoordinatorAllowedTools(projectId: string | null): string[] {
-  return [...neoCoordinatorNativeTools(projectId), `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`];
+export function neoCoordinatorAllowedTools(): string[] {
+  return [...neoCoordinatorNativeTools(), `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`];
 }
 
 export function restrictNeoQuery(
@@ -128,14 +128,14 @@ export function restrictNeoQuery(
     snapshot: false,
   };
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
-  options.tools = neoCoordinatorNativeTools(projectId);
+  options.tools = neoCoordinatorNativeTools();
   options.additionalDirectories = [homedir()];
   options.agents = {};
   delete options.agent;
   options.plugins = [];
   options.settingSources = [];
   options.mcpServers = operations ? { [OPERATIONS_MCP_SERVER_NAME]: operations } : {};
-  options.allowedTools = neoCoordinatorAllowedTools(projectId);
+  options.allowedTools = neoCoordinatorAllowedTools();
   options.disallowedTools = [...(options.disallowedTools ?? []), ...neoCoordinatorDeniedReads()];
   options.hooks = {
     ...options.hooks,
