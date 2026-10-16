@@ -42,6 +42,9 @@ describe('Neo speaking policy delivery', () => {
     (projectId) => {
       const prompt = neoPrompt(projectId);
       expect(prompt).toContain('ordinary assistant text is internal');
+      expect(prompt).toContain(
+        'Deliver direct human answers through neo.publication.publish so they appear in that conversation.'
+      );
       expect(prompt).toContain('neo.publication.publish {requestId,shortText,fullText,links}');
       expect(prompt).toContain(
         'neo.publication.edit {publicationId,requestId,shortText?,fullText?}'
