@@ -56,7 +56,7 @@ describe('Neo MVP', () => {
     expect(prompt).toContain('never render a pretend work item');
     expect(prompt).toContain('Start work button is the approval to execute');
     expect(prompt).toContain('no implicit project, workspace, folder, repository or worktree');
-    expect(prompt).toContain('ask one short clarifying question');
+    expect(prompt).toContain('wait for needed facts or ask for genuinely missing information');
     expect(prompt).toContain('Apply them whenever you propose work and write doneWhen');
     expect(prompt).toContain('neo.rule.save {add?,remove?,from}');
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save');

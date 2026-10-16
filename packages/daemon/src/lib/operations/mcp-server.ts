@@ -17,7 +17,7 @@ export function createOperationMcpServer(
   const tools = [
     tool(
       'invoke',
-      `Invoke a daemon operation by name. Call operations.list with no input to discover operations, then operations.describe with input {name} for its schema. A message.send acceptance means durable mailbox persistence, not an agent reply.${signatures ? `\n\nInput fields of the core operations (? marks optional); call operations.describe only for others:\n${signatures}` : ''}`,
+      `Invoke a daemon operation by name. Core operation input fields are included below when available. operations.list discovers other operations; operations.describe {name} returns their schemas. A message.send acceptance means durable mailbox persistence, not an agent reply.${signatures ? `\n\nInput fields of the core operations (? marks optional); call operations.describe only for others:\n${signatures}` : ''}`,
       OperationMcpInvocationSchema.shape,
       createOperationMcpHandler(registry, resolveCaller, recordRefusal)
     ),

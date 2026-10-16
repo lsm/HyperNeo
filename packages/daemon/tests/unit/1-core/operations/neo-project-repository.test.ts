@@ -54,6 +54,6 @@ describe('neo.snapshot project repository', () => {
 
   test('tells Neo a folder without .git is never evidence of history', () => {
     expect(NEO_LOOK_UP).toContain('A folder without .git');
-    expect(NEO_LOOK_UP).toContain('say you cannot tell, never that nothing happened');
+    expect(NEO_LOOK_UP).toContain('An unreachable repository leaves that history unknown');
   });
 });
