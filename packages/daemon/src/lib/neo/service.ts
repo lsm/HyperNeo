@@ -1,3 +1,4 @@
+import { neoHolderTitle, planNeoHolderTitles } from './holder-title.ts';
 import { hostname } from 'node:os';
 import {
   fillPrompt,
@@ -796,6 +797,9 @@ export class NeoService {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
       this.scheduleTriggerSweep();
+      void Promise.resolve()
+        .then(() => this.alignHolderTitles())
+        .catch((error) => this.log.warn(`Neo holder titles not aligned: ${error}`));
     };
     this.notifyPublicationsChanged = (conversationId) => {
       hub.event('neo.publications.changed', { conversationId });
@@ -1418,6 +1422,27 @@ export class NeoService {
     }
   }
 
+  private async alignHolderTitles(): Promise<void> {
+    if (!this.repo) return;
+    const fixes = planNeoHolderTitles(
+      this.repo.listProjectTitles().flatMap((project) => {
+        const binding = this.repo.getBindingForProject(project.id);
+        const session = binding ? this.db.getSession(binding.sessionId) : null;
+        return binding
+          ? [
+              {
+                sessionId: binding.sessionId,
+                projectTitle: project.title,
+                sessionTitle: session?.title,
+                titleSetBy: session?.metadata?.titleSetBy,
+              },
+            ]
+          : [];
+      })
+    );
+    for (const fix of fixes) await this.sessions.updateSession(fix.sessionId, { title: fix.title });
+  }
+
   private async alignModelPreference(sessionId: string): Promise<void> {
     const preference = this.modelPreference();
     const config = this.db.getSession(sessionId)?.config;
@@ -1526,7 +1551,7 @@ export class NeoService {
       await this.sessions.createSession({
         sessionId: binding.sessionId,
         parentSessionId: rootSession ? root : undefined,
-        title: project ? `Neo · ${project.title}` : 'Neo',
+        title: project ? neoHolderTitle(project.title) : 'Neo',
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {

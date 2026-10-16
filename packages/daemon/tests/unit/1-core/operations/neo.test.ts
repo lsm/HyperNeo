@@ -250,6 +250,32 @@ describe('Neo MVP', () => {
     ).toMatchObject({ value: { projects: [{ context: '' }] } });
   });
 
+  test('a holder session title follows its project title', async () => {
+    service.repo.saveProject(project, 0);
+    const id = await service.open(project.id);
+    const titles = new Map([[id, 'Neo · an old name']]);
+    Object.assign(db, {
+      getSession: (sessionId: string) =>
+        active.has(sessionId) ? { id: sessionId, title: titles.get(sessionId) } : null,
+    });
+    Object.assign(sessions, {
+      updateSession: async (sessionId: string, updates: { title: string }) => {
+        titles.set(sessionId, updates.title);
+      },
+    });
+    await invoke('neo.project.save', { ...project, title: 'Renamed', expectedRevision: 1 });
+    expect(titles.get(id)).toBe('Neo · Renamed');
+    titles.set(id, 'My name');
+    Object.assign(db, {
+      getSession: (sessionId: string) =>
+        active.has(sessionId)
+          ? { id: sessionId, title: titles.get(sessionId), metadata: { titleSetBy: 'user' } }
+          : null,
+    });
+    await invoke('neo.project.save', { ...project, title: 'Again', expectedRevision: 2 });
+    expect(titles.get(id)).toBe('My name');
+  });
+
   test('a project snapshot lists the folders the project owns on every machine', async () => {
     service.repo.saveProject(project, 0);
     for (const alias of ['folder:laptop\u0000/w/app', 'folder:imac\u0000/x/app', 'git:root'])
