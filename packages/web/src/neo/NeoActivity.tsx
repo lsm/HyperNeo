@@ -50,22 +50,37 @@ export function NeoActivity({
   enabled: boolean;
   busy?: readonly string[] | null;
 }) {
-  const [tick, setTick] = useState(0);
+  const [word, setWord] = useState(0);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const items = [
-    ...(busy?.length ? [{ key: 'neo-busy', text: busy[tick % busy.length] }] : []),
+    ...(busy?.length ? [{ key: 'neo-busy', text: busy[word % busy.length] }] : []),
     ...(enabled ? projectActivity(scenes, projects, redirects) : []),
   ];
   const fingerprint = JSON.stringify(items.map((item) => item.key));
-  const current = items.length ? items[Math.floor(tick / 2) % items.length] : undefined;
+  const current = items.find((item) => item.key === activeKey) ?? items[0];
   useEffect(() => {
-    setTick(0);
-    if (items.length < 2 && (busy?.length ?? 0) < 2) return;
+    setWord(0);
+    if ((busy?.length ?? 0) < 2) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
-      setTick((previous) => previous + 1);
+      setWord((previous) => previous + 1);
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [fingerprint, busy]);
+  }, [busy]);
+  useEffect(() => {
+    if (items.length < 2) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      setActiveKey((previous) => {
+        const index = Math.max(
+          0,
+          items.findIndex((item) => item.key === previous)
+        );
+        return items[(index + 1) % items.length].key;
+      });
+    }, 6000);
+    return () => window.clearInterval(timer);
+  }, [fingerprint]);
   return (
     <div
       class="neo-activity"
