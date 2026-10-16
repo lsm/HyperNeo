@@ -58,7 +58,6 @@ describe('claude-desktop start', () => {
     probeFails?: boolean;
     twin?: boolean;
     checkout?: { repo: string; linked: boolean };
-    resumeExit?: number;
     owner?: 'desktop' | 'cli' | 'unknown';
   }) {
     const transcripts = join(dir, 'projects', '-focus-dolmen');
@@ -98,12 +97,7 @@ describe('claude-desktop start', () => {
             `${JSON.stringify({ type: 'user', uuid: 'u-brief', message: { content: '<cross-session-message from="x">\nRaise the body font to 16px.\n</cross-session-message>' } })}\n`
           );
         }
-        const code =
-          args[2] === '--session-id'
-            ? (options.openExit ?? 0)
-            : args[2] === '--resume'
-              ? (options.resumeExit ?? 0)
-              : 0;
+        const code = args[2] === '--session-id' ? (options.openExit ?? 0) : 0;
         return {
           stdout: null,
           stderr: new Response(code ? 'no auth' : '').body,
