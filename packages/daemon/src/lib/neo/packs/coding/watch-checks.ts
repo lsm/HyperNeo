@@ -135,12 +135,14 @@ export function judgeNeoWatchTicks(
             ? Math.min(...starts)
             : null
           : ask.createdAt;
+      const checked =
+        ask.pack === 'coding' && !item.check ? { ...item, check: CODING_CHECK_PR_MERGED } : item;
       const read = watched.map((url) => {
         const state = byKey.get(refKey(url));
         return state
           ? {
               url: state.url,
-              settled: settledAs(state, item, cardBase, since),
+              settled: settledAs(state, checked, cardBase, since),
             }
           : null;
       });

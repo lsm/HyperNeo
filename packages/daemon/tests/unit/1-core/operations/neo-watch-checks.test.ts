@@ -265,6 +265,12 @@ describe('judgeNeoWatchTicks for coding.pr_merged', () => {
       merges: [{ url: pull(1), base: 'dev', at: 999 }],
     });
     expect(judgeNeoWatchTicks(watched, [state], undefined, undefined, () => 1_000)).toEqual([]);
+    const legacy = {
+      ...watched,
+      pack: 'coding',
+      doneItems: [item('i1', [issueUrl(2)], { ...bound, check: null })],
+    };
+    expect(judgeNeoWatchTicks(legacy, [state], undefined, undefined, () => 1_000)).toEqual([]);
   });
 
   test('an unbound watch uses execution kickoff rather than the earlier proposal time', () => {
