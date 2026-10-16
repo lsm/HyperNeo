@@ -45,31 +45,6 @@ export function resolveSubscriptionTarget<T extends WorkflowTargetKey>(
   return current?.agentSessionId ? { ...target, sessionId: current.agentSessionId } : target;
 }
 
-export function resolveLiveDeliveryTarget<T extends WorkflowTargetKey>(
-  executions: readonly NodeExecution[],
-  target: T
-): (T & { sessionId?: string }) | null {
-  const current = resolveCurrentQueueableOrActiveExecution(executions, target);
-  if (!current?.agentSessionId) return null;
-  return { ...target, sessionId: current.agentSessionId };
-}
-
-export function hasTerminalExecutionForTarget(
-  executions: readonly NodeExecution[],
-  target: Pick<WorkflowTargetKey, 'agentName'>
-): boolean {
-  return executions.some(
-    (execution) => execution.agentName === target.agentName && execution.status === 'cancelled'
-  );
-}
-
-export function hasAnyExecutionForTarget(
-  executions: readonly NodeExecution[],
-  target: Pick<WorkflowTargetKey, 'agentName'>
-): boolean {
-  return executions.some((execution) => execution.agentName === target.agentName);
-}
-
 export function isWorkflowTargetOwnedBySpace(
   task: SpaceTask | null,
   run: SpaceWorkflowRun | null,
@@ -127,10 +102,4 @@ export function isQueuedExternalEventExpired(
   ttlMs = DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS
 ): boolean {
   return now - createdAt > ttlMs;
-}
-
-export function buildQueueKey(
-  target: Pick<WorkflowTargetKey, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
-): string {
-  return JSON.stringify([target.workflowRunId, target.taskId, target.nodeId, target.agentName]);
 }

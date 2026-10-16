@@ -1,10 +1,5 @@
 import type { MailboxEntry } from './entry.ts';
 
-export type MailboxSettleOutcome =
-  | { kind: 'consumed' }
-  | { kind: 'requeued'; attempt: number }
-  | { kind: 'dead'; reason: string };
-
 export type MailboxTerminal = 'delivered' | 'dead';
 
 export interface MailboxSettlement {

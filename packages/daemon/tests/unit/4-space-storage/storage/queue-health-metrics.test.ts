@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   ExternalEventQueueMetrics,
   categorizeFailureReason,
-  computeQueueAgeStats,
   type QueueHealthGauges,
 } from '../../../../src/lib/external-events/queue-health-metrics';
 
@@ -234,21 +233,5 @@ describe('categorizeFailureReason', () => {
     ['something_unexpected', 'other'],
   ])('categorizes %s -> %s', (reason, expected) => {
     expect(categorizeFailureReason(reason)).toBe(expected);
-  });
-});
-
-describe('computeQueueAgeStats', () => {
-  test('returns null for an empty set', () => {
-    expect(computeQueueAgeStats([])).toBeNull();
-  });
-
-  test('computes min/max/avg/p95 for a small set', () => {
-    const stats = computeQueueAgeStats([100, 200, 300, 400, 500]);
-    expect(stats).not.toBeNull();
-    expect(stats!.count).toBe(5);
-    expect(stats!.minMs).toBe(100);
-    expect(stats!.maxMs).toBe(500);
-    expect(stats!.avgMs).toBe(300);
-    expect(stats!.p95Ms).toBe(500);
   });
 });

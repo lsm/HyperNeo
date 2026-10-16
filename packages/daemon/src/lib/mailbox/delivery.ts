@@ -1,14 +1,12 @@
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { activatePrompts, ensurePrompt, retryPrompt } from '../agent/message-delivery-outbox.ts';
 import { planMailboxAdmission } from './admission-plan.ts';
 import { parseMailboxEntry, type MailboxEntry } from './entry.ts';
-import { type MailboxSettlement, settleMailboxEntry } from './settlement.ts';
+import { settleMailboxEntry } from './settlement.ts';
 import { mailboxEntryExpired } from './entry.ts';
-
-export type MailboxDeliveryOutcome = MailboxSettlement | { kind: 'failed'; reason: string };
 
 export interface MailboxDeliveryDeps {
   jobQueue: JobQueueRepository;
@@ -22,13 +20,6 @@ export interface MailboxDeliveryDeps {
   publishDeferredStatus?(sessionId: string, dbMessageId: string): Promise<void>;
   scheduleDeferredReplay?(sessionId: string): void | Promise<void>;
   defersFor?(sessionId: string, entry: MailboxEntry): boolean;
-}
-
-export function createMailboxDeadHandler(logError: (message: string) => void) {
-  return (job: Job): void => {
-    const entryId = typeof job.payload.id === 'string' ? job.payload.id : 'unknown';
-    logError(`mailbox: entry ${entryId} dead-lettered: ${job.error ?? 'unknown error'}`);
-  };
 }
 
 function readAdmissionRowid(db: BunDatabase, jobId: string): number | undefined {
