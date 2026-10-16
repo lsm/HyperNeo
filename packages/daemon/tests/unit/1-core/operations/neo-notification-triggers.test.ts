@@ -356,8 +356,8 @@ describe('neoTriggerWatchSessions', () => {
 });
 
 describe('neoTriggerMessageId', () => {
-  test('a retried note keeps its trigger id', () => {
-    expect(neoTriggerMessageId('outcome:a1:x', 1)).toBe('neo-trigger:outcome:a1:x');
+  test('uses the trigger identity without an attempt suffix', () => {
+    expect(neoTriggerMessageId('outcome:a1:x')).toBe('neo-trigger:outcome:a1:x');
   });
 });
 
