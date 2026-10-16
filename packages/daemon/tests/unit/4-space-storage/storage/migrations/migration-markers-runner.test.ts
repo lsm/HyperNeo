@@ -1,52 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/migrations';
 import { reclaimPendingMigrationSpace } from '../../../../../src/storage/schema/migration-space-reclaim';
-import { createLongHorizonAgentTables } from '../../../../../src/storage/schema/long-horizon-agents';
-
-function tableHasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {
-  return !!db
-    .prepare(`SELECT name FROM pragma_table_info('${tableName}') WHERE name = ?`)
-    .get(columnName);
-}
 
 function markerExists(db: BunDatabase, key: string): boolean {
-  return !!db.prepare(`SELECT key FROM migration_markers WHERE key = ?`).get(key);
+  return !!db.prepare('SELECT key FROM migration_markers WHERE key = ?').get(key);
 }
 
-function createBaselineSchemaSentinels(db: BunDatabase): void {
-  db.exec(`
-    CREATE TABLE spaces (id TEXT PRIMARY KEY);
-    CREATE TABLE space_tasks (
-      id TEXT PRIMARY KEY,
-      space_id TEXT NOT NULL,
-      task_number INTEGER NOT NULL,
-      workflow_run_id TEXT,
-      preferred_workflow_id TEXT,
-      goal_id TEXT,
-      evolution_scope_id TEXT,
-      workspace_path TEXT,
-      post_approval_session_id TEXT,
-      created_at INTEGER NOT NULL DEFAULT 0,
-      updated_at INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'open',
-      task_agent_session_id TEXT
-    );
-    CREATE TABLE space_workflows (id TEXT PRIMARY KEY);
-    CREATE TABLE space_workflow_runs (
-      id TEXT PRIMARY KEY,
-      status TEXT NOT NULL DEFAULT 'running'
-    );
-    CREATE TABLE node_executions (
-      id TEXT PRIMARY KEY,
-      workflow_run_id TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
-      completed_at INTEGER,
-      updated_at INTEGER,
-      created_at INTEGER
-    );
-  `);
-  createLongHorizonAgentTables(db);
+function loadSupportedBaseline(db: BunDatabase): void {
+  db.exec(readFileSync(new URL('./fixtures/schema-baseline/v0.41.0.sql', import.meta.url), 'utf8'));
+  db.exec(`INSERT INTO sessions
+    (id, title, created_at, last_active_at, status, config, metadata, type)
+    VALUES ('kept', 'Existing work', '', '', 'active', '{}', '{"kept":true}', 'worker')`);
 }
 
 describe('migration runner markers', () => {
@@ -62,104 +28,69 @@ describe('migration runner markers', () => {
 
   test('does not rerun marked migrations or create another backup', () => {
     let backups = 0;
-
-    const firstReclaims = runMigrations(db, () => {
-      backups++;
-    });
+    const firstReclaims = runMigrations(db, () => backups++);
     expect(backups).toBe(1);
     expect(firstReclaims.length).toBeGreaterThan(0);
     expect(firstReclaims.some((request) => request.migrationKey === 'migration_183')).toBe(true);
     expect(markerExists(db, 'migration_001')).toBe(true);
     expect(markerExists(db, 'migration_157')).toBe(true);
     expect(markerExists(db, 'migration_158')).toBe(true);
-
-    const retryReclaims = runMigrations(db, () => {
-      backups++;
-    });
+    const retryReclaims = runMigrations(db, () => backups++);
     expect(retryReclaims).toEqual(firstReclaims);
     reclaimPendingMigrationSpace(db, retryReclaims);
     expect(runMigrations(db, () => backups++)).toEqual([]);
     expect(backups).toBe(1);
   });
 
-  test('seeds historical markers for databases already migrated through 156', () => {
-    db.exec(`
-      CREATE TABLE sessions (
-        id TEXT PRIMARY KEY,
-        status TEXT NOT NULL DEFAULT 'active',
-        type TEXT,
-        session_context TEXT,
-        archived_at TEXT,
-        acp_session_id TEXT
-      );
-    `);
-    createBaselineSchemaSentinels(db);
+  test('upgrades the oldest supported markers without overwriting existing data', () => {
+    loadSupportedBaseline(db);
+    const historicalMarkers = db.prepare('SELECT * FROM migration_markers ORDER BY key').all() as {
+      key: string;
+      applied_at: number;
+    }[];
     let backups = 0;
-
-    runMigrations(db, () => {
-      backups++;
-    });
-
+    runMigrations(db, () => backups++);
     expect(backups).toBe(1);
-    expect(markerExists(db, 'migration_001')).toBe(true);
-    expect(markerExists(db, 'migration_154')).toBe(true);
-    expect(markerExists(db, 'migration_156')).toBe(true);
-    expect(markerExists(db, 'migration_157')).toBe(true);
-    expect(markerExists(db, 'migration_158')).toBe(true);
-    expect(tableHasColumn(db, 'sessions', 'is_worktree')).toBe(false);
+    for (const marker of historicalMarkers) {
+      expect(db.prepare('SELECT * FROM migration_markers WHERE key = ?').get(marker.key)).toEqual(
+        marker
+      );
+    }
+    expect(markerExists(db, 'migration_239')).toBe(true);
+    expect(db.prepare("SELECT title, metadata FROM sessions WHERE id = 'kept'").get()).toEqual({
+      title: 'Existing work',
+      metadata: '{"kept":true}',
+    });
   });
 
-  test('does not seed historical markers for partial schemas with only late sessions columns', () => {
-    db.exec(`
-      CREATE TABLE sessions (
-        id TEXT PRIMARY KEY,
-        acp_session_id TEXT
-      );
-    `);
+  test('does not mistake a marker-only existing database for a fresh install', () => {
+    db.exec('CREATE TABLE migration_markers (key TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)');
+    db.exec("INSERT INTO migration_markers VALUES ('migration_195', 1)");
     let backups = 0;
-
     expect(() =>
       runMigrations(db, () => {
         backups++;
+        expect(
+          db.prepare("SELECT name FROM sqlite_schema WHERE name = 'sessions'").get()
+        ).toBeNull();
+        throw new Error('Stop before the first pending legacy migration');
       })
-    ).toThrow();
-
+    ).toThrow('Stop before the first pending legacy migration');
     expect(backups).toBe(1);
-    expect(markerExists(db, 'migration_001')).toBe(true);
-    expect(markerExists(db, 'migration_029')).toBe(false);
+    expect(db.prepare('SELECT * FROM migration_markers').all()).toEqual([
+      { key: 'migration_195', applied_at: 1 },
+    ]);
   });
 
-  test('seeds through 157 and runs the next pending migration', () => {
-    db.exec(`
-      CREATE TABLE sessions (
-        id TEXT PRIMARY KEY,
-        status TEXT NOT NULL DEFAULT 'active',
-        type TEXT,
-        session_context TEXT,
-        archived_at TEXT,
-        acp_session_id TEXT
-      );
-      CREATE TABLE migration_markers (
-        key TEXT PRIMARY KEY,
-        applied_at INTEGER NOT NULL
-      );
-      INSERT INTO migration_markers (key, applied_at)
-      VALUES
-        ('m154_legacy_long_horizon_agent_data', 1),
-        ('m157_archive_terminal_space_task_worker_sessions', 1);
-    `);
-    createBaselineSchemaSentinels(db);
-    let backups = 0;
-
-    runMigrations(db, () => {
-      backups++;
-    });
-
-    expect(backups).toBe(1);
+  test('does not recreate a supported database missing its first historical marker', () => {
+    loadSupportedBaseline(db);
+    db.exec("DELETE FROM migration_markers WHERE key = 'migration_001'");
+    runMigrations(db, () => {});
     expect(markerExists(db, 'migration_001')).toBe(true);
-    expect(markerExists(db, 'migration_155')).toBe(true);
-    expect(markerExists(db, 'migration_157')).toBe(true);
-    expect(markerExists(db, 'migration_158')).toBe(true);
-    expect(tableHasColumn(db, 'sessions', 'is_worktree')).toBe(false);
+    expect(markerExists(db, 'migration_238')).toBe(true);
+    expect(markerExists(db, 'migration_239')).toBe(true);
+    expect(db.prepare("SELECT title FROM sessions WHERE id = 'kept'").get()).toEqual({
+      title: 'Existing work',
+    });
   });
 });

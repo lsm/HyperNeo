@@ -1,3 +1,4 @@
+import baselineSchema from './baseline-v041.json' with { type: 'json' };
 import { runMigration370 } from './m370-neo-project-merges.ts';
 import { runMigration371 } from './m371-neo-work-admission-claims.ts';
 import { runMigration372 } from './m372-neo-ask-item-removed-reason.ts';
@@ -888,49 +889,27 @@ function runMarkedMigration(
 }
 
 function seedHistoricalMigrationMarkers(db: BunDatabase): void {
-  if (hasMigrationMarker(db, migrationMarkerKey(1))) return;
-
-  const alreadyRanMigration155 = hasMigrationMarker(db, 'm154_legacy_long_horizon_agent_data');
-  const alreadyRanMigration157 = hasMigrationMarker(
-    db,
-    'm157_archive_terminal_space_task_worker_sessions'
-  );
-  const hasBaselineSchema = hasCurrentBaselineSchema(db);
-  const currentThrough =
-    alreadyRanMigration157 && hasBaselineSchema ? 157 : hasBaselineSchema ? 156 : 0;
-
-  if (currentThrough === 0) return;
-
-  for (let version = 1; version <= currentThrough; version++) {
-    if (version === 155 && !alreadyRanMigration155) continue;
-    markMigration(db, migrationMarkerKey(version));
-  }
-  markMigration(db, 'migration_room_cleanup');
+  if (db.prepare('SELECT 1 FROM migration_markers LIMIT 1').get() || hasExistingDatabaseSchema(db))
+    return;
+  db.transaction(() => {
+    for (const sql of baselineSchema) db.exec(sql);
+    for (let version = 1; version <= 238; version++) markMigration(db, migrationMarkerKey(version));
+    markMigration(db, 'migration_room_cleanup');
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO external_event_extension_configs
+       (source, globally_enabled, capabilities_json, secrets_ref, settings_json, created_at, updated_at)
+       VALUES ('github', 1, '{"webhooks":true,"polling":false,"rpcConfig":true}', NULL, '{}', ?, ?)`
+    ).run(now, now);
+  })();
 }
 
-function hasCurrentBaselineSchema(db: BunDatabase): boolean {
-  return (
-    tableExists(db, 'sessions') &&
-    tableHasColumn(db, 'sessions', 'acp_session_id') &&
-    tableHasColumn(db, 'sessions', 'status') &&
-    tableHasColumn(db, 'sessions', 'type') &&
-    tableHasColumn(db, 'sessions', 'session_context') &&
-    tableHasColumn(db, 'sessions', 'archived_at') &&
-    tableExists(db, 'spaces') &&
-    tableExists(db, 'space_long_horizon_agents') &&
-    tableExists(db, 'space_tasks') &&
-    tableHasColumn(db, 'space_tasks', 'status') &&
-    tableHasColumn(db, 'space_tasks', 'task_agent_session_id') &&
-    tableExists(db, 'space_workflows') &&
-    tableExists(db, 'space_workflow_runs') &&
-    tableHasColumn(db, 'space_workflow_runs', 'status') &&
-    tableExists(db, 'node_executions') &&
-    tableHasColumn(db, 'node_executions', 'workflow_run_id') &&
-    tableHasColumn(db, 'node_executions', 'status') &&
-    tableHasColumn(db, 'node_executions', 'completed_at') &&
-    tableHasColumn(db, 'node_executions', 'updated_at') &&
-    tableHasColumn(db, 'node_executions', 'created_at')
-  );
+function hasExistingDatabaseSchema(db: BunDatabase): boolean {
+  return !!db
+    .prepare(
+      `SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' AND name != 'migration_markers' LIMIT 1`
+    )
+    .get();
 }
 
 export function runMigration94(db: BunDatabase): void {
