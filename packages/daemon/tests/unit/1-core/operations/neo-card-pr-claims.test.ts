@@ -400,6 +400,38 @@ describe('PRs the worker session opened', () => {
   });
 });
 
+describe('a PR its worker session subscribes to', () => {
+  test('is named by the card like its follow, once', () => {
+    const candidates = planNeoCardPrCandidates({
+      window: { start: 0, end: null },
+      report: null,
+      follows: pull(5),
+      subscribed: [pull(5), pull(6)],
+      branch: [],
+      stored: [],
+    });
+    expect(candidates.map((item) => [item.url, item.claim])).toEqual([
+      [pull(5), 'named'],
+      [pull(6), 'named'],
+    ]);
+  });
+
+  test('stays named once its subscription ends and only the stored PR names it', () => {
+    const card = { id: 'card', createdAt: 100, title: 'Ship', instruction: 'Ship it' };
+    const scope = { window: { start: 0, end: null }, onBranch: false };
+    const owned = planNeoCardPrOwnership(
+      card,
+      [{ url: pull(5), claim: 'mentioned', scope }],
+      [claim({ workId: 'card', urlKey: pull(5).toLowerCase(), claim: 'named' })],
+      300
+    );
+    expect(owned.map((item) => item.claim)).toEqual(['named']);
+    expect(keepNeoCardPrReads(card, owned, [pr(5)]).kept.map((item) => item.url)).toEqual([
+      pull(5),
+    ]);
+  });
+});
+
 describe('a PR the card follows', () => {
   const follower = { id: 'follow-up', createdAt: 300 };
   const opener = {

@@ -35,13 +35,17 @@ export function planNeoCardPrCandidates(input: {
   window?: PrWindow | null;
   report: string | null;
   follows?: string | null;
+  subscribed?: readonly string[];
   branch: readonly string[];
   opened?: readonly string[];
   stored: readonly { url: string }[];
   mentioned?: readonly string[];
 }): NeoCardPrCandidate[] {
   const pr = input.follows ? parsePrUrl(input.follows) : null;
-  const followed = pr ? [`https://${pr.host}/${pr.owner}/${pr.repo}/pull/${pr.number}`] : [];
+  const followed = [
+    ...(pr ? [`https://${pr.host}/${pr.owner}/${pr.repo}/pull/${pr.number}`] : []),
+    ...(input.subscribed ?? []),
+  ];
   const named = new Set(followed.map(key));
   const onBranch = new Set(input.branch.map(key));
   const opened = new Set((input.opened ?? []).map(key));
@@ -156,7 +160,7 @@ export function planNeoCardPrOwnership(
     const prior = mine && isRanked(mine) ? mine : undefined;
     const claim =
       prior &&
-      (prior.scoped || candidate.scope === undefined) &&
+      (prior.scoped || prior.claim === 'named' || candidate.scope === undefined) &&
       RANK[prior.claim] < RANK[candidate.claim]
         ? prior.claim
         : candidate.claim;

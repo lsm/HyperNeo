@@ -41,6 +41,8 @@ import {
 import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
+import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
+import { pullRequestUrlOfTopic } from '../github/parse-pr-url.ts';
 import { NeoCardPrRelayRepository } from '../../storage/repositories/neo-card-pr-relay-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
@@ -495,6 +497,7 @@ export class NeoService {
   readonly dependencies: NeoDependencyRepository;
   readonly workPrs: NeoWorkPrRepository;
   readonly cardEvents: NeoCardEventSubscriptionRepository;
+  private readonly sessionSubscriptions: SessionEventSubscriptionRepository;
   private readonly sessionEvents: SessionExternalEventStore;
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
   readonly workPrClaims: NeoWorkPrClaimRepository;
@@ -885,6 +888,7 @@ export class NeoService {
     );
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
+    this.sessionSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
     this.cardPrRelays = new NeoCardPrRelayRepository(db.getDatabase());
     this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
@@ -3559,10 +3563,18 @@ export class NeoService {
         : null;
     const window = outcome ? readDriverCardExchange(outcome, sent) : null;
     const cwd = currentCodingExecutionDirectory(ref, outcome, hostname(), window?.current === true);
+    const worker = neoCardWorkerSession(planNeoCardSend({ work, ref }));
+    const startedAt = this.driverTargets.readStartedAt(work.id) ?? work.createdAt;
     return planNeoCardPrCandidates({
       window,
       report: work.report,
       follows: work.follows,
+      subscribed: worker
+        ? this.sessionSubscriptions
+            .listBySession(worker)
+            .filter((row) => row.createdAt >= startedAt)
+            .flatMap((row) => pullRequestUrlOfTopic(row.topic) ?? [])
+        : [],
       branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),
       opened: this.cardOpenedPrs.get(work.id) ?? [],
       stored: stored?.prs ?? [],
