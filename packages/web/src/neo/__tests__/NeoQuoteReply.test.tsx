@@ -191,9 +191,14 @@ function deferredSend() {
 }
 
 describe('Neo quote reply through live chat and durable intake', () => {
-  it.each([false, true])(
-    'replies to an open question through the composer with desktop=%s',
-    async (desktop) => {
+  it.each([
+    { desktop: false, draft: '' },
+    { desktop: true, draft: '' },
+    { desktop: false, draft: 'My existing draft' },
+    { desktop: true, draft: 'My existing draft' },
+  ])(
+    'replies to an open question with desktop=$desktop and draft="$draft"',
+    async ({ desktop, draft }) => {
       vi.stubGlobal('matchMedia', (query: string) => ({
         matches: query === '(min-width: 1120px)' && desktop,
         addEventListener() {},
@@ -238,7 +243,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
         };
       });
       const input = await open();
-      type('My existing draft');
+      type(draft);
       quote('You');
       const sheet = screen.queryByRole('button', { name: /^Your work/ });
       if (sheet) fireEvent.click(sheet);
@@ -251,15 +256,16 @@ describe('Neo quote reply through live chat and durable intake', () => {
       expect(screen.getByRole('region', { name: /^Replying to Neo:/ }).textContent).toContain(
         'Which repo?'
       );
-      expect(input.value).toBe('My existing draft');
+      expect(input.value).toBe(draft);
       expect(scrollTo).toHaveBeenCalledWith({ top: 1600, behavior: 'smooth' });
       expect(intoView).toHaveBeenCalledWith({ block: 'nearest' });
       if (sheet) expect(sheet.getAttribute('aria-expanded')).toBe('false');
       expect(calls()).toHaveLength(0);
+      if (!draft) type('Use lsm/HyperNeo.');
       submit();
       await waitFor(() => expect(calls()).toHaveLength(1));
       expect(calls()[0][1].input.content).toBe(
-        'Replying to Neo:\n> Which repo?\n\nMy existing draft'
+        `Replying to Neo:\n> Which repo?\n\n${draft || 'Use lsm/HyperNeo.'}`
       );
     }
   );
