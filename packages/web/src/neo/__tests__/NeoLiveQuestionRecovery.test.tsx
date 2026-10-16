@@ -211,7 +211,7 @@ describe('NeoLive native question failure attention', () => {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(select).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole('button', { name: /Submit Response|Send answer/ })).toBeNull();
-    fireEvent.click(within(attention()).getByRole('button', { name: 'Answer in chat' }));
+    fireEvent.click(within(attention()).getByRole('button', { name: 'Open chat' }));
     expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('worker-A');
     expect(request.mock.calls.some(([method]) => method === 'question.respond')).toBe(false);
     expect(request.mock.calls.some(([method]) => method === 'operation.invoke')).toBe(false);

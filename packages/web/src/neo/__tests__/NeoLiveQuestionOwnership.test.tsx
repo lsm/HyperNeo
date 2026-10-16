@@ -215,7 +215,7 @@ describe('NeoLive public question ownership', () => {
     fireEvent.input(screen.getByRole('textbox', { name: 'Composer draft' }), {
       target: { value: 'Composer stays' },
     });
-    fireEvent.click(within(card('a')).getByRole('button', { name: 'Answer in chat' }));
+    fireEvent.click(within(card('a')).getByRole('button', { name: 'Open chat' }));
     expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('worker-a');
     expect(
       (screen.getByRole('textbox', { name: 'Composer draft' }) as HTMLTextAreaElement).value

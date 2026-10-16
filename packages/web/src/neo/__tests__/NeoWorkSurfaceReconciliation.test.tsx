@@ -135,9 +135,9 @@ describe('original work surface reconciled with the live scenes', () => {
     expect(screen.getAllByRole('article', { name: 'Draft the agenda', hidden: true })).toHaveLength(
       1
     );
-    expect(screen.getAllByRole('button', { name: 'Start work' })).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
-    expect(act).toHaveBeenCalledExactlyOnceWith('work', 'start');
+    expect(screen.getAllByRole('button', { name: 'Open chat' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
+    expect(act).not.toHaveBeenCalled();
   });
 
   it('opens the work chat without firing a native action and preserves the composer', () => {
@@ -157,14 +157,15 @@ describe('original work surface reconciled with the live scenes', () => {
     );
   });
 
-  it('keeps orphan decisions on their actionable scene, not an empty projects panel', () => {
+  it('keeps orphan work on its scene with a session opener', () => {
     const { act } = mount('ask', false);
     expect(screen.queryByRole('button', { name: /Work in flight|Your projects/ })).toBeNull();
     expect(screen.queryByRole('complementary', { name: 'Your projects' })).toBeNull();
     const attention = screen.getByRole('region', { name: 'Needs your attention' });
     expect(within(attention).getByRole('article', { name: 'Draft the agenda' })).toBeTruthy();
-    fireEvent.click(within(attention).getByRole('button', { name: 'Decline' }));
-    expect(act).toHaveBeenCalledExactlyOnceWith('work', 'cancel');
+    expect(within(attention).getByRole('button', { name: 'Open chat' })).toBeTruthy();
+    expect(within(attention).queryByRole('button', { name: 'Decline' })).toBeNull();
+    expect(act).not.toHaveBeenCalled();
   });
 
   it('the real Neo entry owns one viewport hook through keyboard resize and cleanup', async () => {
