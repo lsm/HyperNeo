@@ -398,6 +398,24 @@ function agentPromptText(queryOptions: Options): string[] {
   ].filter((text): text is string => !!text?.trim());
 }
 
+export async function acpPromptContext(
+  hooks: NonNullable<Options['hooks']>['UserPromptSubmit'],
+  sessionId: string
+): Promise<AcpContentBlock[]> {
+  const context: string[] = [];
+  for (const callback of (hooks ?? []).flatMap((matcher) => matcher.hooks)) {
+    const output = await callback(
+      { hook_event_name: 'UserPromptSubmit', session_id: sessionId } as never,
+      undefined,
+      { signal: new AbortController().signal }
+    );
+    const specific = (output as { hookSpecificOutput?: { additionalContext?: string } })
+      .hookSpecificOutput;
+    if (specific?.additionalContext) context.push(specific.additionalContext);
+  }
+  return context.map((text) => ({ type: 'text', text }));
+}
+
 function acpInstructionBlocks(queryOptions: Options): AcpContentBlock[] {
   const text = [...systemPromptText(queryOptions.systemPrompt), ...agentPromptText(queryOptions)]
     .map((part) => part.trim())
@@ -518,6 +536,7 @@ export class AcpQueryRunner {
     let acpMcpServers: AcpMcpServerConfig[] = [];
     let cwd: string = process.cwd();
     let instructionBlocks: AcpContentBlock[] = [];
+    let promptHooks: NonNullable<Options['hooks']>['UserPromptSubmit'] = [];
     let prependInstructionsToNextPrompt = false;
     let startupHandshakeActive = true;
     let command: string;
@@ -707,6 +726,7 @@ export class AcpQueryRunner {
             cwd = workspace ?? process.cwd();
             assertActiveAcpStartup();
             instructionBlocks = acpInstructionBlocks(queryOptions);
+            promptHooks = queryOptions.hooks?.UserPromptSubmit ?? [];
             const hasInstructionBlocks = instructionBlocks.length > 0;
             const hasPriorAcpTurn = (session.metadata?.messageCount ?? 0) > 0;
             prependInstructionsToNextPrompt =
@@ -959,9 +979,12 @@ export class AcpQueryRunner {
         }
 
         assertActiveAcpStartup();
-        const promptContent = prependInstructionsToNextPrompt
-          ? [...instructionBlocks, ...toAcpPromptContent(message)]
-          : toAcpPromptContent(message);
+        const promptContext = await acpPromptContext(promptHooks, session.id);
+        const promptContent = [
+          ...(prependInstructionsToNextPrompt ? instructionBlocks : []),
+          ...promptContext,
+          ...toAcpPromptContent(message),
+        ];
         const shouldPersistInstructionsSent = prependInstructionsToNextPrompt;
         prependInstructionsToNextPrompt = false;
         let submitted = false;
