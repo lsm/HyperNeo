@@ -162,7 +162,7 @@ export function createNeoCrossProjectOperation(service: NeoService) {
   return defineOperation({
     name: 'neo.projects.dispatch',
     description:
-      'Split the current human request across its owning projects. Quote the human exactly in each part and give only that owner its instruction. Parts must cover every known owner. Returns one durable group; holders return privately and root receives all results together for one final publication. Identical retries reuse the group.',
+      'Split the current human request across its owning projects. Quote the human exactly in each part and give only that owner its instruction. Parts must cover every known owner. Returns one durable group; holders return privately and root receives every recorded result together. Identical retries reuse the group.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

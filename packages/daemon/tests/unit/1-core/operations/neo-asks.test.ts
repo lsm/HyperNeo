@@ -4342,18 +4342,16 @@ describe('neoPrompt', () => {
     expect(prompt).toContain('neo.snapshot returns waitingOnHuman');
     expect(neoPrompt('book-club')).toContain('File work only under asks you opened yourself');
     expect(prompt).toContain('save it straight away with neo.rule.save');
-    expect(prompt).toContain('Never ask whether to save it.');
     expect(prompt).toContain('or from precedent: what done meant for the same kind of work');
     expect(prompt).toContain('corrects you with something lasting');
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save as a rule');
   });
 
-  test('answers card state from the snapshot’s cards, never from work.find', () => {
-    const prompt = neoPrompt(null);
-    expect(prompt).toContain(
-      "Answer what cards or work are running, done or stuck from neo.snapshot's cards (phase and label), never from work.find"
+  test('distinguishes card state from discovered sessions as facts', () => {
+    expect(neoPrompt(null)).toContain(
+      'Neo snapshot cards expose their phase and label; work.find exposes sessions and places'
     );
-    expect(prompt).toContain('is not a card');
+    expect(neoPrompt(null)).toContain('A snapshot marked omitted is incomplete');
   });
 
   test('carries the enabled packs and their guidance, and keeps the core prompt free of coding examples', () => {
@@ -4500,18 +4498,13 @@ describe('neoPrompt dropped items', () => {
   });
 });
 
-describe('neoPrompt stale failures', () => {
-  test('tells Neo to re-check an old failure before repeating it', () => {
+describe('neoPrompt evidence context', () => {
+  test('presents reports and external state as facts rather than a speaking protocol', () => {
     expect(neoPrompt(null)).toContain(
-      'before you tell the human something is still broken, or skip or refuse work because of it, check it again now'
+      'External state may have changed since a report or prior read'
     );
-  });
-});
-
-describe('neoPrompt reply length', () => {
-  test('keeps shortText to the outcome and the next action', () => {
     expect(neoPrompt(null)).toContain(
-      'shortText is one or two short sentences: the outcome for what they asked'
+      'shortText is its preview and fullText is its expanded content'
     );
   });
 });

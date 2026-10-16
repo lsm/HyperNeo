@@ -190,6 +190,15 @@ describe('consultation runtime', () => {
         }
       );
       agents.push(agent);
+      if (kind !== 'worker') {
+        const description = agent.createNeoTurnMcpServer(() => undefined).tools[0].description;
+        const signature = (name: string) =>
+          description.split('\n').find((line) => line.startsWith(`${name} {`));
+        expect(signature('neo.publication.publish')).toContain('requestId: string');
+        expect(signature('neo.publication.edit')).toContain('requestId: string');
+        expect(signature('neo.publication.edit')).toContain('publicationId: string');
+        expect(description).not.toContain('Call operations.list with no input');
+      }
       const options = agent.optionsBuilder.addSessionStateOptions(
         await agent.optionsBuilder.build()
       );

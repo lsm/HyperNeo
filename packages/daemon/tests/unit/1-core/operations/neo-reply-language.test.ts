@@ -1,39 +1,27 @@
 import { describe, expect, test } from 'bun:test';
+import { NEO_SPEAKING_POLICY } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
-describe('Neo reply language guidance', () => {
+describe('Neo speaking context', () => {
   test.each([null, 'mixed-name-project'])(
-    'rendered prompt keeps human language distinct from names for %j',
+    'keeps human answers and event silence distinct for %j',
     (projectId) => {
       const prompt = neoPrompt(projectId);
-      expect(prompt).toContain("Choose the reply language from the human question's phrasing");
-      expect(prompt).toContain('not its project\nnames, tool names, or these English instructions');
-      expect(prompt).toContain('This also applies to a brief\nacknowledgement');
-      expect(prompt).toContain(
-        "use the originating human ask's\nlanguage, not the latest unrelated ask"
-      );
-      expect(prompt).toContain('An explicitly requested output language\ntakes precedence');
-      expect(prompt).toContain('not prescribed wording or fixed modes');
+      expect(prompt).toContain(NEO_SPEAKING_POLICY);
+      expect(prompt).toContain('Answer every direct human question');
+      expect(prompt).toContain('On event wakes, stay silent unless');
       expect(prompt).not.toContain('Always answer in Chinese');
       expect(prompt).not.toContain('Always answer in English');
+      expect(prompt).not.toContain('one or two conversational sentences');
+      expect(prompt).not.toContain('A refused publication says why; end the turn');
     }
   );
 
-  test('language refinement preserves the different root and holder roles', () => {
-    const root = neoPrompt(null);
+  test('retains root and holder context boundaries', () => {
+    expect(neoPrompt(null)).toContain('Detailed context belongs to the holder');
     const holder = neoPrompt('mixed-name-project');
-    expect(root).toContain('Native question cards are not available to root Neo');
-    expect(root).toContain('A new message is NOT a new project');
-    expect(holder).toContain('You are the context holder for project');
-    expect(holder).toContain('The human sees which project answered each message');
-    expect(holder).not.toContain('never sees holders');
-    expect(holder).toContain("Reply in the language of the user's latest message.");
-    expect(holder).not.toContain('分身');
+    expect(holder).toContain('context holder for project "mixed-name-project"');
     expect(holder).toContain('You cannot consult other holders');
-    for (const prompt of [root, holder]) {
-      expect(prompt).toContain('Respond to the current input, not the whole visible backlog');
-      expect(prompt).toContain('one or two conversational sentences');
-      expect(prompt).toContain('You and the project holders NEVER execute worker jobs directly');
-    }
+    expect(holder).toContain('NEVER execute worker jobs directly');
   });
 });

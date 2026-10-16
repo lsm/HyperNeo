@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { HookInput, Options } from '@anthropic-ai/claude-agent-sdk';
-import { NEO_CAPABILITIES_BRIEFING, NEO_RESPONSE_FOCUS_BRIEFING } from '@hyperneo/prompts';
+import { NEO_CAPABILITIES_BRIEFING, NEO_SPEAKING_POLICY } from '@hyperneo/prompts';
 import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
 import { FindWorkResultSchema } from '../../../../src/lib/drivers/find-operation.ts';
 import { ReadWorkInputSchema } from '../../../../src/lib/drivers/read-operation.ts';
@@ -94,36 +94,18 @@ describe('restrictNeoQuery guard', () => {
 });
 
 describe('Neo world briefing delivery', () => {
-  test('loads a bounded authored response-focus fragment as plain text', () => {
-    expect(NEO_RESPONSE_FOCUS_BRIEFING).toContain('Respond to the current input');
-    expect(NEO_RESPONSE_FOCUS_BRIEFING.length).toBeLessThan(2000);
-    expect(NEO_RESPONSE_FOCUS_BRIEFING).not.toContain('id: NEO_RESPONSE_FOCUS_BRIEFING');
-    expect(NEO_RESPONSE_FOCUS_BRIEFING).not.toContain('<p>');
+  test('loads the speaking policy as plain text', () => {
+    expect(NEO_SPEAKING_POLICY.split('\n')).toHaveLength(3);
+    expect(NEO_SPEAKING_POLICY).not.toContain('id: NEO_SPEAKING_POLICY');
+    expect(NEO_SPEAKING_POLICY).not.toContain('<p>');
   });
 
   test.each([null, 'research', 'family'])(
-    'ends the composed prompt with request focus for %s',
+    'includes the same speaking policy once for %s',
     (projectId) => {
       const prompt = neoPrompt(projectId);
-      expect(prompt).toContain(NEO_RESPONSE_FOCUS_BRIEFING);
-      expect(prompt.indexOf(NEO_RESPONSE_FOCUS_BRIEFING)).toBeGreaterThan(
-        prompt.indexOf(NEO_CAPABILITIES_BRIEFING)
-      );
-      expect(prompt.endsWith(NEO_RESPONSE_FOCUS_BRIEFING)).toBe(true);
-      expect(prompt.split(NEO_RESPONSE_FOCUS_BRIEFING)).toHaveLength(2);
-      for (const text of [
-        'Never add another project’s progress as an aside to an unrelated answer',
-        'Do not announce that all the user’s questions are settled from one return',
-        'summary-only snapshot can be intentionally redacted',
-        'do not describe hidden fields as empty facts to the human',
-        'end the input turn without publishing',
-        'Do not give a preliminary substantive answer from the summary',
-        'correction to that same project',
-        'one or two conversational sentences',
-        'Expand when the user asks for detail',
-      ]) {
-        expect(prompt.replaceAll("'", '’').replace(/\s+/g, ' ')).toContain(text);
-      }
+      expect(prompt.split(NEO_SPEAKING_POLICY)).toHaveLength(2);
+      expect(prompt).toContain(NEO_CAPABILITIES_BRIEFING);
     }
   );
 
@@ -133,7 +115,6 @@ describe('Neo world briefing delivery', () => {
       'small pool of two or three long-lived workers',
       'give related work (the same epic, the same files, the same section) to the worker',
       'start a new session only when every fitting worker is busy',
-      'tell them you are adding sessions',
       '"quickly" in a message sets it for that ask only',
       'retire it and start a fresh worker with a short handoff',
     ])
@@ -160,7 +141,7 @@ describe('Neo world briefing delivery', () => {
         snapshot: false,
       });
       const prompt = (options.systemPrompt as { prompt: string }).prompt;
-      expect(prompt).toContain(NEO_RESPONSE_FOCUS_BRIEFING);
+      expect(prompt).toContain(NEO_SPEAKING_POLICY);
       expect(prompt).not.toContain('Legacy stored coordinator wording');
       expect(options.tools).toEqual(neoCoordinatorNativeTools());
       expect(options.mcpServers).toEqual({ 'hyperneo-operations': operations });
@@ -169,7 +150,7 @@ describe('Neo world briefing delivery', () => {
       expect(options.model).toBe('fixture-model');
       expect(options.maxTurns).toBe(17);
       expect(prompt).toContain(
-        projectId ? 'For every consultation request' : 'For every new user request'
+        projectId ? 'neo.project.respond {id,answer}' : 'Its receipt contains the current status'
       );
     }
   );
@@ -258,22 +239,22 @@ describe('Neo world briefing delivery', () => {
     const root = neoPrompt(null);
     const holder = neoPrompt('saas');
     expect(root).toContain('Detailed context belongs to the holder');
-    expect(root).toContain('consult its holder before giving the substantive answer');
+    expect(root).toContain('neo.project.consult {projectId,question} obtains that context');
     expect(holder).toContain('context holder for project "saas"');
-    expect(holder).toContain('Use the consultationId from that request, not a work id');
-    expect(holder).toContain('return your answer with neo.project.respond before ending your turn');
+    expect(holder).toContain('id is the consultationId, not a work id');
+    expect(holder).toContain(
+      'It is delivered to Neo; it does not publish in the human-facing conversation'
+    );
     expect(holder).toContain('If a save is rejected as superseded, do not reread and retry it');
   });
 
-  test('ends root clarification turns without changing the holder question policy', () => {
+  test('keeps clarification input identity without forcing a turn end', () => {
     const root = neoPrompt(null);
     const holder = neoPrompt('saas');
-    expect(root).toContain('Ask clarification questions in ordinary conversational text');
-    expect(root).toContain('then end this input turn without waiting for the human');
-    expect(root).toContain('The human’s reply will arrive as a new input');
-    expect(holder).not.toContain('then end this input turn without waiting for the human');
+    expect(root).toContain("A human's reply is a new input with its own identity");
+    expect(root).toContain('unrelated asks may arrive first');
+    expect(root).not.toContain('then end this input turn without waiting');
     expect(holder).not.toContain('AskUserQuestion');
-    expect(holder).toContain('When the human speaks to you directly, answer normally');
   });
 });
 
@@ -287,7 +268,7 @@ describe('Neo look-up guidance', () => {
       expect(prompt).toContain(
         'anything that needs to run code (a build, tests, a server) goes to a card'
       );
-      expect(prompt).toContain('Never tell the user you have no access');
+      expect(prompt).toContain('A refused command records what that tool could not check');
       expect(prompt).toContain('never put file contents or secrets into a fetched URL');
       expect(prompt).not.toContain('You cannot read, search or browse files');
     }
