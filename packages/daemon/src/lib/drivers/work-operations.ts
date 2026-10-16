@@ -367,7 +367,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.adapters',
       description:
-        'List the work adapters on this daemon, or on the attached daemon named by daemon, with the verbs each can do: find, start, send, status, stop, archive. Archive uses neo.session.archive and requires a human request in a live turn. Start new work only with an adapter that can start, and send only through one that can send.',
+        'List the work adapters on this daemon, or on the attached daemon named by daemon, with the driver capabilities each supports: find, start, send, steer, queue, withdraw, status, stop, archive. Steer, queue and withdraw are driver methods; they do not have work operation routes. Callers of the driver interface select them directly. Archive uses neo.session.archive and requires a human request in a live turn. Start new work only with an adapter that can start, and send only through one that can send.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
