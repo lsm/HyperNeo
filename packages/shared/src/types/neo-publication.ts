@@ -6,6 +6,16 @@ export interface NeoPublicationLink {
   readonly id: string;
 }
 
+export interface NeoPublicationRevision {
+  readonly revisionId: string;
+  readonly shortText: string;
+  readonly fullText: string;
+  readonly createdAt: string;
+  readonly producerInput: NeoInputOrigin;
+  readonly askOrigin?: NeoInputOrigin;
+  readonly awaiting?: string;
+}
+
 export interface NeoPublicationInput {
   readonly conversationId: string;
   readonly publicationId: string;
@@ -14,17 +24,17 @@ export interface NeoPublicationInput {
   readonly shortText: string;
   readonly fullText: string;
   readonly links: readonly NeoPublicationLink[];
-  readonly interim?: true;
   readonly triggerId?: string;
   readonly askSummary?: string;
   readonly awaiting?: string;
   readonly editedAt?: string;
   readonly editedBy?: string;
   readonly answerInput?: NeoInputOrigin;
+  readonly answerOrigin?: NeoInputOrigin;
   readonly languageMismatch?: string;
   readonly requestedLanguage?: string;
-  readonly corrects?: string;
-  readonly correctedBy?: string;
+  readonly revisionId?: string;
+  readonly revisions?: readonly NeoPublicationRevision[];
 }
 
 export interface NeoPublication extends NeoPublicationInput {
@@ -41,4 +51,4 @@ export type NeoPublicationAppendResult =
 
 export type NeoPublicationChangeResult =
   | { accepted: true; created: boolean; publication: NeoPublication }
-  | { accepted: false; reason: 'not_found' | 'already_corrected' | 'publication_conflict' };
+  | { accepted: false; reason: 'not_found' | 'publication_conflict' };

@@ -138,7 +138,7 @@ describe('neo.message.send routing log', () => {
     expect(log.recentAsks('research', 1)).toEqual(['How can we join the Cloudflare git beta?']);
   });
 
-  test('fills the outcome from the first final reply to that ask', async () => {
+  test('repairs a lost routing outcome when a message send is retried', async () => {
     await send(root.sessionId, ask(3), 'Summarize it');
     const publications = new NeoPublicationRepository(writer);
     const reply = (n: number, shortText: string, interim?: true) => ({

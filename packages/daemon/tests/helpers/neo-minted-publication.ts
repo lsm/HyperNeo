@@ -1,14 +1,7 @@
 export function withMintedPublicationId<T extends { publicationId?: string }>(
-  service: { newPublicationId(): string },
+  _service: unknown,
   input: T
-): Omit<T, 'publicationId'> {
+): Omit<T, 'publicationId'> & { requestId: string } {
   const { publicationId, ...authored } = input;
-  if (publicationId !== undefined) {
-    const next = service.newPublicationId;
-    service.newPublicationId = () => {
-      service.newPublicationId = next;
-      return publicationId;
-    };
-  }
-  return authored;
+  return { ...authored, requestId: publicationId ?? 'send' };
 }

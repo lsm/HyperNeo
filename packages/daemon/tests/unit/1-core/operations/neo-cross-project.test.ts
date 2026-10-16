@@ -129,7 +129,7 @@ describe('Cross-project runtime', () => {
     };
     expect(await invoke('neo.publication.publish', draft)).toMatchObject({
       kind: 'completed',
-      value: { accepted: false, reason: 'cross_project_pending' },
+      value: { accepted: true, created: true },
     });
     savePrompt(request.sessionId, `neo-consult:${first.id}:request`);
     const holder: OperationCaller = {
@@ -187,7 +187,7 @@ describe('Cross-project runtime', () => {
       value: { accepted: true },
     });
     expect(service.crossProjects.forAsk({ sessionId: root, messageId })?.publicationId).toBe(
-      draft.publicationId
+      service.publications.list(root.slice(4))?.at(-1)?.publicationId
     );
     expect(
       await invoke(

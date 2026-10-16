@@ -13,6 +13,7 @@ import { NeoIcon } from './NeoIcon.tsx';
 import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from './NeoMessageMenu.tsx';
 import { copyToClipboard } from '../lib/utils.ts';
 import { messageTime } from './NeoMessage.tsx';
+import { NeoPublicationHistory } from './NeoPublicationHistory.tsx';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 import { neoMessageAnchor } from './reply-context.ts';
 import {
@@ -287,10 +288,8 @@ function PublicEntry({
   forwarders,
   onQuote,
   status,
-  loaded,
 }: {
   entry: NeoPublicEntry;
-  loaded?: ReadonlySet<string>;
   status?: NeoMessageStatus;
   projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
@@ -303,6 +302,7 @@ function PublicEntry({
   const undelivered = ask?.delivery?.state === 'failed';
   const publication = entry.kind === 'publication' ? entry.publication : null;
   const [expanded, setExpanded] = useState(false);
+  const [history, setHistory] = useState(false);
   const [copiedAt, setCopiedAt] = useState(0);
   const bubbleText = useRef<HTMLDivElement>(null);
   const article = useRef<HTMLElement>(null);
@@ -354,43 +354,19 @@ function PublicEntry({
             {time.label}
           </time>
         )}
-        {publication?.corrects &&
-          (loaded?.has(publication.corrects) ? (
-            <a
-              data-publication-correction
-              href={`#${neoMessageAnchor(publication.conversationId, `publication-${publication.corrects}`)}`}
-              class="text-[11px] font-medium text-warning hover:underline"
-            >
-              Correction of an earlier reply
-            </a>
-          ) : (
-            <span data-publication-correction class="text-[11px] font-medium text-warning">
-              Correction of an earlier reply
-            </span>
-          ))}
-        {publication?.editedAt && (
-          <span
+        {publication && (publication.editedAt || publication.revisions?.length) ? (
+          <button
+            type="button"
             data-publication-edited
-            title={`Edited ${new Date(publication.editedAt).toLocaleString()}`}
-            class="text-[11px] text-fg-faint"
+            aria-label="Edited: show revision history"
+            aria-expanded={history}
+            aria-controls={`${anchor}-history`}
+            onClick={() => setHistory(!history)}
+            class="text-[11px] text-fg-faint hover:text-fg hover:underline"
           >
-            edited
-          </span>
-        )}
-        {publication?.correctedBy &&
-          (loaded?.has(publication.correctedBy) ? (
-            <a
-              data-publication-corrected
-              href={`#${neoMessageAnchor(publication.conversationId, `publication-${publication.correctedBy}`)}`}
-              class="text-[11px] text-warning hover:underline"
-            >
-              Corrected below
-            </a>
-          ) : (
-            <span data-publication-corrected class="text-[11px] text-warning">
-              Corrected below
-            </span>
-          ))}
+            Edited
+          </button>
+        ) : null}
         {ask && !undelivered && (
           <span
             role="img"
@@ -532,6 +508,9 @@ function PublicEntry({
           );
         })()}
       </div>
+      {publication && history && (
+        <NeoPublicationHistory publication={publication} id={`${anchor}-history`} />
+      )}
       {undelivered && showReason && (
         <p class="mt-1 px-1 text-right text-xs text-danger">{NOT_DELIVERED}</p>
       )}
@@ -734,11 +713,6 @@ export function NeoPublicConversation({
   onRetry?: () => void;
   onLoadEarlier?: () => void;
 }) {
-  const loaded = new Set(
-    conversation.entries.flatMap((entry) =>
-      entry.kind === 'publication' ? [entry.publication.publicationId] : []
-    )
-  );
   return (
     <div class="space-y-6" aria-label="Public conversation">
       {conversation.status !== 'ready' && (
@@ -782,7 +756,6 @@ export function NeoPublicConversation({
             forwarders={forwarders}
             onQuote={onQuote}
             status={entry.kind === 'ask' ? statuses?.get(entry.ask.requestId) : undefined}
-            loaded={loaded}
           />
         )
       )}

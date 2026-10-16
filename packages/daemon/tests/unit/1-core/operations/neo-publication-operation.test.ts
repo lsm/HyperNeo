@@ -20,7 +20,6 @@ import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
-import { requirePublicationNews } from '../../../../src/lib/neo/publication-news.ts';
 import { createNeoPublicationCommit } from '../../../../src/lib/neo/publication-commit.ts';
 import {
   type NeoDeliveryTrigger,
@@ -31,10 +30,7 @@ import {
 } from '../../../../src/lib/neo/notification-triggers.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
-import {
-  findNeoRepeatedPublication,
-  NeoPublicationRepository,
-} from '../../../../src/storage/repositories/neo-publication-repository.ts';
+import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
@@ -76,7 +72,6 @@ describe('runtime-bound publication operation', () => {
   let runtime: Parameters<typeof createNeoPublisher>[0];
   let publish: ReturnType<typeof createNeoPublisher>;
   let notify: ReturnType<typeof vi.fn>;
-  let minted: string | undefined;
   function prompt(sessionId: string, messageId: string, inputKind = 'human') {
     expect(
       mailbox.sdkMessageRepo.saveSDKMessage(sessionId, {
@@ -140,11 +135,10 @@ describe('runtime-bound publication operation', () => {
   }
   function invoke(input: unknown = draft, who: OperationCaller = caller()) {
     const { publicationId, ...authored } = input as { publicationId?: string };
-    minted = publicationId;
     return invokeOperation(
       createOperationRegistry([createNeoPublicationOperation(publish)]),
       'neo.publication.publish',
-      authored,
+      { ...authored, requestId: publicationId ?? 'send' },
       who
     );
   }
@@ -190,18 +184,12 @@ describe('runtime-bound publication operation', () => {
         published: () => {},
       }),
       inputTrigger,
-      newId: () => {
-        const id = minted ?? crypto.randomUUID();
-        minted = undefined;
-        return id;
-      },
       notify,
     };
     const publishRaw = createNeoPublisher(runtime);
     publish = ((input: unknown, who: OperationCaller) => {
       const { publicationId, ...authored } = input as { publicationId?: string };
-      if (publicationId !== undefined) minted = publicationId;
-      return publishRaw(authored, who);
+      return publishRaw({ ...authored, requestId: publicationId ?? 'send' }, who);
     }) as typeof publishRaw;
   });
   afterEach(() => mailbox.close());
@@ -212,7 +200,12 @@ describe('runtime-bound publication operation', () => {
       await invokeOperation(registry, 'neo.publication.publish', draft, caller())
     ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
     const { publicationId: _chosen, ...authored } = draft;
-    const result = await invokeOperation(registry, 'neo.publication.publish', authored, caller());
+    const result = await invokeOperation(
+      registry,
+      'neo.publication.publish',
+      { ...authored, requestId: 'send' },
+      caller()
+    );
     expect(result).toMatchObject({ kind: 'completed', value: { accepted: true, created: true } });
     const minted =
       result.kind === 'completed'
@@ -231,15 +224,21 @@ describe('runtime-bound publication operation', () => {
     const registry = createOperationRegistry(createNeoOperations(service));
     const before = mailbox.sdkRows();
     const { publicationId, ...authored } = draft;
-    minted = publicationId;
-    const result = await invokeOperation(registry, 'neo.publication.publish', authored, caller());
+    const result = await invokeOperation(
+      registry,
+      'neo.publication.publish',
+      { ...authored, requestId: 'send' },
+      caller()
+    );
     expect(result).toMatchObject({
       kind: 'completed',
       value: {
         accepted: true,
         created: true,
         publication: {
-          ...draft,
+          shortText: draft.shortText,
+          fullText: draft.fullText,
+          links: [],
           conversationId,
           askOrigin: ask,
           producerInput: ask,
@@ -275,74 +274,26 @@ describe('runtime-bound publication operation', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  test('a turn without a trigger may still tell the human a new fact, but not filler', async () => {
-    const item = work();
-    repo.transitionWork(item.id, item, { status: 'reported', report: 'Reported context only' });
-    prompt(root.sessionId, item.id, 'system');
-    stamp({ sessionId: root.sessionId, messageId: item.id }, ask, null);
-    const note = caller(root.sessionId, item.id, false);
-    expect(await invoke({ ...draft, shortText: '收到。', fullText: '收到。' }, note)).toMatchObject(
-      {
-        value: {
-          accepted: false,
-          reason: 'no_news',
-          detail: expect.stringContaining('end the turn'),
-        },
-      }
-    );
-    expect(await invoke(draft, note)).toMatchObject({
-      value: { accepted: true, publication: { shortText: draft.shortText } },
-    });
-    expect(ledger.list(conversationId)?.[0]?.triggerId).toBeUndefined();
+  test('a live turn can deliver an acknowledgement without a trigger', async () => {
+    prompt(root.sessionId, 'note-1', 'system');
     expect(
-      await invoke({ ...draft, publicationId: '20000000-0000-4000-8000-000000000009' }, caller())
-    ).toMatchObject({
-      value: {
-        accepted: true,
-        created: true,
-        publication: { triggerId: `human:${ask.messageId}` },
-      },
-    });
+      await invoke(
+        { ...draft, shortText: '收到。', fullText: '收到。' },
+        caller(root.sessionId, 'note-1', false)
+      )
+    ).toMatchObject({ value: { accepted: true, publication: { shortText: '收到。' } } });
   });
 
-  test('a trigger note turn publishes under its trigger id; a repeat returns the first, a new fact posts', () => {
-    const triggerId = 'outcome:ask-1:abc';
-    const note = neoTriggerMessageId(triggerId);
-    prompt(root.sessionId, note, 'system');
-    stamp({ sessionId: root.sessionId, messageId: note }, ask, { id: triggerId });
-    expect(publish({ ...draft, triggerId }, caller(root.sessionId, note, false))).toMatchObject({
-      accepted: true,
-      publication: { triggerId, producerInput: { sessionId: root.sessionId, messageId: note } },
-    });
-    expect(
-      publish(
-        { ...draft, publicationId: '20000000-0000-4000-8000-000000000002' },
-        caller(root.sessionId, note, false)
-      )
-    ).toMatchObject({ accepted: true, created: false });
-    expect(
-      publish(
-        {
-          ...draft,
-          publicationId: '20000000-0000-4000-8000-000000000003',
-          shortText: 'A second sentence.',
-        },
-        caller(root.sessionId, note, false)
-      )
-    ).toMatchObject({ accepted: true, created: true });
-    const later = { sessionId: root.sessionId, messageId: `${note}:again` };
-    expect(
-      ledger.append({
-        ...draft,
-        publicationId: '20000000-0000-4000-8000-000000000099',
-        conversationId,
-        askOrigin: ask,
-        producerInput: later,
-        triggerId,
-        shortText: 'A second sentence.',
-      })
-    ).toMatchObject({ accepted: true, created: false });
+  test('separate operations with identical text both publish under the same trigger', () => {
+    const first = publish(draft, caller());
+    expect(first).toMatchObject({ accepted: true, created: true });
+    const second = publish(
+      { ...draft, publicationId: '20000000-0000-4000-8000-000000000002' },
+      caller()
+    );
+    expect(second).toMatchObject({ accepted: true, created: true });
     expect(ledger.list(conversationId)).toHaveLength(2);
+    expect(publish(draft, caller())).toEqual({ ...first, created: false });
   });
 
   test('a cross-project return answers the human message that started it; a later fact also posts', () => {
@@ -399,10 +350,10 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)).toEqual([]);
   });
 
-  test('refuses an interim status post even on a human turn', () => {
+  test('the removed interim field is not part of the message contract', () => {
     expect(publish({ ...draft, interim: true }, caller())).toMatchObject({
       accepted: false,
-      reason: 'no_news',
+      reason: 'invalid_publication',
     });
     expect(publish(draft, caller())).toMatchObject({ accepted: true });
   });
@@ -523,40 +474,25 @@ describe('runtime-bound publication operation', () => {
     expect(notify).toHaveBeenCalledTimes(2);
   });
 
-  test('a bare acknowledgement is refused, a repeat returns the first, a new fact posts', () => {
-    const id = (n: number) => `20000000-0000-4000-8000-00000000010${n}`;
-    expect(
-      publish({ ...draft, publicationId: id(1), shortText: '收到。', fullText: '收到。' }, caller())
-    ).toMatchObject({ accepted: false, reason: 'no_news' });
-    expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({ accepted: true });
-    expect(
-      publish({ ...draft, publicationId: id(3), shortText: 'One more thing.' }, caller())
-    ).toMatchObject({ accepted: true, created: true });
-    expect(publish({ ...draft, publicationId: id(2) }, caller())).toMatchObject({
-      accepted: true,
-      created: false,
-    });
-    expect(
-      publish({ ...draft, publicationId: id(5), shortText: 'One more thing.' }, caller())
-    ).toMatchObject({ accepted: true, created: false, publication: { publicationId: id(3) } });
-    expect(ledger.list(conversationId)).toHaveLength(2);
-    expect(ledger.findByProducer(root.sessionId, ask.messageId)?.publicationId).toBe(id(2));
-    prompt(root.sessionId, 'next-ask');
-    expect(
-      publish({ ...draft, publicationId: id(4) }, caller(root.sessionId, 'next-ask'))
-    ).toMatchObject({ accepted: true });
+  test('acknowledgements and progress text are delivery decisions, not refusals', () => {
+    for (const [index, text] of ['收到。', 'Still waiting.', 'Still waiting.'].entries()) {
+      expect(
+        publish(
+          { ...draft, publicationId: `send-${index}`, shortText: text, fullText: text },
+          caller()
+        )
+      ).toMatchObject({ accepted: true, created: true });
+    }
+    expect(ledger.list(conversationId)).toHaveLength(3);
   });
 
-  test('one publication id cannot be replayed under a newer producer/ask tuple', () => {
-    const first = publish(draft, caller());
-    prompt(root.sessionId, 'other-ask');
-    expect(publish(draft, caller(root.sessionId, 'other-ask'))).toEqual({
-      accepted: false,
-      reason: 'publication_conflict',
+  test('operation identities are scoped to the input that authored them', () => {
+    expect(publish(draft, caller())).toMatchObject({ accepted: true, created: true });
+    expect(publish(draft, caller(root.sessionId, 'other-ask'))).toMatchObject({
+      accepted: true,
+      created: true,
     });
-    expect(first.accepted && ledger.list(conversationId)![0]).toEqual(
-      first.accepted ? first.publication : false
-    );
+    expect(ledger.list(conversationId)).toHaveLength(2);
   });
 
   test('a trigger note turn records its trigger, and a new fact for it also posts', () => {
@@ -686,41 +622,13 @@ describe('runtime-bound publication operation', () => {
       false
     );
     const { publicationId: _publicationId, ...authored } = draft;
-    expect(admitPublicationDraft(authored)).toHaveProperty('value');
+    expect(admitPublicationDraft({ ...authored, requestId: 'send' })).toHaveProperty('value');
     expect(
       admitPublicationDraft({
         ...authored,
         links: Array.from({ length: 17 }, () => ({ label: 'Open', kind: 'project', id: 'a' })),
       })
     ).toHaveProperty('reason.reason', 'invalid_publication');
-  });
-});
-
-describe('requirePublicationNews', () => {
-  const reply = { publicationId: 'p1', shortText: 'Merged #12.', fullText: 'Merged #12 to dev.' };
-
-  test.each(['收到。', '我听到了。', 'Got it!', 'ok'])(
-    'refuses the bare acknowledgement %s',
-    (text) => {
-      expect(
-        requirePublicationNews('v', { ...reply, shortText: text, fullText: text })
-      ).toMatchObject({ reason: { reason: 'no_news' } });
-    }
-  );
-
-  test.each([
-    ['收到。', 'Got it.'],
-    ['👍', '👍'],
-  ])('refuses %s with full text %s', (shortText, fullText) => {
-    expect(requirePublicationNews('v', { ...reply, shortText, fullText })).toMatchObject({
-      reason: { reason: 'no_news' },
-    });
-  });
-
-  test('keeps an acknowledgement that carries details', () => {
-    expect(requirePublicationNews('v', { ...reply, shortText: '收到。' })).toEqual({
-      value: 'v',
-    });
   });
 });
 
@@ -748,38 +656,5 @@ describe('requirePublicationTrigger', () => {
       'reason.reason',
       'wrong_trigger'
     );
-  });
-});
-
-describe('findNeoRepeatedPublication', () => {
-  const prior = {
-    conversationId: '10000000-0000-4000-8000-000000000001',
-    publicationId: '20000000-0000-4000-8000-000000000001',
-    askOrigin: { sessionId: 'neo:root', messageId: 'm1' },
-    producerInput: { sessionId: 'neo:root', messageId: 'm1' },
-    shortText: 'Merged #12.',
-    fullText: 'Merged #12 to dev.',
-    links: [],
-    triggerId: 'human:m1',
-    sequence: 1,
-    createdAt: '2026-10-15T00:00:00.000Z',
-  };
-  const input = { ...prior, publicationId: '20000000-0000-4000-8000-000000000002' };
-
-  test('an identical message for the trigger is a repeat, whoever produced it', () => {
-    expect(
-      findNeoRepeatedPublication([prior], {
-        ...input,
-        producerInput: { sessionId: 'neo:holder', messageId: 'x' },
-      })
-    ).toBe(prior);
-  });
-
-  test('a message with any new text or a new question for the human is a new fact', () => {
-    expect(findNeoRepeatedPublication([prior], { ...input, awaiting: 'Merge it now?' })).toBeNull();
-    expect(
-      findNeoRepeatedPublication([prior], { ...input, fullText: 'Merged #12; CI green.' })
-    ).toBeNull();
-    expect(findNeoRepeatedPublication([], input)).toBeNull();
   });
 });

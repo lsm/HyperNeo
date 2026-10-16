@@ -244,9 +244,7 @@ import {
 import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
 import {
   coverNeoAskTriggers,
-  isNeoAskAnsweredByReply,
   isNeoHumanOwnTurn,
-  NEO_CONSULTATION_PENDING_DETAIL,
   NEO_TRIGGER_ACHIEVED_WINDOW_MS,
   NEO_TRIGGER_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
@@ -258,7 +256,6 @@ import {
   neoDeliveryTrigger,
   neoHumanTrigger,
   neoHumanTriggerMessageId,
-  neoReplyOriginKey,
   neoTriggerMessageId,
   neoTriggerMessageIds,
   neoTriggerNote,
@@ -571,7 +568,6 @@ export class NeoService {
   private readonly noteQueue: NeoNoteQueueDeps;
   private readonly triggers: NeoNotificationTriggerRepository;
   private readonly triggerDeps: NeoTriggerSweepDeps;
-  private readonly triggerCovers = new Map<string, Set<string>>();
   private triggerTimer?: ReturnType<typeof setTimeout>;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
@@ -952,7 +948,6 @@ export class NeoService {
       getConsultation: (id) => this.consultations.get(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
       inputTrigger: (input) => this.inputTrigger(input),
-      newId: () => this.newPublicationId(),
       append: (input) => this.commitPublication(input),
       notify: notifyPublication,
     });
@@ -960,16 +955,9 @@ export class NeoService {
       commit: (input) => {
         const problem = this.crossProjects.publicationProblem(input);
         if (problem) return { accepted: false, reason: problem };
-        if (this.consultationOpenFor(input))
-          return {
-            accepted: false,
-            reason: 'consultation_pending',
-            detail: NEO_CONSULTATION_PENDING_DETAIL,
-          };
         return this.appendPublication(input);
       },
       published: (input, publication) => {
-        this.noteHumanReply(input);
         this.notePublishedAnswer(publication);
       },
     });
@@ -1066,7 +1054,6 @@ export class NeoService {
           } catch (error) {
             this.log.warn('Direct reply fallback failed', error);
           }
-          this.coverHumanReply(sessionId);
           this.scheduleTriggerSweep();
         }
         if (binding?.kind === 'project' && binding.projectId)
@@ -1322,33 +1309,6 @@ export class NeoService {
     }
   }
 
-  private noteHumanReply(input: NeoPublicationInput): void {
-    const human = neoHumanTriggerMessageId(
-      input.triggerId ?? this.inputTrigger(input.producerInput) ?? undefined
-    );
-    if (!human) return;
-    const covers = this.triggerCovers.get(input.producerInput.sessionId) ?? new Set<string>();
-    covers.add(neoReplyOriginKey(input.askOrigin));
-    covers.add(neoReplyOriginKey({ sessionId: input.askOrigin.sessionId, messageId: human }));
-    this.triggerCovers.set(input.producerInput.sessionId, covers);
-    this.coverHumanReply(input.producerInput.sessionId, false);
-  }
-
-  private coverHumanReply(sessionId: string, settled = true): void {
-    const covers = this.triggerCovers.get(sessionId);
-    if (!covers) return;
-    if (settled) this.triggerCovers.delete(sessionId);
-    for (const ask of this.triggerAsks())
-      if (isNeoAskAnsweredByReply(ask, covers))
-        coverNeoAskTriggers(ask, this.triggerDeps, ['outcome', 'action']);
-  }
-
-  noteCorrectionReply(publication: NeoPublicationInput): void {
-    if (!publication.triggerId) return;
-    this.spendWaitingReminders(publication.producerInput);
-    this.noteHumanReply(publication);
-  }
-
   private appendPublication(input: NeoPublicationInput) {
     const plan = planNeoSavedRulesAppend(input, this.savedRules, {
       standingRules: neoStandingRules(this.db.getGlobalSettings?.().neo),
@@ -1358,8 +1318,7 @@ export class NeoService {
       this.publications.append(withNeoSavedRules(input, plan.rules))
     );
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
-    if (receipt.accepted && receipt.created && !input.interim)
-      this.spendWaitingReminders(input.producerInput);
+    if (receipt.accepted && receipt.created) this.spendWaitingReminders(input.producerInput);
     return receipt;
   }
 
@@ -3952,33 +3911,11 @@ export class NeoService {
     this.stampDelivery(input, parent, 'continues');
   }
 
-  newPublicationId(): string {
-    return crypto.randomUUID();
-  }
-
   inputTrigger(input: NeoAskOrigin): string | null {
     return (
       this.inputOrigins.trigger(input.sessionId, input.messageId) ??
       (this.isHumanInput(input) ? neoHumanTrigger(input.messageId) : null)
     );
-  }
-
-  private consultationOpenFor(
-    input: Pick<NeoPublicationInput, 'triggerId' | 'askOrigin'>
-  ): boolean {
-    return [
-      ...this.consultations.unsettled().filter((item) => item.status === 'pending'),
-      ...this.consultationWaiters.queued(),
-    ].some((item) => {
-      if (!item.originMessageId) return false;
-      const origin = { sessionId: item.originSessionId, messageId: item.originMessageId };
-      const ask = this.resolveAskOrigin(origin);
-      return (
-        (!!input.triggerId && this.inputTrigger(origin) === input.triggerId) ||
-        (ask?.sessionId === input.askOrigin.sessionId &&
-          ask.messageId === input.askOrigin.messageId)
-      );
-    });
   }
 
   consultationFor(origin: NeoAskOrigin, projectId: string): NeoConsultation | null {

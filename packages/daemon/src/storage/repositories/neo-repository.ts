@@ -173,8 +173,7 @@ export class NeoRepository {
       repeatedReplies: this.db
         .prepare(`SELECT json_extract(payload_json, '$.producerInput.messageId') AS trigger,
             count(*) AS count FROM neo_publications
-          WHERE created_at > ? AND json_extract(payload_json, '$.interim') IS NULL
-            AND json_extract(payload_json, '$.corrects') IS NULL
+          WHERE created_at > ?
           GROUP BY conversation_id, trigger HAVING count(*) > 1 ORDER BY count DESC`)
         .all(new Date(since).toISOString()) as NeoHealthFacts['repeatedReplies'],
       liveAsks: this.db

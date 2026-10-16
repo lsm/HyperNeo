@@ -8,10 +8,14 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { NeoAskOrigin } from './ask-origin.ts';
 import { neoDerivedId } from './derived-id.ts';
+import type { NeoAskOrigin } from './ask-origin.ts';
 import { NeoPublicationSchema } from './publication.ts';
-import { requirePublicationProducer } from './publication-operation.ts';
+import {
+  requirePublicationLifetime,
+  requirePublicationProducer,
+  requirePublicationNotConsulted,
+} from './publication-operation.ts';
 
 type Producer = Extract<ReturnType<typeof requirePublicationProducer>, { value: unknown }>['value'];
 type Rejection = { accepted: false; reason: string; detail?: string };
@@ -19,6 +23,7 @@ type Owned = { producer: Producer; publication: NeoPublication };
 
 const EditInput = z
   .object({
+    requestId: z.string().min(1).max(160),
     publicationId: z.string().uuid(),
     shortText: NeoPublicationSchema.shape.shortText.optional(),
     fullText: NeoPublicationSchema.shape.fullText.optional(),
@@ -29,6 +34,7 @@ const EditInput = z
   });
 const CorrectInput = z
   .object({
+    requestId: z.string().min(1).max(160),
     publicationId: z.string().uuid(),
     shortText: NeoPublicationSchema.shape.shortText,
     fullText: NeoPublicationSchema.shape.fullText,
@@ -50,13 +56,10 @@ const Result = z.union([
 export interface NeoPublicationChangeRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
-  publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'correct' | 'listRecent'>;
+  publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent'>;
   isConsultationReturn(conversationId: string, publicationId: string): boolean;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
-  inputTrigger(input: NeoAskOrigin): string | null;
-  isTriggerPublished(conversationId: string, triggerId: string, publicationId: string): boolean;
   notify(conversationId: string): void;
-  noteReply(publication: NeoPublication): void;
 }
 
 export function requireConversationPublication(
@@ -87,54 +90,12 @@ export function requireChangeable(
     : { value: owned };
 }
 
-export function requireCorrectable(owned: Owned): { value: Owned } | { reason: Rejection } {
-  return owned.publication.corrects
-    ? { reason: { accepted: false, reason: 'already_corrected' } }
-    : { value: owned };
-}
-
-export function planNeoCorrectionAnswer(
-  owned: Owned,
-  trigger: string | null,
-  published: boolean,
-  ask: NeoAskOrigin | null
-): { askOrigin: NeoAskOrigin; triggerId?: string } {
-  return trigger && !published && ask
-    ? { askOrigin: ask, triggerId: trigger }
-    : { askOrigin: owned.publication.askOrigin };
-}
-
-export function requireNeoEditable(
-  owned: Owned,
-  text: { shortText?: string; fullText?: string }
-): { value: Owned } | { reason: Rejection } {
-  const { publication, producer } = owned;
-  if (
-    (text.shortText ?? publication.shortText) === publication.shortText &&
-    (text.fullText ?? publication.fullText) === publication.fullText
-  )
-    return { reason: { accepted: false, reason: 'edit_unchanged' } };
-  const last = publication.answerInput ?? publication.producerInput;
-  return last.sessionId === producer.input.sessionId &&
-    last.messageId === producer.input.messageId &&
-    !!publication.editedAt
-    ? { reason: { accepted: false, reason: 'already_edited' } }
-    : { value: owned };
-}
-
-export function neoCorrectionId(owned: Owned, trigger: string | null): string {
-  const { conversationId, publicationId } = owned.publication;
-  const turn = trigger ?? `${owned.producer.input.sessionId}:${owned.producer.input.messageId}`;
-  return neoDerivedId(`neo.publication.correct:${conversationId}:${publicationId}:${turn}`);
-}
-
 const RecentInput = z.object({ limit: z.number().int().min(1).max(20).default(10) }).strict();
 
 function changePipeline(
   name: string,
   schema: z.ZodType,
   runtime: NeoPublicationChangeRuntime,
-  gate: (owned: Owned, request: never) => { value: Owned } | { reason: Rejection },
   change: (owned: Owned, input: never) => NeoPublicationChangeResult
 ) {
   return (superpipe({})(name) as PipelineAPI)
@@ -160,6 +121,7 @@ function changePipeline(
       'caller',
       'result:change'
     )
+    .pipe(requirePublicationNotConsulted, 'change', 'result:change')
     .pipe(
       (producer: Producer, request: { publicationId: string }) =>
         requireConversationPublication(
@@ -182,7 +144,19 @@ function changePipeline(
       'change',
       'result:change'
     )
-    .pipe(gate, ['change', 'request'], 'result:change')
+    .pipe(
+      (owned: Owned, caller: OperationCaller) => {
+        const live = requirePublicationLifetime(
+          { ...owned.producer, ask: owned.publication.askOrigin },
+          caller,
+          runtime.getBinding(owned.producer.input.sessionId),
+          runtime.getRootBinding()
+        );
+        return 'reason' in live ? live : { value: owned };
+      },
+      ['change', 'caller'],
+      'result:change'
+    )
     .pipe(
       (owned: Owned, request: never) => {
         const result = change(owned, request);
@@ -202,53 +176,32 @@ export function createNeoPublicationChangeOperations(
   runtime: NeoPublicationChangeRuntime,
   now: () => Date = () => new Date()
 ) {
-  const edit = changePipeline(
-    'neo-publication-edit',
-    EditInput,
-    runtime,
-    (owned, input: z.infer<typeof EditInput>) => requireNeoEditable(owned, input),
-    (owned, input: z.infer<typeof EditInput>) =>
-      runtime.publications.edit(
-        owned.publication.conversationId,
-        owned.publication.publicationId,
-        {
-          ...(input.shortText !== undefined ? { shortText: input.shortText } : {}),
-          ...(input.fullText !== undefined ? { fullText: input.fullText } : {}),
-        },
-        now().toISOString(),
-        owned.producer.input.sessionId,
-        owned.producer.input
-      )
-  );
-  const correct = changePipeline(
-    'neo-publication-correct',
-    CorrectInput,
-    runtime,
-    (owned: Owned) => requireCorrectable(owned),
-    (owned, input: z.infer<typeof CorrectInput>) => {
-      const trigger = runtime.inputTrigger(owned.producer.input);
-      const correctionId = neoCorrectionId(owned, trigger);
-      const answer = planNeoCorrectionAnswer(
-        owned,
-        trigger,
-        !!trigger &&
-          runtime.isTriggerPublished(owned.publication.conversationId, trigger, correctionId),
-        runtime.resolveAskOrigin(owned.producer.input)
-      );
-      const result = runtime.publications.correct(owned.publication, {
-        conversationId: owned.publication.conversationId,
-        publicationId: correctionId,
-        ...answer,
-        producerInput: owned.producer.input,
-        shortText: input.shortText,
-        fullText: input.fullText,
-        links: [],
-      });
-      if (result.accepted && result.created && result.publication.triggerId)
-        runtime.noteReply(result.publication);
-      return result;
-    }
-  );
+  const revise = (name: string, schema: z.ZodType) =>
+    changePipeline(
+      name,
+      schema,
+      runtime,
+      (owned, input: { requestId: string; shortText?: string; fullText?: string }) =>
+        runtime.publications.edit(
+          owned.publication.conversationId,
+          owned.publication.publicationId,
+          { shortText: input.shortText, fullText: input.fullText },
+          now().toISOString(),
+          owned.producer.input.sessionId,
+          owned.producer.input,
+          neoDerivedId(
+            JSON.stringify([
+              name,
+              owned.producer.input.sessionId,
+              owned.producer.input.messageId,
+              input.requestId,
+            ])
+          ),
+          runtime.resolveAskOrigin(owned.producer.input) ?? owned.producer.input
+        )
+    );
+  const edit = revise('neo.publication.edit', EditInput);
+  const correct = revise('neo.publication.correct', CorrectInput);
   const recent = (superpipe({})('neo-publication-recent') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -286,8 +239,8 @@ export function createNeoPublicationChangeOperations(
             yours: publication.producerInput.sessionId === producer.input.sessionId,
             ...(publication.editedAt ? { editedAt: publication.editedAt } : {}),
             ...(publication.editedBy ? { editedBy: publication.editedBy } : {}),
-            ...(publication.corrects ? { corrects: publication.corrects } : {}),
-            ...(publication.correctedBy ? { correctedBy: publication.correctedBy } : {}),
+            revisionId: publication.revisionId ?? publication.publicationId,
+            revisions: publication.revisions ?? [],
           })),
       }),
       ['recent', 'request'],
@@ -298,7 +251,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.recent',
       description:
-        'List the most recent published messages in this conversation, newest first (limit 1-20, default 10): every Neo reply the human sees, whichever Neo session produced it. Each has its publicationId, createdAt, shortText, the human message it answered, its producer, whether it is yours, and any editedAt, editedBy, corrects or correctedBy. Read it before fixing an earlier reply, and use its content rather than re-deriving it. It never lists session messages.',
+        'List recent messages in this conversation with their IDs and revision history. Current text is top-level; revisions contains earlier versions, oldest first.',
       policy: { safetyClass: 'read', roles: ['neo'] },
       inputSchema: RecentInput,
       resultSchema: z.unknown(),
@@ -307,7 +260,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.edit',
       description:
-        "Fix the wording of a Neo reply in this conversation in place, by its publicationId, whichever Neo session produced it: to the human they are all Neo's. Use it only for wording: the meaning, facts and anything the human should do must stay the same. Once per message per turn; otherwise already_edited, and an edit that changes nothing is edit_unchanged. A new fact goes out as its own message, never by rewriting what the human already read. The message is marked edited, records you as editedBy, and drops its awaiting question. Links, the ask it answers and its trigger never change. Only Neo publications in this conversation can change, never session messages (not_found). A project holder's reply to a consultation cannot change until Neo has received it (consultation_return); after that it is a Neo reply like any other.",
+        'Revise a message in this conversation without changing its publicationId. Prior text and attribution are preserved in revisions. Use a new requestId per revision and reuse it only when retrying that operation.',
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: EditInput,
       resultSchema: Result,
@@ -316,7 +269,7 @@ export function createNeoPublicationChangeOperations(
     defineOperation({
       name: 'neo.publication.correct',
       description:
-        "Correct a Neo reply in this conversation, whichever Neo session produced it, when a fact or an action for the human changed (for example it said a PR merged and it did not). This publishes a separate message labelled as a correction that cites the original by publicationId; it never rewrites what the human already read. Base it on the original's content and fresh evidence, not a guess. The daemon assigns the correction's id and returns it; a retry within the same turn returns the same correction. When this turn answers a human message (or a trigger note) that has no reply yet, the correction is that reply, so do not publish a separate one. Each message takes at most one correction, and a correction cannot be corrected (already_corrected). Only Neo publications in this conversation can be corrected (not_found), and a holder's consultation reply only once Neo has received it (consultation_return). Otherwise it needs no notification trigger.",
+        'Revise a message in this conversation without changing its publicationId. Prior text and attribution are preserved in revisions. Use a new requestId per revision and reuse it only when retrying that operation.',
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       inputSchema: CorrectInput,
       resultSchema: Result,

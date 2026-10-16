@@ -218,7 +218,7 @@ describe('createNeoRouter explicit identity', () => {
 });
 
 describe('NeoCrossProjectRepository', () => {
-  test('binds every waiter atomically and makes aggregate publication durable and unique', () => {
+  test('binds every waiter atomically and retries aggregate publications by identity', () => {
     const sql = db.getDatabase();
     const groups = new NeoCrossProjectRepository(sql);
     const waiters = new NeoConsultationWaiterRepository(sql, () => {});
@@ -261,7 +261,8 @@ describe('NeoCrossProjectRepository', () => {
       links: [],
       triggerId: `human:${ask.messageId}`,
     };
-    expect(groups.publicationProblem(input)).toBe('cross_project_pending');
+    expect(groups.ready(group)).toBe(false);
+    expect(groups.publicationProblem(input)).toBeNull();
     for (const member of groups.members(group)) {
       expect(waiters.admitNext(member.projectId)?.id).toBe(member.id);
       consultations.finish(member.id, 'reported', `${member.projectId} done`);
@@ -277,14 +278,18 @@ describe('NeoCrossProjectRepository', () => {
       accepted: true,
       created: false,
     });
-    const retry = { ...input, publicationId: crypto.randomUUID() };
-    expect(reopened.publicationProblem(retry)).toBeNull();
-    expect(reopened.append(retry, () => ledger.append(retry))).toMatchObject({
+    const sameText = { ...input, publicationId: crypto.randomUUID() };
+    expect(reopened.publicationProblem(sameText)).toBeNull();
+    expect(reopened.append(sameText, () => ledger.append(sameText))).toMatchObject({
       accepted: true,
-      created: false,
-      publication: { publicationId: input.publicationId },
+      created: true,
+      publication: { publicationId: sameText.publicationId },
     });
-    const changed = { ...retry, shortText: 'A different aggregate.' };
+    const changed = {
+      ...sameText,
+      publicationId: crypto.randomUUID(),
+      shortText: 'A different aggregate.',
+    };
     expect(reopened.append(changed, () => ledger.append(changed))).toMatchObject({
       accepted: true,
       created: true,

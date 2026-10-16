@@ -330,16 +330,15 @@ describe('neoAwaitingReply', () => {
       key: messageId,
       ask: { askOrigin: { sessionId: 'holder', messageId } },
     }) as never;
-  const reply = (messageId: string, interim?: true) =>
+  const reply = (messageId: string) =>
     ({
       kind: 'publication',
       key: `reply-${messageId}`,
-      publication: { interim, askOrigin: { sessionId: 'holder', messageId } },
+      publication: { askOrigin: { sessionId: 'holder', messageId } },
     }) as never;
 
-  it('waits until the newest ask has its own final reply', () => {
+  it('waits until the newest ask has its own reply', () => {
     expect(neoAwaitingReply([ask('A')])).toBe(true);
-    expect(neoAwaitingReply([ask('A'), reply('A', true)])).toBe(true);
     expect(neoAwaitingReply([ask('A'), reply('A')])).toBe(false);
     expect(neoAwaitingReply([])).toBe(false);
   });
@@ -360,8 +359,37 @@ describe('neoAwaitingReply', () => {
   });
 
   it('keeps waiting for a newer ask when an earlier ask is answered after it', () => {
-    expect(neoAwaitingReply([ask('A'), reply('A', true), ask('B'), reply('A')])).toBe(true);
+    expect(neoAwaitingReply([ask('A'), reply('A'), ask('B'), reply('A')])).toBe(true);
     expect(neoAwaitingReply([ask('A'), ask('B'), reply('A'), reply('B')])).toBe(false);
+  });
+
+  it('recognizes a revision answering the latest ask only by exact input identity', () => {
+    const revised = {
+      kind: 'publication',
+      key: 'old-reply',
+      publication: {
+        askOrigin: { sessionId: 'holder', messageId: 'A' },
+        answerInput: { sessionId: 'holder', messageId: 'B' },
+      },
+    } as unknown as Extract<
+      Parameters<typeof neoAwaitingReply>[0][number],
+      { kind: 'publication' }
+    >;
+    expect(neoAwaitingReply([ask('A'), revised, ask('B')])).toBe(false);
+    expect(neoAwaitingReply([ask('A'), revised, ask('C')])).toBe(true);
+    expect(
+      neoAwaitingReply([
+        ask('A'),
+        {
+          ...revised,
+          publication: {
+            ...revised.publication,
+            answerInput: { sessionId: 'other', messageId: 'B' },
+          },
+        } as typeof revised,
+        ask('B'),
+      ])
+    ).toBe(true);
   });
 });
 

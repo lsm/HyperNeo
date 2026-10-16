@@ -64,7 +64,7 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
           name: invoke!.name,
           input: {
             name: 'neo.publication.publish',
-            input: { shortText, fullText, links: [] },
+            input: { requestId: 'fictional-send', shortText, fullText, links: [] },
           },
         }
       : { type: 'text', text: 'Fictional execution transcript only.' };

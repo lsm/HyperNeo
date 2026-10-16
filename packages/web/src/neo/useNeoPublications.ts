@@ -177,15 +177,25 @@ export function useNeoPublications(rootSessionId: string | null) {
           );
           if (!current()) return;
           publish((tail ? applyTail : applyPage)(before, result));
-          if (edited && !tail && value.status === 'ready' && value.items.length) {
-            const window = await readNeoPublications(
-              { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
-              async () => hub,
-              current
-            );
-            if (!current()) return;
-            if (window.state === 'ready') edited = false;
-            publish(mergePublicationEdits(value, window));
+          if (edited && value.status === 'ready' && value.items.length) {
+            edited = false;
+            let after = value.items[0].sequence - 1;
+            const newest = value.items.at(-1)!.sequence;
+            while (current() && after < newest) {
+              const window = await readNeoPublications(
+                { conversationId, after, limit: 50 },
+                async () => hub,
+                current
+              );
+              if (!current()) return;
+              if (window.state !== 'ready' || window.nextAfter <= after) {
+                edited = true;
+                publish({ ...value, status: 'unavailable' });
+                break;
+              }
+              publish(mergePublicationEdits(value, window));
+              after = window.nextAfter;
+            }
           }
           inFlight = false;
           if (pending && value.status === 'ready') void update();
@@ -224,7 +234,10 @@ export function useNeoPublications(rootSessionId: string | null) {
           offEdited();
         };
         reconnect = hub.onConnection((connection) => {
-          if (connection === 'connected') void update();
+          if (connection === 'connected') {
+            edited = true;
+            void update();
+          }
         });
         void update();
       })

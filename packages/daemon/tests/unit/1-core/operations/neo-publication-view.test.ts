@@ -52,20 +52,20 @@ describe('nextNeoPublicationAnchor', () => {
 });
 
 describe('neoPublicationViewNote', () => {
-  test('lists what the human read, oldest first, and leaves out interim posts', () => {
+  test('lists each publication and marks revised messages', () => {
     const note = neoPublicationViewNote(
-      [said(6), said(7, { interim: true }), said(8, { corrects: 'p6', askSummary: undefined })],
+      [said(6), said(8, { editedAt: '2026-10-16T10:00:00.000Z', askSummary: undefined })],
       false
     );
     expect(note).toBe(
       [
         'What the human has read from Neo since your last turn, oldest first:',
         '- 2026-10-15T21:06:00.000Z, on "Add .DS_Store": Told 6.',
-        '- 2026-10-15T21:08:00.000Z (correction): Told 8.',
+        '- 2026-10-15T21:08:00.000Z (revised): Told 8.',
         'The human already has these.',
       ].join('\n')
     );
-    expect(neoPublicationViewNote([said(7, { interim: true })], true)).toBeNull();
+    expect(neoPublicationViewNote([], true)).toBeNull();
   });
 });
 

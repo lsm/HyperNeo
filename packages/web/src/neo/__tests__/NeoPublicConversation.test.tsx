@@ -245,47 +245,100 @@ describe('durable public conversation presentation', () => {
     expect(status.getAttribute('title')).toBe('Neo is working on this message now.');
   });
 
-  it('marks an edited reply and links a correction to the reply it corrects', () => {
-    const originalId = '20000000-0000-4000-8000-000000000001';
-    const correctionId = '20000000-0000-4000-8000-000000000002';
-    const { container } = render(
+  it('revises one stable bubble and opens the saved versions without changing copy or reply', async () => {
+    const onQuote = vi.fn();
+    const initial = publication({ shortText: 'Original summary', fullText: 'Original **detail**' });
+    const view = render(
+      <NeoPublicConversation conversation={conversation([ask()], [initial])} onQuote={onQuote} />
+    );
+    const bubble = view.container.querySelector('.neo-message-assistant')!;
+    const originalTime = bubble.querySelector('time')!.dateTime;
+    expect(screen.queryByRole('button', { name: /Edited/ })).toBeNull();
+    const revised = {
+      ...initial,
+      revisionId: '30000000-0000-4000-8000-000000000003',
+      editedAt: '2026-09-30T12:10:00Z',
+      shortText: 'Latest summary',
+      fullText: 'Latest **detail**',
+      revisions: [
+        {
+          revisionId: initial.publicationId,
+          shortText: initial.shortText,
+          fullText: initial.fullText,
+          createdAt: initial.createdAt,
+          producerInput: initial.producerInput,
+        },
+        {
+          revisionId: '30000000-0000-4000-8000-000000000002',
+          shortText: 'Middle summary',
+          fullText: 'Middle detail',
+          createdAt: '2026-09-30T12:05:00Z',
+          producerInput: initial.producerInput,
+        },
+      ],
+    };
+    view.rerender(
+      <NeoPublicConversation conversation={conversation([ask()], [revised])} onQuote={onQuote} />
+    );
+    expect(view.container.querySelector('.neo-message-assistant')).toBe(bubble);
+    expect(view.container.querySelectorAll('article')).toHaveLength(2);
+    expect(bubble.querySelector('time')!.dateTime).toBe(originalTime);
+    await screen.findByText('Latest summary');
+    expect(screen.queryByRole('region', { name: 'Revision history' })).toBeNull();
+    const edited = screen.getByRole('button', { name: 'Edited: show revision history' });
+    fireEvent.click(edited);
+    expect(edited.getAttribute('aria-expanded')).toBe('true');
+    const history = screen.getByRole('region', { name: 'Revision history' });
+    expect(edited.getAttribute('aria-controls')).toBe(history.id);
+    await waitFor(() => expect(within(history).getByText('Middle detail')).toBeTruthy());
+    await waitFor(() => expect(history.querySelectorAll('strong')).toHaveLength(2));
+    expect(
+      within(history)
+        .getAllByRole('listitem')
+        .map((item) => item.textContent)
+    ).toEqual([
+      expect.stringContaining('Original detail'),
+      expect.stringContaining('Middle detail'),
+      expect.stringContaining('Latest detail'),
+    ]);
+    expect(within(history).getByText('Original', { selector: 'span' })).toBeTruthy();
+    expect(within(history).getByText('Current')).toBeTruthy();
+    expect([...history.querySelectorAll('time')].map((time) => time.dateTime)).toEqual([
+      new Date(initial.createdAt).toISOString(),
+      '2026-09-30T12:05:00.000Z',
+      '2026-09-30T12:10:00.000Z',
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
+    await waitFor(() => expect(clipboard).toHaveBeenCalledWith('Latest **detail**'));
+    fireEvent.click(screen.getByRole('button', { name: 'Reply to Neo’s message' }));
+    expect(onQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Latest **detail**', anchor: bubble.id })
+    );
+    fireEvent.click(edited);
+    expect(edited.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'Revision history' })).toBeNull();
+  });
+
+  it('keeps legacy edited messages readable without inventing missing versions', () => {
+    render(
       <NeoPublicConversation
         conversation={conversation(
           [ask()],
           [
-            publication({ editedAt: '2026-09-30T12:05:00Z', correctedBy: correctionId }),
             publication({
-              publicationId: correctionId,
-              sequence: 2,
-              createdAt: '2026-09-30T12:10:00Z',
-              corrects: originalId,
-              links: [],
+              editedAt: '2026-09-30T12:05:00Z',
+              shortText: 'Saved reply',
+              fullText: 'Saved reply',
             }),
           ]
         )}
       />
     );
-    expect(screen.getByText('edited')).toBeTruthy();
-    const corrected = screen.getByRole('link', { name: 'Corrected below' });
-    const correction = screen.getByRole('link', { name: 'Correction of an earlier reply' });
-    expect(corrected.getAttribute('href')).toBe(
-      `#${container.querySelector(`[data-public-entry*="${correctionId}"]`)?.id}`
-    );
-    expect(correction.getAttribute('href')).toBe(
-      `#${container.querySelector(`[data-public-entry*="${originalId}"]`)?.id}`
-    );
-  });
-
-  it('names a correction without a dead link when its original is not loaded', () => {
-    render(
-      <NeoPublicConversation
-        conversation={conversation(
-          [ask()],
-          [publication({ corrects: '20000000-0000-4000-8000-000000000009', links: [] })]
-        )}
-      />
-    );
-    expect(screen.getByText('Correction of an earlier reply').closest('a')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Edited/ }));
+    const history = screen.getByRole('region', { name: 'Revision history' });
+    expect(within(history).getAllByRole('listitem')).toHaveLength(1);
+    expect(within(history).getByText('Current')).toBeTruthy();
+    expect(within(history).queryByText('Original')).toBeNull();
   });
 
   it('leaves references as text when the scene owner is absent instead of creating inert controls', () => {

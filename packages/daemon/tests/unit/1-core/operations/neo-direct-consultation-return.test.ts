@@ -154,7 +154,7 @@ describe('NeoService direct consultation return', () => {
     links: [],
   };
 
-  test('A: root cannot post a placeholder while the holder it consulted has not returned', async () => {
+  test('root may publish while consultation facts are pending', async () => {
     expect(
       await invokeOperation(
         ops(),
@@ -162,7 +162,7 @@ describe('NeoService direct consultation return', () => {
         withMintedPublicationId(service, interim),
         rootCaller()
       )
-    ).toMatchObject({ value: { accepted: false, reason: 'consultation_pending' } });
+    ).toMatchObject({ value: { accepted: true, created: true } });
     prompt(root, 'note-without-trigger', 'system');
     service.inputOrigins.record(
       { sessionId: root, messageId: 'note-without-trigger' },
@@ -177,8 +177,8 @@ describe('NeoService direct consultation return', () => {
         withMintedPublicationId(service, { ...interim, shortText: 'A note fact.' }),
         rootCaller('note-without-trigger', false)
       )
-    ).toMatchObject({ value: { accepted: false, reason: 'consultation_pending' } });
-    expect(service.publications.list(conversationId)).toEqual([]);
+    ).toMatchObject({ value: { accepted: true, created: true } });
+    expect(service.publications.list(conversationId)).toHaveLength(2);
     await respond();
     expect(
       await invokeOperation(
@@ -253,7 +253,11 @@ describe('NeoService direct consultation return', () => {
       await invokeOperation(
         ops(),
         'neo.publication.edit',
-        { publicationId: draft.publicationId, shortText: 'Reworded.' },
+        {
+          publicationId: service.publications.list(conversationId)![0].publicationId,
+          requestId: 'edit-1',
+          shortText: 'Reworded.',
+        },
         later
       )
     ).toMatchObject({ value: { accepted: true } });

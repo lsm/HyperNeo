@@ -19,11 +19,11 @@ const ask = (requestId: string, failed = false) =>
       ...(failed ? { delivery: { state: 'failed' } } : {}),
     },
   }) as unknown as NeoPublicEntry;
-const reply = (requestId: string, interim?: true) =>
+const reply = (requestId: string) =>
   ({
     kind: 'publication',
     key: `reply-${requestId}`,
-    publication: { interim, askOrigin: { sessionId: 'neo', messageId: requestId } },
+    publication: { askOrigin: { sessionId: 'neo', messageId: requestId } },
     replyTo: { requestId },
   }) as unknown as NeoPublicEntry;
 const working: AgentProcessingState = { status: 'processing', messageId: 'B', phase: 'thinking' };
@@ -63,18 +63,13 @@ describe('projectNeoMessageStatuses', () => {
     });
   });
 
-  it('treats an interim post as no answer and a lost message as failed', () => {
+  it('treats any reply as answered and a lost message as failed', () => {
     expect(
       read(
-        projectNeoMessageStatuses(
-          [ask('A'), reply('A', true), ask('B', true)],
-          'inactive',
-          idle,
-          live
-        )
+        projectNeoMessageStatuses([ask('A'), reply('A'), ask('B', true)], 'inactive', idle, live)
       )
     ).toEqual({
-      A: 'received',
+      A: 'answered',
       B: 'failed',
     });
   });
@@ -134,8 +129,44 @@ describe('projectNeoMessageStatuses', () => {
 });
 
 describe('neoRepliedAsks', () => {
-  it('counts only final replies', () => {
-    expect([...neoRepliedAsks([ask('A'), reply('A', true), ask('B'), reply('B')])]).toEqual(['B']);
+  it('recognizes every attributed reply', () => {
+    expect([...neoRepliedAsks([ask('A'), reply('A'), ask('B'), reply('B')])]).toEqual(['A', 'B']);
+  });
+
+  it('attributes current and saved revisions without moving the original reply', () => {
+    const revised = {
+      ...reply('A'),
+      publication: {
+        askOrigin: { sessionId: 'neo', messageId: 'A' },
+        answerInput: { sessionId: 'neo', messageId: 'C' },
+        revisions: [
+          { producerInput: { sessionId: 'neo', messageId: 'B' } },
+          { producerInput: { sessionId: 'other', messageId: 'D' } },
+        ],
+      },
+    } as unknown as NeoPublicEntry;
+    expect([...neoRepliedAsks([ask('A'), revised, ask('B'), ask('C'), ask('D')])]).toEqual([
+      'A',
+      'B',
+      'C',
+    ]);
+  });
+  it('recognizes human origins behind current and earlier forwarded revisions', () => {
+    const revised = {
+      ...reply('A'),
+      publication: {
+        askOrigin: { sessionId: 'neo', messageId: 'A' },
+        answerInput: { sessionId: 'holder', messageId: 'neo-forward:C:0' },
+        answerOrigin: { sessionId: 'neo', messageId: 'C' },
+        revisions: [
+          {
+            producerInput: { sessionId: 'holder', messageId: 'neo-forward:B:0' },
+            askOrigin: { sessionId: 'neo', messageId: 'B' },
+          },
+        ],
+      },
+    } as unknown as NeoPublicEntry;
+    expect([...neoRepliedAsks([ask('A'), revised, ask('B'), ask('C')])]).toEqual(['A', 'B', 'C']);
   });
 });
 

@@ -48,7 +48,7 @@ describe('neoHealthDigest', () => {
       'Routing by signal: classifier-failed 31, facts 7.',
       'Card refusals by what was refused: none.',
       'Operation refusals at the agent door by operation and reason: neo.ask.open invalid_input 3.',
-      'Triggers that got more than one final reply: neo-turn-limit:r1 4.',
+      'Triggers that got more than one message: neo-turn-limit:r1 4.',
       `Live asks: a1 "Old" waiting, last changed ${new Date(since - 1).toISOString()} (untouched since the last digest); a2 "Fresh" open, last changed ${new Date(since + 1).toISOString()}.`,
       'Watched GitHub repos whose last poll failed: lsm/private: Not Found.',
     ]);
@@ -93,7 +93,7 @@ describe('NeoRepository.healthFacts', () => {
     ]);
   });
 
-  test('groups door refusals since a time and finds triggers with several final replies', () => {
+  test('groups door refusals since a time and finds triggers with several messages', () => {
     const repo = new NeoRepository(db.getDatabase());
     const refusals = new OperationRefusalRepository(db.getDatabase());
     refusals.record({ operation: 'neo.ask.open', reason: 'invalid_input' }, 's', since + 1);
@@ -120,7 +120,10 @@ describe('NeoRepository.healthFacts', () => {
     publish('p7', 't3');
     expect(repo.healthFacts(since)).toMatchObject({
       doorRefusals: [{ operation: 'neo.ask.open', reason: 'invalid_input', count: 2 }],
-      repeatedReplies: [{ trigger: 't1', count: 2 }],
+      repeatedReplies: [
+        { trigger: 't1', count: 3 },
+        { trigger: 't2', count: 2 },
+      ],
     });
   });
 });

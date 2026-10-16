@@ -285,26 +285,58 @@ describe('useNeo client build reachability', () => {
   });
 });
 
-describe('presentPublicationPage edits and corrections', () => {
-  const correctionId = '30000000-0000-4000-8000-000000000003';
+describe('presentPublicationPage revisions', () => {
+  const original = item();
+  const saved = {
+    revisionId: original.publicationId,
+    shortText: original.shortText,
+    fullText: original.fullText,
+    createdAt: original.createdAt,
+    producerInput: original.producerInput,
+    askOrigin: original.askOrigin,
+    awaiting: 'The review is pending.',
+  };
+  const revised = () => ({
+    ...item(),
+    revisionId: '30000000-0000-4000-8000-000000000003',
+    editedAt: '2026-09-30T09:00:00.000Z',
+    editedBy: 'holder:research',
+    answerInput: { sessionId: 'holder:research', messageId: 'neo-forward:follow-up-ask:0' },
+    answerOrigin: { sessionId: 'neo', messageId: 'follow-up-ask' },
+    shortText: 'Updated summary',
+    fullText: 'Updated **detail**',
+    revisions: [saved],
+  });
 
-  it('keeps edited and correction fields and drops a malformed one', () => {
-    const marked = {
-      ...item(),
-      editedAt: '2026-09-30T09:00:00.000Z',
-      corrects: correctionId,
-      correctedBy: correctionId,
-    };
-    expect(presentPublicationPage(response([marked]), page)).toEqual({
-      value: { state: 'ready', items: [marked], nextAfter: 1 },
+  it('preserves the current message and all earlier authored versions', () => {
+    expect(presentPublicationPage(response([revised()]), page)).toEqual({
+      value: { state: 'ready', items: [revised()], nextAfter: 1 },
     });
-    expect(
-      presentPublicationPage(
-        response([{ ...item(), corrects: 'not-an-id' } as ReturnType<typeof item>]),
-        page
-      )
-    ).toEqual({
+  });
+
+  it.each([
+    { revisionId: 'invalid' },
+    { answerInput: { sessionId: '' } },
+    { answerOrigin: { sessionId: '' } },
+    { revisions: [{ ...saved, askOrigin: { sessionId: '' } }] },
+    { revisions: {} },
+    { revisions: [null] },
+    { revisions: [{ ...saved, revisionId: 'invalid' }] },
+    { revisions: [{ ...saved, fullText: '' }] },
+    { revisions: [{ ...saved, createdAt: 'invalid' }] },
+    { revisions: [{ ...saved, producerInput: { sessionId: '' } }] },
+    { revisions: [{ ...saved, awaiting: 1 }] },
+    { revisions: [saved, saved] },
+    { revisions: [{ ...saved, revisionId: revised().revisionId }] },
+  ])('rejects malformed revision data %j', (fields) => {
+    expect(presentPublicationPage(response([{ ...revised(), ...fields }]), page)).toEqual({
       reason: { state: 'unavailable' },
+    });
+  });
+
+  it('does not require revision metadata for an unchanged historical message', () => {
+    expect(presentPublicationPage(response([original]), page)).toEqual({
+      value: { state: 'ready', items: [original], nextAfter: 1 },
     });
   });
 });
