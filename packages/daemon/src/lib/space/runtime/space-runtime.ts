@@ -1,3 +1,4 @@
+import { isRecord } from '../../record.ts';
 import {
   fillPrompt,
   SPACE_RUNTIME_HANDOFF_NO_TRANSCRIPT,
@@ -8766,10 +8767,6 @@ function parseNodeExecutionData(value: unknown): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function hasSqlExec(value: unknown): value is { exec: (sql: string) => void } {

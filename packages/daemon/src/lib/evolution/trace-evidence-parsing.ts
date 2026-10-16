@@ -1,3 +1,4 @@
+import { asRecord } from '../record.ts';
 const SOURCE_FILE_EXTENSIONS = new Set([
   'ts',
   'tsx',
@@ -90,10 +91,7 @@ export function parseJsonRecord(value: string): Record<string, unknown> | null {
   }
 }
 
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
+export { asRecord };
 
 export function groupBy<T>(items: T[], keyFor: (item: T) => string): Map<string, T[]> {
   const grouped = new Map<string, T[]>();

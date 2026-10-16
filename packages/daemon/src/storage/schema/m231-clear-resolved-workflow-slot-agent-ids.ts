@@ -1,3 +1,4 @@
+import { asRecord } from '../../lib/record.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from '../repositories/space-workflow-definition-version-repository.ts';
 import {
@@ -54,12 +55,6 @@ function parseJson(raw: string | null): unknown {
   } catch {
     return null;
   }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function parseJsonObject(raw: string | null): Record<string, unknown> | null {

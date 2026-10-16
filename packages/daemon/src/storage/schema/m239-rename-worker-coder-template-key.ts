@@ -1,3 +1,4 @@
+import { asRecord } from '../../lib/record.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   getLongHorizonAgentTemplate,
@@ -58,12 +59,6 @@ function parseJson(raw: string | null): unknown {
   } catch {
     return null;
   }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function renamedKeyFor(key: string, storedRelocation: string | null): string | null {

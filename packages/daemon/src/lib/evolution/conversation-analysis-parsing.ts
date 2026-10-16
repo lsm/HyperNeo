@@ -1,3 +1,4 @@
+import { asRecord } from '../record.ts';
 import type { EvolutionScope } from '@hyperneo/shared';
 import type {
   ConversationFrictionAnalysis,
@@ -90,7 +91,4 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
   return record;
 }
 
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
+export { asRecord };

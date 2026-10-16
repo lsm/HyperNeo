@@ -1,3 +1,4 @@
+import { isRecord } from '../record.ts';
 import type { WorkflowHookResult } from '@hyperneo/shared';
 
 const VALID_RESULT_TYPES = new Set([
@@ -9,9 +10,7 @@ const VALID_RESULT_TYPES = new Set([
   'record_state',
 ]);
 const MAX_HOOK_RESULT_BYTES = 65_536;
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
+export { isRecord };
 
 export function jsonByteLength(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).length;

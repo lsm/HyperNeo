@@ -1,3 +1,4 @@
+import { isRecord } from '../record.ts';
 import { PROMPT_TOO_LONG_CONTINUE_NAG } from '@hyperneo/prompts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { PROMPT_TOO_LONG_RE } from '@hyperneo/shared/provider/error-taxonomy';
@@ -37,10 +38,6 @@ export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
 }
 
 const LOCAL_COMMAND_STDERR_RE = /<local-command-stderr>([\s\S]*?)<\/local-command-stderr>/gi;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
 
 function extractUserMessageText(message: SDKMessage): string {
   const user = message as { message?: { content?: unknown } };
