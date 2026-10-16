@@ -695,17 +695,27 @@ function requireNeoAskChecklistMet(
   if (input.outcome !== 'achieved' || caller.source !== 'mcp' || !open.length)
     return { value: ask };
   const daemon = (item: NeoAskItem) => (isNeoAnswerItem(item) ? null : neoDaemonTickPath(item));
-  const tickable = open.filter((item) => !daemon(item));
-  const state = open.map((item) => {
+  const fact = (item: NeoAskItem) => {
     const path = daemon(item);
-    return `${item.id} "${item.text}" is ${item.state}${path ? `, and ${NEO_DAEMON_TICKS[path]}` : ''}`;
-  });
+    if (isNeoAnswerItem(item)) return ', and is met when its answer reaches the human';
+    if (!path) return '';
+    return item.state === 'reported'
+      ? ', and waits on the human to confirm it'
+      : `, and ${NEO_DAEMON_TICKS[path]}`;
+  };
+  const ids = (items: NeoAskItem[]) => items.map((item) => item.id).join(', ');
+  const tickable = open.filter((item) => !daemon(item) && !isNeoAnswerItem(item));
+  const answers = open.filter((item) => isNeoAnswerItem(item) && item.state !== 'reported');
+  const steps = [
+    ...(tickable.length ? [`tick ${ids(tickable)} met with neo.ask.tick`] : []),
+    ...(answers.length ? [`tick ${ids(answers)} reported with the result`] : []),
+  ];
   return {
     reason: fail(
-      `checklist_incomplete: ${state.join('; ')}. ${
-        tickable.length
-          ? `Tick ${tickable.map((item) => item.id).join(', ')} met with neo.ask.tick first, or settle waiting or blocked.`
-          : 'The ask is achieved by itself once the daemon ticks them.'
+      `checklist_incomplete: ${open.map((item) => `${item.id} "${item.text}" is ${item.state}${fact(item)}`).join('; ')}. ${
+        steps.length
+          ? `First ${steps.join(' and ')}, or settle waiting or blocked.`
+          : 'None of these is Neo’s to tick; settle waiting or blocked until they are met.'
       }`
     ),
   };
