@@ -12,7 +12,7 @@ export function NeoBusyRow({ words }: { words: readonly string[] }) {
     return () => window.clearInterval(timer);
   }, [words]);
   return (
-    <div role="status" class="neo-progress" aria-live="polite">
+    <div role="status" class="neo-progress" aria-live="off" aria-label={words[0]}>
       <span class="neo-progress-dots" aria-hidden="true">
         <i />
         <i />

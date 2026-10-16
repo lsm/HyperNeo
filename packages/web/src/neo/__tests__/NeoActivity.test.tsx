@@ -263,6 +263,8 @@ describe('NeoBusyRow', () => {
     const row = screen.getByRole('status');
     expect(row.textContent).toBe('Neo is working…');
     expect(result.container.querySelectorAll('.neo-progress-dots i')).toHaveLength(3);
+    expect(row.getAttribute('aria-live')).toBe('off');
+    expect(row.getAttribute('aria-label')).toBe('Neo is working…');
     act(() => {
       vi.advanceTimersByTime(3000);
     });
