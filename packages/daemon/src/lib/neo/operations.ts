@@ -1,11 +1,7 @@
 import { neoTurnRequestKey } from './request-key.ts';
 import { NeoWorkBlockerSchema } from './work-blocker.ts';
 import { hostname } from 'node:os';
-import {
-  backfillNeoRepositoryIdentities,
-  isNeoPlumbingFolder,
-  planNeoProjectRetitles,
-} from './project-mirror.ts';
+import { backfillNeoRepositoryIdentities, isNeoPlumbingFolder } from './project-mirror.ts';
 import { neoFolderPath } from './folder.ts';
 import { isTempCwd } from '../drivers/claude-feed.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
@@ -103,7 +99,6 @@ import {
   NEO_PROJECT_QUESTION_ATTEMPTS,
   readNeoProjectDecision,
   readNeoProjectIdentities,
-  readNeoProjectNames,
   settleNeoProjectQuestions,
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -1024,23 +1019,6 @@ export function neoReorganizeRuntime(
         (question, attempt) => askNeoProjectQuestion(service, question, attempt),
         (line) => service.logReorganize(line)
       );
-      const names = await readNeoProjectNames(
-        merges.localFolders(hostname()),
-        readWorkspaceIdentity
-      );
-      for (const retitle of planNeoProjectRetitles(
-        service.repo.listProjects(),
-        names,
-        merges.allFolders()
-      )) {
-        const project = service.repo.getProject(retitle.id);
-        if (!project) continue;
-        service.repo.saveProject(
-          { ...project, title: retitle.title, summary: `Project: ${retitle.title}` },
-          retitle.revision
-        );
-        service.logReorganize(`neo reorganize: retitled ${retitle.id} to ${retitle.title}`);
-      }
       return { merged: [...backfilled, ...merged, ...settled.merged], asked: settled.asked };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),

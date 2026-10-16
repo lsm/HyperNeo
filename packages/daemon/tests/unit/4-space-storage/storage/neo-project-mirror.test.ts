@@ -236,7 +236,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
     full.close();
   });
 
-  test('names a project once after its repository, repairs only a generated title, and never renames it otherwise', () => {
+  test('names a project once after its repository and never renames it', () => {
     const uuid = 'f793a97e-2b7e-4088-92a1-2506bde88670';
     const tree = (remotes?: string[]) => {
       const found = workspace(`/w/neokai/worktrees/${uuid}`, 'laptop', 'git:1');
@@ -246,9 +246,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
     expect(repo.listProjects()).toEqual([]);
     mirrorNeoWorkspaceProjects(db, tree(['git@github.com:lsm/neokai.git']));
     expect(repo.listProjects().map((project) => project.title)).toEqual(['neokai']);
-    const [first] = repo.listProjects();
-    repo.saveProject({ ...first, title: uuid, summary: `Project: ${uuid}` }, first.revision);
-    expect(mirrorNeoWorkspaceProjects(db, tree(['git@github.com:lsm/HyperNeo.git']))).toBe(true);
+    mirrorNeoWorkspaceProjects(db, tree(['git@github.com:lsm/HyperNeo.git']));
     expect(repo.listProjects().map((project) => project.title)).toEqual(['neokai']);
     mirrorNeoWorkspaceProjects(db, tree(['git@github.com:lsm/open-agent-protocol.git']));
     expect(repo.listProjects().map((project) => project.title)).toEqual(['neokai']);
@@ -641,20 +639,6 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     raw.prepare('DELETE FROM neo_asks').run();
     ask(NEO_PROJECT_SAME);
     expect(allowed()).toBe(true);
-    full.close();
-  });
-
-  test('retitles a generated title from the repository when the project kept it', async () => {
-    const full = await createTestDb();
-    const raw = full.getDatabase();
-    const store = new NeoRepository(raw);
-    const title = '6c79b9f4-531a-4c83-a514-fa20c272ea80';
-    store.saveProject({ id: 'project:x', title, summary: `Project: ${title}`, context: '' }, 0);
-    raw
-      .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
-      .run('repo:lsm/hyperneo\u0000x', 'project:x');
-    backfillNeoRepositoryIdentities(raw);
-    expect(store.getProject('project:x')?.title).toBe('hyperneo');
     full.close();
   });
 
