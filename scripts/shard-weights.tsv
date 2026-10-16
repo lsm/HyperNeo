@@ -980,7 +980,6 @@
 7	packages/daemon/tests/unit/5-space/runtime/admission-gates.test.ts
 13	packages/daemon/tests/unit/5-space/runtime/agent-message-delivery-pipeline.test.ts
 6293	packages/daemon/tests/unit/5-space/runtime/atomic-task-pointer-write.test.ts
-102	packages/daemon/tests/unit/5-space/runtime/bound-task-dependencies.test.ts
 11	packages/daemon/tests/unit/5-space/runtime/built-in-validator-registry.test.ts
 2339	packages/daemon/tests/unit/5-space/runtime/cancel-route.test.ts
 6	packages/daemon/tests/unit/5-space/runtime/cancel-task-gates.test.ts
