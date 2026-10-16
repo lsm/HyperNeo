@@ -8,11 +8,6 @@ package-lock.json
 
 # IDE
 .vscode/
-
-# CI Artifacts (downloaded test results)
-e2e-no-llm-results-*/
-e2e-no-llm-results-*
-e2e-results-llm-*/
 .idea/
 *.swp
 *.swo
@@ -45,7 +40,6 @@ tmp/
 coverage/
 data/
 test-results/
-playwright-report/
 *.tsbuildinfo
 
 # Git worktrees

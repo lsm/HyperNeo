@@ -20,7 +20,6 @@
   "devDependencies": {
     "@types/bun": "1.4.2",
     "@vitest/coverage-v8": "5.0.0",
-    "playwright": "1.63.0",
     "v8-to-istanbul": "9.3.0",
     "vitest": "5.0.0"
   }

@@ -1228,7 +1228,7 @@ reject_effective_config_drift "$ONLINE_CFG" "packages/daemon/vitest.online" \
 
 # Each guarded test job's job-level if: must EQUAL its pinned predicate (not a
 # substring match). A substring search accepts a gate like
-# `github.event.inputs.run_e2e_only != 'true' && github.event_name == 'never'`,
+# `always() && github.event_name == 'never'`,
 # which GitHub evaluates FALSE in normal CI — silently skipping every shard
 # while this guard reports its files covered. enabled_run_cmd only catches
 # literal if:false/never, so pinning the FULL predicate is what blocks a compound
@@ -1269,10 +1269,9 @@ _check_job_gate() {
 		fi
 	fi
 }
-_check_job_gate test-daemon-shared-unit "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && github.event.inputs.run_e2e_only != 'true'"
-_check_job_gate test-web "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.web == 'true') && (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref_type == 'tag') || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'"
-_check_job_gate test-daemon-online "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && (github.ref_type != 'tag' || github.event_name == 'push') && github.event.inputs.run_e2e_only != 'true'"
-_check_job_gate daemon-real-api "$REAL_API_WORKFLOW" "github.event.inputs.run_e2e_only != 'true'"
+_check_job_gate test-daemon-shared-unit "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true')"
+_check_job_gate test-web "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.web == 'true') && (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref_type == 'tag') || github.event_name == 'workflow_dispatch')"
+_check_job_gate test-daemon-online "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && (github.ref_type != 'tag' || github.event_name == 'push')"
 # Reject module: scalars with invalid characters (a typo like `comp_onents` is a
 # distinct module to GitHub — splits a combination while this guard cannot match).
 reject_invalid_module_values "$MAIN_WORKFLOW" test-daemon-online

@@ -1,8 +1,0 @@
-# Test output
-test-results/
-playwright-report/
-
-# Coverage output
-coverage/
-monocart-report/
-assets/

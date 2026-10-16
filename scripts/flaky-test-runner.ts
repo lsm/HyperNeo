@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 
-export type FlakySuite = 'daemon-unit' | 'daemon-online' | 'web' | 'cli' | 'e2e';
+export type FlakySuite = 'daemon-unit' | 'daemon-online' | 'web' | 'cli';
 
 export interface FlakyPolicy {
   maxRetries: number;

@@ -8,12 +8,12 @@ HyperNeo is a browser UI for the Claude Agent SDK: multi-session chat, provider/
 
 - **Runtimes:** Bun 1.4.2 (pinned release runtime) and Deno 2.9.x for the daemon (`docs/supported-runtimes.md`). Plain Node is not supported.
 - **Stack:** Hono + Claude Agent SDK + SQLite backend; Preact + Signals + Vite + Tailwind frontend (Preact conventions, not React APIs); custom MessageHub RPC/pub-sub over WebSocket.
-- **Tests:** Vitest everywhere except messaging (Bun test) and E2E (Playwright). Daemon and shared tests import `bun:test` but run under Vitest through `packages/daemon/tests/bun-test-shim.ts`.
+- **Tests:** Vitest everywhere except messaging (Bun test). Daemon and shared tests import `bun:test` but run under Vitest through `packages/daemon/tests/bun-test-shim.ts`.
 - **Dependencies:** exact version pins only; CI rejects `^`/`~`.
 
 ## Monorepo
 
-`cli` (entry point + HTTP wrapper), `daemon` (backend, sessions, providers, persistence, operations, Space), `shared` (types, MessageHub protocol, `OPERATION_NAMES`), `messaging` (transport-independent contracts), `prompts`, `web` (Preact frontend), `ui` (component library), `skills` (bundled `SKILL.md` plugins, copied to `~/.hyperneo/skills/` at startup), `desktop` (Tauri), `e2e` (Playwright).
+`cli` (entry point + HTTP wrapper), `daemon` (backend, sessions, providers, persistence, operations, Space), `shared` (types, MessageHub protocol, `OPERATION_NAMES`), `messaging` (transport-independent contracts), `prompts`, `web` (Preact frontend), `ui` (component library), `skills` (bundled `SKILL.md` plugins, copied to `~/.hyperneo/skills/` at startup), `desktop` (Tauri).
 
 `packages/prompts/src/mod.ts` imports every `.md` with `with { type: 'text' }`; the attribute is mandatory (Bun silently renders attribute-less `.md` imports to HTML) and there is no generated registry. Aliases `@hyperneo/shared`, `@hyperneo/daemon`, `@hyperneo/ui`, and `@/*` resolve directly to source.
 
@@ -31,12 +31,11 @@ make setup-hooks       # pre-commit: lint, format check, typecheck, knip
 cd packages/daemon && bun test tests/unit/some-test.test.ts     # never run `bun test` from the repo root
 cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts
 cd packages/web && bunx vitest run src/lib/__tests__/some.test.ts
-make run-e2e TEST=tests/features/foo.e2e.ts
 
 make build && make compile
 ```
 
-Prefer unit/component tests; add E2E only when asked or when the behavior needs a browser.
+Prefer unit/component tests.
 
 ## Quality guards
 
@@ -100,7 +99,6 @@ ADRs in `docs/adr/` (0001 live query + job queue, 0002 job-queue migration, 0003
 - Daemon unit tests under `tests/unit/` are discovered recursively and balanced across `daemon-a` through `daemon-h` using recorded file durations, with deterministic hash fallbacks for unmeasured files. Shared tests have a separate shard. Vitest preloads `tests/vitest.setup.ts` and aliases the SDK to `tests/sdk-mock.ts`; bare `bun test` gets the same isolation with `--preload=./tests/unit/setup.ts`.
 - `tests/online/` boots a real daemon. CI runs it with `HYPERNEO_USE_DEV_PROXY=1` (Anthropic traffic to the `.devproxy/` stub, real credentials blanked); `real-api-tests.yml` runs selected modules with real keys. The proxy flag must never fall back silently.
 - Flaky tests are registered in `flaky-tests.json`, not patched with retries or skips.
-- E2E acts through visible UI only: no `hub.request`, stores, or state mutation in test bodies (setup/teardown may use `hub.request`); use `closeWebSocket()`/`restoreWebSocket()`, not browser offline mode. Run one file at a time; malformed-response and token-expiry cases belong in daemon integration tests.
 
 ## Git
 

@@ -13,8 +13,3 @@ src/styles.out.css
 node_modules/
 vendor/
 
-# Playwright
-test-results/
-playwright-report/
-playwright/.cache/
-
