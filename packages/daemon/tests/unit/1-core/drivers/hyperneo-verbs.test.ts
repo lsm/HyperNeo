@@ -55,7 +55,13 @@ function control(db: Database, events: string[]) {
 
 describe('hyperneo adapter send and status', () => {
   let db: Database;
-  let handed: Array<{ sessionId: string; message: string; from: string; messageUuid: string }>;
+  let handed: Array<{
+    sessionId: string;
+    message: string;
+    from: string;
+    messageUuid: string;
+    deliveryMode?: string;
+  }>;
   let outcome: MailboxHandoffOutcome;
   let events: string[];
 
@@ -114,8 +120,14 @@ describe('hyperneo adapter send and status', () => {
       db: () => db,
       machine: 'imac',
       searchChats: async () => [],
-      handoff: async (sessionId, message, from, messageUuid) => {
-        handed.push({ sessionId, message, from, messageUuid });
+      handoff: async (sessionId, message, from, messageUuid, deliveryMode) => {
+        handed.push({
+          sessionId,
+          message,
+          from,
+          messageUuid,
+          ...(deliveryMode ? { deliveryMode } : {}),
+        });
         return outcome;
       },
       ...control(db, events),
@@ -123,6 +135,52 @@ describe('hyperneo adapter send and status', () => {
   }
 
   const ref = (id: string) => ({ adapter: 'hyperneo', id });
+
+  test.each(['idle', 'busy'])(
+    'queue defers the input with its receipt for an owned %s session',
+    async (id) => {
+      const driver = adapter();
+      expect(driver.capabilities).toContain('queue');
+      const result = await driver.queue!(ref(id), 'after this turn', {
+        from: 'session:sender',
+        caller: { source: 'internal' },
+      });
+      expect(result).toEqual({
+        ok: true,
+        value: {
+          delivered: false,
+          queuedSubmissionId: 'mb1',
+          receipt: { executionId: id, inputId: handed[0].messageUuid },
+        },
+      });
+      expect(handed).toEqual([
+        {
+          sessionId: id,
+          message: 'after this turn',
+          from: 'session:sender',
+          messageUuid: expect.any(String),
+          deliveryMode: 'defer',
+        },
+      ]);
+    }
+  );
+
+  test.each(['gone', 'space', 'missing'])(
+    'queue reuses session admission for %s without handoff',
+    async (id) => {
+      expect(
+        await adapter().queue!(ref(id), 'queued', { from: 'user', caller: { source: 'rpc' } })
+      ).toMatchObject({ ok: false });
+      expect(handed).toEqual([]);
+    }
+  );
+
+  test('queue does not return a submission receipt when mailbox admission fails', async () => {
+    outcome = { kind: 'rejected', reason: 'mailbox unavailable' };
+    expect(
+      await adapter().queue!(ref('idle'), 'queued', { from: 'user', caller: { source: 'rpc' } })
+    ).toEqual({ ok: false, reason: 'not_delivered', detail: 'mailbox unavailable' });
+  });
 
   test('creates the native session in the prepared directory without another worktree choice', async () => {
     const driver = adapter(async () => ({
