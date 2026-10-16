@@ -1,23 +1,7 @@
 import type { Session, SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import type { SetTaskDependenciesInput } from '../../storage/tasks/set-task-dependencies.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
-import { requireDependencyExecutionBlock } from '../space/tools/update-task-fields.ts';
-
-import {
-  persistSpaceTaskFields,
-  publishSpaceTaskFieldUpdate,
-  blockSpaceTaskForDependency,
-} from './field-effects.ts';
-type DependencyState = { previous: SpaceTask | null; task: SpaceTask };
-
-export interface BoundSpaceTaskDependencyDependencies {
-  getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'updateTask'>;
-  emitTaskUpdated: (spaceId: string, task: SpaceTask) => void | Promise<void>;
-  blockExecution?: SpaceTaskDependencyDependencies['blockExecution'];
-}
 
 export interface SpaceTaskDependencyDependencies extends SpaceMcpSessionPolicyContext {
   db: Database;
@@ -35,58 +19,4 @@ export interface SpaceTaskDependencyDependencies extends SpaceMcpSessionPolicyCo
     taskId: string,
     params: UpdateSpaceTaskParams
   ) => Promise<SpaceTask | null>;
-}
-
-export async function persistSpaceDependencies(
-  getTaskManager: BoundSpaceTaskDependencyDependencies['getTaskManager'],
-  spaceId: string,
-  input: SetTaskDependenciesInput
-): Promise<DependencyState> {
-  return persistSpaceTaskFields(getTaskManager, undefined, spaceId, input.taskId, {
-    dependsOn: input.dependsOn,
-  });
-}
-
-export function selectSpaceDependencyCompletion(
-  state: DependencyState,
-  blockExecution: BoundSpaceTaskDependencyDependencies['blockExecution'],
-  emit: BoundSpaceTaskDependencyDependencies['emitTaskUpdated']
-): (spaceId: string, task: SpaceTask) => Promise<SpaceTask> {
-  const blocked = requireDependencyExecutionBlock(state.previous, state.task);
-  return blockExecution && 'value' in blocked
-    ? (spaceId, task) => blockSpaceTaskForDependency(blockExecution, spaceId, task)
-    : (spaceId, task) => publishSpaceTaskFieldUpdate(emit, spaceId, task);
-}
-
-export function createSpaceDependencyReplacer(dependencies: BoundSpaceTaskDependencyDependencies) {
-  return (superpipe({ ...dependencies })('replace-space-task-dependencies') as PipelineAPI)
-    .input(['spaceId', 'input'])
-    .pipe(persistSpaceDependencies, ['getTaskManager', 'spaceId', 'input'], 'state')
-    .pipe(
-      selectSpaceDependencyCompletion,
-      ['state', 'blockExecution', 'emitTaskUpdated'],
-      'complete'
-    )
-    .pipe(
-      (
-        complete: ReturnType<typeof selectSpaceDependencyCompletion>,
-        spaceId: string,
-        state: DependencyState
-      ) => complete(spaceId, state.task),
-      ['complete', 'spaceId', 'state'],
-      'task'
-    )
-    .endAsync('task') as (spaceId: string, input: SetTaskDependenciesInput) => Promise<SpaceTask>;
-}
-
-export function isTaskDependenciesOnlyUpdate(params: UpdateSpaceTaskParams): boolean {
-  return params.dependsOn !== undefined && Object.keys(params).every((key) => key === 'dependsOn');
-}
-
-export function createBoundSpaceTaskDependencyEditor(
-  spaceId: string,
-  dependencies: BoundSpaceTaskDependencyDependencies
-) {
-  const replace = createSpaceDependencyReplacer(dependencies);
-  return (input: SetTaskDependenciesInput) => replace(spaceId, input);
 }

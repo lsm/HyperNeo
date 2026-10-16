@@ -4,7 +4,7 @@ import { getPresetAgentTemplates } from '../../../../../src/lib/agents/seed-agen
 import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
-} from '../../../../../src/lib/agents/system-contracts.ts';
+} from '../../../../helpers/system-contracts.ts';
 import {
   PRE_TASK_APPROVE_CONTRACT_SHA256,
   runMigration267,

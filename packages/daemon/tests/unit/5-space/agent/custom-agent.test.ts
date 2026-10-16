@@ -19,7 +19,7 @@ import {
   resolveCustomAgentPrompt,
   type SlotOverrides,
 } from '../../../../src/lib/agents/custom-agent';
-import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/agents/system-contracts';
+import { REVIEWER_SYSTEM_CONTRACT } from '../../../helpers/system-contracts.ts';
 import {
   CODING_WORKFLOW,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
