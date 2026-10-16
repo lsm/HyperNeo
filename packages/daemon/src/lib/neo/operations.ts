@@ -154,7 +154,6 @@ import {
   driverTargetDaemon,
   NeoDriverTargetSchema,
   readNeoDriverAdapters,
-  neoNoteChecklist,
   neoNotePrVerdict,
   readNeoStartFolder,
   requireNeoDriverVerb,
@@ -163,6 +162,7 @@ import {
   type NeoDriverTarget,
   type NeoWorkRetryCard,
 } from './driver-work.ts';
+import { neoNoteChecklist } from './ask-progress.ts';
 import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import type { WorkRef } from '../drivers/types.ts';

@@ -12,6 +12,7 @@ import {
   NEO_WORK_RETURNED,
   NEO_WORK_RETURNED_RETRIED,
   NEO_WORK_RETURNED_RETRY,
+  NEO_WORK_REROUTED,
 } from '@hyperneo/prompts';
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -2018,7 +2019,11 @@ export class NeoService {
         await this.deliver(
           next.originSessionId,
           `neo-work-reroute:${next.id}:${this.driverTargets.readRetries(next.id)}`,
-          `The card's target is archived, ended or taken by another card; its instruction was not delivered. The card is still approved and has not failed. neo.work.retry with this workId selects an open worker and sends the original instruction.\n${JSON.stringify({ workId: next.id, title: next.title, ref, place })}`,
+          neoAskProgressNote(
+            this.askRecords.forWork(next.id),
+            fillPrompt(NEO_WORK_REROUTED, { work_id: next.id, title: next.title }),
+            { card: { id: next.id, title: next.title, ref, place } }
+          ),
           next.originSessionId,
           neoWorkParent(next)
         );
@@ -3051,7 +3056,13 @@ export class NeoService {
       [work.id],
       work.originSessionId,
       neoStallMessageId(work.id, live.lastActivityAt),
-      driverStallNote(work, this.workDoneGoal(work.id), live.lastReply, budget),
+      driverStallNote(
+        work,
+        this.askRecords.forWork(work.id),
+        this.workDoneGoal(work.id),
+        live.lastReply,
+        budget
+      ),
       neoWorkParent(work)
     );
   }
@@ -3066,6 +3077,7 @@ export class NeoService {
       neoStallMessageId(work.id, reminder.due),
       driverStuckNote(
         work,
+        this.askRecords.forWork(work.id),
         this.workDoneGoal(work.id),
         work.updatedAt,
         now,
@@ -3108,7 +3120,7 @@ export class NeoService {
           await this.deliverToOrigin(
             work.originSessionId,
             neoNeedsYouMessageId(work.id, plan.notify),
-            driverNeedsYouNote(work, ref, card.state?.lastReply),
+            driverNeedsYouNote(work, card.ask, ref, card.state?.lastReply),
             neoWorkParent(work)
           );
         if (plan.record !== undefined) this.driverTargets.recordNeedsYouSince(work.id, plan.record);

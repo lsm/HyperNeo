@@ -42,4 +42,14 @@ describe('neoAskProgressNote', () => {
     expect(parts(note).data.replacedBy).toBe('a2');
     expect(note).not.toMatch(/Tell the human|Decide now|Check each|Settle/);
   });
+
+  test('a card with no ask reads as card progress, with only what the source adds', () => {
+    const note = neoAskProgressNote(null, 'card w1 "Fix" is waiting on the user.', {
+      card: { id: 'w1' },
+    });
+    expect(parts(note)).toEqual({
+      head: 'Card progress: card w1 "Fix" is waiting on the user.',
+      data: { card: { id: 'w1' } },
+    });
+  });
 });

@@ -54,6 +54,7 @@ import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { hashString32 } from '../runtime-hash.ts';
 import type { NeoPackCardFacts, NeoPackFragment } from './packs/types.ts';
+import { neoAskProgressNote, neoNoteChecklist } from './ask-progress.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
 import { awaitingNeoWorker } from './work-reroute.ts';
 
@@ -594,12 +595,6 @@ export function projectNeoAskCards(
     });
 }
 
-export function neoNoteChecklist(ask: NeoAsk): { id: string; state: string; text?: string }[] {
-  return (ask.doneItems ?? [])
-    .filter((item) => !item.removed)
-    .map(({ id, text, state }) => (state === 'met' ? { id, state } : { id, state, text }));
-}
-
 export function isNeoDoneWhenRestated(doneWhen: string, ask: NeoAsk): boolean {
   const texts = new Set(
     (ask.doneItems ?? []).filter((item) => !item.removed).map((item) => item.text.trim())
@@ -684,12 +679,25 @@ export function readDriverActivity(
 
 export function driverStallNote(
   work: Pick<NeoWork, 'id' | 'title'>,
+  ask: NeoAsk | null,
   goal: NeoWorkGoal | null,
   lastReply: string | undefined,
   budget: string | null
 ): string {
   const next = budget ? fillPrompt(NEO_WORK_STALL_BUDGET, { budget }) : '';
-  return `${fillPrompt(NEO_WORK_STALL, { next })}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal?.goal ?? null, doneWhen: goal?.doneWhen ?? null, lastReply: lastReply?.slice(0, 2000) ?? null })}`;
+  return neoAskProgressNote(
+    ask,
+    fillPrompt(NEO_WORK_STALL, { work_id: work.id, title: work.title, next }),
+    {
+      card: {
+        id: work.id,
+        title: work.title,
+        goal: goal?.goal ?? null,
+        doneWhen: goal?.doneWhen ?? null,
+        lastReply: lastReply?.slice(0, 2000) ?? null,
+      },
+    }
+  );
 }
 
 const HOUR_MS = 60 * 60_000;
@@ -722,6 +730,7 @@ export function isNeoReceiptAbandoned(
 
 export function driverStuckNote(
   work: Pick<NeoWork, 'id' | 'title'>,
+  ask: NeoAsk | null,
   goal: NeoWorkGoal | null,
   queuedSince: number,
   now: number,
@@ -734,15 +743,31 @@ export function driverStuckNote(
     : budget
       ? fillPrompt(NEO_WORK_STUCK_BUDGET, { budget })
       : '';
-  return `${fillPrompt(NEO_WORK_STUCK, { hours: String(hours), next })}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal?.goal ?? null, doneWhen: goal?.doneWhen ?? null })}`;
+  return neoAskProgressNote(
+    ask,
+    fillPrompt(NEO_WORK_STUCK, { work_id: work.id, title: work.title, hours: String(hours), next }),
+    {
+      card: {
+        id: work.id,
+        title: work.title,
+        goal: goal?.goal ?? null,
+        doneWhen: goal?.doneWhen ?? null,
+      },
+    }
+  );
 }
 
 export function driverNeedsYouNote(
   work: Pick<NeoWork, 'id' | 'title'>,
+  ask: NeoAsk | null,
   ref: WorkRef,
   lastReply: string | undefined
 ): string {
-  return `${NEO_WORK_NEEDS_YOU}\n${JSON.stringify({ workId: work.id, title: work.title, ref, lastReply: lastReply?.slice(0, 2000) ?? null })}`;
+  return neoAskProgressNote(
+    ask,
+    fillPrompt(NEO_WORK_NEEDS_YOU, { work_id: work.id, title: work.title }),
+    { card: { id: work.id, title: work.title, ref, lastReply: lastReply?.slice(0, 2000) ?? null } }
+  );
 }
 
 export function readDriverCardExchange(outcome: OperationOutcome, sent: DriverSent | null) {
