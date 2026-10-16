@@ -1,4 +1,10 @@
-import { ChevronDownGlyph, ChevronUpGlyph, CloseGlyph } from '../icons/common-glyphs.tsx';
+import {
+  ModelChevronUpIcon as ChevronUpIcon,
+  ModelChevronDownIcon as ChevronDownIcon,
+  ModelXIcon as XIcon,
+  ModelPlusIcon as PlusIcon,
+  ModelPencilIcon as PencilIcon,
+} from '../icons/panel-icons.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { FallbackModelEntry, ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -27,60 +33,6 @@ interface RawModelEntry {
   description: string;
   alias?: string;
   provider?: string;
-}
-
-function ChevronUpIcon() {
-  return (
-    <ChevronUpGlyph
-      class="w-4 h-4 text-fg-muted"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    />
-  );
-}
-
-function ChevronDownIcon() {
-  return (
-    <ChevronDownGlyph
-      class="w-4 h-4 text-fg-muted"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    />
-  );
-}
-
-function XIcon({ class: cls }: { class?: string }) {
-  return (
-    <CloseGlyph
-      class={cls ?? 'w-4 h-4 text-fg-muted'}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    />
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-    </svg>
-  );
-}
-
-function PencilIcon() {
-  return (
-    <svg class="w-4 h-4 text-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width="2"
-        d="M15.232 5.232l3.536 3.536M9 11l6.536-6.536a2 2 0 012.828 2.828L11.828 13.828a2 2 0 01-1.414.586H8v-2.414a2 2 0 01.586-1.414z"
-      />
-    </svg>
-  );
 }
 
 interface ModelPickerModalProps {
