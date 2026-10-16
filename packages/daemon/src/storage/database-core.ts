@@ -29,6 +29,7 @@ import {
   runMigrations,
 } from './schema/index.ts';
 import { Database as BunDatabase } from './sqlite-compat.ts';
+import { assertSupportedDatabaseVersion } from './schema/upgrade-floor.ts';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
@@ -74,6 +75,8 @@ export class DatabaseCore {
       this.db = this.options.queryObservability
         ? new BunDatabase(this.dbPath, { queryObservability: this.options.queryObservability })
         : new BunDatabase(this.dbPath);
+
+      assertSupportedDatabaseVersion(this.db);
 
       this.db.exec('PRAGMA journal_mode = WAL');
 
