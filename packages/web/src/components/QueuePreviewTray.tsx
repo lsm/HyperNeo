@@ -1,3 +1,8 @@
+import {
+  QueueTrashIcon as TrashIcon,
+  QueueMoveToSteerIcon as MoveToSteerIcon,
+  QueueMoveToNextIcon as MoveToNextIcon,
+} from './icons/panel-icons.tsx';
 import { useEffect, useState } from 'preact/hooks';
 import { Modal } from './ui/Modal.tsx';
 
@@ -32,47 +37,6 @@ interface QueuePreviewTrayProps {
   onDeferMessage?: (message: QueuePreviewMessage) => void;
   onPromoteMessage?: (message: QueuePreviewMessage) => void;
   onRemoveMessage?: (message: QueuePreviewMessage) => void;
-}
-
-function TrashIcon() {
-  return (
-    <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={2}>
-      <path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18" />
-      <path stroke-linecap="round" stroke-linejoin="round" d="M8 6V4h8v2" />
-      <path stroke-linecap="round" stroke-linejoin="round" d="M6.5 6l1 16h9l1-16" />
-      <path stroke-linecap="round" stroke-linejoin="round" d="M10 11v6M14 11v6" />
-    </svg>
-  );
-}
-
-function MoveToSteerIcon() {
-  return (
-    <svg
-      class="h-3.5 w-3.5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width={2.3}
-    >
-      <path stroke-linecap="round" stroke-linejoin="round" d="M12 19V5" />
-      <path stroke-linecap="round" stroke-linejoin="round" d="M5 12l7-7 7 7" />
-    </svg>
-  );
-}
-
-function MoveToNextIcon() {
-  return (
-    <svg
-      class="h-3.5 w-3.5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width={2.3}
-    >
-      <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14" />
-      <path stroke-linecap="round" stroke-linejoin="round" d="M19 12l-7 7-7-7" />
-    </svg>
-  );
 }
 
 function QueuePreviewRow({

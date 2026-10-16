@@ -1,3 +1,17 @@
+import {
+  GitPullRequestIcon as PullRequestIcon,
+  GitWorkspaceIcon as WorkspaceIcon,
+  GitChecksIcon as ChecksIcon,
+  GitCommitIcon as CommitIcon,
+  GitErrorIcon as ErrorIcon,
+  GitPendingIcon as PendingIcon,
+  GitCheckDotIcon as CheckDotIcon,
+  GitDotIcon as DotIcon,
+  GitChevronIcon as ChevronIcon,
+  GitCopyIcon as CopyIcon,
+  GitCheckSmallIcon as CheckSmallIcon,
+  GitExternalLinkIcon as ExternalLinkIcon,
+} from './icons/panel-icons.tsx';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
   GitCheckSummary,
@@ -835,160 +849,4 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     ) : null;
 
   return <InspectPanel header={header}>{body}</InspectPanel>;
-}
-
-function PullRequestIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M7 5v14M17 5v3a4 4 0 0 1-4 4H7M17 5a2 2 0 1 0-4 0 2 2 0 0 0 4 0ZM9 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM19 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z"
-      />
-    </svg>
-  );
-}
-
-function WorkspaceIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M4.5 17.5h15M6.5 6.5h11a1 1 0 0 1 1 1v8.5h-13V7.5a1 1 0 0 1 1-1Z"
-      />
-    </svg>
-  );
-}
-
-function ChecksIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-      />
-    </svg>
-  );
-}
-
-function CommitIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M4 12h6M14 12h6M10 12a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z"
-      />
-    </svg>
-  );
-}
-
-function ErrorIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M12 8v4M12 16h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-      />
-    </svg>
-  );
-}
-
-function PendingIcon() {
-  return (
-    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M12 6v6l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-      />
-    </svg>
-  );
-}
-
-function CheckDotIcon() {
-  return (
-    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={2.5}
-        d="M4.5 12.75 10 18.25 19.5 6.5"
-      />
-    </svg>
-  );
-}
-
-function DotIcon() {
-  return (
-    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <circle cx="12" cy="12" r="3.5" stroke-width={2.5} />
-    </svg>
-  );
-}
-
-function ChevronIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      class={cn('h-3 w-3 flex-shrink-0 text-fg-faint transition-transform', open && 'rotate-90')}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    >
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M9 5l7 7-7 7" />
-    </svg>
-  );
-}
-
-function CopyIcon() {
-  return (
-    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M8 8H6.5A1.5 1.5 0 0 0 5 9.5v8A1.5 1.5 0 0 0 6.5 19h8a1.5 1.5 0 0 0 1.5-1.5V16M9.5 5h8A1.5 1.5 0 0 1 19 6.5v8A1.5 1.5 0 0 1 17.5 16h-8A1.5 1.5 0 0 1 8 14.5v-8A1.5 1.5 0 0 1 9.5 5Z"
-      />
-    </svg>
-  );
-}
-
-function CheckSmallIcon() {
-  return (
-    <svg
-      class="h-3.5 w-3.5 text-success-soft"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    >
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={2.5}
-        d="M4.5 12.75 10 18.25 19.5 6.5"
-      />
-    </svg>
-  );
-}
-
-function ExternalLinkIcon() {
-  return (
-    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={1.8}
-        d="M14 5h5v5M19 5l-8 8M12 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"
-      />
-    </svg>
-  );
 }
