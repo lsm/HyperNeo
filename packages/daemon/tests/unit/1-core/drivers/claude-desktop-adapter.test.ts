@@ -571,16 +571,9 @@ describe('claude-desktop adapter against the app session records', () => {
 
   test('a delivered send returns the receipt of the input it put in the transcript', async () => {
     const relayDir = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
-    const resumeDir = join(dir, 'projects', '-focus-ops');
     mkdirSync(relayDir, { recursive: true });
-    mkdirSync(resumeDir, { recursive: true });
     const relayLog = join(relayDir, 'cli-a1.jsonl');
-    const resumeLog = join(resumeDir, 'cli-b2.jsonl');
     writeFileSync(relayLog, '');
-    writeFileSync(
-      resumeLog,
-      `${JSON.stringify({ type: 'user', uuid: 'old', message: { content: 'next' } })}\n`
-    );
     const relayed = JSON.stringify({
       type: 'user',
       uuid: 'u-relay',

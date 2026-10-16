@@ -57,7 +57,7 @@ rejected; this partial start is reported as not delivered, never as running.
 
 1. Keep owner admission ahead of every Claude send/start handoff path.
 2. Build and wire a daemon-owned inbox with delivery receipts and reply routing;
-   then delete the Haiku relay and obsolete headless fallback.
+   then delete the Haiku relay. The obsolete headless fallback has been removed.
 3. Show unsupported stop/withdraw truthfully on cards with Open session.
 4. Reuse daemon-owned SDK query interruption and the daemon outbox for queue
    and withdrawal before dispatch. No inbox interrupt/withdraw command was
