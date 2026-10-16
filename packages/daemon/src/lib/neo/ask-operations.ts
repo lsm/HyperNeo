@@ -332,10 +332,11 @@ function neoPromptText(message: SDKMessage): string {
 const isFinal = isNeoAskSettled;
 const ACTIVE_ASK_LIMIT = 50;
 
+const activeNeoAskItems = (ask: Pick<NeoAsk, 'doneItems'>) =>
+  (ask.doneItems ?? []).filter((item) => !item.removed);
+
 const checklist = (ask: NeoAsk) =>
-  (ask.doneItems ?? [])
-    .filter((item) => !item.removed)
-    .map((item) => ({ id: item.id, title: item.text }));
+  activeNeoAskItems(ask).map((item) => ({ id: item.id, title: item.text }));
 
 export function requireNeoAskOwner(
   ask: NeoAsk | null,
@@ -819,16 +820,13 @@ export function neoAskLiveOutcomeCards(
   ask: Pick<NeoAsk, 'doneItems'>,
   cards: readonly NeoOutcomeCard[]
 ): string[] {
-  return (ask.doneItems ?? [])
-    .filter((item) => !item.removed)
-    .flatMap((item) =>
-      neoItemDependentCards(item, cards)
-        .filter((card) => !NEO_TERMINAL_CARD.has(card.status))
-        .map(
-          (card) =>
-            `${item.id} is delivered by card ${card.id.slice(0, 8)}, which is ${card.status}`
-        )
-    );
+  return activeNeoAskItems(ask).flatMap((item) =>
+    neoItemDependentCards(item, cards)
+      .filter((card) => !NEO_TERMINAL_CARD.has(card.status))
+      .map(
+        (card) => `${item.id} is delivered by card ${card.id.slice(0, 8)}, which is ${card.status}`
+      )
+  );
 }
 
 export function requireNeoSettleKeepsOutcomeCards<T>(
@@ -1284,7 +1282,7 @@ export function readNeoAskReply(input: z.infer<typeof Answer>): { choice: string
 }
 
 export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gate<NeoAsk> {
-  const active = (ask.doneItems ?? []).filter((item) => !item.removed);
+  const active = activeNeoAskItems(ask);
   const missing = input.remove.filter((id) => !active.some((item) => item.id === id));
   if (missing.length)
     return {
@@ -1377,7 +1375,7 @@ export function planNeoAskTickStatus(
   | { status: 'open' }
   | { status: 'unchanged' } {
   if (isFinal(ask)) return { status: 'unchanged' };
-  const items = (ask.doneItems ?? []).filter((item) => !item.removed);
+  const items = activeNeoAskItems(ask);
   const held = ask.status === 'waiting' && !ask.waitingItem;
   if (
     settle.changes.metAt > settle.changes.removedAt &&

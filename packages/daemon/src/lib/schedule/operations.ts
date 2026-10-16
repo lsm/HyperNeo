@@ -1,3 +1,4 @@
+import { errorMessage as failureMessage } from '../utils/error-message.ts';
 import type { Session, TaskSchedule } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -152,10 +153,6 @@ const SCOPE_MESSAGES: Record<SpaceCallerRejection, string> = {
 
 function reject(reason: ScheduleRejection['reason'], message: string): ScheduleRejection {
   return { ok: false, reason, message };
-}
-
-function failureMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function recordScheduleAudit(deps: ScheduleOperationDependencies, entry: ScheduleAuditEntry): void {

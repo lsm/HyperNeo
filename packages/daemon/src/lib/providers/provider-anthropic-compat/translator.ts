@@ -73,11 +73,7 @@ export type AnthropicRequest = {
     | { type: 'disabled' };
 };
 
-export function extractSystemText(system: AnthropicRequest['system'] | undefined): string {
-  if (!system) return '';
-  if (typeof system === 'string') return system;
-  return system.map((b) => b.text).join('\n');
-}
+export { extractSystemText } from '../shared/system-text.js';
 
 const SSE_SEP = '\n\n';
 

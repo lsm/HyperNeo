@@ -1,3 +1,4 @@
+import { sleep } from './sleep.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../space/runtime/constants.ts';
 import { Logger } from '../logger.ts';
 
@@ -45,8 +46,4 @@ export async function retryWithBackoff<T>(
   }
 
   throw lastError;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

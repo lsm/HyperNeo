@@ -1,3 +1,4 @@
+import { sleep } from '../utils/sleep.ts';
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
 import { TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE } from './task-notification-requery.ts';
 import type {
@@ -125,10 +126,6 @@ function getProviderRetryBaseDelayMs(): number {
 
 function getProviderRetryDelayMs(attempt: number): number {
   return getProviderRetryBaseDelayMs() * 2 ** attempt;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function looksLikeRateLimit429(errorMessage: string): boolean {

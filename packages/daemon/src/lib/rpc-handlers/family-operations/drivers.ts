@@ -1,3 +1,4 @@
+import { sleep } from '../../utils/sleep.ts';
 import {
   workStartPreparation,
   type WorkExecutionPreparer,
@@ -223,7 +224,7 @@ function claudeDesktopAdapters(
     homeDir: homedir(),
     gitCheckout: readGitCheckout,
     newId: () => crypto.randomUUID(),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep,
     now: Date.now,
     searchChats: (text) => searchChats(text, ['claude']),
   };
