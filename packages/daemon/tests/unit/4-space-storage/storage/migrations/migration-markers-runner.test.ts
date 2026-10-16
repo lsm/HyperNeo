@@ -15,15 +15,6 @@ function markerExists(db: BunDatabase, key: string): boolean {
 }
 
 function createBaselineSchemaSentinels(db: BunDatabase): void {
-  db.exec(
-    'CREATE TABLE IF NOT EXISTS migration_markers (key TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)'
-  );
-  for (let version = 1; version <= 156; version++) {
-    db.prepare('INSERT OR IGNORE INTO migration_markers VALUES (?, 1)').run(
-      `migration_${String(version).padStart(3, '0')}`
-    );
-  }
-  db.exec("INSERT OR IGNORE INTO migration_markers VALUES ('migration_room_cleanup', 1)");
   db.exec(`
     CREATE TABLE spaces (id TEXT PRIMARY KEY);
     CREATE TABLE space_tasks (
@@ -91,7 +82,7 @@ describe('migration runner markers', () => {
     expect(backups).toBe(1);
   });
 
-  test('honors historical markers for databases already migrated through 156', () => {
+  test('seeds historical markers for databases already migrated through 156', () => {
     db.exec(`
       CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
@@ -138,7 +129,7 @@ describe('migration runner markers', () => {
     expect(markerExists(db, 'migration_029')).toBe(false);
   });
 
-  test('preserves legacy data markers and runs the next pending migration', () => {
+  test('seeds through 157 and runs the next pending migration', () => {
     db.exec(`
       CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
