@@ -20,6 +20,7 @@ import { isNeoCardInPlay } from './ask-views.ts';
 export const NEO_TRIGGER_PREFIX = 'neo-trigger:';
 export const NEO_HUMAN_TRIGGER_PREFIX = 'human:';
 export const NEO_TRIGGER_SWEEP_MS = 1_000;
+export const NEO_TRIGGER_DELIVERY_RETRY_MS = 60_000;
 
 export type NeoTriggerKind = 'outcome' | 'failed' | 'idle' | 'action';
 export interface NeoTriggerKey {
@@ -46,6 +47,7 @@ export interface NeoTriggerSweepDeps {
   work(id: string): Card | null;
   deliveryRetryPending(workId: string): boolean;
   reportSettled(workId: string, updatedAt: number): boolean;
+  recorded(askId: string, triggerId: string): boolean;
   record(askId: string, keys: readonly string[], triggerId: string | null): void;
   wake(ask: NeoAsk, trigger: NeoAskTrigger): Promise<boolean>;
 }
@@ -278,6 +280,14 @@ export function requireNeoTriggerRead(
   return read ? { value: read } : { reason: null };
 }
 
+export function requireNeoTriggerUnrecorded(
+  ask: NeoAsk,
+  trigger: NeoAskTrigger,
+  deps: NeoTriggerSweepDeps
+): { value: NeoAskTrigger } | { reason: null } {
+  return deps.recorded(ask.id, trigger.triggerId) ? { reason: null } : { value: trigger };
+}
+
 export function shouldPreemptNeoTurn(
   processingState: string | undefined,
   trigger: (messageId: string) => string | null,
@@ -329,6 +339,7 @@ export const noteNeoAskTrigger = (superpipe({})('neo-ask-trigger') as PipelineAP
   .pipe(requireNeoTriggerRead, ['owner', 'deps'], 'result:read')
   .pipe(readKeys, ['ask', 'read', 'deps'], 'keys')
   .pipe(planNeoAskTrigger, ['ask', 'keys'], 'result:trigger')
+  .pipe(requireNeoTriggerUnrecorded, ['ask', 'trigger', 'deps'], 'result:trigger')
   .pipe(
     async (ask: NeoAsk, trigger: NeoAskTrigger, deps: NeoTriggerSweepDeps) => {
       if (!(await deps.wake(ask, trigger))) return null;

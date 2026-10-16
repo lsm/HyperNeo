@@ -13,6 +13,7 @@ import {
   isNeoAskReportUnsettled,
   isNeoCardFailedForGood,
   isNeoHumanOwnTurn,
+  NEO_TRIGGER_DELIVERY_RETRY_MS,
   type NeoAskTrigger,
   type NeoTriggerSweepDeps,
   neoAskIdleLine,
@@ -394,6 +395,7 @@ describe('noteNeoAskTrigger', () => {
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
   function sweepDeps(read: { view: NeoAskView; cards: NeoCardView[] }, busy = false) {
     const recorded = new Map<string, Set<string>>();
+    const receipts = new Set<string>();
     const wakes: NeoAskTrigger[] = [];
     const delivery = { ok: true };
     const deps: NeoTriggerSweepDeps = {
@@ -402,8 +404,11 @@ describe('noteNeoAskTrigger', () => {
       work,
       deliveryRetryPending: () => false,
       reportSettled: () => true,
-      record: (askId, keys) =>
-        recorded.set(askId, new Set([...(recorded.get(askId) ?? []), ...keys])),
+      recorded: (_askId, id) => receipts.has(id),
+      record: (askId, keys, triggerId) => {
+        recorded.set(askId, new Set([...(recorded.get(askId) ?? []), ...keys]));
+        if (triggerId) receipts.add(triggerId);
+      },
       wake: async (_ask, trigger) => {
         wakes.push(trigger);
         return delivery.ok;
@@ -420,16 +425,16 @@ describe('noteNeoAskTrigger', () => {
     cards: [],
   };
 
-  test('repeated sweeps reuse the same fact-state delivery identity', async () => {
+  test('repeated sweeps skip the exact recorded fact state', async () => {
     const { deps, wakes } = sweepDeps(startRead);
     expect(await noteNeoAskTrigger(ask, deps)).toMatchObject({
       kind: 'action',
       keys: ['question:proposal'],
     });
     await settle();
-    expect(await noteNeoAskTrigger(ask, deps)).toMatchObject({ triggerId: wakes[0].triggerId });
-    expect(await noteNeoAskTrigger(ask, deps)).toMatchObject({ triggerId: wakes[0].triggerId });
-    expect(wakes).toHaveLength(3);
+    expect(await noteNeoAskTrigger(ask, deps)).toBeFalsy();
+    expect(await noteNeoAskTrigger(ask, deps)).toBeFalsy();
+    expect(wakes).toHaveLength(1);
     expect(wakes[0].lines).toEqual(['question: Start? (options: Later / Start)']);
   });
 
@@ -443,7 +448,8 @@ describe('noteNeoAskTrigger', () => {
     await noteNeoAskTrigger(ask, deps);
     await settle();
     expect(wakes.map((wake) => wake.triggerId)).toEqual([wakes[0].triggerId, wakes[0].triggerId]);
-    expect(await noteNeoAskTrigger(ask, deps)).toMatchObject({ triggerId: wakes[0].triggerId });
+    expect(await noteNeoAskTrigger(ask, deps)).toBeFalsy();
+    expect(wakes).toHaveLength(2);
   });
 
   test('a new action on the same ask is a new trigger with its own id', async () => {
@@ -561,6 +567,8 @@ describe('NeoService notification triggers', () => {
       Date.now()
     );
   const sweep = () => (service as unknown as { sweepTriggers(): Promise<void> }).sweepTriggers();
+  const initialize = () =>
+    (service as unknown as { initializeTriggerFacts(): void }).initializeTriggerFacts();
 
   beforeEach(async () => {
     db = await createTestDb();
@@ -578,6 +586,48 @@ describe('NeoService notification triggers', () => {
     vi.restoreAllMocks();
     service.dispose();
     db.close();
+  });
+
+  test('baselines historical settled asks once without waking them, and delivers later fact changes', async () => {
+    const opened = open();
+    tickMet(opened);
+    service.askRecords.settle(service.askRecords.get(opened.id)!, 'achieved', 'Fixed.', 'merged');
+    db.getDatabase()
+      .prepare(`INSERT INTO neo_notification_triggers
+        (ask_id, trigger_key, trigger_id, created_at) VALUES (?, ?, ?, ?)`)
+      .run(opened.id, 'outcome:1', 'outcome:a1:legacy', 1);
+    const deliver = vi.spyOn(
+      service as unknown as { deliver(...args: unknown[]): Promise<void> },
+      'deliver'
+    );
+    initialize();
+    await sweep();
+    await sweep();
+    expect(mailbox()).toEqual([]);
+    expect(deliver).not.toHaveBeenCalled();
+    db.getDatabase()
+      .prepare('UPDATE neo_asks SET revision = revision + 1 WHERE id = ?')
+      .run(opened.id);
+    initialize();
+    await sweep();
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(mailbox()).toHaveLength(1);
+  });
+
+  test('startup leaves live asks eligible and records new settlements after the baseline', async () => {
+    const opened = open();
+    initialize();
+    const deliver = vi.spyOn(
+      service as unknown as { deliver(...args: unknown[]): Promise<void> },
+      'deliver'
+    );
+    tickMet(opened);
+    service.askRecords.settle(service.askRecords.get(opened.id)!, 'achieved', 'Fixed.', 'merged');
+    initialize();
+    await sweep();
+    await sweep();
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(mailbox()).toHaveLength(1);
   });
 
   test('a published answer the hook never saw is applied by the next sweep, never a stale one', async () => {
@@ -710,23 +760,47 @@ describe('NeoService notification triggers', () => {
   });
 
   test('a failed note delivery re-arms the sweep, and the retry sends it', async () => {
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     const opened = open();
     const rearm = vi.spyOn(
       service as unknown as { scheduleTriggerSweep(delay?: number): void },
       'scheduleTriggerSweep'
     );
-    vi.spyOn(
-      service as unknown as { deliver(...args: unknown[]): Promise<void> },
-      'deliver'
-    ).mockRejectedValueOnce(new Error('session gone'));
+    const deliver = vi
+      .spyOn(service as unknown as { deliver(...args: unknown[]): Promise<void> }, 'deliver')
+      .mockRejectedValueOnce(new Error('session gone'));
     tickMet(opened);
     rearm.mockClear();
     await sweep();
     expect(mailbox()).toEqual([]);
-    expect(rearm).toHaveBeenCalledWith();
+    expect(rearm).toHaveBeenCalledWith(NEO_TRIGGER_DELIVERY_RETRY_MS);
+    await sweep();
+    await sweep();
+    expect(deliver).toHaveBeenCalledTimes(1);
+    now += NEO_TRIGGER_DELIVERY_RETRY_MS;
     await sweep();
     await vi.waitFor(() => expect(mailbox()).toHaveLength(1));
     expect(mailbox()[0].messageUuid).toMatch(/^neo-trigger:outcome:a1:/);
+    expect(deliver).toHaveBeenCalledTimes(2);
+  });
+
+  test('a missing project backs off opening while other sweeps still run', async () => {
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const opened = open();
+    tickMet(opened);
+    const reopen = vi
+      .spyOn(service, 'open')
+      .mockRejectedValue(new Error('This project no longer exists.'));
+    await sweep();
+    now += NEO_TRIGGER_DELIVERY_RETRY_MS - 1;
+    await sweep();
+    expect(reopen).toHaveBeenCalledTimes(1);
+    expect(mailbox()).toEqual([]);
+    now += 1;
+    await sweep();
+    expect(reopen).toHaveBeenCalledTimes(2);
   });
 
   test('an outcome trigger recorded while a question was open is still found once it is answered', () => {
@@ -800,6 +874,7 @@ describe('NeoService notification triggers', () => {
     await sweep();
     const [note] = mailbox();
     expect(note).toBeDefined();
+    const reopen = vi.spyOn(service, 'open');
     db.getSDKMessageRepo().saveSDKMessage(root, {
       type: 'user',
       uuid: note.messageUuid,
@@ -809,6 +884,7 @@ describe('NeoService notification triggers', () => {
       message: { role: 'user', content: 'event facts' },
     } as unknown as SDKUserMessage);
     for (let n = 0; n < 5; n++) await sweep();
+    expect(reopen).not.toHaveBeenCalled();
     expect(mailbox().map((item) => item.messageUuid)).toEqual([note.messageUuid]);
   });
 
@@ -930,6 +1006,31 @@ describe('NeoService notification triggers', () => {
 });
 
 describe('NeoNotificationTriggerRepository', () => {
+  test('baseline initialization is atomic and persists across repository instances', async () => {
+    const db = await createTestDb();
+    try {
+      const receipts = new NeoNotificationTriggerRepository(db.getDatabase());
+      expect(() =>
+        receipts.initializeFacts(() => {
+          receipts.record('a1', ['outcome:1'], 'outcome:a1:baseline', 1);
+          throw new Error('interrupted');
+        }, 1)
+      ).toThrow('interrupted');
+      expect(receipts.trigger('outcome:a1:baseline')).toBeNull();
+      receipts.initializeFacts(() => {
+        receipts.record('a1', ['outcome:1'], 'outcome:a1:baseline', 2);
+      }, 2);
+      const later = new NeoNotificationTriggerRepository(db.getDatabase());
+      later.initializeFacts(() => {
+        later.record('a2', ['outcome:1'], 'outcome:a2:new', 3);
+      }, 3);
+      expect(later.trigger('outcome:a1:baseline')).toEqual({ askId: 'a1', keys: ['outcome:1'] });
+      expect(later.trigger('outcome:a2:new')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   test('keeps overlapping event receipts and reads legacy keys', async () => {
     const db = await createTestDb();
     try {
@@ -939,6 +1040,9 @@ describe('NeoNotificationTriggerRepository', () => {
       receipts.record('a1', ['answer:q1', 'idle:1'], 'action:a1:next', 3);
       receipts.record('a1', ['idle:1'], 'idle:a1:revised', 4);
       expect(receipts.trigger('idle:a1:revised')).toEqual({ askId: 'a1', keys: ['idle:1'] });
+      expect(receipts.recorded('a1', 'idle:a1:revised')).toBe(true);
+      expect(receipts.recorded('a2', 'idle:a1:revised')).toBe(false);
+      expect(receipts.recorded('a1', 'idle:a1:missing')).toBe(false);
       expect(receipts.trigger('idle:a1:first')).toEqual({ askId: 'a1', keys: ['idle:1'] });
       expect(receipts.trigger('action:a1:next')).toEqual({
         askId: 'a1',

@@ -1,5 +1,7 @@
 import type { Database } from '../sqlite-compat.ts';
 
+const FACT_BASELINE_KEY = 'fact-state-baseline:v1';
+
 export class NeoNotificationTriggerRepository {
   private present: boolean | null = null;
 
@@ -19,6 +21,32 @@ export class NeoNotificationTriggerRepository {
     const insert = this.db.prepare(`INSERT OR IGNORE INTO neo_notification_triggers
       (ask_id, trigger_key, trigger_id, created_at) VALUES (?, ?, ?, ?)`);
     insert.run(askId, JSON.stringify({ id: triggerId, keys: [...keys].sort() }), triggerId, at);
+  }
+
+  initializeFacts(recordFacts: () => void, at: number): void {
+    if (!this.ready()) return;
+    this.db.transaction(() => {
+      if (
+        this.db
+          .prepare('SELECT 1 FROM neo_notification_triggers WHERE ask_id = ? AND trigger_key = ?')
+          .get('', FACT_BASELINE_KEY)
+      )
+        return;
+      recordFacts();
+      this.db
+        .prepare(`INSERT INTO neo_notification_triggers
+          (ask_id, trigger_key, trigger_id, created_at) VALUES (?, ?, NULL, ?)`)
+        .run('', FACT_BASELINE_KEY, at);
+    })();
+  }
+
+  recorded(askId: string, triggerId: string): boolean {
+    return (
+      this.ready() &&
+      !!this.db
+        .prepare('SELECT 1 FROM neo_notification_triggers WHERE ask_id = ? AND trigger_id = ?')
+        .get(askId, triggerId)
+    );
   }
 
   trigger(triggerId: string): { askId: string; keys: string[] } | null {

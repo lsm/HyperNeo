@@ -230,10 +230,13 @@ import {
 } from './needs-you.ts';
 import { createNeoNoteQueueDeps, issueNeoNote, type NeoNoteQueueDeps } from './note-queue.ts';
 import {
+  NEO_TRIGGER_DELIVERY_RETRY_MS,
   NEO_TRIGGER_SWEEP_MS,
+  type NeoAskTrigger,
   type NeoDeliveryTrigger,
   type NeoTriggerSweepDeps,
   neoAskOutcomeBase,
+  neoAskTriggerKeys,
   neoAskTriggerConcern,
   neoConsultationDelivery,
   neoDeliveryTrigger,
@@ -243,6 +246,7 @@ import {
   neoTriggerNote,
   neoTriggerWatchSessions,
   noteNeoAskTrigger,
+  planNeoAskTrigger,
   planNeoSettledReports,
   shouldPreemptNeoTurn,
 } from './notification-triggers.ts';
@@ -540,6 +544,7 @@ export class NeoService {
   private readonly triggers: NeoNotificationTriggerRepository;
   private readonly triggerDeps: NeoTriggerSweepDeps;
   private triggerTimer?: ReturnType<typeof setTimeout>;
+  private readonly triggerDeliveryRetryAt = new Map<string, number>();
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly bootedAt = Date.now();
@@ -768,27 +773,9 @@ export class NeoService {
       work: (id) => this.repo.getWork(id),
       deliveryRetryPending: (id) => isNeoDeliveryRetryPending(this.db.getJobQueueRepo(), id),
       reportSettled: (id, updatedAt) => this.settledReports.get(id) === updatedAt,
+      recorded: (askId, id) => this.triggers.recorded(askId, id),
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
-      wake: (ask, trigger) =>
-        this.open(this.triggerConcern(ask))
-          .then((target) =>
-            this.deliver(
-              target,
-              neoTriggerMessageId(trigger.triggerId),
-              neoTriggerNote(ask, trigger),
-              target,
-              neoAskParent(ask),
-              { id: trigger.triggerId }
-            )
-          )
-          .then(
-            () => true,
-            (error) => {
-              this.log.warn('Trigger note pending; the next sweep retries it', error);
-              this.scheduleTriggerSweep();
-              return false;
-            }
-          ),
+      wake: (ask, trigger) => this.deliverAskTrigger(ask, trigger),
     };
     this.noteQueue = createNeoNoteQueueDeps(db, (sessionId, messageIds) => {
       void events
@@ -1094,6 +1081,56 @@ export class NeoService {
     return this.askRecords.list().filter((ask) => ask.status !== 'abandoned');
   }
 
+  private initializeTriggerFacts(): void {
+    this.triggers.initializeFacts(() => {
+      for (const ask of this.askRecords.list()) {
+        if (ask.status !== 'achieved') continue;
+        const read = this.triggerDeps.read(ask);
+        if (!read) continue;
+        const plan = planNeoAskTrigger(
+          ask,
+          neoAskTriggerKeys(
+            ask,
+            read,
+            this.triggerDeps.work,
+            this.triggerDeps.deliveryRetryPending,
+            this.triggerDeps.reportSettled
+          )
+        );
+        if ('value' in plan) this.triggerDeps.record(ask.id, plan.value.keys, plan.value.triggerId);
+      }
+    }, Date.now());
+  }
+
+  private async deliverAskTrigger(ask: NeoAsk, trigger: NeoAskTrigger): Promise<boolean> {
+    const delay = (this.triggerDeliveryRetryAt.get(trigger.triggerId) ?? 0) - Date.now();
+    if (delay > 0) {
+      this.scheduleTriggerSweep(delay);
+      return false;
+    }
+    this.triggerDeliveryRetryAt.delete(trigger.triggerId);
+    try {
+      const target = await this.open(this.triggerConcern(ask));
+      await this.deliver(
+        target,
+        neoTriggerMessageId(trigger.triggerId),
+        neoTriggerNote(ask, trigger),
+        target,
+        neoAskParent(ask),
+        { id: trigger.triggerId }
+      );
+      return true;
+    } catch (error) {
+      this.log.warn('Trigger note pending; the next sweep retries it', error);
+      this.triggerDeliveryRetryAt.set(
+        trigger.triggerId,
+        Date.now() + NEO_TRIGGER_DELIVERY_RETRY_MS
+      );
+      this.scheduleTriggerSweep(NEO_TRIGGER_DELIVERY_RETRY_MS);
+      return false;
+    }
+  }
+
   private scheduleTriggerSweep(delay = NEO_TRIGGER_SWEEP_MS): void {
     if (this.triggerTimer || this.disposed) return;
     this.triggerTimer = setTimeout(() => {
@@ -1322,6 +1359,7 @@ export class NeoService {
     this.unsubscribe();
     if (this.triggerTimer) clearTimeout(this.triggerTimer);
     this.triggerTimer = undefined;
+    this.triggerDeliveryRetryAt.clear();
     this.processingStatus.clear();
     if (this.watching) await this.watching;
     this.sessionWatcher.flushSessionNoticeGroup();
@@ -1918,6 +1956,7 @@ export class NeoService {
 
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
+    this.initializeTriggerFacts();
     for (const binding of [
       this.repo.getBindingForProject(null),
       ...this.repo.listProjectBindings(),
