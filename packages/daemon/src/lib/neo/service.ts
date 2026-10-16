@@ -40,6 +40,11 @@ import {
   type NeoAskCheckRow,
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
+import {
+  neoQuestionStartTargets,
+  neoStartDecision,
+  planNeoStartQuestion,
+} from './start-question.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
@@ -1668,6 +1673,54 @@ export class NeoService {
     });
   }
 
+  private startTarget(workId: string) {
+    const work = this.repo.getWork(workId);
+    return {
+      workId,
+      title: work?.title,
+      target: JSON.stringify(
+        this.driverTargets.get(workId) ??
+          this.agentTargets.get(workId) ??
+          work?.targetSessionId ??
+          null
+      ),
+    };
+  }
+
+  proposalApproval(workId: string): boolean | null {
+    const ask = this.askRecords.forWork(workId);
+    const decision = ask && neoStartDecision(ask, this.startTarget(workId));
+    return decision === null ? null : decision === 'approved';
+  }
+
+  proposeStartQuestion(workId: string): void {
+    const ask = this.askRecords.forWork(workId);
+    if (!ask) return;
+    const proposed = ask.workIds
+      .filter(
+        (id) =>
+          this.repo.getWork(id)?.status === 'proposed' &&
+          !['read', 'adopt'].includes(this.driverTargets.get(id)?.verb ?? '')
+      )
+      .map((id) => this.startTarget(id));
+    const question = planNeoStartQuestion(ask, proposed);
+    if (question) this.askRecords.proposeStartQuestion(ask.id, question, Date.now());
+  }
+
+  async answerStartQuestion(ask: NeoAsk, item: NeoAskItem, choice: string): Promise<void> {
+    const targets = neoQuestionStartTargets(item);
+    const ids = targets
+      .filter((entry) => entry.target === this.startTarget(entry.workId).target)
+      .map((entry) => entry.workId);
+    if (!ids.length) return;
+    if (choice === item.options?.at(-1)) {
+      this.askRecords.approve(ask.id, Date.now(), this.askRecords.get(ask.id)?.revision ?? 0);
+      await this.startApprovedWork(ids);
+    } else if (choice === item.options?.[0]) {
+      await Promise.all(ids.map((id) => this.cancel(id)));
+    }
+  }
+
   async startApprovedWork(workIds: readonly string[]): Promise<void> {
     const startable = workIds.filter(
       (id) => this.repo.getWork(id)?.status === 'proposed' && this.resolveWorkTarget(id).accepted
@@ -1679,6 +1732,7 @@ export class NeoService {
     const admitted = await admitNeoWork(id, authorized, now, {
       bootedAt: this.bootedAt,
       readWork: (workId: string) => this.repo.getWork(workId),
+      readApproval: (workId: string) => this.proposalApproval(workId),
       readAsk: (workId: string) => this.askRecords.forWork(workId),
       readCard: (workId: string) => this.driverTargets.readCard(workId),
       readBlockers: (workId: string) => this.dependencyBlockers(workId),
@@ -1718,8 +1772,9 @@ export class NeoService {
         this.driverTargets.readStartInterrupted(id);
       if (!blockers.length && !uncertain) return [];
       const authorized =
-        this.dependencies.hasStartIntent(id) ||
-        isNeoAdmissionApproved(this.askRecords.forWork(id), now);
+        this.proposalApproval(id) ??
+        (this.dependencies.hasStartIntent(id) ||
+          isNeoAdmissionApproved(this.askRecords.forWork(id), now));
       return [
         {
           workId: id,
@@ -1974,7 +2029,11 @@ export class NeoService {
       find: (input) => this.invokeAsCard(work, 'work.find', input),
       reserve: (current, candidates) =>
         this.driverTargets.reassign(this.repo, current, candidates, this.waitingCardIds()),
-      start: (next, target) => this.startDriverWork(next, target, tried),
+      start: async (next, target) => {
+        this.proposeStartQuestion(next.id);
+        if (this.proposalApproval(next.id) !== false)
+          await this.startDriverWork(next, target, tried);
+      },
       returnToNeo: async (next, place) => {
         await this.deliver(
           next.originSessionId,

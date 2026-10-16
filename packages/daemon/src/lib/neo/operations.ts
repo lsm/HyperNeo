@@ -2095,6 +2095,11 @@ export function createNeoOperations(service: NeoService) {
       'goalRecorded'
     )
     .pipe(
+      (receipt: { work: NeoWork }) => service.proposeStartQuestion(receipt.work.id),
+      'admission',
+      'question'
+    )
+    .pipe(
       async (input: ProposeRequest, ask: { askId?: string }, receipt: { work: NeoWork }) => {
         if (input.work?.verb === 'read') {
           await service.start(receipt.work.id);
@@ -2146,7 +2151,10 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (found: NeoWorkStartFound, caller: OperationCaller) => ({
-        approved: !!found.work && isNeoAskStartApproved(found.work, found.ask, caller),
+        approved:
+          !!found.work &&
+          (service.proposalApproval(found.work.id) ??
+            isNeoAskStartApproved(found.work, found.ask, caller)),
       }),
       ['found', 'caller'],
       'authority'

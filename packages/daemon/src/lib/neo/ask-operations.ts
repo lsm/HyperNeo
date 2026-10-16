@@ -1872,10 +1872,15 @@ export function createNeoAskOperations(
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Tick>, target: { ask: NeoAsk }, caller: OperationCaller) => {
+      (
+        input: z.infer<typeof Tick>,
+        target: { ask: NeoAsk; item: NeoAskItem },
+        caller: OperationCaller
+      ) => {
         const written = service.askRecords.tickItem(
           target.ask.id,
           {
+            ...target.item,
             id: input.itemId,
             state: input.state,
             evidence: input.evidence ?? null,
@@ -1925,6 +1930,7 @@ export function createNeoAskOperations(
       'cited'
     )
     .pipe(requireNeoAnswerProvenance, ['input', 'admission', 'caller', 'cited'], 'result:admission')
+    .pipe((target: { ask: NeoAsk; item: NeoAskItem }) => target, 'admission', 'answerTarget')
     .pipe(readNeoAskReply, 'input', 'reply')
     .pipe(
       async (
@@ -1940,7 +1946,7 @@ export function createNeoAskOperations(
     .pipe(
       (
         input: z.infer<typeof Answer>,
-        target: { ask: NeoAsk },
+        target: { ask: NeoAsk; item: NeoAskItem },
         reply: { choice: string; met: boolean },
         cited: { id: string | null }
       ) => {
@@ -1949,6 +1955,7 @@ export function createNeoAskOperations(
           service.askRecords.tickItem(
             target.ask.id,
             {
+              ...target.item,
               id: input.itemId,
               state: 'met',
               evidence: neoAskAnswerEvidence(reply.choice, cited.id),
@@ -1964,6 +1971,12 @@ export function createNeoAskOperations(
       'answered'
     )
     .pipe(requireNeoAskWritten, 'answered', 'result:admission')
+    .pipe(
+      (target: { ask: NeoAsk; item: NeoAskItem }, reply: { choice: string }) =>
+        service.answerStartQuestion(target.ask, target.item, reply.choice),
+      ['answerTarget', 'reply'],
+      'started'
+    )
     .pipe(replanAsk, 'admission', 'written')
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
     .endAsync('admission') as (

@@ -293,6 +293,57 @@ export class NeoAskRepository {
     return changed;
   }
 
+  proposeStartQuestion(
+    askId: string,
+    question: {
+      id: string;
+      text: string;
+      action: string;
+      options: string[];
+      decides: string;
+    },
+    at: number
+  ): boolean {
+    const changed = this.db.transaction(() => {
+      const ask = this.get(askId);
+      if (
+        !ask ||
+        ['achieved', 'abandoned'].includes(ask.status) ||
+        ask.doneItems?.some((item) => item.id === question.id && !item.removed)
+      )
+        return false;
+      this.db
+        .prepare(`UPDATE neo_ask_items SET removed = 1, removed_reason = 'Proposal updated', updated_at = ?
+        WHERE ask_id = ? AND state = 'needs_you' AND removed = 0 AND action LIKE 'neo-start:%'`)
+        .run(at, askId);
+      this.db
+        .prepare(`INSERT INTO neo_ask_items
+        (ask_id, id, position, text, state, decision, kind, question, action, options, decides, added_at, updated_at)
+        VALUES (?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM neo_ask_items WHERE ask_id = ?), ?, 'needs_you', 1, 'approval', ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ask_id, id) DO UPDATE SET removed = 0, removed_reason = NULL, state = 'needs_you',
+          evidence = NULL, met_by = NULL, verified_definition_hash = NULL, updated_at = excluded.updated_at`)
+        .run(
+          askId,
+          question.id,
+          askId,
+          question.text,
+          question.text,
+          question.action,
+          JSON.stringify(question.options),
+          question.decides,
+          at,
+          at
+        );
+      this.db
+        .prepare(`UPDATE neo_asks SET status = 'waiting', waiting_item = ?, outcome = ?, evidence = ?,
+        revision = revision + 1, updated_at = ? WHERE id = ?`)
+        .run(question.id, question.text, question.decides, at, askId);
+      return true;
+    })();
+    if (changed) this.notify();
+    return changed;
+  }
+
   restateQuestion(
     askId: string,
     item: {

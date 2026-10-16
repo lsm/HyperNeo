@@ -5,7 +5,10 @@ Propose work from the current live input. For a card whose only job is a read-on
 work {verb:"read", operation, input}: the daemon runs that registered read operation immediately
 without human approval, returns its result on the card, and never sends instruction to a worker.
 This does not approve the ask or any other work. All other execution proposals need ordinary
-approval. Every proposal must choose where it runs. targetSessionId names an exact ordinary
+approval. Proposed cards on the ask become one question ("开始这 3 步？" for three cards),
+with decline first and agree last. Its answer approves only those cards and their exact targets.
+A replacement or changed target needs its own question; ask-wide approval does not cover it.
+Every proposal must choose where it runs. targetSessionId names an exact ordinary
 project/non-project chat, or an existing active long-horizon Space agent with matching
 targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch
 session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter,

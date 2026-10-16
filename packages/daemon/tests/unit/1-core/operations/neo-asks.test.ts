@@ -387,12 +387,13 @@ describe('neo.ask operations', () => {
       value: {
         ok: true,
         ask: {
-          revision: 1,
+          revision: 2,
           approvedAt: null,
           approvedRevision: null,
           doneItems: [
             { id: 'i1', deliveredBy: card, state: 'pending', evidence: null },
             { id: 'i2' },
+            { kind: 'approval', state: 'needs_you' },
             { id: 'i3', deliveredBy: card },
           ],
         },
@@ -400,7 +401,7 @@ describe('neo.ask operations', () => {
     });
     expect(
       await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: card }] })
-    ).toMatchObject({ value: { ok: true, ask: { revision: 1 } } });
+    ).toMatchObject({ value: { ok: true, ask: { revision: 2 } } });
     humanSays('Drop the CI part, it must roll back.');
     const before = service.askRecords.get(askId);
     expect(
@@ -423,7 +424,7 @@ describe('neo.ask operations', () => {
     expect(
       await invoke('neo.ask.edit', { askId, bind: [{ itemId: 'i1', deliveredBy: null }] })
     ).toMatchObject({
-      value: { ok: true, ask: { revision: 2, doneItems: [{ deliveredBy: null }, {}, {}] } },
+      value: { ok: true, ask: { revision: 3, doneItems: [{ deliveredBy: null }, {}, {}, {}] } },
     });
   });
 
@@ -569,6 +570,7 @@ describe('neo.ask operations', () => {
               watch: item.watch,
               verifiedDefinitionHash: service.askRecords.revisionPolicy.definitionHash(item),
             },
+            { id: 'i4', kind: 'approval', state: 'needs_you' },
           ],
         },
       },
@@ -745,7 +747,7 @@ describe('neo.ask operations', () => {
     );
   });
 
-  test('a card proposed under an ask names the items it delivers, and binding it keeps the approval', async () => {
+  test('a card proposed under an ask names the items it delivers, and a replay preserves its grouped question', async () => {
     const askId = await openUnapprovedAsk();
     const approved = service.askRecords.get(askId)!;
     const card = (input: { requestKey: string; delivers?: string[]; supersedes?: string }) =>
@@ -769,8 +771,11 @@ describe('neo.ask operations', () => {
       value: { ok: true, work: { id: first } },
     });
     const bound = service.askRecords.get(askId)!;
-    expect(bound.doneItems?.map((item) => item.deliveredBy ?? null)).toEqual([first, null]);
-    expect([bound.revision, bound.approvedAt]).toEqual([approved.revision, approved.approvedAt]);
+    expect(bound.doneItems?.map((item) => item.deliveredBy ?? null)).toEqual([first, null, null]);
+    expect([bound.revision, bound.approvedAt]).toEqual([
+      approved.revision! + 1,
+      approved.approvedAt,
+    ]);
     expect(await card({ requestKey: 'card-2', delivers: ['i1'] })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('delivers_taken') },
     });
@@ -786,11 +791,16 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test('an ask opened in a turn the human sent is approved, so its cards start without Start', async () => {
+  test('an ask opened in a turn the human sent still asks about the proposed cards', async () => {
     const askId = await openAsk();
     expect(service.askRecords.get(askId)?.approvedAt).toEqual(expect.any(Number));
     const proposed = await propose('card-1', askId);
-    expect(service.repo.getWork(proposed.value!.work!.id)?.status).not.toBe('proposed');
+    expect(service.repo.getWork(proposed.value!.work!.id)?.status).toBe('proposed');
+    expect(service.askRecords.get(askId)?.doneItems?.at(-1)).toMatchObject({
+      state: 'needs_you',
+      question: '开始这 1 步？',
+      options: ['先不做', '开始'],
+    });
   });
 
   test('only a human message opens an ask; a note turn is told to edit the ask it works on', async () => {
@@ -955,10 +965,11 @@ describe('neo.ask operations', () => {
         ok: true,
         ask: {
           id: askId,
-          status: 'open',
+          status: 'waiting',
           items: [
             { id: 'i1', state: 'pending', text: 'implementation ready' },
             { id: 'i2', state: 'pending', text: 'CI green' },
+            { state: 'needs_you', text: '开始这 1 步？' },
           ],
           cards: [{ id: card, title: 'Fix it', status: 'proposed' }],
         },
@@ -1602,7 +1613,7 @@ describe('neo.ask operations', () => {
 
     await propose('card-1', askId);
 
-    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', settledAt: null });
+    expect(service.askRecords.get(askId)).toMatchObject({ status: 'waiting', settledAt: null });
   });
 
   test('ticks checklist items met, and nobody can tick one needs_you', async () => {
@@ -1891,7 +1902,7 @@ describe('neo.ask operations', () => {
         kind: 'decision',
       })
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('approval_on_ask') } });
-    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
+    expect(service.askRecords.get(askId)).toMatchObject({ status: 'waiting' });
     const unapproved = await invoke(
       'neo.ask.open',
       { ...opening, requestKey: 'never-approved' },
@@ -1905,9 +1916,15 @@ describe('neo.ask operations', () => {
 
     service.isContinueStalled = (id: string) => id === cardId;
     expect(await invoke('neo.ask.settle', renew)).toMatchObject({
-      value: { ok: true, ask: { status: 'waiting', waitingItem: null } },
+      value: {
+        ok: true,
+        ask: {
+          status: 'waiting',
+          waitingItem: service.askRecords.get(askId)!.doneItems!.at(-1)!.id,
+        },
+      },
     });
-    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(3);
   });
 
   test('a decision item is written only by the settle that wins the status check', async () => {
@@ -2000,6 +2017,14 @@ describe('neo.ask operations', () => {
       state: 'met',
       evidence: 'CI run 42 green.',
     });
+    const question = service.askRecords.get(askId)!.doneItems!.at(-1)!;
+    service.askRecords.tickItem(
+      askId,
+      { ...question, state: 'met', evidence: 'The human answered: 开始', metBy: 'human' },
+      Date.now(),
+      question,
+      true
+    );
     const settle = () =>
       invoke('neo.ask.settle', { id: askId, outcome: 'achieved', summary: 'Done.', evidence: 'x' });
     expect(await settle()).toMatchObject({
@@ -2426,7 +2451,7 @@ describe('neo.ask operations', () => {
     });
   });
 
-  test('an offer waits on the human, and starting its work item reopens the ask', async () => {
+  test('an offer waits on the human, and its grouped answer reopens the ask', async () => {
     const askId = await openUnapprovedAsk();
     const offered = (await propose('card-1', askId)).value!.work!.id;
     expect(
@@ -2444,9 +2469,19 @@ describe('neo.ask operations', () => {
       expect.objectContaining({ id: askId, status: 'waiting' }),
     ]);
 
-    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(3);
 
-    await service.start(offered).catch(() => {});
+    const question = service.askRecords.get(askId)!.doneItems!.at(-1)!;
+    await invoke(
+      'neo.ask.answer',
+      {
+        askId,
+        itemId: question.id,
+        choice: '开始',
+        expectedRevision: service.askRecords.get(askId)!.revision,
+      },
+      { source: 'rpc', principal: 'local' }
+    );
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', settledAt: null });
     await invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met', evidence: 'PR #12 merged.' });
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
@@ -2943,7 +2978,7 @@ describe('neo.ask operations', () => {
     service.repo.transitionWork(cardId, card, { status: 'queued' });
     await service.clearStaleNeedsYou();
 
-    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
+    expect(service.askRecords.get(askId)).toMatchObject({ status: 'waiting' });
     expect(service.askRecords.get(askId)?.doneItems?.[1]).toMatchObject({ state: 'pending' });
     expect(service.askRecords.get(askId)?.doneItems?.[1]?.waitCard).toBeUndefined();
     expect(delivered).toHaveBeenCalledTimes(1);
@@ -3001,6 +3036,7 @@ describe('neo.ask operations', () => {
       'implementation ready',
       'CI green',
       'guard merged',
+      '开始这 1 步？',
     ]);
     expect(service.askRecords.get(sourceId)).toMatchObject({
       status: 'abandoned',
@@ -3178,6 +3214,13 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true } });
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', waitingItem: null });
     const spare = (await propose('spare-card', unapprove(askId))).value!.work!.id;
+    await invoke('neo.work.cancel', { id: spare });
+    const question = service.askRecords.get(askId)!.doneItems!.at(-1)!;
+    await invoke(
+      'neo.ask.edit',
+      { askId, remove: [question.id] },
+      { source: 'rpc', principal: 'local' }
+    );
     const internals = service as unknown as {
       triggers: { record(askId: string, keys: string[], triggerId: string, at: number): void };
       notePublishedAnswer(publication: unknown): void;
@@ -3206,7 +3249,7 @@ describe('neo.ask operations', () => {
     expect(service.askRecords.get(askId)).toMatchObject({
       status: 'achieved',
       outcome: 'There are 42 .md files.',
-      doneItems: [{ id: 'i1', state: 'met', metBy: 'daemon' }],
+      doneItems: [{ id: 'i1', state: 'met', metBy: 'daemon' }, { removed: true }],
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(service.repo.getWork(spare)?.status).toBe('cancelled');
@@ -3452,7 +3495,7 @@ describe('neo.ask operations', () => {
       question: 'Slice 6 can’t reach its archived target. Retarget it?',
       because: { card, reason: 'target_unavailable' },
     });
-    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
+    expect(service.askRecords.get(askId)?.doneItems?.[3]).toMatchObject({
       text: 'Slice 6 can’t reach its archived target. Retarget it?',
       because: { card, reason: 'target_unavailable' },
     });
@@ -3464,7 +3507,7 @@ describe('neo.ask operations', () => {
     internals.deliverToOrigin = delivered;
     internals.resolveWorkTarget = () => ({ accepted: false });
     await service.clearStaleNeedsYou();
-    expect(service.askRecords.get(askId)?.doneItems?.[2]).toMatchObject({
+    expect(service.askRecords.get(askId)?.doneItems?.[3]).toMatchObject({
       id: 'i3',
       state: 'needs_you',
       removed: false,
@@ -3476,12 +3519,13 @@ describe('neo.ask operations', () => {
     expect(ask.doneItems?.map((item) => [item.id, item.state, item.removed])).toEqual([
       ['i1', 'pending', false],
       ['i2', 'pending', false],
+      [service.askRecords.get(askId)!.doneItems![2].id, 'needs_you', false],
       ['i3', 'pending', true],
     ]);
-    expect(ask.doneItems?.[2]?.removedReason).toBe(
+    expect(ask.doneItems?.[3]?.removedReason).toBe(
       `No longer needed: card ${card} can reach its target again`
     );
-    expect(ask.status).toBe('open');
+    expect(ask.status).toBe('waiting');
     expect(delivered).toHaveBeenCalledTimes(1);
     expect(
       await invoke(
