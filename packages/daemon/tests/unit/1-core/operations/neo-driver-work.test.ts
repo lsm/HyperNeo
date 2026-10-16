@@ -57,6 +57,7 @@ import {
   requireNeoWorkContinuation,
   requireNeoWorkRetryCaller,
 } from '../../../../src/lib/neo/operations.ts';
+import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 import { neoCardPrFacts } from '../../../../src/lib/neo/packs/coding/card-facts.ts';
 import { lifeAdminReportEvidence } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -822,6 +823,29 @@ describe('Neo work with a drivers target', () => {
       target
     );
     return { db, service, calls, proposed };
+  }
+
+  function independentlyMerged(service: NeoService, urls: string[]) {
+    const at = Date.now() + 60_000;
+    const reader = mock(async (refs: NeoRef[]) =>
+      refs.flatMap((ref) => {
+        const url = `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`;
+        return urls.includes(url)
+          ? [
+              {
+                url,
+                kind: 'pr' as const,
+                state: 'MERGED' as const,
+                at,
+                done: true,
+                closedBy: null,
+              },
+            ]
+          : [];
+      })
+    );
+    service.readRefStates = reader;
+    return reader;
   }
 
   const archivedRef = { adapter: 'claude-desktop', id: 'archived' };
@@ -2791,7 +2815,7 @@ describe('Neo work with a drivers target', () => {
     service.workGoals.record('work-1', 'Regenerate icons', '- merged to dev');
     const opened = service.askRecords.open(
       {
-        id: 'ask-icons',
+        id: 'ask-icons-tick',
         requestKey: 'neo:root:icons',
         projectId: null,
         originSessionId: 'neo:root',
@@ -2802,12 +2826,13 @@ describe('Neo work with a drivers target', () => {
         doneSource: 'human',
       },
       [
-        { text: 'Icons merged to dev', check: 'coding.pr_merged' },
+        { text: 'Icons merged to dev', check: 'coding.pr_merged', watch: [url] },
         { text: 'App shows them', check: null },
       ]
     )!;
     service.askRecords.link(opened.id, 'work-1');
     service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
+    independentlyMerged(service, [url]);
     const notes: string[] = [];
     Object.assign(service, {
       deliver: async (_target: string, _id: string, content: string) => {
@@ -2823,11 +2848,11 @@ describe('Neo work with a drivers target', () => {
           id: 'i1',
           state: 'met',
           metBy: 'daemon',
-          evidence: `Merged: ${url}`,
+          evidence: `Watched: ${url} merged`,
         }),
         expect.objectContaining({ id: 'i2', state: 'pending' }),
       ]);
-      expect(notes.at(-1)).toContain('"state":"met"');
+      expect(notes.at(-1)).toContain('"state":"pending"');
     } finally {
       db.close();
     }
@@ -2855,7 +2880,7 @@ describe('Neo work with a drivers target', () => {
         doneSource: 'human',
       },
       [
-        { text: 'Icons merged to dev', check: 'coding.pr_merged' },
+        { text: 'Icons merged to dev', check: 'coding.pr_merged', watch: [url] },
         {
           text: 'Android icons merged',
           check: null,
@@ -2865,7 +2890,7 @@ describe('Neo work with a drivers target', () => {
     )!;
     service.askRecords.link(opened.id, 'work-1');
     service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
-    service.readRefStates = async () => [];
+    independentlyMerged(service, [url]);
     const notes: string[] = [];
     Object.assign(service, {
       deliver: async (_target: string, _id: string, content: string) => {
@@ -2901,7 +2926,7 @@ describe('Neo work with a drivers target', () => {
     service.workGoals.record('work-1', 'Regenerate icons', '- merged to dev');
     const opened = service.askRecords.open(
       {
-        id: 'ask-icons',
+        id: 'ask-icons-open-sibling',
         requestKey: 'neo:root:icons',
         projectId: null,
         originSessionId: 'neo:root',
@@ -2911,7 +2936,13 @@ describe('Neo work with a drivers target', () => {
         doneWhen: '- merged to dev',
         doneSource: 'human',
       },
-      [{ text: 'Icons and docs merged to dev', check: 'coding.pr_merged' }]
+      [
+        {
+          text: 'Icons and docs merged to dev',
+          check: 'coding.pr_merged',
+          watch: [url, 'https://github.com/lsm/HyperNeo/pull/6266'],
+        },
+      ]
     )!;
     service.repo.proposeWork({
       id: 'work-2',
@@ -2931,6 +2962,7 @@ describe('Neo work with a drivers target', () => {
     };
     service.workPrs.record('work-2', [docsPr], Date.now());
     service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
+    independentlyMerged(service, [url]);
     Object.assign(service, { deliver: async () => {} });
     try {
       await service.start('work-1');
@@ -2955,7 +2987,7 @@ describe('Neo work with a drivers target', () => {
     service.workGoals.record('work-1', 'Regenerate icons', '- merged to dev');
     const opened = service.askRecords.open(
       {
-        id: 'ask-icons',
+        id: 'ask-icons-no-pr-sibling',
         requestKey: 'neo:root:icons',
         projectId: null,
         originSessionId: 'neo:root',
@@ -2965,7 +2997,13 @@ describe('Neo work with a drivers target', () => {
         doneWhen: '- merged to dev',
         doneSource: 'human',
       },
-      [{ text: 'Icons and docs merged to dev', check: 'coding.pr_merged' }]
+      [
+        {
+          text: 'Icons and docs merged to dev',
+          check: 'coding.pr_merged',
+          watch: [url, 'https://github.com/lsm/HyperNeo/pull/6266'],
+        },
+      ]
     )!;
     service.repo.proposeWork({
       id: 'work-2',
@@ -2978,6 +3016,7 @@ describe('Neo work with a drivers target', () => {
     });
     for (const id of ['work-1', 'work-2']) service.askRecords.link(opened.id, id);
     service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
+    independentlyMerged(service, [url]);
     Object.assign(service, { deliver: async () => {} });
     try {
       await service.start('work-1');
@@ -3002,7 +3041,7 @@ describe('Neo work with a drivers target', () => {
     service.workGoals.record('work-1', 'Regenerate icons', '- merged to dev');
     const opened = service.askRecords.open(
       {
-        id: 'ask-icons',
+        id: 'ask-icons-waiting',
         requestKey: 'neo:root:icons',
         projectId: null,
         originSessionId: 'neo:root',
@@ -3012,12 +3051,12 @@ describe('Neo work with a drivers target', () => {
         doneWhen: '- merged to dev',
         doneSource: 'human',
       },
-      [{ text: 'Icons merged to dev', check: 'coding.pr_merged' }]
+      [{ text: 'Icons merged to dev', check: 'coding.pr_merged', watch: [url] }]
     )!;
     service.askRecords.link(opened.id, 'work-1');
     service.askRecords.tickItem(
       opened.id,
-      { id: 'i1', state: 'needs_you', evidence: null, metBy: null },
+      { id: 'i1', state: 'pending', evidence: null, metBy: null },
       Date.now()
     );
     service.askRecords.settle(
@@ -3027,6 +3066,7 @@ describe('Neo work with a drivers target', () => {
       'Icons merged to dev'
     );
     service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
+    independentlyMerged(service, [url]);
     Object.assign(service, { deliver: async () => {} });
     try {
       db.getDatabase().prepare('UPDATE neo_work SET follows = ? WHERE id = ?').run(url, 'work-1');
@@ -3042,11 +3082,15 @@ describe('Neo work with a drivers target', () => {
   });
 
   test('ticks merged-PR items on the next refresh for asks told about the merge before', async () => {
-    const { db, service } = await setup({ ok: true, value: { ref: { id: 't1' } } });
+    const { db, service } = await setup({
+      ok: true,
+      value: { ref: { adapter: 'codex-desktop', id: 't1' } },
+    });
     db.createSession(createTestSession('neo:root'));
+    const url = 'https://github.com/lsm/HyperNeo/pull/6265';
     const opened = service.askRecords.open(
       {
-        id: 'ask-icons',
+        id: 'ask-icons-cached',
         requestKey: 'neo:root:icons',
         projectId: null,
         originSessionId: 'neo:root',
@@ -3056,10 +3100,11 @@ describe('Neo work with a drivers target', () => {
         doneWhen: '- merged to dev',
         doneSource: 'human',
       },
-      [{ text: 'Icons merged to dev', check: 'coding.pr_merged' }]
+      [{ text: 'Icons merged to dev', check: 'coding.pr_merged', watch: [url] }]
     )!;
     service.askRecords.link(opened.id, 'work-1');
-    const url = 'https://github.com/lsm/HyperNeo/pull/6265';
+    const read = independentlyMerged(service, [url]);
+    await service.start('work-1');
     service.workPrs.record(
       'work-1',
       [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }],
@@ -3067,10 +3112,11 @@ describe('Neo work with a drivers target', () => {
     );
     try {
       await service.refreshDriverWork();
+      expect(read).toHaveBeenCalled();
       expect(service.askRecords.get(opened.id)?.doneItems?.[0]).toMatchObject({
         state: 'met',
         metBy: 'daemon',
-        evidence: `Merged: ${url}`,
+        evidence: `Watched: ${url} merged`,
       });
     } finally {
       db.close();

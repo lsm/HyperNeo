@@ -301,14 +301,10 @@ describe('codingPrMergedCheck', () => {
     blockers: [],
   };
   test.each<[string, NeoEvidence[], ReturnType<typeof codingPrMergedCheck>]>([
-    [
-      'every tracked pull request merged',
-      [merged],
-      { value: 'Merged: https://github.com/lsm/HyperNeo/pull/1' },
-    ],
-    ['one still open', [merged, open], { reason: 'not_merged' }],
-    ['no pull requests', [], { reason: 'not_merged' }],
-    ['only another pack evidence, all done', [confirmation], { reason: 'not_merged' }],
+    ['every tracked pull request merged', [merged], { reason: 'watch_required' }],
+    ['one still open', [merged, open], { reason: 'watch_required' }],
+    ['no pull requests', [], { reason: 'watch_required' }],
+    ['only another pack evidence, all done', [confirmation], { reason: 'watch_required' }],
   ])('%s', (_label, evidence, gate) => {
     expect(codingPrMergedCheck(item(), evidence)).toEqual(gate);
   });
@@ -390,18 +386,8 @@ describe('planNeoPackTicks', () => {
       [{ id: 'i1', evidence: `Opened: ${open.key}` }],
     ],
     ['a merge item while its pull request is only open', ask([item()]), [open], []],
-    [
-      'a merged item on a live ask',
-      ask([item()]),
-      [merged],
-      [{ id: 'i1', evidence: 'Merged: https://github.com/lsm/HyperNeo/pull/1' }],
-    ],
-    [
-      'a waiting ask too',
-      ask([item()], 'waiting'),
-      [merged],
-      [{ id: 'i1', evidence: 'Merged: https://github.com/lsm/HyperNeo/pull/1' }],
-    ],
+    ['a merged item on a live ask', ask([item()]), [merged], []],
+    ['a waiting ask too', ask([item()], 'waiting'), [merged], []],
     ['an item already met', ask([item({ state: 'met' })]), [merged], []],
     ['a removed item', ask([item({ removed: true })]), [merged], []],
     ['an item with no check', ask([item({ check: null })]), [merged], []],

@@ -478,7 +478,7 @@ const DependsOn = z
   );
 const Propose = z.object({
   projectId: z.string().min(1).nullable().default(null),
-  title: z.string().trim().min(1).max(160),
+  title: z.string().trim().min(1).max(160).describe('Use the human’s language.'),
   instruction: z.string().trim().min(1).max(16000),
   targetSessionId: z.string().min(1).max(160).nullable().optional(),
   targetAgent: z

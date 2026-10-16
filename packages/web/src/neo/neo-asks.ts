@@ -148,15 +148,4 @@ export function isNeoAskQuestionItem(
   );
 }
 
-export function neoAskOutcomeCount(
-  items: readonly NeoAskItem[]
-): { verified: number; total: number } | null {
-  const outcomes = items.filter((item) => !item.removed && !isNeoAskQuestionItem(item));
-  if (!outcomes.length) return null;
-  return {
-    verified: outcomes.filter((item) => item.state === 'met' && item.metBy !== 'neo').length,
-    total: outcomes.length,
-  };
-}
-
 export type NeoAskItemAction = NeoAskHumanAction;

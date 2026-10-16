@@ -513,19 +513,38 @@ export class NeoRepository {
     if (moved.changes > 0) this.notify();
   }
 
+  workStartedAt(id: string): number | null {
+    return (
+      (
+        this.db
+          .prepare(`SELECT COALESCE(started_at,
+      (SELECT claimed_at FROM neo_work_driver_targets WHERE work_id = w.id),
+      (SELECT ROUND((julianday(timestamp) - 2440587.5) * 86400000)
+        FROM sdk_messages WHERE session_id = w.session_id AND json_extract(sdk_message, '$.uuid') = w.id
+          AND json_extract(sdk_message, '$.type') = 'user'
+          AND json_extract(sdk_message, '$.inputKind') = 'system'
+        ORDER BY rowid LIMIT 1)) AS at FROM neo_work w WHERE id = ?`)
+          .get(id) as { at: number | null } | null
+      )?.at ?? null
+    );
+  }
+
   transitionWork(
     id: string,
     expected: NeoWorkState,
     patch: Pick<NeoWorkState, 'status'> & Partial<Omit<NeoWorkState, 'status'>>
   ): NeoWork | null {
     const row = this.db
-      .prepare(`UPDATE neo_work SET status = ?, session_id = ?, report = ?, updated_at = ?
+      .prepare(`UPDATE neo_work SET status = ?, session_id = ?, report = ?, updated_at = ?,
+        started_at = CASE WHEN ? = 'queued' THEN COALESCE(started_at, ?) ELSE started_at END
         WHERE id = ? AND status = ? AND session_id IS ? AND report IS ?
         RETURNING ${workColumns}`)
       .get(
         patch.status,
         patch.sessionId === undefined ? expected.sessionId : patch.sessionId,
         patch.report === undefined ? expected.report : patch.report,
+        Date.now(),
+        patch.status,
         Date.now(),
         id,
         expected.status,

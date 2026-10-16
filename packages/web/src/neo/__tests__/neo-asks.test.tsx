@@ -327,50 +327,21 @@ describe('NeoAskCard', () => {
     expect(card.container.querySelector('[data-ask-session]')).toBeNull();
   });
 
-  it('names its card without counting steps as outcomes, and keeps the done definition and the full card behind Details', () => {
-    const view = describeAsk(ask('a', 'waiting', ['a1', 'a2']), scenes.running.slice(0, 1));
-    const card = render(<NeoAskCard view={view} renderCard={() => <p>Step card</p>} />);
-    expect(card.container.querySelector('[data-ask-step]')?.textContent).toBe(
-      '●Card a2Handed to HyperNeo'
-    );
-    expect(card.getByText('Waiting on you')).toBeTruthy();
-    expect(card.queryByText(/outcomes verified/)).toBeNull();
-    expect(card.queryByText('Merged to dev with CI green')).toBeNull();
-    expect(card.queryByText('Step card')).toBeNull();
-    const toggle = card.getByRole('button', { name: 'Details' });
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
-    expect(card.getByText('Step card')).toBeTruthy();
-  });
-
-  it('lists several cards as rows with their stage and shows a card that needs you in full', () => {
+  it('shows Todos before Details and renders each step once without nested cards', () => {
     const owned = [scenes.outcomes[0]!, scenes.running[0]!, scenes.attention[0]!];
     const view = describeAsk(ask('a', 'open', ['a1', 'a2', 'b1']), owned, { doneWorkIds: ['a1'] });
-    const rendered: string[] = [];
-    const card = render(
-      <NeoAskCard
-        view={view}
-        renderCard={(scene) => {
-          rendered.push(scene.ref.id);
-          return <p>Full {scene.ref.id}</p>;
-        }}
-      />
-    );
-    expect(card.getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe(
-      'false'
-    );
-    const rows = [...card.container.querySelectorAll('[data-ask-step]')].map((row) => [
-      row.getAttribute('data-ask-step'),
-      row.textContent,
-    ]);
-    expect(rows).toEqual([
-      ['a1', '✓Card a1Reply received'],
-      ['a2', '●Card a2Handed to HyperNeo'],
-    ]);
-    expect(rendered).toEqual(['b1']);
-    expect(card.getByText('Full b1')).toBeTruthy();
+    const card = render(<NeoAskCard view={view} onOpen={vi.fn()} />);
+    expect(card.getByText('Todos')).toBeTruthy();
+    expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
+    expect(card.queryByText(/outcomes verified/)).toBeNull();
+    expect(card.container.querySelectorAll('[data-ask-step]')).toHaveLength(3);
+    expect(card.container.querySelectorAll('article')).toHaveLength(1);
+    expect(card.getAllByText('Handed to HyperNeo')).toHaveLength(1);
+    const opener = card.getByRole('button', { name: 'Open Card a2' });
+    expect(opener.closest('[data-ask-step]')?.getAttribute('data-ask-step')).toBe('a2');
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    expect(card.getAllByRole('button', { name: 'Open Card a2' })).toHaveLength(1);
+    expect(card.container.querySelectorAll('article')).toHaveLength(1);
   });
 
   it('opens the ask’s current card in its app or in chat', () => {
@@ -385,11 +356,8 @@ describe('NeoAskCard', () => {
     );
     const view = describeAsk(ask('a', 'open', ['a2']), linked);
     const app = render(<NeoAskCard view={view} cards={new Map([['a2', card]])} />);
-    const link = app.getByRole('link', { name: 'Open Ask a' });
-    expect([link.getAttribute('href'), link.textContent]).toEqual([
-      'codex://threads/t1',
-      'Open in Codex',
-    ]);
+    const link = app.getByRole('link', { name: 'Open Card a2' });
+    expect([link.getAttribute('href'), link.textContent]).toEqual(['codex://threads/t1', 'Open']);
     expect(link.querySelector('[data-app-logo]')?.getAttribute('data-app-logo')).toBe(
       'anthropic-codex'
     );
@@ -401,14 +369,14 @@ describe('NeoAskCard', () => {
         onOpen={open}
       />
     );
-    fireEvent.click(chat.getByRole('button', { name: 'Open Ask c' }));
+    fireEvent.click(chat.getByRole('button', { name: 'Open Card c1' }));
     expect(open).toHaveBeenCalledExactlyOnceWith('c1');
-    expect(chat.getByRole('button', { name: 'Open Ask c' }).textContent).toBe('Open chat');
+    expect(chat.getByRole('button', { name: 'Open Card c1' }).textContent).toBe('Open');
     cleanup();
     const unstarted = render(
       <NeoAskCard view={describeAsk(ask('b', 'open', ['b1']), scenes.attention)} onOpen={open} />
     );
-    expect(unstarted.queryByRole('button', { name: 'Open Ask b' })).toBeNull();
+    expect(unstarted.queryByRole('button', { name: 'Open Card b1' })).toBeNull();
   });
 
   it('counts checklist items, not cards, and leaves removed items out of the count', () => {
@@ -431,19 +399,17 @@ describe('NeoAskCard', () => {
     );
     expect([view.done, view.total]).toEqual([1, 2]);
     const card = render(<NeoAskCard view={view} />);
-    expect(card.getByText('1 of 2 outcomes verified')).toBeTruthy();
+    expect(card.queryByText(/outcomes verified/)).toBeNull();
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
     const rows = [
-      ...card.getByRole('list', { name: 'Done when' }).querySelectorAll('[data-ask-item]'),
+      ...card.getByRole('list', { name: 'Todos' }).querySelectorAll('[data-ask-item]'),
     ].map((row) => [row.getAttribute('data-ask-item'), row.textContent]);
     expect(rows).toEqual([
       ['i1', '✓Item i1verifiedPR #6099 merged'],
       ['i2', '○Item i2'],
       ['i3', '○Item i3removedRemoved by the human.'],
     ]);
-    expect(
-      within(card.getByRole('list', { name: 'Questions' })).getByText('Ship it?')
-    ).toBeTruthy();
+    expect(card.queryByRole('list', { name: 'Answered questions' })).toBeNull();
     expect(card.container.querySelector('[data-ask-item="i3"] .line-through')).toBeTruthy();
   });
 
@@ -473,11 +439,81 @@ describe('NeoAskCard', () => {
     fireEvent.click(choices[0]);
     expect(answer).toHaveBeenCalledExactlyOnceWith('i2', '先不做');
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    const questions = within(card.getByRole('list', { name: 'Questions' }));
-    expect(questions.getByRole('button', { name: 'Question above' })).toBeTruthy();
-    expect(questions.queryByRole('button', { name: /开始调查/ })).toBeNull();
+    expect(card.queryByRole('list', { name: 'Answered questions' })).toBeNull();
+    expect(card.getAllByText('开始调查？')).toHaveLength(1);
     expect(card.getAllByRole('button', { name: /: 开始调查$/ })).toHaveLength(1);
   });
+
+  it.each([undefined, ['https://github.com/lsm/HyperNeo/issues/7264']])(
+    'preserves Chinese titles and waits for a PR with issue watch %s, with answers in Details',
+    (watch) => {
+      const scene = {
+        ...scenes.running[0]!,
+        receipt: { ...scenes.running[0]!.receipt, title: '实现会话归属控制' },
+      };
+      const view = describeAsk(
+        {
+          ...ask('mock', 'open', ['a2']),
+          title: '按会话归属改驱动控制',
+          doneItems: [
+            item('merge', 'pending', {
+              text: '这次的 PR 合并进 dev',
+              check: 'coding.pr_merged',
+              watch,
+              deliveredBy: 'a2',
+            }),
+            item('answered', 'met', {
+              text: '开始这 1 步？',
+              decision: true,
+              metBy: 'human',
+              evidence: 'The human answered: 开始',
+            }),
+          ],
+        },
+        [scene]
+      );
+      const card = render(<NeoAskCard view={view} onOpen={vi.fn()} />);
+      expect(card.getByRole('article', { name: '按会话归属改驱动控制' })).toBeTruthy();
+      expect(card.getByText('实现会话归属控制')).toBeTruthy();
+      expect(card.getByText('等 PR 开出来')).toBeTruthy();
+      expect(card.queryByText(/outcomes verified/)).toBeNull();
+      expect(card.queryByText('开始这 1 步？')).toBeNull();
+      fireEvent.click(card.getByRole('button', { name: 'Details' }));
+      expect(
+        within(card.getByRole('list', { name: 'Answered questions' })).getByText('开始这 1 步？')
+      ).toBeTruthy();
+      expect(card.getByText('The human answered: 开始')).toBeTruthy();
+      const openedCard = testCard(
+        { id: 'a2', status: 'queued', sessionId: 'a2-session' },
+        {
+          pr: {
+            number: '7255',
+            label: 'Checks pending',
+            count: 1,
+            inProgress: true,
+            setback: false,
+            merged: [],
+          },
+        }
+      );
+      card.rerender(
+        <NeoAskCard
+          view={{
+            ...view,
+            scenes: [{ ...scene, label: 'PR #7255 · checks pending · waiting for bot approval' }],
+          }}
+          cards={new Map([['a2', openedCard]])}
+          onOpen={vi.fn()}
+        />
+      );
+      expect(card.queryByText('等 PR 开出来')).toBeNull();
+      expect(
+        card.getAllByText('PR #7255 · checks pending · waiting for bot approval')
+      ).toHaveLength(1);
+      expect(card.queryByText(/outcomes verified/)).toBeNull();
+      expect(card.getAllByRole('button', { name: 'Open 实现会话归属控制' })).toHaveLength(1);
+    }
+  );
 
   it('disables option submission while busy', () => {
     const view = describeAsk(ask('w', 'waiting', []), [], {
@@ -559,7 +595,7 @@ describe('NeoAskCard', () => {
     const card = render(<NeoAskCard view={describeAsk(ask('a', 'open', []), [])} />);
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
     expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
-    expect(card.queryByRole('list', { name: 'Done when' })).toBeNull();
+    expect(card.queryByRole('list', { name: 'Todos' })).toBeNull();
   });
 
   it('drops the count once settled and keeps a long outcome behind Details', () => {

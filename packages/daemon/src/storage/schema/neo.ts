@@ -8,6 +8,7 @@ import { addNeoRoutingDigestedColumn } from './m300-neo-routing-digested.ts';
 import { addNeoRoutingTurnNoteColumns } from './m301-neo-routing-turn-notes.ts';
 import { runMigration379 } from './m379-neo-routing-cause.ts';
 import { runMigration380 } from './m380-neo-work-follows.ts';
+import { runMigration385 } from './m385-neo-work-kickoff.ts';
 
 export function createNeoContextTables(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS neo_concerns (
@@ -43,6 +44,7 @@ export function createNeoContextTables(db: Database): void {
     updated_at INTEGER NOT NULL
   )`);
   runMigration380(db);
+  runMigration385(db);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_work_concern ON neo_work(concern_id, created_at)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_work_session
     ON neo_work(session_id, created_at) WHERE session_id IS NOT NULL`);

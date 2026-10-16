@@ -79,6 +79,7 @@ export function neoAskViewSummary(
   live: readonly NeoCardView[],
   merged: ReadonlyMap<string, string[]>
 ): string | null {
+  if (ask.status !== 'achieved' && ask.status !== 'abandoned') return null;
   const outcome = ask.outcome?.trim() || null;
   if (!outcome || outcome.length <= NEO_ASK_SUMMARY_LIMIT) return outcome;
   const numbers = [...new Set(live.flatMap((card) => merged.get(card.workId) ?? []))];
