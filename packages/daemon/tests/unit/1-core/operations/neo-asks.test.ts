@@ -4321,10 +4321,25 @@ describe('driverNeedsYouNote', () => {
   test('states that the work waits on the user; the system prompt says how to ask', () => {
     const note = driverNeedsYouNote(
       { id: 'w1', title: 'Fix startup' },
+      ask,
       { adapter: 'claude-desktop', daemon: 'laptop', id: 't1' },
       'A or B?'
     );
-    expect(note).toContain('Work you handed off is waiting on the user.');
+    expect(note).toContain(
+      `Ask progress on ask ${ask.id} "${ask.title}": card w1 "Fix startup" is waiting on the user.`
+    );
+    expect(JSON.parse(note.slice(note.indexOf('\n') + 1)).card).toMatchObject({
+      id: 'w1',
+      lastReply: 'A or B?',
+    });
+    expect(
+      driverNeedsYouNote(
+        { id: 'w1', title: 'Fix startup' },
+        null,
+        { adapter: 'hyperneo', id: 's' },
+        undefined
+      )
+    ).toMatch(/^Card progress: card w1/);
     expect(note).not.toMatch(/neo\.ask\.question|[Dd]o not/);
     expect(neoPrompt(null)).toContain('When work is waiting on the user');
   });

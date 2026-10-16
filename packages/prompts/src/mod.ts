@@ -71,6 +71,8 @@ import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text'
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
 import mdneoAskProgress from './neo/ask-progress.md' with { type: 'text' };
+import mdneoCardProgress from './neo/card-progress.md' with { type: 'text' };
+import mdneoWorkRerouted from './neo/work/rerouted.md' with { type: 'text' };
 import mdneoAskIdle from './neo/ask-idle.md' with { type: 'text' };
 import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
 import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
@@ -372,6 +374,8 @@ const registry: Record<string, string> = {
   'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-evidence.md': mdneoAskEvidence,
   'neo/ask-progress.md': mdneoAskProgress,
+  'neo/card-progress.md': mdneoCardProgress,
+  'neo/work/rerouted.md': mdneoWorkRerouted,
   'neo/ask-idle.md': mdneoAskIdle,
   'neo/ask-moved.md': mdneoAskMoved,
   'neo/ask-stalled.md': mdneoAskStalled,
@@ -564,6 +568,8 @@ export const {
   NEO_SESSION_TRACK,
   NEO_ASK_EVIDENCE,
   NEO_ASK_PROGRESS,
+  NEO_CARD_PROGRESS,
+  NEO_WORK_REROUTED,
   NEO_ASK_STALLED,
   NEO_TRIGGER_NOTE,
   NEO_WORK_REVIEW_REQUEST,
