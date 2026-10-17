@@ -14,6 +14,7 @@ import {
 } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { neoImageSize } from './image-size.ts';
 import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
+import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -137,12 +138,19 @@ export function neoReplyFact(reply: NeoReply | null): string | null {
   return reply?.todo ? `The human replied about todo ${reply.todo.id}:` : null;
 }
 
-export function repliedNeoRoute(
+export function neoReplyAuthor(
   reply: NeoReply | null,
+  publication: { producerInput: { sessionId: string } } | null
+): string | null {
+  return reply?.ask?.sessionId ?? publication?.producerInput.sessionId ?? null;
+}
+
+export function repliedNeoRoute(
+  author: string | null,
   repo: NeoRepository
 ): { value: null } | { reason: NeoRouted } {
-  if (!reply?.ask) return { value: null };
-  const holder = repo.getBindingBySession(reply.ask.sessionId);
+  if (!author) return { value: null };
+  const holder = repo.getBindingBySession(author);
   return {
     reason: {
       choice:
@@ -388,7 +396,16 @@ export function replayedNeoRoute(
 
 const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
   .input(['input', 'binding', 'db', 'router', 'conversationId', 'repo', 'reply'])
-  .pipe(repliedNeoRoute, ['reply', 'repo'], 'result:route')
+  .pipe(
+    (input: IntakeInput, db: Database, conversationId: string) =>
+      input.replyTo?.kind === 'message'
+        ? new NeoPublicationRepository(db.getDatabase()).get(conversationId, input.replyTo.id)
+        : null,
+    ['input', 'db', 'conversationId'],
+    'publication'
+  )
+  .pipe(neoReplyAuthor, ['reply', 'publication'], 'author')
+  .pipe(repliedNeoRoute, ['author', 'repo'], 'result:route')
   .pipe(wantsNeoRoute, ['binding', 'router'], 'result:route')
   .pipe(
     (input: IntakeInput, db: Database) =>
@@ -554,7 +571,7 @@ export function createNeoIntakeOperation(
   return defineOperation({
     name: 'neo.message.send',
     description:
-      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered. replyTo {kind, id} quotes a question, todo or message: a reply to a question or todo goes to the Neo session that owns its ask, and a reply to a question is recorded as its answer. For each photo, thumbnails may carry a small preview { index, mediaType, data, width?, height? } keyed by the photo’s content index; it is stored for conversation pages and never sent to the model.',
+      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered. replyTo {kind, id} quotes a question, todo or message: a reply to a question or todo goes to the Neo session that owns its ask, a reply to a message goes to the session that wrote it, and a reply to a question is recorded as its answer. For each photo, thumbnails may carry a small preview { index, mediaType, data, width?, height? } keyed by the photo’s content index; it is stored for conversation pages and never sent to the model.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
