@@ -6,6 +6,7 @@ import {
 } from '../../../../src/lib/drivers/claude-inbox-conversations';
 import type {
   ClaudeInboxEvent,
+  ClaudeInboxFrameEvent,
   ClaudeInboxTarget,
   openClaudeInbox,
 } from '../../../../src/lib/drivers/claude-inbox';
@@ -44,7 +45,7 @@ describe('Claude inbox conversation lifetime', () => {
   let opened: Array<{
     directory: string;
     name: string;
-    emit: (event: ClaudeInboxEvent) => void;
+    emit: (event: ClaudeInboxFrameEvent) => void;
     inbox: Inbox;
     writes: unknown[];
     closes: number;
@@ -87,6 +88,8 @@ describe('Claude inbox conversation lifetime', () => {
     manager = createClaudeInboxConversations({
       name: 'abc123',
       routes,
+      senderSession: async (from) =>
+        from === 'uds:/tmp/cc-socks/456.sock' ? target.sessionId : null,
       open,
       onEvent: (returnTo, event) => void routed.push({ returnTo, event }),
       onError: (error) => void errors.push(error),
@@ -138,6 +141,23 @@ describe('Claude inbox conversation lifetime', () => {
     opened[1].emit(event);
     await manager.close();
     expect(routed).toEqual([{ returnTo: origin, event }]);
+  });
+
+  test('a reply without a session in its envelope is named by its sender socket', async () => {
+    await manager.write(target, origin, input());
+    const plain = {
+      kind: 'reply' as const,
+      sessionId: null,
+      messageId: randomUUID(),
+      from: 'uds:/tmp/cc-socks/456.sock',
+      content: 'answer',
+    };
+    opened[0].emit(plain);
+    opened[0].emit({ ...plain, from: 'uds:/tmp/cc-socks/1.sock' });
+    await manager.close();
+    expect(routed).toEqual([
+      { returnTo: origin, event: { ...plain, sessionId: target.sessionId } },
+    ]);
   });
 
   test('listen opens nothing before any session was sent to', async () => {

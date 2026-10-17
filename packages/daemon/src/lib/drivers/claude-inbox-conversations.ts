@@ -2,6 +2,7 @@ import { dirname } from 'node:path';
 import {
   openClaudeInbox,
   type ClaudeInboxEvent,
+  type ClaudeInboxFrameEvent,
   type ClaudeInboxSubmission,
   type ClaudeInboxTarget,
 } from './claude-inbox.ts';
@@ -15,9 +16,19 @@ export interface ClaudeInboxRoutes {
 interface ClaudeInboxConversationDeps {
   name: string;
   routes: ClaudeInboxRoutes;
+  senderSession(from: string): Promise<string | null>;
   open?: typeof openClaudeInbox;
   onEvent(returnTo: string, event: ClaudeInboxEvent): void | Promise<void>;
   onError(error: unknown): void;
+}
+
+async function claudeFrameEvent(
+  frame: ClaudeInboxFrameEvent,
+  senderSession: (from: string) => Promise<string | null>
+): Promise<ClaudeInboxEvent | null> {
+  if (frame.kind === 'receipt') return frame;
+  const sessionId = frame.sessionId ?? (await senderSession(frame.from));
+  return sessionId ? { ...frame, sessionId } : null;
 }
 
 export function createClaudeInboxConversations(deps: ClaudeInboxConversationDeps) {
@@ -26,10 +37,14 @@ export function createClaudeInboxConversations(deps: ClaudeInboxConversationDeps
   let closed = false;
   let closing: Promise<void> | undefined;
 
-  function route(event: ClaudeInboxEvent): void {
-    const returnTo = deps.routes.returnTo(event.sessionId);
-    if (!returnTo) return;
-    const task = Promise.resolve().then(() => deps.onEvent(returnTo, event));
+  async function deliver(frame: ClaudeInboxFrameEvent): Promise<void> {
+    const event = await claudeFrameEvent(frame, deps.senderSession);
+    const returnTo = event ? deps.routes.returnTo(event.sessionId) : null;
+    if (event && returnTo) await deps.onEvent(returnTo, event);
+  }
+
+  function route(frame: ClaudeInboxFrameEvent): void {
+    const task = deliver(frame);
     events.add(task);
     void task.then(
       () => events.delete(task),

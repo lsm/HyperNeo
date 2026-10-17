@@ -7,7 +7,7 @@ import {
   claudeInboxEvent,
   claudeInboxFrame,
   claudeInboxReplySession,
-  type ClaudeInboxEvent,
+  type ClaudeInboxFrameEvent,
   type ClaudeInboxTarget,
   openClaudeInbox,
   removeOwnedClaudeInboxPath,
@@ -161,6 +161,18 @@ describe('claudeInboxEvent', () => {
     });
     expect(claudeInboxReplySession('approved')).toBeNull();
     expect(
+      claudeInboxEvent(
+        {
+          type: 'user',
+          msgV: 1,
+          msg_id: replyMessageId,
+          from: 'uds:/tmp/cc-socks/777.sock',
+          message: { role: 'user', content: 'plain' },
+        },
+        new Map()
+      )
+    ).toMatchObject({ kind: 'reply', sessionId: null, from: 'uds:/tmp/cc-socks/777.sock' });
+    expect(
       claudeInboxEvent({ ...receipt, action: 'stop' }, new Map([[messageId, target]]))
     ).toBeNull();
     const raw = { ...receipt, type: 'user', msgV: 1, message: { role: 'user', content: 'x' } };
@@ -174,7 +186,7 @@ describe('openClaudeInbox', () => {
   let session: ClaudeInboxTarget;
   let inbox: Awaited<ReturnType<typeof openClaudeInbox>> | undefined;
   let frames: unknown[];
-  let events: ClaudeInboxEvent[];
+  let events: ClaudeInboxFrameEvent[];
   let peers: Set<Socket>;
 
   beforeEach(async () => {

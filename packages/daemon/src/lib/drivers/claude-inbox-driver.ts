@@ -5,6 +5,7 @@ import {
 } from './claude-inbox-conversations.ts';
 import { requireClaudeReplyDestination, submitClaudeInboxMessage } from './claude-inbox-submit.ts';
 import type { ClaudeInboxEvent } from './claude-inbox.ts';
+import { readClaudeSenderSession } from './claude-inbox-endpoint.ts';
 import type { ClaudeLiveSession } from './claude-desktop-adapter.ts';
 import type { MailboxHandoffArgs, MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import type { Rejected, WorkCallContext } from './types.ts';
@@ -63,6 +64,7 @@ export function createClaudeInboxDriver(deps: ClaudeInboxDriverDeps) {
   const conversations = createClaudeInboxConversations({
     name: deps.name,
     routes: deps.routes,
+    senderSession: (from) => readClaudeSenderSession(from, deps.registrationsDir),
     open: deps.open,
     onError: deps.onError,
     onEvent: async (returnTo, event) => {

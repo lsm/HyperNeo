@@ -25,6 +25,12 @@ export type ClaudeInboxEvent =
   | { kind: 'reply'; sessionId: string; messageId: string; from: string; content: string }
   | { kind: 'receipt'; sessionId: string; messageId: string; status: string };
 
+export type ClaudeInboxFrameEvent =
+  | Extract<ClaudeInboxEvent, { kind: 'receipt' }>
+  | (Omit<Extract<ClaudeInboxEvent, { kind: 'reply' }>, 'sessionId'> & {
+      sessionId: string | null;
+    });
+
 const ReplySchema = z.object({
   msgV: z.literal(1),
   msg_id: z.string().uuid(),
@@ -97,20 +103,16 @@ export function claudeInboxReplySession(content: string): string | null {
 export function claudeInboxEvent(
   value: unknown,
   sent: ReadonlyMap<string, ClaudeInboxTarget>
-): ClaudeInboxEvent | null {
+): ClaudeInboxFrameEvent | null {
   const reply = ReplySchema.safeParse(value);
-  if (reply.success) {
-    const sessionId = claudeInboxReplySession(reply.data.message.content);
-    return sessionId
-      ? {
-          kind: 'reply',
-          sessionId,
-          messageId: reply.data.msg_id,
-          from: reply.data.from,
-          content: reply.data.message.content,
-        }
-      : null;
-  }
+  if (reply.success)
+    return {
+      kind: 'reply',
+      sessionId: claudeInboxReplySession(reply.data.message.content),
+      messageId: reply.data.msg_id,
+      from: reply.data.from,
+      content: reply.data.message.content,
+    };
   const receipt = ReceiptSchema.safeParse(value);
   const target = receipt.success ? sent.get(receipt.data.orig_msg_id) : undefined;
   if (!receipt.success || !target || receipt.data.from !== `uds:${target.socketPath}`) return null;
@@ -217,7 +219,7 @@ async function removeStaleClaudeInbox(path: string): Promise<void> {
 export async function openClaudeInbox(
   directory: string,
   name: string,
-  onEvent: (event: ClaudeInboxEvent) => void
+  onEvent: (event: ClaudeInboxFrameEvent) => void
 ): Promise<{
   path: string;
   write: (
