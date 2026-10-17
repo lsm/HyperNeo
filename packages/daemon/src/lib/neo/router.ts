@@ -516,7 +516,6 @@ export async function defaultNeoRoute(
   if (routed.choice || !open) return routed;
   const holder = await open().catch(() => null);
   if (!holder) return { ...routed, fallback: 'default-unavailable' };
-  const cause = routed.cause ?? routed.fallback;
   return {
     choice: {
       projectId: holder.projectId,
@@ -524,7 +523,7 @@ export async function defaultNeoRoute(
       signal: 'default',
       confidence: 1,
     },
-    ...(cause ? { cause } : {}),
+    ...(routed.cause ? { cause: routed.cause } : {}),
   };
 }
 
