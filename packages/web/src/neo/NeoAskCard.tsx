@@ -59,7 +59,7 @@ function TodoRow({
     <div
       data-ask-todo={todo.id}
       data-neo-work={todo.workId ?? undefined}
-      class="flex min-w-0 items-start gap-2.5 border-t border-line py-2 text-sm first:border-t-0"
+      class={`flex min-w-0 items-start gap-2.5 text-sm ${number === undefined ? 'border-t border-line py-2' : 'py-1'}`}
     >
       <span aria-hidden="true" class={`w-4 shrink-0 text-center font-semibold ${color}`}>
         {number ?? mark}
@@ -160,10 +160,12 @@ function AnsweredQuestion({ item }: { item: NeoAskItem }) {
   const answer = item.answer;
   return (
     <li data-ask-answer={item.id} class="flex min-w-0 flex-wrap gap-x-2 text-sm text-fg-muted">
-      <span>{answer?.choice ?? '选择未记录'}</span>
+      <span>
+        {item.question ?? item.text} — <span>{answer?.choice ?? '选择未记录'}</span>
+      </span>
       {answer?.at != null ? (
         <time dateTime={new Date(answer.at).toISOString()} class="text-xs text-fg-faint">
-          {new Date(answer.at).toLocaleString()}
+          · {new Date(answer.at).toLocaleString()}
         </time>
       ) : (
         <span class="text-xs text-fg-faint">时间未记录</span>

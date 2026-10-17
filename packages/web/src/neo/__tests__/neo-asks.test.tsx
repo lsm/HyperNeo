@@ -413,7 +413,8 @@ describe('NeoAskCard', () => {
     const answers = within(app.getByRole('list', { name: '已回答' }));
     expect(answers.getByText('改派新会话')).toBeTruthy();
     expect(app.container.querySelector('time')?.dateTime).toBe(new Date(at).toISOString());
-    expect(app.queryByText(/原问题|过时问题|internal receipt/)).toBeNull();
+    expect(app.getByText(/原问题？/)).toBeTruthy();
+    expect(app.queryByText(/过时问题|internal receipt/)).toBeNull();
   });
 
   it('opens remote todos at their session link and gives daemon todos no Open control', () => {
