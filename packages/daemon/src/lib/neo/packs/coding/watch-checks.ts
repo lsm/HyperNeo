@@ -34,10 +34,6 @@ function refKey(url: string): string {
   return ref ? `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase() : url.toLowerCase();
 }
 
-export function countNeoAskWatches(items: readonly Pick<NeoAskItem, 'watch'>[]): number {
-  return new Set(items.flatMap((item) => item.watch ?? []).map(refKey)).size;
-}
-
 export function neoItemWatchUrls(
   item: Pick<NeoAskItem, 'watch' | 'check' | 'deliveredBy'>,
   cardPrs: NeoCardPrs
