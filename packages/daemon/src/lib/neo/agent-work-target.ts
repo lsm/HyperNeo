@@ -1,7 +1,6 @@
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkTarget } from '../../storage/repositories/neo-repository.ts';
 import type { ExecutionSession, NeoWorkTargetRejection } from './work-target.ts';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 
 export interface NeoAgentWorkOwner {
   agentId: string;
@@ -64,9 +63,4 @@ export function requireNeoAgentWorkBinding(
   binding: NeoBinding | null
 ): Gate {
   return binding === null ? { value: target } : reject('target_owned_context');
-}
-
-export interface NeoProposal {
-  receipt: { work: NeoWork; agent: NeoWorkTarget['agent'] | null };
-  crossTarget: boolean;
 }

@@ -21,7 +21,7 @@ const Text = z.string().trim().min(1);
 
 const Open = z.object({
   title: Text.max(200),
-  request: Text,
+  request: Text.max(4000),
   projectId: Text.nullable().optional(),
   todos: z.array(NeoTodoDraftSchema).max(20).default([]),
 });
