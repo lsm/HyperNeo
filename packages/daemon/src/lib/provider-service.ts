@@ -135,10 +135,13 @@ export class ProviderService {
   ): Promise<void> {
     if (!provider) return;
     await provider.ensureBridgeStarted?.(modelId, sessionConfig);
-    await startProviderKeyBridge(
-      provider.id,
-      sdkConfigToEnvVars(provider.buildSdkConfig(modelId, sessionConfig))
-    );
+    let sdkConfig: ProviderSdkConfig;
+    try {
+      sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
+    } catch {
+      return;
+    }
+    await startProviderKeyBridge(provider.id, sdkConfigToEnvVars(sdkConfig));
   }
 
   private getRegistry() {
