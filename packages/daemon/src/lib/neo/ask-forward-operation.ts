@@ -181,7 +181,7 @@ export function requireForwardTarget(
 ): Gate<Target> {
   if (plan.to === NEO_INBOX_ID) return { value: { ...plan, title: 'Inbox' } };
   return project
-    ? { value: { ...plan, title: project.title } }
+    ? { value: { ...plan, to: project.id, title: project.title } }
     : {
         reason: {
           ok: false,

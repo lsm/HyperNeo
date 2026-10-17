@@ -1601,7 +1601,10 @@ export function createNeoOperations(service: NeoService) {
       getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
       forwards: (ask) => service.askForwards.list(ask),
-      getProject: (id) => service.repo.getProject(id),
+      getProject: (id) => {
+        const resolved = service.repo.resolveProjectRef(id);
+        return resolved ? service.repo.getProject(resolved) : null;
+      },
       listProjects: () => service.repo.listProjects(),
       openDefault: async () =>
         (

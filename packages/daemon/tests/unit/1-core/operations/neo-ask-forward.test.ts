@@ -10,6 +10,7 @@ import {
   neoTurnOwnsMessage,
   planNeoAskForward,
   requireForwardingHolder,
+  requireForwardTarget,
   staleNeoForwardHops,
 } from '../../../../src/lib/neo/ask-forward-operation.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
@@ -160,6 +161,14 @@ describe('planNeoAskForward', () => {
       ).toEqual({ reason: { ok: false, reason: 'not_your_ask' } });
     }
   );
+});
+
+describe('requireForwardTarget', () => {
+  test('targets the resolved project id, not the reference the caller passed', () => {
+    expect(
+      requireForwardTarget({ hop: 0, to: '4ce2' }, { id: 'project:4ce2', title: 'Daemon' }, [])
+    ).toEqual({ value: { hop: 0, to: 'project:4ce2', title: 'Daemon' } });
+  });
 });
 
 describe('neoTurnOwnsMessage', () => {
