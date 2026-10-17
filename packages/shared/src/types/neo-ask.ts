@@ -42,3 +42,26 @@ export interface NeoTodo {
   startedAt: number | null;
   finishedAt: number | null;
 }
+
+export type NeoQuestionKind = 'yesno' | 'choice' | 'reply' | 'start';
+
+export type NeoQuestionState = 'open' | 'answered' | 'retired';
+
+export type NeoQuestionAnswer = string | string[];
+
+export interface NeoQuestion {
+  id: string;
+  askId: string;
+  text: string;
+  kind: NeoQuestionKind;
+  options: string[] | null;
+  multiple: boolean;
+  noLabel: string | null;
+  yesLabel: string | null;
+  startTodos: string[] | null;
+  state: NeoQuestionState;
+  answer: NeoQuestionAnswer | null;
+  answeredBy: 'button' | 'chat' | null;
+  answeredAt: number | null;
+  createdAt: number;
+}
