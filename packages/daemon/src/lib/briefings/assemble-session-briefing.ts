@@ -1,3 +1,4 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { CapabilityContribution, ScopeContribution, ScopeFacet } from './contribution.ts';
 import { SCOPE_FACET_ORDER } from './contribution.ts';
 
@@ -20,6 +21,62 @@ export interface AssembledSessionBriefing {
 }
 
 const SECTION_SEPARATOR = '\n\n';
+const SEPARATOR_BYTES = Buffer.byteLength(SECTION_SEPARATOR, 'utf8');
+
+export const BRIEFING_ASSEMBLY_BUDGET_BYTES = 8192;
+
+export interface BriefingBudgetExceeded {
+  readonly sectionKind: BriefingSectionKind;
+  readonly sectionKey: string;
+  readonly sectionBytes: number;
+  readonly totalBytes: number;
+  readonly budgetBytes: number;
+  readonly overBytes: number;
+}
+
+function gateAssemblyBudget(
+  sections: readonly BriefingSection[]
+): { value: readonly BriefingSection[] } | { reason: BriefingBudgetExceeded } {
+  let totalBytes = 0;
+  for (const [index, entry] of sections.entries()) {
+    const sectionBytes = Buffer.byteLength(entry.briefing, 'utf8');
+    totalBytes += sectionBytes + (index === 0 ? 0 : SEPARATOR_BYTES);
+    if (totalBytes > BRIEFING_ASSEMBLY_BUDGET_BYTES) {
+      return {
+        reason: {
+          sectionKind: entry.kind,
+          sectionKey: entry.key,
+          sectionBytes,
+          totalBytes,
+          budgetBytes: BRIEFING_ASSEMBLY_BUDGET_BYTES,
+          overBytes: totalBytes - BRIEFING_ASSEMBLY_BUDGET_BYTES,
+        },
+      };
+    }
+  }
+  return { value: sections };
+}
+
+const runGateAssemblyBudget = (superpipe({})('briefing-assembly-budget') as PipelineAPI)
+  .input(['sections'])
+  .pipe(gateAssemblyBudget, 'sections', 'result:budget')
+  .end('budget') as (
+  sections: readonly BriefingSection[]
+) => readonly BriefingSection[] | BriefingBudgetExceeded;
+
+function isBudgetExceeded(
+  result: readonly BriefingSection[] | BriefingBudgetExceeded
+): result is BriefingBudgetExceeded {
+  return !Array.isArray(result);
+}
+
+function formatBudgetError(reason: BriefingBudgetExceeded): string {
+  return (
+    `briefing assembly: total size ${reason.totalBytes}B exceeds the ${reason.budgetBytes}B budget ` +
+    `by ${reason.overBytes}B; pushed over by ${reason.sectionKind} "${reason.sectionKey}" ` +
+    `(${reason.sectionBytes}B)`
+  );
+}
 
 function section(kind: BriefingSectionKind, key: string, briefing: string): BriefingSection {
   const trimmed = briefing.trim();
@@ -68,8 +125,12 @@ export function assembleSessionBriefing(
     ...scopeSections(contributions.scope),
     ...capabilitySections(contributions.capabilities),
   ];
+  const budgeted = runGateAssemblyBudget(sections);
+  if (isBudgetExceeded(budgeted)) {
+    throw new Error(formatBudgetError(budgeted));
+  }
   return {
-    sections,
-    text: sections.map((entry) => entry.briefing).join(SECTION_SEPARATOR),
+    sections: budgeted,
+    text: budgeted.map((entry) => entry.briefing).join(SECTION_SEPARATOR),
   };
 }
