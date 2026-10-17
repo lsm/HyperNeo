@@ -69,7 +69,7 @@ describe('durable public ask reads', () => {
   ] as OperationCaller[])(
     'refuses non-human %o before binding or ledger access',
     async (caller) => {
-      const bindings = vi.spyOn(repo, 'getBindingForProject');
+      const bindings = vi.spyOn(repo, 'conversationId');
       const reads = vi.spyOn(ledger, 'list');
       expect(await invoke({ conversationId }, caller)).toEqual({
         kind: 'completed',
@@ -80,16 +80,10 @@ describe('durable public ask reads', () => {
     }
   );
 
-  test.each(['foreign', 'missing', 'holder'])(
+  test.each(['foreign', 'missing'])(
     'refuses a %s conversation before ledger access',
     async (kind) => {
       if (kind === 'missing') mailbox.db.exec('DELETE FROM neo_session_bindings');
-      if (kind === 'holder')
-        vi.spyOn(repo, 'getBindingForProject').mockReturnValue({
-          ...root,
-          projectId: 'research',
-          kind: 'project',
-        });
       const reads = vi.spyOn(ledger, 'list');
       expect(
         await invoke({ conversationId: kind === 'foreign' ? foreignId : conversationId })

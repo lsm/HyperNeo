@@ -51,14 +51,13 @@ export function neoPublicationViewNote(
 export const readNeoPublicationView = (superpipe({})('neo-publication-view') as PipelineAPI)
   .input(['db', 'sessionId', 'fresh'])
   .pipe(
-    (db: Database) => new NeoRepository(db.getDatabase()).getBindingForProject(null)?.sessionId,
+    (db: Database) => new NeoRepository(db.getDatabase()).conversationId(),
     'db',
-    'root'
+    'conversation'
   )
   .pipe(
-    (root: string | undefined) =>
-      root?.startsWith('neo:') ? { value: root.slice(4) } : { reason: null },
-    'root',
+    (conversation: string | null) => (conversation ? { value: conversation } : { reason: null }),
+    'conversation',
     'result:conversation'
   )
   .pipe(
