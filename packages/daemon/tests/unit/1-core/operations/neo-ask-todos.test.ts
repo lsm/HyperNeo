@@ -180,6 +180,15 @@ describe('projectNeoAskViews todo projection', () => {
       status: '已取消部署',
     });
   });
+  test('keeps the ask order when snapshot work arrives newest first', () => {
+    const rows = [work('first'), work('second')];
+    expect(
+      project(rows.slice().reverse(), [], [], { workIds: ['first', 'second'] }).todos?.map(
+        (todo) => todo.id
+      )
+    ).toEqual(['first', 'second']);
+  });
+
   test('only work added after the first human start gets 新, even after a replan resets approval', () => {
     const approval = item('start', {
       kind: 'approval',

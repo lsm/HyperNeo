@@ -42,7 +42,7 @@ export function projectNeoAskTodos(
   parts: NeoAskTodoParts
 ): NeoAskTodo[] {
   const items = (ask.doneItems ?? []).filter((item) => !question(item));
-  const work = parts.work.filter((row) => ask.workIds.includes(row.id));
+  const work = ask.workIds.flatMap((id) => parts.work.find((row) => row.id === id) ?? []);
   const start = startedAt(ask);
   const rows: NeoAskTodo[] = work.map((row) => {
     const card = cards.find((view) => view.workId === row.id);
