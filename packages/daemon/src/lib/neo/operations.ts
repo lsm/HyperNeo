@@ -2503,7 +2503,7 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     createNeoPreferenceOperation(service),
-    ...createNeoTodoOperations(service.todos, service.todoSessions, service.todoRunner.start),
+    ...createNeoTodoOperations(service.todos, service.todoSessions, service.todoRunner),
     ...createNeoQuestionOperations(
       service.todos,
       (ask, question, note) =>

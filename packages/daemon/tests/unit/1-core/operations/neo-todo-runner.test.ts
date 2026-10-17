@@ -157,6 +157,28 @@ describe('neo todo runner', () => {
   });
 });
 
+describe('neo todo runner follow-ups', () => {
+  test('continue sends the next step and reopens the todo; retry goes again only before a session', async () => {
+    const { store, runner, calls, add, setStatus } = setup();
+    const todo = add();
+    expect(await runner.proceed(todo.id, 'next')).toEqual({
+      ok: false,
+      reason: 'not_started: this todo is todo and has no session to continue.',
+    });
+    await runner.start(todo.id);
+    store.updateTodo(store.getTodo(todo.id)!, { state: 'done', report: 'Done' }, 3);
+    setStatus({ ok: true, value: { delivered: true } });
+    const continued = await runner.proceed(todo.id, 'Now add tests.');
+    expect(continued.ok && continued.todo).toMatchObject({ state: 'doing', report: null });
+    expect(calls.at(-1)).toMatchObject({ name: 'work.send', input: { ref } });
+    expect(String(calls.at(-1)?.input.message)).toContain('Now add tests.');
+    expect(await runner.retry(todo.id)).toEqual({
+      ok: false,
+      reason: 'not_retryable: only a todo that failed before its session started goes again.',
+    });
+  });
+});
+
 describe('requireNeoTodoStartable', () => {
   test('refuses daemon-checked todos and read targets', () => {
     const todo = { state: 'todo', instruction: null } as NeoTodo;

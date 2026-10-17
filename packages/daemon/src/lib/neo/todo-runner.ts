@@ -18,6 +18,7 @@ import {
   readDriverOutcome,
   readDriverSendBaseline,
   readDriverSent,
+  withWorkGoal,
 } from './driver-work.ts';
 import type { NeoPack, NeoTodoCheckResult } from './packs/types.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
@@ -81,6 +82,31 @@ export function requireNeoTodoStartable(read: {
     return fail('no_session: this todo has no instruction and target; the daemon checks it.');
   if (target.verb === 'read') return fail('unsupported_target: a todo cannot start a read.');
   return { value: { todo, ask, target } };
+}
+
+export function requireNeoTodoContinuable(read: {
+  todo: NeoTodo | null;
+  ask: NeoAsk | null;
+  ref: WorkRef | null;
+}): Gate<{ todo: NeoTodo; ask: NeoAsk; ref: WorkRef }> {
+  const { todo, ask, ref } = read;
+  if (!todo || !ask) return fail('not_found: no such todo.');
+  if (ask.status !== 'open') return fail(`ask_settled: this ask is ${ask.status}.`);
+  if (todo.state === 'todo' || todo.state === 'removed' || !ref)
+    return fail(`not_started: this todo is ${todo.state} and has no session to continue.`);
+  return { value: { todo, ask, ref } };
+}
+
+export function requireNeoTodoRetryable(read: {
+  todo: NeoTodo | null;
+  ref: WorkRef | null;
+  target: NeoDriverTarget | null;
+}): Gate<NeoTodo> {
+  const { todo, ref, target } = read;
+  if (!todo) return fail('not_found: no such todo.');
+  if (todo.state !== 'failed' || ref || !target)
+    return fail('not_retryable: only a todo that failed before its session started goes again.');
+  return { value: todo };
 }
 
 export function planNeoTodoSettled(
@@ -212,7 +238,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       return neoCardSent(sessions.readSent(id), todo ? neoTodoCard(todo, ask) : null);
     },
     readLiveStatus: (id) => sessions.readLiveStatus(id),
-    isContinuing: (id) => sessions.get(id)?.verb === 'send' || sessions.readRetries(id) > 0,
+    isContinuing: (id) =>
+      sessions.get(id)?.verb === 'send' || sessions.readFollowAnchor(id) !== null,
     readStatus: (card, ref, since, receipt) =>
       deps.invoke(caller(ask), 'work.status', {
         ref,
@@ -256,8 +283,62 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (patch) await finish(todo, ask, patch, now);
   };
 
+  const read = (todoId: string) => {
+    const todo = store.getTodo(todoId);
+    return {
+      todo,
+      ask: todo ? store.getAsk(todo.askId) : null,
+      ref: todo ? sessions.readRef(todo.id) : null,
+      target: todo ? sessions.get(todo.id) : null,
+    };
+  };
+
+  const proceed = async (todoId: string, message: string) => {
+    const gate = requireNeoTodoContinuable(read(todoId));
+    if ('reason' in gate) return gate.reason;
+    const { todo, ask, ref } = gate.value;
+    const text = withWorkGoal(message, { workId: todo.id, goal: null, doneWhen: todo.doneWhen });
+    const status = await deps.invoke(caller(ask), 'work.status', { ref });
+    const baseline = readDriverSendBaseline(status, Date.now(), !!ref.daemon);
+    const sent = readDriverSent(status, text, todo.createdAt);
+    const delivered = readDriverOutcome(
+      { verb: 'send', ref },
+      await deps.invoke(caller(ask), 'work.send', { ref, message: text })
+    );
+    if (!('ref' in delivered)) return { ok: false as const, reason: delivered.failure };
+    sessions.recordStartedAt(todo.id, 'queued' in delivered ? null : baseline);
+    sessions.recordSent(todo.id, sent && { ...sent, receipt: delivered.receipt });
+    const next = store.updateTodo(
+      todo,
+      { state: 'doing', report: null, evidence: null, reason: null, finishedAt: null },
+      Date.now()
+    );
+    checked.delete(todo.id);
+    return { ok: true as const, todo: next };
+  };
+
+  const stop = async (todo: NeoTodo) => {
+    const ref = sessions.readRef(todo.id);
+    const ask = store.getAsk(todo.askId);
+    if (ref && ask && todo.state === 'doing')
+      await deps.invoke(caller(ask), 'work.stop', { ref }).catch(() => null);
+  };
+
   return {
     start,
+    proceed,
+    stop,
+    async retry(todoId: string) {
+      const gate = requireNeoTodoRetryable(read(todoId));
+      if ('reason' in gate) return gate.reason;
+      sessions.recordRetry(todoId);
+      store.updateTodo(
+        gate.value,
+        { state: 'todo', reason: null, startedAt: null, finishedAt: null },
+        Date.now()
+      );
+      return start(todoId);
+    },
     recheck(todoIds: readonly string[]) {
       for (const id of todoIds) checked.delete(id);
     },

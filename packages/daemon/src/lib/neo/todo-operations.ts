@@ -150,15 +150,46 @@ export function planNeoTodoRemove(
   };
 }
 
+type Ran = Promise<{ ok: true; todo: NeoTodo } | Rejection>;
+
+export interface NeoTodoControls {
+  start(todoId: string): Ran;
+  proceed(todoId: string, message: string): Ran;
+  retry(todoId: string): Ran;
+  stop(todo: NeoTodo): Promise<void>;
+}
+
+const Continue = z.object({ todoId: Text, message: Text });
+const Retry = z.object({ todoId: Text });
+const Close = z.object({ todoId: Text, reason: Text });
+
+export function planNeoTodoClose(
+  todo: NeoTodo,
+  input: z.infer<typeof Close>,
+  now = Date.now()
+): Gate<{ todo: NeoTodo; patch: NeoTodoPatch }> {
+  if (todo.state === 'removed') return fail('todo_removed: this todo was removed.');
+  return {
+    value: { todo, patch: { state: 'done', evidence: input.reason, finishedAt: now } },
+  };
+}
+
 export function createNeoTodoOperations(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  start: (todoId: string) => Promise<{ ok: true; todo: NeoTodo } | Rejection>
+  controls: NeoTodoControls
 ) {
+  const { start } = controls;
   const write = (plan: { todo: NeoTodo; patch: NeoTodoPatch }): TodoReceipt => {
     const todo = todos.updateTodo(plan.todo, plan.patch, Date.now());
     return { ok: true, todo, todos: todos.listTodos(todo.askId) };
   };
+  const stopAndWrite = async (plan: { todo: NeoTodo; patch: NeoTodoPatch }) => {
+    await controls.stop(plan.todo);
+    return write(plan);
+  };
+  const ran = async (result: Awaited<Ran>): Promise<TodoReceipt | Rejection> =>
+    result.ok ? { ok: true, todo: result.todo, todos: todos.listTodos(result.todo.askId) } : result;
   const owned = (pipeline: PipelineAPI) =>
     pipeline
       .input(['input', 'caller'])
@@ -207,11 +238,38 @@ export function createNeoTodoOperations(
       ['outcome', 'input'],
       'result:outcome'
     )
-    .pipe(write, 'outcome', 'outcome')
-    .end('outcome') as (
+    .pipe(stopAndWrite, 'outcome', 'outcome')
+    .endAsync('outcome') as (
     input: z.infer<typeof Remove>,
     caller: OperationCaller
-  ) => TodoReceipt | Rejection;
+  ) => Promise<TodoReceipt | Rejection>;
+
+  const proceed = owned(superpipe({})('neo.todo.continue') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo, input: z.infer<typeof Continue>) =>
+        controls.proceed(todo.id, input.message).then(ran),
+      ['outcome', 'input'],
+      'outcome'
+    )
+    .endAsync('outcome') as (
+    input: z.infer<typeof Continue>,
+    caller: OperationCaller
+  ) => Promise<TodoReceipt | Rejection>;
+
+  const retry = owned(superpipe({})('neo.todo.retry') as PipelineAPI)
+    .pipe((todo: NeoTodo) => controls.retry(todo.id).then(ran), 'outcome', 'outcome')
+    .endAsync('outcome') as (
+    input: z.infer<typeof Retry>,
+    caller: OperationCaller
+  ) => Promise<TodoReceipt | Rejection>;
+
+  const close = owned(superpipe({})('neo.todo.close') as PipelineAPI)
+    .pipe(planNeoTodoClose, ['outcome', 'input'], 'result:outcome')
+    .pipe(stopAndWrite, 'outcome', 'outcome')
+    .endAsync('outcome') as (
+    input: z.infer<typeof Close>,
+    caller: OperationCaller
+  ) => Promise<TodoReceipt | Rejection>;
 
   return [
     defineOperation({
@@ -235,11 +293,38 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.remove',
       description:
-        'Remove a todo from an open ask you own, with the reason. replacedBy names the todo that replaces it. A removed todo stays listed, struck through.',
+        'Remove a todo from an open ask you own, with the reason; its session stops if it is running. replacedBy names the todo that replaces it. A removed todo stays listed, struck through.',
       inputSchema: Remove,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => remove(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.todo.continue',
+      description:
+        "Send a started todo's session its next step. The todo goes back to doing until the session reports again.",
+      inputSchema: Continue,
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => proceed(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.todo.retry',
+      description:
+        'Start a todo that failed before its session started again, on the same target. To use anything else, ask the human.',
+      inputSchema: Retry,
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => retry(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.todo.close',
+      description:
+        'Mark a todo done with the reason you judged it done; its session stops if it is running.',
+      inputSchema: Close,
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => close(input, caller),
     }),
   ];
 }
