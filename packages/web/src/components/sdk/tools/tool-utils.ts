@@ -12,9 +12,17 @@ export function getToolSummary(toolName: string, input: unknown): string {
   return 'Tool execution';
 }
 
-export function getToolDisplayName(toolName: string): string {
+export function getInvokedOperationName(toolName: string, input: unknown): string | null {
+  const invoke =
+    toolName === 'invoke' ||
+    (toolName.startsWith('mcp__') && toolName.split('__').slice(2).join('__') === 'invoke');
+  if (!invoke || !input || typeof input !== 'object' || !('name' in input)) return null;
+  return typeof input.name === 'string' && input.name.trim() ? input.name.trim() : null;
+}
+
+export function getToolDisplayName(toolName: string, input?: unknown): string {
   const config = getToolConfig(toolName);
-  return config.displayName || toolName;
+  return getInvokedOperationName(toolName, input) ?? (config.displayName || toolName);
 }
 
 export function getToolColors(toolName: string) {

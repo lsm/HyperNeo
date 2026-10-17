@@ -5,6 +5,23 @@ import { render } from '@testing-library/preact';
 import { ToolSummary } from '../ToolSummary';
 
 describe('ToolSummary', () => {
+  it('omits an invoke summary that repeats the operation already used as its title', () => {
+    const { container } = render(
+      <ToolSummary
+        toolName="mcp__hyperneo-operations__invoke"
+        input={{ name: 'neo.snapshot', input: {} }}
+      />
+    );
+    expect(container.childElementCount).toBe(0);
+  });
+
+  it('preserves the existing summary when invoke has no operation name', () => {
+    const { container } = render(
+      <ToolSummary toolName="mcp__hyperneo-operations__invoke" input={{}} />
+    );
+    expect(container.textContent).toBe('hyperneo-operations');
+  });
+
   describe('Basic Rendering', () => {
     it('should render tool summary', () => {
       const { container } = render(

@@ -25,6 +25,19 @@ function createToolProgressMessage(
 }
 
 describe('SDKMessageRenderer', () => {
+  it('uses the matching tool input to title a running invoke operation', () => {
+    const message = createToolProgressMessage('mcp__hyperneo-operations__invoke', 1);
+    const app = render(
+      <SDKMessageRenderer
+        message={message}
+        showSubagentMessages
+        toolInputsMap={new Map([[message.tool_use_id, { name: 'neo.snapshot', input: {} }]])}
+      />
+    );
+    expect(app.container.querySelector('span.font-medium')?.textContent).toBe('neo.snapshot');
+    expect(app.getAllByText('neo.snapshot')).toHaveLength(1);
+  });
+
   describe('Basic Rendering', () => {
     it('should render tool name', () => {
       const message = createToolProgressMessage('Read', 2.5);

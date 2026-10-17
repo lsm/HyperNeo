@@ -87,8 +87,8 @@ vi.mock('../../../ui/ConfirmModal.tsx', () => ({
     ) : null,
 }));
 
-vi.mock('../tool-utils.ts', () => ({
-  getToolDisplayName: (name: string) => name,
+vi.mock('../tool-utils.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../tool-utils.ts')>()),
   getToolColors: () => ({
     bg: 'bg-accent/10',
     border: 'border-accent/40',
@@ -123,6 +123,26 @@ describe('ToolResultCard Component', () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
+
+  it.each(['compact', 'default', 'detailed', 'inline'])(
+    'titles the %s invoke card with its operation',
+    (variant) => {
+      const app = render(
+        <ToolResultCard
+          toolName="mcp__hyperneo-operations__invoke"
+          toolId="invoke-1"
+          input={{ name: 'neo.snapshot', input: {} }}
+          output="ok"
+          variant={variant}
+        />
+      );
+      const title = app.container.querySelector(
+        variant === 'default' || variant === 'detailed' ? 'span.font-semibold' : 'span.font-medium'
+      );
+      expect(title?.textContent).toBe('neo.snapshot');
+      expect(app.queryByText('invoke')).toBeNull();
+    }
+  );
 
   describe('compact variant', () => {
     it('should render compact variant correctly', () => {
