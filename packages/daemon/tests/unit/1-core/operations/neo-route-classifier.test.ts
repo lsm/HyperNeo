@@ -34,22 +34,31 @@ const youtube: NeoHolder = {
   summary: '',
 };
 
+const inboxChoice: NeoHolder = {
+  projectId: NEO_INBOX_ID,
+  sessionId: '',
+  title: 'Inbox',
+  summary: '',
+};
+
 describe('buildNeoRoutePrompt', () => {
   test('puts the conversation context before the new message and lists the allowed ids', () => {
     const prompt = buildNeoRoutePrompt(
       'how about 5060 now?',
       [drivers, youtube],
-      'Projects:\n- main: Neo itself, the default'
+      'Projects:\n- drivers: Neo driver epic'
     );
     expect(prompt.indexOf('Projects:')).toBeLessThan(
       prompt.indexOf('New message:\nhow about 5060 now?')
     );
     expect(prompt).toContain('Reply with one JSON object and nothing else');
-    expect(prompt).toContain('choice is one of: main, drivers, youtube');
+    expect(prompt).toContain('choice is one of: drivers, youtube');
+    expect(prompt).not.toContain('main');
     expect(prompt).toContain('answers_waiting: it answers a WAITING ON YOU question');
     expect(prompt.indexOf('- answers_waiting:')).toBeLessThan(prompt.indexOf('- continues_turn:'));
-    expect(prompt).toContain("Choose main only when it replies to main's last message.");
-    expect(prompt).toContain('cross_project: it asks about work across projects');
+    expect(prompt).toContain(
+      'cross_project: it asks about work across projects ("how is everything going?"); choose inbox (when listed).'
+    );
     expect(prompt).toContain('basis is the name of the rule below, exactly as written');
   });
 
@@ -164,16 +173,16 @@ describe('readNeoRouteDecision', () => {
       )
     ).toEqual({ decision: youtube, confidence: 0.82, basis: 'answers_waiting' });
     expect(
-      readNeoRouteDecision('```json\n{"choice":"main","confidence":3,"basis":"guess"}\n```', [
+      readNeoRouteDecision('```json\n{"choice":"drivers","confidence":3,"basis":"guess"}\n```', [
         drivers,
       ])
-    ).toEqual({ decision: 'main', confidence: 1, basis: null });
+    ).toEqual({ decision: drivers, confidence: 1, basis: null });
   });
 
-  test('reads a cross-project question as main', () => {
+  test('no longer accepts main as a choice', () => {
     expect(
       readNeoRouteDecision('{"choice":"main","confidence":0.7,"basis":"cross_project"}', [youtube])
-    ).toEqual({ decision: 'main', confidence: 0.7, basis: 'cross_project' });
+    ).toBeNull();
   });
 
   test('keeps the rule when the model explains its basis after it', () => {
@@ -183,8 +192,8 @@ describe('readNeoRouteDecision', () => {
         [youtube]
       )
     ).toEqual({ decision: youtube, confidence: 0.9, basis: 'continues_turn' });
-    expect(readNeoRouteDecision('{"choice":"main","basis":"one_offish"}', [youtube])).toEqual({
-      decision: 'main',
+    expect(readNeoRouteDecision('{"choice":"youtube","basis":"one_offish"}', [youtube])).toEqual({
+      decision: youtube,
       confidence: null,
       basis: null,
     });
@@ -239,7 +248,7 @@ describe('chooseNeoRoute with a classifier', () => {
       'yes',
       deps(async (_text, options, context) => {
         seen.push(options.map((holder) => holder.projectId).join(','));
-        return context.includes('WAITING ON YOU: "Draft a reply?"') ? youtube : 'main';
+        return context.includes('WAITING ON YOU: "Draft a reply?"') ? youtube : null;
       })
     );
     expect(seen).toEqual(['drivers,youtube']);
@@ -256,16 +265,15 @@ describe('chooseNeoRoute with a classifier', () => {
       confidence: 0.91,
       signal: 'classifier:answers_waiting',
     });
-    const main = await chooseNeoRoute(
+    const unlisted = await chooseNeoRoute(
       'new thing',
-      deps(async () => ({ decision: 'main', confidence: 0.7, basis: 'new_subject' }))
+      deps(async () => ({ decision: inboxChoice, confidence: 0.7, basis: 'new_subject' }))
     );
-    expect(main).toEqual({ choice: null, fallback: 'inbox-unavailable' });
+    expect(unlisted).toEqual({ choice: null, fallback: 'inbox-unavailable' });
   });
 
-  test('stays with main Neo and records why when the classifier says main or gives no answer', async () => {
+  test('records why when the classifier gives no answer', async () => {
     const verdicts = [
-      'main',
       null,
       { miss: 'timeout', cause: 'no answer within 15000 ms' },
       { miss: 'failed', cause: 'route model returned 429' },
@@ -279,7 +287,6 @@ describe('chooseNeoRoute with a classifier', () => {
       )
     );
     expect(routes).toEqual([
-      { choice: null, fallback: 'classifier' },
       { choice: null, fallback: 'classifier-unanswered' },
       { choice: null, fallback: 'classifier-timeout', cause: 'no answer within 15000 ms' },
       { choice: null, fallback: 'classifier-failed', cause: 'route model returned 429' },
@@ -296,7 +303,7 @@ describe('chooseNeoRoute with a new subject', () => {
     recentAsks: () => [],
     embed: async () => null,
     classify: async () => ({
-      decision: 'main',
+      decision: inboxChoice,
       confidence: 0.8,
       basis: 'new_subject',
       projectTitle: 'Spring garden',
@@ -326,7 +333,7 @@ describe('chooseNeoRoute with a new subject', () => {
   ] as const)('sends %s to the Inbox', async (_label, answer) => {
     const route = await chooseNeoRoute('fix HyperNeo #5554', {
       ...base(),
-      classify: async () => ({ decision: 'main', confidence: 0.7, ...answer }),
+      classify: async () => ({ decision: inboxChoice, confidence: 0.7, ...answer }),
     });
     expect(route.choice?.projectId).toBe(NEO_INBOX_ID);
   });
@@ -346,7 +353,7 @@ describe('chooseNeoRoute with a new subject', () => {
     expect(route.choice?.projectId).toBe('project-19');
   });
 
-  test('stays with main Neo when the Inbox cannot open', async () => {
+  test('reports an Inbox that cannot open', async () => {
     const failing = async (): Promise<null> => {
       throw new Error('holder open failed');
     };
@@ -388,7 +395,7 @@ describe('chooseNeoRoute with a new subject', () => {
     db.close();
   });
 
-  test('drops a project whose holder cannot be opened, so the message stays with main Neo', async () => {
+  test('drops a project whose holder cannot be opened', async () => {
     const { db, repo } = projectDb();
     expect(
       await openNeoNewProject(
@@ -471,7 +478,7 @@ describe('chooseNeoRoute with an inbox', () => {
       embed: async () => null,
       classify: async (_text, options) => {
         offered.push(options.map((holder) => holder.projectId));
-        return 'main';
+        return null;
       },
       inbox: async () => {
         opened += 1;
@@ -479,7 +486,7 @@ describe('chooseNeoRoute with an inbox', () => {
       },
       inboxRunnable: async () => false,
     });
-    expect([route.choice, offered, opened]).toEqual([null, [['drivers']], 0]);
+    expect([route.choice, offered, opened]).toEqual([null, [['drivers'], ['drivers']], 0]);
   });
 
   test('never matches the inbox by embedding', async () => {

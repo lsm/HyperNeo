@@ -46,18 +46,6 @@ export function neoDefaultSessionId(
   return repo.getBindingForProject(NEO_INBOX_ID)?.sessionId;
 }
 
-export async function openNeoDefaultSession(
-  repo: Pick<NeoRepository, 'saveProject' | 'getBindingForProject' | 'retireArchivedBinding'>,
-  db: Pick<Database, 'getSession'>,
-  open: (projectId: string) => Promise<string>
-): Promise<string> {
-  repo.saveProject(
-    { id: NEO_INBOX_ID, title: 'Inbox', summary: NEO_INBOX_SUMMARY, context: '' },
-    0
-  );
-  return reopenNeoHolder(repo, db, open, NEO_INBOX_ID);
-}
-
 const NEW_PROJECT_TITLE_CHARS = 60;
 
 export function neoNewProject(
@@ -109,7 +97,7 @@ export interface NeoRouteChoice {
   confidence: number;
 }
 
-type NeoRouteAnswer = NeoHolder | 'main' | null;
+type NeoRouteAnswer = NeoHolder | null;
 export const NEO_ROUTE_BASES = [
   'continues_turn',
   'answers_waiting',
@@ -121,7 +109,7 @@ export const NEO_ROUTE_BASES = [
 ] as const;
 export type NeoRouteBasis = (typeof NEO_ROUTE_BASES)[number];
 export interface NeoRouteDecision {
-  decision: NeoHolder | 'main';
+  decision: NeoHolder;
   confidence: number | null;
   basis: NeoRouteBasis | null;
   projectTitle?: string;
@@ -132,7 +120,12 @@ export interface NeoRouteMiss {
 }
 export type NeoRouteVerdict = NeoRouteAnswer | NeoRouteDecision | NeoRouteMiss;
 const CLASSIFIER_CONFIDENCE = 0.6;
-export type NeoRouteSignal = 'facts' | 'embedding' | 'classifier' | `classifier:${NeoRouteBasis}`;
+export type NeoRouteSignal =
+  | 'facts'
+  | 'embedding'
+  | 'default'
+  | 'classifier'
+  | `classifier:${NeoRouteBasis}`;
 
 function classifierSignal(basis: NeoRouteBasis | null | undefined): NeoRouteSignal {
   return basis ? `classifier:${basis}` : 'classifier';
@@ -285,8 +278,6 @@ export function renderNeoRouteContext(
     return awaiting ? [`    WAITING ON YOU: "${neoExcerpt(awaiting, TURN_TEXT_CHARS)}"`] : [];
   };
   const projects = [
-    '- main: Neo itself, the last resort for questions across projects or when you cannot tell',
-    ...notes('main'),
     ...holders.flatMap((holder) => [
       `- ${holder.projectId}: ${holder.title}${holder.repository ? ` [${holder.repository}]` : ''}${holder.summary ? ` (${neoExcerpt(holder.summary, PROJECT_SUMMARY_CHARS)})` : ''}`,
       ...waiting(holder.projectId),
@@ -336,9 +327,6 @@ async function classifyNeoAsk(
   const decided = verdict && typeof verdict === 'object' && 'decision' in verdict ? verdict : null;
   const missed = verdict && typeof verdict === 'object' && 'miss' in verdict ? verdict : null;
   const chosen = decided ? decided.decision : missed ? null : (verdict as NeoRouteAnswer);
-  const unheld = decided?.basis === 'new_subject' || decided?.basis === 'matches_project';
-  if (chosen === 'main' && !unheld)
-    return { choice: null, fallback: classifierSignal(decided?.basis) };
   if (!chosen)
     return {
       choice: pickNeoHolder(scores),
@@ -347,7 +335,8 @@ async function classifyNeoAsk(
     };
   const title = decided?.projectTitle?.trim().toLowerCase();
   const titled = holders.filter((holder) => holder.title.trim().toLowerCase() === title);
-  const target = chosen !== 'main' ? chosen : titled.length === 1 ? titled[0] : INBOX_CHOICE;
+  const target =
+    chosen.projectId !== NEO_INBOX_ID ? chosen : titled.length === 1 ? titled[0] : INBOX_CHOICE;
   const holder =
     target.projectId !== NEO_INBOX_ID
       ? target
@@ -515,6 +504,35 @@ export async function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise
 
 export type NeoRouter = (text: string) => Promise<NeoRouted>;
 
+export async function openNeoDefaultSession(
+  repo: Pick<NeoRepository, 'saveProject'>,
+  openHolder: (projectId: string) => Promise<string>
+): Promise<NeoHolder> {
+  repo.saveProject(
+    { id: NEO_INBOX_ID, title: INBOX_CHOICE.title, summary: NEO_INBOX_SUMMARY, context: '' },
+    0
+  );
+  return { ...INBOX_CHOICE, sessionId: await openHolder(NEO_INBOX_ID) };
+}
+
+export async function defaultNeoRoute(
+  routed: NeoRouted,
+  open: (() => Promise<NeoHolder | null>) | undefined
+): Promise<NeoRouted> {
+  if (routed.choice || !open) return routed;
+  const holder = await open().catch(() => null);
+  if (!holder) return { ...routed, fallback: 'default-unavailable' };
+  return {
+    choice: {
+      projectId: holder.projectId,
+      sessionId: holder.sessionId,
+      signal: 'default',
+      confidence: 1,
+    },
+    ...(routed.cause ? { cause: routed.cause } : {}),
+  };
+}
+
 export interface NeoHolderWake {
   asleep(sessionId: string): boolean;
   wake?(projectId: string): Promise<string | null>;
@@ -655,12 +673,7 @@ export function createNeoRouter(
         neoRouteTimeoutMs(neo?.routeTimeoutMs)
       );
     },
-    inbox: openHolder
-      ? async () => ({
-          ...INBOX_CHOICE,
-          sessionId: await openNeoDefaultSession(repo, db, openHolder),
-        })
-      : undefined,
+    inbox: openHolder ? () => openNeoDefaultSession(repo, openHolder) : undefined,
     inboxRunnable: async () => {
       if (process.env.NODE_ENV === 'test') return true;
       const session = neoDefaultSessionId(repo);
@@ -686,5 +699,6 @@ export function createNeoRouter(
         }
       : undefined,
   };
-  return async (text) => wakeNeoRoute(await chooseNeoRoute(text, deps), holders);
+  return async (text) =>
+    wakeNeoRoute(await defaultNeoRoute(await chooseNeoRoute(text, deps), deps.inbox), holders);
 }

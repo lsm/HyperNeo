@@ -332,7 +332,12 @@ import { neoPrompt } from './prompt.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { runNeoReadWork } from './read-work.ts';
-import { NEO_INBOX_ID, neoDefaultSessionId, openNeoDefaultSession } from './router.ts';
+import {
+  NEO_INBOX_ID,
+  neoDefaultSessionId,
+  openNeoDefaultSession,
+  reopenNeoHolder,
+} from './router.ts';
 import {
   type NeoSavedRulesNote,
   planNeoSavedRulesAppend,
@@ -2013,7 +2018,10 @@ export class NeoService {
   }
 
   async openDefault(): Promise<string> {
-    return openNeoDefaultSession(this.repo, this.db, (id) => this.open(id));
+    const opened = await openNeoDefaultSession(this.repo, (projectId) =>
+      reopenNeoHolder(this.repo, this.db, (id) => this.open(id), projectId)
+    );
+    return opened.sessionId;
   }
 
   async recover(): Promise<void> {
