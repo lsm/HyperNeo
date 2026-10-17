@@ -2,6 +2,8 @@ import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './logge
 
 const FLUSH_TIMEOUT_MS = 2000;
 
+export const SHUTDOWN_ABORT = new DOMException('Aborted for shutdown', 'AbortError');
+
 export interface ProcessFatalLoggingOptions {
   flush?: () => Promise<void>;
   exit?: (code: number) => void;
@@ -32,7 +34,7 @@ function describeReason(reason: unknown): string {
 }
 
 function handle(processEvent: FatalProcessEvent, reason: unknown): void {
-  if (handling) return;
+  if (handling || reason === SHUTDOWN_ABORT) return;
   handling = true;
   const registration = activeRegistration();
   try {

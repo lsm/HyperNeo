@@ -1,5 +1,6 @@
 import { getDataDir } from '../../lib/data-dir.ts';
 import { Logger } from '../../lib/logger.ts';
+import { SHUTDOWN_ABORT } from '../../lib/process-fatal-logger.ts';
 import { access, constants, mkdir, readFile, rename, unlink } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -176,7 +177,7 @@ export function abortAgentMemoryEmbeddingModelPrefetch(): void {
   const abortController = prefetchAbortController;
   if (!abortController) return;
   abortedPrefetchGenerations.add(prefetchGeneration);
-  abortController.abort();
+  abortController.abort(SHUTDOWN_ABORT);
   prefetchResult = null;
 }
 
