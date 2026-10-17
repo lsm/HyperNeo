@@ -327,7 +327,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own: title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
+        'Add a todo to an open ask you own: title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
