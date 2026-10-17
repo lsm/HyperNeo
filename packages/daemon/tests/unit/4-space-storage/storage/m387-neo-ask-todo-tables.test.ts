@@ -27,6 +27,7 @@ describe('runMigration387', () => {
   test('keeps old asks as legacy_neo_asks and starts the new tables empty', () => {
     const db = migrated();
     revertMigration387(db);
+    revertMigration387(db);
     expect(tables(db)).toEqual(['neo_asks']);
     db.prepare(
       `INSERT INTO neo_asks (id, request_key, origin_session_id, title, ask, done_when, done_source, status, created_at, updated_at)

@@ -12,6 +12,13 @@ if (!dbPath) {
 
 const db = new Database(dbPath);
 db.exec('PRAGMA foreign_keys = ON');
+const legacy = db
+  .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'legacy_neo_asks'")
+  .get();
 db.transaction(() => revertMigration387(db))();
 db.close();
-console.log(`Restored the pre-387 Neo ask tables in ${dbPath}`);
+console.log(
+  legacy
+    ? `Restored the pre-387 Neo ask tables in ${dbPath}`
+    : `No legacy_neo_asks in ${dbPath}; nothing to restore`
+);

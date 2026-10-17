@@ -91,11 +91,12 @@ export function runMigration387(db: Database): void {
 }
 
 export function revertMigration387(db: Database): void {
+  if (!hasTable(db, 'legacy_neo_asks')) return;
   db.exec(`DROP TABLE IF EXISTS pack_facts;
     DROP TABLE IF EXISTS neo_questions;
     DROP TABLE IF EXISTS neo_todo_sessions;
     DROP TABLE IF EXISTS neo_todos;
     DROP TABLE IF EXISTS neo_asks;
     DELETE FROM migration_markers WHERE key = 'migration_387'`);
-  if (hasTable(db, 'legacy_neo_asks')) db.exec('ALTER TABLE legacy_neo_asks RENAME TO neo_asks');
+  db.exec('ALTER TABLE legacy_neo_asks RENAME TO neo_asks');
 }
