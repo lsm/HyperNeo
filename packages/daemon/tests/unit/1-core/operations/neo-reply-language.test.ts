@@ -25,6 +25,10 @@ describe('Neo speaking context', () => {
     expect(holder).toContain(
       "When a request spans projects, handle this project's part and open an ask in each other project"
     );
+    expect(holder).toContain(
+      'An ask you open in another project is yours: add its todos and start its work yourself.'
+    );
+    expect(neoPrompt(null)).not.toContain('only its holder may revise');
     expect(holder).toContain('NEVER execute worker jobs directly');
   });
 });
