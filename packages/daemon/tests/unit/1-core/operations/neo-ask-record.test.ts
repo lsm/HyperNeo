@@ -158,10 +158,23 @@ describe('neo.ask.open and neo.ask.settle', () => {
 });
 
 describe('requireNeoAskProject', () => {
+  test('keeps a project holder to its own project', () => {
+    const resolve = (id: string) => id;
+    expect(requireNeoAskProject({ projectId: 'other' }, 's', () => 'held', resolve)).toEqual({
+      reason: { ok: false, reason: 'wrong_project: this session holds project held.' },
+    });
+    expect(requireNeoAskProject({ projectId: null }, 's', () => 'held', resolve)).toEqual({
+      reason: { ok: false, reason: 'wrong_project: this session holds project held.' },
+    });
+    expect(requireNeoAskProject({ projectId: 'held' }, 's', () => 'held', resolve)).toEqual({
+      value: 'held',
+    });
+  });
+
   test('uses the session project, keeps an explicit null and refuses an unknown id', () => {
-    const projectOf = () => 'bound';
+    const projectOf = () => null;
     const resolve = (id: string) => (id === 'old' ? 'kept' : null);
-    expect(requireNeoAskProject({}, 's', projectOf, resolve)).toEqual({ value: 'bound' });
+    expect(requireNeoAskProject({}, 's', () => 'bound', resolve)).toEqual({ value: 'bound' });
     expect(requireNeoAskProject({ projectId: null }, 's', projectOf, resolve)).toEqual({
       value: null,
     });

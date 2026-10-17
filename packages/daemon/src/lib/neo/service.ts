@@ -2128,7 +2128,8 @@ export class NeoService {
     for (const work of this.repo.listWork()) {
       try {
         const recovered = await this.recoverHandoff(work);
-        if (!recovered && work.status === 'queued') await this.start(work.id);
+        if (!recovered && work.status === 'queued' && this.driverTargets.get(work.id))
+          await this.start(work.id);
         else if (
           !recovered &&
           (awaitingNeoWorker(work) ||
@@ -2140,16 +2141,6 @@ export class NeoService {
         this.log.warn('Neo recovery pending', error);
       }
     }
-    for (const work of this.repo.listWork())
-      if (
-        work.status === 'proposed' &&
-        work.report !== NEO_WORK_AWAITING_WORKER &&
-        this.driverTargets.readCard(work.id)?.claimedAt == null &&
-        !this.driverTargets.readStartInterrupted(work.id) &&
-        !this.dependencies.hasStartIntent(work.id) &&
-        !isNeoAdmissionApproved(this.askRecords.forWork(work.id), Date.now())
-      )
-        this.proposeStartQuestion(work.id);
     for (const workId of new Set(this.dependencies.edges().map((edge) => edge.workId)))
       scheduleNeoAdmissionWake(this.db.getJobQueueRepo(), workId);
     await this.reclaimCardPrs();

@@ -53,12 +53,14 @@ export function requireNeoAskProject(
   projectOf: (sessionId: string) => string | null,
   resolveProject: (projectId: string) => string | null
 ): Gate<string | null> {
-  if (input.projectId === undefined) return { value: projectOf(sessionId) };
-  if (input.projectId === null) return { value: null };
-  const projectId = resolveProject(input.projectId);
-  return projectId
-    ? { value: projectId }
-    : { reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.` } };
+  const bound = projectOf(sessionId);
+  if (input.projectId === undefined) return { value: bound };
+  const projectId = input.projectId === null ? null : resolveProject(input.projectId);
+  if (input.projectId !== null && !projectId)
+    return { reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.` } };
+  return bound !== null && projectId !== bound
+    ? { reason: { ok: false, reason: `wrong_project: this session holds project ${bound}.` } }
+    : { value: projectId };
 }
 
 export function createNeoAskRecordOperations(
