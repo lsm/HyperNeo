@@ -99,7 +99,7 @@ export function neoIntakeMessage(
     typeof input.content === 'string'
       ? [{ type: 'text' as const, text: input.content }]
       : input.content;
-  const fact = neoReplyFact(reply);
+  const fact = reply?.ask?.sessionId === sessionId ? neoReplyFact(reply) : null;
   return {
     type: 'user',
     uuid: input.requestId as UUID,
@@ -135,7 +135,7 @@ export function readNeoReply(
 
 export function neoReplyFact(reply: NeoReply | null): string | null {
   if (reply?.question) return `The human answered your question "${reply.question.text}":`;
-  return reply?.todo ? `The human replied about the todo "${reply.todo.title}":` : null;
+  return reply?.todo ? `The human replied about todo ${reply.todo.id}:` : null;
 }
 
 export function repliedNeoRoute(
@@ -164,10 +164,16 @@ export function recordNeoReplyAnswer(
   receipt: IntakeResult,
   reply: NeoReply | null,
   input: IntakeInput,
-  store: NeoAskTodoRepository
+  store: NeoAskTodoRepository,
+  sessionId: string
 ): IntakeResult {
   const words = neoAskText(input.content).trim();
-  if (receipt.ok && words && reply?.question?.state === 'open')
+  if (
+    receipt.ok &&
+    words &&
+    reply?.question?.state === 'open' &&
+    reply.ask?.sessionId === sessionId
+  )
     store.answerQuestion(reply.question, words, 'chat', Date.now());
   return receipt;
 }
@@ -523,7 +529,17 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     ['message', 'routed', 'db', 'conversationId'],
     'receipt'
   )
-  .pipe(recordNeoReplyAnswer, ['receipt', 'reply', 'input', 'store'], 'receipt')
+  .pipe(
+    (
+      receipt: IntakeResult,
+      reply: NeoReply | null,
+      input: IntakeInput,
+      store: NeoAskTodoRepository,
+      routed: Routed
+    ) => recordNeoReplyAnswer(receipt, reply, input, store, routed.target.id),
+    ['receipt', 'reply', 'input', 'store', 'routed'],
+    'receipt'
+  )
   .pipe(recordNeoIntakeImages, ['receipt', 'input', 'conversationId', 'db'], 'receipt')
   .pipe(logNeoRoute, ['receipt', 'message', 'routed', 'conversationId', 'db'], 'receipt')
   .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify', 'routed'], 'receipt')

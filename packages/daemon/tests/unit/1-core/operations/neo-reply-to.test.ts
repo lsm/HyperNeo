@@ -150,9 +150,19 @@ describe('neo.message.send replyTo', () => {
   test('a reply about a todo goes to the ask owner without answering anything', async () => {
     const id = crypto.randomUUID();
     await send(id, 'Use the new session', { kind: 'todo', id: 't1' });
-    expect(prompt(id).message.content[0].text).toBe(
-      'The human replied about the todo "Todo rows":'
-    );
+    expect(prompt(id).message.content[0].text).toBe('The human replied about todo t1:');
+    expect(store.getQuestion('q1')?.state).toBe('open');
+  });
+
+  test('a reply whose owner session is unavailable goes to Neo without recording an answer', async () => {
+    (db.getSession as unknown as (id: string) => { status: string } | undefined)(holder)!.status =
+      'archived';
+    const id = crypto.randomUUID();
+    await send(id, '在做', { kind: 'question', id: 'q1' });
+    expect(prompt(id)).toMatchObject({
+      session_id: root,
+      message: { content: [{ type: 'text', text: '在做' }] },
+    });
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
