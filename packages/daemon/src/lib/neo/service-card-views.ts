@@ -53,7 +53,8 @@ export function readNeoAskTriggerView(service: NeoService, ask: NeoAsk): NeoAskT
     cards,
     workPrs,
     sessions,
-    busyNeoAskSessions(service.askSessions)
+    busyNeoAskSessions(service.askSessions),
+    { work, supersessions: service.workSupersessions.list(work.map((row) => row.id)) }
   )[0];
   return view ? { view, cards } : null;
 }
