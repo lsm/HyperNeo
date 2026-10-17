@@ -16,6 +16,10 @@ import {
   neoCardSent,
   type NeoDriverTarget,
   readDriverOutcome,
+  readDriverActivity,
+  readDriverFollowUp,
+  readDriverLive,
+  readDriverOpenedPrs,
   readDriverSendBaseline,
   readDriverSent,
   withWorkGoal,
@@ -265,12 +269,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     readLiveStatus: (id) => sessions.readLiveStatus(id),
     isContinuing: (id) =>
       sessions.get(id)?.verb === 'send' || sessions.readFollowAnchor(id) !== null,
-    readStatus: (card, ref, since, receipt) =>
-      deps.invoke(caller(ask), 'work.status', {
+    readStatus: async (card, ref, since, receipt) => {
+      const outcome = await deps.invoke(caller(ask), 'work.status', {
         ref,
         ...(since !== null ? { since } : {}),
         ...(receipt ? { receipt } : {}),
-      }),
+      });
+      observe(card.id, outcome);
+      return outcome;
+    },
     recordStartedAt: (id, at) => sessions.recordStartedAt(id, at),
     recordLive: (id, status, live) => sessions.recordLive(id, status, live.link, live.remoteLink),
     recordCheck: (id, read, now) => {
@@ -307,7 +314,58 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     checked.set(todo.id, now);
     const patch = planNeoTodoCheck(todo, await pack.check(todo), now);
     if (patch) await finish(todo, ask, patch, now);
+    deps.changed();
   };
+
+  const observe = (id: string, outcome: OperationOutcome) => {
+    const todo = store.getTodo(id);
+    if (todo)
+      for (const pack of deps.packs()) pack.todos?.openedPrs?.(todo, readDriverOpenedPrs(outcome));
+  };
+
+  const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)
+    .input(['todo', 'now'])
+    .pipe(
+      (todo: NeoTodo, now: number) => {
+        const ref = sessions.readRef(todo.id);
+        const ask = store.getAsk(todo.askId);
+        return todo.state === 'doing' &&
+          todo.report &&
+          ref &&
+          ask?.status === 'open' &&
+          now - (checked.get(todo.id) ?? 0) >= NEO_TODO_CHECK_MS
+          ? { value: { ref, ask } }
+          : { reason: null };
+      },
+      ['todo', 'now'],
+      'result:target'
+    )
+    .pipe(
+      async (todo: NeoTodo, target: { ref: WorkRef; ask: NeoAsk }, now: number) => {
+        const since = sessions.readFollowAnchor(todo.id) ?? todo.updatedAt;
+        const sent = sessions.readSent(todo.id);
+        const outcome = await deps.invoke(caller(target.ask), 'work.status', {
+          ref: target.ref,
+          since: sent?.inputBefore ?? since,
+          ...(sent?.receipt ? { receipt: sent.receipt } : {}),
+        });
+        observe(todo.id, outcome);
+        const live = readDriverLive(outcome);
+        if (live) sessions.recordLive(todo.id, live.status, live.link, live.remoteLink);
+        sessions.recordCardCheck(todo.id, { checkedAt: now, unchecked: !live });
+        deps.changed();
+        const report = readDriverFollowUp(outcome, since, sent);
+        if (report) {
+          const current = store.getTodo(todo.id);
+          if (current?.state !== 'doing' || current.updatedAt !== todo.updatedAt) return;
+          store.updateTodo(todo, { report: `${report}\n\n${todo.report}`.slice(0, 12_000) }, now);
+          sessions.recordFollowAnchor(todo.id, readDriverActivity(outcome)?.lastActivityAt ?? now);
+        }
+      },
+      ['todo', 'target', 'now'],
+      'followed'
+    )
+    .endAsync('followed') as (todo: NeoTodo, now: number) => Promise<void>;
 
   const read = (todoId: string) => {
     const todo = store.getTodo(todoId);
@@ -398,8 +456,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       }
       for (const { todoId, ref } of sessions.awaitingReports())
         await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
-      for (const todo of store.listCheckable())
-        await check(todo, Date.now()).catch((error) => warn('Todo check pending', error));
+      for (const todo of store.listCheckable()) {
+        await follow(todo, Date.now()).catch((error) => warn('Todo follow pending', error));
+        await check(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
+          warn('Todo check pending', error)
+        );
+      }
     },
   };
 }

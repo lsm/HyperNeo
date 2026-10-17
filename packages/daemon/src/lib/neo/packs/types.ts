@@ -53,6 +53,7 @@ export interface NeoTodoPack {
   statusLine(todo: NeoTodo): string | null;
   topics(todo: NeoTodo): string[];
   event(event: ExternalEvent): string[];
+  openedPrs?(todo: NeoTodo, urls: readonly string[]): void;
 }
 
 export interface NeoPack extends NeoPackBrief {
