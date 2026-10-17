@@ -48,6 +48,8 @@ import {
 } from './start-question.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
 import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
@@ -474,6 +476,8 @@ export class NeoService {
   readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
   readonly todos: NeoAskTodoRepository;
+  readonly todoSessions: NeoTodoSessionRepository;
+  readonly todoRunner: NeoTodoRunner;
   readonly dependencies: NeoDependencyRepository;
   readonly workPrs: NeoWorkPrRepository;
   readonly cardEvents: NeoCardEventSubscriptionRepository;
@@ -816,6 +820,24 @@ export class NeoService {
     this.workWakes = new NeoWorkWakeRepository(db.getDatabase());
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged);
+    this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
+    this.todoRunner = createNeoTodoRunner({
+      store: this.todos,
+      sessions: this.todoSessions,
+      invoke: (caller, name, input) =>
+        invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
+      packs: () => this.installedPacks(),
+      tell: (ask, todo, note) =>
+        this.deliverForward(
+          ask.sessionId,
+          `neo-todo:${todo.id}:${todo.updatedAt}`,
+          note,
+          ask.sessionId,
+          ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
+          'continues'
+        ),
+      changed: this.notifyChanged,
+    });
     this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged, (cardId) => {
       for (const id of this.dependencies.dependents(cardId))
         scheduleNeoAdmissionWake(db.getJobQueueRepo(), id);
@@ -2253,6 +2275,7 @@ export class NeoService {
         this.log.warn('Ask idle note pending', error)
       );
     }
+    await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
     this.pruneReadThrottles(Date.now());
     if (this.watching || this.disposed) return;
     this.watching = this.sessionWatcher
@@ -2829,6 +2852,7 @@ export class NeoService {
     )
     .pipe(
       async (event: ExternalEvent) => {
+        this.todoRunner.recheck(this.packs().flatMap((pack) => pack.todos?.event(event) ?? []));
         for (const ask of this.askRecords.listLive()) {
           const ticks = await readNeoAskEventTicks(this.packs(), ask, event, (id, error) =>
             this.log.warn(`Neo pack ${id} event ticks pending`, error)

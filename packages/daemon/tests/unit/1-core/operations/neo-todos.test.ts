@@ -3,6 +3,7 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -24,7 +25,12 @@ function setup() {
     request: 'Fix login and ship it',
     createdAt: 1,
   });
-  const ops = Object.fromEntries(createNeoTodoOperations(repo).map((op) => [op.name, op]));
+  const ops = Object.fromEntries(
+    createNeoTodoOperations(repo, new NeoTodoSessionRepository(db), async () => ({
+      ok: false as const,
+      reason: 'not started',
+    })).map((op) => [op.name, op])
+  );
   const call = async (name: string, input: unknown, caller = owner) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as
       | { ok: true; todo: NeoTodo; todos: NeoTodo[] }

@@ -136,7 +136,8 @@ export function neoQuestionAnsweredNote(question: NeoQuestion, todos: NeoTodo[])
 
 export function createNeoQuestionOperations(
   store: NeoAskTodoRepository,
-  told: (ask: NeoAsk, question: NeoQuestion, note: string) => Promise<void>
+  told: (ask: NeoAsk, question: NeoQuestion, note: string) => Promise<void>,
+  start: (todoId: string) => Promise<unknown>
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
@@ -185,6 +186,8 @@ export function createNeoQuestionOperations(
     .pipe(requireNeoQuestionAnswered, 'written', 'result:outcome')
     .pipe(
       async (answered: { question: NeoQuestion; ask: NeoAsk }): Promise<QuestionReceipt> => {
+        if (answered.question.kind === 'start')
+          for (const todoId of [answered.question.answer ?? []].flat()) await start(todoId);
         await told(
           answered.ask,
           answered.question,

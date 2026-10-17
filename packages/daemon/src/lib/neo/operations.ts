@@ -2503,16 +2503,19 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     createNeoPreferenceOperation(service),
-    ...createNeoTodoOperations(service.todos),
-    ...createNeoQuestionOperations(service.todos, (ask, question, note) =>
-      service.deliverForward(
-        ask.sessionId,
-        `neo-question:${question.id}`,
-        note,
-        ask.sessionId,
-        ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
-        'continues'
-      )
+    ...createNeoTodoOperations(service.todos, service.todoSessions, service.todoRunner.start),
+    ...createNeoQuestionOperations(
+      service.todos,
+      (ask, question, note) =>
+        service.deliverForward(
+          ask.sessionId,
+          `neo-question:${question.id}`,
+          note,
+          ask.sessionId,
+          ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
+          'continues'
+        ),
+      service.todoRunner.start
     ),
     ...createNeoAskOperations(
       service,
