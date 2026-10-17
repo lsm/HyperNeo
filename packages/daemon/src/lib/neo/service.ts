@@ -748,7 +748,8 @@ export class NeoService {
         const parent = ask.originMessageId
           ? { sessionId: ask.sessionId, messageId: ask.originMessageId }
           : null;
-        const origin = (parent && this.resolveAskOrigin(parent)) ?? parent;
+        const resolved = parent && this.resolveAskOrigin(parent);
+        const origin = resolved && this.db.getSession(resolved.sessionId) ? resolved : parent;
         return this.deliverForward(
           origin?.sessionId ?? ask.sessionId,
           `neo-todo:${todo.id}:${todo.updatedAt}`,
@@ -3212,7 +3213,7 @@ export class NeoService {
     }
     if (item.status === 'pending') return;
     if (
-      item.originSessionId !== item.sessionId &&
+      !(neoReviewWorkId(id) && item.originSessionId === item.sessionId) &&
       !this.consultations.isReturned(id) &&
       !this.consultations.wasPublished(id) &&
       !(item.status === 'reported' && item.answer === NEO_WORK_REVIEWED)
