@@ -330,5 +330,3 @@ describe('Neo report resources with real SQL settlement', () => {
     expect(repo.getWork('B')?.sessionId).toBe('recipient');
   });
 });
-
-describe('NeoService resource-report Wire', () => {});

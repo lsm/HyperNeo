@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoAskView, NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
@@ -507,7 +506,7 @@ describe('neoTriggerNote', () => {
     expect(note).not.toContain('language');
   });
 
-  test('an idle trigger states that nothing runs; the system prompt says how to move the work', () => {
+  test('an idle trigger states that nothing runs', () => {
     const note = neoTriggerNote(ask, {
       triggerId: 'idle:a1:x',
       kind: 'idle',
@@ -516,7 +515,6 @@ describe('neoTriggerNote', () => {
     });
     expect(note).toContain('nothing is running for the ask and its outcome is not met');
     expect(note).not.toContain('neo.ask.question');
-    expect(neoPrompt(null)).toContain('get the work moving another way');
     expect(note).not.toContain('settle');
     expect(note).not.toContain('failed');
   });

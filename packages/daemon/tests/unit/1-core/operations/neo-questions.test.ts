@@ -34,13 +34,19 @@ function setup() {
   const rows = store.addTodo('t2', 'ask', { ...draft, title: 'Todo rows' }, 1);
   const told: string[] = [];
   const started: string[] = [];
+  const refused = new Set<string>();
   const ops = Object.fromEntries(
     createNeoQuestionOperations(
       store,
       async (_ask, _question, note) => {
         told.push(note);
       },
-      async (todoId) => started.push(todoId)
+      async (todoId) => {
+        started.push(todoId);
+        return refused.has(todoId)
+          ? { ok: false, reason: 'already_started: this todo is removed.' }
+          : { ok: true };
+      }
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
@@ -50,7 +56,7 @@ function setup() {
     if (!receipt.ok) throw new Error(receipt.reason);
     return receipt.question;
   };
-  return { db, store, call, asked, told, started, fix, rows };
+  return { db, store, call, asked, told, started, refused, fix, rows };
 }
 
 describe('neo.question operations', () => {
@@ -86,6 +92,16 @@ describe('neo.question operations', () => {
       ok: false,
       reason: 'question_closed: this question is answered.',
     });
+  });
+
+  test('tells Neo which ticked todos did not start', async () => {
+    const { call, asked, told, refused, fix, rows } = setup();
+    refused.add(rows.id);
+    const start = await asked({ kind: 'start', text: 'Start these?', todos: [fix.id, rows.id] });
+    await call('neo.question.answer', { questionId: start.id, answer: [fix.id, rows.id] }, human);
+    expect(told).toEqual([
+      'The human answered "Start these?": start List steps, Todo rows.\nThese did not start: Todo rows: already_started: this todo is removed.',
+    ]);
   });
 
   test('yesno, choice and reply questions take only their own answers', async () => {

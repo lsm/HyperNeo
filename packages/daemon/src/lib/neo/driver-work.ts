@@ -51,20 +51,29 @@ import { neoAskProgressNote, neoNoteChecklist } from './ask-progress.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
 import { awaitingNeoWorker } from './work-reroute.ts';
 
+const NeoStartWorkTarget = z.object({
+  verb: z.literal('start'),
+  adapter: z.string().min(1).max(80),
+  place: PlaceSchema,
+  createFolder: z.boolean().optional(),
+  preparationParameters: z
+    .record(z.string(), z.json())
+    .optional()
+    .describe('Parameters for the linked ask pack preparation stage.'),
+  ...workStartConfiguration.schema.shape,
+});
+
+const NeoSendWorkTarget = z.object({ verb: z.literal('send'), ref: WorkRefSchema });
+
+export const NeoTodoTargetSchema = z.discriminatedUnion('verb', [
+  NeoStartWorkTarget,
+  NeoSendWorkTarget,
+]);
+
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   NeoReadWorkTarget,
-  z.object({
-    verb: z.literal('start'),
-    adapter: z.string().min(1).max(80),
-    place: PlaceSchema,
-    createFolder: z.boolean().optional(),
-    preparationParameters: z
-      .record(z.string(), z.json())
-      .optional()
-      .describe('Parameters for the linked ask pack preparation stage.'),
-    ...workStartConfiguration.schema.shape,
-  }),
-  z.object({ verb: z.literal('send'), ref: WorkRefSchema }),
+  NeoStartWorkTarget,
+  NeoSendWorkTarget,
   z.object({ verb: z.literal('adopt'), ref: WorkRefSchema }),
 ]);
 

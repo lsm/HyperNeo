@@ -106,7 +106,12 @@ export function summarizeNeoSnapshot<T extends NeoSnapshot>(
 export function neoSnapshotOmitted<T extends NeoSnapshot>(fitted: T, built: NeoSnapshot): T {
   const { omitted: _omitted, ...rest } = fitted;
   const work = (built.omitted?.work ?? 0) + built.work.length - fitted.work.length;
-  const asks = (built.omitted?.asks ?? 0) + (built.asks?.length ?? 0) - (fitted.asks?.length ?? 0);
+  const asks =
+    (built.omitted?.asks ?? 0) +
+    (built.asks?.length ?? 0) -
+    (fitted.asks?.length ?? 0) +
+    (built.todoAsks?.length ?? 0) -
+    (fitted.todoAsks?.length ?? 0);
   return (
     work || asks
       ? { ...rest, omitted: { ...(work ? { work } : {}), ...(asks ? { asks } : {}) } }
@@ -352,7 +357,7 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
         todoAsks: snapshot.todoAsks?.filter((entry) => entry.ask.status === 'open'),
       };
   if (size(fitted) > room) fitted = withTodoText(withShortText(fitted), 300);
-  const openAsks = fitted.asks?.length ?? 0;
+  const openAsks = (fitted.asks?.length ?? 0) + (fitted.todoAsks?.length ?? 0);
   if (!focused)
     for (let count = fitted.asks?.length ?? 0; size(fitted) > room && count > 1; )
       fitted = withNewestAsks(fitted, (count = Math.floor(count / 2)));
@@ -365,7 +370,9 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
       ...fitted,
       trimmed: focused
         ? NEO_SNAPSHOT_FOCUS_TRIMMED
-        : neoSnapshotTrimmedNote(openAsks - (fitted.asks?.length ?? 0)),
+        : neoSnapshotTrimmedNote(
+            openAsks - (fitted.asks?.length ?? 0) - (fitted.todoAsks?.length ?? 0)
+          ),
     } as T;
   fitted = withSkeleton(fitted);
   if (size(fitted) > room) fitted = bareMinimum(fitted);

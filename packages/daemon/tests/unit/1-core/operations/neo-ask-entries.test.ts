@@ -6,10 +6,16 @@ import {
   projectNeoAskEntries,
 } from '../../../../src/lib/neo/ask-entries.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
-import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
+import {
+  NeoTodoSessionRepository,
+  neoSafeSessionLink,
+} from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { fitNeoSnapshotBudget } from '../../../../src/lib/neo/snapshot-compact.ts';
+import {
+  fitNeoSnapshotBudget,
+  neoSnapshotOmitted,
+} from '../../../../src/lib/neo/snapshot-compact.ts';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 
 const todo = (patch: Partial<NeoTodo>): NeoTodo =>
@@ -75,6 +81,9 @@ describe('projectNeoAskEntries', () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
+    db.exec(
+      "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('p', 'P', '', '', 1, 1, 1)"
+    );
     const store = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
     const opened = store.openAsk({
@@ -162,6 +171,20 @@ describe('fitNeoSnapshotBudget with todoAsks', () => {
     expect(fitted.todoAsks?.length).toBeGreaterThan(0);
     expect(fitted.todoAsks?.some((item) => item.ask.id === 'settled')).toBe(false);
     expect(fitted.todoAsks?.[0].todos[0].instruction?.length).toBeLessThanOrEqual(300);
+    const dropped = 21 - (fitted.todoAsks?.length ?? 0);
+    expect(neoSnapshotOmitted(fitted, snapshot).omitted).toEqual({ asks: dropped });
+    if (dropped > 1) expect(fitted.trimmed).toContain('this is not every open ask');
+  });
+});
+
+describe('neoSafeSessionLink', () => {
+  test('keeps app and same-origin links and refuses scripts and other hosts', () => {
+    expect(neoSafeSessionLink('/session/w', false)).toBe('/session/w');
+    expect(neoSafeSessionLink('codex://threads/1', false)).toBe('codex://threads/1');
+    expect(neoSafeSessionLink('https://imac/session/w', true)).toBe('https://imac/session/w');
+    for (const link of ['javascript:alert(1)', '//evil.com/x', '/a\\b', 'https://imac/x'])
+      expect(neoSafeSessionLink(link, false)).toBeNull();
+    expect(neoSafeSessionLink('/session/w', true)).toBeNull();
   });
 });
 

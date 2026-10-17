@@ -7,7 +7,7 @@ import type {
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { isLocalUser } from '../operations/caller.ts';
-import { NeoDriverTargetSchema } from './driver-work.ts';
+import { NeoTodoTargetSchema } from './driver-work.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -38,7 +38,7 @@ const TodoDraft = z.object({
   doneWhen: Text,
   check: TodoCheck.nullable().default(null),
   instruction: Text.nullable().default(null),
-  target: NeoDriverTargetSchema.optional(),
+  target: NeoTodoTargetSchema.optional(),
   named: z.record(z.string(), z.unknown()).nullable().default(null),
   start: z.boolean().default(false),
 });
