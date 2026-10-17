@@ -290,10 +290,11 @@ export function NeoAskCard({
   const openControl = (todo: NeoAskTodo) => {
     if (!todo.workId || todo.state === 'cancelled') return null;
     const card = cards?.get(todo.workId);
+    const target = todo.open ?? card?.open;
     const scene = view.scenes.find((scene) => scene.ref.id === todo.workId);
     const sessionId =
-      card?.open.sessionId ?? (scene?.receipt.kind === 'work' ? scene.receipt.sessionId : null);
-    const link = sessionId ? null : neoSessionLink(card?.open.link ?? null, card?.open.daemon);
+      target?.sessionId ?? (scene?.receipt.kind === 'work' ? scene.receipt.sessionId : null);
+    const link = sessionId ? null : neoSessionLink(target?.link ?? null, target?.daemon);
     const name = `打开 ${todo.title}`;
     return link ? (
       <a href={link} class={neoSecondaryClass} aria-label={name}>
@@ -409,7 +410,7 @@ export function NeoAskCard({
             .map((session) => (
               <SessionRow key={session.key} session={session} onOpenSession={onOpenSession} />
             ))}
-          {ask.outcome && ask.outcome.trim() && (
+          {view.settled && ask.outcome && ask.outcome.trim() && (
             <div class="text-sm text-fg-muted">
               <p class="text-xs font-medium text-fg-faint">Outcome</p>
               <p class="mt-1 whitespace-pre-wrap break-words">{ask.outcome}</p>
