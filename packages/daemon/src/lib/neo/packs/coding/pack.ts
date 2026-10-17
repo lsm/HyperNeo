@@ -1,4 +1,5 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
+import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -276,6 +277,7 @@ export function createCodingPack(
     readMergeCommit: (url: string) => Promise<string | null>;
     cardBase: (workId: string) => string | null;
     cardStartedAt?: (workId: string) => number | null;
+    todoPrs: CodingTodoPrRepository;
   }
 ): NeoPack {
   const cardPrs = (workId: string) => deps.workPrs.get(workId)?.prs ?? [];
@@ -283,6 +285,7 @@ export function createCodingPack(
   return {
     ...CODING_PACK_BRIEF,
     prepareExecution: prepareCodingExecution,
+    todos: createCodingTodoPack(deps.todoPrs, deps.readPrs),
     prerequisiteParameters: (items) =>
       readCodingPrerequisiteBase(items, {
         readRefStates: deps.readRefStates,
