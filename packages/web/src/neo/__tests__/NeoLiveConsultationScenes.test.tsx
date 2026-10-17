@@ -63,7 +63,7 @@ const waiting = (): NeoConsultationWaiter => ({
   createdAt: 2,
 });
 
-function mount(publicMode = true) {
+function mount(publicMode = true, empty = false) {
   const snapshot = {
     sessionId: root,
     projects: ['a', 'b'].map((id) => ({
@@ -76,7 +76,9 @@ function mount(publicMode = true) {
       updatedAt: 1,
     })),
     work: [],
-    todoAsks: [testAskEntry('waiting', 'Fictional execution proposal', { state: 'waiting' })],
+    todoAsks: empty
+      ? []
+      : [testAskEntry('waiting', 'Fictional execution proposal', { state: 'waiting' })],
     consultations: [
       consultation('pending', 'pending'),
       consultation('reported', 'reported'),
@@ -126,6 +128,45 @@ function mount(publicMode = true) {
 }
 
 describe('Neo public mixed consultation scenes', () => {
+  it.each([true, false])('keeps an empty Work surface accessible on desktop=%s', (desktop) => {
+    vi.stubGlobal('matchMedia', () => ({ matches: desktop }));
+    const { container } = mount(true, true);
+    expect(container.querySelector('.neo-shell')?.classList.contains('neo-has-scenes')).toBe(true);
+    const work = screen.getByRole('region', { name: 'Work scenes' });
+    expect(within(work).getByRole('status').textContent).toBe('No work yet.');
+    expect(work.querySelectorAll('[data-scene-group]')).toHaveLength(0);
+    if (!desktop) {
+      fireEvent.click(screen.getByRole('button', { name: 'Close work list' }));
+      expect(screen.queryByRole('region', { name: 'Work scenes' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Your work' }));
+      expect(screen.getByRole('region', { name: 'Work scenes' })).toBeTruthy();
+    }
+  });
+
+  it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
+    const { container } = mount(false, true);
+    expect(screen.queryByText('No work yet.')).toBeNull();
+    expect(container.querySelector('.neo-has-scenes')).toBeNull();
+    expect(container.querySelector('.neo-scene-list')?.childElementCount).toBe(0);
+  });
+
+  it('keeps the Work column when the last ask disappears and reuses it for new work', () => {
+    const { container, model } = mount();
+    const entries = model.value.snapshot.todoAsks;
+    act(() => {
+      model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks: [] } };
+    });
+    expect(container.querySelector('.neo-shell')?.classList.contains('neo-has-scenes')).toBe(true);
+    expect(
+      within(screen.getByRole('region', { name: 'Work scenes' })).getByRole('status').textContent
+    ).toBe('No work yet.');
+    act(() => {
+      model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks: entries } };
+    });
+    expect(screen.queryByText('No work yet.')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Needs your attention' })).toBeTruthy();
+  });
+
   it('lists no context check in any scene group, whatever its status', () => {
     const { container } = mount();
     expect(container.querySelector('[data-consultation-open]')).toBeNull();

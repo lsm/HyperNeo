@@ -125,10 +125,10 @@ export function NeoLive() {
     };
   });
   const workCount = sceneGroups.reduce((total, group) => total + group.entries.length, 0);
-  const columns = !!publicConversation && (workCount > 0 || !!chat);
+  const columns = !!publicConversation;
   const sheet = !!publicConversation && narrow;
   useNeoSheetSwipe({
-    enabled: sheet && workCount > 0 && !chat,
+    enabled: sheet && !chat,
     open: scenesOpen,
     setOpen: setScenesOpen,
     surface: shell,
@@ -366,7 +366,7 @@ export function NeoLive() {
             <rect x="60" y="97" width="42" height="79" rx="6" />
           </svg>
         </button>
-        {sheet && workCount > 0 && (
+        {sheet && (
           <button
             type="button"
             aria-label={`Your work${attentionCount ? `, ${attentionCount} need your attention` : ''}`}
@@ -577,6 +577,11 @@ export function NeoLive() {
                 <NeoIcon name="close" />
               </button>
             </div>
+          )}
+          {publicConversation && workCount === 0 && (
+            <p role="status" class="mt-6 text-sm text-fg-muted">
+              No work yet.
+            </p>
           )}
           {sceneGroups.map((group) =>
             group.entries.length === 0 ? null : (
