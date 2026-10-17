@@ -63,7 +63,9 @@ export function requireNeoAskProject(
   if (input.projectId === null) return { value: null };
   const projectId = resolveProject(input.projectId);
   if (projectId) return { value: projectId };
-  const known = knownProjects().map((project) => `${project.id} (${project.title})`);
+  const known = knownProjects()
+    .slice(0, 50)
+    .map((project) => `${project.id} (${project.title})`);
   const list = known.length ? ` Projects: ${known.join('; ')}.` : '';
   return {
     reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.${list}` },

@@ -233,6 +233,20 @@ describe('requireNeoAskProject', () => {
     });
   });
 
+  test('caps the listed projects at 50', () => {
+    const known = () => Array.from({ length: 60 }, (_, i) => ({ id: `p${i}`, title: `T${i}` }));
+    const refused = requireNeoAskProject(
+      { projectId: 'x' },
+      's',
+      () => null,
+      () => null,
+      known
+    );
+    const reason = 'reason' in refused ? refused.reason.reason : '';
+    expect(reason).toContain('p49 (T49)');
+    expect(reason).not.toContain('p50 (T50)');
+  });
+
   test('lists the known projects when an id matches none', () => {
     const known = () => [
       { id: 'project:a', title: 'Alpha' },
