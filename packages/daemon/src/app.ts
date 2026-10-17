@@ -587,6 +587,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       ({ sessionId }) => releaseSessionKeyBridges(sessionId),
       { subscriberName: 'ProviderKeyBridge.sessionDeleted' }
     );
+    internalEventBus.subscribe(
+      'session.updated',
+      ({ sessionId, session }) => {
+        if (session?.status === 'archived') releaseSessionKeyBridges(sessionId);
+      },
+      { subscriberName: 'ProviderKeyBridge.sessionArchived' }
+    );
     await waitForOptionalProviderRegistration(providerRegistry);
     await applyStoredProviderCredentials(
       providerRegistry.getAll(),

@@ -141,11 +141,10 @@ export class ProviderService {
     } catch {
       return;
     }
-    const sessionScoped = sessionConfig?.apiKey || sessionConfig?.baseUrl;
     await startProviderKeyBridge(
       provider.id,
       sdkConfigToEnvVars(sdkConfig),
-      sessionScoped ? `${provider.id}:${sessionConfig?.sessionId}` : provider.id
+      sessionConfig?.sessionId ? `${provider.id}:${sessionConfig.sessionId}` : provider.id
     );
   }
 
