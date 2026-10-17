@@ -2012,8 +2012,8 @@ export class NeoService {
     return neoDefaultSessionId(this.repo);
   }
 
-  openDefault(): Promise<string> {
-    return openNeoDefaultSession(this.repo, (id) => this.open(id));
+  async openDefault(): Promise<string> {
+    return openNeoDefaultSession(this.repo, this.db, (id) => this.open(id));
   }
 
   async recover(): Promise<void> {

@@ -46,15 +46,16 @@ export function neoDefaultSessionId(
   return repo.getBindingForProject(NEO_INBOX_ID)?.sessionId;
 }
 
-export function openNeoDefaultSession(
-  repo: Pick<NeoRepository, 'saveProject'>,
+export async function openNeoDefaultSession(
+  repo: Pick<NeoRepository, 'saveProject' | 'getBindingForProject' | 'retireArchivedBinding'>,
+  db: Pick<Database, 'getSession'>,
   open: (projectId: string) => Promise<string>
 ): Promise<string> {
   repo.saveProject(
     { id: NEO_INBOX_ID, title: 'Inbox', summary: NEO_INBOX_SUMMARY, context: '' },
     0
   );
-  return open(NEO_INBOX_ID);
+  return reopenNeoHolder(repo, db, open, NEO_INBOX_ID);
 }
 
 const NEW_PROJECT_TITLE_CHARS = 60;
@@ -657,7 +658,7 @@ export function createNeoRouter(
     inbox: openHolder
       ? async () => ({
           ...INBOX_CHOICE,
-          sessionId: await openNeoDefaultSession(repo, openHolder),
+          sessionId: await openNeoDefaultSession(repo, db, openHolder),
         })
       : undefined,
     inboxRunnable: async () => {
