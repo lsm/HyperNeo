@@ -33,6 +33,7 @@ function setup() {
   const stopped: string[] = [];
   const refuse = { value: false };
   const stopFails = { value: false };
+  const onStop: { value: ((todo: NeoTodo) => void) | null } = { value: null };
   const ops = Object.fromEntries(
     createNeoAskRecordOperations(
       store,
@@ -50,6 +51,7 @@ function setup() {
         retry: async () => ({ ok: false, reason: 'unused' }),
         stop: async (todo) => {
           stopped.push(todo.id);
+          onStop.value?.(todo);
           return stopFails.value ? 'stop_failed: offline' : null;
         },
       },
@@ -60,7 +62,7 @@ function setup() {
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
-  return { store, call, started, stopped, refuse, stopFails };
+  return { store, sessions, call, started, stopped, refuse, stopFails, onStop };
 }
 
 const opening = {
@@ -128,6 +130,23 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(store.listAsks(undefined, 10)).toEqual([]);
   });
 
+  test('a start that lands while settle stops other sessions is stopped after the ask settles', async () => {
+    const { call, sessions, stopped, onStop } = setup();
+    const opened = await call('neo.ask.open', opening, turn('m6'));
+    if (!opened.ok) throw new Error(opened.reason);
+    const [first, second] = opened.todos;
+    onStop.value = (todo) => {
+      if (todo.id === second.id) sessions.recordRef(first.id, { adapter: 'hyperneo', id: 'late' });
+    };
+    const settled = await call(
+      'neo.ask.settle',
+      { askId: opened.ask.id, status: 'dropped', outcome: 'x' },
+      turn('m6')
+    );
+    expect(settled.ok).toBe(true);
+    expect(stopped).toEqual([first.id, second.id, first.id]);
+  });
+
   test('a settle whose stop fails leaves the ask open and says so', async () => {
     const { call, store, stopFails } = setup();
     const opened = await call('neo.ask.open', opening, turn('m5'));
@@ -139,7 +158,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
       turn('m5')
     );
     expect(settled.ok).toBe(false);
-    expect(!settled.ok && settled.reason).toContain('the ask is unchanged');
+    expect(!settled.ok && settled.reason).toContain('the ask is still open');
     expect(store.getAsk(opened.ask.id)?.status).toBe('open');
   });
 

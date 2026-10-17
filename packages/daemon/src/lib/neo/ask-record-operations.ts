@@ -144,16 +144,24 @@ export function createNeoAskRecordOperations(
     .pipe(
       async (ask: NeoAsk, input: z.infer<typeof Settle>): Promise<AskReceipt | Rejection> => {
         const failed: string[] = [];
+        const stopped: string[] = [];
+        const swept = new Set<string>();
         for (const todo of store.listTodos(ask.id)) {
-          const stopped = await controls.stop(todo);
-          if (stopped) failed.push(`${todo.title}: ${stopped}`);
+          if (sessions.readRef(todo.id)) swept.add(todo.id);
+          const failure = await controls.stop(todo);
+          if (failure) failed.push(`${todo.title}: ${failure}`);
+          else if (swept.has(todo.id)) stopped.push(todo.title);
         }
         if (failed.length)
           return {
             ok: false,
-            reason: `${failed.join(' ')}; the ask is unchanged, those sessions may still run.`,
+            reason: `${failed.join(' ')}; the ask is still open${
+              stopped.length ? ` (stopped: ${stopped.join(', ')})` : ''
+            }, and those sessions may still run.`,
           };
         const settled = store.settleAsk(ask, input.status, input.outcome, Date.now());
+        for (const todo of store.listTodos(ask.id))
+          if (!swept.has(todo.id) && sessions.readRef(todo.id)) await controls.stop(todo);
         return { ok: true, ask: settled, todos: store.listTodos(ask.id) };
       },
       ['outcome', 'input'],
