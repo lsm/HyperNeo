@@ -25,7 +25,7 @@ import {
   type WorkRejection,
 } from './types.ts';
 
-type RoutedVerb = 'start' | 'send' | 'status' | 'stop' | 'archive';
+type RoutedVerb = 'start' | 'send' | 'queue' | 'withdraw' | 'status' | 'stop' | 'archive';
 type Route<Verb extends RoutedVerb> =
   | { daemon: string }
   | {
@@ -64,6 +64,18 @@ export const SendWorkInputSchema = z.object({
   from: ForwardedOriginSchema,
 });
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
+const WithdrawWorkInputSchema = z.object({
+  ref: WorkRefSchema,
+  queuedSubmissionId: z.string().min(1).max(500),
+  from: ForwardedOriginSchema,
+});
+const WithdrawWorkResultSchema = workResultSchema(
+  z.object({
+    queuedSubmissionId: z.string().min(1),
+    withdrawn: z.boolean(),
+    reason: z.literal('not_queued').optional(),
+  })
+);
 export const WorkStatusInputSchema = z.object({
   ref: WorkRefSchema,
   since: z.number().int().min(0).optional(),
@@ -74,7 +86,16 @@ export const StartWorkResultSchema = workResultSchema(WorkStartedSchema);
 export const SendWorkResultSchema = workResultSchema(WorkDeliverySchema);
 export const WorkStatusResultSchema = workResultSchema(WorkDetailSchema);
 export const StopWorkResultSchema = workResultSchema(z.object({ stopped: z.boolean() }));
-const RoutedCapabilitySchema = z.enum(['find', 'start', 'send', 'status', 'stop', 'archive']);
+const RoutedCapabilitySchema = z.enum([
+  'find',
+  'start',
+  'send',
+  'queue',
+  'withdraw',
+  'status',
+  'stop',
+  'archive',
+]);
 
 export const WorkAdaptersResultSchema = workResultSchema(
   z.array(
@@ -340,6 +361,65 @@ const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
   .pipe(readWorkStatus, ['outcome', 'input', 'deps'], 'outcome')
   .endAsync('outcome') as (input: StatusInput, deps: WorkVerbDeps) => Promise<StatusResult>;
 
+type QueuedInput = SendInput | z.infer<typeof WithdrawWorkInputSchema>;
+type QueuedResult = SendResult | z.infer<typeof WithdrawWorkResultSchema>;
+function routeQueuedInput(input: QueuedInput, deps: WorkVerbDeps) {
+  return pickRoute('message' in input ? 'queue' : 'withdraw', input.ref, deps.adapters());
+}
+async function changeQueuedInput(
+  route: Route<'queue' | 'withdraw'>,
+  input: QueuedInput,
+  from: string,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+): Promise<QueuedResult> {
+  if ('local' in route)
+    return route.local(input.ref, 'message' in input ? input.message : input.queuedSubmissionId, {
+      from,
+      caller,
+    });
+  const forwarded = {
+    ...input,
+    ref: localRef(input.ref),
+    from: qualifyRemoteOrigin(from, deps.daemonName),
+  };
+  const result =
+    'message' in input
+      ? await forwardWork(
+          route.daemon,
+          'work.queue',
+          forwarded,
+          SendWorkResultSchema,
+          deps.remote,
+          REMOTE_SEND_TIMEOUT_MS
+        )
+      : await forwardWork(
+          route.daemon,
+          'work.withdraw',
+          forwarded,
+          WithdrawWorkResultSchema,
+          deps.remote,
+          REMOTE_SEND_TIMEOUT_MS
+        );
+  return result.ok
+    ? result
+    : annotateUnreachable(
+        result,
+        'The input may already have been queued or withdrawn; inspect its owning daemon before retrying.'
+      );
+}
+const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI)
+  .input(['input', 'caller', 'deps'])
+  .pipe(routeQueuedInput, ['input', 'deps'], 'result:outcome')
+  .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(selectSendOrigin, ['input', 'caller'], 'from')
+  .pipe(changeQueuedInput, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  input: QueuedInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => Promise<QueuedResult>;
+
 const runStopWork = (superpipe({})('stop-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStop, ['input', 'deps'], 'result:outcome')
@@ -359,11 +439,13 @@ async function listWorkAdapters(
     return forwardWork(daemon, 'work.adapters', {}, WorkAdaptersResultSchema, deps.remote);
   return {
     ok: true,
-    value: deps.adapters().map(({ id, capabilities }) => ({
-      id,
-      capabilities: capabilities.flatMap((capability) => {
+    value: deps.adapters().map((adapter) => ({
+      id: adapter.id,
+      capabilities: adapter.capabilities.flatMap((capability) => {
         const routed = RoutedCapabilitySchema.safeParse(capability);
-        return routed.success ? [routed.data] : [];
+        return routed.success && (routed.data === 'find' || adapter[routed.data])
+          ? [routed.data]
+          : [];
       }),
     })),
   };
@@ -374,7 +456,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.adapters',
       description:
-        'List the work adapters on this daemon, or on the attached daemon named by daemon, with their available work-operation verbs: find, start, send, status, stop, archive. Direct driver methods such as steer, queue and withdraw are not exposed as work operation routes and are not listed here. Archive uses neo.session.archive and requires a human request in a live turn. Start new work only with an adapter that can start, and send only through one that can send.',
+        'List work adapters on this daemon, or the attached daemon named by daemon, with their available operation verbs: find, start, send, queue, withdraw, status, stop, archive. Direct steer methods are not listed; Claude peer send also carries steering input. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
@@ -397,6 +479,25 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
       execute: (input, caller) => runSendWork(input, caller, deps),
+    }),
+    defineOperation({
+      name: 'work.queue',
+      description:
+        'Queue next-turn peer input by ref. Returns an opaque queuedSubmissionId when supported; delivered false/unconfirmed does not prove execution. Only Neo or the user can change work on another daemon. Unsupported adapters return a factual rejection with no fallback.',
+      inputSchema: SendWorkInputSchema,
+      resultSchema: SendWorkResultSchema,
+      policy: { safetyClass: 'mutate' },
+      execute: (input, caller) => runQueuedInput(input, caller, deps) as Promise<SendResult>,
+    }),
+    defineOperation({
+      name: 'work.withdraw',
+      description:
+        'Withdraw your queued input using its owning ref and queuedSubmissionId. withdrawn true confirms cancellation only while it remains withdrawable; false/not_queued means too late or no longer pending. Native Desktop queue IDs and another sender’s inputs are unsupported. Only Neo or the user can change work on another daemon.',
+      inputSchema: WithdrawWorkInputSchema,
+      resultSchema: WithdrawWorkResultSchema,
+      policy: { safetyClass: 'mutate' },
+      execute: (input, caller) =>
+        runQueuedInput(input, caller, deps) as Promise<z.infer<typeof WithdrawWorkResultSchema>>,
     }),
     defineOperation({
       name: 'work.status',

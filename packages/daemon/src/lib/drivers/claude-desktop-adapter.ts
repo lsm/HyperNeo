@@ -1,4 +1,5 @@
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
+import type { createClaudeDesktopModsDriver } from './claude-desktop-mods-driver.ts';
 import { CLAUDE_DESKTOP_OPENING } from '@hyperneo/prompts';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
@@ -26,6 +27,7 @@ import type {
   WorkRef,
   WorkStatus,
   WorkSummary,
+  WorkWithdrawal,
   ArchiveAdmission,
 } from './types.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
@@ -46,7 +48,7 @@ import { readTailLines } from './transcript-tail.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
 import {
   readClaudeSessionOwner,
-  requireClaudeCliOwner,
+  requireClaudePeerOwner,
   type ClaudeSessionOwner,
 } from './claude-session-owner.ts';
 
@@ -94,6 +96,7 @@ export interface ClaudeLiveSession {
 }
 
 export interface ClaudeDesktopAdapterDeps {
+  mods?: NonNullable<ReturnType<typeof createClaudeDesktopModsDriver>>['ready'];
   admitInbox?: (context: WorkCallContext) => Gate<string>;
   sendInbox?: (
     sessionId: string,
@@ -689,7 +692,7 @@ export const sendClaudeMessage = (superpipe({})('claude-owner-send') as Pipeline
     'record',
     'cliSessionId'
   )
-  .pipe(requireClaudeCliOwner, ['cliSessionId', 'liveSessions'], 'result:outcome')
+  .pipe(requireClaudePeerOwner, ['cliSessionId', 'liveSessions'], 'result:outcome')
   .pipe(sendOwnedClaudeMessage, ['record', 'message', 'deps', 'context'], 'outcome')
   .endAsync('outcome') as (
   record: ClaudeDesktopRecord & { cliSessionId: string },
@@ -715,6 +718,39 @@ const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as Pipel
   cache: ClaudeRecordCache,
   context?: WorkCallContext
 ) => Promise<Result<WorkDelivery>>;
+
+type ModsAction = { kind: 'queue' | 'withdraw'; value: string } | { kind: 'stop' };
+async function invokeDesktopMods(
+  record: ClaudeDesktopRecord & { cliSessionId: string },
+  action: ModsAction,
+  context: WorkCallContext,
+  deps: ClaudeDesktopAdapterDeps
+) {
+  const mods = await deps.mods;
+  if (!mods)
+    return reject(
+      'unsupported',
+      'The configured Desktop mods bridge is unavailable; inspect daemon logs.'
+    );
+  return action.kind === 'stop'
+    ? mods.stop(record.cliSessionId, context)
+    : action.kind === 'queue'
+      ? mods.queue(record.cliSessionId, action.value, context)
+      : mods.withdraw(record.cliSessionId, action.value, context);
+}
+const runClaudeDesktopMods = (superpipe({})('claude-desktop-mods-work') as PipelineAPI)
+  .input(['ref', 'action', 'context', 'deps', 'cache'])
+  .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
+  .pipe(requireClaudeRecord, ['ref', 'records'], 'result:outcome')
+  .pipe(requireOpenClaudeRecord, 'outcome', 'result:outcome')
+  .pipe(invokeDesktopMods, ['outcome', 'action', 'context', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  action: ModsAction,
+  context: WorkCallContext,
+  deps: ClaudeDesktopAdapterDeps,
+  cache: ClaudeRecordCache
+) => Promise<Result<WorkDelivery | WorkWithdrawal | { stopped: boolean }>>;
 
 function admitClaudeStartConfiguration(request: StartRequest): Gate<StartRequest> {
   const field =
@@ -916,7 +952,39 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
   return {
     id: 'claude-desktop',
     supportsStartPreparation: !!deps.prepareExecution,
-    capabilities: ['find', 'start', 'send', 'steer', 'status', 'archive'],
+    capabilities: [
+      'find',
+      'start',
+      'send',
+      'steer',
+      'status',
+      'archive',
+      ...(deps.mods ? (['queue', 'stop', 'withdraw'] as const) : []),
+    ],
+    ...(deps.mods
+      ? {
+          queue: (ref: WorkRef, text: string, context: WorkCallContext) =>
+            runClaudeDesktopMods(
+              ref,
+              { kind: 'queue', value: text },
+              context,
+              deps,
+              cache
+            ) as Promise<Result<WorkDelivery>>,
+          stop: (ref: WorkRef, context: WorkCallContext) =>
+            runClaudeDesktopMods(ref, { kind: 'stop' }, context, deps, cache) as Promise<
+              Result<{ stopped: boolean }>
+            >,
+          withdraw: (ref: WorkRef, id: string, context: WorkCallContext) =>
+            runClaudeDesktopMods(
+              ref,
+              { kind: 'withdraw', value: id },
+              context,
+              deps,
+              cache
+            ) as Promise<Result<WorkWithdrawal>>,
+        }
+      : {}),
     find: async (query) =>
       runClaudeDesktopFind(
         query,

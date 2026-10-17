@@ -1,15 +1,16 @@
-# Claude CLI inbox transport
+# Claude peer inbox transport
 
-This ADR 0004 Build slice is not wired into a driver. It implements the Unix
-NDJSON protocol inspected in Claude Code 2.1.295 and exercised against an
-isolated throwaway CLI session during the approved investigation. Other
-versions are rejected. It is an undocumented protocol and may change.
+The driver uses the Unix NDJSON protocol inspected in CLI 2.1.295 and Desktop's
+2.1.299 engine. Both were exercised against isolated throwaway sessions during
+the approved investigation. Other versions are rejected. The wire format is
+version-dependent and may change.
 
 `openClaudeInbox` is scoped to one already-resolved target. Before calling it,
-the driver must prove current CLI ownership, match the live PID/session to its
-registration and obtain its registered socket path. Neither this low-level
-transport nor the existence of a socket grants permission to use CLI for a
-Desktop-owned or unknown session. Revalidate ownership before each send.
+the driver must match the unique live PID/session/owner to its freshly read
+registration and obtain its registered socket path. Desktop 2.1.299 also needs
+peerProtocol 1 and its advertised notify_idle feature. A verified peer inbox
+does not transfer ownership or allow headless resume. Unknown, changed or
+conflicting ownership fails closed. Revalidate before each send.
 
 The transport checks the target filename against its PID and requires a
 private same-user directory and socket. It never borrows a Claude auth token

@@ -156,7 +156,7 @@ export interface NeoTodoControls {
   start(todoId: string): Ran;
   proceed(todoId: string, message: string): Ran;
   retry(todoId: string): Ran;
-  stop(todo: NeoTodo): Promise<void>;
+  stop(todo: NeoTodo): Promise<string | null>;
 }
 
 const Continue = z.object({ todoId: Text, message: Text });
@@ -183,9 +183,14 @@ export function createNeoTodoOperations(
     const todo = todos.updateTodo(plan.todo, plan.patch, Date.now());
     return { ok: true, todo, todos: todos.listTodos(todo.askId) };
   };
-  const stopAndWrite = async (plan: { todo: NeoTodo; patch: NeoTodoPatch }) => {
-    await controls.stop(plan.todo);
-    return write(plan);
+  const stopAndWrite = async (plan: {
+    todo: NeoTodo;
+    patch: NeoTodoPatch;
+  }): Promise<TodoReceipt | Rejection> => {
+    const failed = await controls.stop(plan.todo);
+    return failed
+      ? { ok: false, reason: `${failed}; the todo is unchanged, its session may still run.` }
+      : write(plan);
   };
   const ran = async (result: Awaited<Ran>): Promise<TodoReceipt | Rejection> =>
     result.ok ? { ok: true, todo: result.todo, todos: todos.listTodos(result.todo.askId) } : result;
