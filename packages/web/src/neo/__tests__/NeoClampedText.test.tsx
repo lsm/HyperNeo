@@ -1,22 +1,26 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
-import { afterEach, describe, expect, it } from 'vitest';
-import { NeoClampedText, neoTextOverLines } from '../NeoClampedText.tsx';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { NeoClampedText } from '../NeoClampedText.tsx';
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
-const lines = (count: number) =>
-  Array.from({ length: count }, (_, n) => `line ${n + 1}`).join('\n');
+const sized = (scroll: number, client: number) => {
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(scroll);
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(client);
+};
 
 describe('NeoClampedText', () => {
-  it('clamps text over ten lines and lets the human expand and collapse it', () => {
-    const text = lines(12);
+  it('clamps text that overflows ten lines and lets the human expand and collapse it', () => {
+    sized(500, 272);
     const { container } = render(
-      <NeoClampedText text={text}>
-        <p>{text}</p>
+      <NeoClampedText text="long">
+        <p>long</p>
       </NeoClampedText>
     );
-    const box = container.querySelector('[data-clamped]');
-    expect(box?.className).toBe('line-clamp-10');
+    expect(container.querySelector('[data-clamped]')?.className).toBe('line-clamp-10');
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
     expect(container.querySelector('[data-clamped]')).toBeNull();
     expect(screen.getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe(
@@ -24,19 +28,14 @@ describe('NeoClampedText', () => {
     );
   });
 
-  it('shows short text without a toggle', () => {
+  it('shows text that fits without a toggle, however many newlines it has', () => {
+    sized(272, 272);
+    const text = Array.from({ length: 14 }, (_, n) => `line ${n}`).join('\n');
     render(
-      <NeoClampedText text={lines(10)}>
-        <p>{lines(10)}</p>
+      <NeoClampedText text={text}>
+        <p>{text}</p>
       </NeoClampedText>
     );
     expect(screen.queryByRole('button')).toBeNull();
-  });
-});
-
-describe('neoTextOverLines', () => {
-  it('counts written lines against the ten-line limit', () => {
-    expect(neoTextOverLines(lines(10))).toBe(false);
-    expect(neoTextOverLines(lines(11))).toBe(true);
   });
 });

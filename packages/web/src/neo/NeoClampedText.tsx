@@ -1,21 +1,20 @@
 import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 
-export const NEO_USER_TEXT_LINES = 10;
-
-export function neoTextOverLines(text: string, lines = NEO_USER_TEXT_LINES): boolean {
-  return text.split('\n').length > lines;
-}
-
 export function NeoClampedText({ text, children }: { text: string; children: ComponentChildren }) {
   const box = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [overflows, setOverflows] = useState(false);
+  const [long, setLong] = useState(false);
   useLayoutEffect(() => {
     const element = box.current;
-    if (element && !open) setOverflows(element.scrollHeight > element.clientHeight + 1);
+    if (!element || open) return;
+    const measure = () => setLong(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, [text, open]);
-  const long = overflows || neoTextOverLines(text);
   return (
     <>
       <div
