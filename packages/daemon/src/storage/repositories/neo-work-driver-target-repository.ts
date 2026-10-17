@@ -2,15 +2,9 @@ import {
   NEO_WORK_CLOSED_DONE_PREFIX,
   type NeoWorkDriverReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
-import {
-  WorkStatusSchema,
-  WorkDeliverySchema,
-  type WorkRef,
-  type WorkStatus,
-} from '../../lib/drivers/types.ts';
+import { WorkStatusSchema, type WorkRef } from '../../lib/drivers/types.ts';
 import {
   NeoDriverTargetSchema,
-  type DriverSent,
   isNeoReceiptAbandoned,
   isNeoReceiptUnconfirmed,
   type NeoDriverTarget,
@@ -24,32 +18,12 @@ import {
   neoWorkerRefKey,
 } from '../../lib/neo/work-reroute.ts';
 import { NeoAgentWorkTargetRepository } from './neo-agent-work-target-repository.ts';
+import { NeoDriverSessionRows } from './neo-driver-session-rows.ts';
 
-function storedInputReceipt(raw: string | null, ref: string | null): DriverSent['receipt'] {
-  if (!raw || !ref) return undefined;
-  try {
-    const stored = JSON.parse(raw) as { ref?: unknown; receipt?: unknown } | null;
-    const receipt = WorkDeliverySchema.shape.receipt.safeParse(stored?.receipt);
-    return stored?.ref === ref && receipt.success ? receipt.data : undefined;
-  } catch {
-    return undefined;
+export class NeoWorkDriverTargetRepository extends NeoDriverSessionRows {
+  constructor(db: Database) {
+    super(db, 'neo_work_driver_targets', 'work_id');
   }
-}
-
-export type NeoDriverTargetCard = {
-  target: NeoDriverTarget | null;
-  ref: WorkRef | null;
-  followAnchor: number | null;
-  liveStatus: WorkStatus | null;
-  startedAt: number | null;
-  retries: number;
-  startInterrupted: boolean;
-  needsYouSince: number | null;
-  claimedAt: number | null;
-};
-
-export class NeoWorkDriverTargetRepository {
-  constructor(private readonly db: Database) {}
 
   propose(repo: NeoRepository, input: NeoWorkInput, target: NeoDriverTarget) {
     return this.db.transaction(() => {
@@ -64,15 +38,6 @@ export class NeoWorkDriverTargetRepository {
       }
       return { work, target: this.get(work.id) };
     })();
-  }
-
-  get(workId: string): NeoDriverTarget | null {
-    const row = this.db
-      .prepare('SELECT target FROM neo_work_driver_targets WHERE work_id = ?')
-      .get(workId) as { target: string } | null | undefined;
-    if (!row) return null;
-    const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
-    return target.success ? target.data : null;
   }
 
   occupiedWorkers(
@@ -129,43 +94,6 @@ export class NeoWorkDriverTargetRepository {
     })();
   }
 
-  readCard(workId: string): NeoDriverTargetCard | null {
-    const row = this.db
-      .prepare(
-        `SELECT target, ref, follow_anchor AS followAnchor, live_status AS liveStatus,
-                started_at AS startedAt, retries, start_interrupted AS startInterrupted,
-                needs_you_since AS needsYouSince, claimed_at AS claimedAt
-           FROM neo_work_driver_targets WHERE work_id = ?`
-      )
-      .get(workId) as
-      | {
-          target: string;
-          ref: string | null;
-          followAnchor: number | null;
-          liveStatus: WorkStatus | null;
-          startedAt: number | null;
-          retries: number;
-          startInterrupted: number;
-          needsYouSince: number | null;
-          claimedAt: number | null;
-        }
-      | null
-      | undefined;
-    if (!row) return null;
-    const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
-    return {
-      target: target.success ? target.data : null,
-      ref: row.ref ? (JSON.parse(row.ref) as WorkRef) : null,
-      followAnchor: row.followAnchor,
-      liveStatus: row.liveStatus,
-      startedAt: row.startedAt,
-      retries: row.retries,
-      startInterrupted: !!row.startInterrupted,
-      needsYouSince: row.needsYouSince,
-      claimedAt: row.claimedAt,
-    };
-  }
-
   claimAdmission(workId: string, at: number, admitted: () => boolean, staleBefore = 0): boolean {
     return this.db.transaction(() => {
       if (!admitted()) return false;
@@ -214,26 +142,6 @@ export class NeoWorkDriverTargetRepository {
     return rows.map((row) => ({ workId: row.workId, ref: JSON.parse(row.ref) as WorkRef }));
   }
 
-  readRef(workId: string): WorkRef | null {
-    const row = this.db
-      .prepare('SELECT ref FROM neo_work_driver_targets WHERE work_id = ? AND ref IS NOT NULL')
-      .get(workId) as { ref: string } | null | undefined;
-    return row ? (JSON.parse(row.ref) as WorkRef) : null;
-  }
-
-  readFollowAnchor(workId: string): number | null {
-    const row = this.db
-      .prepare('SELECT follow_anchor AS at FROM neo_work_driver_targets WHERE work_id = ?')
-      .get(workId) as { at: number | null } | null | undefined;
-    return row?.at ?? null;
-  }
-
-  recordFollowAnchor(workId: string, at: number): void {
-    this.db
-      .prepare('UPDATE neo_work_driver_targets SET follow_anchor = ? WHERE work_id = ?')
-      .run(at, workId);
-  }
-
   readSupersededAt(workId: string): number | null {
     const row = this.db
       .prepare(
@@ -246,160 +154,6 @@ export class NeoWorkDriverTargetRepository {
       )
       .get(workId) as { at: number | null } | null | undefined;
     return row?.at ?? null;
-  }
-
-  readLiveStatus(workId: string): WorkStatus | null {
-    const row = this.db
-      .prepare('SELECT live_status AS status FROM neo_work_driver_targets WHERE work_id = ?')
-      .get(workId) as { status: WorkStatus | null } | null | undefined;
-    return row?.status ?? null;
-  }
-
-  readStartedAt(workId: string): number | null {
-    const row = this.db
-      .prepare('SELECT started_at AS startedAt FROM neo_work_driver_targets WHERE work_id = ?')
-      .get(workId) as { startedAt: number | null } | null | undefined;
-    return row?.startedAt ?? null;
-  }
-
-  readSent(workId: string): DriverSent | null {
-    const row = this.db
-      .prepare(
-        `SELECT input_before AS inputBefore, sent_opening AS opening, sent_receipt AS receipt, ref
-           FROM neo_work_driver_targets WHERE work_id = ?`
-      )
-      .get(workId) as
-      | {
-          inputBefore: number | null;
-          opening: string | null;
-          receipt: string | null;
-          ref: string | null;
-        }
-      | null
-      | undefined;
-    const receipt = row ? storedInputReceipt(row.receipt, row.ref) : undefined;
-    return row && row.inputBefore !== null && row.opening
-      ? { inputBefore: row.inputBefore, opening: row.opening, ...(receipt ? { receipt } : {}) }
-      : null;
-  }
-
-  readRetries(workId: string): number {
-    const row = this.db
-      .prepare('SELECT retries FROM neo_work_driver_targets WHERE work_id = ?')
-      .get(workId) as { retries: number } | null | undefined;
-    return row?.retries ?? 0;
-  }
-
-  readStartInterrupted(workId: string): boolean {
-    const row = this.db
-      .prepare(
-        'SELECT start_interrupted AS interrupted FROM neo_work_driver_targets WHERE work_id = ?'
-      )
-      .get(workId) as { interrupted: number } | null | undefined;
-    return !!row?.interrupted;
-  }
-
-  readCardCheck(workId: string): { checkedAt: number; unchecked: boolean } | null {
-    const row = this.db
-      .prepare(
-        'SELECT checked_at AS checkedAt, unchecked FROM neo_work_driver_targets WHERE work_id = ?'
-      )
-      .get(workId) as { checkedAt: number | null; unchecked: number } | null | undefined;
-    return row?.checkedAt == null ? null : { checkedAt: row.checkedAt, unchecked: !!row.unchecked };
-  }
-
-  recordCardCheck(workId: string, check: { checkedAt: number; unchecked: boolean }): void {
-    this.db
-      .prepare('UPDATE neo_work_driver_targets SET checked_at = ?, unchecked = ? WHERE work_id = ?')
-      .run(check.checkedAt, check.unchecked ? 1 : 0, workId);
-  }
-
-  recordStartInterrupted(workId: string): void {
-    this.db
-      .prepare('UPDATE neo_work_driver_targets SET start_interrupted = 1 WHERE work_id = ?')
-      .run(workId);
-  }
-
-  recordRetry(workId: string): number {
-    this.db
-      .prepare('UPDATE neo_work_driver_targets SET retries = retries + 1 WHERE work_id = ?')
-      .run(workId);
-    return this.readRetries(workId);
-  }
-
-  readNeedsYouSince(workId: string): number | null {
-    const row = this.db
-      .prepare('SELECT needs_you_since AS since FROM neo_work_driver_targets WHERE work_id = ?')
-      .get(workId) as { since: number | null } | null | undefined;
-    return row?.since ?? null;
-  }
-
-  recordStartedAt(workId: string, startedAt: number | null): void {
-    this.db
-      .prepare('UPDATE neo_work_driver_targets SET started_at = ? WHERE work_id = ?')
-      .run(startedAt, workId);
-  }
-
-  recordSent(workId: string, sent: DriverSent | null): void {
-    this.db
-      .prepare(
-        `UPDATE neo_work_driver_targets SET input_before = ?1, sent_opening = ?2,
-          sent_receipt = CASE WHEN ?3 IS NULL THEN NULL
-            ELSE json_object('ref', ref, 'receipt', json(?3)) END WHERE work_id = ?4`
-      )
-      .run(
-        sent?.inputBefore ?? null,
-        sent?.opening ?? null,
-        sent?.receipt ? JSON.stringify(sent.receipt) : null,
-        workId
-      );
-  }
-
-  recordNeedsYouSince(workId: string, since: number | null): void {
-    this.db
-      .prepare('UPDATE neo_work_driver_targets SET needs_you_since = ? WHERE work_id = ?')
-      .run(since, workId);
-  }
-
-  recordRef(
-    workId: string,
-    ref: WorkRef,
-    startedAt?: number,
-    link?: string,
-    observed: Pick<NeoWorkDriverReceipt, 'model' | 'effort'> = {}
-  ): void {
-    this.db
-      .prepare(
-        `UPDATE neo_work_driver_targets
-          SET ref = ?1, started_at = ?2, link = ?3, actual_model = ?4, actual_effort = ?5,
-            sent_receipt = CASE WHEN ref IS ?1 THEN sent_receipt ELSE NULL END
-          WHERE work_id = ?6`
-      )
-      .run(
-        JSON.stringify(ref),
-        startedAt ?? null,
-        link ?? null,
-        observed.model ?? null,
-        observed.effort ?? null,
-        workId
-      );
-  }
-
-  recordLive(
-    workId: string,
-    status: WorkStatus,
-    link: string | undefined,
-    remoteLink?: string
-  ): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE neo_work_driver_targets
-            SET live_status = ?1, link = COALESCE(?2, link), remote_link = ?4
-          WHERE work_id = ?3 AND (live_status IS NOT ?1 OR (?2 IS NOT NULL AND link IS NOT ?2)
-            OR remote_link IS NOT ?4)`
-      )
-      .run(status, link ?? null, workId, remoteLink ?? null);
-    return result.changes > 0;
   }
 
   receipts(workIds: readonly string[], now = Date.now()): NeoWorkDriverReceipt[] {
