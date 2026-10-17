@@ -1,10 +1,12 @@
 import { homedir } from 'node:os';
+import { claudeInboxName } from '../drivers/claude-inbox.ts';
 import { createClaudeInboxDriver } from '../drivers/claude-inbox-driver.ts';
+import { ClaudeInboxRouteRepository } from '../../storage/repositories/claude-inbox-route-repository.ts';
 import { createClaudeDesktopModsDriver } from '../drivers/claude-desktop-mods-driver.ts';
 import { readLiveClaudeSessions } from '../drivers/claude-desktop-adapter.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { stampActiveAttemptList } from '../tasks/direct-attempt-flag.ts';
 import { registerDirectStartJobs } from '../tasks/direct-start-jobs.ts';
 import {
@@ -1409,6 +1411,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
   const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
   const claudeInbox = createClaudeInboxDriver({
+    name: claudeInboxName(resolve(deps.config.dbPath)),
+    routes: new ClaudeInboxRouteRepository(deps.db.getDatabase()),
     registrationsDir: join(homedir(), '.claude', 'sessions'),
     liveSessions: () => readLiveClaudeSessions(spawnProcess),
     hasSession: (sessionId) => {
@@ -1418,6 +1422,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     handoff: (args) => handoffPromptToMailbox({ ...args, jobQueue: deps.jobQueue }),
     onError: (error) => log.warn('Claude inbox reply could not be persisted', error),
   });
+  void claudeInbox.listen().catch((error) => log.warn('Claude reply inbox not reopened', error));
   const claudeDesktopMods = createClaudeDesktopModsDriver({
     db: deps.db.getDatabase(),
     env: process.env,

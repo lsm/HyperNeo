@@ -1,7 +1,11 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { createClaudeInboxConversations } from './claude-inbox-conversations.ts';
+import {
+  type ClaudeInboxRoutes,
+  createClaudeInboxConversations,
+} from './claude-inbox-conversations.ts';
 import { requireClaudeReplyDestination, submitClaudeInboxMessage } from './claude-inbox-submit.ts';
 import type { ClaudeInboxEvent } from './claude-inbox.ts';
+import { readClaudeSenderSession } from './claude-inbox-endpoint.ts';
 import type { ClaudeLiveSession } from './claude-desktop-adapter.ts';
 import type { MailboxHandoffArgs, MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import type { Rejected, WorkCallContext } from './types.ts';
@@ -9,6 +13,8 @@ import type { Rejected, WorkCallContext } from './types.ts';
 type InboxHandoff = Omit<MailboxHandoffArgs, 'jobQueue'>;
 
 interface ClaudeInboxDriverDeps {
+  name: string;
+  routes: ClaudeInboxRoutes;
   registrationsDir: string;
   liveSessions(): Promise<readonly ClaudeLiveSession[]>;
   hasSession(sessionId: string): boolean;
@@ -56,6 +62,9 @@ const receiveClaudeInboxReply = (superpipe({})('receive-claude-inbox-reply') as 
 
 export function createClaudeInboxDriver(deps: ClaudeInboxDriverDeps) {
   const conversations = createClaudeInboxConversations({
+    name: deps.name,
+    routes: deps.routes,
+    senderSession: (from) => readClaudeSenderSession(from, deps.registrationsDir),
     open: deps.open,
     onError: deps.onError,
     onEvent: async (returnTo, event) => {
@@ -72,6 +81,7 @@ export function createClaudeInboxDriver(deps: ClaudeInboxDriverDeps) {
         write: conversations.write,
       });
     },
+    listen: conversations.listen,
     close: conversations.close,
   };
 }

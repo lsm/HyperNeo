@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   readClaudeInboxEndpoint,
   requireClaudeInboxEndpoint,
+  readClaudeSenderSession,
 } from '../../../../src/lib/drivers/claude-inbox-endpoint';
 import type { ClaudeSessionOwner } from '../../../../src/lib/drivers/claude-session-owner';
 
@@ -172,5 +173,24 @@ describe('readClaudeInboxEndpoint', () => {
       ok: false,
       reason: 'unreachable',
     });
+  });
+});
+
+describe('readClaudeSenderSession', () => {
+  test('names a reply sender from its socket registration, and nothing else', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'claude-sender-'));
+    try {
+      const sessionId = '6d9e55f8-05b0-4445-a5f8-4f8b123fb043';
+      await writeFile(
+        join(dir, '4321.json'),
+        JSON.stringify({ sessionId, pid: 4321, messagingSocketPath: '/tmp/cc-socks/4321.sock' })
+      );
+      expect(await readClaudeSenderSession('uds:/tmp/cc-socks/4321.sock', dir)).toBe(sessionId);
+      expect(await readClaudeSenderSession('uds:/tmp/cc-socks/other/4321.sock', dir)).toBeNull();
+      expect(await readClaudeSenderSession('uds:/tmp/cc-socks/9999.sock', dir)).toBeNull();
+      expect(await readClaudeSenderSession('bridge:abc', dir)).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
