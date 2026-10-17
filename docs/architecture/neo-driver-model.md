@@ -57,6 +57,8 @@ What each layer never does:
 
 ## The adapter interface
 
+The sketch below shows the core operations. The current contract in `packages/daemon/src/lib/drivers/types.ts` also has optional capabilities such as `steer`, `queue`, `withdraw` and `archive`; each adapter declares its actual supported set.
+
 ```ts
 type WorkStatus = 'queued' | 'running' | 'needs_you' | 'done' | 'failed' | 'stopped';
 type Place = { machine: string; folder?: string; spaceId?: string; name: string };
@@ -102,9 +104,9 @@ interface WorkAdapter {
 }
 ```
 
-- Five verbs. Finding a place is part of `find`, a deep link is a field, and push events wait: status is refreshed on read and on a timer until a backend can push.
+- Five core verbs in this sketch. Finding a place is part of `find`, a deep link is a field, and push events wait: status is refreshed on read and on a timer until a backend can push.
 - Rejections are result values with a named reason, following ADR 0006; `detail` carries the backend's own words. `unknown_adapter` and `unsupported` come from the operation layer (an adapter id that isn't registered, or a verb it doesn't declare). `not_found` and `not_open` cover a ref that doesn't exist or is archived or ended, such as `message.send`'s archived and ended rejections. `not_delivered` means the backend refused or dropped the message. `unreachable` means the other daemon didn't answer. `invalid_place` is a folder or Space the adapter can't start work in.
-- `capabilities` makes a missing verb explicit. Claude Code Desktop has no `stop` today, so its adapter declares four verbs and Neo tells the user instead of failing.
+- `capabilities` makes a missing verb explicit. The `claude-desktop` adapter declares `find`, `start`, `send`, `steer`, `status` and `archive`; its send/steer owner gate may refuse a particular session. It declares no `stop`, `queue` or `withdraw`, so Neo reports unsupported control and offers Open session.
 - A different implementation of the same backend can replace an adapter in the registry without touching Neo.
 
 ## Operations
@@ -198,7 +200,8 @@ HyperNeo's own sessions and projects. They run on the Claude Agent SDK and show 
 - `find`: open sessions plus the full-text index, grouped by session folder.
 - `start`: a session in the folder's project, or in the Neo project when no files are needed.
 - `send`: the `message.send` path, which rejects archived and ended targets (#5580) and reports delivery (#5582, #5584).
-- `status`: processing state and the last reply. `stop`: interrupt.
+- `status`: processing state and the last reply. `stop`: await public SDK interruption and verify the owned runtime stopped; never restore a session merely to stop it.
+- `queue`: defer through the existing mailbox until the active turn ends; return the mailbox entry ID. `withdraw`: remove only the caller/target-matched deferred input before SDK dispatch or consumption. Atomic claims and tombstones keep retries idempotent; active or consumed inputs are not retractable. These are direct driver methods, not a new Neo usage policy.
 
 ### space
 
@@ -222,30 +225,37 @@ Runs on the laptop, ported from the `codex-driver` skill. Everything it does sho
 
 ### claude-desktop
 
-Runs on the laptop. Everything it does shows in the Claude Code Desktop app. Verified on 2026-10-04 with a throwaway session:
+Uses Claude Desktop's local session records for discovery and its standard deep link for opening the app. The session's owner selects the channel; a running Claude.app does not make every CLI session Desktop-owned. The inspected Desktop version exposes no outside-daemon management socket/API. Its renderer IPC and in-process MCP tools are not daemon interfaces.
 
 | Verb | How |
 | --- | --- |
-| `start` | `claude -p --session-id <uuid> -n <title> "<opening message>"` in the place's folder, then `claude --desktop --resume <uuid>` under a pseudo-terminal. The app creates session `local_<uuid>` in its sidebar with the transcript and starts its own process for it. |
-| `send` | When the app runs the session, a short headless relay, `claude -p --model haiku --allowedTools "SendMessage ListAgents"`, delivers the message with cross-session messaging and it starts a turn. When the session is not running, `claude -p --resume <uuid> "<message>"`. |
-| `find`, `status` | `claude agents --json` for live sessions (`status` busy, waiting or idle, and `waitingFor`), the app's session records for title, folder, archived state and last activity, and the transcript for the last reply. |
-| `link` | `claude://claude.ai/epitaxy/local_<uuid>`, the link the app reports for a session. |
-| `stop` | Not available outside the app. The adapter does not declare it. |
+| `start` | Validate a local daemon-session reply destination before creation. Bootstrap a short `claude -p --session-id <uuid> -n <title>` opening, then launch `claude --desktop --resume <uuid>` under a pseudo-terminal. Recheck the resulting owner before sending the real task. If Desktop owns it or ownership is unknown, report partial creation without task delivery; never resume it headlessly. |
+| `send`, `steer` | For a confirmed live CLI/SDK owner only, use the registered inbox socket through the same daemon-owned sender. Exact message bytes and native receipt IDs replace the one-shot Haiku relay and text matching. Desktop-owned sessions return unsupported; unknown owners return `unreachable` without fallback. |
+| `find`, `status` | `claude agents --json` supplies live status, PID and session identity; join the exact registration to classify the owner. App records supply title, folder, archive state and activity; transcripts supply replies and exact input-receipt evidence. Observation does not grant control. |
+| `archive` | Existing record-based archive path: require exactly one matching app record, recheck its identity and live status, then call the archive admission gate. Atomically replace the record with `isArchived: true`, preserving its other fields; this does not stop a turn. |
+| `link` | `claude://claude.ai/epitaxy/local_<uuid>`. |
+| `stop`, `queue`, `withdraw` | No verified outside-daemon Desktop management interface. These capabilities are not declared for external sessions; open the app to act there. |
 
 Constraints:
 
-- `claude --desktop` refuses to run without a terminal, so the adapter launches it under a pseudo-terminal (`script -q /dev/null claude --desktop --resume <uuid>` works).
-- Never resume a session headlessly while the app runs it: the two writers could fork the conversation. Use the relay whenever `claude agents --json` lists the session.
-- A relayed message arrives as a message from another session, which the receiving Claude treats as a teammate's request. The relay uses the app's recorded permission class, including `bypassPermissions` when the app reports it; the CLI bootstrap's mode does not establish the desktop session's mode.
-- The first turn runs headless before the session reaches the app. Keep it short, open the session in the app, then send the real task through the relay so the work happens where the user can watch it.
+- `claude --desktop` is only a UI launcher and requires a terminal, so use `script -q /dev/null claude --desktop --resume <uuid>`. Do not spoof a renderer, inject JavaScript, bypass origin checks or rewrite app records to claim ownership, change permissions or manufacture delivery/control evidence. The existing admitted `archive` record update above is a separate, version-sensitive mechanism; it is not an outside-daemon Desktop management API.
+- CLI/SDK ownership requires the inspected CLI 2.1.295 or app-bundled CLI 2.1.299; a matching Desktop registration remains Desktop-owned even on a newer version. Direct inbox delivery accepts only the verified 2.1.295 protocol and revalidates the live PID/session registration and its registered path. A version or owner mismatch is a refusal, not permission to restore a session.
+- The inbox NDJSON framing is undocumented and may change. `next` wakes idle CLI sessions or delivers at the next tool round; it does not interrupt a tool. No reliable external turn-end queue, withdrawal or stop command was verified, so no such socket control is invented.
+- A completed socket write returns `delivered:false, unconfirmed:true` with its exact input receipt. Immediate peer acceptance need not produce an ACK. Neither a write nor a peer transport receipt proves work completion or human approval.
+- The daemon owns the reply listener until shutdown and persists replies to the originating local daemon session with peer provenance. Anonymous/chat/remote reply destinations are unsupported; listener lifetime is not durable across a daemon restart. Same-UID socket/path checks are not peer authentication.
+- Cancelling a human request does not prove execution stopped. A failed control remains visible as `controlFailure: { operation, reason, detail, at }` with unsupported/unavailable detail and Open session; there is no invented retry button.
+
+### claude-code
+
+Standalone CLI sessions share the same owner gate and inbox sender as confirmed CLI sessions discovered through Desktop records. The adapter offers `find`, owner-verified `status`, `send` and `steer`; it has no creation, stop, turn-end queue or withdrawal capability. Status and delivery evidence reuse the native transcript and exact input UUID. Daemon-owned SDK sessions remain on `hyperneo`, whose cached runtime and deferred mailbox support the controls described above.
 
 ### Creation permission defaults
 
 New work started through HyperNeo requests Full Access through the supported permission parameters:
 
 - Codex: `thread/start` sends `approvalPolicy: "never"` and `sandbox: "danger-full-access"`. The opening turn request carries the public `turn/start` fields `approvalPolicy: "never"` and `sandboxPolicy: {type: "dangerFullAccess"}` so desktop handoff does not lose the requested permissions. The pre-existing undocumented desktop ownership/IPC handoff is unchanged; no private permission setter, session database edit or global configuration change is introduced. A server policy rejection is returned without a weaker-permission retry.
-- Claude Code CLI: the opening `claude -p --session-id …` invocation passes `--permission-mode bypassPermissions`. If the new session is not yet running in Desktop, the initial task's headless `--resume` invocation passes the same flag. Sends to pre-existing sessions keep their existing behavior.
-- Claude Code Desktop: `claude --desktop --resume` accepts no permission flag. The app starts its own process and uses its configured permission mode; the CLI bootstrap does not prove Desktop is in bypass mode. The `claude-code` discovery-only adapter has no creation API. To default new local Desktop sessions through supported settings, enable Bypass permissions where the app/account permits it and set `permissions.defaultMode` to `"bypassPermissions"` in the user's Claude settings. A mode previously selected for a folder takes precedence, so select Bypass permissions in that folder as needed. Organization restrictions still apply. HyperNeo does not edit private app records or silently rewrite the user's settings.
+- Claude Code CLI: the opening `claude -p --session-id …` invocation passes `--permission-mode bypassPermissions`. Subsequent task delivery requires the confirmed live owner and direct inbox channel; there is no headless `--resume` fallback.
+- Claude Code Desktop: `claude --desktop --resume` accepts no permission flag. The app starts its own process and uses its configured permission mode; the CLI bootstrap does not prove Desktop is in bypass mode. The standalone `claude-code` adapter has no creation API. To default new local Desktop sessions through supported settings, enable Bypass permissions where the app/account permits it and set `permissions.defaultMode` to `"bypassPermissions"` in the user's Claude settings. A mode previously selected for a folder takes precedence, so select Bypass permissions in that folder as needed. Organization restrictions still apply. HyperNeo does not edit private app records or silently rewrite the user's settings.
 
 Interface evidence (2026-10-16): both `codex-cli 0.160.1` and the desktop-bundled `codex-cli 0.162.0-alpha.17.2` public `codex app-server generate-json-schema` outputs include both permission fields and the above sandbox enum values; `claude 2.1.295 --help` exposes `--permission-mode`. See the official [Codex App Server protocol](https://learn.chatgpt.com/docs/app-server), [Codex Full Access definition](https://learn.chatgpt.com/docs/sandboxing), [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), and [Desktop permission settings](https://code.claude.com/docs/en/desktop#choose-a-permission-mode). Unit tests exercise the real adapter creation functions with recorded transport/process arguments; they do not establish that a live Desktop application accepted or displayed the requested mode.
 
@@ -253,7 +263,7 @@ Interface evidence (2026-10-16): both `codex-cli 0.160.1` and the desktop-bundle
 
 | Status | hyperneo | space | codex-desktop | claude-desktop |
 | --- | --- | --- | --- | --- |
-| queued | message accepted, not yet picked up | draft, open, rate or usage limited | message queued | relay delivered, turn not started |
+| queued | message accepted, not yet picked up | draft, open, rate or usage limited | message queued | unconfirmed write, awaiting exact input evidence |
 | running | processing | in progress | turn active | `busy` |
 | needs you | waiting for input or a worktree choice | review, blocked | approval requested | `waiting` (permission prompt or input needed) |
 | done | idle after the reply | done | turn completed | `idle` after the reply |
@@ -384,23 +394,30 @@ sequenceDiagram
   H-->>You: Done: #2008 is ready, here is its PR
 ```
 
-### With adapters: new work in Claude Code Desktop on the laptop
+### With adapters: opening Claude Desktop from a local daemon session
 
 ```mermaid
 sequenceDiagram
-  participant H as 分身
-  participant I as iMac daemon
+  participant H as Local daemon session
   participant A as claude-desktop adapter (laptop)
   participant CLI as claude CLI (laptop)
   participant App as Claude Code Desktop
-  H->>I: work.start claude-desktop in ~/focus/dolmen
-  I->>A: forwarded to the attached laptop daemon
+  H->>A: work.start in ~/focus/dolmen, local reply destination
+  A->>A: validate reply destination before creation
   A->>CLI: claude -p --session-id U -n title, short opening message
   A->>CLI: claude --desktop --resume U, under a pseudo-terminal
-  CLI->>App: session local_U appears in the sidebar
-  A->>CLI: relay: claude -p --model haiku, SendMessage the task to the session
-  CLI->>App: the task arrives and a turn starts
-  A-->>H: work item running, link claude://claude.ai/epitaxy/local_U
+  CLI->>App: open local_U in the sidebar
+  A->>CLI: inspect live owner and registered inbox protocol
+  alt Desktop-owned or unknown/unsupported owner
+    A-->>H: local_U was created, task was not delivered
+    Note over A,App: Continue in the app; no headless resume or relay fallback
+  else Confirmed CLI/SDK owner with supported inbox
+    A->>CLI: write task directly to inbox, priority next
+    A-->>H: unconfirmed write, exact input receipt
+    Note over A,CLI: Write alone does not prove acceptance or a running turn
+    CLI-->>A: reply to the daemon-owned inbox
+    A-->>H: persist peer reply to the original local session
+  end
 ```
 
 ### With adapters: a hand-off to Codex Desktop
