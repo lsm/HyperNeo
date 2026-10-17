@@ -2132,6 +2132,7 @@ export class NeoService {
           await this.start(work.id);
         else if (
           !recovered &&
+          this.driverTargets.get(work.id) &&
           (awaitingNeoWorker(work) ||
             (work.status === 'proposed' && this.driverTargets.get(work.id)?.verb === 'read'))
         )

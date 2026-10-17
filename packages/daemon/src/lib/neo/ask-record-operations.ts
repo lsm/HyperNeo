@@ -41,8 +41,11 @@ const AskResult = z.union([
   }),
 ]);
 
-export function requireNeoAskSession(caller: OperationCaller): Gate<string> {
-  return caller.sessionId
+export function requireNeoAskSession(
+  caller: OperationCaller,
+  isNeoSession: (sessionId: string) => boolean
+): Gate<string> {
+  return caller.sessionId && isNeoSession(caller.sessionId)
     ? { value: caller.sessionId }
     : { reason: { ok: false, reason: 'no_session: only a Neo session opens an ask.' } };
 }
@@ -68,7 +71,8 @@ export function createNeoAskRecordOperations(
   sessions: NeoTodoSessionRepository,
   controls: NeoTodoControls,
   projectOf: (sessionId: string) => string | null,
-  resolveProject: (projectId: string) => string | null
+  resolveProject: (projectId: string) => string | null,
+  isNeoSession: (sessionId: string) => boolean
 ) {
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
@@ -78,7 +82,11 @@ export function createNeoAskRecordOperations(
       ['input', 'caller'],
       'result:outcome'
     )
-    .pipe(requireNeoAskSession, 'caller', 'result:outcome')
+    .pipe(
+      (caller: OperationCaller) => requireNeoAskSession(caller, isNeoSession),
+      'caller',
+      'result:outcome'
+    )
     .pipe(
       (sessionId: string, input: z.infer<typeof Open>) => {
         const project = requireNeoAskProject(input, sessionId, projectOf, resolveProject);

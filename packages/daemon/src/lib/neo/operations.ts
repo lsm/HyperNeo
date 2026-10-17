@@ -1681,6 +1681,10 @@ export function createNeoOperations(service: NeoService) {
       (projectId) => {
         const resolved = service.repo.projectMerges.resolve(projectId) ?? projectId;
         return service.repo.getProject(resolved) ? resolved : null;
+      },
+      (sessionId) => {
+        const binding = service.repo.getBindingBySession(sessionId);
+        return !!binding && binding.kind !== 'worker';
       }
     ),
     ...createNeoQuestionOperations(
