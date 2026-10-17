@@ -22,7 +22,9 @@ describe('Neo speaking context', () => {
     expect(neoPrompt(null)).toContain('Empty redacted context, instruction or report fields');
     const holder = neoPrompt('mixed-name-project');
     expect(holder).toContain('context holder for project "mixed-name-project"');
-    expect(holder).toContain('You cannot consult other holders');
+    expect(holder).toContain(
+      "When a request spans projects, handle this project's part and open an ask in each other project"
+    );
     expect(holder).toContain('NEVER execute worker jobs directly');
   });
 });
