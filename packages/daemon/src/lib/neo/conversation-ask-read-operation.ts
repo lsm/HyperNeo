@@ -11,7 +11,6 @@ import type {
   NeoConversationAskRepository,
 } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { isMainNeoBinding } from './binding-roles.ts';
 import { NeoConversationAskSchema, NeoReplyToSchema } from './conversation-ask.ts';
 import { neoImageSize } from './image-size.ts';
 import {
@@ -165,8 +164,8 @@ const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
   .input(['request', 'caller', 'repo', 'ledger', 'readSendStatus'])
   .pipe((request: AskPage): Page => request, 'request', 'page')
   .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
-  .pipe((repo: NeoRepository) => repo.getBindingForProject(null), 'repo', 'root')
-  .pipe(requirePublicationConversation, ['page', 'root'], 'result:page')
+  .pipe((repo: NeoRepository) => repo.conversationId(), 'repo', 'conversation')
+  .pipe(requirePublicationConversation, ['page', 'conversation'], 'result:page')
   .pipe(
     (page: Page, ledger: NeoConversationAskRepository) =>
       readNeoConversationPage(page, ledger, 'ask'),
@@ -227,8 +226,7 @@ export function requireNeoImageConversation(
   input: ImageInput,
   repo: NeoRepository
 ): { value: ImageInput } | { reason: ImageFailure } {
-  const root = repo.getBindingForProject(null);
-  return isMainNeoBinding(root) && root.sessionId === `neo:${input.conversationId}`
+  return repo.conversationId() === input.conversationId
     ? { value: input }
     : { reason: { ok: false, reason: 'conversation_not_found' } };
 }

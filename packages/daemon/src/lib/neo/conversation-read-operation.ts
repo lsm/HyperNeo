@@ -45,8 +45,8 @@ export function createNeoConversationReadOperation(
       'binding'
     )
     .pipe(requireNeoConversationReader, ['page', 'caller', 'binding'], 'result:page')
-    .pipe(() => repo.getBindingForProject(null), 'page', 'root')
-    .pipe(requirePublicationConversation, ['page', 'root'], 'result:page')
+    .pipe(() => repo.conversationId(), 'page', 'conversation')
+    .pipe(requirePublicationConversation, ['page', 'conversation'], 'result:page')
     .pipe(
       (page: NeoConversationPage) => ({
         ok: true as const,

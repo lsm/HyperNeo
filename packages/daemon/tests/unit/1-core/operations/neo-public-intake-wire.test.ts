@@ -36,20 +36,10 @@ type Target = Pick<Session, 'id' | 'status' | 'config'>;
 const active = (id = root.sessionId): Target => ({ id, status: 'active', config: {} });
 
 describe('current public intake binding', () => {
-  test('pure root gate derives identity only from valid runtime root and matching non-archived session', () => {
-    expect(requireNeoIntakeConversation(root, active())).toEqual({ value: conversationId });
-    for (const [binding, session] of [
-      [null, active()],
-      [holder, active(holder.sessionId)],
-      [{ ...root, kind: 'worker' }, active()],
-      [{ ...root, projectId: 'other' }, active()],
-      [{ ...root, sessionId: 'neo:root' }, active('neo:root')],
-      [{ ...root, sessionId: conversationId }, active(conversationId)],
-      [root, null],
-      [root, active('unrelated')],
-      [root, { ...active(), status: 'archived' }],
-    ] as [NeoBinding | null, Target | null][]) {
-      expect(requireNeoIntakeConversation(binding, session)).toEqual({
+  test('the conversation gate takes the stored conversation id when it is a uuid', () => {
+    expect(requireNeoIntakeConversation(conversationId)).toEqual({ value: conversationId });
+    for (const conversation of [null, '', 'root']) {
+      expect(requireNeoIntakeConversation(conversation)).toEqual({
         reason: { ok: false, reason: 'The public Neo conversation is no longer available.' },
       });
     }
