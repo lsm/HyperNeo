@@ -346,7 +346,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const ref = sessions.readRef(todo.id);
     const ask = store.getAsk(todo.askId);
     const live = sessions.readLiveStatus(todo.id);
-    if (ref && ask && live !== 'done' && live !== 'failed' && live !== 'stopped')
+    const settled = live === 'done' || live === 'failed' || live === 'stopped';
+    if (ref && ask && (todo.state === 'doing' || !settled))
       await deps.invoke(caller(ask), 'work.stop', { ref }).catch(() => null);
   };
 

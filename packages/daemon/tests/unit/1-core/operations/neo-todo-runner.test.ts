@@ -219,6 +219,14 @@ describe('neo todo runner uncertainty', () => {
     sessions.recordLive(running.id, 'running', undefined);
     await flaky.stop(store.updateTodo(running, { state: 'done', report: 'Claimed done' }, 5));
     expect(calls.at(-1)).toMatchObject({ name: 'work.stop', input: { ref } });
+    const resumed = add();
+    sessions.recordRef(resumed.id, ref);
+    sessions.recordLive(resumed.id, 'done', undefined);
+    const before = calls.length;
+    await flaky.stop(store.updateTodo(resumed, { state: 'done' }, 6));
+    expect(calls).toHaveLength(before);
+    await flaky.stop(store.updateTodo(resumed, { state: 'doing' }, 7));
+    expect(calls.at(-1)).toMatchObject({ name: 'work.stop', input: { ref } });
   });
 });
 
