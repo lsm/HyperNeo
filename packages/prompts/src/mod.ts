@@ -66,7 +66,6 @@ import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
 import mdneoAskProgress from './neo/ask-progress.md' with { type: 'text' };
 import mdneoCardProgress from './neo/card-progress.md' with { type: 'text' };
-import mdneoWorkRerouted from './neo/work/rerouted.md' with { type: 'text' };
 import mdneoAskIdle from './neo/ask-idle.md' with { type: 'text' };
 import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
 import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
@@ -95,7 +94,6 @@ import mdneoSystemRootRuleSave from './neo/system/root-rule-save.md' with { type
 import mdneoSystemRootSnapshotScope from './neo/system/root-snapshot-scope.md' with {
   type: 'text',
 };
-import mdneoWorkDelegated from './neo/work/delegated.md' with { type: 'text' };
 import mdneoWorkDoneCheck from './neo/work/done-check.md' with { type: 'text' };
 import mdneoWorkDoneCheckAskForeign from './neo/work/done-check-ask-foreign.md' with {
   type: 'text',
@@ -366,7 +364,6 @@ const registry: Record<string, string> = {
   'neo/ask-evidence.md': mdneoAskEvidence,
   'neo/ask-progress.md': mdneoAskProgress,
   'neo/card-progress.md': mdneoCardProgress,
-  'neo/work/rerouted.md': mdneoWorkRerouted,
   'neo/ask-idle.md': mdneoAskIdle,
   'neo/ask-moved.md': mdneoAskMoved,
   'neo/ask-stalled.md': mdneoAskStalled,
@@ -386,7 +383,6 @@ const registry: Record<string, string> = {
   'neo/system/root-role.md': mdneoSystemRootRole,
   'neo/system/root-rule-save.md': mdneoSystemRootRuleSave,
   'neo/system/root-snapshot-scope.md': mdneoSystemRootSnapshotScope,
-  'neo/work/delegated.md': mdneoWorkDelegated,
   'neo/work/done-check-ask-foreign.md': mdneoWorkDoneCheckAskForeign,
   'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
   'neo/work/done-check-budget.md': mdneoWorkDoneCheckBudget,
@@ -555,7 +551,6 @@ export const {
   NEO_ASK_EVIDENCE,
   NEO_ASK_PROGRESS,
   NEO_CARD_PROGRESS,
-  NEO_WORK_REROUTED,
   NEO_ASK_STALLED,
   NEO_TRIGGER_NOTE,
   NEO_WORK_REVIEW_REQUEST,
@@ -575,7 +570,6 @@ export const {
   NEO_ROOT_ROLE,
   NEO_ROOT_RULE_SAVE,
   NEO_ROOT_SNAPSHOT_SCOPE,
-  NEO_WORK_DELEGATED,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
   NEO_WORK_DONE_CHECK_BUDGET,

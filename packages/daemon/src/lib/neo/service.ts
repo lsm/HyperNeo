@@ -9,12 +9,10 @@ import {
   NEO_ASK_IDLE,
   NEO_ASK_STALLED,
   NEO_SESSION_TRACK,
-  NEO_WORK_DELEGATED,
   NEO_WORK_PACK_NOTE,
   NEO_WORK_RETURNED,
   NEO_WORK_RETURNED_RETRIED,
   NEO_WORK_RETURNED_RETRY,
-  NEO_WORK_REROUTED,
 } from '@hyperneo/prompts';
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -1510,8 +1508,10 @@ export class NeoService {
         );
         return;
       }
-      const brief = `${NEO_WORK_DELEGATED}\n${JSON.stringify({ workId: work.id, title: work.title, instruction: withWorkGoal(work.instruction, this.workDoneGoal(work.id), this.cardEventsDelivered()) })}`;
-      await this.deliver(work.sessionId, work.id, brief, work.originSessionId);
+      await this.failWork(
+        work,
+        'Work handed to a chat no longer runs; add a todo with a target to run it.'
+      );
       return;
     }
     await this.failWork(
@@ -1987,17 +1987,10 @@ export class NeoService {
         if (this.proposalApproval(next.id) !== false)
           await this.startDriverWork(next, target, tried);
       },
-      returnToNeo: async (next, place) => {
-        await this.deliver(
-          next.originSessionId,
-          `neo-work-reroute:${next.id}:${this.driverTargets.readRetries(next.id)}`,
-          neoAskProgressNote(
-            this.askRecords.forWork(next.id),
-            fillPrompt(NEO_WORK_REROUTED, { work_id: next.id, title: next.title }),
-            { card: { id: next.id, title: next.title, ref, place } }
-          ),
-          next.originSessionId,
-          neoWorkParent(next)
+      returnToNeo: async (next) => {
+        await this.failWork(
+          next,
+          'Its session is archived, ended or taken, so it was not delivered; add a todo with a target to run it.'
         );
       },
     });

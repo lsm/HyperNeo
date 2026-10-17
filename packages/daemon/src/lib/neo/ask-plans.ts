@@ -65,47 +65,6 @@ export function neoAskLiveOutcomeCards(
   );
 }
 
-export function planNeoAskRestate(
-  asked: NeoAskItem | null,
-  input: {
-    question?: string;
-    options?: readonly string[];
-    kind?: NeoAskItemKind;
-    decides?: string;
-    because?: NeoAskQuestionBecause;
-  }
-): {
-  id: string;
-  text: string;
-  question: string;
-  kind: NeoAskItemKind;
-  options: string[];
-  decides: string;
-  because: NeoAskQuestionBecause | null;
-} | null {
-  const decides = asked?.decides ?? input.decides;
-  if (!asked || !decides || !input.question) return null;
-  const kind = input.kind ?? asked.kind ?? 'decision';
-  const because = input.because ?? asked.because ?? null;
-  const same =
-    asked.decides === decides &&
-    JSON.stringify(asked.because ?? null) === JSON.stringify(because) &&
-    asked.text === input.question &&
-    asked.kind === kind &&
-    JSON.stringify(asked.options ?? []) === JSON.stringify(input.options ?? []);
-  return same
-    ? null
-    : {
-        id: asked.id,
-        text: input.question,
-        question: input.question,
-        kind,
-        options: [...(input.options ?? [])],
-        decides,
-        because,
-      };
-}
-
 export function planNeoAskQuestion(
   ask: NeoAsk,
   input: {
