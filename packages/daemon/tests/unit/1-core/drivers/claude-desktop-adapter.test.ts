@@ -122,15 +122,31 @@ describe('claude-desktop adapter against the app session records', () => {
   }
 
   test.each([
-    { ok: true as const, value: { delivered: false, unconfirmed: true as const } },
-    { ok: false as const, reason: 'unreachable' as const, detail: 'owner changed' },
-  ])('uses the injected inbox result without relay fallback (%j)', async (reply) => {
+    {
+      owner: 'cli' as const,
+      reply: { ok: true as const, value: { delivered: false, unconfirmed: true as const } },
+    },
+    {
+      owner: 'desktop' as const,
+      reply: { ok: true as const, value: { delivered: false, unconfirmed: true as const } },
+    },
+    {
+      owner: 'desktop' as const,
+      reply: { ok: false as const, reason: 'unreachable' as const, detail: 'owner changed' },
+    },
+  ])('uses the injected inbox result without relay fallback (%j)', async ({ owner, reply }) => {
     const calls: unknown[] = [];
     const context = { from: 'session:origin', caller: { source: 'internal' as const } };
-    const driver = adapter(undefined, 0, undefined, undefined, async (...args) => {
-      calls.push(args);
-      return reply;
-    });
+    const driver = adapter(
+      [{ sessionId: 'cli-a1', status: 'busy', pid: 1, owner }],
+      0,
+      undefined,
+      undefined,
+      async (...args) => {
+        calls.push(args);
+        return reply;
+      }
+    );
     for (const verb of ['send', 'steer'] as const) {
       expect(
         await driver[verb]!({ adapter: 'claude-desktop', id: 'local_a1' }, 'exact text', context)
