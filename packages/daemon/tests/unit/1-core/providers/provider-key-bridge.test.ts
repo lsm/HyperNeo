@@ -6,11 +6,22 @@ import {
 } from '../../../../src/lib/providers/provider-key-bridge';
 
 describe('shieldProviderKey', () => {
-  it('leaves anthropic and loopback routes untouched', () => {
+  it('leaves anthropic routes and daemon placeholder tokens untouched', () => {
     const anthropic = { ANTHROPIC_BASE_URL: 'https://gw.example.com', ANTHROPIC_AUTH_TOKEN: 'k' };
-    const loopback = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9', ANTHROPIC_AUTH_TOKEN: 'k' };
+    const placeholder = {
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:9',
+      ANTHROPIC_AUTH_TOKEN: 'custom-endpoint:s-1',
+    };
     expect(shieldProviderKey('anthropic', anthropic)).toBe(anthropic);
-    expect(shieldProviderKey('glm', loopback)).toBe(loopback);
+    expect(shieldProviderKey('custom', placeholder)).toBe(placeholder);
+  });
+
+  it('shields a real key even when the upstream is loopback', async () => {
+    const env = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9', ANTHROPIC_AUTH_TOKEN: 'loopback-key' };
+    await startProviderKeyBridge('glm', env, 'glm:loopback');
+    const shielded = shieldProviderKey('glm', env);
+    expect(Object.values(shielded)).not.toContain('loopback-key');
+    expect(shieldProviderKey('glm', shielded)).toBe(shielded);
   });
 
   it('refuses a keyed route whose bridge has not started', () => {
@@ -24,6 +35,18 @@ describe('shieldProviderKey', () => {
 });
 
 describe('startProviderKeyBridge', () => {
+  it('stops the previous bridge when a scope rotates its key', async () => {
+    const base = 'https://rotate.invalid';
+    const first = { ANTHROPIC_BASE_URL: base, ANTHROPIC_AUTH_TOKEN: 'old-key' };
+    const second = { ANTHROPIC_BASE_URL: base, ANTHROPIC_AUTH_TOKEN: 'new-key' };
+    await startProviderKeyBridge('kimi', first, 'kimi:rotate');
+    const oldUrl = shieldProviderKey('kimi', first).ANTHROPIC_BASE_URL;
+    await startProviderKeyBridge('kimi', second, 'kimi:rotate');
+
+    expect(() => shieldProviderKey('kimi', first)).toThrow(/not started/);
+    expect(shieldProviderKey('kimi', second).ANTHROPIC_BASE_URL).not.toBe(oldUrl);
+  });
+
   it('replaces the provider key with a loopback bridge that requires its own token', async () => {
     const env = {
       ANTHROPIC_BASE_URL: 'https://upstream.invalid/api/anthropic',

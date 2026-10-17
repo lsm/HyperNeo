@@ -13,23 +13,24 @@ type KeyedEnv = {
 
 type KeyBridge = { server: AnthropicMessagesBridgeServer; accessToken: string };
 
+const DAEMON_PLACEHOLDER_TOKEN =
+  /^(custom-endpoint:|codex-bridge-|ollama-bridge|anthropic-copilot-proxy:|opencode:)/;
+
 const readyBridges = new Map<string, KeyBridge>();
 const startingBridges = new Map<string, Promise<KeyBridge>>();
+const scopeBridgeKeys = new Map<string, string>();
 
-function isLoopback(baseUrl: string): boolean {
-  try {
-    const { hostname } = new URL(baseUrl);
-    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
-  } catch {
-    return false;
-  }
+function isDaemonToken(token: string): boolean {
+  if (DAEMON_PLACEHOLDER_TOKEN.test(token)) return true;
+  for (const bridge of readyBridges.values()) if (bridge.accessToken === token) return true;
+  return false;
 }
 
 function keyedUpstream(providerId: string, env: KeyedEnv) {
   const baseUrl = env.ANTHROPIC_BASE_URL;
   const bearer = env.ANTHROPIC_AUTH_TOKEN;
   const apiKey = bearer || env.ANTHROPIC_API_KEY;
-  if (providerId === 'anthropic' || !baseUrl || !apiKey || isLoopback(baseUrl)) return undefined;
+  if (providerId === 'anthropic' || !baseUrl || !apiKey || isDaemonToken(apiKey)) return undefined;
   const forwardHeaders = (env.ANTHROPIC_CUSTOM_HEADERS ?? '')
     .split('\n')
     .map((line) => line.split(':')[0].trim())
@@ -45,9 +46,24 @@ function keyedUpstream(providerId: string, env: KeyedEnv) {
   };
 }
 
-export async function startProviderKeyBridge(providerId: string, env: KeyedEnv): Promise<void> {
+function retireScopeBridge(scope: string, nextKey: string): void {
+  const previousKey = scopeBridgeKeys.get(scope);
+  scopeBridgeKeys.set(scope, nextKey);
+  if (!previousKey || previousKey === nextKey) return;
+  if ([...scopeBridgeKeys.values()].includes(previousKey)) return;
+  readyBridges.get(previousKey)?.server.stop();
+  readyBridges.delete(previousKey);
+}
+
+export async function startProviderKeyBridge(
+  providerId: string,
+  env: KeyedEnv,
+  scope: string = providerId
+): Promise<void> {
   const upstream = keyedUpstream(providerId, env);
-  if (!upstream || readyBridges.has(upstream.key)) return;
+  if (!upstream) return;
+  retireScopeBridge(scope, upstream.key);
+  if (readyBridges.has(upstream.key)) return;
   let starting = startingBridges.get(upstream.key);
   if (!starting) {
     const accessToken = randomUUID();
