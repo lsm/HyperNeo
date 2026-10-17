@@ -559,6 +559,7 @@ export class NeoAskRepository {
         .prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ? AND status = ?')
         .run(at, target.id, target.status).changes;
       if (!closed || !kept) throw new Error('neo-ask-fold-lost');
+      this.withdrawQuestions(source.id, outcome, at);
       const copy = this.db.prepare(`INSERT INTO neo_ask_items
         (ask_id, id, position, text, state, evidence, check_kind, met_by, removed, added_at,
          updated_at, options, decision, action, wait_card, kind, question, decides, because,
@@ -758,11 +759,8 @@ export class NeoAskRepository {
           ).changes === 0
       )
         throw lost;
-      if (settled && dropped !== null)
-        this.db
-          .prepare(`UPDATE neo_ask_items SET state = 'met', evidence = ?, met_by = 'human', updated_at = ?
-            WHERE ask_id = ? AND state = 'needs_you' AND removed = 0`)
-          .run(dropped, now, expected.id);
+      if (settled && (status === 'achieved' || status === 'abandoned'))
+        this.withdrawQuestions(expected.id, dropped ?? outcome, now);
       if (settled && !decision && decided && waitingItem)
         this.db
           .prepare(`UPDATE neo_ask_items SET decision = 1, updated_at = ?
@@ -780,6 +778,15 @@ export class NeoAskRepository {
     if (!row) return null;
     this.notify();
     return this.withWork([row])[0];
+  }
+
+  private withdrawQuestions(askId: string, reason: string, at: number): void {
+    this.db
+      .prepare(`UPDATE neo_ask_items SET state = 'pending', removed = 1,
+        removed_reason = ?, updated_at = ?
+        WHERE ask_id = ? AND state = 'needs_you' AND removed = 0
+          AND (decision = 1 OR kind IS NOT NULL OR question IS NOT NULL OR options IS NOT NULL)`)
+      .run(`Ask ended: ${reason}`, at, askId);
   }
 
   waitingFor(sessionId: string): (NeoAsk & { remindedAt: number | null })[] {
@@ -860,7 +867,11 @@ export class NeoAskRepository {
                   },
                 }
               : {}),
-            removed: removed === 1,
+            removed:
+              removed === 1 ||
+              ((row.status === 'achieved' || row.status === 'abandoned') &&
+                item.state === 'needs_you' &&
+                (decision === 1 || !!kind || !!question || !!options)),
             ...(removedReason ? { removedReason } : {}),
             ...(options ? { options: JSON.parse(options) as string[] } : {}),
             ...(decision === 1 ? { decision: true as const } : {}),

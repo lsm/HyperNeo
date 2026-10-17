@@ -1791,10 +1791,61 @@ describe('neo.ask operations', () => {
     const items = service.askRecords.get(askId)!.doneItems!;
     expect(items).toHaveLength(before!.doneItems!.length);
     expect(items.find((item) => item.question === 'Which NOTICE text?')).toMatchObject({
-      state: 'met',
-      metBy: 'human',
-      evidence: 'The human dropped this ask: "不用了，放弃 Fix the login bug"',
+      state: 'pending',
+      removed: true,
+      removedReason: 'Ask ended: The human dropped this ask: "不用了，放弃 Fix the login bug"',
     });
+  });
+
+  test.each(['achieved', 'abandoned'] as const)(
+    'ending an ask as %s withdraws every open question without inventing answers',
+    async (status) => {
+      const askId = await openAsk();
+      await invoke('neo.ask.question', {
+        askId,
+        question: 'Which target?',
+        options: ['Keep it', 'Replace it'],
+        kind: 'decision',
+      });
+      const before = service.askRecords.get(askId)!;
+      expect(service.askRecords.settle(before, status, 'Finished.', 'Finished.')).toMatchObject({
+        status,
+        waitingItem: null,
+        doneItems: expect.arrayContaining([
+          expect.objectContaining({ question: 'Which target?', removed: true, state: 'pending' }),
+          expect.objectContaining({ id: 'i1', removed: false, state: 'pending' }),
+        ]),
+      });
+      const rows = db
+        .getDatabase()
+        .prepare(
+          "SELECT state, removed FROM neo_ask_items WHERE ask_id = ? AND question = 'Which target?'"
+        )
+        .all(askId);
+      expect(rows).toEqual([{ state: 'pending', removed: 1 }]);
+      expect(
+        service.askRecords.get(askId)!.doneItems!.find((item) => item.question)?.answer
+      ).toBeUndefined();
+    }
+  );
+
+  test('reading an old settled ask retires unanswered questions without rewriting the record', async () => {
+    const askId = await openAsk();
+    await invoke('neo.ask.question', { askId, question: 'Still needed?', kind: 'decision' });
+    db.getDatabase().prepare("UPDATE neo_asks SET status = 'achieved' WHERE id = ?").run(askId);
+    expect(service.askRecords.get(askId)!.doneItems!.find((item) => item.question)).toMatchObject({
+      question: 'Still needed?',
+      state: 'needs_you',
+      removed: true,
+    });
+    expect(
+      db
+        .getDatabase()
+        .prepare(
+          "SELECT state, removed FROM neo_ask_items WHERE ask_id = ? AND question = 'Still needed?'"
+        )
+        .get(askId)
+    ).toEqual({ state: 'needs_you', removed: 0 });
   });
 
   test('a settle never carries a gate: waiting needs something the human can act on', async () => {
