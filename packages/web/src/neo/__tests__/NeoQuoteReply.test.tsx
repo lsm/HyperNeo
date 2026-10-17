@@ -244,7 +244,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       });
       sessionId.value = null;
       render(<NeoLive />);
-      expect(screen.getByText('Reply in chat').closest('button')?.disabled).toBe(true);
+      expect(screen.getByText('在聊天里回复').closest('button')?.disabled).toBe(true);
       sessionId.value = root;
       const input = (await screen.findByRole('textbox')) as HTMLTextAreaElement;
       type(draft);
@@ -255,7 +255,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       Object.defineProperty(scroll, 'scrollHeight', { value: 1600 });
       const scrollTo = vi.spyOn(scroll, 'scrollTo');
       const intoView = vi.spyOn(input, 'scrollIntoView');
-      fireEvent.click(screen.getByRole('button', { name: 'Reply in chat' }));
+      fireEvent.click(screen.getByRole('button', { name: '在聊天里回复' }));
       await waitFor(() => expect(document.activeElement).toBe(input));
       expect(screen.getByRole('region', { name: /^Replying to Neo:/ }).textContent).toContain(
         'Which repo?'

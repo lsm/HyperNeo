@@ -1,7 +1,7 @@
 import type {
   NeoAskItem,
   NeoAskSessionView,
-  NeoCardView,
+  NeoAskTodo,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
@@ -11,7 +11,6 @@ import {
   NeoAppMark,
   NeoChatMark,
   NeoMoreIcon,
-  NeoStatusChip,
   neoCardClass,
   neoFooterClass,
   neoPlainClass,
@@ -24,9 +23,8 @@ import {
   type NeoAskOutcome,
   type NeoAskView,
   isNeoAskQuestionItem,
-  neoAskOpenTarget,
 } from './neo-asks.ts';
-import type { NeoScene, NeoSceneCards } from './neo-scenes.ts';
+import type { NeoSceneCards } from './neo-scenes.ts';
 import { neoAppLabel, neoAppLogo, neoSessionLink } from './work-driver.ts';
 import { isNeoSummarized } from './neo-ask-detail.ts';
 import type { NeoQuote } from './neo-intake.ts';
@@ -39,64 +37,45 @@ const tones = {
   ended: 'text-fg-muted bg-fill-soft',
 };
 
-function stepGlyph(
-  scene: NeoScene,
-  done: boolean,
-  card?: NeoCardView
-): { mark: string; color: string } {
-  if (scene.receipt.kind === 'work' && scene.receipt.status === 'proposed')
-    return { mark: '○', color: 'text-fg-faint' };
-  if (done) return { mark: '✓', color: 'text-success' };
-  if (scene.group === 'attention') return { mark: '!', color: 'text-warning' };
-  if (scene.group === 'running' && card && ['running', 'checking', 'pr_open'].includes(card.phase))
-    return { mark: '●', color: 'text-accent' };
-  return { mark: '○', color: 'text-fg-faint' };
-}
+const todoMarks = {
+  pending: ['○', 'text-fg-faint'],
+  running: ['●', 'text-accent'],
+  done: ['✓', 'text-success'],
+  failed: ['✕', 'text-danger'],
+  cancelled: ['', 'text-fg-faint'],
+} as const;
 
-function StepRow({
-  scene,
-  done,
+function TodoRow({
+  todo,
   control,
-  todos,
-  cards,
+  number,
 }: {
-  scene: NeoScene;
-  done: boolean;
+  todo: NeoAskTodo;
   control?: ComponentChildren;
-  todos: readonly NeoAskItem[];
-  cards?: NeoSceneCards;
+  number?: number;
 }) {
-  const owned = todos.filter((item) => !item.removed && item.deliveredBy === scene.ref.id);
-  const glyph = stepGlyph(
-    scene,
-    owned.length ? owned.every((item) => item.state === 'met') : done,
-    cards?.get(scene.ref.id)
-  );
-  const title = scene.receipt.kind === 'work' ? scene.receipt.title : scene.label;
+  const [mark, color] = todoMarks[todo.state];
   return (
     <div
-      data-ask-step={scene.ref.id}
-      data-neo-work={scene.ref.id}
-      class="flex min-w-0 items-baseline gap-2 text-sm"
+      data-ask-todo={todo.id}
+      data-neo-work={todo.workId ?? undefined}
+      class={`flex min-w-0 items-start gap-2.5 text-sm ${number === undefined ? 'border-t border-line py-2' : 'py-1'}`}
     >
-      <span aria-hidden="true" class={`w-3 shrink-0 text-center text-xs ${glyph.color}`}>
-        {glyph.mark}
+      <span aria-hidden="true" class={`w-4 shrink-0 text-center font-semibold ${color}`}>
+        {number ?? mark}
       </span>
       <div class="min-w-0 flex-1">
-        <span class="line-clamp-2 break-words" title={title}>
-          {title}
+        <span
+          class={`break-words ${todo.state === 'cancelled' ? 'text-fg-faint line-through' : 'text-fg'}`}
+        >
+          {todo.title}
         </span>
-        <span class="block break-words text-xs text-fg-faint">
-          {scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'
-            ? '等你决定'
-            : scene.label}
-        </span>
-        <Checklist
-          items={todos}
-          step={{ id: scene.ref.id, title }}
-          label={`做完 = ${title}`}
-          cards={cards}
-        />
+        {todo.added && todo.state !== 'cancelled' && (
+          <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
+            新
+          </span>
+        )}
+        <span class="block break-words text-xs text-fg-muted">{todo.status}</span>
       </div>
       {control}
     </div>
@@ -177,113 +156,21 @@ function SessionRow({
   );
 }
 
-const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> = {
-  met: { mark: '✓', color: 'text-success' },
-  needs_you: { mark: '!', color: 'text-warning' },
-  reported: { mark: '○', color: 'text-fg-faint' },
-  pending: { mark: '○', color: 'text-fg-faint' },
-};
-
-function ItemRow({
-  item,
-  waitingForPr,
-  goal,
-  progress,
-}: {
-  item: NeoAskItem;
-  waitingForPr?: boolean;
-  goal?: boolean;
-  progress?: string;
-}) {
-  const glyph = itemGlyphs[item.state];
-  const tags = [
-    item.removed && 'removed',
-    item.addedAt !== null && !item.removed && 'added',
-    item.state === 'met' && item.metBy === 'daemon' && 'verified',
-    item.state === 'met' && item.metBy === 'human' && 'confirmed by you',
-    item.state === 'met' && item.metBy === 'neo' && 'Neo says done, not verified',
-    item.state === 'needs_you' && 'needs you',
-    item.state === 'reported' && 'reported, not verified',
-  ].filter(Boolean);
-  return (
-    <li data-ask-item={item.id} class="flex min-w-0 items-baseline gap-2 text-sm">
-      <span aria-hidden="true" class={`w-3 shrink-0 text-center text-xs ${glyph.color}`}>
-        {glyph.mark}
-      </span>
-      <span class="min-w-0 flex-1">
-        <span
-          class={`break-words ${item.removed ? 'text-fg-faint line-through' : item.state === 'met' ? 'text-fg-muted' : 'text-fg'}`}
-        >
-          {goal && <span class="text-fg-faint">做完 = </span>}
-          {item.text}
-        </span>
-        {tags.length > 0 && <span class="ml-2 text-xs text-fg-faint">{tags.join(' · ')}</span>}
-        {waitingForPr && <span class="block text-xs text-fg-faint">等 PR 开出来</span>}
-        {progress && <span class="block text-xs text-fg-faint">{progress}</span>}
-        {item.removed && item.removedReason && (
-          <span class="block break-words text-xs text-fg-faint">{item.removedReason}</span>
-        )}
-        {item.evidence && (item.state === 'met' || item.state === 'reported') && (
-          <span class="block truncate text-xs text-fg-faint" title={item.evidence}>
-            {item.evidence}
-          </span>
-        )}
-      </span>
-    </li>
-  );
-}
-
 function AnsweredQuestion({ item }: { item: NeoAskItem }) {
   const answer = item.answer;
   return (
     <li data-ask-answer={item.id} class="flex min-w-0 flex-wrap gap-x-2 text-sm text-fg-muted">
-      <span>{answer?.choice ?? '选择未记录'}</span>
+      <span>
+        {item.question ?? item.text} — <span>{answer?.choice ?? '选择未记录'}</span>
+      </span>
       {answer?.at != null ? (
         <time dateTime={new Date(answer.at).toISOString()} class="text-xs text-fg-faint">
-          {new Date(answer.at).toLocaleString()}
+          · {new Date(answer.at).toLocaleString()}
         </time>
       ) : (
         <span class="text-xs text-fg-faint">时间未记录</span>
       )}
     </li>
-  );
-}
-
-function Checklist({
-  items,
-  label,
-  cards,
-  step,
-}: {
-  items: readonly NeoAskItem[];
-  label: string;
-  cards?: NeoSceneCards;
-  step?: { id: string; title: string };
-}) {
-  const listed = step ? items.filter((item) => item.deliveredBy === step.id) : items;
-  if (!listed.length) return null;
-  return (
-    <ul aria-label={label} class="space-y-1.5">
-      {listed.map((item) => (
-        <ItemRow
-          key={item.id}
-          item={item}
-          goal={!!step}
-          progress={
-            item.state !== 'met' && item.check === 'coding.pr_merged'
-              ? cards?.get(item.deliveredBy ?? '')?.pr?.label
-              : undefined
-          }
-          waitingForPr={
-            !item.removed &&
-            item.state !== 'met' &&
-            item.check === 'coding.pr_merged' &&
-            !item.watch?.some((url) => /\/pull\/\d+/i.test(url)) &&
-            !cards?.get(item.deliveredBy ?? '')?.pr
-          }
-        />
-      ))}
-    </ul>
   );
 }
 
@@ -293,34 +180,35 @@ function ActionRow({
   onReply,
   onAnswer,
   disabled,
-  outcomes,
-  cards,
+  todos,
+  control,
 }: {
   action: NeoAskItemAction;
   reply: NeoQuote;
   onReply?: (quote: NeoQuote) => void;
   onAnswer?: (itemId: string, choice: string) => void;
   disabled?: boolean;
-  outcomes: readonly NeoAskItem[];
-  cards?: NeoSceneCards;
+  todos: readonly NeoAskTodo[];
+  control: (todo: NeoAskTodo) => ComponentChildren;
 }) {
-  const todos = (step: { id: string; title: string }) => (
-    <Checklist items={outcomes} label={`做完 = ${step.title}`} step={step} cards={cards} />
-  );
   return (
     <li id={reply.anchor} data-ask-item={action.itemId} class="min-w-0 text-sm">
       <p class="break-words font-medium text-fg">{action.question}</p>
-      {action.steps && action.steps.length > 1 && (
-        <ol aria-label="待开始步骤" class="mt-2 list-decimal space-y-1 pl-5">
-          {action.steps.map((step) => (
-            <li key={step.id} data-question-step={step.id} class="break-words">
-              {step.title}
-              {todos(step)}
-            </li>
-          ))}
-        </ol>
+      {action.steps && (
+        <div aria-label="待开始 todo" class="mt-2">
+          {action.steps.map((step, index) => {
+            const todo = todos.find((todo) => todo.workId === step.id) ?? {
+              id: step.id,
+              workId: step.id,
+              title: step.title,
+              state: 'pending' as const,
+              status: '等你开始',
+              added: false,
+            };
+            return <TodoRow key={step.id} todo={todo} number={index + 1} control={control(todo)} />;
+          })}
+        </div>
       )}
-      {action.steps?.length === 1 && todos(action.steps[0])}
       {action.options.length > 0 ? (
         <div class="mt-2 flex flex-wrap justify-end gap-2">
           {action.options.map((option, index) => (
@@ -345,7 +233,7 @@ function ActionRow({
             onClick={() => onReply?.(reply)}
           >
             <NeoChatMark />
-            Reply in chat
+            在聊天里回复
           </button>
         </div>
       )}
@@ -395,39 +283,34 @@ export function NeoAskCard({
         : view.group === 'outcomes'
           ? 'ended'
           : 'running';
-  const itemActions = [...view.humanActions];
+  const itemActions = view.humanActions.slice(-1);
   const questioned = new Set(
     itemActions.flatMap((action) => action.steps?.map((step) => step.id) ?? [])
   );
-  const scenes = view.scenes.filter(
-    (scene) =>
-      scene.receipt.kind !== 'work' ||
-      scene.receipt.status !== 'proposed' ||
-      !questioned.has(scene.ref.id)
-  );
-  const outcomes = view.items.filter((item) => !isNeoAskQuestionItem(item));
-  const visibleSteps = new Set([...scenes.map((scene) => scene.ref.id), ...questioned]);
-  const unassigned = outcomes.filter(
-    (item) => !item.deliveredBy || !visibleSteps.has(item.deliveredBy)
-  );
+  const todos = view.todos.filter((todo) => !todo.workId || !questioned.has(todo.workId));
   const questions = view.items.filter((item) => isNeoAskQuestionItem(item) && item.state === 'met');
-  const openControl = (scene: NeoScene) => {
-    const target = neoAskOpenTarget({ ...view, scenes: [scene] }, cards);
-    if (!target) return null;
-    const name = `打开 ${target.work.title}`;
-    return target.link ? (
-      <a href={target.link} class={neoSecondaryClass} aria-label={name}>
-        <NeoAppMark logo={neoAppLogo(target.card?.adapter)} />
+  const openControl = (todo: NeoAskTodo) => {
+    if (!todo.workId || todo.state === 'cancelled') return null;
+    const card = cards?.get(todo.workId);
+    const target = todo.open ?? card?.open;
+    const scene = view.scenes.find((scene) => scene.ref.id === todo.workId);
+    const sessionId =
+      target?.sessionId ?? (scene?.receipt.kind === 'work' ? scene.receipt.sessionId : null);
+    const link = sessionId ? null : neoSessionLink(target?.link ?? null, target?.daemon);
+    const name = `打开 ${todo.title}`;
+    return link ? (
+      <a href={link} class={neoSecondaryClass} aria-label={name}>
         打开
       </a>
-    ) : onOpen ? (
+    ) : sessionId && (onOpen || onOpenSession) ? (
       <button
         type="button"
         class={neoSecondaryClass}
         aria-label={name}
-        onClick={() => onOpen(target.work.id)}
+        onClick={() =>
+          onOpenSession ? onOpenSession(sessionId, todo.title) : onOpen?.(todo.workId!)
+        }
       >
-        <NeoChatMark />
         打开
       </button>
     ) : null;
@@ -435,12 +318,12 @@ export function NeoAskCard({
   return (
     <article aria-label={ask.title} data-ask={ask.id} class={neoCardClass}>
       <div class="flex min-h-7 items-center gap-2">
-        <NeoStatusChip
-          tone={tone}
-          colors={tones[tone]}
-          label={view.label}
-          pulse={tone === 'running'}
-        />
+        <span
+          data-tone={tone}
+          class={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${tones[tone]}`}
+        >
+          {view.label}
+        </span>
         <span class="flex-1" />
         {onSettle && ask.status !== 'achieved' && ask.status !== 'abandoned' && (
           <Dropdown
@@ -462,13 +345,9 @@ export function NeoAskCard({
           />
         )}
       </div>
-      {view.idleReason && <p class="mt-1 text-xs text-fg-muted">{view.idleReason}</p>}
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}
       </h3>
-      {view.summary && (
-        <p class="mt-1.5 line-clamp-2 break-words text-sm text-fg-muted">{view.summary}</p>
-      )}
       {itemActions.length > 0 && (
         <div data-ask-needs-you class="mt-3 rounded-lg bg-warning/10 px-3 py-2">
           <ul aria-label="Needs you" class="space-y-1.5">
@@ -480,41 +359,17 @@ export function NeoAskCard({
                 onReply={onReply}
                 onAnswer={onAnswer}
                 disabled={disabled}
-                outcomes={outcomes}
-                cards={cards}
+                todos={view.todos}
+                control={openControl}
               />
             ))}
           </ul>
         </div>
       )}
-      {scenes.length > 0 && (
-        <div class="mt-3 space-y-2 border-l-2 border-line pl-3">
-          {scenes.map((scene) => (
-            <StepRow
-              key={scene.ref.id}
-              scene={scene}
-              done={view.doneIds.has(scene.ref.id)}
-              control={openControl(scene)}
-              todos={outcomes}
-              cards={cards}
-            />
-          ))}
-        </div>
-      )}
-      {!summarized && (unassigned.length > 0 || !view.items.length) && (
-        <div class="mt-3 text-sm text-fg-muted">
-          <p class="text-xs font-medium text-fg-faint">还要</p>
-          {unassigned.length > 0 ? (
-            <Checklist items={unassigned} label="还要" cards={cards} />
-          ) : (
-            <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
-          )}
-        </div>
-      )}
-      {view.sessions.length > 0 && (
-        <div class="mt-3 space-y-2 border-l-2 border-line pl-3" aria-label="Linked sessions">
-          {view.sessions.map((session) => (
-            <SessionRow key={session.key} session={session} onOpenSession={onOpenSession} />
+      {todos.length > 0 && (
+        <div class="mt-3" aria-label="Todos">
+          {todos.map((todo) => (
+            <TodoRow key={todo.id} todo={todo} control={openControl(todo)} />
           ))}
         </div>
       )}
@@ -543,7 +398,24 @@ export function NeoAskCard({
               </ul>
             </div>
           )}
-          {ask.outcome && ask.outcome.trim() !== view.summary && (
+          {view.idleReason && <p class="text-xs text-fg-muted">{view.idleReason}</p>}
+          {view.sessions
+            .filter(
+              (session) =>
+                !view.todos.some(
+                  (todo) =>
+                    todo.workId &&
+                    ((session.open.sessionId &&
+                      (todo.open ?? cards?.get(todo.workId)?.open)?.sessionId ===
+                        session.open.sessionId) ||
+                      (session.open.link &&
+                        (todo.open ?? cards?.get(todo.workId)?.open)?.link === session.open.link))
+                )
+            )
+            .map((session) => (
+              <SessionRow key={session.key} session={session} onOpenSession={onOpenSession} />
+            ))}
+          {view.settled && ask.outcome && ask.outcome.trim() && (
             <div class="text-sm text-fg-muted">
               <p class="text-xs font-medium text-fg-faint">Outcome</p>
               <p class="mt-1 whitespace-pre-wrap break-words">{ask.outcome}</p>

@@ -3,6 +3,7 @@ import type {
   NeoAsk,
   NeoAskHumanAction,
   NeoAskItem,
+  NeoAskTodo,
   NeoAskSessionView,
   NeoAskView as NeoAskSnapshotView,
   NeoCardView,
@@ -20,6 +21,7 @@ export type NeoAskView = {
   readonly scenes: readonly NeoScene[];
   readonly summary: string | null;
   readonly items: readonly NeoAskItem[];
+  readonly todos: readonly NeoAskTodo[];
   readonly sessions: readonly NeoAskSessionView[];
   readonly humanActions: readonly NeoAskHumanAction[];
   readonly idleReason?: string;
@@ -61,11 +63,13 @@ export function describeNeoAskFromView(
   const liveIds = new Set(published.workIds);
   const live = scenes.filter((scene) => liveIds.has(scene.ref.id));
   const needsYou =
-    !published.settled && (published.needsYou || live.some((scene) => scene.group === 'attention'));
+    !published.settled &&
+    (published.needsYou || (!published.todos && live.some((scene) => scene.group === 'attention')));
   return {
     ask,
     group: needsYou ? 'attention' : published.group,
-    label: needsYou && !published.idle ? NEO_ASK_NEEDS_YOU_LABEL : published.label,
+    label:
+      needsYou && !published.idle && !published.todos ? NEO_ASK_NEEDS_YOU_LABEL : published.label,
     settled: published.settled,
     done: published.done,
     doneIds: new Set(published.doneWorkIds),
@@ -73,6 +77,7 @@ export function describeNeoAskFromView(
     scenes: live,
     summary: published.summary,
     items: neoAskItems(ask),
+    todos: published.todos ?? [],
     sessions: published.sessions ?? [],
     humanActions: published.settled ? [] : (published.humanActions ?? []),
     ...(published.idleReason && !published.label.includes(published.idleReason)

@@ -1,6 +1,11 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk, NeoAskItem, NeoAskView } from '@hyperneo/shared/types/neo-snapshot';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import type {
+  NeoAsk,
+  NeoAskItem,
+  NeoAskTodo,
+  NeoAskView,
+} from '@hyperneo/shared/types/neo-snapshot';
+import { cleanup, fireEvent, render, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskCard } from '../NeoAskCard.tsx';
 import {
@@ -237,6 +242,17 @@ describe('neoAskOpenTarget', () => {
 });
 
 describe('describeNeoAskFromView', () => {
+  it('keeps the daemon todo status even when a proposed or failed scene is attention', () => {
+    const value = ask('fact', 'open', ['b1']);
+    const view = describeAsk(value, scenes.attention, {
+      label: '在做',
+      group: 'running',
+      todos: [todo('b1', 'pending')],
+    });
+    expect(view.label).toBe('在做');
+    expect(view.group).toBe('running');
+  });
+
   it('keeps the daemon label of an idle ask and shows why it could not start', () => {
     const trying = describeAsk(ask('a', 'open', []), [], {
       group: 'attention',
@@ -256,647 +272,247 @@ describe('describeNeoAskFromView', () => {
     expect(stuck.label).toBe("Needs you · Couldn't start: No adapter can start work");
     expect(stuck.idleReason).toBeUndefined();
     const card = render(<NeoAskCard view={trying} />);
+    expect(card.queryByText("Couldn't start: No adapter can start work")).toBeNull();
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
     expect(card.getByText("Couldn't start: No adapter can start work")).toBeTruthy();
     cleanup();
   });
 });
 
+const todo = (
+  id: string,
+  state: NeoAskTodo['state'],
+  extra: Partial<NeoAskTodo> = {}
+): NeoAskTodo => ({
+  id,
+  workId: null,
+  title: `任务 ${id}`,
+  state,
+  status: `状态 ${id}`,
+  added: false,
+  ...extra,
+});
+
 describe('NeoAskCard', () => {
-  it('lists the linked sessions with their app, state and how to open them', () => {
-    const openSession = vi.fn();
-    const view = describeAsk(ask('a', 'waiting', []), [], {
-      sessions: [
-        {
-          key: 'claude',
-          title: 'Fix the login bug',
-          adapter: 'claude-desktop',
-          status: 'running',
-          kind: 'needs_you',
-          open: {
-            link: 'claude://claude.ai/epitaxy/x',
-            remoteLink: null,
-            sessionId: null,
-            daemon: null,
-          },
-        },
-        {
-          key: 'local',
-          title: 'Review the docs',
-          adapter: 'hyperneo',
-          status: 'failed',
-          kind: 'failed',
-          open: { link: '/session/s1', remoteLink: null, sessionId: 's1', daemon: null },
-        },
-        {
-          key: 'codex',
-          title: 'Bump the deps',
-          adapter: 'codex-desktop',
-          status: 'running',
-          kind: null,
-          open: { link: null, remoteLink: null, sessionId: null, daemon: null },
-        },
+  it('renders one todo list with factual marks, Chinese progress, removals and post-start additions', () => {
+    const view = describeAsk(ask('a', 'open', ['a2']), scenes.running, {
+      todos: [
+        todo('pending', 'pending'),
+        todo('running', 'running'),
+        todo('done', 'done'),
+        todo('failed', 'failed', { status: '没交出去：目标不可用' }),
+        todo('old', 'cancelled', { status: '换成「新会话」' }),
+        todo('new', 'pending', { added: true }),
+        todo('a2', 'running', { workId: 'a2', status: '#103 开着，等 bot 批准' }),
       ],
     });
-    const card = render(<NeoAskCard view={view} onOpenSession={openSession} />);
-    const rows = [...card.container.querySelectorAll('[data-ask-session]')].map((row) => [
-      row.tagName,
-      row.textContent,
+    const onOpen = vi.fn();
+    const app = render(<NeoAskCard view={view} onOpen={onOpen} />);
+    const rows = [...app.container.querySelectorAll('[data-ask-todo]')];
+    expect(rows.map((row) => row.querySelector('[aria-hidden]')?.textContent)).toEqual([
+      '○',
+      '●',
+      '✓',
+      '✕',
+      '',
+      '○',
+      '●',
     ]);
-    expect(rows).toEqual([
-      ['A', 'Fix the login bugClaude Code · Needs you'],
-      ['BUTTON', 'Review the docsHyperNeo · Failed'],
-      ['DIV', 'Bump the depsCodex · Running'],
-    ]);
-    expect(card.getByRole('link', { name: 'Open Fix the login bug' }).getAttribute('href')).toBe(
-      'claude://claude.ai/epitaxy/x'
-    );
-    fireEvent.click(card.getByRole('button', { name: 'Open Review the docs' }));
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('s1', 'Review the docs');
+    expect(rows[4].querySelector('.line-through')?.textContent).toBe('任务 old');
+    expect(app.getByText('新')).toBeTruthy();
+    expect(app.getByText('没交出去：目标不可用')).toBeTruthy();
+    expect(app.getByText('#103 开着，等 bot 批准')).toBeTruthy();
+    expect(app.queryByText(/还要|做完 =|verified|Reply received|Watched:/)).toBeNull();
+    const buttons = app.getAllByRole('button', { name: /^打开 / });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith('a2');
+    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    expect(app.container.querySelectorAll('[data-ask-todo]')).toHaveLength(7);
+    expect(app.getAllByRole('button', { name: /^打开 / })).toHaveLength(1);
   });
 
-  it('asks for the full ask when a summarized one is expanded, and shows it once it arrives', () => {
-    const full = ask('a', 'achieved', []);
-    const summarized = { ...full, doneWhen: '', summarized: true as const };
-    const onExpand = vi.fn();
-    const card = render(
-      <NeoAskCard view={describeAsk(summarized, [], { settled: true })} onExpand={onExpand} />
-    );
-    const toggle = card.getByRole('button', { name: 'Details' });
-    fireEvent.click(toggle);
-    expect(onExpand).toHaveBeenCalledTimes(1);
-    expect(card.getByRole('status').textContent).toBe('Loading details…');
-    fireEvent.click(toggle);
-    expect(onExpand).toHaveBeenCalledTimes(1);
-    fireEvent.click(toggle);
-    expect(onExpand).toHaveBeenCalledTimes(2);
-    card.rerender(
-      <NeoAskCard view={describeAsk(full, [], { settled: true })} onExpand={onExpand} />
-    );
-    expect(card.queryByRole('status')).toBeNull();
-    expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
-  });
-
-  it('asks for the detail of an ask that becomes summarized while open, and retries a failed read', () => {
-    const full = ask('a', 'achieved', []);
-    const summarized = { ...full, doneWhen: '', summarized: true as const };
-    const onExpand = vi.fn();
-    const card = render(
-      <NeoAskCard view={describeAsk(full, [], { settled: true })} onExpand={onExpand} />
-    );
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(onExpand).not.toHaveBeenCalled();
-    card.rerender(
-      <NeoAskCard view={describeAsk(summarized, [], { settled: true })} onExpand={onExpand} />
-    );
-    expect(onExpand).toHaveBeenCalledTimes(1);
-    card.rerender(
-      <NeoAskCard
-        view={describeAsk(summarized, [], { settled: true })}
-        onExpand={onExpand}
-        detailFailed
-      />
-    );
-    expect(card.getByRole('status').textContent).toContain('Couldn’t load details.');
-    fireEvent.click(card.getByRole('button', { name: 'Retry' }));
-    expect(onExpand).toHaveBeenCalledTimes(2);
-    card.rerender(
-      <NeoAskCard
-        view={describeAsk(summarized, [], { settled: true })}
-        onExpand={onExpand}
-        detailEpoch={1}
-      />
-    );
-    expect(onExpand).toHaveBeenCalledTimes(3);
-    card.rerender(
-      <NeoAskCard
-        view={describeAsk({ ...summarized, revision: 9 }, [], { settled: true })}
-        onExpand={onExpand}
-        detailEpoch={1}
-      />
-    );
-    expect(onExpand).toHaveBeenCalledTimes(4);
-  });
-
-  it('shows no session rows when the ask has none', () => {
-    const card = render(<NeoAskCard view={describeAsk(ask('a', 'open', []), [])} />);
-    expect(card.container.querySelector('[data-ask-session]')).toBeNull();
-  });
-
-  it('shows 还要 before Details and renders each step once without nested cards', () => {
-    const owned = [scenes.outcomes[0]!, scenes.running[0]!, scenes.attention[0]!];
-    const view = describeAsk(ask('a', 'open', ['a1', 'a2', 'b1']), owned, { doneWorkIds: ['a1'] });
-    const card = render(<NeoAskCard view={view} onOpen={vi.fn()} />);
-    expect(card.getByText('还要')).toBeTruthy();
-    expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
-    expect(card.queryByText(/outcomes verified/)).toBeNull();
-    expect(card.container.querySelectorAll('[data-ask-step]')).toHaveLength(3);
-    expect(card.container.querySelectorAll('article')).toHaveLength(1);
-    expect(card.getAllByText('Handed to HyperNeo')).toHaveLength(1);
-    const opener = card.getByRole('button', { name: '打开 Card a2' });
-    expect(opener.closest('[data-ask-step]')?.getAttribute('data-ask-step')).toBe('a2');
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(card.getAllByRole('button', { name: '打开 Card a2' })).toHaveLength(1);
-    expect(card.container.querySelectorAll('article')).toHaveLength(1);
-  });
-
-  it('opens the ask’s current card in its app or in chat', () => {
-    const queued = { ...(work('a2', 'queued') as NeoWork), sessionId: null };
-    const linked = groupNeoScenes(classifyNeoScenes([{ ...queued, kind: 'work' }])).running;
-    const card = testCard(
-      { id: 'a2', status: 'queued', sessionId: null },
-      {
-        adapter: 'codex-desktop',
-        open: { link: 'codex://threads/t1', remoteLink: null, sessionId: null, daemon: null },
-      }
-    );
-    const view = describeAsk(ask('a', 'open', ['a2']), linked);
-    const app = render(<NeoAskCard view={view} cards={new Map([['a2', card]])} />);
-    const link = app.getByRole('link', { name: '打开 Card a2' });
-    expect([link.getAttribute('href'), link.textContent]).toEqual(['codex://threads/t1', '打开']);
-    expect(link.querySelector('[data-app-logo]')?.getAttribute('data-app-logo')).toBe(
-      'anthropic-codex'
-    );
-    cleanup();
-    const open = vi.fn();
-    const chat = render(
-      <NeoAskCard
-        view={describeAsk(ask('c', 'achieved', ['c1']), scenes.outcomes.slice(1))}
-        onOpen={open}
-      />
-    );
-    fireEvent.click(chat.getByRole('button', { name: '打开 Card c1' }));
-    expect(open).toHaveBeenCalledExactlyOnceWith('c1');
-    expect(chat.getByRole('button', { name: '打开 Card c1' }).textContent).toBe('打开');
-    cleanup();
-    const unstarted = render(
-      <NeoAskCard view={describeAsk(ask('b', 'open', ['b1']), scenes.attention)} onOpen={open} />
-    );
-    expect(unstarted.queryByRole('button', { name: '打开 Card b1' })).toBeNull();
-  });
-
-  it('counts checklist items, not cards, and leaves removed items out of the count', () => {
-    const view = describeAsk(
-      {
-        ...ask('a', 'open', ['a1', 'a2']),
-        doneItems: [
-          item('i1', 'met', {
-            metBy: 'daemon',
-            check: 'coding.pr_merged',
-            evidence: 'PR #6099 merged',
-          }),
-          item('i2', 'pending'),
-          item('i3', 'pending', { removed: true, removedReason: 'Removed by the human.' }),
-          item('i4', 'needs_you', { text: 'Ship it?', options: ['Yes', 'No'] }),
-        ],
-      },
-      scenes.running.slice(0, 1),
-      { done: 1, total: 2 }
-    );
-    expect([view.done, view.total]).toEqual([1, 2]);
-    const card = render(<NeoAskCard view={view} />);
-    expect(card.queryByText(/outcomes verified/)).toBeNull();
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    const rows = [
-      ...card.getByRole('list', { name: '还要' }).querySelectorAll('[data-ask-item]'),
-    ].map((row) => [row.getAttribute('data-ask-item'), row.textContent]);
-    expect(rows).toEqual([
-      ['i1', '✓Item i1verifiedPR #6099 merged'],
-      ['i2', '○Item i2'],
-      ['i3', '○Item i3removedRemoved by the human.'],
-    ]);
-    expect(card.queryByRole('list', { name: '已回答' })).toBeNull();
-    expect(card.container.querySelector('[data-ask-item="i3"] .line-through')).toBeTruthy();
-  });
-
-  it('places each todo under its delivering step and puts unassigned or missing steps under 还要', () => {
-    const value = {
-      ...ask('owned-todos', 'open', ['a1', 'a2']),
-      doneItems: [
-        item('one', 'pending', { text: 'Backend merged', deliveredBy: 'a1' }),
-        item('two', 'pending', { text: 'Web merged', deliveredBy: 'a2' }),
-        item('manual', 'pending', { text: 'Try it on the laptop' }),
-        item('missing', 'pending', {
-          text: 'Retain the missing step outcome',
-          deliveredBy: 'gone',
-        }),
-      ],
-    };
-    const app = render(
-      <NeoAskCard view={describeAsk(value, [...scenes.running, ...scenes.outcomes])} />
-    );
-    const first = app.container.querySelector<HTMLElement>('[data-ask-step="a1"]')!;
-    const second = app.container.querySelector<HTMLElement>('[data-ask-step="a2"]')!;
-    expect(within(first).getByText('Backend merged')).toBeTruthy();
-    expect(within(first).queryByText('Web merged')).toBeNull();
-    expect(within(second).getByText('Web merged')).toBeTruthy();
-    expect(within(second).getByText('做完 =')).toBeTruthy();
-    const rest = within(app.getByRole('list', { name: '还要' }));
-    expect(rest.getByText('Try it on the laptop')).toBeTruthy();
-    expect(rest.getByText('Retain the missing step outcome')).toBeTruthy();
-    expect(rest.queryByText('Web merged')).toBeNull();
-    expect(app.queryByText('Todos')).toBeNull();
-    expect(app.queryByText('Done when')).toBeNull();
-  });
-
-  it('places proposed step outcomes inside the start question for one or several steps', () => {
-    for (const ids of [['one'], ['one', 'two', 'three']]) {
-      const steps = ids.map((id) => ({ id, title: `Step ${id}` }));
-      const owned = groupNeoScenes(
-        classifyNeoScenes(ids.map((id) => work(id, 'proposed')))
-      ).attention;
-      const value = {
-        ...ask('question-todos', 'waiting', ids),
-        doneItems: ids.map((id) => item(id, 'pending', { text: `Outcome ${id}`, deliveredBy: id })),
-      };
-      const view = describeAsk(value, owned, {
+  it.each([1, 3])(
+    'uses the same %i todo rows inside a start question and never repeats them below',
+    (count) => {
+      const answer = vi.fn();
+      const steps = Array.from({ length: count }, (_, n) => ({
+        id: `w${n}`,
+        title: `中文步骤 ${n}`,
+      }));
+      const view = describeAsk(ask('start', 'waiting', []), [], {
         humanActions: [
           {
             kind: 'question',
             itemId: 'q',
-            question: 'Start these steps?',
-            options: ['Later', 'Start'],
-            steps,
-          },
-        ],
-      });
-      const app = render(<NeoAskCard view={view} onAnswer={vi.fn()} />);
-      const question = within(app.getByRole('list', { name: 'Needs you' }));
-      for (const id of ids) expect(question.getByText(`Outcome ${id}`)).toBeTruthy();
-      expect(app.container.querySelectorAll('[data-ask-step]')).toHaveLength(0);
-      expect(app.queryByText('还要')).toBeNull();
-      cleanup();
-    }
-  });
-
-  it('updates a step todo from waiting for a PR to live PR progress without premature verification', () => {
-    const value = {
-      ...ask('pr-progress', 'open', ['a2']),
-      doneItems: [
-        item('merge', 'pending', {
-          text: 'Merge the PR',
-          deliveredBy: 'a2',
-          check: 'coding.pr_merged',
-        }),
-      ],
-    };
-    const view = describeAsk(value, scenes.running);
-    const app = render(<NeoAskCard view={view} />);
-    expect(app.getByText('等 PR 开出来')).toBeTruthy();
-    const card = testCard(
-      { id: 'a2', status: 'queued', sessionId: 'a2-session' },
-      {
-        pr: {
-          number: '42',
-          label: 'Waiting on CI · #42',
-          count: 1,
-          inProgress: true,
-          setback: false,
-          merged: [],
-        },
-      }
-    );
-    app.rerender(<NeoAskCard view={view} cards={new Map([['a2', card]])} />);
-    expect(app.queryByText('等 PR 开出来')).toBeNull();
-    expect(app.getByText('Waiting on CI · #42')).toBeTruthy();
-    expect(app.queryByText('verified')).toBeNull();
-    expect(app.container.querySelector('[data-ask-item="merge"]')?.textContent).toContain('○');
-  });
-
-  it('uses fixed marks for proposed, running, verified, and needs-you steps', () => {
-    const cases = [
-      { id: 'proposed', status: 'proposed', group: 'attention', done: false, mark: '○' },
-      { id: 'running', status: 'queued', group: 'running', done: false, mark: '●' },
-      { id: 'handed', status: 'queued', group: 'running', done: false, mark: '○' },
-      { id: 'done', status: 'reported', group: 'outcomes', done: true, mark: '✓' },
-      { id: 'needs', status: 'queued', group: 'attention', done: false, mark: '!' },
-      { id: 'stopped', status: 'cancelled', group: 'outcomes', done: false, mark: '○' },
-    ] as const;
-    for (const entry of cases) {
-      const base = classifyNeoScenes([work(entry.id, entry.status)])[0];
-      const scene = { ...base, group: entry.group };
-      const view = describeAsk(ask('marks', 'open', [entry.id]), [scene], {
-        doneWorkIds: entry.done ? [entry.id] : [],
-      });
-      const cards = new Map([
-        [
-          entry.id,
-          testCard(
-            { id: entry.id, status: entry.status, sessionId: 'session' },
-            entry.id === 'running' ? { phase: 'running' } : {}
-          ),
-        ],
-      ]);
-      const app = render(<NeoAskCard view={view} cards={cards} />);
-      expect(app.container.querySelector('[data-ask-step] > [aria-hidden]')?.textContent).toBe(
-        entry.mark
-      );
-      if (entry.status === 'proposed') expect(app.getByText('等你决定')).toBeTruthy();
-      cleanup();
-    }
-  });
-
-  it('does not mark a step done from a merged card while its bound todo is still pending', () => {
-    const value = {
-      ...ask('unverified-card', 'open', ['a1']),
-      doneItems: [item('merge', 'pending', { deliveredBy: 'a1' })],
-    };
-    const view = describeAsk(value, scenes.outcomes, { doneWorkIds: ['a1'] });
-    const app = render(<NeoAskCard view={view} />);
-    expect(app.container.querySelector('[data-ask-step] > [aria-hidden]')?.textContent).toBe('○');
-  });
-
-  it.each([undefined, { choice: '先不做', at: null }])(
-    'keeps missing historical answer facts explicit: %s',
-    (answer) => {
-      const value = {
-        ...ask('unknown-answer', 'open', []),
-        doneItems: [
-          item('old', 'met', { decision: true, metBy: 'human', text: 'Old question', answer }),
-        ],
-      };
-      const app = render(<NeoAskCard view={describeAsk(value, [])} />);
-      fireEvent.click(app.getByRole('button', { name: 'Details' }));
-      expect(app.getByText(answer?.choice ?? '选择未记录')).toBeTruthy();
-      expect(app.getByText('时间未记录')).toBeTruthy();
-      expect(app.queryByText('Old question')).toBeNull();
-    }
-  );
-
-  it('renders grouped start steps from structured data and does not repeat proposed cards', () => {
-    const steps = ['one', 'two', 'three'].map((id, index) => ({ id, title: `第 ${index + 1} 步` }));
-    const owned = groupNeoScenes(
-      classifyNeoScenes(steps.map((step) => work(step.id, 'proposed')))
-    ).attention;
-    const answer = vi.fn();
-    const view = describeAsk(
-      ask(
-        'start-steps',
-        'waiting',
-        steps.map((step) => step.id)
-      ),
-      owned,
-      {
-        humanActions: [
-          {
-            kind: 'question',
-            itemId: 'q',
-            question: '开始这 3 步？',
+            question: count === 1 ? '开始「中文步骤 0」？' : '开始这 3 件？',
             options: ['先不做', '开始'],
             steps,
           },
         ],
-      }
-    );
-    const app = render(<NeoAskCard view={view} onAnswer={answer} />);
-    const list = app.getByRole('list', { name: '待开始步骤' });
-    expect(list.tagName).toBe('OL');
-    expect(
-      within(list)
-        .getAllByRole('listitem')
-        .map((row) => [row.getAttribute('data-question-step'), row.textContent])
-    ).toEqual(steps.map((step) => [step.id, step.title]));
-    expect(app.container.querySelectorAll('[data-ask-step]')).toHaveLength(0);
-    fireEvent.click(app.getByRole('button', { name: 'Answer 开始这 3 步？: 开始' }));
-    expect(answer).toHaveBeenCalledExactlyOnceWith('q', '开始');
-  });
-
-  it('shows a named single-step question once while retaining an unrelated running row', () => {
-    const owned = [...scenes.attention, ...scenes.running];
-    const view = describeAsk(ask('single-step', 'waiting', ['b1', 'a2']), owned, {
-      humanActions: [
-        {
-          kind: 'question',
-          itemId: 'q',
-          question: '开始「按样图改网页」？',
-          options: ['先不做', '开始'],
-          steps: [{ id: 'b1', title: '按样图改网页' }],
-        },
-      ],
-    });
-    const app = render(<NeoAskCard view={view} onAnswer={vi.fn()} />);
-    expect(app.getAllByText('开始「按样图改网页」？')).toHaveLength(1);
-    expect(app.queryByRole('list', { name: '待开始步骤' })).toBeNull();
-    expect(app.container.querySelector('[data-ask-step="b1"]')).toBeNull();
-    expect(app.container.querySelector('[data-ask-step="a2"]')).toBeTruthy();
-  });
-
-  it('renders each question once with the decline option left and positive option right', () => {
-    const answer = vi.fn();
-    const view = describeAsk(
-      {
-        ...ask('w', 'waiting', []),
-        doneItems: [item('i2', 'needs_you', { text: '开始调查？', decision: true })],
-      },
-      [],
-      {
-        humanActions: [
-          {
-            kind: 'question',
-            itemId: 'i2',
-            question: '开始调查？',
-            options: ['先不做', '开始调查'],
-          },
+        todos: [
+          ...steps.map((step) =>
+            todo(step.id, 'pending', { title: step.title, workId: step.id, status: 'PR 合进 dev' })
+          ),
+          todo('daemon', 'pending'),
         ],
-      }
-    );
-    const card = render(<NeoAskCard view={view} onAnswer={answer} />);
-    const choices = within(card.getByRole('list', { name: 'Needs you' })).getAllByRole('button');
-    expect(choices.map((button) => button.textContent)).toEqual(['先不做', '开始调查']);
-    expect(choices[1].className).toContain('bg-accent');
-    fireEvent.click(choices[0]);
-    expect(answer).toHaveBeenCalledExactlyOnceWith('i2', '先不做');
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(card.queryByRole('list', { name: '已回答' })).toBeNull();
-    expect(card.getAllByText('开始调查？')).toHaveLength(1);
-    expect(card.getAllByRole('button', { name: /: 开始调查$/ })).toHaveLength(1);
-  });
-
-  it.each([undefined, ['https://github.com/lsm/HyperNeo/issues/7264']])(
-    'preserves Chinese titles and waits for a PR with issue watch %s, with answers in Details',
-    (watch) => {
-      const scene = {
-        ...scenes.running[0]!,
-        receipt: { ...scenes.running[0]!.receipt, title: '实现会话归属控制' },
-      };
-      const view = describeAsk(
-        {
-          ...ask('mock', 'open', ['a2']),
-          title: '按会话归属改驱动控制',
-          doneItems: [
-            item('merge', 'pending', {
-              text: '这次的 PR 合并进 dev',
-              check: 'coding.pr_merged',
-              watch,
-              deliveredBy: 'a2',
-            }),
-            item('answered', 'met', {
-              text: '开始这 1 步？',
-              decision: true,
-              metBy: 'human',
-              evidence: 'The human answered: 开始',
-              answer: { choice: '开始', at: 1_792_173_600_000 },
-            }),
-          ],
-        },
-        [scene]
+      });
+      const app = render(<NeoAskCard view={view} onAnswer={answer} />);
+      const box = app.getByRole('list', { name: 'Needs you' });
+      expect(box.querySelectorAll('[data-ask-todo]')).toHaveLength(count);
+      expect(app.container.querySelectorAll('[data-ask-todo]')).toHaveLength(count + 1);
+      expect([...box.querySelectorAll('[aria-hidden]')].map((row) => row.textContent)).toEqual(
+        steps.map((_, n) => String(n + 1))
       );
-      const card = render(<NeoAskCard view={view} onOpen={vi.fn()} />);
-      expect(card.getByRole('article', { name: '按会话归属改驱动控制' })).toBeTruthy();
-      expect(card.getByText('实现会话归属控制')).toBeTruthy();
-      expect(card.getByText('等 PR 开出来')).toBeTruthy();
-      expect(card.queryByText(/outcomes verified/)).toBeNull();
-      expect(card.queryByText('开始这 1 步？')).toBeNull();
-      fireEvent.click(card.getByRole('button', { name: 'Details' }));
-      expect(within(card.getByRole('list', { name: '已回答' })).getByText('开始')).toBeTruthy();
-      expect(card.queryByText('The human answered: 开始')).toBeNull();
-      expect(card.queryByText('开始这 1 步？')).toBeNull();
-      expect(card.getByRole('list', { name: '已回答' }).querySelector('time')?.dateTime).toBe(
-        new Date(1_792_173_600_000).toISOString()
-      );
-      const openedCard = testCard(
-        { id: 'a2', status: 'queued', sessionId: 'a2-session' },
-        {
-          pr: {
-            number: '7255',
-            label: 'Checks pending',
-            count: 1,
-            inProgress: true,
-            setback: false,
-            merged: [],
-          },
-        }
-      );
-      card.rerender(
-        <NeoAskCard
-          view={{
-            ...view,
-            scenes: [{ ...scene, label: 'PR #7255 · checks pending · waiting for bot approval' }],
-          }}
-          cards={new Map([['a2', openedCard]])}
-          onOpen={vi.fn()}
-        />
-      );
-      expect(card.queryByText('等 PR 开出来')).toBeNull();
-      expect(
-        card.getAllByText('PR #7255 · checks pending · waiting for bot approval')
-      ).toHaveLength(1);
-      expect(card.queryByText(/outcomes verified/)).toBeNull();
-      expect(card.getAllByRole('button', { name: '打开 实现会话归属控制' })).toHaveLength(1);
+      const choices = within(box).getAllByRole('button');
+      expect(choices.map((button) => button.textContent)).toEqual(['先不做', '开始']);
+      expect(choices[1].className).toContain('bg-accent');
+      fireEvent.click(choices[1]);
+      expect(answer).toHaveBeenCalledExactlyOnceWith('q', '开始');
     }
   );
 
-  it('disables option submission while busy', () => {
-    const view = describeAsk(ask('w', 'waiting', []), [], {
+  it('presents one current question while retaining the remaining question records in the view', () => {
+    const answer = vi.fn();
+    const view = describeAsk(ask('multiple', 'waiting', []), [], {
       humanActions: [
-        { kind: 'question', itemId: 'i2', question: 'Did it work?', options: ['No', 'Yes'] },
+        { kind: 'question', itemId: 'older', question: '旧决定？', options: ['不要', '要'] },
+        { kind: 'question', itemId: 'latest', question: '当前决定？', options: ['先不做', '继续'] },
       ],
     });
-    const card = render(<NeoAskCard view={view} onAnswer={vi.fn()} disabled />);
-    expect(
-      (card.getByRole('button', { name: 'Answer Did it work?: Yes' }) as HTMLButtonElement).disabled
-    ).toBe(true);
+    const app = render(<NeoAskCard view={view} onAnswer={answer} />);
+    expect(app.queryByText('旧决定？')).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Answer 当前决定？: 继续' }));
+    expect(answer).toHaveBeenCalledExactlyOnceWith('latest', '继续');
+    expect(view.humanActions).toHaveLength(2);
   });
 
-  it('offers a secondary right-aligned reply button that targets the open question', () => {
+  it('shows decisions above todos and replies to the original question from the chat control', () => {
     const reply = vi.fn();
-    const answer = vi.fn();
-    const view = describeAsk(ask('w', 'waiting', []), [], {
-      humanActions: [{ kind: 'question', itemId: 'i2', question: 'Which repo?', options: [] }],
+    const view = describeAsk(ask('decision', 'waiting', []), [], {
+      humanActions: [{ kind: 'question', itemId: 'q', question: '换成新会话？', options: [] }],
+      todos: [todo('failed', 'failed')],
     });
-    const card = render(<NeoAskCard view={view} onAnswer={answer} onReply={reply} />);
-    const button = within(card.getByRole('list', { name: 'Needs you' })).getByRole('button', {
-      name: 'Reply in chat',
-    });
-    expect(button.parentElement?.classList.contains('justify-end')).toBe(true);
-    expect(button.classList.contains('bg-accent')).toBe(false);
-    fireEvent.click(button);
-    expect(reply).toHaveBeenCalledExactlyOnceWith({
+    const app = render(<NeoAskCard view={view} onReply={reply} />);
+    fireEvent.click(app.getByRole('button', { name: '在聊天里回复' }));
+    expect(reply.mock.calls[0][0]).toMatchObject({
       author: 'Neo',
-      text: 'Which repo?',
-      anchor: button.closest('li')!.id,
+      anchor: 'neo-question-decision-q',
+      text: '换成新会话？',
     });
-    expect(button.closest('li')!.id).not.toBe('');
+    expect(app.container.innerHTML.indexOf('data-ask-needs-you')).toBeLessThan(
+      app.container.innerHTML.indexOf('data-ask-todo')
+    );
+    app.rerender(<NeoAskCard view={view} onReply={reply} disabled />);
+    expect((app.getByRole('button', { name: '在聊天里回复' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+  });
+
+  it('keeps real human answers and selection times only in Details, without evidence tags', () => {
+    const at = 1792173600000;
+    const value = {
+      ...ask('a', 'achieved', []),
+      doneItems: [
+        item('answered', 'met', {
+          decision: true,
+          question: '原问题？',
+          answer: { choice: '改派新会话', at },
+          metBy: 'human',
+          evidence: 'internal receipt',
+        }),
+        item('retired', 'needs_you', { decision: true, question: '过时问题？', removed: true }),
+      ],
+    };
+    const app = render(<NeoAskCard view={describeAsk(value, [])} />);
+    expect(app.queryByText('改派新会话')).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    const answers = within(app.getByRole('list', { name: '已回答' }));
+    expect(answers.getByText('改派新会话')).toBeTruthy();
+    expect(app.container.querySelector('time')?.dateTime).toBe(new Date(at).toISOString());
+    expect(app.getByText(/原问题？/)).toBeTruthy();
+    expect(app.queryByText(/过时问题|internal receipt/)).toBeNull();
+  });
+
+  it('opens remote todos at their session link and gives daemon todos no Open control', () => {
+    const view = describeAsk(ask('a', 'open', []), [], {
+      todos: [todo('remote', 'running', { workId: 'remote' }), todo('daemon', 'done')],
+    });
+    const card = testCard(
+      { id: 'remote', status: 'queued', sessionId: null },
+      { open: { link: 'codex://threads/t1', sessionId: null, remoteLink: null, daemon: null } }
+    );
+    const app = render(<NeoAskCard view={view} cards={new Map([['remote', card]])} />);
+    expect(app.getByRole('link', { name: '打开 任务 remote' }).getAttribute('href')).toBe(
+      'codex://threads/t1'
+    );
+    expect(app.getAllByRole('link')).toHaveLength(1);
+  });
+
+  it('opens an older local todo directly from its structured target without a recent-work scene', () => {
+    const openSession = vi.fn();
+    const view = describeAsk(ask('older', 'open', []), [], {
+      todos: [
+        todo('old', 'done', {
+          workId: 'old',
+          open: {
+            sessionId: 'old-session',
+            link: '/session/old-session',
+            daemon: null,
+            remoteLink: null,
+          },
+        }),
+      ],
+    });
+    const withSession: typeof view = {
+      ...view,
+      sessions: [
+        {
+          key: 'old-session',
+          title: '旧会话',
+          adapter: 'hyperneo',
+          status: 'done',
+          kind: null,
+          open: {
+            sessionId: 'old-session',
+            link: '/session/old-session',
+            daemon: null,
+            remoteLink: null,
+          },
+        },
+      ],
+    };
+    const app = render(<NeoAskCard view={withSession} onOpenSession={openSession} />);
+    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    expect(app.queryByRole('button', { name: 'Open 旧会话' })).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: '打开 任务 old' }));
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('old-session', '任务 old');
+  });
+
+  it('loads a summarized ask only when expanded and retries an unsuccessful detail read', () => {
+    const expand = vi.fn();
+    const view = describeAsk({ ...ask('a', 'achieved', []), summarized: true }, []);
+    const app = render(<NeoAskCard view={view} onExpand={expand} />);
+    expect(expand).not.toHaveBeenCalled();
+    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    expect(expand).toHaveBeenCalledTimes(1);
+    expect(app.getByText('Loading details…')).toBeTruthy();
+    app.rerender(<NeoAskCard view={view} onExpand={expand} detailFailed />);
+    fireEvent.click(app.getByRole('button', { name: 'Retry' }));
+    expect(expand).toHaveBeenCalledTimes(2);
+  });
+
+  it('disables question options while busy', () => {
+    const answer = vi.fn();
+    const view = describeAsk(ask('a', 'waiting', []), [], {
+      humanActions: [
+        { kind: 'question', itemId: 'q', question: '开始？', options: ['先不做', '开始'] },
+      ],
+    });
+    const app = render(<NeoAskCard view={view} onAnswer={answer} disabled />);
+    const choices = within(app.getByRole('list', { name: 'Needs you' })).getAllByRole('button');
+    expect(choices.every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+    fireEvent.click(choices[0]);
     expect(answer).not.toHaveBeenCalled();
-  });
-
-  it('disables open-question replies while unavailable', () => {
-    const reply = vi.fn();
-    const view = describeAsk(ask('w', 'waiting', []), [], {
-      humanActions: [{ kind: 'question', itemId: 'i2', question: 'Which repo?', options: [] }],
-    });
-    const card = render(<NeoAskCard view={view} onReply={reply} disabled />);
-    const button = card.getByRole('button', { name: 'Reply in chat' }) as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    fireEvent.click(button);
-    expect(reply).not.toHaveBeenCalled();
-  });
-
-  it('does not invent confirm, retry or approval controls from reported items or expired approval facts', () => {
-    const view = describeAsk(
-      {
-        ...ask('w', 'open', []),
-        approvedAt: 1,
-        approvalSpent: 'expired',
-        stalledWorkIds: ['w1'],
-        doneItems: [item('i2', 'reported', { text: 'The iMac runs the fix' })],
-      },
-      []
-    );
-    const card = render(<NeoAskCard view={view} />);
-    expect(card.queryByRole('list', { name: 'Needs you' })).toBeNull();
-    expect(card.queryByRole('button', { name: /Confirm|Retry|Approve/ })).toBeNull();
-  });
-
-  it('hides outcome progress while all cards are still proposed', () => {
-    const proposed = [...scenes.attention, ...scenes.running].filter(
-      (scene) => scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'
-    );
-    expect(proposed.length).toBeGreaterThan(0);
-    const view = describeAsk(
-      { ...ask('b', 'open', ['b1']), doneItems: [item('i1', 'pending')] },
-      proposed
-    );
-    const card = render(<NeoAskCard view={view} />);
-    expect(card.queryByText(/outcomes verified/)).toBeNull();
-    expect(card.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
-  });
-
-  it('shows the done-when text for an ask opened before checklists', () => {
-    const card = render(<NeoAskCard view={describeAsk(ask('a', 'open', []), [])} />);
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
-    expect(card.queryByRole('list', { name: '还要' })).toBeNull();
-  });
-
-  it('drops the count once settled and keeps a long outcome behind Details', () => {
-    const outcome = `Merged after review. ${'evidence '.repeat(30)}`;
-    const view = describeAsk(
-      { ...ask('c', 'achieved', ['c1']), outcome },
-      scenes.outcomes.slice(1),
-      { summary: 'Merged after review.' }
-    );
-    const card = render(<NeoAskCard view={view} />);
-    expect(card.queryByText(/of \d+ done/)).toBeNull();
-    expect(card.getByText('Merged after review.')).toBeTruthy();
-    expect(card.queryByText(outcome)).toBeNull();
-    fireEvent.click(card.getByRole('button', { name: 'Details' }));
-    expect(card.getByText(outcome.trim())).toBeTruthy();
-  });
-
-  it('closes an open ask as done or dropped from its menu, and offers nothing once settled', () => {
-    const settle = vi.fn();
-    for (const item of ['Mark done', 'Drop this ask']) {
-      const card = render(
-        <NeoAskCard view={describeAsk(ask('a', 'open', []), [])} onSettle={settle} />
-      );
-      fireEvent.click(card.getByRole('button', { name: 'Ask actions' }));
-      fireEvent.click(screen.getByRole('menuitem', { name: item }));
-      cleanup();
-    }
-    expect(settle.mock.calls).toEqual([['achieved'], ['abandoned']]);
-    const settled = render(
-      <NeoAskCard view={describeAsk(ask('c', 'achieved', []), [])} onSettle={settle} />
-    );
-    expect(settled.queryByRole('button', { name: 'Ask actions' })).toBeNull();
   });
 });
