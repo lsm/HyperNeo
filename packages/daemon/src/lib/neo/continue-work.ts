@@ -176,7 +176,7 @@ export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as P
     ) =>
       deps.recordSent(
         target.work.id,
-        'queued' in delivered ? null : probe.baseline,
+        'queued' in delivered ? null : (delivered.startedAt ?? probe.baseline),
         probe.sent && { ...probe.sent, receipt: delivered.receipt }
       ),
     ['deps', 'target', 'probe', 'continued']
