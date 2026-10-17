@@ -145,6 +145,10 @@ describe('neo todo runner', () => {
       reason: 'Start was interrupted; a session may have started without being recorded.',
     });
     expect(told).toEqual([expect.stringContaining('Start was interrupted')]);
+    expect(await runner.retry(todo.id)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('start_uncertain'),
+    });
   });
 
   test('a start the driver refuses fails the todo with its reason', async () => {
