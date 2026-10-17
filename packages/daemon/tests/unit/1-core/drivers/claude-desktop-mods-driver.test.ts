@@ -10,6 +10,15 @@ import {
 import { createClaudeDesktopModsDriver } from '../../../../src/lib/drivers/claude-desktop-mods-driver';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
+import type {
+  Result,
+  WorkAdapter,
+  WorkDelivery,
+  WorkWithdrawal,
+} from '../../../../src/lib/drivers/types';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 
 type Driver = ReturnType<typeof createClaudeDesktopModsDriver>;
@@ -199,6 +208,24 @@ describe('Claude Desktop mods driver wiring', () => {
   const commands = () =>
     jobs.listJobs({}).filter((job) => job.queue.startsWith('claude_desktop_mods:'));
   const mailbox = () => jobs.listJobs({ queue: 'mailbox' });
+  async function invoke<T>(adapter: WorkAdapter, name: string, input: unknown): Promise<T> {
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [adapter],
+        daemonName: 'test',
+        remote: {
+          list: () => [],
+          invoke: async () => {
+            throw new Error('No remote fallback');
+          },
+        },
+      })
+    );
+    const handler = createOperationMcpHandler(registry, () => ({ role: 'neo', sessionId: 'neo' }));
+    const outcome = await handler({ name, input });
+    if (outcome.isError) throw new Error(outcome.content[0].text);
+    return JSON.parse(outcome.content[0].text) as T;
+  }
 
   test.each([undefined, '', '0', 'true'])(
     'default/flag %s retains existing capabilities and native send/steer',
@@ -238,13 +265,25 @@ describe('Claude Desktop mods driver wiring', () => {
     expect(commands()).toEqual([]);
   });
 
-  test('enabled adapter uses the shipped plugin prompt API and preserves native send/steer', async () => {
+  test('invoke queue reaches the shipped plugin prompt API and preserves native send/steer', async () => {
     const adapter = start();
     await driver!.ready;
     const engine = await plugin();
     expect(adapter.capabilities).toEqual(expect.arrayContaining(['queue', 'stop', 'withdraw']));
     const before = liveReads;
-    const queued = await adapter.queue!(ref, 'peer\n"follow up"', context);
+    const queued = await invoke<Result<WorkDelivery>>(adapter, 'work.queue', {
+      ref,
+      message: 'peer\n"follow up"',
+    });
+    expect(await invoke(adapter, 'work.adapters', {})).toMatchObject({
+      ok: true,
+      value: [
+        {
+          id: 'claude-desktop',
+          capabilities: expect.arrayContaining(['queue', 'withdraw', 'stop']),
+        },
+      ],
+    });
     expect(liveReads).toBeGreaterThan(before);
     expect(queued).toMatchObject({ ok: true, value: { delivered: false, unconfirmed: true } });
     expect(engine.submitted).toEqual([]);
@@ -266,17 +305,19 @@ describe('Claude Desktop mods driver wiring', () => {
     expect(errors).toEqual([]);
   });
 
-  test('adapter stop invokes plugin abort and waits for matching observed completion', async () => {
+  test('invoke stop calls plugin abort and waits for matching observed completion', async () => {
     const adapter = start();
     await driver!.ready;
     const engine = await plugin();
     await engine.emit('turn.start', { turnId: 'live' });
     await engine.poll();
     let settled = false;
-    const stopped = adapter.stop!(ref, context).then((result) => {
-      settled = true;
-      return result;
-    });
+    const stopped = invoke<Result<{ stopped: boolean }>>(adapter, 'work.stop', { ref }).then(
+      (result) => {
+        settled = true;
+        return result;
+      }
+    );
     await waitFor(() => commands().length === 1);
     await engine.poll();
     await engine.poll();
@@ -290,14 +331,22 @@ describe('Claude Desktop mods driver wiring', () => {
     ).toBe(true);
   });
 
-  test('adapter withdraw reaches only the daemon outbox and reports the withdrawal', async () => {
+  test('invoke withdraw reaches only the daemon outbox and reports the withdrawal', async () => {
     const adapter = start();
     await driver!.ready;
     const engine = await plugin();
-    const queued = await adapter.queue!(ref, 'withdraw me', context);
+    const queued = await invoke<Result<WorkDelivery>>(adapter, 'work.queue', {
+      ref,
+      message: 'withdraw me',
+    });
     if (!queued.ok) throw new Error(queued.detail);
     const id = queued.value.queuedSubmissionId!;
-    expect(await adapter.withdraw!(ref, id, context)).toEqual({
+    expect(
+      await invoke<Result<WorkWithdrawal>>(adapter, 'work.withdraw', {
+        ref,
+        queuedSubmissionId: id,
+      })
+    ).toEqual({
       ok: true,
       value: { queuedSubmissionId: id, withdrawn: true },
     });
@@ -309,7 +358,9 @@ describe('Claude Desktop mods driver wiring', () => {
         JSON.stringify(job.payload.message).includes('withdrawn-before-submit')
       )
     ).toBe(true);
-    expect(await adapter.withdraw!(ref, 'native-queue-id', context)).toMatchObject({
+    expect(
+      await invoke(adapter, 'work.withdraw', { ref, queuedSubmissionId: 'native-queue-id' })
+    ).toMatchObject({
       ok: false,
       reason: 'unsupported',
     });
