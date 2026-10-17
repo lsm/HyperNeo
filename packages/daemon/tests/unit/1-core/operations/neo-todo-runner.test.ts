@@ -179,6 +179,37 @@ describe('neo todo runner follow-ups', () => {
   });
 });
 
+describe('neo todo runner uncertainty', () => {
+  test('a start that may have opened a session is not retried, and a running session is stopped', async () => {
+    const { db, store, add, calls } = setup();
+    const todo = add();
+    const sessions = new NeoTodoSessionRepository(db);
+    const flaky = createNeoTodoRunner({
+      store,
+      sessions,
+      invoke: async (_caller, name, input) => {
+        calls.push({ name, input });
+        return { kind: 'failed', code: 'execution_failed', message: 'socket hang up' } as never;
+      },
+      packs: () => [],
+      tell: async () => {},
+      changed: () => {},
+    });
+    const result = await flaky.start(todo.id);
+    expect(result.ok && result.todo.state).toBe('failed');
+    expect(await flaky.retry(todo.id)).toEqual({
+      ok: false,
+      reason:
+        'start_uncertain: the start failed after the driver may have opened a session; find it with work.find before starting again.',
+    });
+    const running = add();
+    sessions.recordRef(running.id, ref);
+    sessions.recordLive(running.id, 'running', undefined);
+    await flaky.stop(store.updateTodo(running, { state: 'done', report: 'Claimed done' }, 5));
+    expect(calls.at(-1)).toMatchObject({ name: 'work.stop', input: { ref } });
+  });
+});
+
 describe('requireNeoTodoStartable', () => {
   test('refuses daemon-checked todos and read targets', () => {
     const todo = { state: 'todo', instruction: null } as NeoTodo;
@@ -195,7 +226,18 @@ describe('requireNeoTodoStartable', () => {
         ask,
         target: { verb: 'read', operation: 'x', input: {} } as never,
       })
-    ).toEqual({ reason: { ok: false, reason: 'unsupported_target: a todo cannot start a read.' } });
+    ).toEqual({
+      reason: { ok: false, reason: 'unsupported_target: a todo cannot read a session.' },
+    });
+    expect(
+      requireNeoTodoStartable({
+        todo: { ...todo, instruction: 'x' },
+        ask,
+        target: { verb: 'adopt', ref: { adapter: 'hyperneo', id: 'w' } },
+      })
+    ).toEqual({
+      reason: { ok: false, reason: 'unsupported_target: a todo cannot adopt a session.' },
+    });
   });
 });
 
