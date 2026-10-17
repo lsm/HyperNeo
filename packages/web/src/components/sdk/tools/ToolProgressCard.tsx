@@ -13,7 +13,7 @@ export function ToolProgressCard({
   className,
 }: ToolProgressCardProps) {
   const colors = getToolColors(toolName);
-  const displayName = getToolDisplayName(toolName);
+  const displayName = getToolDisplayName(toolName, toolInput);
 
   return (
     <div

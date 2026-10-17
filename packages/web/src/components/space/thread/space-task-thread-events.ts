@@ -17,6 +17,8 @@ import {
 import type { SpaceTaskThreadMessageRow } from '../../../hooks/useSpaceTaskMessages';
 import type { MessageReplacementStatus } from '../../../lib/sdk-message-replacement';
 
+import { getInvokedOperationName } from '../../sdk/tools/tool-utils.ts';
+
 export type SpaceTaskThreadEventKind =
   | 'thinking'
   | 'tool'
@@ -260,7 +262,7 @@ function extractAssistantEvents(
               ? `Grep: ${oneLine(grepPattern, 120)}`
               : isGlob && globPattern
                 ? `Glob: ${oneLine(globPattern, 120)}`
-                : block.name;
+                : (getInvokedOperationName(block.name, input) ?? block.name);
 
       events.push({
         id: eventId,
@@ -372,6 +374,20 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
 
 export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThreadEvent[] {
   const events: SpaceTaskThreadEvent[] = [];
+  const toolInputs = new Map(
+    parsedRows.flatMap((row) =>
+      row.message &&
+      isSDKAssistantMessage(row.message) &&
+      Array.isArray(row.message.message?.content)
+        ? (row.message.message.content as ContentBlock[])
+            .filter(isToolUseBlock)
+            .map(
+              (block) =>
+                [JSON.stringify([row.sessionId, row.taskId, block.id]), block.input] as const
+            )
+        : []
+    )
+  );
 
   for (const row of parsedRows) {
     if (!row.message) {
@@ -414,8 +430,12 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
     }
 
     if (isSDKToolProgressMessage(row.message)) {
+      const operationName = getInvokedOperationName(
+        row.message.tool_name,
+        toolInputs.get(JSON.stringify([row.sessionId, row.taskId, row.message.tool_use_id]))
+      );
       const progressSummary = oneLine(
-        `${row.message.tool_name} · ${Math.max(0, Math.round(row.message.elapsed_time_seconds))}s`
+        `${operationName ?? row.message.tool_name} · ${Math.max(0, Math.round(row.message.elapsed_time_seconds))}s`
       );
       events.push({
         id: `${String(row.id)}-progress`,
@@ -426,7 +446,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
         sessionId: row.sessionId,
         createdAt: row.createdAt,
         kind: 'progress',
-        title: 'Progress',
+        title: operationName ?? 'Progress',
         summary: progressSummary,
         message: row.message,
         iconToolName: row.message.tool_name,

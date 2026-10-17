@@ -190,6 +190,20 @@ describe('SyntheticMessageBlock', () => {
       expect(container.textContent).toContain('base64');
     });
 
+    it.each([{ name: 'neo.snapshot' }, {}])(
+      'titles synthetic invoke calls using their input (%j)',
+      (input) => {
+        const app = render(
+          <SyntheticMessageBlock
+            content={[{ type: 'tool_use', name: 'mcp__hyperneo-operations__invoke', input }]}
+          />
+        );
+        expect(
+          app.getByText(`Tool Use: ${input.name ?? 'mcp__hyperneo-operations__invoke'}`)
+        ).toBeTruthy();
+      }
+    );
+
     it('should render tool_use blocks', () => {
       const content = [
         {

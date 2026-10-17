@@ -5,6 +5,8 @@ import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { SpaceTaskThreadMessageActions } from '../space/thread/SpaceTaskThreadMessageActions.tsx';
 import { DeliveryStateBadge, type DeliveryBadgeState } from '../ui/DeliveryStateBadge.tsx';
 
+import { getInvokedOperationName } from './tools/tool-utils.ts';
+
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
 interface Props {
@@ -171,7 +173,11 @@ export function SyntheticMessageBlock({
                   )}
                   {block.type === 'tool_use' && (
                     <div class="space-y-1">
-                      <div class="text-xs text-warning">Tool Use: {block.name as string}</div>
+                      <div class="text-xs text-warning">
+                        Tool Use:{' '}
+                        {getInvokedOperationName(block.name as string, block.input) ??
+                          (block.name as string)}
+                      </div>
                       <div class="font-mono text-xs text-fg-soft bg-surface-raised/50 p-2 rounded overflow-x-auto">
                         {JSON.stringify(block.input, null, 2)}
                       </div>

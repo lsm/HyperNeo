@@ -109,6 +109,73 @@ describe('parseThreadRow', () => {
 });
 
 describe('buildThreadEvents — multi-agent ordering and label preservation', () => {
+  it.each(['invoke', 'mcp__hyperneo-operations__invoke'])(
+    'titles thread tool calls with the operation, preserving raw fallback for %s',
+    (name) => {
+      for (const input of [{ name: 'neo.snapshot' }, {}]) {
+        const events = buildThreadEvents([
+          parseThreadRow(
+            makeRow({
+              content: JSON.stringify({
+                type: 'assistant',
+                message: { content: [{ type: 'tool_use', id: 't1', name, input }] },
+              }),
+            })
+          ),
+        ]);
+        expect(events[0].title).toBe('name' in input ? 'neo.snapshot' : name);
+        expect(events[0].iconToolName).toBe(name);
+      }
+    }
+  );
+  it('uses session-scoped invoke inputs for thread progress, with a raw fallback when missing', () => {
+    const rows = ['session-1', 'session-2'].flatMap((sessionId, n) => [
+      makeRow({
+        sessionId,
+        id: `a-${n}`,
+        content: JSON.stringify({
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'tool_use', id: 'same-id', name: 'invoke', input: { name: `neo.op${n}` } },
+            ],
+          },
+        }),
+      }),
+      makeRow({
+        sessionId,
+        id: `p-${n}`,
+        content: JSON.stringify({
+          type: 'tool_progress',
+          tool_use_id: 'same-id',
+          tool_name: 'invoke',
+          elapsed_time_seconds: 2,
+        }),
+      }),
+    ]);
+    rows.push(
+      makeRow({
+        sessionId: 'unmatched',
+        id: 'missing',
+        content: JSON.stringify({
+          type: 'tool_progress',
+          tool_use_id: 'same-id',
+          tool_name: 'invoke',
+          elapsed_time_seconds: 3,
+        }),
+      })
+    );
+    const progress = buildThreadEvents(rows.map(parseThreadRow)).filter(
+      (event) => event.kind === 'progress'
+    );
+    expect(progress.map((event) => event.title)).toEqual(['neo.op0', 'neo.op1', 'Progress']);
+    expect(progress.map((event) => event.summary)).toEqual([
+      'neo.op0 · 2s',
+      'neo.op1 · 2s',
+      'invoke · 3s',
+    ]);
+  });
+
   it('produces events in the same order as input rows', () => {
     const rows = [
       makeAssistantRow('r1', 'Task Agent', 'task_agent', 'Task is planning', 1_000),

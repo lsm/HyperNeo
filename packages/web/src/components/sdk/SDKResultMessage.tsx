@@ -1,6 +1,7 @@
 import { CheckGlyph, ChevronDownGlyph } from '../icons/common-glyphs.tsx';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { isSDKResultSuccess, isSDKResultError } from '@hyperneo/shared/sdk/type-guards';
+import { getInvokedOperationName } from './tools/tool-utils.ts';
 import { useState } from 'preact/hooks';
 
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
@@ -218,17 +219,15 @@ export function SDKResultMessage({ message }: Props) {
                 Permissions Denied ({message.permission_denials.length})
               </h4>
               <div class="space-y-2">
-                {message.permission_denials.map(
-                  (denial: { tool_name: string; tool_use_id: string }, idx: number) => (
-                    <div
-                      key={idx}
-                      class="bg-warning/10 p-3 rounded border border-warning/40 text-sm"
-                    >
-                      <div class="font-medium text-warning-soft">{denial.tool_name}</div>
-                      <div class="text-warning mt-1 text-xs font-mono">{denial.tool_use_id}</div>
+                {message.permission_denials.map((denial, idx) => (
+                  <div key={idx} class="bg-warning/10 p-3 rounded border border-warning/40 text-sm">
+                    <div class="font-medium text-warning-soft">
+                      {getInvokedOperationName(denial.tool_name, denial.tool_input) ??
+                        denial.tool_name}
                     </div>
-                  )
-                )}
+                    <div class="text-warning mt-1 text-xs font-mono">{denial.tool_use_id}</div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

@@ -124,6 +124,23 @@ describe('ToolResultCard Component', () => {
     vi.clearAllMocks();
   });
 
+  it.each(['compact', 'default', 'detailed', 'inline'])(
+    'titles the %s invoke card with its operation',
+    (variant) => {
+      const app = render(
+        <ToolResultCard
+          toolName="mcp__hyperneo-operations__invoke"
+          toolId="invoke-1"
+          input={{ name: 'neo.snapshot', input: {} }}
+          output="ok"
+          variant={variant}
+        />
+      );
+      expect(app.getByText('neo.snapshot')).toBeTruthy();
+      expect(app.queryByText('invoke')).toBeNull();
+    }
+  );
+
   describe('compact variant', () => {
     it('should render compact variant correctly', () => {
       render(

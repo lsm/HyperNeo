@@ -98,6 +98,25 @@ describe('tool-utils', () => {
   });
 
   describe('getToolDisplayName', () => {
+    it.each(['invoke', 'mcp__hyperneo-operations__invoke', 'mcp__other-server__invoke'])(
+      'uses the input operation as the display name of %s',
+      (name) => {
+        expect(getToolDisplayName(name, { name: 'neo.snapshot', input: {} })).toBe('neo.snapshot');
+      }
+    );
+    it.each([undefined, null, {}, { name: '' }, { name: '  ' }, { name: 42 }, 'neo.snapshot'])(
+      'retains the existing invoke label without a valid operation name (%j)',
+      (input) => {
+        expect(getToolDisplayName('mcp__hyperneo-operations__invoke', input)).toBe('invoke');
+      }
+    );
+    it('does not rename other tools that happen to accept a name field', () => {
+      expect(getToolDisplayName('NotebookEdit', { name: 'neo.snapshot' })).toBe('Notebook Edit');
+      expect(getToolDisplayName('mcp__server__not__invoke', { name: 'neo.snapshot' })).toBe(
+        'not__invoke'
+      );
+    });
+
     it('should return display name for known tools', () => {
       expect(getToolDisplayName('Read')).toBe('Read');
       expect(getToolDisplayName('Write')).toBe('Write');

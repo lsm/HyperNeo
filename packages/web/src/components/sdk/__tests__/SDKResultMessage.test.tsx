@@ -259,6 +259,25 @@ describe('SDKResultMessage', () => {
       expect(container.textContent).toContain('2');
     });
 
+    it('names a denied invoke operation using its recorded input', () => {
+      const app = render(
+        <SDKResultMessage
+          message={createSuccessResult({
+            permission_denials: [
+              {
+                tool_name: 'mcp__hyperneo-operations__invoke',
+                tool_use_id: 'i1',
+                tool_input: { name: 'neo.snapshot', input: {} },
+              },
+            ],
+          })}
+        />
+      );
+      fireEvent.click(app.container.querySelector('button')!);
+      expect(app.getByText('neo.snapshot')).toBeTruthy();
+      expect(app.queryByText('mcp__hyperneo-operations__invoke')).toBeNull();
+    });
+
     it('should list denied tools', () => {
       const message = createResultWithPermissionDenials();
       const { container } = render(<SDKResultMessage message={message} />);

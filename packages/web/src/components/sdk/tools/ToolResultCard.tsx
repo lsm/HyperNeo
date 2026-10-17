@@ -139,7 +139,7 @@ function ToolResultCardBody({
   const readText = toolName === 'Read' ? readContentText(output) : null;
 
   const colors = getToolColors(toolName);
-  const displayName = getToolDisplayName(toolName);
+  const displayName = getToolDisplayName(toolName, input);
   const folded = useFoldedActivity();
   const shouldExpand =
     defaultExpanded !== undefined
