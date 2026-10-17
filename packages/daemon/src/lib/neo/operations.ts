@@ -85,6 +85,7 @@ import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './session-status.ts';
 import {
   createNeoRouter,
+  NEO_INBOX_ID,
   type NeoRouter,
   neoNewProject,
   openNeoNewProject,
@@ -706,12 +707,12 @@ function readNeoProjectQuestionAsks(
 }
 
 function askNeoProjectQuestion(
-  service: Pick<NeoService, 'repo' | 'askRecords'>,
+  service: Pick<NeoService, 'repo' | 'askRecords' | 'defaultSessionId'>,
   question: NeoProjectQuestion,
   attempt: number
 ): boolean {
-  const root = service.repo.getBindingForProject(null)?.sessionId;
-  if (!root) return false;
+  const session = service.defaultSessionId();
+  if (!session) return false;
   const [source, target] = [question.sourceId, question.targetId].map(
     (id) => service.repo.getProject(id)?.title ?? id
   );
@@ -719,8 +720,8 @@ function askNeoProjectQuestion(
   const opened = service.askRecords.open({
     id: crypto.randomUUID(),
     requestKey: neoProjectQuestionKey(question.key, attempt),
-    projectId: null,
-    originSessionId: root,
+    projectId: NEO_INBOX_ID,
+    originSessionId: session,
     originMessageId: null,
     title: `${source} and ${target}: one project?`,
     ask: `${text} The daemon asked this while reorganizing projects; after the human answers, run neo.projects.reorganize to apply it.`,
@@ -1146,11 +1147,7 @@ export function createNeoOperations(service: NeoService) {
       'caller',
       'result:track'
     )
-    .pipe(
-      () => requireNeoTrackRoot(service.repo.getBindingForProject(null)?.sessionId),
-      'caller',
-      'result:track'
-    )
+    .pipe(() => requireNeoTrackRoot(service.defaultSessionId()), 'caller', 'result:track')
     .pipe((root: string) => root, 'track', 'root')
     .pipe(
       (input: z.infer<typeof SessionTrack>) =>

@@ -126,6 +126,7 @@ describe('reorganize merge questions on a real store', () => {
   let logged: string[];
   const notified: number[] = [];
   const root = 'neo:10000000-0000-4000-8000-000000000001';
+  const inbox = 'neo:10000000-0000-4000-8000-000000000002';
   const key = 'neo-project-merge:web\u0000web-shallow';
 
   beforeEach(() => {
@@ -137,6 +138,8 @@ describe('reorganize merge questions on a real store', () => {
     asks = new NeoAskRepository(db);
     logged = [];
     repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+    repo.saveProject({ id: 'inbox', title: 'Inbox', summary: 'Inbox', context: '' }, 0);
+    repo.reserveBinding({ sessionId: inbox, kind: 'project', projectId: 'inbox' });
     for (const id of ['web', 'web-shallow'])
       repo.saveProject({ id, title: id, summary: id, context: id }, 0);
     db.prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)').run(identity, 'web');
@@ -158,6 +161,7 @@ describe('reorganize merge questions on a real store', () => {
         db: { getDatabase: () => db },
         notifyChanged: () => notified.push(1),
         askRecords: asks,
+        defaultSessionId: () => inbox,
         logReorganize: (line: string) => logged.push(line),
       } as unknown as NeoService,
       (async () => ({ choice: null })) as unknown as NeoRouter
@@ -268,7 +272,7 @@ describe('reorganize merge questions on a real store', () => {
       asked: [],
     });
     expect(asks.forRequest(key)).toBeNull();
-    expect(repo.listProjects().map((item) => item.id)).toEqual(['web']);
+    expect(repo.listProjects().map((item) => item.id)).toEqual(['inbox', 'web']);
     expect(notified.length).toBeGreaterThan(0);
   });
 
@@ -288,6 +292,6 @@ describe('reorganize merge questions on a real store', () => {
         .listProjects()
         .map((item) => item.id)
         .sort()
-    ).toEqual(['web', 'web-shallow']);
+    ).toEqual(['inbox', 'web', 'web-shallow']);
   });
 });

@@ -332,6 +332,7 @@ import { neoPrompt } from './prompt.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { runNeoReadWork } from './read-work.ts';
+import { neoDefaultSessionId, openNeoDefaultSession } from './router.ts';
 import {
   type NeoSavedRulesNote,
   planNeoSavedRulesAppend,
@@ -701,7 +702,7 @@ export class NeoService {
     };
     this.sessionWatcher = new NeoSessionWatcher({
       db,
-      rootSessionId: () => this.repo.getBindingForProject(null)?.sessionId,
+      defaultSessionId: () => neoDefaultSessionId(this.repo),
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
       seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
@@ -1219,11 +1220,11 @@ export class NeoService {
     .end('plan') as (turn: NeoReminderTurnInput) => unknown;
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
-    const root = this.repo.getBindingForProject(null)?.sessionId;
+    const fallback = neoDefaultSessionId(this.repo);
     const settings = this.db.getGlobalSettings?.();
     return effectiveNeoPreference(
       settings?.neo?.preferences,
-      root ? (this.db.getSession(root)?.config ?? null) : null,
+      fallback ? (this.db.getSession(fallback)?.config ?? null) : null,
       settings?.thinkingLevel
     );
   }
@@ -2010,7 +2011,18 @@ export class NeoService {
     if (failed) await this.returnReport(failed);
   }
 
+  defaultSessionId(): string | undefined {
+    return neoDefaultSessionId(this.repo);
+  }
+
+  openDefault(): Promise<string> {
+    return openNeoDefaultSession(this.repo, (id) => this.open(id));
+  }
+
   async recover(): Promise<void> {
+    await this.openDefault().catch((error) =>
+      this.log.warn('Neo default session not opened', error)
+    );
     this.sessionWatcher.loadSessionNoticeGroups();
     this.initializeTriggerFacts();
     for (const binding of [

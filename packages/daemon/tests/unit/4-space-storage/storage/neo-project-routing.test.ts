@@ -19,7 +19,10 @@ import {
 import {
   chooseNeoRoute,
   createNeoRouter,
+  neoDefaultSessionId,
+  NEO_INBOX_ID,
   type NeoRouterDeps,
+  openNeoDefaultSession,
 } from '../../../../src/lib/neo/router.ts';
 
 let db: Database;
@@ -142,6 +145,23 @@ describe('readNeoProjectFacts', () => {
         .prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)')
         .run(`repo:lsm/shared\u0000${id}`, id);
     expect(neoFactOwners(readNeoProjectFacts(db.getDatabase(), 'lsm/shared#2'))).toBeNull();
+  });
+});
+
+describe('openNeoDefaultSession', () => {
+  test('the default session is the Inbox holder, opened once and then found', async () => {
+    const opened: string[] = [];
+    const open = async (projectId: string) => {
+      opened.push(projectId);
+      repo.reserveBinding({ sessionId: 'neo:inbox', kind: 'project', projectId });
+      return repo.getBindingForProject(projectId)!.sessionId;
+    };
+    expect(neoDefaultSessionId(repo)).toBeUndefined();
+    expect(await openNeoDefaultSession(repo, open)).toBe('neo:inbox');
+    expect(await openNeoDefaultSession(repo, open)).toBe('neo:inbox');
+    expect(opened).toEqual([NEO_INBOX_ID, NEO_INBOX_ID]);
+    expect(repo.getProject(NEO_INBOX_ID)?.title).toBe('Inbox');
+    expect(neoDefaultSessionId(repo)).toBe('neo:inbox');
   });
 });
 

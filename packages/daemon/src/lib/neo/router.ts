@@ -40,6 +40,23 @@ const INBOX_CHOICE: NeoHolder = {
   summary: NEO_INBOX_SUMMARY,
 };
 
+export function neoDefaultSessionId(
+  repo: Pick<NeoRepository, 'getBindingForProject'>
+): string | undefined {
+  return repo.getBindingForProject(NEO_INBOX_ID)?.sessionId;
+}
+
+export function openNeoDefaultSession(
+  repo: Pick<NeoRepository, 'saveProject'>,
+  open: (projectId: string) => Promise<string>
+): Promise<string> {
+  repo.saveProject(
+    { id: NEO_INBOX_ID, title: 'Inbox', summary: NEO_INBOX_SUMMARY, context: '' },
+    0
+  );
+  return open(NEO_INBOX_ID);
+}
+
 const NEW_PROJECT_TITLE_CHARS = 60;
 
 export function neoNewProject(
@@ -586,11 +603,11 @@ export function createNeoRouter(
       return readNeoSectionFacts(text, facts, projects);
     },
     holders: async () => {
-      const root = repo.getBindingForProject(null)?.sessionId;
+      const fallback = neoDefaultSessionId(repo);
       const settings = db.getGlobalSettings();
       const opening = effectiveNeoPreference(
         settings.neo?.preferences,
-        root ? (db.getSession(root)?.config ?? null) : null
+        fallback ? (db.getSession(fallback)?.config ?? null) : null
       )?.provider;
       const repositories = repo.repositories();
       const holders = neoProjectHolders(
@@ -638,20 +655,16 @@ export function createNeoRouter(
       );
     },
     inbox: openHolder
-      ? async () => {
-          repo.saveProject(
-            { id: NEO_INBOX_ID, title: 'Inbox', summary: NEO_INBOX_SUMMARY, context: '' },
-            0
-          );
-          const sessionId = await openHolder(NEO_INBOX_ID);
-          return { ...INBOX_CHOICE, sessionId };
-        }
+      ? async () => ({
+          ...INBOX_CHOICE,
+          sessionId: await openNeoDefaultSession(repo, openHolder),
+        })
       : undefined,
     inboxRunnable: async () => {
       if (process.env.NODE_ENV === 'test') return true;
-      const binding = repo.getBindingForProject(NEO_INBOX_ID) ?? repo.getBindingForProject(null);
+      const session = neoDefaultSessionId(repo);
       const provider =
-        (binding ? db.getSession(binding.sessionId)?.config.provider : undefined) ?? 'anthropic';
+        (session ? db.getSession(session)?.config.provider : undefined) ?? 'anthropic';
       return getProviderService()
         .isProviderAvailable(provider)
         .catch(() => false);
