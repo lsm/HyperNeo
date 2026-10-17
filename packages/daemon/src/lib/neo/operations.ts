@@ -2503,7 +2503,9 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     createNeoPreferenceOperation(service),
-    ...createNeoTodoOperations(service.todos, service.todoSessions, service.todoRunner.start),
+    ...createNeoTodoOperations(service.todos, service.todoSessions, (todoId) =>
+      service.todoRunner.start(todoId)
+    ),
     ...createNeoQuestionOperations(
       service.todos,
       (ask, question, note) =>
@@ -2515,7 +2517,7 @@ export function createNeoOperations(service: NeoService) {
           ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
           'continues'
         ),
-      service.todoRunner.start
+      (todoId) => service.todoRunner.start(todoId)
     ),
     ...createNeoAskOperations(
       service,

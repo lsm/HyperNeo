@@ -47,6 +47,7 @@ describe('neo.todo operations', () => {
       doneWhen: 'PR merged',
       check: { pack: 'coding', kind: 'pr_merged' },
       instruction: 'Fix the login bug and open a PR.',
+      target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'dev-1' } },
     });
     if (!first.ok) throw new Error(first.reason);
     expect(first.todo).toMatchObject({
