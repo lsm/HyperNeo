@@ -1,4 +1,4 @@
-import { getDataDir } from '../data-dir.ts';
+import { getDataDir, resolveDataDir } from '../data-dir.ts';
 import { Database } from '../../storage/sqlite-compat.ts';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { platform } from 'node:os';
@@ -506,8 +506,27 @@ export class DatabaseCredentialStore implements CredentialStore {
   }
 }
 
+function realPath(file: string): string {
+  try {
+    return fs.realpathSync(file);
+  } catch {
+    return path.resolve(file);
+  }
+}
+
+export function isLiveDaemonDatabase(db: Database): boolean {
+  const main = (db.prepare('PRAGMA database_list').all() as { name: string; file: string }[]).find(
+    (row) => row.name === 'main'
+  );
+  return (
+    realPath(getDataDir()) === realPath(resolveDataDir()) &&
+    !!main?.file &&
+    realPath(main.file) === realPath(path.join(resolveDataDir(), 'data', 'daemon.db'))
+  );
+}
+
 export function createCredentialStore(db: Database): CredentialStore {
-  if (process.env.NODE_ENV !== 'test' && platform() === 'darwin') {
+  if (process.env.NODE_ENV !== 'test' && platform() === 'darwin' && isLiveDaemonDatabase(db)) {
     const ttyCheck = () => process.stdout.isTTY === true;
     return new KeychainStatusCredentialStore(
       new KeychainCredentialStore(),

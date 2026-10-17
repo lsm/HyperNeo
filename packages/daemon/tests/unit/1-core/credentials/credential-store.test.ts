@@ -151,22 +151,34 @@ describe('createCredentialStore', () => {
     }
   });
 
-  it('uses Keychain-only store on darwin outside tests', () => {
+  it('uses the Keychain only for the live daemon database on darwin outside tests', () => {
     osOverrides.platform = 'darwin';
-    const prevNodeEnv = process.env.NODE_ENV;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-home-'));
+    osOverrides.homedir = home;
+    const prev = { nodeEnv: process.env.NODE_ENV, dataDir: process.env.HYPERNEO_DATA_DIR };
     process.env.NODE_ENV = 'production';
-    const db = new Database(':memory:');
+    delete process.env.HYPERNEO_DATA_DIR;
+    fs.mkdirSync(path.join(home, '.hyperneo', 'data'), { recursive: true });
+    const live = new Database(path.join(home, '.hyperneo', 'data', 'daemon.db'));
+    const isolated = new Database(path.join(home, 'isolated.db'));
+    const memory = new Database(':memory:');
     try {
-      const store = createCredentialStore(db);
-      expect(store).toBeInstanceOf(KeychainStatusCredentialStore);
-      expect(store).not.toBeInstanceOf(DatabaseCredentialStore);
+      expect(createCredentialStore(live)).toBeInstanceOf(KeychainStatusCredentialStore);
+      expect(createCredentialStore(isolated)).toBeInstanceOf(DatabaseCredentialStore);
+      expect(createCredentialStore(memory)).toBeInstanceOf(DatabaseCredentialStore);
+      process.env.HYPERNEO_DATA_DIR = path.join(home, 'other-data');
+      expect(createCredentialStore(live)).toBeInstanceOf(DatabaseCredentialStore);
     } finally {
-      db.close();
+      for (const db of [live, isolated, memory]) db.close();
       osOverrides.platform = null;
-      if (prevNodeEnv === undefined) {
-        delete process.env.NODE_ENV;
-      } else {
-        process.env.NODE_ENV = prevNodeEnv;
+      osOverrides.homedir = null;
+      fs.rmSync(home, { recursive: true, force: true });
+      for (const [key, value] of [
+        ['NODE_ENV', prev.nodeEnv],
+        ['HYPERNEO_DATA_DIR', prev.dataDir],
+      ] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
       }
     }
   });

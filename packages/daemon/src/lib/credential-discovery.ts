@@ -200,8 +200,18 @@ function readHyperNeoAuthJson(): Record<string, unknown> {
 
 type ProviderImportCredentials = Pick<
   ProviderCredentialManager,
-  'storeApiKey' | 'storeOAuthTokens'
+  'getCredentials' | 'storeApiKey' | 'storeOAuthTokens'
 >;
+
+async function fillEmptyCredential(
+  credentialManager: ProviderImportCredentials,
+  providerId: string,
+  store: () => Promise<void>
+): Promise<void> {
+  try {
+    if (!(await credentialManager.getCredentials(providerId))) await store();
+  } catch {}
+}
 
 async function importLegacyProviders(
   db: Database,
@@ -233,9 +243,9 @@ async function importLegacyProviders(
     });
 
     if (!apiKey) continue;
-    try {
-      await credentialManager.storeApiKey(mapping.providerId, apiKey);
-    } catch {}
+    await fillEmptyCredential(credentialManager, mapping.providerId, () =>
+      credentialManager.storeApiKey(mapping.providerId, apiKey)
+    );
   }
 
   const hyperneoAuth = readHyperNeoAuthJson();
@@ -258,13 +268,13 @@ async function importLegacyProviders(
           sortOrder: sortOrder++,
         });
       }
-      try {
-        await credentialManager.storeOAuthTokens('anthropic-codex', {
+      await fillEmptyCredential(credentialManager, 'anthropic-codex', () =>
+        credentialManager.storeOAuthTokens('anthropic-codex', {
           accessToken: openaiCreds.access,
           refreshToken: openaiCreds.refresh,
           expiresAt: openaiCreds.expires,
-        });
-      } catch {}
+        })
+      );
     }
   }
 
@@ -283,11 +293,11 @@ async function importLegacyProviders(
           sortOrder: sortOrder++,
         });
       }
-      try {
-        await credentialManager.storeOAuthTokens('anthropic-copilot', {
+      await fillEmptyCredential(credentialManager, 'anthropic-copilot', () =>
+        credentialManager.storeOAuthTokens('anthropic-copilot', {
           accessToken: copilotCreds.refresh,
-        });
-      } catch {}
+        })
+      );
     }
   }
 
