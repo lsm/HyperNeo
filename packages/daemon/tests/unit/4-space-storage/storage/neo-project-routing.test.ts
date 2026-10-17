@@ -149,7 +149,7 @@ describe('readNeoProjectFacts', () => {
   });
 });
 
-describe('openNeoDefaultSession', () => {
+describe('the default Neo session', () => {
   const opened: string[] = [];
   const open = async (projectId: string) => {
     opened.push(projectId);
