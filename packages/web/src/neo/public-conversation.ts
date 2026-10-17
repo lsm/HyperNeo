@@ -184,26 +184,3 @@ export const projectNeoPublicConversation = (
   publications: NeoPublicationState,
   noticeGroups?: readonly NeoSessionNoticeGroup[]
 ) => NeoPublicConversation;
-
-export function neoWorkSummaries(
-  entries: readonly NeoPublicEntry[] | undefined
-): ReadonlyMap<string, { text: string; at: number }> {
-  const summaries = new Map<string, { text: string; at: number }>();
-  for (const entry of entries ?? []) {
-    if (entry.kind !== 'publication') continue;
-    const text = entry.publication.shortText.trim() || entry.publication.fullText.trim();
-    const at = Date.parse(entry.publication.editedAt ?? entry.publication.createdAt);
-    for (const link of entry.publication.links)
-      if (link.kind === 'work' && text && at >= (summaries.get(link.id)?.at ?? -Infinity))
-        summaries.set(link.id, { text, at });
-  }
-  return summaries;
-}
-
-export function neoWorkSummary(
-  summaries: ReadonlyMap<string, { text: string; at: number }>,
-  work: { id: string; updatedAt: number }
-): string | undefined {
-  const summary = summaries.get(work.id);
-  return summary && summary.at >= work.updatedAt ? summary.text : undefined;
-}
