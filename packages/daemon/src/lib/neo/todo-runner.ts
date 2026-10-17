@@ -124,15 +124,12 @@ export function requireNeoTodoRetryable(read: {
 }
 
 export function planNeoTodoSettled(
-  todo: NeoTodo,
   settled: { status: 'reported' | 'failed'; report: string },
   now: number
 ): NeoTodoPatch {
-  if (settled.status === 'failed')
-    return { state: 'failed', reason: settled.report, finishedAt: now };
-  return todo.check
-    ? { report: settled.report }
-    : { report: settled.report, state: 'done', finishedAt: now };
+  return settled.status === 'failed'
+    ? { state: 'failed', reason: settled.report, finishedAt: now }
+    : { report: settled.report };
 }
 
 export function planNeoTodoCheck(
@@ -149,9 +146,11 @@ export function neoTodoNote(todo: NeoTodo): string {
   if (todo.state === 'failed') return `Todo "${todo.title}" failed: ${todo.reason ?? ''}`;
   if (todo.state === 'done' && todo.evidence)
     return `Todo "${todo.title}" is done: ${todo.evidence}`;
-  return `Todo "${todo.title}" reported${todo.state === 'done' ? ' and is done' : ''}:\n${
-    todo.report ?? ''
-  }`;
+  if (todo.state === 'done')
+    return `Todo "${todo.title}" reported and is done:\n${todo.report ?? ''}`;
+  return `Todo "${todo.title}": its session stopped, which is not completion; the todo stays doing ${
+    todo.check ? 'until its check passes' : 'until it is ticked with evidence'
+  }. Its last report:\n${todo.report ?? '(none)'}`;
 }
 
 export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
@@ -292,7 +291,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       if (!todo || todo.state !== 'doing' || todo.report || todo.updatedAt !== card.updatedAt)
         return null;
       const now = Date.now();
-      return neoTodoCard(store.updateTodo(todo, planNeoTodoSettled(todo, settled, now), now), ask);
+      return neoTodoCard(store.updateTodo(todo, planNeoTodoSettled(settled, now), now), ask);
     },
     anchorFollow: (id, at) => sessions.recordFollowAnchor(id, at),
     returnReport: async (card) => {
