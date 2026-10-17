@@ -447,3 +447,65 @@ describe('neoTodoNote', () => {
     );
   });
 });
+
+describe('a todo sent to an existing session', () => {
+  test('starts when its own message is confirmed there, not at the session’s last activity', async () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const sessions = new NeoTodoSessionRepository(db);
+    store.openAsk({
+      id: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: 'm1',
+      title: 'Two sends',
+      request: 'Send twice',
+      createdAt: 1,
+    });
+    const claude = { adapter: 'claude-desktop', id: 'local_fs3' };
+    const lastActivity = Date.parse('2026-10-17T20:14:36Z');
+    let confirmedAt = 0;
+    const runner = createNeoTodoRunner({
+      store,
+      sessions,
+      invoke: async (_caller, name) =>
+        name === 'work.send'
+          ? completed({
+              ok: true,
+              value: {
+                delivered: true,
+                receipt: { executionId: 'cli-fs3', inputId: `in-${confirmedAt}` },
+                confirmedAt,
+              },
+            })
+          : completed({ ok: true, value: { status: 'done', lastActivityAt: lastActivity } }),
+      packs: () => [],
+      tell: async () => {},
+      tellAsk: async () => {},
+      changed: () => {},
+    });
+    const sent = (id: string) => {
+      const todo = store.addTodo(
+        id,
+        'ask',
+        { title: id, doneWhen: 'Done', check: null, instruction: `Do ${id}`, named: null },
+        1
+      );
+      sessions.create(todo.id, { verb: 'send', ref: claude });
+      return todo;
+    };
+    for (const [id, at] of [
+      ['first', Date.parse('2026-10-17T20:30:00Z')],
+      ['second', Date.parse('2026-10-17T21:18:25Z')],
+    ] as const) {
+      confirmedAt = at;
+      await runner.start(sent(id).id);
+      expect(sessions.readStartedAt(id)).toBe(at);
+    }
+    confirmedAt = Date.parse('2026-10-17T21:40:00Z');
+    expect(await runner.proceed('second', 'Next step')).toMatchObject({ ok: true });
+    expect(sessions.readStartedAt('second')).toBe(confirmedAt);
+  });
+});

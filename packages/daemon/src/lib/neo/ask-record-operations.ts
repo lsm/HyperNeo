@@ -37,7 +37,9 @@ const AskResult = z.union([
   z.object({
     ok: z.literal(true),
     ask: NeoAskEntrySchema.shape.ask,
-    todos: NeoAskEntrySchema.shape.todos.element.omit({ status: true, link: true }).array(),
+    todos: NeoAskEntrySchema.shape.todos.element
+      .omit({ status: true, link: true, remoteLink: true })
+      .array(),
   }),
 ]);
 

@@ -112,6 +112,7 @@ export const WorkDeliverySchema = z.object({
   receipt: WorkInputReceiptSchema.optional(),
   queuedSubmissionId: z.string().min(1).optional(),
   steeredIntoTurnId: z.string().min(1).optional(),
+  confirmedAt: z.number().optional(),
 });
 
 export type WorkDelivery = z.infer<typeof WorkDeliverySchema>;

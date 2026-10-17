@@ -36,7 +36,10 @@ describe('claudeDirectInput', () => {
       type: 'queue-operation',
       content: `<cross-session-message from="uds:/x.sock">\n${claudeInboxText(message)}\n</cross-session-message>`,
     });
-    expect(claudeDirectInput([queued], 'in-1', message)).toBe('in-1');
+    expect(claudeDirectInput([queued], 'in-1', message)).toEqual({
+      inputId: 'in-1',
+      at: undefined,
+    });
     expect(claudeDirectInput([queued], 'in-1', 'something else')).toBeUndefined();
   });
 });
@@ -165,15 +168,21 @@ describe('claude-desktop adapter against the app session records', () => {
     });
     const append = (entry: Record<string, unknown>) =>
       appendFileSync(transcript, `${JSON.stringify(entry)}\n`);
+    const at = '2026-10-17T21:18:25.000Z';
+    const confirmedAt = Date.parse(at);
     const relayed = (uuid?: string) => ({
       type: uuid ? 'user' : 'queue-operation',
+      timestamp: at,
       ...(uuid ? { uuid } : {}),
       content: '<cross-session-message from="x">\nload "orders"\n</cross-session-message>',
     });
 
     test.each([
-      ['its own input', { type: 'user', uuid: 'in-1' }],
-      ['a queued copy of it', { type: 'queue-operation', content: 'load \"orders\" then stop' }],
+      ['its own input', { type: 'user', uuid: 'in-1', timestamp: at }],
+      [
+        'a queued copy of it',
+        { type: 'queue-operation', timestamp: at, content: 'load \"orders\" then stop' },
+      ],
     ])('the direct message counts once the transcript shows %s', async (_, entry) => {
       const driver = adapter(undefined, 0, undefined, undefined, async () => {
         append(entry);
@@ -181,7 +190,11 @@ describe('claude-desktop adapter against the app session records', () => {
       });
       expect(await driver.send?.(ref, 'load "orders" then stop', context)).toEqual({
         ok: true,
-        value: { delivered: true, receipt: { executionId: 'cli-a1', inputId: 'in-1' } },
+        value: {
+          delivered: true,
+          receipt: { executionId: 'cli-a1', inputId: 'in-1' },
+          confirmedAt,
+        },
       });
       expect(spawned).toEqual([]);
     });
@@ -203,7 +216,11 @@ describe('claude-desktop adapter against the app session records', () => {
       );
       expect(await relay.send?.(ref, 'load "orders"\nthen stop', context)).toEqual({
         ok: true,
-        value: { delivered: true, receipt: { executionId: 'cli-a1', inputId: 'u-relay' } },
+        value: {
+          delivered: true,
+          receipt: { executionId: 'cli-a1', inputId: 'u-relay' },
+          confirmedAt,
+        },
       });
       expect(spawned[0].args.slice(0, 11)).toEqual([
         'claude',
@@ -228,7 +245,7 @@ describe('claude-desktop adapter against the app session records', () => {
       );
       expect(await queued.send?.(ref, 'load "orders"\nthen stop', context)).toEqual({
         ok: true,
-        value: { delivered: true },
+        value: { delivered: true, confirmedAt },
       });
       const lost = adapter(undefined, 1, undefined, undefined, async () => reply);
       expect(await lost.send?.(ref, 'load "orders"', context)).toEqual({
@@ -268,7 +285,11 @@ describe('claude-desktop adapter against the app session records', () => {
         await driver.send?.({ adapter: 'claude-desktop', id: 'local_c1' }, 'hi', context)
       ).toEqual({
         ok: true,
-        value: { delivered: true, receipt: { executionId: 'cli-c1', inputId: 'in-c1' } },
+        value: {
+          delivered: true,
+          receipt: { executionId: 'cli-c1', inputId: 'in-c1' },
+          confirmedAt: 0,
+        },
       });
       expect(spawned).toEqual([]);
     });
