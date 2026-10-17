@@ -699,6 +699,17 @@ export function PendingAsk({
           </button>
         )}
       </div>
+      {ask.quote && (
+        <button
+          type="button"
+          class="mb-1 block max-w-full truncate px-1 text-left text-xs text-fg-muted hover:underline"
+          onClick={() =>
+            document.getElementById(ask.quote!.anchor)?.scrollIntoView({ block: 'center' })
+          }
+        >
+          回复：{neoQuoteExcerpt(ask.quote.text)}
+        </button>
+      )}
       <div
         class={`neo-message-bubble rounded-2xl rounded-tr-sm border px-4 py-3 ${failed ? '!border-danger' : ''}`}
       >

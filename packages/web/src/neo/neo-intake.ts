@@ -222,6 +222,7 @@ export type NeoPendingAsk = {
   sessionId: string;
   text: string;
   images: readonly MessageImage[];
+  quote?: NeoQuote;
   createdAt: string;
   state: 'sending' | 'accepted' | 'failed';
   reason?: string;
@@ -239,6 +240,7 @@ export function createNeoIntakeClient(
       sessionId: submission.sessionId,
       text: submission.text,
       images: submission.images ?? [],
+      ...(submission.quote ? { quote: submission.quote } : {}),
       createdAt: shown.get(submission.requestId)?.createdAt ?? new Date().toISOString(),
       state,
       ...(reason ? { reason } : {}),

@@ -376,7 +376,10 @@ describe('Neo quote reply through live chat and durable intake', () => {
     const anchor = quote('Neo');
     request.mockImplementationOnce(async () => ({ ok: false, reason: 'Try again.' }));
     submit();
-    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    const failed = document.querySelector('[data-pending-ask]')!;
+    expect(failed.textContent).toContain(`回复：${fullReply.split('\n')[0]}`);
+    fireEvent.click(retry);
     await waitFor(() => expect(calls()).toHaveLength(2));
     expect(calls()[0][1].input).toMatchObject({
       content: 'Please explain',
