@@ -120,3 +120,28 @@ remain separate facts and do not claim that a turn stopped or an input ran.
 No command is returned by this Build slice. Durable command claims, retirement
 of uncertain submissions, pending-only withdrawal and runtime/adapter wiring
 remain subsequent work; missing execution receipts never authorize blind replay.
+
+## Durable command outbox
+
+`ClaudeDesktopOutboxRepository` reuses `JobQueueRepository`, with distinct
+per-session input and stop lanes. It registers no generic job processor and
+disables automatic retries. An exchange commits journal ACK, scoped command
+receipts, retirement of uncertain claims and the next instance-bound claim in
+one immediate transaction. A reconnect to the same plugin instance returns the
+same command ID; it does not allocate another submission. A new instance, owner
+change or reclaimed bound job never authorizes replay of the uncertain effect.
+
+Busy turns retain unclaimed inputs in the daemon. An unknown lifecycle state
+requires a separately verified idle-owner fact before a first input is claimed;
+the default is false. A known busy state takes precedence over that fact. Stop
+has a separate lane and can progress while a submitted prompt waits for idle.
+API resolution, rejection and dropped prompts are stored as command facts,
+without claiming model execution or actual turn termination.
+
+Withdrawal verifies the external session and original sender, then uses the
+existing pending-only job CAS in a transaction. Unclaimed withdrawn inputs stay
+withdrawn across restart. Claimed or completed inputs return `not_queued`; a
+foreign sender/session, stop command or native Desktop queue ID is unsupported.
+Neither lease reclamation nor instance replacement makes an uncertain input
+withdrawable again. Runtime opt-in, stable connection publication and adapter
+wiring remain separate Wire work; this Build slice advertises no new capability.
