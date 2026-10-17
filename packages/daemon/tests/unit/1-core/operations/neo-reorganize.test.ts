@@ -60,10 +60,12 @@ const routed = (projectId: string | null): NeoRouted => ({
 const neoCaller: OperationCaller = { source: 'mcp', sessionId: root, role: 'neo' };
 
 describe('admitNeoReorganizer', () => {
-  test('lets main Neo and the human run it, not a project avatar', () => {
+  test('lets main Neo, the default session and the human run it, not a project avatar', () => {
     const main = { sessionId: root, kind: 'neo', projectId: null } as NeoBinding;
+    const inbox = { sessionId: 'i', kind: 'project', projectId: 'inbox' } as NeoBinding;
     const holder = { sessionId: 'h', kind: 'project', projectId: 'c' } as NeoBinding;
     expect(admitNeoReorganizer(neoCaller, main)).toEqual({ value: true });
+    expect(admitNeoReorganizer({ ...neoCaller, sessionId: 'i' }, inbox)).toEqual({ value: true });
     expect(admitNeoReorganizer({ source: 'rpc', principal: 'local' }, null)).toEqual({
       value: true,
     });
