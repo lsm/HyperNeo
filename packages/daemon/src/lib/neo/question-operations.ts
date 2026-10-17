@@ -10,6 +10,7 @@ import type {
   NeoAskTodoRepository,
   NeoQuestionDraft,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { requireNeoAskOwner } from './todo-operations.ts';
 
@@ -165,7 +166,8 @@ export function createNeoQuestionOperations(
   ) => QuestionReceipt | Rejection;
 
   const answer = (superpipe({})('neo.question.answer') as PipelineAPI)
-    .input(['input'])
+    .input(['input', 'caller'])
+    .pipe(requireLocalUser, 'caller', 'result:outcome')
     .pipe(
       (input: z.infer<typeof Answer>) =>
         planNeoQuestionAnswer(store.getQuestion(input.questionId), input.answer),
@@ -193,7 +195,10 @@ export function createNeoQuestionOperations(
       'outcome',
       'outcome'
     )
-    .endAsync('outcome') as (input: z.infer<typeof Answer>) => Promise<QuestionReceipt | Rejection>;
+    .endAsync('outcome') as (
+    input: z.infer<typeof Answer>,
+    caller: OperationCaller
+  ) => Promise<QuestionReceipt | Rejection>;
 
   return [
     defineOperation({
@@ -212,7 +217,7 @@ export function createNeoQuestionOperations(
       inputSchema: Answer,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'human_only' },
-      execute: async (input) => answer(input),
+      execute: async (input, caller) => answer(input, caller),
     }),
   ];
 }

@@ -674,6 +674,8 @@ describe('Neo MVP', () => {
       'neo.todo.add',
       'neo.todo.edit',
       'neo.todo.remove',
+      'neo.question.ask',
+      'neo.question.answer',
       'neo.ask.fold',
       'neo.ask.open',
       'neo.ask.tick',
