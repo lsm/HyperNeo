@@ -133,19 +133,8 @@ export function neoQuoteExcerpt(text: string): string {
   return chars.length > 500 ? `${chars.slice(0, 500).join('')}…` : chars.join('');
 }
 
-function neoDraftText({ text, quote }: NeoDraft): string {
-  if (!quote || quote.replyTo) return text;
-  const quoted = neoQuoteExcerpt(quote.text)
-    .split('\n')
-    .map((line) => (line ? `> ${line}` : '>'))
-    .join('\n');
-  const head = `Replying to ${quote.author === 'You' ? 'my earlier message' : quote.author}:\n${quoted}`;
-  return text ? `${head}\n\n${text}` : head;
-}
-
 export function neoDraftPayload(submission: Submission, thumbnails: readonly NeoThumbnail[] = []) {
-  const { sessionId, requestId, images } = submission;
-  const text = neoDraftText(submission);
+  const { sessionId, requestId, images, text } = submission;
   return {
     sessionId,
     requestId,
@@ -248,7 +237,7 @@ export function createNeoIntakeClient(
     shown.set(submission.requestId, {
       requestId: submission.requestId,
       sessionId: submission.sessionId,
-      text: neoDraftText(submission),
+      text: submission.text,
       images: submission.images ?? [],
       createdAt: shown.get(submission.requestId)?.createdAt ?? new Date().toISOString(),
       state,

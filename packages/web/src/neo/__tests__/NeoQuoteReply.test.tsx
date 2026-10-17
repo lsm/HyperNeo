@@ -169,11 +169,10 @@ function quote(author: 'You' | 'Neo') {
   fireEvent.click(button);
   return anchor;
 }
-const quotedText = (author: string, _anchor: string, text: string, draft: string) =>
-  `Replying to ${author === 'You' ? 'my earlier message' : author}:\n${text
-    .split('\n')
-    .map((line) => (line ? `> ${line}` : '>'))
-    .join('\n')}\n\n${draft}`;
+const replyTo = (anchor: string) => ({
+  kind: 'message',
+  id: document.getElementById(anchor)!.getAttribute('data-message-ref'),
+});
 function deferredSend() {
   let finish: (response: unknown) => void = () => {};
   request.mockImplementationOnce(
@@ -304,7 +303,8 @@ describe('Neo quote reply through live chat and durable intake', () => {
         input: {
           sessionId: root,
           requestId: expect.any(String),
-          content: quotedText('Neo', anchor, fullReply, 'My existing draft'),
+          content: 'My existing draft',
+          replyTo: replyTo(anchor),
         },
       },
       { timeout: 90_000 },
@@ -343,9 +343,10 @@ describe('Neo quote reply through live chat and durable intake', () => {
     submit();
     await waitFor(() => expect(calls()).toHaveLength(1));
     expect(calls()[0][1].input.content).toEqual([
-      { type: 'text', text: quotedText('You', anchor, originalText, 'About this image') },
+      { type: 'text', text: 'About this image' },
       { type: 'image', source: { type: 'base64', data: 'cGhvdG8=', media_type: 'image/png' } },
     ]);
+    expect(calls()[0][1].input.replyTo).toEqual(replyTo(anchor));
   });
 
   it('clears selection across session changes without reviving it on return', async () => {
@@ -377,9 +378,10 @@ describe('Neo quote reply through live chat and durable intake', () => {
     submit();
     fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(calls()).toHaveLength(2));
-    expect(calls()[0][1].input.content).toBe(
-      quotedText('Neo', anchor, fullReply, 'Please explain')
-    );
+    expect(calls()[0][1].input).toMatchObject({
+      content: 'Please explain',
+      replyTo: replyTo(anchor),
+    });
     expect(calls()[1][1].input).toEqual(calls()[0][1].input);
     await waitFor(() => expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull());
   });
