@@ -2020,9 +2020,6 @@ export class NeoService {
   }
 
   async recover(): Promise<void> {
-    await this.openDefault().catch((error) =>
-      this.log.warn('Neo default session not opened', error)
-    );
     this.sessionWatcher.loadSessionNoticeGroups();
     this.initializeTriggerFacts();
     for (const binding of [

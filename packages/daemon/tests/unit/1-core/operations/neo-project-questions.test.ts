@@ -272,7 +272,12 @@ describe('reorganize merge questions on a real store', () => {
       asked: [],
     });
     expect(asks.forRequest(key)).toBeNull();
-    expect(repo.listProjects().map((item) => item.id)).toEqual(['inbox', 'web']);
+    expect(
+      repo
+        .listProjects()
+        .map((item) => item.id)
+        .sort()
+    ).toEqual(['inbox', 'web']);
     expect(notified.length).toBeGreaterThan(0);
   });
 

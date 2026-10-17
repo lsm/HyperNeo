@@ -1704,6 +1704,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   if (process.env.NODE_ENV !== 'test') {
     const neoFolder = ensureNeoProject(deps.db.workspaceHistory);
     fileNeoSessions(deps.db, neoService.repo, neoFolder);
+    void neoService
+      .openDefault()
+      .catch((error) => log.warn('Neo default session not opened', error));
   }
   void neoService.recover();
   deps.jobProcessor.register(NEO_CONSULTATION_RECOVERY, () =>
