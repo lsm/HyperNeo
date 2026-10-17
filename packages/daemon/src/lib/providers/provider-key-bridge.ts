@@ -13,15 +13,21 @@ type KeyedEnv = {
 
 type KeyBridge = { server: AnthropicMessagesBridgeServer; accessToken: string };
 
-const DAEMON_PLACEHOLDER_TOKEN =
-  /^(custom-endpoint:|codex-bridge-|ollama-bridge|anthropic-copilot-proxy:|opencode:)/;
+const KEYED_PROVIDER_IDS = new Set([
+  'glm',
+  'kimi',
+  'minimax',
+  'deepseek',
+  'openrouter',
+  'opencode',
+]);
 
 const readyBridges = new Map<string, KeyBridge>();
 const startingBridges = new Map<string, Promise<KeyBridge>>();
 const scopeBridgeKeys = new Map<string, string>();
 
 function isDaemonToken(token: string): boolean {
-  if (DAEMON_PLACEHOLDER_TOKEN.test(token)) return true;
+  if (token.startsWith('opencode:')) return true;
   for (const bridge of readyBridges.values()) if (bridge.accessToken === token) return true;
   return false;
 }
@@ -30,7 +36,9 @@ function keyedUpstream(providerId: string, env: KeyedEnv) {
   const baseUrl = env.ANTHROPIC_BASE_URL;
   const bearer = env.ANTHROPIC_AUTH_TOKEN;
   const apiKey = bearer || env.ANTHROPIC_API_KEY;
-  if (providerId === 'anthropic' || !baseUrl || !apiKey || isDaemonToken(apiKey)) return undefined;
+  if (!KEYED_PROVIDER_IDS.has(providerId) || !baseUrl || !apiKey || isDaemonToken(apiKey)) {
+    return undefined;
+  }
   const forwardHeaders = (env.ANTHROPIC_CUSTOM_HEADERS ?? '')
     .split('\n')
     .map((line) => line.split(':')[0].trim())
