@@ -342,8 +342,8 @@ describe('neo.ask.forward', () => {
   test('resolves the target before the same-project check', async () => {
     const { invoke, forwards } = runtime();
     expect(await invoke(caller(garden.sessionId, 'ask-1'), 'Garden')).toMatchObject({
-      ok: false,
-      reason: 'same_project',
+      kind: 'completed',
+      value: { ok: false, reason: 'same_project' },
     });
     expect(forwards).toEqual([]);
   });
