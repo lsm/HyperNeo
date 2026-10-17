@@ -42,16 +42,19 @@ identity or framing cannot be verified. No messages were sent to real sessions.
 
 | Owner | Channel | Unavailable behavior |
 | --- | --- | --- |
-| Desktop | Desktop's own channel only | `unsupported`; open the existing Desktop session |
+| Desktop | Verified 2.1.299 peer inbox for send/steer | `unsupported` without verified protocol evidence |
 | Confirmed CLI/SDK | Inspected inbox for a live session | No blind resume or relay |
 | Unknown or conflicting | None | `unreachable`; never resume |
 
-Desktop evidence wins over conflicting CLI evidence. A CLI admission requires
-exactly one live session with a matched PID and confirmed CLI owner. This
-admission now gates the shared send path. Desktop-owned sessions return
-`unsupported`; absent or unknown live owners return `unreachable` before any
-CLI message/resume effect. Creating a session can succeed before handoff is
-rejected; this partial start is reported as not delivered, never as running.
+Send admission requires exactly one known live owner and a freshly verified
+inbox registration matching its PID/session/owner. Desktop 2.1.299 must
+advertise peerProtocol 1 and notify_idle; CLI 2.1.295 keeps its inspected
+protocol. A later isolated Desktop experiment proved consumption and a real
+reply through its registered inbox without changing ownership. The reply
+endpoint remains open for the daemon's lifetime; a write alone is unconfirmed.
+Conflicting, changed or unknown ownership returns `unreachable`, with no resume
+effect. Stop, queue and withdraw remain unavailable through this inbox. Creating
+a session can still succeed before handoff fails; that is reported as not delivered.
 
 ## Remaining slices
 

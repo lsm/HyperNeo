@@ -12,6 +12,7 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { listOperationSummaries } from '../../../../src/lib/operations/discovery';
 
 const place = { machine: 'imac', folder: '/focus/dolmen', name: 'dolmen' };
 
@@ -90,7 +91,7 @@ describe('work verb operations', () => {
     }
   });
 
-  test('operation discovery omits direct driver capabilities without routes', async () => {
+  test('operation discovery omits unrouted or unimplemented driver capabilities', async () => {
     const adapter: WorkAdapter = {
       ...desktop,
       capabilities: ['find', 'send', 'steer', 'queue', 'withdraw'],
@@ -103,6 +104,139 @@ describe('work verb operations', () => {
     });
     expect(adapter.capabilities).toContain('steer');
   });
+
+  test('queue/withdraw are discoverable routes and preserve the authoritative caller origin', async () => {
+    const received: unknown[] = [];
+    const adapter: WorkAdapter = {
+      ...desktop,
+      capabilities: ['find', 'queue', 'withdraw'],
+      queue: async (ref, message, context) => {
+        received.push([ref, message, context]);
+        return {
+          ok: true,
+          value: { delivered: false, unconfirmed: true, queuedSubmissionId: 'q1' },
+        };
+      },
+      withdraw: async (ref, id, context) => {
+        received.push([ref, id, context]);
+        return {
+          ok: true,
+          value: { queuedSubmissionId: id, withdrawn: false, reason: 'not_queued' },
+        };
+      },
+    };
+    const ref = { adapter: adapter.id, id: 'd1' };
+    const caller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: 'self' };
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [adapter],
+        daemonName: 'imac',
+        remote: { list: () => [], invoke: async () => ({}) },
+      })
+    );
+    expect(listOperationSummaries(registry, caller).map((entry) => entry.name)).toEqual(
+      expect.arrayContaining(['work.queue', 'work.withdraw'])
+    );
+    expect(await call('work.adapters', {}, undefined, caller, [adapter])).toEqual({
+      ok: true,
+      value: [{ id: adapter.id, capabilities: ['find', 'queue', 'withdraw'] }],
+    });
+    expect(
+      await call(
+        'work.queue',
+        { ref, message: ' next ', from: 'session:forged' },
+        undefined,
+        caller,
+        [adapter]
+      )
+    ).toEqual({
+      ok: true,
+      value: { delivered: false, unconfirmed: true, queuedSubmissionId: 'q1' },
+    });
+    expect(
+      await call(
+        'work.withdraw',
+        { ref, queuedSubmissionId: 'q1', from: 'session:forged' },
+        undefined,
+        caller,
+        [adapter]
+      )
+    ).toEqual({
+      ok: true,
+      value: { queuedSubmissionId: 'q1', withdrawn: false, reason: 'not_queued' },
+    });
+    expect(received).toEqual([
+      [ref, 'next', { from: 'session:self', caller }],
+      [ref, 'q1', { from: 'session:self', caller }],
+    ]);
+  });
+
+  test.each(['queue', 'withdraw'] as const)(
+    '%s does not fall back to send on an unsupported adapter',
+    async (verb) => {
+      const input = {
+        ref: { adapter: desktop.id, id: 'd1' },
+        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+      };
+      expect(await call(`work.${verb}`, input)).toMatchObject({ ok: false, reason: 'unsupported' });
+    }
+  );
+
+  test.each(['queue', 'withdraw'] as const)(
+    '%s retains remote caller restrictions and origin qualification',
+    async (verb) => {
+      const asked: unknown[] = [];
+      const remote: Invoke = async (...args) => {
+        asked.push(args);
+        return verb === 'queue'
+          ? { ok: true, value: { delivered: false, queuedSubmissionId: 'q1' } }
+          : { ok: true, value: { queuedSubmissionId: 'q1', withdrawn: true } };
+      };
+      const input = {
+        ref: { adapter: desktop.id, id: 'd1', daemon: 'laptop' },
+        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+      };
+      expect(
+        await call(`work.${verb}`, input, remote, {
+          source: 'mcp',
+          role: 'workflow_worker',
+          sessionId: 'worker',
+        })
+      ).toMatchObject({ ok: false, reason: 'unsupported' });
+      expect(asked).toEqual([]);
+      const caller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: 'self' };
+      expect(await call(`work.${verb}`, input, remote, caller)).toMatchObject({ ok: true });
+      expect(asked[0]).toEqual([
+        'laptop',
+        `work.${verb}`,
+        {
+          ...input,
+          ref: { adapter: desktop.id, id: 'd1' },
+          from: 'daemon:imac::session:self',
+        },
+        { timeoutMs: 180_000 },
+      ]);
+    }
+  );
+
+  test.each(['queue', 'withdraw'] as const)(
+    '%s reports remote transport failure as uncertain',
+    async (verb) => {
+      const input = {
+        ref: { adapter: desktop.id, id: 'd1', daemon: 'laptop' },
+        ...(verb === 'queue' ? { message: 'next' } : { queuedSubmissionId: 'q1' }),
+      };
+      expect(
+        await call(`work.${verb}`, input, async () => {
+          throw new Error('disconnected');
+        })
+      ).toMatchObject({
+        ok: false,
+        reason: 'unreachable',
+        detail: expect.stringContaining('may already have been'),
+      });
+    }
+  );
 
   test('runs each verb on the adapter named by the ref', async () => {
     expect(

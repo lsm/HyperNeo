@@ -4,7 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import {
   claudeSessionOwner,
-  requireClaudeCliOwner,
+  requireClaudePeerOwner,
   type ClaudeSessionIdentity,
   type ClaudeSessionOwner,
 } from './claude-session-owner.ts';
@@ -14,31 +14,45 @@ import { reject } from './work-operations.ts';
 const InboxRegistrationSchema = z.object({
   sessionId: z.string().uuid(),
   pid: z.number().int().positive(),
-  version: z.literal('2.1.295'),
+  version: z.enum(['2.1.295', '2.1.299']),
   messagingSocketPath: z.string().min(1),
+  peerProtocol: z.number().optional(),
+  peerFeatures: z.array(z.string()).optional(),
 });
 
 export interface ClaudeCliInboxEndpoint {
   sessionId: string;
   pid: number;
-  version: '2.1.295';
+  version: '2.1.295' | '2.1.299';
   socketPath: string;
 }
 
 export function requireClaudeInboxEndpoint(
-  live: ClaudeSessionIdentity,
+  live: ClaudeSessionIdentity & { owner?: ClaudeSessionOwner },
   registration: unknown
 ): { value: ClaudeCliInboxEndpoint } | { reason: Rejected } {
-  const owner = requireClaudeCliOwner(live.sessionId, [
+  const owner = requireClaudePeerOwner(live.sessionId, [
     { ...live, owner: claudeSessionOwner(live, registration) },
   ]);
   if ('reason' in owner) return owner;
+  if (live.owner !== undefined && live.owner !== owner.value.owner)
+    return { reason: reject('unreachable', 'Claude ownership changed since live discovery.') };
   const parsed = InboxRegistrationSchema.safeParse(registration);
   if (!parsed.success)
     return {
       reason: reject('unsupported', 'No registered inbox with a verified Claude protocol.'),
     };
   const record = parsed.data;
+  const verified =
+    owner.value.owner === 'desktop'
+      ? record.version === '2.1.299' &&
+        record.peerProtocol === 1 &&
+        record.peerFeatures?.includes('notify_idle')
+      : record.version === '2.1.295';
+  if (!verified)
+    return {
+      reason: reject('unsupported', 'No registered inbox with a verified Claude protocol.'),
+    };
   if (
     !isAbsolute(record.messagingSocketPath) ||
     !new RegExp(`^${record.pid}(?:-[a-f0-9]{8})?\\.sock$`).test(
@@ -71,7 +85,7 @@ async function readRegistration(
 
 export const readClaudeInboxEndpoint = (superpipe({})('read-claude-inbox-endpoint') as PipelineAPI)
   .input(['sessionId', 'live', 'sessionsDir'])
-  .pipe(requireClaudeCliOwner, ['sessionId', 'live'], 'result:target')
+  .pipe(requireClaudePeerOwner, ['sessionId', 'live'], 'result:target')
   .pipe((target: ClaudeSessionIdentity) => target, 'target', 'identity')
   .pipe(readRegistration, ['identity', 'sessionsDir'], 'registration')
   .pipe(requireClaudeInboxEndpoint, ['identity', 'registration'], 'result:target')

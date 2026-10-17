@@ -76,7 +76,7 @@ describe('Claude inbox driver runtime', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  const reply = (): ClaudeInboxEvent => ({
+  const reply = (): Extract<ClaudeInboxEvent, { kind: 'reply' }> => ({
     kind: 'reply',
     sessionId,
     messageId: randomUUID(),
@@ -189,11 +189,43 @@ describe('Claude inbox driver runtime', () => {
         await adapter.send!({ adapter: 'claude-code', id: sessionId }, 'text', context)
       ).toMatchObject({
         ok: false,
-        reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
+        reason: 'unreachable',
       });
       expect(opens).toBe(0);
     }
   );
+
+  test('keeps the verified Desktop reply channel alive after send returns', async () => {
+    await writeFile(
+      join(dir, '456.json'),
+      JSON.stringify({
+        sessionId,
+        pid: 456,
+        procStart: 'Thu Oct 15 15:18:31 2026',
+        entrypoint: 'claude-desktop',
+        version: '2.1.299',
+        peerProtocol: 1,
+        peerFeatures: ['notify_idle'],
+        messagingSocketPath: '/tmp/cc-socks/456.sock',
+      })
+    );
+    deps.liveSessions = async () => [{ sessionId, pid: 456, status: 'busy', owner: 'desktop' }];
+    expect(await driver.send(sessionId, 'task', context)).toMatchObject({
+      ok: true,
+      value: { delivered: false, unconfirmed: true },
+    });
+    expect(closes).toBe(0);
+    const event = reply();
+    emits[0](event);
+    await driver.close();
+    expect(handoffs).toHaveLength(1);
+    expect(handoffs[0]).toMatchObject({
+      to: context.from,
+      origin: `driver:claude-code:${sessionId}`,
+      message: { inputKind: 'system', message: { content: event.content } },
+    });
+    expect(closes).toBe(1);
+  });
 
   test('revalidates the reply destination when a later reply arrives', async () => {
     await driver.send(sessionId, 'text', context);
