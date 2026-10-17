@@ -6,21 +6,18 @@ const caller: OperationCaller = { source: 'mcp', sessionId: 'root', role: 'neo' 
 
 describe('requireNeoProjectSaveId', () => {
   test('a create omits the id, and an update names it', () => {
-    expect(requireNeoProjectSaveId({ expectedRevision: 0 }, false, caller)).toEqual({
-      value: caller,
-    });
-    expect(requireNeoProjectSaveId({ id: 'club', expectedRevision: 2 }, true, caller)).toEqual({
+    expect(requireNeoProjectSaveId({ expectedRevision: 0 }, caller)).toEqual({ value: caller });
+    expect(requireNeoProjectSaveId({ id: 'club', expectedRevision: 2 }, caller)).toEqual({
       value: caller,
     });
   });
 
-  test('refuses a named create, a holder create and an update without an id', () => {
-    for (const [input, holder, reason] of [
-      [{ id: 'club', expectedRevision: 0 }, false, 'Omit id'],
-      [{ expectedRevision: 0 }, true, 'own project'],
-      [{ expectedRevision: 1 }, false, 'Pass the id'],
+  test('refuses a named create and an update without an id', () => {
+    for (const [input, reason] of [
+      [{ id: 'club', expectedRevision: 0 }, 'Omit id'],
+      [{ expectedRevision: 1 }, 'Pass the id'],
     ] as const)
-      expect(requireNeoProjectSaveId(input, holder, caller)).toEqual({
+      expect(requireNeoProjectSaveId(input, caller)).toEqual({
         reason: { ok: false, reason: expect.stringContaining(reason) },
       });
   });

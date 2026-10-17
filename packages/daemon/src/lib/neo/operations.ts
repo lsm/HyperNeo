@@ -385,7 +385,6 @@ type SaveRequest = z.infer<typeof Save>;
 
 export function requireNeoProjectSaveId(
   input: Pick<SaveRequest, 'id' | 'expectedRevision'>,
-  holder: boolean,
   caller: OperationCaller
 ): { value: OperationCaller } | { reason: z.infer<typeof Failure> } {
   if (input.id && input.expectedRevision === 0)
@@ -395,8 +394,6 @@ export function requireNeoProjectSaveId(
         reason: 'Omit id to create a project; the daemon assigns its id and returns it.',
       },
     };
-  if (!input.id && holder)
-    return { reason: { ok: false, reason: 'A context holder saves only its own project id.' } };
   if (!input.id && input.expectedRevision > 0)
     return { reason: { ok: false, reason: 'Pass the id of the project you are updating.' } };
   return { value: caller };
@@ -636,10 +633,6 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
     : { ...snapshot, rev, ...scoped };
 }
 
-export function neoAskScope(ask: Pick<NeoAsk, 'projectId'> | null): string | null | undefined {
-  return ask ? ask.projectId : undefined;
-}
-
 export const NEO_HUMAN_TURN_REFUSAL =
   'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.';
 
@@ -686,33 +679,16 @@ function isNeoHumanTurn(service: NeoService, caller: OperationCaller): boolean {
 function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
-  name: string,
-  projectId?: string | null
+  name: string
 ): { value: OperationCaller } | { reason: Rejection } {
   if (caller.source === 'rpc' && caller.principal === 'local') return { value: caller };
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
   if (caller.source !== 'mcp' || !binding || binding.kind === 'worker')
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
-  if (name === 'neo.rule.save' && binding.kind !== 'neo')
-    return { reason: { ok: false, reason: 'Only root Neo can save standing rules.' } };
-  if (
-    name === 'neo.project.save' &&
-    binding.kind === 'neo' &&
-    projectId &&
-    service.repo.getProject(projectId)
-  )
-    return {
-      reason: {
-        ok: false,
-        reason: 'Consult this project’s holder to save corrections; Neo only has its summary.',
-      },
-    };
   if (name === 'neo.rule.save' && !isNeoHumanTurn(service, caller))
     return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
   if (['neo.open', 'neo.project.cancel', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
-  if (binding.kind === 'project' && projectId !== undefined && projectId !== binding.projectId)
-    return { reason: { ok: false, reason: 'This context holder cannot access another project.' } };
   return { value: caller };
 }
 
@@ -881,16 +857,12 @@ export function neoReorganizeRuntime(
 }
 
 export function createNeoOperations(service: NeoService) {
-  function path<I, O>(
-    name: string,
-    scope: (input: I) => string | null | undefined,
-    action: (input: I, caller: OperationCaller) => O | Promise<O>
-  ) {
+  function path<I, O>(name: string, action: (input: I, caller: OperationCaller) => O | Promise<O>) {
     return (superpipe({})(name) as PipelineAPI)
       .input(['input', 'caller'])
       .pipe(
-        (input: I, caller: OperationCaller) => admitNeoCaller(service, caller, name, scope(input)),
-        ['input', 'caller'],
+        (caller: OperationCaller) => admitNeoCaller(service, caller, name),
+        'caller',
         'result:admission'
       )
       .pipe(action, ['input', 'admission'], 'admission')
@@ -960,12 +932,13 @@ export function createNeoOperations(service: NeoService) {
     const focus = askId ? service.askRecords.get(askId) : null;
     if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
-    const scope =
-      binding?.kind === 'project'
-        ? binding.projectId
-        : focus
-          ? (focus.projectId ?? undefined)
-          : requested && (service.repo.projectMerges.resolve(requested) ?? requested);
+    const scope = focus
+      ? (focus.projectId ?? undefined)
+      : requested
+        ? (service.repo.projectMerges.resolve(requested) ?? requested)
+        : binding?.kind === 'project'
+          ? binding.projectId
+          : undefined;
     const detailed = caller.source === 'rpc' || binding?.kind === 'project';
     const cardDetail = detailed || !!focus;
     const compact = caller.source !== 'rpc' && !focus;
@@ -1260,29 +1233,24 @@ export function createNeoOperations(service: NeoService) {
     const askId = turnAsk(caller);
     return { askId, scopedTo: askId };
   };
-  const read = path(
-    'neo.snapshot',
-    (input: z.infer<typeof Scope>) =>
-      input.askId ? neoAskScope(service.askRecords.get(input.askId)) : input.projectId,
-    (input, caller) => {
-      const scope = scopeOf(input, caller);
-      const read = neoSnapshotRevision(
-        snapshot(caller, input.projectId, scope.askId, input.summaries),
-        input.sinceRev,
-        scope.scopedTo
-      );
-      const turn = caller.source === 'mcp' ? caller.neoTurn?.messageId : undefined;
-      if (!caller.sessionId || !turn) return read;
-      const key = [caller.sessionId, turn, input.projectId, scope.askId, input.all].join('\n');
-      const planned = planNeoSnapshotRead(
-        read,
-        service.snapshotReads.get(key) ?? null,
-        service.db.getSDKMessageRepo().latestCompactionSeq(caller.sessionId)
-      );
-      if (planned.remember) rememberNeoSnapshotRead(service.snapshotReads, key, planned.remember);
-      return planned.result;
-    }
-  );
+  const read = path('neo.snapshot', (input: z.infer<typeof Scope>, caller) => {
+    const scope = scopeOf(input, caller);
+    const read = neoSnapshotRevision(
+      snapshot(caller, input.projectId, scope.askId, input.summaries),
+      input.sinceRev,
+      scope.scopedTo
+    );
+    const turn = caller.source === 'mcp' ? caller.neoTurn?.messageId : undefined;
+    if (!caller.sessionId || !turn) return read;
+    const key = [caller.sessionId, turn, input.projectId, scope.askId, input.all].join('\n');
+    const planned = planNeoSnapshotRead(
+      read,
+      service.snapshotReads.get(key) ?? null,
+      service.db.getSDKMessageRepo().latestCompactionSeq(caller.sessionId)
+    );
+    if (planned.remember) rememberNeoSnapshotRead(service.snapshotReads, key, planned.remember);
+    return planned.result;
+  });
   const consult = (superpipe({})('neo.project.consult') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -1401,69 +1369,56 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof Respond>,
     caller: OperationCaller
   ) => Promise<z.infer<typeof ConsultationResult>>;
-  const open = path(
-    'neo.open',
-    (input: z.infer<typeof Scope>) => input.projectId,
-    async (input, caller) => {
-      const projectId = input.projectId
-        ? (service.repo.projectMerges.resolve(input.projectId) ?? input.projectId)
-        : null;
-      if (projectId && !service.repo.getProject(projectId))
-        return { ok: false as const, reason: 'Project not found.' };
-      setTimeout(
-        () =>
-          void invokeOperation(
-            service.sessions.getOperationRegistry(),
-            'work.find',
-            { limit: 50 },
-            caller
-          ).catch(() => null),
-        0
-      );
-      const sessionId = await service.open(projectId);
-      return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
+  const open = path('neo.open', async (input: z.infer<typeof Scope>, caller) => {
+    const projectId = input.projectId
+      ? (service.repo.projectMerges.resolve(input.projectId) ?? input.projectId)
+      : null;
+    if (projectId && !service.repo.getProject(projectId))
+      return { ok: false as const, reason: 'Project not found.' };
+    setTimeout(
+      () =>
+        void invokeOperation(
+          service.sessions.getOperationRegistry(),
+          'work.find',
+          { limit: 50 },
+          caller
+        ).catch(() => null),
+      0
+    );
+    const sessionId = await service.open(projectId);
+    return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
+  });
+  const readReceipt = path('neo.receipt.read', (input: z.infer<typeof ReceiptRead>, caller) => {
+    const work = 'workId' in input ? service.repo.getWork(input.workId) : null;
+    const consultation =
+      'consultationId' in input ? service.consultations.get(input.consultationId) : null;
+    if (caller.source !== 'rpc' || caller.principal !== 'local') {
+      const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
+      if (
+        !consultation ||
+        !binding ||
+        binding.kind === 'worker' ||
+        consultation.originSessionId !== caller.sessionId ||
+        !caller.neoTurn?.isLive()
+      )
+        return { ok: false as const, reason: 'This action needs the user.' };
     }
-  );
-  const readReceipt = path(
-    'neo.receipt.read',
-    (_input: z.infer<typeof ReceiptRead>) => undefined,
-    (input, caller) => {
-      const work = 'workId' in input ? service.repo.getWork(input.workId) : null;
-      const consultation =
-        'consultationId' in input ? service.consultations.get(input.consultationId) : null;
-      if (caller.source !== 'rpc' || caller.principal !== 'local') {
-        const binding = caller.sessionId
-          ? service.repo.getBindingBySession(caller.sessionId)
-          : null;
-        if (
-          !consultation ||
-          binding?.kind !== 'neo' ||
-          consultation.originSessionId !== caller.sessionId ||
-          !caller.neoTurn?.isLive()
-        )
-          return { ok: false as const, reason: 'This action needs the user.' };
-      }
-      if (work) return { ok: true as const, work };
-      if (consultation) return { ok: true as const, consultation };
-      return { ok: false as const, reason: 'Receipt not found.' };
+    if (work) return { ok: true as const, work };
+    if (consultation) return { ok: true as const, consultation };
+    return { ok: false as const, reason: 'Receipt not found.' };
+  });
+  const cancelConsultation = path('neo.project.cancel', async ({ id }: z.infer<typeof WorkId>) => {
+    const waiter = service.consultationWaiters.get(id);
+    if (waiter?.status === 'queued' || waiter?.status === 'cancelled') {
+      const cancelled = service.consultationWaiters.cancel(id)!;
+      await service.dispatchConsultationWaiter(cancelled.projectId);
+      return { ok: true as const, waiter: cancelled };
     }
-  );
-  const cancelConsultation = path(
-    'neo.project.cancel',
-    (_input: z.infer<typeof WorkId>) => undefined,
-    async ({ id }) => {
-      const waiter = service.consultationWaiters.get(id);
-      if (waiter?.status === 'queued' || waiter?.status === 'cancelled') {
-        const cancelled = service.consultationWaiters.cancel(id)!;
-        await service.dispatchConsultationWaiter(cancelled.projectId);
-        return { ok: true as const, waiter: cancelled };
-      }
-      const item = service.consultations.finish(id, 'failed', CONSULTATION_STOPPED);
-      if (!item) return { ok: false as const, reason: 'Consultation not found.' };
-      await service.syncConsultation(id);
-      return { ok: true as const, consultation: service.consultations.get(id)! };
-    }
-  );
+    const item = service.consultations.finish(id, 'failed', CONSULTATION_STOPPED);
+    if (!item) return { ok: false as const, reason: 'Consultation not found.' };
+    await service.syncConsultation(id);
+    return { ok: true as const, consultation: service.consultations.get(id)! };
+  });
   const isHolder = (caller: OperationCaller) =>
     caller.source === 'mcp' &&
     !!caller.sessionId &&
@@ -1472,13 +1427,12 @@ export function createNeoOperations(service: NeoService) {
     .input(['input', 'caller'])
     .pipe(
       (input: SaveRequest, caller: OperationCaller) =>
-        admitNeoCaller(service, caller, 'neo.project.save', input.id),
+        admitNeoCaller(service, caller, 'neo.project.save'),
       ['input', 'caller'],
       'result:admission'
     )
     .pipe(
-      (input: SaveRequest, caller: OperationCaller) =>
-        requireNeoProjectSaveId(input, isHolder(caller), caller),
+      (input: SaveRequest, caller: OperationCaller) => requireNeoProjectSaveId(input, caller),
       ['input', 'admission'],
       'result:admission'
     )
@@ -1552,8 +1506,9 @@ export function createNeoOperations(service: NeoService) {
   >;
   const readGithub = path(
     'neo.github.read',
-    (_input: z.infer<typeof GithubRead>) => undefined,
-    async (input): Promise<NeoGithubReadResult | NeoGithubQueryResult> =>
+    async (
+      input: z.infer<typeof GithubRead>
+    ): Promise<NeoGithubReadResult | NeoGithubQueryResult> =>
       input.url
         ? await readNeoGithubRef(service, input.url)
         : await queryNeoGithub((args: string[]) => service.listGithub(args), {
@@ -1561,22 +1516,18 @@ export function createNeoOperations(service: NeoService) {
             repo: input.repo!,
           })
   );
-  const readPack = path(
-    'neo.pack.read',
-    (_input: z.infer<typeof PackRead>) => undefined,
-    ({ id }) => {
-      const pack = service.pack(id);
-      if (!pack)
-        return { ok: false as const, reason: `pack_not_found: no pack "${id}" is installed.` };
-      const instructions = pack.instructions(null);
-      return instructions === null
-        ? {
-            ok: false as const,
-            reason: `pack_without_instructions: "${id}" carries no instructions to read.`,
-          }
-        : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
-    }
-  );
+  const readPack = path('neo.pack.read', ({ id }: z.infer<typeof PackRead>) => {
+    const pack = service.pack(id);
+    if (!pack)
+      return { ok: false as const, reason: `pack_not_found: no pack "${id}" is installed.` };
+    const instructions = pack.instructions(null);
+    return instructions === null
+      ? {
+          ok: false as const,
+          reason: `pack_without_instructions: "${id}" carries no instructions to read.`,
+        }
+      : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
+  });
   const router = createNeoRouter(
     service.db,
     service.repo,
@@ -1655,6 +1606,7 @@ export function createNeoOperations(service: NeoService) {
       open: (projectId) =>
         reopenNeoHolder(service.repo, service.db, (id) => service.open(id), projectId),
       record: (ask, forward) => service.askForwards.record(ask, forward),
+      moveAsks: (from, to) => service.todos.moveAsks(from, to),
       unrecord: (ask, hop) => service.askForwards.remove(ask, hop),
       delivered: (sessionId, messageId) => service.hasDelivery(sessionId, messageId),
       delivering: (sessionId, messageId) => service.isDelivering(sessionId, messageId),

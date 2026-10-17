@@ -244,21 +244,11 @@ describe('Cross-project runtime', () => {
       'Owner timed out',
     ]);
   });
-  test('refuses stale root input and non-root callers before creating a group', async () => {
+  test('refuses a stale input before creating a group', async () => {
     live = false;
     expect(await invoke('neo.projects.dispatch', { parts: parts() })).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('live root') },
+      value: { ok: false, reason: expect.stringContaining('live Neo') },
     });
-    expect(service.crossProjects.pending()).toEqual([]);
-    live = true;
-    const holder = await service.open('alpha');
-    expect(
-      await invoke(
-        'neo.projects.dispatch',
-        { parts: parts() },
-        { ...rootCaller(), sessionId: holder }
-      )
-    ).toMatchObject({ value: { ok: false, reason: 'Only root Neo can consult.' } });
     expect(service.crossProjects.pending()).toEqual([]);
   });
 });
