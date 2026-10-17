@@ -1,6 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { NeoDriverTargetCard } from '../../storage/repositories/neo-work-driver-target-repository.ts';
+import type { NeoDriverTargetCard } from '../../storage/repositories/neo-driver-session-rows.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import { type DriverSent, readDriverInputAttribution } from './driver-work.ts';
