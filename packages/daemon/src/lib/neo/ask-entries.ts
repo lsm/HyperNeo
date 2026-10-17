@@ -24,7 +24,8 @@ export function neoTodoStatusLine(
   if (todo.state === 'failed') return todo.reason ?? '没做成';
   if (packLine) return packLine;
   if (todo.state === 'todo') return '没开始';
-  if (todo.state === 'doing') return todo.report ? '会话回报了，正在检查' : '在做';
+  if (todo.state === 'doing')
+    return !todo.report ? '在做' : todo.check ? '会话回报了，正在检查' : '会话停了，等 Neo 核对';
   return todo.evidence ?? (todo.report ? '会话说做完了' : '做完了');
 }
 

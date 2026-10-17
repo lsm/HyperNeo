@@ -158,7 +158,7 @@ describe('neo todo runner', () => {
       evidence: '#1 已合并',
     });
     expect(told).toEqual([
-      expect.stringContaining('Todo "Rows" reported:'),
+      expect.stringContaining('Todo "Rows": its session stopped'),
       'Todo "Rows" is done: #1 已合并',
     ]);
   });
