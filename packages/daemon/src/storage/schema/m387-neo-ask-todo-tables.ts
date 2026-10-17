@@ -3,9 +3,22 @@ import type { Database } from '../sqlite-compat.ts';
 const hasTable = (db: Database, name: string): boolean =>
   !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
 
+const NEW_TABLES = ['pack_facts', 'neo_questions', 'neo_todo_sessions', 'neo_todos', 'neo_asks'];
+
+function renameTable(db: Database, from: string, to: string): void {
+  const legacy = (db.prepare('PRAGMA legacy_alter_table').get() as { legacy_alter_table: number })
+    .legacy_alter_table;
+  db.exec('PRAGMA legacy_alter_table = OFF');
+  try {
+    db.exec(`ALTER TABLE ${from} RENAME TO ${to}`);
+  } finally {
+    db.exec(`PRAGMA legacy_alter_table = ${legacy ? 'ON' : 'OFF'}`);
+  }
+}
+
 export function runMigration387(db: Database): void {
   if (hasTable(db, 'neo_asks') && !hasTable(db, 'legacy_neo_asks'))
-    db.exec('ALTER TABLE neo_asks RENAME TO legacy_neo_asks');
+    renameTable(db, 'neo_asks', 'legacy_neo_asks');
   db.exec(`CREATE TABLE IF NOT EXISTS neo_asks (
     id TEXT PRIMARY KEY,
     project_id TEXT REFERENCES neo_concerns(id),
@@ -90,13 +103,16 @@ export function runMigration387(db: Database): void {
   )`);
 }
 
-export function revertMigration387(db: Database): void {
-  if (!hasTable(db, 'legacy_neo_asks')) return;
-  db.exec(`DROP TABLE IF EXISTS pack_facts;
-    DROP TABLE IF EXISTS neo_questions;
-    DROP TABLE IF EXISTS neo_todo_sessions;
-    DROP TABLE IF EXISTS neo_todos;
-    DROP TABLE IF EXISTS neo_asks;
-    DELETE FROM migration_markers WHERE key = 'migration_387'`);
-  db.exec('ALTER TABLE legacy_neo_asks RENAME TO neo_asks');
+export function revertMigration387(db: Database): 'restored' | 'nothing' | 'has_rows' {
+  if (!hasTable(db, 'legacy_neo_asks')) return 'nothing';
+  if (
+    NEW_TABLES.some(
+      (table) => hasTable(db, table) && db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get()
+    )
+  )
+    return 'has_rows';
+  for (const table of NEW_TABLES) db.exec(`DROP TABLE IF EXISTS ${table}`);
+  db.exec("DELETE FROM migration_markers WHERE key = 'migration_387'");
+  renameTable(db, 'legacy_neo_asks', 'neo_asks');
+  return 'restored';
 }
