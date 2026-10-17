@@ -744,15 +744,20 @@ export class NeoService {
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
-      tell: (ask, todo, note) =>
-        this.deliverForward(
-          ask.sessionId,
+      tell: (ask, todo, note) => {
+        const parent = ask.originMessageId
+          ? { sessionId: ask.sessionId, messageId: ask.originMessageId }
+          : null;
+        const origin = (parent && this.resolveAskOrigin(parent)) ?? parent;
+        return this.deliverForward(
+          origin?.sessionId ?? ask.sessionId,
           `neo-todo:${todo.id}:${todo.updatedAt}`,
           note,
           ask.sessionId,
-          ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
+          origin,
           'continues'
-        ),
+        );
+      },
       changed: this.notifyChanged,
     });
     this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged, (cardId) => {
@@ -3207,6 +3212,7 @@ export class NeoService {
     }
     if (item.status === 'pending') return;
     if (
+      item.originSessionId !== item.sessionId &&
       !this.consultations.isReturned(id) &&
       !this.consultations.wasPublished(id) &&
       !(item.status === 'reported' && item.answer === NEO_WORK_REVIEWED)
@@ -3308,7 +3314,6 @@ export class NeoService {
       await returnWorkThroughHolder(this, work, rootId);
       return;
     }
-    const targets = new Set([rootId, work.originSessionId]);
     const retries = this.driverTargets.readRetries(work.id);
     const retryNote =
       'value' in requireNeoWorkRetryable(work, this.retryCard(work.id), true)
@@ -3330,18 +3335,17 @@ export class NeoService {
       retries,
       this.workContinues.get(work.id)?.count ?? 0
     );
-    for (const target of targets) {
-      if (!this.db.getSession(target)) continue;
-      const fresh = !this.hasDelivery(target, messageId);
-      await this.deliver(
-        target,
-        messageId,
-        content,
-        work.sessionId ?? work.originSessionId,
-        neoWorkParent(work)
-      );
-      if (fresh && target === work.originSessionId) this.recordCardWake(work.id, messageId);
-    }
+    const target = work.originSessionId;
+    if (!this.db.getSession(target)) return;
+    const fresh = !this.hasDelivery(target, messageId);
+    await this.deliver(
+      target,
+      messageId,
+      content,
+      work.sessionId ?? work.originSessionId,
+      neoWorkParent(work)
+    );
+    if (fresh) this.recordCardWake(work.id, messageId);
   }
 
   private async cardPrCandidates(
