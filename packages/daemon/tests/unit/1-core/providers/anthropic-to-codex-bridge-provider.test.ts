@@ -1226,7 +1226,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
     const DISCOVERY_CATALOG: Array<Record<string, unknown>> = [
       {
-        slug: 'gpt-6-astra',
+        slug: 'gpt-7-astra',
         display_name: 'GPT-6-Astra',
         description: 'Frontier intelligence for the most demanding work.',
         visibility: 'list',
@@ -1323,15 +1323,15 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
       const byId = new Map(models.map((model) => [model.id, model]));
 
-      expect(byId.get('gpt-6-astra')?.available).toBe(true);
-      expect(byId.get('gpt-6-astra')?.sdkModelIds).toEqual(['gpt-6-astra']);
-      expect(byId.get('gpt-6-astra')?.contextWindow).toBe(272000);
+      expect(byId.get('gpt-7-astra')?.available).toBe(true);
+      expect(byId.get('gpt-7-astra')?.sdkModelIds).toEqual(['gpt-7-astra']);
+      expect(byId.get('gpt-7-astra')?.contextWindow).toBe(272000);
       expect(byId.get('gpt-5.5')?.available).toBe(true);
       expect(byId.has('gpt-reserve')).toBe(false);
       expect(byId.has('codex-auto-review')).toBe(false);
       expect(byId.get('gpt-5.3-codex')?.available).toBe(false);
       expect(byId.get('gpt-5.4')?.available).toBe(false);
-      expect(models[0]?.id).toBe('gpt-6-astra');
+      expect(models[0]?.id).toBe('gpt-7-astra');
       expect(probeBodies[0]?.model).toBe('gpt-5.5');
     });
 
@@ -1340,15 +1340,15 @@ describe('AnthropicToCodexBridgeProvider', () => {
       provider = oauthProvider(impl);
 
       await provider.getModels();
-      await provider.ensureBridgeStarted('gpt-6-astra', { workspacePath: '/tmp/ws-discovery' });
+      await provider.ensureBridgeStarted('gpt-7-astra', { workspacePath: '/tmp/ws-discovery' });
 
-      const dynamicConfig = provider.buildSdkConfig('gpt-6-astra', {
+      const dynamicConfig = provider.buildSdkConfig('gpt-7-astra', {
         workspacePath: '/tmp/ws-discovery',
       });
       expect(dynamicConfig.envVars.ANTHROPIC_BASE_URL).toContain('127.0.0.1');
       expect(dynamicConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
-      expect(dynamicConfig.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-6-astra');
-      expect(dynamicConfig.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-6-astra');
+      expect(dynamicConfig.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-7-astra');
+      expect(dynamicConfig.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-7-astra');
 
       const savedConfig = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-discovery',
@@ -1373,7 +1373,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       expect(counts.models).toBe(1);
       const byId = new Map(models.map((model) => [model.id, model]));
-      expect(byId.get('gpt-6-astra')?.available).toBe(true);
+      expect(byId.get('gpt-7-astra')?.available).toBe(true);
       expect(byId.has('gpt-reserve')).toBe(false);
     });
 
@@ -1384,7 +1384,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
 
       expect(models.length).toBeGreaterThan(0);
-      expect(models.some((model) => model.id === 'gpt-6-astra')).toBe(false);
+      expect(models.some((model) => model.id === 'gpt-7-astra')).toBe(false);
       expect(models.every((model) => model.available)).toBe(true);
       await provider.ensureBridgeStarted('gpt-5.5', { workspacePath: '/tmp/ws-offline' });
     });
@@ -1434,7 +1434,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       provider = oauthProvider(impl);
 
       const first = await provider.getModels();
-      expect(first.some((model) => model.id === 'gpt-6-astra')).toBe(true);
+      expect(first.some((model) => model.id === 'gpt-7-astra')).toBe(true);
 
       unlinkSync(path.join(hyperneoDir, 'auth.json'));
       writeCodexAuth(codexDir, {
@@ -1446,7 +1446,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const second = await provider.getModels();
       const ids = second.map((model) => model.id);
       expect(ids).toContain('gpt-b-only');
-      expect(ids).not.toContain('gpt-6-astra');
+      expect(ids).not.toContain('gpt-7-astra');
     });
 
     it('discards a stale in-flight discovery after an account switch', async () => {
@@ -1517,10 +1517,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
       provider = oauthProvider(impl);
 
       await provider.getModels();
-      await provider.ensureBridgeStarted('gpt-6-astra', {
+      await provider.ensureBridgeStarted('gpt-7-astra', {
         workspacePath: '/tmp/ws-bridge-refresh',
       });
-      const config = provider.buildSdkConfig('gpt-6-astra', {
+      const config = provider.buildSdkConfig('gpt-7-astra', {
         workspacePath: '/tmp/ws-bridge-refresh',
       });
       const baseUrl = config.envVars.ANTHROPIC_BASE_URL as string;
@@ -1528,7 +1528,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const before = (await (await fetch(`${baseUrl}/v1/models`)).json()) as {
         data: Array<{ id: string }>;
       };
-      expect(before.data.some((model) => model.id === 'gpt-6-astra')).toBe(true);
+      expect(before.data.some((model) => model.id === 'gpt-7-astra')).toBe(true);
       expect(before.data.some((model) => model.id === 'gpt-7-nova')).toBe(false);
 
       catalog = [
@@ -1563,10 +1563,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
       provider = oauthProvider(impl);
       await provider.getApiKey();
 
-      const first = provider.ensureBridgeStarted('gpt-6-astra', {
+      const first = provider.ensureBridgeStarted('gpt-7-astra', {
         workspacePath: '/tmp/ws-race-a',
       });
-      const second = provider.ensureBridgeStarted('gpt-6-astra', {
+      const second = provider.ensureBridgeStarted('gpt-7-astra', {
         workspacePath: '/tmp/ws-race-b',
       });
       await Promise.resolve();
@@ -1586,7 +1586,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
 
       expect(models.some((model) => model.id === 'gpt-5.6-sol')).toBe(true);
-      expect(models.some((model) => model.id === 'gpt-6-astra')).toBe(false);
+      expect(models.some((model) => model.id === 'gpt-7-astra')).toBe(false);
     });
 
     it('seeds from a fresh persisted cache without hitting the network after a restart', async () => {
@@ -1599,7 +1599,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
 
       expect(counts.models).toBe(0);
-      expect(models.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+      expect(models.some((model) => model.id === 'gpt-7-astra' && model.available)).toBe(true);
     });
 
     it('keeps the discovered catalog across generic model-cache clears', async () => {
@@ -1625,7 +1625,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
 
       expect(counts.models).toBe(1);
-      expect(models.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+      expect(models.some((model) => model.id === 'gpt-7-astra' && model.available)).toBe(true);
       expect(models.some((model) => model.id === 'gpt-5.3-codex' && !model.available)).toBe(true);
       expect(models.some((model) => model.id === 'gpt-7-nova')).toBe(false);
     });
@@ -1644,13 +1644,13 @@ describe('AnthropicToCodexBridgeProvider', () => {
       );
 
       const first = await provider.getModels();
-      expect(first.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+      expect(first.some((model) => model.id === 'gpt-7-astra' && model.available)).toBe(true);
 
       (provider as Provider).clearModelCache?.();
       const second = await provider.getModels();
 
       expect(counts.models).toBe(1);
-      expect(second.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+      expect(second.some((model) => model.id === 'gpt-7-astra' && model.available)).toBe(true);
     });
 
     it('forced listRemoteModels falls back to the static catalog without throwing during an outage', async () => {
@@ -1672,7 +1672,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await provider.getModels();
       const first = await provider.listRemoteModels();
       const firstById = new Map(first.map((model) => [model.id, model]));
-      expect(firstById.get('gpt-6-astra')?.available).toBe(true);
+      expect(firstById.get('gpt-7-astra')?.available).toBe(true);
       expect(firstById.get('gpt-5.3-codex')?.available).toBe(false);
 
       catalog = [
@@ -1708,9 +1708,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       await provider.getModels();
 
-      expect(provider.ownsModel('gpt-6-astra')).toBe(true);
+      expect(provider.ownsModel('gpt-7-astra')).toBe(true);
       expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
-      expect(provider.getModelForTier('default')).toBe('gpt-6-astra');
+      expect(provider.getModelForTier('default')).toBe('gpt-7-astra');
       expect(provider.getModelForTier('haiku')).toBe('gpt-5.5');
     });
 
@@ -1732,7 +1732,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await provider.getModels();
 
       expect(provider.getModelForTier('haiku')).toBe('gpt-6-luna');
-      expect(provider.getModelForTier('opus')).toBe('gpt-6-astra');
+      expect(provider.getModelForTier('opus')).toBe('gpt-7-astra');
     });
 
     it('keeps the static tier mapping for non-subscription auth', () => {
@@ -1749,7 +1749,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       try {
         await provider.getModels();
         expect(provider.getModelForTier('default')).toBe('gpt-5.5');
-        expect(provider.getModelForTier('opus')).toBe('gpt-6-astra');
+        expect(provider.getModelForTier('opus')).toBe('gpt-7-astra');
         expect(provider.getModelForTier('haiku')).toBe('gpt-5.5');
       } finally {
         policy.pinnedDefault = previousPinned;
@@ -1782,7 +1782,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
 
       expect(counts.models).toBe(2);
-      expect(models.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+      expect(models.some((model) => model.id === 'gpt-7-astra' && model.available)).toBe(true);
     });
   });
 
