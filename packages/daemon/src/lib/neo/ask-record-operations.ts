@@ -183,7 +183,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add). A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
+        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add). projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
