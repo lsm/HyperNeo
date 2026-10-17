@@ -5,11 +5,18 @@ import { defineOperation } from '../operations/registry.ts';
 import { readWorkspaceIdentity, identifyWorkspaces } from './code-identity.ts';
 import { mergePlaceGroups, placeKey, stampDaemon } from './places.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import { PlaceGroupSchema, type FindQuery, type PlaceGroup, type WorkAdapter } from './types.ts';
+import {
+  PlaceGroupSchema,
+  WorkRefSchema,
+  type FindQuery,
+  type PlaceGroup,
+  type WorkAdapter,
+} from './types.ts';
 
 export const FindWorkInputSchema = z.object({
   text: z.string().trim().min(1).max(200).optional(),
   id: z.string().trim().min(1).max(200).optional(),
+  session: z.string().trim().min(1).max(200).optional(),
   folder: z.string().min(1).optional(),
   spaceId: z.string().min(1).optional(),
   adapters: z.array(z.string().min(1)).optional(),
@@ -22,6 +29,13 @@ export const FindWorkResultSchema = z.object({
   places: z.array(PlaceGroupSchema),
   unreachable: z.array(z.object({ source: z.string(), reason: z.string() })),
   more: z.boolean().optional(),
+  session: z
+    .object({
+      name: z.string(),
+      match: z.enum(['exact', 'ambiguous', 'none']),
+      near: z.array(z.object({ ref: WorkRefSchema, title: z.string() })).optional(),
+    })
+    .optional(),
 });
 
 export const FIND_RESULT_BUDGET_CHARS = 60_000;
@@ -82,7 +96,7 @@ export function toFindQuery(input: FindInput): FindQuery {
         folder: input.folder,
         spaceId: input.spaceId,
         includeClosed: input.includeClosed,
-        limit: input.limit,
+        limit: input.session ? 50 : input.limit,
       };
 }
 
@@ -128,6 +142,38 @@ export function addNamedPlace(
       },
     ],
   };
+}
+
+const sessionName = (title: string) => title.trim().replace(/\s+/g, ' ').toLowerCase();
+const NEAR_SESSIONS = 5;
+
+export function searchFindSession(input: FindInput): FindInput {
+  return input.session ? { ...input, text: input.session } : input;
+}
+
+export function keepFindSession(
+  groups: readonly PlaceGroup[],
+  session: string | undefined
+): PlaceGroup[] {
+  if (!session) return [...groups];
+  const name = sessionName(session);
+  return groups.flatMap((group) => {
+    const work = group.work.filter((item) => sessionName(item.title) === name);
+    return work.length ? [{ ...group, work }] : [];
+  });
+}
+
+export function findSessionVerdict(
+  session: string,
+  matched: readonly PlaceGroup[],
+  searched: readonly PlaceGroup[]
+): NonNullable<FindResult['session']> {
+  const count = matched.reduce((total, group) => total + group.work.length, 0);
+  if (count) return { name: session, match: count === 1 ? 'exact' : 'ambiguous' };
+  const near = searched
+    .flatMap((group) => group.work.map(({ ref, title }) => ({ ref, title })))
+    .slice(0, NEAR_SESSIONS);
+  return { name: session, match: 'none', near };
 }
 
 export function keepFindId(groups: readonly PlaceGroup[], id: string | undefined): PlaceGroup[] {
@@ -262,11 +308,13 @@ export function combineFindResults(
   budget = FIND_RESULT_BUDGET_CHARS,
   own: ReadonlySet<string> = new Set()
 ): FindResult {
+  const searched = ownPlacesFirst(
+    mergePlaceGroups([...local.groups, ...remote.groups], Number.MAX_SAFE_INTEGER),
+    input.id ? new Set() : own
+  );
+  const named = keepFindSession(searched, input.session);
   const merged = keepFindId(
-    ownPlacesFirst(
-      mergePlaceGroups([...local.groups, ...remote.groups], Number.MAX_SAFE_INTEGER),
-      input.id ? new Set() : own
-    ).slice(0, input.id ? 51 : input.limit + 1),
+    named.slice(0, input.id || input.session ? 51 : input.limit + 1),
     input.id
   );
   const open =
@@ -276,16 +324,18 @@ export function combineFindResults(
           ...group,
           work: group.work.filter((work) => work.status !== 'stopped'),
         }));
-  const fitted = fitFindBudget(open.slice(0, input.limit), budget);
+  const fitted = fitFindBudget(open.slice(0, input.session ? 51 : input.limit), budget);
   return {
     places: fitted.places,
     unreachable: [...local.unreachable, ...remote.unreachable],
     more: fitted.more || remote.more === true || merged.length > input.limit,
+    ...(input.session ? { session: findSessionVerdict(input.session, open, searched) } : {}),
   };
 }
 
 const runFindWork = (superpipe({})('find-work') as PipelineAPI)
   .input(['input', 'deps', 'budget', 'own'])
+  .pipe(searchFindSession, 'input', 'input')
   .pipe(selectFindAdapters, ['input', 'deps'], 'adapters')
   .pipe(askRemotely, ['input', 'deps'], 'asked')
   .pipe(expandFindFolder, ['input', 'deps'], 'input')
@@ -324,7 +374,7 @@ export function createFindWorkOperation(deps: FindWorkDeps) {
   return defineOperation({
     name: 'work.find',
     description:
-      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, the calling Neo project’s own folders ahead of the rest, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. With id, it returns only the work whose ref id matches, closed or not, for example to turn a session id into its ref and place; id takes precedence over text, which is then ignored. The lookup covers the 50 most recent places and each place’s most recent work, so a long-idle item may not be found. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. folder takes a path as the human wrote it (~ allowed); an existing directory there is returned as a place even when no work has run in it yet, so a folder the human names can always be started in. Snippet handles are for work.read only; to send or propose work, use the item ref.',
+      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, the calling Neo project’s own folders ahead of the rest, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. With id, it returns only the work whose ref id matches, closed or not, for example to turn a session id into its ref and place; id takes precedence over text, which is then ignored. With session, the name of a session the human named, it returns only work whose title equals that name exactly (case and spacing aside) and says whether the match is exact, ambiguous (every candidate is listed) or none (near lists the closest titles); send only to an exact match, and tell the human the candidates or the miss instead of picking one. The lookup covers the 50 most recent places and each place’s most recent work, so a long-idle item may not be found. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. folder takes a path as the human wrote it (~ allowed); an existing directory there is returned as a place even when no work has run in it yet, so a folder the human names can always be started in. Snippet handles are for work.read only; to send or propose work, use the item ref.',
     inputSchema: FindWorkInputSchema,
     resultSchema: FindWorkResultSchema,
     policy: { safetyClass: 'read' },
