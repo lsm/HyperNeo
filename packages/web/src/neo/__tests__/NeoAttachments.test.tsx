@@ -10,7 +10,6 @@ const sendMessage = vi.hoisted(() => vi.fn());
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
 vi.mock('../NeoConversation.tsx', () => ({ NeoConversation: () => null }));
-vi.mock('../NeoWorkCard.tsx', () => ({ NeoWorkCard: () => null }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
 vi.mock('../../hooks/useInterrupt.ts', () => ({
   useInterrupt: () => ({ handleInterrupt: vi.fn(), interrupting: false }),

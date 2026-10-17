@@ -445,7 +445,7 @@ export function NeoLive() {
               onQuote={ready ? (quote) => setQuoted({ scope: neo.sessionId!, quote }) : undefined}
               store={neo.store}
               sessionId={neo.sessionId}
-              works={relevant}
+              works={relevant.filter((work) => work.sessionId)}
               projects={projectTitles}
               forwarders={forwarders}
               replyLabels={replyLabels}
