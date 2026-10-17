@@ -1342,10 +1342,12 @@ export function createNeoOperations(service: NeoService) {
         workPrs,
         unmutedAskSessions(),
         busyNeoAskSessions(service.askSessions),
-        {
-          work: visibleWork,
-          supersessions: service.workSupersessions.list(visibleWork.map((row) => row.id)),
-        }
+        caller.source === 'rpc'
+          ? {
+              work: visibleWork,
+              supersessions: service.workSupersessions.list(visibleWork.map((row) => row.id)),
+            }
+          : undefined
       ),
       workResources: visibleWork.map((item) => ({
         workId: item.id,

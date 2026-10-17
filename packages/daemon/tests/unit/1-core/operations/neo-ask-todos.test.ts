@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { projectNeoAskTodos } from '../../../../src/lib/neo/ask-todo-views.ts';
 import { projectNeoAskViews } from '../../../../src/lib/neo/ask-views.ts';
 import { projectNeoCardViews } from '../../../../src/lib/neo/card-views.ts';
 
@@ -110,6 +111,28 @@ describe('projectNeoAskViews todo projection', () => {
       ).todos
     ).toEqual([{ id: 'w', workId: 'w', title: 'w', state, status, added: false }]);
   });
+  test.each([
+    ['abandoned', 'failed', '会话没有回报结果'],
+    ['checking', 'running', '会话已结束，daemon 正在核实'],
+  ] as const)('does not claim work is running in phase %s', (phase, state, status) => {
+    const row = work('w', 'queued');
+    const cards = projectNeoCardViews({
+      work: [row],
+      drivers: [{ workId: 'w', adapter: 'hyperneo', daemon: null, status: 'done', link: null }],
+      prs: [],
+      goals: [],
+      continues: [],
+      supersessions: [],
+      asks: [],
+    });
+    expect(
+      projectNeoAskTodos(ask([row], []), [{ ...cards[0], phase }], [], {
+        work: [row],
+        supersessions: [],
+      })[0]
+    ).toMatchObject({ state, status });
+  });
+
   test('merged PRs do not claim an unmet deployment is done', () => {
     expect(
       project(

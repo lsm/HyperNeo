@@ -70,6 +70,8 @@ export function projectNeoAskTodos(
         state: 'failed',
         status: `${row.status === 'failed' ? '没交出去' : '会话停了'}：${card?.talk ?? row.report ?? '没有完成'}`,
       };
+    else if (card?.phase === 'abandoned')
+      progress = { state: 'failed', status: '会话没有回报结果' };
     else if (row.status === 'proposed')
       progress = {
         state: 'pending',
@@ -93,7 +95,9 @@ export function projectNeoAskTodos(
             ? '已交给会话'
             : card?.phase === 'needs_you'
               ? '会话等你回复'
-              : '会话在做',
+              : card?.phase === 'checking'
+                ? '会话已结束，daemon 正在核实'
+                : '会话在做',
       };
     return {
       id: row.id,
