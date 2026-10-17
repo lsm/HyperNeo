@@ -9,6 +9,8 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { fitNeoSnapshotBudget } from '../../../../src/lib/neo/snapshot-compact.ts';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 
 const todo = (patch: Partial<NeoTodo>): NeoTodo =>
   ({
@@ -101,5 +103,94 @@ describe('projectNeoAskEntries', () => {
       todos: [{ id: 't1', status: '在做', link: '/session/w1' }],
       questions: [],
     });
+  });
+});
+
+describe('fitNeoSnapshotBudget with todoAsks', () => {
+  test('drops settled asks and trims todo text instead of dropping the field', () => {
+    const entry = (id: string, status: NeoAsk['status']) => ({
+      ask: {
+        id,
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: id,
+        request: 'r'.repeat(2000),
+        status,
+        outcome: null,
+        createdAt: 1,
+        updatedAt: 1,
+        settledAt: null,
+      },
+      state: 'doing' as const,
+      todos: [
+        {
+          ...todo({ id: `${id}-t`, state: 'doing' }),
+          askId: id,
+          position: 0,
+          doneWhen: 'Merged',
+          check: null,
+          instruction: 'i'.repeat(4000),
+          named: null,
+          replacedBy: null,
+          addedAfterStart: false,
+          createdAt: 1,
+          updatedAt: 1,
+          startedAt: 1,
+          finishedAt: null,
+          status: '在做',
+          link: null,
+        },
+      ],
+      questions: [],
+    });
+    const snapshot: NeoSnapshot = {
+      ok: true,
+      sessionId: 'neo',
+      projects: [],
+      consultations: [],
+      work: [],
+      cards: [],
+      askViews: [],
+      todoAsks: [
+        ...Array.from({ length: 20 }, (_, index) => entry(`open-${index}`, 'open')),
+        entry('settled', 'done'),
+      ],
+    };
+    const fitted = fitNeoSnapshotBudget(snapshot, 40_000);
+    expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(40_000);
+    expect(fitted.todoAsks?.length).toBeGreaterThan(0);
+    expect(fitted.todoAsks?.some((item) => item.ask.id === 'settled')).toBe(false);
+    expect(fitted.todoAsks?.[0].todos[0].instruction?.length).toBeLessThanOrEqual(300);
+  });
+});
+
+describe('NeoTodoSessionRepository.readLink', () => {
+  test('never offers a local session path for a session on another daemon', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const sessions = new NeoTodoSessionRepository(db);
+    store.openAsk({
+      id: 'a',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'a',
+      request: 'a',
+      createdAt: 1,
+    });
+    store.addTodo(
+      't',
+      'a',
+      { title: 't', doneWhen: 'd', check: null, instruction: 'i', named: null },
+      1
+    );
+    sessions.create('t', { verb: 'send', ref: { adapter: 'hyperneo', id: 'w', daemon: 'imac' } });
+    sessions.recordRef('t', { adapter: 'hyperneo', id: 'w', daemon: 'imac' }, 1, '/session/w');
+    expect(sessions.readLink('t')).toBeNull();
+    sessions.recordLive('t', 'running', undefined, 'https://imac/session/w');
+    expect(sessions.readLink('t')).toBe('https://imac/session/w');
   });
 });

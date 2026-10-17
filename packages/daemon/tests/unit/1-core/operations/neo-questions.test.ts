@@ -64,7 +64,10 @@ describe('neo.question operations', () => {
         text: 'Start these?',
         todos: [fix.id, rows.id],
       })
-    ).toEqual({ ok: false, reason: 'not_startable: t2 is not a not-started todo on this ask.' });
+    ).toEqual({
+      ok: false,
+      reason: 'not_startable: t2 is not a not-started todo with a session on this ask.',
+    });
     const start = await asked({ kind: 'start', text: 'Start this?', todos: [fix.id] });
     expect(start).toMatchObject({ kind: 'start', startTodos: ['t1'], state: 'open' });
     const answered = await call(
