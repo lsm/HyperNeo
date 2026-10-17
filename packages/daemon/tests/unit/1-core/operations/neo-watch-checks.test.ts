@@ -17,9 +17,6 @@ import {
   readNeoWatchTicks,
 } from '../../../../src/lib/neo/packs/coding/watch-checks.ts';
 import { codingPrMergedCheck } from '../../../../src/lib/neo/packs/coding/pack.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   InternalEventBus,
@@ -658,47 +655,6 @@ describe('refreshDriverWork watch ticks', () => {
     vi.restoreAllMocks();
     service.dispose();
     db.close();
-  });
-
-  test('an unbound merge outcome can acquire its PR through neo.ask.edit tracking', async () => {
-    const opened = service.askRecords.open(
-      {
-        id: 'a-track-merge',
-        requestKey: 'k-track-merge',
-        projectId: null,
-        originSessionId: 'neo:root',
-        originMessageId: 'm0',
-        title: 'Merge the fix',
-        ask: 'Merge the fix',
-        doneWhen: '- merged',
-        doneSource: 'human',
-        pack: 'coding',
-      },
-      [{ text: 'PR merged', check: 'coding.pr_merged' }]
-    )!;
-    const read = vi.fn(async () => [{ ...prState(7201, 'MERGED'), at: Date.now() + 1_000 }]);
-    service.readRefStates = read;
-    Object.assign(service, { deliver: async () => {} });
-    await service.refreshDriverWork();
-    expect(service.askRecords.get(opened.id)?.doneItems?.[0].state).toBe('pending');
-    expect(read).not.toHaveBeenCalled();
-    expect(
-      await invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
-        'neo.ask.edit',
-        {
-          askId: opened.id,
-          track: [{ itemId: 'i1', check: 'coding.pr_merged', watch: [pull(7201)] }],
-        },
-        { source: 'rpc', principal: 'local' }
-      )
-    ).toMatchObject({ value: { ok: true } });
-    await service.refreshDriverWork();
-    expect(service.askRecords.get(opened.id)?.doneItems?.[0]).toMatchObject({
-      state: 'met',
-      metBy: 'daemon',
-      evidence: `Watched: ${pull(7201)} merged`,
-    });
   });
 
   test('stores an item watch list and ticks it met by the daemon when the PRs merge', async () => {

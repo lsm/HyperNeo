@@ -1,31 +1,11 @@
-import type { OperationCaller } from '../operations/registry.ts';
-import type {
-  NeoAsk,
-  NeoAskItemKind,
-  NeoAskQuestionBecause,
-} from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAskItemKind, NeoAskQuestionBecause } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { NEO_ASK_QUESTION_REASONS } from '@hyperneo/shared/types/neo-snapshot';
-import { NeoAskStateViewSchema } from './card-view-schema.ts';
 import { GITHUB_REF_PATH } from '../github/parse-pr-url.ts';
-import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAskItemInput } from '../../storage/repositories/neo-ask-repository.ts';
-import type { planNeoAskRestate } from './ask-plans.ts';
 
 export type Rejection = { ok: false; reason: string };
-
-export type Gate<T> = { value: T } | { reason: Rejection };
-
-export type NeoAdmit = (
-  caller: OperationCaller,
-  name: string,
-  projectId?: string | null
-) => Gate<OperationCaller>;
-
-export type AskReceipt = { ok: true; ask: NeoAsk };
-
-export type AskOpened = AskReceipt & { packBriefing?: string };
 
 const CheckKind = z
   .string()
@@ -37,8 +17,6 @@ const CheckKind = z
 const NEO_ASK_ITEM_KINDS = ['decision', 'action', 'approval', 'wait'] as const;
 
 const NEO_ASK_ITEM_OUTCOME_KINDS = ['state', 'answer'] as const;
-
-const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 
 export const NeoAskSchema = z.object({
   revision: z.number().int().nonnegative().optional(),
@@ -103,17 +81,6 @@ export const NeoAskSchema = z.object({
   settledAt: z.number().nullable(),
 });
 
-export const AskResult = z.union([
-  Failure,
-  z.object({
-    ok: z.literal(true),
-    ask: NeoAskSchema,
-    view: NeoAskStateViewSchema.nullable().optional(),
-    packBriefing: z.string().optional(),
-    note: z.string().optional(),
-  }),
-]);
-
 const WatchUrl = z
   .string()
   .trim()
@@ -142,26 +109,6 @@ const Item = z.object({
       'state: something in the world changes (merged, deployed, fixed, booked); it needs evidence you or the daemon can read. answer: the human asked to know something (a count, a list, an explanation); it is met when you publish the answer to them.'
     ),
 });
-
-export const Open = z
-  .object({
-    projectId: z.string().min(1).nullable().default(null),
-    title: z.string().trim().min(1).max(160).describe('Use the human’s language.'),
-    ask: z.string().trim().min(1).max(4000),
-    doneWhen: z.string().trim().min(1).max(2000).optional(),
-    doneItems: z.array(Item).min(1).optional(),
-    doneSource: z.string().trim().min(1).max(160),
-    pack: z.string().trim().min(1).max(80).optional(),
-  })
-  .refine((input) => input.doneWhen || input.doneItems, 'Pass doneItems, or doneWhen.')
-  .refine(
-    (input) => countNeoAskWatches(input.doneItems ?? []) <= NEO_ASK_WATCH_MAX,
-    `An ask watches at most ${NEO_ASK_WATCH_MAX} pull requests and issues across its items.`
-  );
-
-export type OpenRequest = z.infer<typeof Open> & { requestKey: string };
-
-export type Opening = Omit<OpenRequest, 'doneItems' | 'doneWhen'> & { doneWhen: string };
 
 const Options = z
   .array(z.string().trim().min(1).max(80))
@@ -215,43 +162,6 @@ const ExpectedRevision = z
   .default(0)
   .describe('The revision from the current ask view; refresh after stale_revision.');
 
-export const Tick = z.object({
-  expectedRevision: ExpectedRevision,
-  askId: z.string().min(1),
-  itemId: z.string().min(1),
-  state: z.enum(['pending', 'met', 'needs_you', 'reported']),
-  evidence: z.string().trim().min(1).max(2000).optional(),
-});
-
-export const Question = z.object({
-  askId: z.string().min(1),
-  question: z.string().trim().min(1).max(200),
-  decides: Decides,
-  because: Because.optional(),
-  options: z
-    .union([z.tuple([]), Options])
-    .default([])
-    .describe(
-      'Optional choices in display order: decline/negative first (left), agree/positive last (right). Omit or pass [] for an open question answered in chat.'
-    ),
-  kind: z.enum(NEO_ASK_ITEM_KINDS),
-});
-
-export const Answer = z.object({
-  expectedRevision: ExpectedRevision,
-  askId: z.string().min(1),
-  itemId: z.string().min(1),
-  choice: z.string().trim().min(1).max(1000),
-  option: z.string().optional(),
-  humanMessageId: z.string().min(1).max(200).optional(),
-});
-
-export const Approve = z.object({ askId: z.string().min(1), expectedRevision: ExpectedRevision });
-
-export const Fold = z
-  .object({ askId: z.string().min(1), intoAskId: z.string().min(1) })
-  .refine((input) => input.askId !== input.intoAskId, 'Fold an ask into another ask.');
-
 export const Edit = z
   .object({
     expectedRevision: ExpectedRevision,
@@ -279,12 +189,6 @@ export const Edit = z
     'Pass items to add, remove, track or bind.'
   );
 
-export type WorkAskInput = { askId?: string; projectId: string | null };
-
-export type NeoAskNameable = { id: string; title: string; cardIds: string[]; refs: string[] };
-
-export type NeoDaemonTicked = { ok: true; ask: NeoAsk; note: string };
-
 export type NeoOutcomeCard = Pick<NeoWork, 'id' | 'status'>;
 
 export type NeoAskQuestionItem = NeoAskItemInput & {
@@ -298,11 +202,3 @@ export type NeoAskQuestionItem = NeoAskItemInput & {
 };
 
 export type NeoAskSettleFacts = { offered: boolean; stalled: boolean; failed: boolean };
-
-export type NeoAskSettlePlan = {
-  waits: boolean;
-  approval: boolean;
-  item: NeoAskQuestionItem | null;
-  restate: ReturnType<typeof planNeoAskRestate>;
-  waitingItem: string | null;
-};

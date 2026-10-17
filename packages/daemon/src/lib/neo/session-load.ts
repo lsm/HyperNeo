@@ -75,10 +75,6 @@ export function readNeoSessionLoad(db: BunDatabase, excludeRequestKey?: string):
   }));
 }
 
-export function hasNeoWorkRequest(db: BunDatabase, requestKey: string): boolean {
-  return !!db.prepare('SELECT 1 FROM neo_work WHERE request_key = ?').get(requestKey);
-}
-
 export function readNeoIdleSessions(
   db: BunDatabase,
   nearSessionId: string,

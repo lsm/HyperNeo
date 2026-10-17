@@ -9,12 +9,10 @@ import {
   NEO_ASK_IDLE,
   NEO_ASK_STALLED,
   NEO_SESSION_TRACK,
-  NEO_WORK_DELEGATED,
   NEO_WORK_PACK_NOTE,
   NEO_WORK_RETURNED,
   NEO_WORK_RETURNED_RETRIED,
   NEO_WORK_RETURNED_RETRY,
-  NEO_WORK_REROUTED,
 } from '@hyperneo/prompts';
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -116,8 +114,12 @@ import {
   requireNeoAskIdle,
   trackNeoAskIdle,
 } from './ask-idle.ts';
-import { neoAskLiveOutcomeCards, planNeoAskTickStatus, planNeoAskWorkStops } from './ask-plans.ts';
-import { writeNeoAskTickStatus } from './ask-operations.ts';
+import {
+  neoAskLiveOutcomeCards,
+  planNeoAskTickStatus,
+  planNeoAskWorkStops,
+  writeNeoAskTickStatus,
+} from './ask-plans.ts';
 import {
   createNeoAskOriginResolver,
   type NeoAskOrigin,
@@ -1506,8 +1508,10 @@ export class NeoService {
         );
         return;
       }
-      const brief = `${NEO_WORK_DELEGATED}\n${JSON.stringify({ workId: work.id, title: work.title, instruction: withWorkGoal(work.instruction, this.workDoneGoal(work.id), this.cardEventsDelivered()) })}`;
-      await this.deliver(work.sessionId, work.id, brief, work.originSessionId);
+      await this.failWork(
+        work,
+        'Work handed to a chat no longer runs; add a todo with a target to run it.'
+      );
       return;
     }
     await this.failWork(
@@ -1983,17 +1987,10 @@ export class NeoService {
         if (this.proposalApproval(next.id) !== false)
           await this.startDriverWork(next, target, tried);
       },
-      returnToNeo: async (next, place) => {
-        await this.deliver(
-          next.originSessionId,
-          `neo-work-reroute:${next.id}:${this.driverTargets.readRetries(next.id)}`,
-          neoAskProgressNote(
-            this.askRecords.forWork(next.id),
-            fillPrompt(NEO_WORK_REROUTED, { work_id: next.id, title: next.title }),
-            { card: { id: next.id, title: next.title, ref, place } }
-          ),
-          next.originSessionId,
-          neoWorkParent(next)
+      returnToNeo: async (next) => {
+        await this.failWork(
+          next,
+          'Its session is archived, ended or taken, so it was not delivered; add a todo with a target to run it.'
         );
       },
     });
@@ -2124,9 +2121,11 @@ export class NeoService {
     for (const work of this.repo.listWork()) {
       try {
         const recovered = await this.recoverHandoff(work);
-        if (!recovered && work.status === 'queued') await this.start(work.id);
+        if (!recovered && work.status === 'queued' && this.driverTargets.get(work.id))
+          await this.start(work.id);
         else if (
           !recovered &&
+          this.driverTargets.get(work.id) &&
           (awaitingNeoWorker(work) ||
             (work.status === 'proposed' && this.driverTargets.get(work.id)?.verb === 'read'))
         )
@@ -2136,16 +2135,6 @@ export class NeoService {
         this.log.warn('Neo recovery pending', error);
       }
     }
-    for (const work of this.repo.listWork())
-      if (
-        work.status === 'proposed' &&
-        work.report !== NEO_WORK_AWAITING_WORKER &&
-        this.driverTargets.readCard(work.id)?.claimedAt == null &&
-        !this.driverTargets.readStartInterrupted(work.id) &&
-        !this.dependencies.hasStartIntent(work.id) &&
-        !isNeoAdmissionApproved(this.askRecords.forWork(work.id), Date.now())
-      )
-        this.proposeStartQuestion(work.id);
     for (const workId of new Set(this.dependencies.edges().map((edge) => edge.workId)))
       scheduleNeoAdmissionWake(this.db.getJobQueueRepo(), workId);
     await this.reclaimCardPrs();

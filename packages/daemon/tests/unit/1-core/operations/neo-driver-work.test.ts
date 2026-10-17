@@ -6,12 +6,11 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
-import type { WorkRef, WorkSummary } from '../../../../src/lib/drivers/types.ts';
+import type { WorkSummary } from '../../../../src/lib/drivers/types.ts';
 import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { NEO_CARD_UNCHECKED_MS } from '../../../../src/lib/neo/card-check.ts';
 import {
   NEO_DELIVERY_RETRY_BACKOFF_MS,
   NEO_WORK_DELIVERY_RETRY,
@@ -61,10 +60,7 @@ import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 import { neoCardPrFacts } from '../../../../src/lib/neo/packs/coding/card-facts.ts';
 import { lifeAdminReportEvidence } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
-import {
-  NEO_WORK_AWAITING_WORKER,
-  pickNeoReplacementWorkers,
-} from '../../../../src/lib/neo/work-reroute.ts';
+import { pickNeoReplacementWorkers } from '../../../../src/lib/neo/work-reroute.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -73,35 +69,9 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
-import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
-const retryVia = async (service: NeoService, id = 'work-1') => {
-  const outcome = await invokeOperation(
-    createOperationRegistry(createNeoOperations(service)),
-    'neo.work.retry',
-    { id },
-    { source: 'rpc', principal: 'local' }
-  );
-  return 'value' in outcome ? outcome.value : outcome;
-};
-const approveReplacement = async (service: NeoService, id = 'work-1') => {
-  const ask = service.askRecords.forWork(id)!;
-  const question = ask.doneItems!.find((item) => item.state === 'needs_you' && !item.removed)!;
-  expect(question).toMatchObject({
-    question: `开始「${service.repo.getWork(id)!.title}」？`,
-    options: ['先不做', '开始'],
-  });
-  expect(
-    await invokeOperation(
-      createOperationRegistry(createNeoOperations(service)),
-      'neo.ask.answer',
-      { askId: ask.id, itemId: question.id, choice: '开始', expectedRevision: ask.revision },
-      { source: 'rpc', principal: 'local' }
-    )
-  ).toMatchObject({ value: { ok: true } });
-};
 const startTarget: NeoDriverTarget = { verb: 'start', adapter: 'codex-desktop', place };
 const sendTarget: NeoDriverTarget = {
   verb: 'send',
@@ -930,293 +900,6 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test.each(['archived', 'ended'])(
-    'reassigns a card rejected as %s to an idle worker in the same project',
-    async (closed) => {
-      const replacement = worker('idle');
-      const { db, service, calls } = await setup(
-        ({ ref }: { ref: WorkRef }) =>
-          ref.id === 'archived'
-            ? { ok: false, reason: 'not_open', detail: closed }
-            : { ok: true, value: { delivered: true } },
-        undefined,
-        statusReply,
-        { verb: 'send', ref: archivedRef },
-        (input) =>
-          found(
-            input.id
-              ? [worker('archived', { status: 'stopped' })]
-              : [
-                  worker('other-project', {
-                    place: { machine: 'laptop', folder: '/focus/other', name: 'other' },
-                  }),
-                  worker('closed', { status: 'stopped' }),
-                  worker('busy', { status: 'running' }),
-                  worker('loaded', { liveCards: 1 }),
-                  replacement,
-                ]
-          )
-      );
-      Object.assign(service, { returnReport: mock(async () => {}) });
-      try {
-        service.workGoals.record('work-1', 'Change the font', '- 16px');
-        await service.start('work-1');
-        expect(service.repo.getWork('work-1')?.status).toBe('proposed');
-        expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(1);
-        await approveReplacement(service);
-        expect(service.repo.getWork('work-1')).toMatchObject({
-          status: 'queued',
-          instruction: work.instruction,
-        });
-        expect(service.driverTargets.get('work-1')).toEqual({ verb: 'send', ref: replacement.ref });
-        expect(service.driverTargets.readRef('work-1')).toEqual(replacement.ref);
-        const sent = calls.filter((call) => call.name === 'work.send').map((call) => call.input);
-        expect(sent).toEqual([
-          { ref: archivedRef, message: expect.stringContaining('- 16px') },
-          { ref: replacement.ref, message: expect.stringContaining('- 16px') },
-        ]);
-        expect((sent[0] as { message: string }).message).toBe(
-          (sent[1] as { message: string }).message
-        );
-        await service.start('work-1');
-        expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(2);
-      } finally {
-        db.close();
-      }
-    }
-  );
-
-  test.each(['proposed', 'queued'] as const)(
-    'respects a %s native Space-agent reservation when rerouting',
-    async (status) => {
-      const { db, service } = await setup({ ok: false, reason: 'not_open', detail: 'archived' });
-      try {
-        const held = service.agentTargets.propose(
-          service.repo,
-          {
-            id: 'native-card',
-            requestKey: 'native-card',
-            projectId: null,
-            originSessionId: 'neo:root',
-            originMessageId: 'ask-1',
-            targetSessionId: 'agent-session',
-            ...work,
-          },
-          { spaceId: 'space', agentId: 'held', sessionId: 'agent-session' }
-        );
-        if (status === 'queued')
-          service.repo.transitionWork(held.work.id, held.work, {
-            status,
-            sessionId: 'agent-session',
-          });
-        const free = { adapter: 'space', id: 'agent:free' };
-        expect(
-          service.driverTargets.reassign(service.repo, service.repo.getWork('work-1')!, [
-            { adapter: 'space', id: 'agent:held' },
-            free,
-          ])?.target
-        ).toEqual({ verb: 'send', ref: free });
-        expect(service.repo.getWork(held.work.id)?.status).toBe(status);
-      } finally {
-        db.close();
-      }
-    }
-  );
-
-  test('returns an unassigned card to Neo without failing it, then retries the same card when a worker appears', async () => {
-    let available = false;
-    const { db, service, calls } = await setup(
-      ({ ref }: { ref: WorkRef }) =>
-        ref.id === 'archived'
-          ? { ok: false, reason: 'not_open', detail: 'archived' }
-          : { ok: true, value: { delivered: true } },
-      undefined,
-      statusReply,
-      { verb: 'send', ref: archivedRef },
-      (input) =>
-        found(
-          input.id ? [worker('archived', { status: 'stopped' })] : available ? [worker('idle')] : []
-        )
-    );
-    const delivered = mock(async () => {});
-    Object.assign(service, { deliver: delivered });
-    try {
-      await service.start('work-1');
-      expect(service.repo.getWork('work-1')).toMatchObject({
-        status: 'proposed',
-        report: NEO_WORK_AWAITING_WORKER,
-      });
-      expect(service.driverTargets.readRef('work-1')).toBeNull();
-      expect(service.isRetryable('work-1')).toBe(true);
-      expect(delivered).toHaveBeenCalledWith(
-        'neo:root',
-        expect.stringContaining('work-1'),
-        expect.stringContaining('neo.work.retry'),
-        'neo:root',
-        expect.anything()
-      );
-      available = true;
-      expect(await retryVia(service)).toMatchObject({
-        ok: true,
-        work: { id: 'work-1', status: 'proposed' },
-      });
-      await approveReplacement(service);
-      expect(
-        calls
-          .filter((call) => call.name === 'work.send')
-          .map((call) => (call.input as { ref: WorkRef }).ref.id)
-      ).toEqual(['archived', 'idle']);
-      expect(service.repo.listWork()).toHaveLength(1);
-    } finally {
-      db.close();
-    }
-  });
-
-  test('waits for each replacement approval and preserves cancellation during discovery', async () => {
-    let cancel: (() => Promise<void>) | undefined;
-    const { db, service, calls } = await setup(
-      { ok: false, reason: 'not_open', detail: 'archived' },
-      undefined,
-      statusReply,
-      { verb: 'send', ref: archivedRef },
-      async (input) => {
-        await cancel?.();
-        return found(input.id ? [worker(String(input.id))] : [worker('archived'), worker('stale')]);
-      }
-    );
-    Object.assign(service, { deliver: mock(async () => {}) });
-    try {
-      await service.start('work-1');
-      expect(service.repo.getWork('work-1')?.status).toBe('proposed');
-      expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(1);
-      await approveReplacement(service);
-      expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(2);
-      cancel = () => service.cancel('work-1');
-      await approveReplacement(service);
-      expect(service.repo.getWork('work-1')?.status).toBe('cancelled');
-      expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(3);
-    } finally {
-      db.close();
-    }
-  });
-
-  test.each([
-    [false, 'start'],
-    [true, 'start'],
-    [true, 'retry'],
-  ] as const)(
-    'an interrupted card resumes from stored state (reserved: %s, resume: %s)',
-    async (reserved, resume) => {
-      let available = reserved;
-      const { db, service, calls } = await setup(
-        ({ ref }: { ref: WorkRef }) =>
-          ref.id === 'archived'
-            ? { ok: false, reason: 'not_open', detail: 'archived' }
-            : { ok: true, value: { delivered: true } },
-        undefined,
-        statusReply,
-        { verb: 'send', ref: archivedRef },
-        (input) =>
-          found(
-            input.id
-              ? [worker(String(input.id), { status: input.id === 'archived' ? 'stopped' : 'done' })]
-              : available
-                ? [worker('idle')]
-                : []
-          )
-      );
-      const reassign = service.driverTargets.reassign.bind(service.driverTargets);
-      spyOn(service.driverTargets, 'reassign').mockImplementation((...args) => {
-        const saved = reassign(...args);
-        if (saved?.target) throw new Error('interrupted');
-        return saved;
-      });
-      Object.assign(service, {
-        deliver: async () => {
-          throw new Error('interrupted');
-        },
-      });
-      try {
-        await expect(service.start('work-1')).rejects.toThrow('interrupted');
-        expect(service.repo.getWork('work-1')).toMatchObject({
-          status: 'proposed',
-          report: expect.stringContaining('worker'),
-        });
-        expect(service.driverTargets.get('work-1')).toEqual({
-          verb: 'send',
-          ref: reserved ? worker('idle').ref : archivedRef,
-        });
-        const restarted = new NeoService(
-          db,
-          service.sessions,
-          { event: mock(() => {}) } as unknown as MessageHub,
-          new InternalEventBus<DaemonInternalEventMap>()
-        );
-        Object.assign(restarted, { deliver: mock(async () => {}) });
-        available = true;
-        if (resume === 'retry') expect(await retryVia(restarted)).toMatchObject({ ok: true });
-        else await restarted.start('work-1');
-        expect(restarted.driverTargets.readRef('work-1')).toBeNull();
-        expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(1);
-        await approveReplacement(restarted);
-        expect(restarted.driverTargets.readRef('work-1')).toEqual(worker('idle').ref);
-        expect(
-          calls
-            .filter((call) => call.name === 'work.send')
-            .map((call) => (call.input as { ref: WorkRef }).ref.id)
-        ).toEqual(['archived', 'idle']);
-      } finally {
-        db.close();
-      }
-    }
-  );
-
-  test.each(['unreachable', 'not_delivered', 'not_found'])(
-    'keeps %s failures unchanged',
-    async (reason) => {
-      const { db, service, calls } = await setup(
-        { ok: false, reason, detail: 'no send' },
-        undefined,
-        statusReply,
-        { verb: 'send', ref: archivedRef }
-      );
-      Object.assign(service, { returnReport: mock(async () => {}) });
-      try {
-        await service.start('work-1');
-        expect(service.repo.getWork('work-1')).toMatchObject({
-          status: 'failed',
-          report: `Could not start the execution: ${reason}: no send`,
-        });
-        expect(calls.some((call) => call.name === 'work.find')).toBe(false);
-      } finally {
-        db.close();
-      }
-    }
-  );
-
-  test('a card that stopped being checked still reads unchecked after a restart', async () => {
-    const { db, service } = await setup({ ok: true, value: { ref: null } });
-    const check = service as unknown as {
-      recordCardCheck(workId: string, read: boolean, now: number): boolean;
-    };
-    try {
-      check.recordCardCheck('work-1', true, 1_000);
-      expect(check.recordCardCheck('work-1', false, 1_000 + NEO_CARD_UNCHECKED_MS + 1)).toBe(true);
-      const restarted = new NeoService(
-        db,
-        { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
-        { event: mock(() => {}) } as unknown as MessageHub,
-        new InternalEventBus<DaemonInternalEventMap>()
-      );
-      expect(restarted.uncheckedSince('work-1')).toBe(1_000);
-      expect(restarted.uncheckedSince('work-unknown')).toBeNull();
-      expect(restarted.checkedAt('work-1')).toBe(1_000);
-      expect(restarted.checkedAt('work-unknown')).toBeNull();
-    } finally {
-      db.close();
-    }
-  });
-
   test('the minute pass forgets read throttles of cards it no longer follows', async () => {
     const { db, service } = await setup({ ok: true, value: { ref: null } });
     const throttles = service as unknown as {
@@ -1535,42 +1218,6 @@ describe('Neo work with a drivers target', () => {
         status: 'reported',
         report: 'Agent: Font is 16px.',
       });
-    } finally {
-      db.close();
-    }
-  });
-
-  test('refuses to retry a start into a folder that does not exist', async () => {
-    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
-    const { db, service, calls } = await setup({ ok: true, value: { ref } });
-    service.driverTargets.propose(
-      service.repo,
-      {
-        id: 'work-2',
-        requestKey: 'root:invented',
-        projectId: null,
-        originSessionId: 'neo:root',
-        originMessageId: 'ask-2',
-        title: 'Fix #5554',
-        instruction: 'Fix it.',
-      },
-      {
-        verb: 'start',
-        adapter: 'claude-desktop',
-        place: { machine: 'laptop', folder: '/nowhere/hn-neo-test-5554', name: 'hn' },
-      }
-    );
-    try {
-      const retried = await invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
-        'neo.work.retry',
-        { id: 'work-2' },
-        { source: 'rpc', principal: 'local' }
-      );
-      expect(retried).toMatchObject({
-        value: { ok: false, reason: expect.stringContaining('does not exist') },
-      });
-      expect(calls.filter((call) => call.name === 'work.start')).toEqual([]);
     } finally {
       db.close();
     }
@@ -4292,40 +3939,6 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('Neo closes a card it started only with a reason, which the card shows', async () => {
-    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
-    const { db, service } = await setup({ ok: true, value: { ref } });
-    try {
-      await service.start('work-1');
-      db.createSession(createTestSession('neo:root'));
-      service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
-      const registry = createOperationRegistry(createNeoOperations(service));
-      const neo: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
-      expect(
-        await invokeOperation(registry, 'neo.work.close', { id: 'work-1', outcome: 'done' }, neo)
-      ).toMatchObject({
-        kind: 'completed',
-        value: { ok: false, reason: 'Give a reason; the card shows it.' },
-      });
-      expect(service.repo.getWork('work-1')?.status).toBe('queued');
-
-      expect(
-        await invokeOperation(
-          registry,
-          'neo.work.close',
-          { id: 'work-1', outcome: 'done', reason: 'both PRs merged' },
-          neo
-        )
-      ).toMatchObject({ kind: 'completed', value: { ok: true } });
-      expect(service.repo.getWork('work-1')).toMatchObject({
-        status: 'reported',
-        report: 'Closed as done by Neo: both PRs merged',
-      });
-    } finally {
-      db.close();
-    }
-  });
-
   test('a person closes started work as done or cancelled and the driver work stops', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const { db, service, calls } = await setup({ ok: true, value: { ref } });
@@ -4354,65 +3967,6 @@ describe('Neo work with a drivers target', () => {
         ok: false,
         reason: 'work_closed: cancelled work stays cancelled',
       });
-    } finally {
-      db.close();
-    }
-  });
-
-  test('an interrupted start is not offered or allowed a retry, since it may have started', async () => {
-    const { db, service, calls } = await setup({ ok: true, value: { ref: null } });
-    const delivered: string[] = [];
-    db.createSession(createTestSession('neo:root'));
-    Object.assign(service, {
-      open: async () => 'neo:root',
-      deliver: async (_target: string, _id: string, content: string) => {
-        delivered.push(content);
-      },
-    });
-    try {
-      const proposed = service.repo.getWork('work-1');
-      if (proposed) service.repo.transitionWork('work-1', proposed, { status: 'queued' });
-      await service.start('work-1');
-      expect(delivered).toHaveLength(1);
-      expect(delivered[0]).not.toContain('neo.work.retry');
-      expect(await retryVia(service)).toEqual({
-        ok: false,
-        reason:
-          'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
-      });
-      expect(calls).toEqual([]);
-      expect(service.repo.getWork('work-1')?.status).toBe('failed');
-      expect(service.isRetryable('work-1')).toBe(false);
-    } finally {
-      db.close();
-    }
-  });
-
-  test('a retry waits out a start still finishing instead of reusing it', async () => {
-    const reply: Record<string, unknown> = { ok: false, reason: 'not_delivered', detail: 'down' };
-    const { db, service, calls } = await setup(reply);
-    Object.assign(service, { returnReport: async () => {} });
-    try {
-      await service.start('work-1');
-      let finish: () => void = () => {};
-      const pending = (service as unknown as { workPending: Map<string, Promise<void>> })
-        .workPending;
-      pending.set(
-        'work-1',
-        new Promise<void>((resolve) => {
-          finish = () => {
-            pending.delete('work-1');
-            resolve();
-          };
-        })
-      );
-      Object.assign(reply, { ok: true, value: { ref: { adapter: 'codex-desktop', id: 't1' } } });
-      delete reply.reason;
-      delete reply.detail;
-      const retried = retryVia(service);
-      finish();
-      expect(await retried).toMatchObject({ ok: true, work: { status: 'queued' } });
-      expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(2);
     } finally {
       db.close();
     }
@@ -4467,51 +4021,6 @@ describe('Neo work with a drivers target', () => {
       expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
       expect(service.isRetryable('work-1')).toBe(true);
       expect(delivered).toHaveLength(1);
-    } finally {
-      db.close();
-    }
-  });
-
-  test('a hand-off that failed before it started retries on the same card', async () => {
-    const reply: Record<string, unknown> = {
-      ok: false,
-      reason: 'claude_cli_login_expired',
-      detail: 'Run `claude auth login`, then try again.',
-    };
-    const { db, service, calls } = await setup(reply);
-    const delivered: Array<[string, string, string]> = [];
-    db.createSession(createTestSession('neo:root'));
-    Object.assign(service, {
-      open: async () => 'neo:root',
-      deliver: async (target: string, messageId: string, content: string) => {
-        delivered.push([target, messageId, content]);
-      },
-    });
-    try {
-      await service.start('work-1');
-      expect(delivered.map(([, id]) => id)).toEqual(['work-1']);
-      expect(delivered[0][2]).toContain('This hand-off never started.');
-      expect(service.isRetryable('work-1')).toBe(true);
-      expect(service.driverTargets.receipts(['work-1'])).toHaveLength(1);
-
-      expect(await retryVia(service)).toMatchObject({
-        ok: true,
-        work: { id: 'work-1', status: 'failed' },
-      });
-      expect(delivered.map(([, id]) => id)).toEqual(['work-1', 'work-1:retry:1']);
-      expect(delivered[1][2]).toContain('it has been retried 1 time');
-
-      delete reply.reason;
-      delete reply.detail;
-      Object.assign(reply, { ok: true, value: { ref: { adapter: 'codex-desktop', id: 't1' } } });
-      expect(await retryVia(service)).toMatchObject({
-        ok: true,
-        work: { id: 'work-1', status: 'queued' },
-      });
-      expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(3);
-      expect(service.repo.listWork()).toHaveLength(1);
-      expect(await retryVia(service)).toMatchObject({ ok: false });
-      expect(service.isRetryable('work-1')).toBe(false);
     } finally {
       db.close();
     }
@@ -4636,132 +4145,6 @@ describe('readDriverSettlement', () => {
         value: { ok: false, reason: 'not_found', detail: 'thread deleted' },
       })
     ).toEqual({ status: 'failed', report: 'The work is gone: thread deleted' });
-  });
-});
-
-describe('neo.work.propose with a drivers target', () => {
-  test('a retried drivers proposal returns its card, and another target is a separate card', async () => {
-    const db = await createTestDb();
-    const service = new NeoService(
-      db,
-      {} as SessionManager,
-      { event: mock(() => {}) } as unknown as MessageHub,
-      new InternalEventBus<DaemonInternalEventMap>()
-    );
-    db.createSession(createTestSession('root'));
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
-    const neo: OperationCaller = {
-      source: 'mcp',
-      sessionId: 'root',
-      role: 'neo',
-      neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
-    };
-    const propose = (target: Record<string, unknown>) =>
-      invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
-        'neo.work.propose',
-        withNeoProposalAsk(
-          service,
-          'neo.work.propose',
-          {
-            title: work.title,
-            instruction: work.instruction,
-            doneWhen: '- font raised',
-            ...target,
-          },
-          neo
-        ),
-        neo
-      );
-    try {
-      const first = (await propose({ work: sendTarget })) as {
-        kind: string;
-        value: { ok: boolean; work: { id: string } };
-      };
-      expect(first).toMatchObject({ kind: 'completed', value: { ok: true } });
-      expect(await propose({ work: sendTarget })).toMatchObject({
-        value: { ok: true, work: { id: first.value.work.id } },
-      });
-      const other = (await propose({ work: startTarget })) as {
-        value: { ok: boolean; work: { id: string } };
-      };
-      expect(other).toMatchObject({ value: { ok: true } });
-      expect(other.value.work.id).not.toBe(first.value.work.id);
-      expect(service.repo.listWork()).toHaveLength(2);
-    } finally {
-      service.dispose();
-      db.close();
-    }
-  });
-
-  test('refuses a target whose adapter cannot do the verb and names ones that can', async () => {
-    const db = await createTestDb();
-    const asked: unknown[] = [];
-    const drivers = createOperationRegistry([
-      defineOperation({
-        name: 'work.adapters',
-        description: 'test adapters',
-        inputSchema: z.object({ daemon: z.string().optional() }),
-        resultSchema: z.unknown(),
-        policy: { safetyClass: 'read' },
-        execute: async (input: { daemon?: string }) => {
-          asked.push(input);
-          return {
-            ok: true,
-            value: [
-              { id: 'claude-code', capabilities: ['find'] },
-              { id: 'claude-desktop', capabilities: ['find', 'start', 'send', 'status'] },
-            ],
-          };
-        },
-      }),
-    ]);
-    const service = new NeoService(
-      db,
-      { getOperationRegistry: () => drivers } as unknown as SessionManager,
-      { event: mock(() => {}) } as unknown as MessageHub,
-      new InternalEventBus<DaemonInternalEventMap>()
-    );
-    db.createSession(createTestSession('root'));
-    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
-    const neo: OperationCaller = {
-      source: 'mcp',
-      sessionId: 'root',
-      role: 'neo',
-      neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
-    };
-    const place = { machine: 'laptop', daemon: 'laptop', folder: '/Users/me/app', name: 'app' };
-    const propose = (requestKey: string, adapter: string) =>
-      invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
-        'neo.work.propose',
-        withNeoProposalAsk(
-          service,
-          'neo.work.propose',
-          {
-            requestKey,
-            title: 'Fix it',
-            instruction: 'Fix the bug.',
-            doneWhen: '- bug fixed',
-            work: { verb: 'start', adapter, place },
-          },
-          neo
-        ),
-        neo
-      );
-    try {
-      expect(await propose('cli', 'claude-code')).toMatchObject({
-        value: {
-          ok: false,
-          reason: 'The claude-code adapter cannot start work. Adapters that can: claude-desktop.',
-        },
-      });
-      expect(await propose('desktop', 'claude-desktop')).toMatchObject({ value: { ok: true } });
-      expect(asked).toEqual([{ daemon: 'laptop' }, { daemon: 'laptop' }]);
-    } finally {
-      service.dispose();
-      db.close();
-    }
   });
 });
 

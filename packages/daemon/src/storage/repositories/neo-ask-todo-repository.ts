@@ -110,6 +110,31 @@ export class NeoAskTodoRepository {
     return this.getAsk(ask.id)!;
   }
 
+  findAsk(sessionId: string, originMessageId: string | null, title: string): NeoAsk | null {
+    return (
+      (this.db
+        .prepare(
+          `${ASK_SELECT} WHERE session_id = ? AND origin_message_id IS ? AND title = ? AND status = 'open'`
+        )
+        .get(sessionId, originMessageId, title) as NeoAsk | null) ?? null
+    );
+  }
+
+  settleAsk(ask: NeoAsk, status: 'done' | 'dropped', outcome: string, now: number): NeoAsk {
+    this.db
+      .prepare(
+        "UPDATE neo_asks SET status = ?, outcome = ?, settled_at = ?, updated_at = ? WHERE id = ? AND status = 'open'"
+      )
+      .run(status, outcome, now, now, ask.id);
+    this.db
+      .prepare(
+        "UPDATE neo_todos SET state = 'removed', reason = ?, finished_at = ?, updated_at = ? WHERE ask_id = ? AND state IN ('todo', 'doing')"
+      )
+      .run(`The ask was settled ${status}.`, now, now, ask.id);
+    this.retireQuestions(ask.id, now);
+    return this.getAsk(ask.id)!;
+  }
+
   getAsk(id: string): NeoAsk | null {
     return (this.db.prepare(`${ASK_SELECT} WHERE id = ?`).get(id) as NeoAsk | null) ?? null;
   }

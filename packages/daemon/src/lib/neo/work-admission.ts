@@ -53,18 +53,6 @@ export function neoAdmissionRefusal(
   return result.ok || NEO_ADMISSION_SETTLED.includes(result.reason) ? null : result;
 }
 
-export const NEO_EDGES_NEED_APPROVAL =
-  "not_approved: the dependency edges are recorded, and they change this ask's plan, so its approval no longer covers it. Ask the human to approve the ask again; the card then starts once its prerequisites are met.";
-
-export function planNeoStartRefusal(
-  refused: NeoAdmissionRefusal | null,
-  edgesChanged: boolean
-): NeoAdmissionRefusal | null {
-  return refused && edgesChanged && ['not_approved', 'approval_stale'].includes(refused.reason)
-    ? { ...refused, reason: NEO_EDGES_NEED_APPROVAL }
-    : refused;
-}
-
 const refuse = (reason: string, blockers?: NeoAdmissionBlocker[]) => ({
   reason: { ok: false as const, reason, ...(blockers ? { blockers } : {}) },
 });

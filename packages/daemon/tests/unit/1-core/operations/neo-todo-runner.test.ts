@@ -135,6 +135,48 @@ describe('neo todo runner', () => {
     ]);
   });
 
+  test('a start that lands after its ask settled stops its session', async () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const sessions = new NeoTodoSessionRepository(db);
+    const ask = store.openAsk({
+      id: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'T',
+      request: 'T',
+      createdAt: 1,
+    });
+    const todo = store.addTodo(
+      't',
+      'ask',
+      { title: 'Rows', doneWhen: 'Done', check: null, instruction: 'Do', named: null },
+      1
+    );
+    sessions.create(todo.id, { verb: 'send', ref });
+    const calls: string[] = [];
+    const runner = createNeoTodoRunner({
+      store,
+      sessions,
+      invoke: async (_caller, name) => {
+        calls.push(name);
+        if (name === 'work.send') {
+          store.settleAsk(ask, 'dropped', 'Dropped', 2);
+          return completed({ ok: true, value: { ref } });
+        }
+        return completed({ ok: true, value: { status: 'running' } });
+      },
+      packs: () => [],
+      tell: async () => {},
+      changed: () => {},
+    });
+    await runner.start(todo.id);
+    expect(calls.at(-1)).toBe('work.stop');
+  });
+
   test('a start a restart interrupted fails the todo on the next refresh', async () => {
     const { store, runner, told, add } = setup();
     const todo = add();

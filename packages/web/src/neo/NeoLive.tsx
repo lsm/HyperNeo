@@ -239,9 +239,6 @@ export function NeoLive() {
         key={JSON.stringify(scene.ref)}
         work={scene.receipt}
         card={card}
-        busy={neo.busyWork === scene.ref.id}
-        disabled={!connected || !!neo.busyWork}
-        onAction={(id, action) => void neo.act(id, action)}
         onOpen={() => openScene(scene.ref)}
         onOpenWork={(id) => openScene({ kind: 'work', id })}
         canOpenWork={canOpenScene}
@@ -759,6 +756,7 @@ export function NeoLive() {
                           }
                         : undefined
                     }
+                    onSettle={(status) => void neo.settleAsk(entry.ask.id, status)}
                     onOpen={(link, title) =>
                       link.startsWith('/session/')
                         ? setChat({ sessionId: link.slice('/session/'.length), title })
@@ -772,10 +770,6 @@ export function NeoLive() {
                     view={ask}
                     cards={cards}
                     disabled={!connected || !!neo.busyWork}
-                    onSettle={(outcome) => void neo.settleAsk(ask.ask.id, outcome)}
-                    onAnswer={(itemId, choice) =>
-                      void neo.answerAskItem(ask.ask.id, itemId, choice)
-                    }
                     onReply={
                       ready
                         ? (quote) => {

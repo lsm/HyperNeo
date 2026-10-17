@@ -72,15 +72,7 @@ describe('NeoWorkCard summary presentation', () => {
       const action = vi.fn();
       const item = work(status);
       const view = render(
-        <NeoWorkCard
-          work={item}
-          card={testCard(item)}
-          busy={true}
-          disabled={true}
-          onAction={action}
-          onOpen={open}
-          presentation="summary"
-        />
+        <NeoWorkCard work={item} card={testCard(item)} onOpen={open} presentation="summary" />
       );
       await act(async () => {});
       const button = screen.getByRole('button', { name: `Open chat for ${item.title}` });
@@ -131,9 +123,6 @@ describe('NeoWorkCard summary presentation', () => {
       <NeoWorkCard
         work={{ ...work('proposed'), sessionId: null }}
         card={testCard({ ...work('proposed'), sessionId: null })}
-        busy={false}
-        disabled={false}
-        onAction={vi.fn()}
         onOpen={open}
         presentation="summary"
       />
@@ -151,9 +140,6 @@ describe('NeoWorkCard summary presentation', () => {
       <NeoWorkCard
         work={{ ...work('proposed'), sessionId: null }}
         card={testCard({ ...work('proposed'), sessionId: null })}
-        busy={false}
-        disabled={false}
-        onAction={action}
         presentation="summary"
       />
     );

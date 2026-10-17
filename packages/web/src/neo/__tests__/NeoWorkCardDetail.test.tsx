@@ -66,14 +66,7 @@ const show = (
   extra?: Partial<NeoCardView>
 ) => {
   const result = render(
-    <NeoWorkCard
-      work={item}
-      card={testCard(item, extra)}
-      busy={false}
-      disabled={false}
-      onAction={onAction}
-      {...(onOpen ? { onOpen } : {})}
-    />
+    <NeoWorkCard work={item} card={testCard(item, extra)} {...(onOpen ? { onOpen } : {})} />
   );
   return { ...result, action: onAction, card: screen.getByRole('article', { name: item.title }) };
 };
@@ -95,9 +88,7 @@ describe('NeoWorkCard detail opening', () => {
       expect(card.getAttribute('tabindex')).toBe('0');
       expect(within(card).getByRole('heading').textContent).toBe('Title r');
       expect(card.querySelector('details, a')).toBeNull();
-      expect(names(card)).toEqual(
-        status === 'queued' ? ['Card actions', 'Open chat'] : ['Open chat']
-      );
+      expect(names(card)).toEqual(['Open chat']);
       expect(within(card).queryByText('Report r')).toBeNull();
       fireEvent.keyDown(card, { key: 'Enter' });
       expect(open).toHaveBeenCalledExactlyOnceWith('r');
@@ -112,16 +103,7 @@ describe('NeoWorkCard detail opening', () => {
     const open = vi.fn();
     const action = vi.fn();
     const item = work('w', 'proposed', { sessionId: 'w-session', report: 'Report w' });
-    render(
-      <NeoWorkCard
-        work={item}
-        card={testCard(item)}
-        busy={false}
-        disabled={false}
-        onAction={action}
-        onOpen={open}
-      />
-    );
+    render(<NeoWorkCard work={item} card={testCard(item)} onOpen={open} />);
     const card = screen.getByRole('article', { name: item.title });
     expect(card.getAttribute('data-scene-open')).toBeNull();
     expect(card.getAttribute('tabindex')).toBeNull();
@@ -138,41 +120,13 @@ describe('NeoWorkCard detail opening', () => {
     expect(action).not.toHaveBeenCalled();
   });
 
-  it('stops queued work from its menu without opening it', () => {
-    const open = vi.fn();
-    const action = vi.fn();
-    const { card } = show(work('q', 'queued'), open, action);
-    fireEvent.click(within(card).getByRole('button', { name: 'Card actions' }));
-    expect(screen.queryByRole('menuitem', { name: 'Mark done' })).toBeNull();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Stop work' }));
-    expect(action).toHaveBeenCalledExactlyOnceWith('q', 'close');
-    expect(open).not.toHaveBeenCalled();
-  });
-
   it('makes a failed card an opener with its card menu and Open chat', () => {
     const open = vi.fn();
     const { card } = show(work('f', 'failed', { sessionId: 'f-session' }), open);
-    expect(names(card)).toEqual(['Card actions', 'Open chat']);
+    expect(names(card)).toEqual(['Open chat']);
     expect(within(card).getByText('Failed')).toBeTruthy();
     fireEvent.keyDown(card, { key: 'Enter' });
     expect(open).toHaveBeenCalledExactlyOnceWith('f');
-  });
-
-  it('keeps a failed hand-off as a status with close in its menu', () => {
-    const action = vi.fn();
-    const failed = work('f', 'failed', {
-      sessionId: null,
-      report: 'Could not start the execution: logged out',
-    });
-    const { card } = show(failed, vi.fn(), action, {
-      retryable: true,
-      primary: { kind: 'retry', label: 'Retry', link: null },
-    });
-    expect(within(card).getByText('Failed')).toBeTruthy();
-    expect(within(card).queryByRole('button', { name: 'Retry' })).toBeNull();
-    fireEvent.click(within(card).getByRole('button', { name: 'Card actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Close work' }));
-    expect(action).toHaveBeenCalledExactlyOnceWith('f', 'close');
   });
 
   it('offers no Open chat before the work has a chat', () => {
@@ -215,9 +169,6 @@ describe('NeoWorkCard detail opening', () => {
       <NeoWorkCard
         work={work('q', 'queued')}
         card={testCard(work('q', 'queued'))}
-        busy={false}
-        disabled={false}
-        onAction={action}
         onOpen={open}
         waiting
       />
@@ -297,9 +248,6 @@ describe('NeoWorkCard continues', () => {
           continued: 2,
           continuedMessage: 'Build settings.',
         })}
-        busy={false}
-        disabled={false}
-        onAction={() => {}}
       />
     );
     expect(screen.getByText('Neo continued it 2 times').getAttribute('title')).toBe(
@@ -316,9 +264,6 @@ describe('NeoWorkCard continues', () => {
           continuedMessage: 'Keep going.',
           pooled: true,
         })}
-        busy={false}
-        disabled={false}
-        onAction={() => {}}
       />
     );
     expect(screen.getByText('Neo continued it 7 times')).toBeTruthy();
@@ -331,9 +276,6 @@ describe('NeoWorkCard result', () => {
       <NeoWorkCard
         work={work('r', 'reported', { report: 'A long raw agent reply' })}
         card={testCard(work('r', 'reported', { report: 'A long raw agent reply' }))}
-        busy={false}
-        disabled={false}
-        onAction={vi.fn()}
         summary="Blocked: two files are missing."
       />
     );
@@ -344,9 +286,6 @@ describe('NeoWorkCard result', () => {
       <NeoWorkCard
         work={work('n', 'reported', { report: 'A long raw agent reply' })}
         card={testCard(work('n', 'reported', { report: 'A long raw agent reply' }))}
-        busy={false}
-        disabled={false}
-        onAction={vi.fn()}
       />
     );
     expect(screen.queryByText('A long raw agent reply')).toBeNull();
@@ -355,9 +294,6 @@ describe('NeoWorkCard result', () => {
       <NeoWorkCard
         work={work('f', 'failed', { report: 'Could not start.' })}
         card={testCard(work('f', 'failed', { report: 'Could not start.' }))}
-        busy={false}
-        disabled={false}
-        onAction={vi.fn()}
       />
     );
     expect(screen.getByText('Could not start.')).toBeTruthy();
@@ -377,9 +313,6 @@ it.each(['detail', 'summary'] as const)(
           model: 'gpt-6.1-sol',
           effort: 'medium',
         })}
-        busy={false}
-        disabled={false}
-        onAction={vi.fn()}
         onOpen={onOpen}
         presentation={presentation}
       />
@@ -395,15 +328,7 @@ it.each(['detail', 'summary'] as const)(
     );
     expect(onOpen).toHaveBeenCalledWith('refused');
     rerender(
-      <NeoWorkCard
-        work={item}
-        card={testCard(item)}
-        busy={false}
-        disabled={false}
-        onAction={vi.fn()}
-        onOpen={onOpen}
-        presentation={presentation}
-      />
+      <NeoWorkCard work={item} card={testCard(item)} onOpen={onOpen} presentation={presentation} />
     );
     expect(screen.queryByText(/Open it and tell it yourself/)).toBeNull();
   }
@@ -422,9 +347,6 @@ describe('NeoWorkCard reply attribution', () => {
           label: 'Reply received · not verified',
           replyUnverified: detail,
         })}
-        busy={false}
-        disabled={false}
-        onAction={() => {}}
       />
     );
     expect(screen.getByText(detail)).toBeTruthy();
@@ -432,9 +354,6 @@ describe('NeoWorkCard reply attribution', () => {
       <NeoWorkCard
         work={work('r1', 'reported')}
         card={testCard(work('r1', 'reported'), { label: 'Reply received' })}
-        busy={false}
-        disabled={false}
-        onAction={() => {}}
       />
     );
     expect(container.querySelector('[data-reply-unverified]')).toBeNull();
@@ -469,9 +388,6 @@ describe('NeoWorkCard dependency waits', () => {
       <NeoWorkCard
         work={work('ui', 'proposed')}
         card={proposed({})}
-        busy={false}
-        disabled={false}
-        onAction={() => {}}
         onOpenWork={openWork}
         canOpenWork={(id) => id === 'api'}
       />
@@ -489,9 +405,6 @@ describe('NeoWorkCard dependency waits', () => {
       <NeoWorkCard
         work={work('ui', 'proposed')}
         card={proposed({})}
-        busy={false}
-        disabled={false}
-        onAction={() => {}}
         onOpen={() => {}}
         onOpenWork={openWork}
         presentation="summary"
@@ -504,15 +417,7 @@ describe('NeoWorkCard dependency waits', () => {
 
   it('a card that starts by itself keeps its prerequisite status without decision buttons', () => {
     const act = vi.fn();
-    render(
-      <NeoWorkCard
-        work={work('ui', 'proposed')}
-        card={proposed({ autoStart: true })}
-        busy={false}
-        disabled={false}
-        onAction={act}
-      />
-    );
+    render(<NeoWorkCard work={work('ui', 'proposed')} card={proposed({ autoStart: true })} />);
     expect(screen.getByText('Starts by itself once these are done')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Start work/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
@@ -529,9 +434,6 @@ describe('NeoWorkCard dependency waits', () => {
           adapter: 'codex-desktop',
           open: { link: 'codex://threads/t1', remoteLink: null, sessionId: null, daemon: null },
         })}
-        busy={false}
-        disabled={false}
-        onAction={() => {}}
       />
     );
     expect(

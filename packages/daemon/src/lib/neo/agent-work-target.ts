@@ -1,8 +1,6 @@
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkTarget } from '../../storage/repositories/neo-repository.ts';
 import type { ExecutionSession, NeoWorkTargetRejection } from './work-target.ts';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkOrigin } from './work-origin.ts';
 
 export interface NeoAgentWorkOwner {
   agentId: string;
@@ -65,47 +63,4 @@ export function requireNeoAgentWorkBinding(
   binding: NeoBinding | null
 ): Gate {
   return binding === null ? { value: target } : reject('target_owned_context');
-}
-
-export function requireNeoProposalReceipt(
-  target: NeoWorkTarget,
-  origin: NeoWorkOrigin,
-  receipt: { work: NeoWork; agent: NeoWorkTarget['agent'] | null }
-): { value: { ok: true; work: NeoWork } } | { reason: { ok: false; reason: string } } {
-  const { work, agent } = receipt;
-  if (
-    work.originMessageId !== origin.originMessageId ||
-    work.originSessionId !== origin.originSessionId
-  )
-    return { reason: { ok: false, reason: 'This request key belongs to another input.' } };
-  if (work.targetSessionId !== target.targetSessionId)
-    return {
-      reason: { ok: false, reason: 'This request key belongs to another execution target.' },
-    };
-  return target.agent
-    ? agent?.spaceId === target.agent.spaceId &&
-      agent.agentId === target.agent.agentId &&
-      agent.sessionId === target.agent.sessionId
-      ? { value: { ok: true, work } }
-      : { reason: { ok: false, reason: 'This request key belongs to another native target.' } }
-    : agent === null
-      ? { value: { ok: true, work } }
-      : { reason: { ok: false, reason: 'This request key belongs to another native target.' } };
-}
-
-export interface NeoProposal {
-  receipt: { work: NeoWork; agent: NeoWorkTarget['agent'] | null };
-  crossTarget: boolean;
-}
-
-export function requireNeoProposal(
-  target: NeoWorkTarget,
-  origin: NeoWorkOrigin,
-  proposal: NeoProposal
-): ReturnType<typeof requireNeoProposalReceipt> {
-  return proposal.crossTarget
-    ? {
-        reason: { ok: false, reason: 'This request key belongs to another execution target.' },
-      }
-    : requireNeoProposalReceipt(target, origin, proposal.receipt);
 }

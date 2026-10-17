@@ -1,12 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import {
-  type DaemonInternalEventMap,
-  InternalEventBus,
-} from '../../../../src/lib/internal-event-bus.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import {
   admitNeoWorkReportInput,
   createNeoWorkReporter,
@@ -15,9 +8,6 @@ import {
   requireNeoWorkReportResources,
 } from '../../../../src/lib/neo/work-report.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
-import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
-import { Database } from '../../../../src/storage/database.ts';
-import { createReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoWorkResourceRepository } from '../../../../src/storage/repositories/neo-work-resource-repository.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
@@ -338,78 +328,5 @@ describe('Neo report resources with real SQL settlement', () => {
     ]);
     expect(repo.getWork('A')?.sessionId).toBe('recipient');
     expect(repo.getWork('B')?.sessionId).toBe('recipient');
-  });
-});
-
-describe('NeoService resource-report Wire', () => {
-  test('uses the atomic primitive and existing deduplicated mailbox with no SDK execution', async () => {
-    const db = new Database(':memory:', { messageSearchIndexFlushIntervalMs: 0 });
-    await db.initialize(createReactiveDatabase(db));
-    const createSession = mock(async () => {
-      throw new Error('No new execution');
-    });
-    const getSessionAsync = mock(async () => {
-      throw new Error('No SDK load');
-    });
-    const event = mock(() => {});
-    const service = new NeoService(
-      db,
-      { createSession, getSessionAsync } as unknown as SessionManager,
-      { event } as unknown as MessageHub,
-      new InternalEventBus<DaemonInternalEventMap>()
-    );
-    try {
-      const sql = db.getDatabase();
-      for (const id of ['root', 'recipient'])
-        sql
-          .prepare(
-            `INSERT INTO sessions(id, title, workspace_path, created_at, last_active_at, status, config, metadata) VALUES (?, ?, NULL, '2026-09-28T12:00:00Z', '2026-09-28T12:00:00Z', 'active', '{}', '{}')`
-          )
-          .run(id, id);
-      service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
-      const proposed = service.repo.proposeWork(work);
-      service.repo.transitionWork(work.id, proposed, { status: 'queued', sessionId: 'recipient' });
-      const capture = () =>
-        JSON.stringify(
-          ['sessions', 'neo_concerns', 'neo_session_bindings', 'sdk_messages'].map((table) =>
-            sql.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()
-          )
-        );
-      const before = capture();
-      event.mockClear();
-      const operation = createNeoOperations(service).find(
-        (entry) => entry.name === 'neo.work.report'
-      );
-      if (!operation) throw new Error('Report operation missing');
-      expect(
-        operation.inputSchema.safeParse({
-          ...input,
-          resourceRefs: Array.from({ length: 17 }, () => task),
-        }).success
-      ).toBe(false);
-      expect(await operation.execute(operation.inputSchema.parse(input), caller)).toMatchObject({
-        accepted: true,
-        replayed: false,
-      });
-      expect(db.neoWorkResources.get(work.id)).toEqual(input.resourceRefs);
-      expect(
-        await service.reportWork({ ...legacy, resourceRefs: [workflow, task, task] }, caller)
-      ).toMatchObject({ accepted: true, replayed: true });
-      expect(event).toHaveBeenCalledTimes(1);
-      const jobs = db.getJobQueueRepo().listActiveByPayload('mailbox', { messageUuid: work.id });
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0].payload).toMatchObject({
-        to: { kind: 'session', sessionId: 'root' },
-        origin: 'session:recipient',
-        messageUuid: work.id,
-      });
-      expect(JSON.stringify(jobs[0].payload)).toContain('ask-A');
-      expect(capture()).toBe(before);
-      expect(createSession).not.toHaveBeenCalled();
-      expect(getSessionAsync).not.toHaveBeenCalled();
-    } finally {
-      service.dispose();
-      db.close();
-    }
   });
 });

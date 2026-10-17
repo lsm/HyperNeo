@@ -211,6 +211,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ? { inputBefore: 0, opening, ...(result.receipt ? { receipt: result.receipt } : {}) }
           : null
     );
+    if (store.getAsk(ask.id)?.status !== 'open')
+      await deps.invoke(caller(ask), 'work.stop', { ref: result.ref }).catch(() => null);
     deps.changed();
     return { ok: true as const, todo: store.getTodo(todo.id) ?? todo };
   };

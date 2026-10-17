@@ -1,0 +1,249 @@
+import { describe, expect, test } from 'bun:test';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import {
+  createNeoAskRecordOperations,
+  requireNeoAskProject,
+  requireNeoAskSession,
+} from '../../../../src/lib/neo/ask-record-operations.ts';
+import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
+
+const turn = (messageId: string, human = true): OperationCaller => ({
+  source: 'mcp',
+  sessionId: 'neo-a',
+  role: 'neo',
+  neoTurn: { messageId, human, isLive: () => true },
+});
+
+type Receipt = { ok: true; ask: NeoAsk; todos: NeoTodo[] } | { ok: false; reason: string };
+
+function setup() {
+  const db = new Database(':memory:');
+  runMigrations(db, () => {});
+  createTables(db);
+  db.exec(
+    "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('project-1', 'P', '', '', 1, 1, 1)"
+  );
+  const store = new NeoAskTodoRepository(db);
+  const sessions = new NeoTodoSessionRepository(db);
+  const started: string[] = [];
+  const stopped: string[] = [];
+  const refuse = { value: false };
+  const stopFails = { value: false };
+  const onStop: { value: ((todo: NeoTodo) => void) | null } = { value: null };
+  const ops = Object.fromEntries(
+    createNeoAskRecordOperations(
+      store,
+      sessions,
+      {
+        start: async (todoId) => {
+          if (refuse.value) return { ok: false, reason: 'busy' };
+          started.push(todoId);
+          return {
+            ok: true,
+            todo: store.updateTodo(store.getTodo(todoId)!, { state: 'doing' }, 2),
+          };
+        },
+        proceed: async () => ({ ok: false, reason: 'unused' }),
+        retry: async () => ({ ok: false, reason: 'unused' }),
+        stop: async (todo) => {
+          stopped.push(todo.id);
+          onStop.value?.(todo);
+          return stopFails.value ? 'stop_failed: offline' : null;
+        },
+      },
+      () => 'project-1',
+      (projectId) => (projectId === 'project-1' ? projectId : null),
+      (sessionId) => sessionId === 'neo-a'
+    ).map((op) => [op.name, op])
+  );
+  const call = async (name: string, input: unknown, caller: OperationCaller) =>
+    (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
+  return { store, sessions, call, started, stopped, refuse, stopFails, onStop };
+}
+
+const opening = {
+  title: 'Fix login',
+  request: 'Fix the login bug and merge it',
+  todos: [
+    {
+      title: 'Fix it',
+      doneWhen: 'PR merged',
+      check: { pack: 'coding', kind: 'pr_merged' },
+      instruction: 'Fix the login bug.',
+      target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'dev-1' } },
+      start: true,
+    },
+    { title: 'Deploy', doneWhen: 'Both daemons run it' },
+  ],
+};
+
+describe('neo.ask.open and neo.ask.settle', () => {
+  test('opens an ask with its todos once per turn and starts the ones asked to start', async () => {
+    const { call, started } = setup();
+    const first = await call('neo.ask.open', opening, turn('m1'));
+    if (!first.ok) throw new Error(first.reason);
+    expect(first.ask).toMatchObject({
+      projectId: 'project-1',
+      sessionId: 'neo-a',
+      originMessageId: 'm1',
+      status: 'open',
+    });
+    expect(first.todos.map((todo) => [todo.title, todo.instruction !== null])).toEqual([
+      ['Fix it', true],
+      ['Deploy', false],
+    ]);
+    expect(started).toEqual([first.todos[0].id]);
+    const retry = await call('neo.ask.open', opening, turn('m1'));
+    expect(retry.ok && retry.ask.id).toBe(first.ask.id);
+    expect(retry.ok && retry.todos).toHaveLength(2);
+    expect(started).toHaveLength(1);
+  });
+
+  test('a retry after a refused start adds the todos that are still missing', async () => {
+    const { call, refuse, started } = setup();
+    refuse.value = true;
+    expect(await call('neo.ask.open', opening, turn('m3'))).toEqual({
+      ok: false,
+      reason: 'busy',
+    });
+    refuse.value = false;
+    const retry = await call(
+      'neo.ask.open',
+      { ...opening, todos: [opening.todos[1], opening.todos[0]] },
+      turn('m3')
+    );
+    expect(retry.ok && retry.todos.map((todo) => todo.title)).toEqual(['Fix it', 'Deploy']);
+    expect(started).toEqual([retry.ok && retry.todos[0].id]);
+  });
+
+  test('start in a turn the human did not start is refused before anything is written', async () => {
+    const { call, store } = setup();
+    expect(await call('neo.ask.open', opening, turn('m2', false))).toEqual({
+      ok: false,
+      reason:
+        'start_needs_human: start:true only in a turn the human started; ask a start question instead.',
+    });
+    expect(store.listAsks(undefined, 10)).toEqual([]);
+  });
+
+  test('a start that lands while settle stops other sessions is stopped after the ask settles', async () => {
+    const { call, sessions, stopped, onStop } = setup();
+    const opened = await call('neo.ask.open', opening, turn('m6'));
+    if (!opened.ok) throw new Error(opened.reason);
+    const [first, second] = opened.todos;
+    onStop.value = (todo) => {
+      if (todo.id === second.id) sessions.recordRef(first.id, { adapter: 'hyperneo', id: 'late' });
+    };
+    const settled = await call(
+      'neo.ask.settle',
+      { askId: opened.ask.id, status: 'dropped', outcome: 'x' },
+      turn('m6')
+    );
+    expect(settled.ok).toBe(true);
+    expect(stopped).toEqual([first.id, second.id, first.id]);
+  });
+
+  test('a settle whose stop fails leaves the ask open and says so', async () => {
+    const { call, store, stopFails } = setup();
+    const opened = await call('neo.ask.open', opening, turn('m5'));
+    if (!opened.ok) throw new Error(opened.reason);
+    stopFails.value = true;
+    const settled = await call(
+      'neo.ask.settle',
+      { askId: opened.ask.id, status: 'dropped', outcome: 'x' },
+      turn('m5')
+    );
+    expect(settled.ok).toBe(false);
+    expect(!settled.ok && settled.reason).toContain('the ask is still open');
+    expect(store.getAsk(opened.ask.id)?.status).toBe('open');
+  });
+
+  test('settling stops running sessions, retires open questions and ends the ask', async () => {
+    const { call, store, stopped } = setup();
+    const opened = await call('neo.ask.open', opening, turn('m3'));
+    if (!opened.ok) throw new Error(opened.reason);
+    store.askQuestion(
+      'q',
+      opened.ask.id,
+      {
+        text: 'Deploy now?',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+      },
+      1
+    );
+    const settled = await call(
+      'neo.ask.settle',
+      { askId: opened.ask.id, status: 'dropped', outcome: 'The human dropped it.' },
+      { source: 'rpc', principal: 'local' }
+    );
+    expect(settled.ok && settled.ask).toMatchObject({
+      status: 'dropped',
+      outcome: 'The human dropped it.',
+      settledAt: expect.any(Number),
+    });
+    expect(stopped).toHaveLength(2);
+    expect(store.getQuestion('q')?.state).toBe('retired');
+    expect(store.listTodos(opened.ask.id).map((todo) => [todo.state, todo.reason])).toEqual([
+      ['removed', 'The ask was settled dropped.'],
+      ['removed', 'The ask was settled dropped.'],
+    ]);
+    expect(
+      await call(
+        'neo.ask.settle',
+        { askId: opened.ask.id, status: 'done', outcome: 'x' },
+        turn('m4')
+      )
+    ).toEqual({ ok: false, reason: 'ask_settled: this ask is dropped.' });
+  });
+});
+
+describe('requireNeoAskProject', () => {
+  test('keeps a project holder to its own project', () => {
+    const resolve = (id: string) => id;
+    expect(requireNeoAskProject({ projectId: 'other' }, 's', () => 'held', resolve)).toEqual({
+      reason: { ok: false, reason: 'wrong_project: this session holds project held.' },
+    });
+    expect(requireNeoAskProject({ projectId: null }, 's', () => 'held', resolve)).toEqual({
+      reason: { ok: false, reason: 'wrong_project: this session holds project held.' },
+    });
+    expect(requireNeoAskProject({ projectId: 'held' }, 's', () => 'held', resolve)).toEqual({
+      value: 'held',
+    });
+  });
+
+  test('uses the session project, keeps an explicit null and refuses an unknown id', () => {
+    const projectOf = () => null;
+    const resolve = (id: string) => (id === 'old' ? 'kept' : null);
+    expect(requireNeoAskProject({}, 's', () => 'bound', resolve)).toEqual({ value: 'bound' });
+    expect(requireNeoAskProject({ projectId: null }, 's', projectOf, resolve)).toEqual({
+      value: null,
+    });
+    expect(requireNeoAskProject({ projectId: 'old' }, 's', projectOf, resolve)).toEqual({
+      value: 'kept',
+    });
+    expect(requireNeoAskProject({ projectId: 'nope' }, 's', projectOf, resolve)).toEqual({
+      reason: { ok: false, reason: 'unknown_project: no project nope.' },
+    });
+  });
+});
+
+describe('requireNeoAskSession', () => {
+  test('needs a Neo session', () => {
+    const refused = {
+      reason: { ok: false, reason: 'no_session: only a Neo session opens an ask.' },
+    };
+    expect(requireNeoAskSession({ source: 'rpc' }, () => true)).toEqual(refused);
+    expect(requireNeoAskSession({ source: 'mcp', sessionId: 'worker-1' }, () => false)).toEqual(
+      refused
+    );
+  });
+});

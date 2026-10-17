@@ -60,7 +60,7 @@ describe('neoPackBriefs', () => {
     expect(guidance).toContain('review approval of the latest head commit');
     expect(guidance).toContain("using the repository's own ready signal");
     expect(guidance).toContain('all required checks to pass before manually merging');
-    expect(guidance).toContain('When review is required, a new commit needs fresh review approval');
+    expect(guidance).toContain('A new commit needs fresh review approval');
     expect(guidance).toContain('If another actor owns the merge, leave it to them');
   });
 });
@@ -133,8 +133,8 @@ describe('coding pack instructions', () => {
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('merged to the');
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('git remote');
     expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('freshly fetched remote target');
-    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('work.preparationParameters.target');
-    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('operation:"neo.github.read"');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('target.preparationParameters.target');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('neo.github.read {url}');
     expect(NEO_SYSTEM_PROMPT).not.toContain('neo.github.read');
   });
 });

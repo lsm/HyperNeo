@@ -1,9 +1,7 @@
-import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import { requireNeoDriverVerb } from '../../../../src/lib/neo/driver-work.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   findNeoSessionNotice,
@@ -16,7 +14,6 @@ import {
 } from '../../../../src/lib/neo/session-track.ts';
 import { neoSessionKey, type NeoSessionNotice } from '../../../../src/lib/neo/session-watch.ts';
 import type { PlaceGroup, WorkStatus } from '../../../../src/lib/drivers/types.ts';
-import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
   defineOperation,
@@ -27,7 +24,6 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
-import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 const ref = { adapter: 'codex-desktop', id: 't1' };
 const key = neoSessionKey(ref);
@@ -203,250 +199,5 @@ describe('neo.session.track', () => {
     status = { status: 'done', lastActivityAt: Date.now() + 10_000 };
     await service.refreshDriverWork();
     expect(service.repo.getWork(card.id)?.status).toBe('reported');
-  });
-
-  test('a tracked-session follow-up waits for its exact target question and starts on its answer', async () => {
-    const neo = {
-      source: 'mcp' as const,
-      sessionId: 'neo:root',
-      role: 'neo' as const,
-      neoTurn: { messageId: 'turn-2', human: true, isLive: () => true },
-    };
-    const registry = createOperationRegistry(createNeoOperations(service));
-    expect(service.trackedSessions.size).toBe(0);
-    const turn = (messageId: string) => ({
-      ...neo,
-      neoTurn: { ...neo.neoTurn, messageId },
-    });
-    const adopted = await invokeOperation(
-      registry,
-      'neo.work.propose',
-      withNeoProposalAsk(
-        service,
-        'neo.work.propose',
-        {
-          requestKey: 'track',
-          title: 'Quiet-model research',
-          instruction: 'Follow the research session.',
-          goal: 'Finish the quiet-model research',
-          work: { verb: 'adopt', ref },
-        },
-        neo
-      ),
-      neo
-    );
-    expect(adopted).toMatchObject({ value: { ok: true } });
-    expect(service.driverTargets.adoptedRefs(0)).toEqual([ref]);
-    const propose = async (label: string, target: { adapter: string; id: string }) => {
-      const caller = label === 'follow-up' ? neo : turn(label);
-      const proposed = await invokeOperation(
-        registry,
-        'neo.work.propose',
-        withNeoProposalAsk(
-          service,
-          'neo.work.propose',
-          {
-            title: 'Finish the write-up',
-            instruction: `Write up the findings (${label}).`,
-            goal: 'A finished write-up',
-            work: { verb: 'send', ref: target },
-          },
-          caller
-        ),
-        caller
-      );
-      const card = (proposed as { value: { work: { id: string } } }).value.work;
-      return service.askRecords.forWork(card.id);
-    };
-    const followUp = (await propose('follow-up', ref))!;
-    const question = followUp.doneItems!.find(
-      (item) => item.state === 'needs_you' && !item.removed
-    )!;
-    expect(question).toMatchObject({ kind: 'approval', options: ['先不做', '开始'] });
-    const followUpId = followUp.workIds.find(
-      (id) => service.driverTargets.get(id)?.verb === 'send'
-    )!;
-    expect(service.proposalApproval(followUpId)).toBe(false);
-    expect(service.repo.getWork(followUpId)?.status).toBe('proposed');
-    expect(sent).not.toHaveBeenCalled();
-    expect(
-      await invokeOperation(
-        registry,
-        'neo.ask.approve',
-        {
-          askId: followUp.id,
-          expectedRevision: followUp.revision,
-        },
-        { source: 'rpc', principal: 'local' }
-      )
-    ).toMatchObject({ value: { ok: true } });
-    expect(sent).not.toHaveBeenCalled();
-    const card = service.repo.getWork(
-      (adopted as { value: { work: { id: string } } }).value.work.id
-    )!;
-    service.repo.transitionWork(card.id, card, {
-      status: 'reported',
-      report: NEO_WORK_CLOSED_DONE,
-    });
-    const revision = service.askRecords.get(followUp.id)!.revision;
-    expect(
-      await invokeOperation(
-        registry,
-        'neo.ask.answer',
-        {
-          askId: followUp.id,
-          itemId: question.id,
-          choice: '开始',
-          expectedRevision: revision,
-        },
-        { source: 'rpc', principal: 'local' }
-      )
-    ).toMatchObject({ value: { ok: true } });
-    expect(sent).toHaveBeenCalledTimes(1);
-    expect(service.repo.getWork(followUpId)?.status).toBe('queued');
-    service.repo.transitionWork(followUpId, service.repo.getWork(followUpId)!, {
-      status: 'reported',
-    });
-    expect(
-      (await propose('elsewhere', { adapter: 'codex-desktop', id: 't9' }))?.approvedAt ?? null
-    ).toBeNull();
-    expect(service.driverTargets.adoptedRefs(0)).toEqual([]);
-    expect((await propose('after-close', ref))?.approvedAt ?? null).toBeNull();
-  });
-
-  test('Neo follows without a Track tap in a system turn but never approves the existing ask', async () => {
-    const neo = {
-      source: 'mcp' as const,
-      sessionId: 'neo:root',
-      role: 'neo' as const,
-      neoTurn: { messageId: 'turn-1', human: false, isLive: () => true },
-    };
-    const registry = createOperationRegistry(createNeoOperations(service));
-    expect(service.trackedSessions.size).toBe(0);
-    const askId = service.askRecords.open(
-      {
-        id: crypto.randomUUID(),
-        requestKey: 'neo:root:research',
-        projectId: null,
-        originSessionId: 'neo:root',
-        originMessageId: 'turn-0',
-        title: 'Research',
-        ask: 'Research quiet models',
-        doneWhen: '- done',
-        doneSource: 'human',
-      },
-      [{ text: 'done', check: null }]
-    )!.id;
-    const proposed = await invokeOperation(
-      registry,
-      'neo.work.propose',
-      {
-        requestKey: 'track',
-        title: 'Quiet-model research',
-        instruction: 'Follow the research session.',
-        askId,
-        delivers: [],
-        work: { verb: 'adopt', ref },
-      },
-      neo
-    );
-    const card = (proposed as { value: { work: { id: string } } }).value.work;
-    expect(service.repo.getWork(card.id)?.status).toBe('queued');
-    expect(service.askRecords.get(askId)?.approvedAt ?? null).toBeNull();
-  });
-
-  test('asks Neo to adopt the session, and the adopted card follows it without sending', async () => {
-    const human = { source: 'rpc' as const, principal: 'local' as const };
-    const invoke = (input: unknown, caller: Parameters<typeof invokeOperation>[3] = human) =>
-      invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
-        'neo.session.track',
-        input,
-        caller
-      );
-    let clock = Date.now();
-    const time = spyOn(Date, 'now').mockImplementation(() => clock);
-    try {
-      listed = [work({ lastActivityAt: clock - 1_000 })];
-      await service.refreshDriverWork();
-      clock += RUN_MS;
-      listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
-      status = { status: 'failed', lastActivityAt: clock - 1_000 };
-      await service.refreshDriverWork();
-      expect(service.trackableNotices.map((item) => item.key)).toContain(key);
-
-      expect(
-        await invoke({ key }, { source: 'mcp', sessionId: 'neo:root', role: 'neo' })
-      ).toMatchObject({ value: { ok: false, reason: 'This action needs the user.' } });
-      expect(await invoke({ key })).toMatchObject({ value: { ok: true } });
-      expect(service.trackedSessions.get(key)).toBe(clock);
-      expect(db.getGlobalSettings().neo?.trackedSessions).toEqual({ [key]: clock });
-      expect(
-        db
-          .getJobQueueRepo()
-          .listActiveByPayload('mailbox', { 'to.sessionId': 'neo:root' })
-          .map((job) => JSON.stringify(job.payload))
-          .join('\n')
-      ).toContain('tapped Track');
-      const trackAsk = service.askRecords
-        .list()
-        .find((ask) => ask.originMessageId?.startsWith(`neo-track:${key}:`));
-      expect(trackAsk).toMatchObject({
-        doneSource: 'human',
-        doneItems: [{ id: 'i1', check: null }],
-      });
-      clock += 1_000;
-      expect(await invoke({ key })).toMatchObject({ value: { ok: true } });
-      expect(
-        service.askRecords.list().filter((ask) => ask.originMessageId?.startsWith('neo-track:'))
-      ).toEqual([expect.objectContaining({ id: trackAsk!.id })]);
-      const tappedAt = clock;
-      clock += 1_000;
-
-      const proposed = await invokeOperation(
-        createOperationRegistry(createNeoOperations(service)),
-        'neo.work.propose',
-        {
-          requestKey: 'track',
-          askId: trackAsk!.id,
-          delivers: ['i1'],
-          title: 'Quiet-model research',
-          instruction: 'Follow the research session.',
-          goal: 'Research quiet models',
-          work: { verb: 'adopt', ref },
-        },
-        {
-          source: 'mcp',
-          sessionId: 'neo:root',
-          role: 'neo',
-          neoTurn: { messageId: trackAsk!.originMessageId!, human: false, isLive: () => true },
-        }
-      );
-      expect(proposed).toMatchObject({ value: { ok: true } });
-      const card = (proposed as { value: { work: { id: string } } }).value.work;
-      expect(service.trackedSessions.has(key)).toBe(false);
-      expect(service.askRecords.forWork(card.id)).toMatchObject({
-        approvedAt: tappedAt,
-        approvedRevision: service.askRecords.forWork(card.id)?.revision,
-      });
-      expect(sent).not.toHaveBeenCalled();
-      expect(service.repo.getWork(card.id)).toMatchObject({
-        status: 'queued',
-        report: expect.stringContaining('Tracking the codex-desktop session'),
-      });
-      expect(service.driverTargets.cardRefs(0)).toEqual([{ workId: card.id, ref }]);
-      clock += 11 * 60_000;
-      await service.refreshDriverWork();
-      expect(service.repo.getWork(card.id)?.status).toBe('queued');
-      expect(await invoke({ key })).toMatchObject({
-        value: { ok: false, reason: 'A Neo card already follows this session.' },
-      });
-
-      await service.close(card.id, 'done');
-      expect(service.repo.getWork(card.id)?.status).toBe('reported');
-      expect(stopped).not.toHaveBeenCalled();
-    } finally {
-      time.mockRestore();
-    }
   });
 });

@@ -159,16 +159,7 @@ describe('NeoWorkQuestion native controls', () => {
     expect(screen.queryByText('Could not check this agent’s questions.')).toBeNull();
   });
   it('observes from the actual work card without inline reply controls and releases its subscriptions', async () => {
-    const view = render(
-      <NeoWorkCard
-        work={work}
-        card={testCard(work)}
-        busy={false}
-        disabled={false}
-        onAction={vi.fn()}
-        onOpen={vi.fn()}
-      />
-    );
+    const view = render(<NeoWorkCard work={work} card={testCard(work)} onOpen={vi.fn()} />);
     await waitFor(() => expect(join).toHaveBeenCalledWith('session:manager-A'));
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith('state.session', { sessionId: 'manager-A' })
