@@ -2503,9 +2503,12 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     createNeoPreferenceOperation(service),
-    ...createNeoTodoOperations(service.todos, service.todoSessions, (todoId) =>
-      service.todoRunner.start(todoId)
-    ),
+    ...createNeoTodoOperations(service.todos, service.todoSessions, {
+      start: (todoId) => service.todoRunner.start(todoId),
+      proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
+      retry: (todoId) => service.todoRunner.retry(todoId),
+      stop: (todo) => service.todoRunner.stop(todo),
+    }),
     ...createNeoQuestionOperations(
       service.todos,
       (ask, question, note) =>

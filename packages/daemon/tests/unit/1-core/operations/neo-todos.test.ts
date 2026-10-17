@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
+import {
+  createNeoTodoOperations,
+  type NeoTodoControls,
+} from '../../../../src/lib/neo/todo-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
@@ -15,6 +18,7 @@ function setup() {
   runMigrations(db, () => {});
   createTables(db);
   let changes = 0;
+  const stopped: string[] = [];
   const repo = new NeoAskTodoRepository(db, () => changes++);
   repo.openAsk({
     id: 'ask',
@@ -25,17 +29,23 @@ function setup() {
     request: 'Fix login and ship it',
     createdAt: 1,
   });
+  const stopFails = { value: false };
   const ops = Object.fromEntries(
-    createNeoTodoOperations(repo, new NeoTodoSessionRepository(db), async () => ({
-      ok: false as const,
-      reason: 'not started',
-    })).map((op) => [op.name, op])
+    createNeoTodoOperations(repo, new NeoTodoSessionRepository(db), {
+      start: async () => ({ ok: false as const, reason: 'not started' }),
+      proceed: async () => ({ ok: false as const, reason: 'no session' }),
+      retry: async () => ({ ok: false as const, reason: 'not failed' }),
+      stop: async (todo) => {
+        stopped.push(todo.id);
+        return stopFails.value ? 'stop_failed: driver offline' : null;
+      },
+    }).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as
       | { ok: true; todo: NeoTodo; todos: NeoTodo[] }
       | { ok: false; reason: string };
-  return { db, repo, call, changes: () => changes };
+  return { db, repo, call, stopped, stopFails, changes: () => changes };
 }
 
 describe('neo.todo operations', () => {
@@ -72,7 +82,7 @@ describe('neo.todo operations', () => {
     const add = createNeoTodoOperations(
       {} as NeoAskTodoRepository,
       {} as NeoTodoSessionRepository,
-      async () => ({ ok: false as const, reason: 'x' })
+      {} as NeoTodoControls
     ).find((op) => op.name === 'neo.todo.add')!;
     const input = { askId: 'ask', title: 'T', doneWhen: 'D', instruction: 'Do' };
     const ref = { adapter: 'hyperneo', id: 'dev-1' };
@@ -133,7 +143,7 @@ describe('neo.todo operations', () => {
   });
 
   test('removes a todo with its reason and replacement', async () => {
-    const { call } = setup();
+    const { call, stopped } = setup();
     const old = await call('neo.todo.add', { askId: 'ask', title: 'Old', doneWhen: 'x' });
     const next = await call('neo.todo.add', { askId: 'ask', title: 'New', doneWhen: 'x' });
     if (!old.ok || !next.ok) throw new Error('add failed');
@@ -157,5 +167,65 @@ describe('neo.todo operations', () => {
       ok: false,
       reason: 'todo_removed: this todo was removed.',
     });
+    expect(stopped).toEqual([old.todo.id]);
+  });
+
+  test('closes a todo done with the reason and stops its session', async () => {
+    const { call, stopped } = setup();
+    const added = await call('neo.todo.add', { askId: 'ask', title: 'Fix', doneWhen: 'Merged' });
+    if (!added.ok) throw new Error(added.reason);
+    const closed = await call('neo.todo.close', {
+      todoId: added.todo.id,
+      reason: 'Verified on device',
+    });
+    expect(closed.ok && closed.todo).toMatchObject({
+      state: 'done',
+      evidence: 'Verified on device',
+      finishedAt: expect.any(Number),
+    });
+    expect(stopped).toEqual([added.todo.id]);
+    expect(await call('neo.todo.continue', { todoId: added.todo.id, message: 'next' })).toEqual({
+      ok: false,
+      reason: 'no session',
+    });
+  });
+
+  test('a close whose stop fails leaves the todo unchanged and says so', async () => {
+    const { call, stopFails, repo } = setup();
+    const added = await call('neo.todo.add', { askId: 'ask', title: 'Fix', doneWhen: 'Merged' });
+    if (!added.ok) throw new Error(added.reason);
+    stopFails.value = true;
+    expect(await call('neo.todo.close', { todoId: added.todo.id, reason: 'x' })).toEqual({
+      ok: false,
+      reason: 'stop_failed: driver offline; the todo is unchanged, its session may still run.',
+    });
+    expect(repo.getTodo(added.todo.id)?.state).toBe('todo');
+  });
+
+  test('start:true needs a turn the human started', async () => {
+    const { call } = setup();
+    const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
+    expect(
+      await call('neo.todo.add', {
+        askId: 'ask',
+        title: 'Fix',
+        doneWhen: 'Merged',
+        instruction: 'Fix it',
+        target,
+        start: true,
+      })
+    ).toEqual({
+      ok: false,
+      reason:
+        'start_needs_human: start:true only in a turn the human started; ask a start question instead.',
+    });
+    await expect(
+      call('neo.todo.add', {
+        askId: 'ask',
+        title: 'Fix',
+        doneWhen: 'Merged',
+        instruction: 'Fix it',
+      })
+    ).rejects.toThrow();
   });
 });
