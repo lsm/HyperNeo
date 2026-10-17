@@ -105,6 +105,14 @@ describe('durable conversation ask client', () => {
     });
   });
 
+  it('keeps a question or todo reference and drops a malformed one', () => {
+    const replied = { ...ask(), replyTo: { kind: 'question', id: 'q1' } };
+    const odd = { ...ask(2), replyTo: { kind: 'card', id: 'w' } };
+    expect(presentConversationAskPage(response([replied, odd]), page)).toEqual({
+      value: { state: 'ready', items: [replied, ask(2)], nextAfter: 2 },
+    });
+  });
+
   it.each([
     { conversationId: 'legacy-root', after: 0 },
     { conversationId, after: -1 },

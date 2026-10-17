@@ -13,6 +13,7 @@ import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoActivity } from './NeoActivity.tsx';
 import { NeoAskCard } from './NeoAskCard.tsx';
+import { NeoAskTodos } from './NeoAskTodos.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoDrawer } from './NeoDrawer.tsx';
@@ -21,7 +22,7 @@ import { publicAskText } from './NeoPublicConversation.tsx';
 import { NeoSessionPane } from './NeoSessionPane.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
-import { groupNeoAsks } from './neo-asks.ts';
+import { groupNeoAsks, neoAskEntryGroup } from './neo-asks.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoProjectBoard } from './neo-project-board.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
@@ -184,6 +185,17 @@ export function NeoLive() {
     cards
   );
   const askGroups = groupNeoAsks(view?.asks, scenes, view?.askViews, cards);
+  const replyLabels = new Map(
+    (view?.todoAsks ?? []).flatMap((entry) => [
+      ...entry.questions.map(
+        (question) =>
+          [`question:${question.id}`, { label: question.text, askId: entry.ask.id }] as const
+      ),
+      ...entry.todos.map(
+        (todo) => [`todo:${todo.id}`, { label: todo.title, askId: entry.ask.id }] as const
+      ),
+    ])
+  );
   const sceneGroups = [
     { key: 'attention', label: 'Needs your attention' },
     { key: 'running', label: 'In progress' },
@@ -193,12 +205,13 @@ export function NeoLive() {
     return {
       ...group,
       key,
+      entries: (view?.todoAsks ?? []).filter((entry) => neoAskEntryGroup(entry) === key),
       asks: askGroups.asks[key],
       scenes: askGroups.loose[key],
     };
   });
   const workCount = sceneGroups.reduce(
-    (total, group) => total + group.asks.length + group.scenes.length,
+    (total, group) => total + group.entries.length + group.asks.length + group.scenes.length,
     0
   );
   const columns = !!publicConversation && (workCount > 0 || !!chat);
@@ -211,7 +224,10 @@ export function NeoLive() {
     sheet: sceneSheet,
   });
   const attention = sceneGroups.find((group) => group.key === 'attention');
-  const attentionCount = (attention?.asks.length ?? 0) + (attention?.scenes.length ?? 0);
+  const attentionCount =
+    (attention?.entries.length ?? 0) +
+    (attention?.asks.length ?? 0) +
+    (attention?.scenes.length ?? 0);
   const ready =
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
@@ -578,6 +594,7 @@ export function NeoLive() {
               works={relevant}
               projects={projectTitles}
               forwarders={forwarders}
+              replyLabels={replyLabels}
               publicConversation={publicConversation}
               onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
               onRetryPublic={retryPublicConversation}
@@ -706,7 +723,7 @@ export function NeoLive() {
             </div>
           )}
           {sceneGroups.map((group) =>
-            group.asks.length + group.scenes.length === 0 ? null : (
+            group.entries.length + group.asks.length + group.scenes.length === 0 ? null : (
               <section
                 key={group.key}
                 aria-label={group.label}
@@ -714,8 +731,41 @@ export function NeoLive() {
                 data-scene-group={group.key}
               >
                 <h2 class="text-xs font-medium text-fg-muted">
-                  {group.label} · {group.asks.length + group.scenes.length}
+                  {group.label} · {group.entries.length + group.asks.length + group.scenes.length}
                 </h2>
+                {group.entries.map((entry) => (
+                  <NeoAskTodos
+                    key={entry.ask.id}
+                    entry={entry}
+                    disabled={!connected || !!neo.busyWork}
+                    onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
+                    onReply={
+                      ready
+                        ? (question) => {
+                            setQuoted({
+                              scope: neo.sessionId!,
+                              quote: {
+                                author: 'Neo',
+                                text: question.text,
+                                anchor: `neo-ref-question-${question.id}`,
+                                replyTo: { kind: 'question', id: question.id },
+                              },
+                            });
+                            setScenesOpen(false);
+                            scrollToBottom();
+                            const input = footer.current?.querySelector('textarea');
+                            input?.scrollIntoView({ block: 'nearest' });
+                            input?.focus({ preventScroll: true });
+                          }
+                        : undefined
+                    }
+                    onOpen={(link, title) =>
+                      link.startsWith('/session/')
+                        ? setChat({ sessionId: link.slice('/session/'.length), title })
+                        : window.open(link, '_blank', 'noopener')
+                    }
+                  />
+                ))}
                 {group.asks.map((ask) => (
                   <NeoAskCard
                     key={ask.ask.id}

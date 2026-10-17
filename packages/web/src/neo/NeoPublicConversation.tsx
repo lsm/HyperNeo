@@ -286,6 +286,7 @@ function PublicEntry({
   onEditUndelivered,
   projects,
   forwarders,
+  replyLabels,
   onQuote,
   status,
 }: {
@@ -293,6 +294,7 @@ function PublicEntry({
   status?: NeoMessageStatus;
   projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
+  replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   onQuote?: (quote: NeoQuote) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
@@ -407,6 +409,23 @@ function PublicEntry({
           </button>
         )}
       </div>
+      {ask?.replyTo && (
+        <button
+          type="button"
+          data-reply-to={`${ask.replyTo.kind}:${ask.replyTo.id}`}
+          class="mb-1 block max-w-full truncate px-1 text-left text-xs text-fg-muted hover:underline"
+          onClick={() =>
+            (
+              document.getElementById(`neo-ref-${ask.replyTo!.kind}-${ask.replyTo!.id}`) ??
+              document.querySelector(
+                `[data-ask="${replyLabels?.get(`${ask.replyTo!.kind}:${ask.replyTo!.id}`)?.askId}"]`
+              )
+            )?.scrollIntoView({ block: 'center' })
+          }
+        >
+          回复：{replyLabels?.get(`${ask.replyTo.kind}:${ask.replyTo.id}`)?.label ?? '之前的内容'}
+        </button>
+      )}
       <div
         class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'} ${undelivered ? '!border-danger' : ''}`}
       >
@@ -698,10 +717,12 @@ export function NeoPublicConversation({
   onEditUndelivered,
   projects,
   forwarders,
+  replyLabels,
   mute,
   onQuote,
 }: {
   conversation: Conversation;
+  replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   statuses?: ReadonlyMap<string, NeoMessageStatus>;
   onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
@@ -754,6 +775,7 @@ export function NeoPublicConversation({
             onEditUndelivered={onEditUndelivered}
             projects={projects}
             forwarders={forwarders}
+            replyLabels={replyLabels}
             onQuote={onQuote}
             status={entry.kind === 'ask' ? statuses?.get(entry.ask.requestId) : undefined}
           />
