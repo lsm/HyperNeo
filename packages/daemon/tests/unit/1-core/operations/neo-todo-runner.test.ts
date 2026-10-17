@@ -231,6 +231,25 @@ describe('neo todo runner uncertainty', () => {
     expect(calls).toHaveLength(before);
     await flaky.stop(store.updateTodo(resumed, { state: 'doing' }, 7));
     expect(calls.at(-1)).toMatchObject({ name: 'work.stop', input: { ref } });
+    const unsupported = createNeoTodoRunner({
+      store,
+      sessions,
+      invoke: async () =>
+        completed({ ok: false, reason: 'unsupported', detail: 'This adapter cannot stop.' }),
+      packs: () => [],
+      tell: async () => {},
+      changed: () => {},
+    });
+    expect(await unsupported.stop(store.getTodo(resumed.id)!)).toBeNull();
+    const refusing = createNeoTodoRunner({
+      store,
+      sessions,
+      invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'Offline.' }),
+      packs: () => [],
+      tell: async () => {},
+      changed: () => {},
+    });
+    expect(await refusing.stop(store.getTodo(resumed.id)!)).toBe('stop_failed: Offline.');
   });
 });
 

@@ -353,8 +353,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       .catch((error: unknown) => ({ kind: 'failed' as const, message: String(error) }));
     if (stopped.kind !== 'completed')
       return `stop_failed: ${(stopped as { message?: string }).message ?? 'the stop did not complete'}`;
-    const value = stopped.value as { ok?: boolean; reason?: string } | null;
-    return value?.ok === false ? `stop_failed: ${value.reason ?? 'the driver refused'}` : null;
+    const value = stopped.value as { ok?: boolean; reason?: string; detail?: string } | null;
+    return value?.ok === false && value.reason !== 'unsupported'
+      ? `stop_failed: ${value.detail ?? value.reason ?? 'the driver refused'}`
+      : null;
   };
 
   return {
