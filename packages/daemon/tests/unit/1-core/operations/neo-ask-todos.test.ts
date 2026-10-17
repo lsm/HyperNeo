@@ -133,6 +133,37 @@ describe('projectNeoAskViews todo projection', () => {
     ).toMatchObject({ state, status });
   });
 
+  test.each([
+    ['waiting', ['pending'], true, '等你', 'attention'],
+    ['open', ['done'], true, '等你', 'attention'],
+    ['open', ['running', 'failed'], false, '在做', 'running'],
+    ['open', ['done', 'cancelled'], false, '做完', 'outcomes'],
+    ['abandoned', ['running'], false, '放弃了', 'outcomes'],
+    ['open', ['failed'], false, '没做成', 'outcomes'],
+    ['open', ['pending'], false, '没开始', 'running'],
+  ] as const)(
+    'top status follows questions and todo facts (%s %j)',
+    (status, states, question, label, group) => {
+      const rows = states.map((state, n) =>
+        work(
+          String(n),
+          state === 'done'
+            ? 'reported'
+            : state === 'running'
+              ? 'queued'
+              : state === 'pending'
+                ? 'proposed'
+                : state
+        )
+      );
+      const questions = question
+        ? [item('q', { state: 'needs_you', decision: true, question: '继续？' })]
+        : [];
+      const view = project(rows, questions, [], { status });
+      expect(view).toMatchObject({ label, group, needsYou: question });
+    }
+  );
+
   test('merged PRs do not claim an unmet deployment is done', () => {
     expect(
       project(
