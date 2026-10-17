@@ -36,6 +36,7 @@ import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 const garden: NeoBinding = { sessionId: 'neo:garden', projectId: 'garden', kind: 'project' };
 const pond: NeoBinding = { sessionId: 'neo:pond', projectId: 'pond', kind: 'project' };
 const root: NeoBinding = { sessionId: 'neo:root', projectId: null, kind: 'neo' };
+const inbox: NeoBinding = { sessionId: 'neo:inbox', projectId: 'inbox', kind: 'project' };
 const ask = { sessionId: garden.sessionId, messageId: 'ask-1' };
 
 const caller = (sessionId: string, messageId: string, live = true): OperationCaller => ({
@@ -267,7 +268,9 @@ describe('neoForwardContent', () => {
 
 describe('neo.ask.forward', () => {
   function runtime(origin = ask, content: MailboxMessageContent = 'Fix the pond pump') {
-    const bindings = new Map([garden, pond, root].map((binding) => [binding.sessionId, binding]));
+    const bindings = new Map(
+      [garden, pond, root, inbox].map((binding) => [binding.sessionId, binding])
+    );
     const forwards: NeoAskForward[] = [];
     let failDelivery = false;
     const delivered: unknown[] = [];
@@ -285,7 +288,7 @@ describe('neo.ask.forward', () => {
         { id: 'garden', title: 'Garden' },
         { id: 'pond', title: 'Pond' },
       ],
-      rootSessionId: () => root.sessionId,
+      openDefault: async () => inbox.sessionId,
       askContent: () => content,
       open: async (id) => `neo:${id}`,
       record: (_ask, forward) => {
@@ -341,16 +344,16 @@ describe('neo.ask.forward', () => {
     expect(await invoke(caller(garden.sessionId, 'ask-1'), 'main')).toMatchObject({
       value: { ok: false, reason: 'not_your_ask' },
     });
-    expect(await invoke(caller(pond.sessionId, 'neo-forward:ask-1:0'), 'main')).toMatchObject({
-      value: { ok: true, hop: 1, to: 'main' },
+    expect(await invoke(caller(pond.sessionId, 'neo-forward:ask-1:0'), 'inbox')).toMatchObject({
+      value: { ok: true, hop: 1, to: 'inbox' },
     });
     expect(forwards.map((item) => [item.hop, item.fromSessionId, item.toSessionId])).toEqual([
       [0, garden.sessionId, pond.sessionId],
-      [1, pond.sessionId, root.sessionId],
+      [1, pond.sessionId, inbox.sessionId],
     ]);
     expect(delivered.map((args) => (args as unknown[]).filter((_, i) => i !== 2))).toEqual([
       [pond.sessionId, 'neo-forward:ask-1:0', garden.sessionId, ask],
-      [root.sessionId, 'neo-forward:ask-1:1', pond.sessionId, ask],
+      [inbox.sessionId, 'neo-forward:ask-1:1', pond.sessionId, ask],
     ]);
   });
 
@@ -398,10 +401,10 @@ describe('neo.ask.forward', () => {
     ]);
     const [to, messageId, content] = delivered[0] as [string, string, string];
     expect([to, messageId]).toEqual([pond.sessionId, 'neo-forward:ask-2:0']);
-    expect(content).toContain('“main”');
+    expect(content).toContain('“Neo”');
     expect(content).not.toContain('forward it to main');
-    expect(await invoke(caller(pond.sessionId, 'neo-forward:ask-2:0'), 'main')).toMatchObject({
-      value: { ok: true, hop: 1, to: 'main' },
+    expect(await invoke(caller(pond.sessionId, 'neo-forward:ask-2:0'), 'inbox')).toMatchObject({
+      value: { ok: true, hop: 1, to: 'inbox' },
     });
   });
 
@@ -414,8 +417,8 @@ describe('neo.ask.forward', () => {
     for (const [index, from, to] of [
       [0, garden, 'pond'],
       [1, pond, 'garden'],
-      [2, garden, 'main'],
-      [3, root, 'pond'],
+      [2, garden, 'inbox'],
+      [3, inbox, 'pond'],
     ] as const) {
       const yieldTurn = mock(() => {});
       const current = caller(
@@ -521,11 +524,12 @@ describe('neo.ask.forward', () => {
     expect(delivered).toHaveLength(1);
   });
 
-  test('a forward straight to main does not tell main to forward again', async () => {
-    const { invoke, delivered } = runtime();
+  test('a forward to main goes to the default session', async () => {
+    const { invoke, delivered, forwards } = runtime();
     expect(await invoke(caller(garden.sessionId, 'ask-1'), 'main')).toMatchObject({
-      value: { ok: true, hop: 0, to: 'main' },
+      value: { ok: true, hop: 0, to: 'inbox' },
     });
+    expect(forwards).toMatchObject([{ toSessionId: inbox.sessionId, toProjectId: 'inbox' }]);
     const content = (delivered[0] as unknown[])[2] as string;
     expect(content).toContain('The runtime binds the original ask and preserves its attachments.');
     expect(content).not.toContain('forwarded on only to main');

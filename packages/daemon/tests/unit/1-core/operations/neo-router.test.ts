@@ -9,6 +9,7 @@ import {
   askNeoRouteModel,
   chooseNeoRoute,
   createNeoRouter,
+  defaultNeoRoute,
   type NeoHolder,
   type NeoRouteVerdict,
   type NeoRouterDeps,
@@ -97,7 +98,7 @@ describe('pickNeoHolder', () => {
 });
 
 describe('renderNeoRouteContext', () => {
-  test("lists main, topics with their last turn and waiting question, then the topics' recent turns", () => {
+  test("lists topics with their waiting question and the inbox's last turn, then the topics' recent turns", () => {
     const pr = route({
       id: 2,
       destination: 'main',
@@ -114,9 +115,7 @@ describe('renderNeoRouteContext', () => {
       awaiting: 'Draft a reply?',
     });
     const context = renderNeoRouteContext([drivers, youtube], [pr, blog], [pr, blog], true);
-    expect(context).toContain(
-      '- main: Neo itself, the last resort for questions across projects or when you cannot tell\n    last: [main] you: "is the font-size PR done?" → Still in review.'
-    );
+    expect(context).not.toContain('- main:');
     expect(context).toContain('- youtube: YouTube (drivers)\n    WAITING ON YOU: "Draft a reply?"');
     expect(context).toContain('- inbox: Self-contained one-off questions');
     expect(context.split('Recent turns (newest first):\n')[1]).toBe(
@@ -203,8 +202,8 @@ describe('askNeoRouteModel', () => {
   );
 
   test('keeps an answer without retrying, and retries only once', async () => {
-    const answered = answering(['main']);
-    expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, answered.deps)).toBe('main');
+    const answered = answering([youtube]);
+    expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, answered.deps)).toBe(youtube);
     expect(answered.calls).toHaveLength(1);
     const silent = answering([timedOut, failed]);
     expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, silent.deps)).toBe(failed);
@@ -216,7 +215,7 @@ describe('askNeoRouteModel', () => {
     await askNeoRouteModel('hi', [drivers], 'ctx', true, {
       classify: async (_text, options) => {
         offered.push(options.map((option) => option.projectId));
-        return 'main';
+        return drivers;
       },
     });
     expect(offered).toEqual([['drivers', 'inbox']]);
@@ -245,18 +244,26 @@ describe('chooseNeoRoute', () => {
     expect((await chooseNeoRoute('unknown text', deps())).choice).toBeNull();
   });
 
-  test('sends a follow-up to main when the classifier reads it as continuing main', async () => {
-    const recent = [route({ destination: 'main', projectId: null, ask: 'is PR 5650 done?' })];
-    const seen: string[] = [];
-    const choice = await chooseNeoRoute('how about 5060 now?', {
-      ...deps(recent),
-      classify: async (_text, _options, context) => {
-        seen.push(context);
-        return 'main';
+  test('sends a message the classifier cannot place to the default session', async () => {
+    const offered: string[][] = [];
+    const choice = await chooseNeoRoute('how is everything going?', {
+      ...deps(),
+      inbox: async () => ({ ...drivers, projectId: 'inbox', sessionId: 'neo:holder:inbox' }),
+      classify: async (_text, options) => {
+        offered.push(options.map((option) => option.projectId));
+        return {
+          decision: options.find((option) => option.projectId === 'inbox')!,
+          confidence: 0.8,
+          basis: 'cross_project',
+        };
       },
     });
-    expect(choice).toEqual({ choice: null, fallback: 'classifier' });
-    expect(seen[0]).toContain('[main] you: "is PR 5650 done?"');
+    expect(offered[0]).toEqual(['drivers', 'youtube', 'inbox']);
+    expect(choice.choice).toMatchObject({
+      projectId: 'inbox',
+      sessionId: 'neo:holder:inbox',
+      signal: 'classifier:cross_project',
+    });
   });
 
   test('offers the classifier every topic without recent turns or embeddings', async () => {
@@ -268,7 +275,7 @@ describe('chooseNeoRoute', () => {
       embed: async () => null,
       classify: async (_text, options) => {
         offered.push(options.map((option) => option.projectId));
-        return 'main';
+        return null;
       },
     });
     expect(offered[0]).toEqual(many.map((holder) => holder.projectId));
@@ -281,10 +288,40 @@ describe('chooseNeoRoute', () => {
       holders: () => [],
       classify: async () => {
         asked += 1;
-        return 'main';
+        return null;
       },
     });
     expect([choice, asked]).toEqual([{ choice: null }, 0]);
+  });
+});
+
+describe('defaultNeoRoute', () => {
+  const inbox = { ...drivers, projectId: 'inbox', sessionId: 'neo:holder:inbox' };
+
+  test('hands an unplaced message to the default session and keeps why', async () => {
+    expect(
+      await defaultNeoRoute({ choice: null, fallback: 'facts:cross_project' }, async () => inbox)
+    ).toEqual({
+      choice: { projectId: 'inbox', sessionId: inbox.sessionId, signal: 'default', confidence: 1 },
+      cause: 'facts:cross_project',
+    });
+  });
+
+  test('keeps a chosen session and reports a default session that cannot open', async () => {
+    const chosen = {
+      choice: {
+        projectId: 'drivers',
+        sessionId: drivers.sessionId,
+        signal: 'facts' as const,
+        confidence: 1,
+      },
+    };
+    expect(await defaultNeoRoute(chosen, async () => inbox)).toBe(chosen);
+    expect(
+      await defaultNeoRoute({ choice: null }, async () => {
+        throw new Error('provider down');
+      })
+    ).toEqual({ choice: null, fallback: 'default-unavailable' });
   });
 });
 

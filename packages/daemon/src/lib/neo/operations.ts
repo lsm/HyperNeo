@@ -87,6 +87,7 @@ import {
   createNeoRouter,
   type NeoRouter,
   neoNewProject,
+  openNeoDefaultSession,
   openNeoNewProject,
   reopenNeoHolder,
 } from './router.ts';
@@ -1592,7 +1593,12 @@ export function createNeoOperations(service: NeoService) {
       forwards: (ask) => service.askForwards.list(ask),
       getProject: (id) => service.repo.getProject(id),
       listProjects: () => service.repo.listProjects(),
-      rootSessionId: () => service.repo.getBindingForProject(null)?.sessionId ?? null,
+      openDefault: async () =>
+        (
+          await openNeoDefaultSession(service.repo, (projectId) =>
+            reopenNeoHolder(service.repo, service.db, (id) => service.open(id), projectId)
+          )
+        ).sessionId,
       askContent: (ask) => {
         const root = service.repo.getBindingForProject(null)?.sessionId;
         const stored = root?.startsWith('neo:')
