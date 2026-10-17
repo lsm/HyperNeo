@@ -1104,15 +1104,20 @@ describe('neo.ask operations', () => {
 
   test('RPC todo rows keep older work and its opener beyond the recent-work projection', async () => {
     const askId = await openAsk();
-    const old = service.repo.proposeWork({
-      id: 'old-todo',
-      requestKey: 'old-todo',
-      projectId: null,
-      originSessionId: 'root',
-      originMessageId: 'ask-1',
-      title: '最早的一步',
-      instruction: 'Do it',
-    });
+    const { work: old } = service.driverTargets.propose(
+      service.repo,
+      {
+        id: 'old-todo',
+        requestKey: 'old-todo',
+        projectId: null,
+        originSessionId: 'root',
+        originMessageId: 'ask-1',
+        title: '最早的一步',
+        instruction: 'Do it',
+      },
+      { verb: 'send', ref: { adapter: 'hyperneo', id: 'root' } }
+    );
+    service.driverTargets.recordRef(old.id, { adapter: 'hyperneo', id: 'root' });
     service.askRecords.link(askId, old.id);
     db.getDatabase()
       .prepare(
@@ -1129,8 +1134,11 @@ describe('neo.ask operations', () => {
         title: `Recent ${n}`,
         instruction: 'Do it',
       });
+    const rereads = vi.spyOn(service.repo, 'getWork');
     const snapshot = (await invoke('neo.snapshot', {}, { source: 'rpc', principal: 'local' }))
       .value as unknown as NeoSnapshot;
+    expect(rereads.mock.calls.filter(([id]) => id === old.id)).toHaveLength(0);
+    rereads.mockRestore();
     expect(snapshot.work.some((row) => row.id === old.id)).toBe(false);
     expect(snapshot.askViews.find((view) => view.askId === askId)?.todos).toEqual(
       expect.arrayContaining([

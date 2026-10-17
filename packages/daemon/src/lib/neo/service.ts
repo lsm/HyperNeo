@@ -1678,12 +1678,16 @@ export class NeoService {
     return this.dependencies.waiting(neoOutcomeEligibility(this.checkRegistry()));
   }
 
-  cardWaits(workIds: readonly string[], now = Date.now()): NeoCardWait[] {
+  cardWaits(
+    workIds: readonly string[],
+    now = Date.now(),
+    workOf?: ReadonlyMap<string, NeoWork>
+  ): NeoCardWait[] {
     const waiting = this.waitingCards();
     const auto = this.db.getGlobalSettings?.().neo?.autoDispatch === true;
     return workIds.flatMap((id) => {
       const blockers = waiting.get(id) ?? [];
-      const status = this.repo.getWork(id)?.status;
+      const status = (workOf ? workOf.get(id) : this.repo.getWork(id))?.status;
       const uncertain =
         ['proposed', 'queued', 'failed'].includes(status ?? '') &&
         this.driverTargets.readStartInterrupted(id);
@@ -1994,8 +1998,7 @@ export class NeoService {
     };
   }
 
-  isRetryable(workId: string): boolean {
-    const work = this.repo.getWork(workId);
+  isRetryable(workId: string, work = this.repo.getWork(workId)): boolean {
     return (
       !!work &&
       'value' in requireNeoWorkRetryable(work, this.retryCard(workId), true) &&

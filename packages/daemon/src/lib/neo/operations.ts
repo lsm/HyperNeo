@@ -1161,14 +1161,15 @@ export function createNeoOperations(service: NeoService) {
     );
   }
   function projectCards(visibleWork: NeoWork[], asks: NeoAsk[]) {
-    const workIds = visibleWork.map((item) => item.id);
+    const workOf = new Map(visibleWork.map((item) => [item.id, item]));
+    const workIds = [...workOf.keys()];
     const workPrs = service.workPrs
       .list(workIds)
       .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));
     const cards = projectNeoCardViews({
       work: visibleWork,
-      drivers: workDrivers(workIds),
-      waits: service.cardWaits(workIds),
+      drivers: workDrivers(workOf),
+      waits: service.cardWaits(workIds, Date.now(), workOf),
       prs: workPrs,
       goals: service.workGoals.list(workIds),
       continues: service.workContinues.list(workIds),
@@ -1179,15 +1180,17 @@ export function createNeoOperations(service: NeoService) {
     });
     return { workPrs, cards };
   }
-  function workDrivers(workIds: string[]) {
-    return service.driverTargets.receipts(workIds).map((receipt) => {
+  function workDrivers(workOf: ReadonlyMap<string, NeoWork>) {
+    return service.driverTargets.receipts([...workOf.keys()]).map((receipt) => {
       const since = service.uncheckedSince(receipt.workId);
       const checkedAt = service.checkedAt(receipt.workId);
       return {
         ...receipt,
         ...(since === null ? {} : { uncheckedSince: since }),
         ...(checkedAt === null ? {} : { checkedAt }),
-        ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
+        ...(service.isRetryable(receipt.workId, workOf.get(receipt.workId) ?? null)
+          ? { retryable: true as const }
+          : {}),
       };
     });
   }

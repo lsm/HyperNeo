@@ -14,13 +14,16 @@ function projectNeoServiceCards(
   work: readonly NeoWork[],
   settledLimit: number
 ): { asks: NeoAsk[]; cards: NeoCardView[]; workPrs: NeoWorkPrReceipt[] } {
-  const workIds = work.map((item) => item.id);
+  const workOf = new Map(work.map((item) => [item.id, item]));
+  const workIds = [...workOf.keys()];
   const drivers = service.driverTargets.receipts(workIds).map((receipt) => {
     const since = service.uncheckedSince(receipt.workId);
     return {
       ...receipt,
       ...(since === null ? {} : { uncheckedSince: since }),
-      ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
+      ...(service.isRetryable(receipt.workId, workOf.get(receipt.workId) ?? null)
+        ? { retryable: true as const }
+        : {}),
     };
   });
   const asks = projectNeoSnapshotAsks(listed, settledLimit, Date.now(), new Set());
