@@ -49,6 +49,7 @@ export function planNeoCardPrCandidates(input: {
   branch: readonly string[];
   opened?: readonly string[];
   stored: readonly { url: string }[];
+  rejected?: readonly { url: string }[];
   mentioned?: readonly string[];
 }): NeoCardPrCandidate[] {
   const pr = input.follows ? parsePrUrl(input.follows) : null;
@@ -62,7 +63,12 @@ export function planNeoCardPrCandidates(input: {
   const opened = new Set((input.opened ?? []).map(key));
   const seen = new Set<string>();
   const listed = neoCardPrUrls(
-    [...followed, ...reported, ...extractNeoWorkPrUrls(null, input.stored)],
+    [
+      ...followed,
+      ...reported,
+      ...extractNeoWorkPrUrls(null, input.stored),
+      ...(input.rejected ?? []).map((item) => item.url),
+    ],
     input.branch
   );
   const known = new Set(listed.map(key));

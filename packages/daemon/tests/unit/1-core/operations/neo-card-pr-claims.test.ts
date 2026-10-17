@@ -75,6 +75,92 @@ describe('report candidates with legacy rejections', () => {
   });
 });
 
+describe('legacy reclaim candidates', () => {
+  test('retains every rejected URL beyond the stored read batch', () => {
+    const rejected = Array.from({ length: 12 }, (_, index) => ({ url: pull(index + 1) }));
+    expect(
+      planNeoCardPrCandidates({ report: null, stored: [], rejected, branch: [] }).map(
+        (candidate) => candidate.url
+      )
+    ).toEqual(rejected.map((item) => item.url));
+  });
+
+  test.each([
+    { ok: true, rival: true, acknowledged: true },
+    { ok: false, rival: true, acknowledged: false },
+    { ok: true, rival: false, acknowledged: false },
+  ])(
+    'acknowledges dropped claims without consuming failed or pending reads: $ok/$rival',
+    async ({ ok, rival, acknowledged }) => {
+      const db = await createTestDb();
+      try {
+        const raw = db.getDatabase();
+        raw
+          .prepare(`INSERT INTO neo_work(id,request_key,origin_session_id,title,instruction,status,created_at,updated_at)
+        VALUES ('card','key','root','T','I','reported',1,2)`)
+          .run();
+        const work = new NeoRepository(raw).getWork('card')!;
+        const repo = new NeoWorkPrClaimRepository(raw);
+        repo.replace(work.id, [{ url: pull(1), claim: 'rejected', claimedAt: 1 }]);
+        const workPrs = new NeoWorkPrRepository(raw);
+        await readNeoCardPrs(
+          {
+            claims: {
+              forUrls: (urls) => [...repo.forUrls(urls), claim({ claim: 'branch', scoped: true })],
+              replace: repo.replace.bind(repo),
+              drop: repo.drop.bind(repo),
+              markReclaimed: repo.markReclaimed.bind(repo),
+            },
+            prCandidates: async () =>
+              planNeoCardPrCandidates({
+                report: null,
+                branch: [],
+                stored: [],
+                rejected: repo.rejectedUrls(work.id),
+                window: { start: 1, end: 2 },
+              }),
+            readPrs: async () => (ok ? [] : null),
+            workPrs,
+            record: (id, prs) => workPrs.record(id, prs, 3),
+          },
+          work,
+          null,
+          3,
+          true
+        );
+        expect(repo.cardsToReclaim().includes(work.id)).toBe(!acknowledged);
+        expect(repo.forUrls([pull(1)])[0].scoped === true).toBe(acknowledged);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  test('acknowledges captured rejections without touching new or accepted claims', async () => {
+    const db = await createTestDb();
+    try {
+      const raw = db.getDatabase();
+      raw
+        .prepare(`INSERT INTO neo_work(id,request_key,origin_session_id,title,instruction,status,created_at,updated_at)
+        VALUES ('card','key','root','T','I','reported',1,2)`)
+        .run();
+      const repo = new NeoWorkPrClaimRepository(raw);
+      repo.replace('card', [{ url: pull(1), claim: 'rejected', claimedAt: 1 }]);
+      const captured = repo.rejectedUrls('card');
+      repo.replace('card', [
+        { url: pull(2), claim: 'rejected', claimedAt: 2 },
+        { url: pull(3), claim: 'named', claimedAt: 2 },
+      ]);
+      repo.markReclaimed('card', [...captured, { url: pull(3) }]);
+      expect(repo.rejectedUrls('card')).toEqual([{ url: pull(2).toLowerCase() }]);
+      expect(repo.forUrls([pull(1)])[0]).toMatchObject({ claim: 'rejected', scoped: true });
+      expect(repo.forUrls([pull(3)])[0]).toMatchObject({ claim: 'named' });
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('planNeoCardPrCandidates with resolved refs', () => {
   test('a PR the report cites by number is named', () => {
     expect(
@@ -1077,7 +1163,8 @@ describe('card lifetime PR recovery', () => {
               window: neoCardPrWindow(work, new NeoRepository(raw).workStartedAt(work.id)),
               report: work.report,
               branch: [ios(103)],
-              stored: claims.rejectedUrls(work.id),
+              stored: [],
+              rejected: claims.rejectedUrls(work.id),
             }),
           readPrs: async () => reads,
           record: (id, prs) => workPrs.record(id, prs, ended + 1000),

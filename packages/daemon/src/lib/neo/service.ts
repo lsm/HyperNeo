@@ -3497,7 +3497,8 @@ export class NeoService {
         : [],
       branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),
       opened: this.cardOpenedPrs.get(work.id) ?? [],
-      stored: [...(stored?.prs ?? []), ...this.workPrClaims.rejectedUrls(work.id)],
+      stored: stored?.prs ?? [],
+      rejected: this.workPrClaims.rejectedUrls(work.id),
       mentioned: await this.cardPrRefs(work, outcome),
     });
   }
