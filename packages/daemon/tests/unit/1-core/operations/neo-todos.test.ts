@@ -243,4 +243,29 @@ describe('neo.todo operations', () => {
       { kind: 'start', text: '开始这 2 件？', startTodos: [fix.todo.id, deploy.todo.id] },
     ]);
   });
+
+  test('extending the start question drops a todo that can no longer start', async () => {
+    const { repo, call } = setup();
+    const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
+    const fix = await call('neo.todo.add', {
+      askId: 'ask',
+      title: 'Fix',
+      doneWhen: 'Merged',
+      instruction: 'Fix it',
+      target,
+    });
+    if (!fix.ok) throw new Error(fix.reason);
+    await call('neo.todo.remove', { todoId: fix.todo.id, reason: 'not needed' });
+    const deploy = await call('neo.todo.add', {
+      askId: 'ask',
+      title: 'Deploy',
+      doneWhen: 'Live',
+      instruction: 'Deploy it',
+      target,
+    });
+    if (!deploy.ok) throw new Error(deploy.reason);
+    expect(repo.listQuestions('ask')).toMatchObject([
+      { text: '开始「Deploy」？', startTodos: [deploy.todo.id] },
+    ]);
+  });
 });

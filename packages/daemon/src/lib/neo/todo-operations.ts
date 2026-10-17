@@ -81,7 +81,9 @@ export function planNeoStartQuestionJoin(
   todos: readonly NeoTodo[]
 ): { questionId: string | null; startTodos: string[]; text: string } {
   const open = questions.find((question) => question.kind === 'start' && question.state === 'open');
-  const startTodos = [...new Set([...(open?.startTodos ?? []), todo.id])];
+  const startable = (id: string) =>
+    todos.some((item) => item.id === id && item.state === 'todo' && item.instruction);
+  const startTodos = [...new Set([...(open?.startTodos ?? []).filter(startable), todo.id])];
   const text = neoStartQuestionTitle(
     startTodos.map((id) => ({ title: todos.find((item) => item.id === id)?.title }))
   );
