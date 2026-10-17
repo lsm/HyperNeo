@@ -22,7 +22,7 @@ import {
   type NeoMessageStatus,
 } from './message-status.ts';
 import { neoAppLabel, neoSessionLink } from './work-driver.ts';
-import type { NeoPendingAsk, NeoQuote } from './neo-intake.ts';
+import { type NeoPendingAsk, type NeoQuote, neoQuoteExcerpt } from './neo-intake.ts';
 import type {
   NeoPublicConversation as Conversation,
   NeoPublicEntry,
@@ -159,6 +159,30 @@ function RefPhoto({
         </button>
       )}
     </div>
+  );
+}
+
+export function neoMessageReplyLabels(
+  entries: Conversation['entries']
+): Map<string, { label: string; askId: string }> {
+  return new Map(
+    entries.flatMap((entry) =>
+      entry.kind === 'ask'
+        ? [
+            [
+              `message:${entry.ask.requestId}`,
+              { label: neoQuoteExcerpt(publicAskText(entry.ask.content)), askId: '' },
+            ] as const,
+          ]
+        : entry.kind === 'publication'
+          ? [
+              [
+                `message:${entry.publication.publicationId}`,
+                { label: neoQuoteExcerpt(entry.publication.shortText), askId: '' },
+              ] as const,
+            ]
+          : []
+    )
   );
 }
 
@@ -333,11 +357,14 @@ function PublicEntry({
     : publication
       ? neoMessageAnchor(publication.conversationId, `publication-${publication.publicationId}`)
       : '';
+  const messageId = ask?.requestId ?? publication?.publicationId ?? '';
+  const replyTo = { kind: 'message' as const, id: messageId };
   return (
     <article
       ref={article}
       tabIndex={-1}
       id={anchor || undefined}
+      data-message-ref={messageId || undefined}
       data-public-entry={entry.key}
       class={`neo-arrive neo-message w-fit break-words focus:outline-none ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%] max-md:w-full max-md:max-w-full'}`}
       {...(copyText.trim() ? menu.bind : {})}
@@ -417,6 +444,9 @@ function PublicEntry({
           onClick={() =>
             (
               document.getElementById(`neo-ref-${ask.replyTo!.kind}-${ask.replyTo!.id}`) ??
+              (ask.replyTo!.kind === 'message'
+                ? document.querySelector(`[data-message-ref="${ask.replyTo!.id}"]`)
+                : null) ??
               document.querySelector(
                 `[data-ask="${replyLabels?.get(`${ask.replyTo!.kind}:${ask.replyTo!.id}`)?.askId}"]`
               )
@@ -570,7 +600,12 @@ function PublicEntry({
             title="Reply"
             class="rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             onClick={() =>
-              onQuote({ author: ask ? 'You' : 'Neo', text: ask ? text : full || text, anchor })
+              onQuote({
+                author: ask ? 'You' : 'Neo',
+                text: ask ? text : full || text,
+                anchor,
+                replyTo,
+              })
             }
           >
             <NeoIcon name="reply" class="!h-4 !w-4" />
@@ -598,7 +633,8 @@ function PublicEntry({
                   if (ok) setCopiedAt(Date.now());
                 }),
               share: () => void navigator.share?.({ text: copyText }).catch(() => {}),
-              reply: () => onQuote?.({ author: ask ? 'You' : 'Neo', text: copyText, anchor }),
+              reply: () =>
+                onQuote?.({ author: ask ? 'You' : 'Neo', text: copyText, anchor, replyTo }),
             })[action]()
           }
         />
@@ -663,6 +699,17 @@ export function PendingAsk({
           </button>
         )}
       </div>
+      {ask.quote && (
+        <button
+          type="button"
+          class="mb-1 block max-w-full truncate px-1 text-left text-xs text-fg-muted hover:underline"
+          onClick={() =>
+            document.getElementById(ask.quote!.anchor)?.scrollIntoView({ block: 'center' })
+          }
+        >
+          回复：{neoQuoteExcerpt(ask.quote.text)}
+        </button>
+      )}
       <div
         class={`neo-message-bubble rounded-2xl rounded-tr-sm border px-4 py-3 ${failed ? '!border-danger' : ''}`}
       >
@@ -734,6 +781,7 @@ export function NeoPublicConversation({
   onRetry?: () => void;
   onLoadEarlier?: () => void;
 }) {
+  const labels = new Map([...neoMessageReplyLabels(conversation.entries), ...(replyLabels ?? [])]);
   return (
     <div class="space-y-6" aria-label="Public conversation">
       {conversation.status !== 'ready' && (
@@ -775,7 +823,7 @@ export function NeoPublicConversation({
             onEditUndelivered={onEditUndelivered}
             projects={projects}
             forwarders={forwarders}
-            replyLabels={replyLabels}
+            replyLabels={labels}
             onQuote={onQuote}
             status={entry.kind === 'ask' ? statuses?.get(entry.ask.requestId) : undefined}
           />

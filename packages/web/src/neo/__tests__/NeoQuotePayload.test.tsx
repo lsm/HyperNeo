@@ -1,38 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { neoDraftPayload, neoQuoteExcerpt } from '../neo-intake.ts';
+import { neoMessageReplyLabels } from '../NeoPublicConversation.tsx';
 
-describe('neoDraftPayload quote, as iOS ReplyTarget.prefix', () => {
-  it('puts "Replying to Neo:" and a Markdown block quote above the reply', () => {
+describe('neoDraftPayload quote', () => {
+  it('sends the quoted message as replyTo and leaves the reply text alone', () => {
     const payload = neoDraftPayload({
       sessionId: 'neo:root',
       requestId: 'new-ask',
       text: 'Why?',
-      quote: { author: 'Neo', text: '  First\n\nSecond  ', anchor: 'source' },
+      quote: {
+        author: 'Neo',
+        text: 'First',
+        anchor: 'source',
+        replyTo: { kind: 'message', id: 'publication-1' },
+      },
     });
-    expect(payload.content).toBe('Replying to Neo:\n> First\n>\n> Second\n\nWhy?');
-  });
-
-  it('names your own message as "my earlier message"', () => {
-    const payload = neoDraftPayload({
-      sessionId: 'neo:root',
-      requestId: 'new-ask',
-      text: 'Still true?',
-      quote: { author: 'You', text: 'Ship it', anchor: 'source' },
+    expect(payload).toMatchObject({
+      content: 'Why?',
+      replyTo: { kind: 'message', id: 'publication-1' },
     });
-    expect(payload.content).toBe('Replying to my earlier message:\n> Ship it\n\nStill true?');
-  });
-
-  it('caps the quote without truncating the reply', () => {
-    const reply = 'My reply '.repeat(1000);
-    const payload = neoDraftPayload({
-      sessionId: 'neo:root',
-      requestId: 'new-ask',
-      text: reply,
-      quote: { author: 'You', text: 'a'.repeat(50000), anchor: 'source' },
-    });
-    const content = payload.content as string;
-    expect(content).toContain(`> ${'a'.repeat(500)}…\n\n`);
-    expect(content.endsWith(`\n\n${reply}`)).toBe(true);
   });
 });
 
@@ -47,5 +33,23 @@ describe('neoQuoteExcerpt', () => {
     const excerpt = neoQuoteExcerpt('😀'.repeat(501));
     expect(Array.from(excerpt)).toHaveLength(501);
     expect(excerpt.replaceAll('😀', '')).toBe('…');
+  });
+});
+
+describe('neoMessageReplyLabels', () => {
+  it('labels each message by its request or publication id with an excerpt', () => {
+    const labels = neoMessageReplyLabels([
+      { kind: 'ask', key: 'a', ask: { requestId: 'r1', content: 'Ship it' } },
+      {
+        kind: 'publication',
+        key: 'p',
+        publication: { publicationId: 'p1', shortText: 'Shipped.' },
+        replyTo: null,
+      },
+    ] as never);
+    expect([...labels]).toEqual([
+      ['message:r1', { label: 'Ship it', askId: '' }],
+      ['message:p1', { label: 'Shipped.', askId: '' }],
+    ]);
   });
 });
