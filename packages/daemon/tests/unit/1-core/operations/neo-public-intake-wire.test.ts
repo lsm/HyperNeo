@@ -36,20 +36,10 @@ type Target = Pick<Session, 'id' | 'status' | 'config'>;
 const active = (id = root.sessionId): Target => ({ id, status: 'active', config: {} });
 
 describe('current public intake binding', () => {
-  test('pure root gate derives identity only from valid runtime root and matching non-archived session', () => {
-    expect(requireNeoIntakeConversation(root, active())).toEqual({ value: conversationId });
-    for (const [binding, session] of [
-      [null, active()],
-      [holder, active(holder.sessionId)],
-      [{ ...root, kind: 'worker' }, active()],
-      [{ ...root, projectId: 'other' }, active()],
-      [{ ...root, sessionId: 'neo:root' }, active('neo:root')],
-      [{ ...root, sessionId: conversationId }, active(conversationId)],
-      [root, null],
-      [root, active('unrelated')],
-      [root, { ...active(), status: 'archived' }],
-    ] as [NeoBinding | null, Target | null][]) {
-      expect(requireNeoIntakeConversation(binding, session)).toEqual({
+  test('the conversation gate takes the stored conversation id when it is a uuid', () => {
+    expect(requireNeoIntakeConversation(conversationId)).toEqual({ value: conversationId });
+    for (const conversation of [null, '', 'root']) {
+      expect(requireNeoIntakeConversation(conversation)).toEqual({
         reason: { ok: false, reason: 'The public Neo conversation is no longer available.' },
       });
     }
@@ -148,15 +138,13 @@ describe('real human intake joint persistence', () => {
     }
   );
 
-  test.each(['missing', 'archived', 'invalid', 'foreign-session', 'holder-root'])(
-    'a valid holder cannot submit through a %s root',
+  test.each(['missing', 'invalid', 'holder-root'])(
+    'a valid holder cannot submit without a conversation id (%s root)',
     async (kind) => {
       if (kind === 'missing')
         mailbox.db.exec('DELETE FROM neo_session_bindings WHERE concern_id IS NULL');
-      if (kind === 'archived') sessions.set(root.sessionId, { ...active(), status: 'archived' });
       if (kind === 'invalid')
         vi.spyOn(repo, 'getBindingForProject').mockReturnValue({ ...root, sessionId: 'neo:root' });
-      if (kind === 'foreign-session') sessions.set(root.sessionId, active('foreign'));
       if (kind === 'holder-root') vi.spyOn(repo, 'getBindingForProject').mockReturnValue(holder);
       expect(await invoke({ ...input, sessionId: holder.sessionId })).toMatchObject({
         value: { ok: false, reason: 'The public Neo conversation is no longer available.' },

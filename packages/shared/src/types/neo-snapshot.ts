@@ -373,6 +373,9 @@ export interface NeoSnapshot {
   rev?: string;
   scopedTo?: string;
   sessionId: string | null;
+  conversationId?: string | null;
+  defaultSessionId?: string | null;
+  neoSessions?: { sessionId: string; projectId: string | null }[];
   projects: NeoProject[];
   projectRedirects?: { sourceId: string; targetId: string }[];
   projectFacts?: { reference: string; projectId?: string | null }[];

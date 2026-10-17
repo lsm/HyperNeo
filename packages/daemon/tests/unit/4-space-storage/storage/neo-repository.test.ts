@@ -71,6 +71,16 @@ describe('NeoRepository', () => {
     expect(repo.getBindingBySession('unknown')).toBeNull();
   });
 
+  test('keeps the conversation id once taken from the default Neo session', () => {
+    expect(repo.conversationId()).toBeNull();
+    repo.reserveBinding({ sessionId: 'neo:conv-1', projectId: null, kind: 'neo' });
+    expect(repo.defaultBinding()?.sessionId).toBe('neo:conv-1');
+    expect(repo.conversationId()).toBe('conv-1');
+    db.exec("DELETE FROM neo_session_bindings WHERE session_id = 'neo:conv-1'");
+    expect(repo.defaultBinding()).toBeNull();
+    expect(repo.conversationId()).toBe('conv-1');
+  });
+
   test('enforces coordinator kind and existing concern references', () => {
     expect(() =>
       repo.reserveBinding({ sessionId: 'invalid', kind: 'project', projectId: null })

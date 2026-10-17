@@ -18,7 +18,6 @@ import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoRouted, NeoRouter, NeoRouteSignal } from './router.ts';
-import { isMainNeoBinding } from './binding-roles.ts';
 import { NeoReplyToSchema } from './conversation-ask.ts';
 
 const Input = z
@@ -178,17 +177,9 @@ export function recordNeoReplyAnswer(
   return receipt;
 }
 
-export function requireNeoIntakeConversation(
-  root: NeoBinding | null,
-  session: Target | null
-): Gate<string> {
-  const id = root?.sessionId.startsWith('neo:') ? root.sessionId.slice(4) : null;
-  return isMainNeoBinding(root) &&
-    id &&
-    z.uuid().safeParse(id).success &&
-    session?.id === root.sessionId &&
-    session.status !== 'archived'
-    ? { value: id }
+export function requireNeoIntakeConversation(conversation: string | null): Gate<string> {
+  return conversation && z.uuid().safeParse(conversation).success
+    ? { value: conversation }
     : { reason: { ok: false, reason: 'The public Neo conversation is no longer available.' } };
 }
 
@@ -453,14 +444,8 @@ const readNeoIntakeTarget = (superpipe({})('neo-intake-target') as PipelineAPI)
     'session'
   )
   .pipe(requireNeoIntakeTarget, ['input', 'binding', 'session'], 'result:admission')
-  .pipe((repo: NeoRepository) => repo.getBindingForProject(null), 'repo', 'root')
-  .pipe(
-    (root: NeoBinding | null, db: Database) =>
-      root ? (db.getSession(root.sessionId) ?? null) : null,
-    ['root', 'db'],
-    'rootSession'
-  )
-  .pipe(requireNeoIntakeConversation, ['root', 'rootSession'], 'result:admission')
+  .pipe((repo: NeoRepository) => repo.conversationId(), 'repo', 'conversation')
+  .pipe(requireNeoIntakeConversation, 'conversation', 'result:admission')
   .pipe(
     (binding: NeoBinding, target: Target, conversationId: string) => ({
       value: { binding, target, conversationId },
