@@ -460,6 +460,9 @@ export function NeoLive() {
                   conversationLoaded &&
                   neo.store.agentState.value.status !== 'waiting_for_input' &&
                   !neo.store.error.value &&
+                  !view?.todoAsks?.some((entry) =>
+                    entry.questions.some((question) => question.state === 'open')
+                  ) &&
                   neoAwaitingReply(publicConversation.entries)
                 )
               )}

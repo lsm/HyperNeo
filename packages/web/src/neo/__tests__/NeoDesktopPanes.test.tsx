@@ -220,6 +220,35 @@ describe('Neo desktop panes', () => {
     expect(line()?.textContent).toContain('Neo is working…');
   });
 
+  it('shows no working line while a question waits on the human', () => {
+    const { container, model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('asking', 'Fictional question', {
+              state: 'waiting',
+              questions: [{ id: 'q', state: 'open' } as never],
+            }),
+          ],
+        },
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          entries: [
+            {
+              key: 'ask',
+              kind: 'ask',
+              ask: { askOrigin: { sessionId: root, messageId: 'ask' } },
+            } as never,
+          ],
+        },
+      };
+    });
+    expect(container.querySelector('.neo-progress')).toBeNull();
+  });
+
   it('shows one working line for an unanswered ask, but not while Neo waits on you', () => {
     const { container, model } = mount();
     const line = () => container.querySelector<HTMLElement>('.neo-progress');
