@@ -147,6 +147,15 @@ export function createCodingTodoPack(
 ): NeoTodoPack {
   return {
     schema: createCodingPackTables,
+    openedPrs: (todo, urls) =>
+      repo.claim(
+        todo.id,
+        [
+          ...planCodingTodoClaims(todo, todo.report, []),
+          ...urls.map((url) => ({ url, claim: 'branch' as const })),
+        ],
+        Date.now()
+      ),
     check: async (todo) => {
       if (todo.check?.pack !== 'coding') return null;
       repo.claim(todo.id, planCodingTodoClaims(todo, todo.report, []), Date.now());

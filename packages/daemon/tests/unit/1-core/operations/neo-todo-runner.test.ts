@@ -92,6 +92,34 @@ function setup(packDone: boolean | null = null) {
 }
 
 describe('neo todo runner', () => {
+  test('follows a reported todo session for a later PR report without writing legacy work', async () => {
+    const { db, store, sessions, runner, add, setStatus, calls } = setup();
+    const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
+    await runner.start(todo.id);
+    store.updateTodo(store.getTodo(todo.id)!, { report: 'Initial report' }, 2000);
+    sessions.recordFollowAnchor(todo.id, 2000);
+    setStatus({
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: 4000,
+        exchange: [
+          { at: 1000, role: 'user', text: String(calls[0].input.message) },
+          { at: 3000, role: 'agent', text: 'Later PR https://github.com/a/b/pull/9' },
+        ],
+      },
+    });
+    await runner.refresh(() => {});
+    const report = store.getTodo(todo.id)?.report;
+    expect(report).toContain('https://github.com/a/b/pull/9');
+    expect(report).toContain('Initial report');
+    expect(sessions.readFollowAnchor(todo.id)).toBe(4000);
+    runner.recheck([todo.id]);
+    await runner.refresh(() => {});
+    expect(store.getTodo(todo.id)?.report).toBe(report);
+    expect(db.prepare('SELECT count(*) AS count FROM neo_work').get()).toEqual({ count: 0 });
+    db.close();
+  });
   test('starts a todo in its session, settles its report and lets the pack tick it done', async () => {
     const { store, sessions, runner, calls, told, add, setStatus } = setup(true);
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });

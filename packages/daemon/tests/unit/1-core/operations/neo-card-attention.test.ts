@@ -190,14 +190,16 @@ describe('NeoService relayCardPr', () => {
       new InternalEventBus<DaemonInternalEventMap>()
     );
     db.createSession(createTestSession('neo:root'));
-    Object.assign(service, {
-      continueWork: async (id: string, message: string) => {
+    Object.assign(service.todoRunner, {
+      proceed: async (id: string, message: string) => {
         sent.push({ id, message });
         return refuse
           ? { ok: false, reason: refuse }
-          : { ok: true, work: service.repo.getWork(id) };
+          : { ok: true, todo: service.todos.getTodo(id) };
       },
-      deliver: async (_sessionId: string, messageId: string, content: string) => {
+    });
+    Object.assign(service, {
+      deliverForward: async (_sessionId: string, messageId: string, content: string) => {
         told.push({ messageId, content });
       },
     });
@@ -212,41 +214,54 @@ describe('NeoService relayCardPr', () => {
     (service as unknown as { relayCardPr(id: string): Promise<unknown> }).relayCardPr(workId);
 
   function queuedCard(): string {
-    const work = service.repo.proposeWork({
-      id: 'w-pr',
-      requestKey: 'k-pr',
+    service.todos.openAsk({
+      id: 'ask',
       projectId: null,
-      originSessionId: 'neo:root',
+      sessionId: 'neo:root',
+      originMessageId: null,
       title: 'Fix login',
-      instruction: 'Fix login.',
+      request: 'Fix login',
+      createdAt: 1,
     });
-    service.repo.transitionWork(work.id, work, { status: 'queued', report: null });
-    return work.id;
+    const todo = service.todos.addTodo(
+      'w-pr',
+      'ask',
+      {
+        title: 'Fix login',
+        instruction: 'Fix login.',
+        doneWhen: 'Merged',
+        named: null,
+        check: { pack: 'coding', kind: 'pr_merged', params: {} },
+      },
+      1
+    );
+    service.todos.claimStart(todo, 2);
+    return todo.id;
   }
 
   test('sends each new PR problem to the card once, and again after it clears and returns', async () => {
     const workId = queuedCard();
-    service.workPrs.record(workId, [pr({ checks: 'failing' })], 1);
+    service.todoPrs.record(workId, [pr({ checks: 'failing' })], 1);
     await relay(workId);
     await relay(workId);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ id: workId });
     expect(sent[0].message).toContain(`${url}: CI checks are failing`);
 
-    service.workPrs.record(workId, [pr({ checks: 'failing', review: 'changes_requested' })], 2);
+    service.todoPrs.record(workId, [pr({ checks: 'failing', review: 'changes_requested' })], 2);
     await relay(workId);
     expect(sent).toHaveLength(2);
 
-    service.workPrs.record(workId, [pr()], 3);
+    service.todoPrs.record(workId, [pr()], 3);
     await relay(workId);
-    service.workPrs.record(workId, [pr({ checks: 'failing', review: 'changes_requested' })], 4);
+    service.todoPrs.record(workId, [pr({ checks: 'failing', review: 'changes_requested' })], 4);
     await relay(workId);
     expect(sent).toHaveLength(3);
   });
 
   test('tries again on the next sweep when the continue is refused', async () => {
     const workId = queuedCard();
-    service.workPrs.record(workId, [pr({ checks: 'failing' })], 1);
+    service.todoPrs.record(workId, [pr({ checks: 'failing' })], 1);
     refuse = 'This work is already being continued; wait for that first.';
     await relay(workId);
     refuse = null;
@@ -258,18 +273,18 @@ describe('NeoService relayCardPr', () => {
   test('keeps what it told while CI is pending, so unchanged threads are not sent again', async () => {
     const workId = queuedCard();
     const threads = { blockers: ['1 unresolved review thread'] };
-    service.workPrs.record(workId, [pr(threads)], 1);
+    service.todoPrs.record(workId, [pr(threads)], 1);
     await relay(workId);
-    service.workPrs.record(workId, [pr({ checks: 'pending' })], 2);
+    service.todoPrs.record(workId, [pr({ checks: 'pending' })], 2);
     await relay(workId);
-    service.workPrs.record(workId, [pr(threads)], 3);
+    service.todoPrs.record(workId, [pr(threads)], 3);
     await relay(workId);
     expect(sent).toHaveLength(1);
   });
 
   test('tells Neo once when the card can never be continued', async () => {
     const workId = queuedCard();
-    service.workPrs.record(workId, [pr({ checks: 'failing' })], 1);
+    service.todoPrs.record(workId, [pr({ checks: 'failing' })], 1);
     refuse = 'Only started driver work can be continued.';
     await relay(workId);
     await relay(workId);
@@ -281,7 +296,7 @@ describe('NeoService relayCardPr', () => {
 
   test('after a restart, does not resend a problem set it already told', async () => {
     const workId = queuedCard();
-    service.workPrs.record(workId, [pr({ checks: 'failing' })], 1);
+    service.todoPrs.record(workId, [pr({ checks: 'failing' })], 1);
     await relay(workId);
     service.dispose();
     service = new NeoService(
@@ -290,10 +305,10 @@ describe('NeoService relayCardPr', () => {
       { event: vi.fn() } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    Object.assign(service, {
-      continueWork: async (id: string, message: string) => {
+    Object.assign(service.todoRunner, {
+      proceed: async (id: string, message: string) => {
         sent.push({ id, message });
-        return { ok: true, work: service.repo.getWork(id) };
+        return { ok: true, todo: service.todos.getTodo(id) };
       },
     });
     await relay(workId);
@@ -302,8 +317,8 @@ describe('NeoService relayCardPr', () => {
 
   test('leaves a cancelled card alone', async () => {
     const workId = queuedCard();
-    service.repo.transitionWork(workId, service.repo.getWork(workId)!, { status: 'cancelled' });
-    service.workPrs.record(workId, [pr({ checks: 'failing' })], 1);
+    service.todos.updateTodo(service.todos.getTodo(workId)!, { state: 'removed' }, 3);
+    service.todoPrs.record(workId, [pr({ checks: 'failing' })], 1);
     await relay(workId);
     expect(sent).toEqual([]);
   });

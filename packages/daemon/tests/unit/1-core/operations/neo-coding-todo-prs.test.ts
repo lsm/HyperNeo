@@ -56,6 +56,18 @@ function setup(read: (urls: readonly string[]) => Promise<NeoWorkPr[] | null>) {
 }
 
 describe('coding todo pack', () => {
+  test('observed session PRs keep named and reported claims for the same todo', () => {
+    const { db, pack, repo, todo } = setup(async () => []);
+    const row = todo(
+      { pack: 'coding', kind: 'pr_merged', params: { urls: [pr(1, 'OPEN').url] } },
+      `Opened ${pr(2, 'OPEN').url}`
+    );
+    pack.openedPrs!(row, [pr(3, 'OPEN').url]);
+    expect(repo.urls(row.id).sort()).toEqual([1, 2, 3].map((n) => pr(n, 'OPEN').url));
+    pack.openedPrs!(row, []);
+    expect(repo.urls(row.id).sort()).toEqual([1, 2, 3].map((n) => pr(n, 'OPEN').url));
+    db.close();
+  });
   test('claims PRs the check names and the report names, then checks their merge state', async () => {
     const reads: string[][] = [];
     const { pack, repo, todo } = setup(async (urls) => {

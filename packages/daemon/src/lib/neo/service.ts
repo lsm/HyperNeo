@@ -47,8 +47,9 @@ import {
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
-import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
+import { createNeoTodoRunner, neoTodoCard, type NeoTodoRunner } from './todo-runner.ts';
 import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
+import { neoCardPrAttention } from './packs/coding/card-facts.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
@@ -141,7 +142,6 @@ import { neoAskProgressNote } from './ask-progress.ts';
 import { neoCardAttentionNeoNote, requireNeoCardAttentionRelay } from './card-attention.ts';
 import { planNeoCardCheck } from './card-check.ts';
 import {
-  isNeoCardLive,
   neoProjectEventMessageId,
   planNeoCardEventRoute,
   planNeoCardSend,
@@ -196,7 +196,6 @@ import {
   driverTargetDaemon,
   driverWorkCall,
   driverWorkCaller,
-  isDriverCardCurrent,
   messageOpening,
   NEO_DRIVER_START_INTERRUPTED,
   NEO_WORK_STALL_MS,
@@ -279,9 +278,7 @@ import {
   readGithubWorkRepo,
 } from './packs/coding/branch-prs.ts';
 import {
-  hasNeoUnattachedOpenedPrs,
   type NeoCardPrCandidate,
-  neoCardOpenedPrs,
   planNeoCardPrCandidates,
   neoCardPrWindow,
 } from './packs/coding/card-pr-claims.ts';
@@ -293,12 +290,7 @@ import {
 import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
 import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
-import {
-  CODING_PACK_BRIEF,
-  createCodingPack,
-  type NeoCardPrDeps,
-  readNeoCardPrs,
-} from './packs/coding/pack.ts';
+import { createCodingPack, type NeoCardPrDeps } from './packs/coding/pack.ts';
 import { neoPrQuestionWithdrawalPolicy } from './packs/coding/question-withdrawal-policy.ts';
 import { codingCardBase } from './packs/coding/watch-checks.ts';
 import {
@@ -313,7 +305,6 @@ import {
   neoPackAskCardEvidence,
   neoPackAskTopics,
   neoPackBriefs,
-  neoPackCardAttention,
   neoPackCardFacts,
   neoPackChecks,
   neoPackEvidenceOrNone,
@@ -381,15 +372,7 @@ import {
   readNeoWorkBlocker,
 } from './work-blocker.ts';
 import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
-import {
-  NEO_WORK_FOLLOW_MAX_AGE_MS,
-  type NeoWorkFollowCard,
-  planNeoWorkFollow,
-  planNeoWorkFollowLive,
-  requireNeoWorkFollow,
-  requireNeoWorkFollowAnswered,
-  requireNeoWorkFollowUp,
-} from './work-follow.ts';
+import { NEO_WORK_FOLLOW_MAX_AGE_MS } from './work-follow.ts';
 import { reconcileNeoWorkRefusal } from './work-refusal.ts';
 import { createNeoWorkReporter } from './work-report.ts';
 import {
@@ -480,6 +463,7 @@ export class NeoService {
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
+  readonly todoPrs: CodingTodoPrRepository;
   readonly dependencies: NeoDependencyRepository;
   readonly workPrs: NeoWorkPrRepository;
   readonly cardEvents: NeoCardEventSubscriptionRepository;
@@ -568,82 +552,6 @@ export class NeoService {
   private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
   private readonly cardOpenedPrs = new Map<string, string[]>();
   private readonly openedPrsTried = new Map<string, string>();
-  private readonly followReads = new Map<string, number>();
-  private readonly followWork = (superpipe({})('neo-work-follow') as PipelineAPI)
-    .input(['work', 'now'])
-    .pipe(
-      (work: NeoWork) => this.followCard(work, this.followReads.get(work.id) ?? null),
-      'work',
-      'card'
-    )
-    .pipe(requireNeoWorkFollow, ['work', 'card', 'now'], 'result:follow')
-    .pipe(
-      async (
-        work: NeoWork,
-        ref: WorkRef,
-        now: number,
-        card: { since: number; sent: DriverSent | null }
-      ) => {
-        this.followReads.set(work.id, now);
-        return {
-          outcome: await this.invokeAsCard(work, 'work.status', {
-            ref,
-            since: card.sent?.inputBefore ?? card.since,
-            ...(card.sent?.receipt ? { receipt: card.sent.receipt } : {}),
-          }),
-        };
-      },
-      ['work', 'follow', 'now', 'card'],
-      'read'
-    )
-    .pipe(
-      (work: NeoWork, read: { outcome: OperationOutcome }) =>
-        this.adoptStartReceipt(work.id, read.outcome),
-      ['work', 'read']
-    )
-    .pipe(planNeoWorkFollowLive, 'read', 'live')
-    .pipe(
-      (work: NeoWork, live: ReturnType<typeof planNeoWorkFollowLive>, now: number) => {
-        const recorded =
-          !!live && this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink);
-        if (this.recordCardCheck(work.id, !!live, now) || recorded) this.notifyChanged();
-      },
-      ['work', 'live', 'now']
-    )
-    .pipe(
-      async (
-        work: NeoWork,
-        ref: WorkRef,
-        live: ReturnType<typeof planNeoWorkFollowLive>,
-        read: { outcome: OperationOutcome }
-      ) => {
-        if (
-          live?.status !== 'needs_you' ||
-          !isDriverCardCurrent(read.outcome, this.driverTargets.readSent(work.id))
-        )
-          return;
-        const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
-        if (queued) await this.noteDriverNeedsYou(queued, ref, read.outcome);
-      },
-      ['work', 'follow', 'live', 'read']
-    )
-    .pipe(requireNeoWorkFollowAnswered, ['live', 'follow'], 'result:follow')
-    .pipe(requireNeoWorkFollowUp, ['work', 'card'], 'result:follow')
-    .pipe(planNeoWorkFollow, ['work', 'read', 'card'], 'result:follow')
-    .pipe(
-      (work: NeoWork, report: string, read: { outcome: OperationOutcome }) => {
-        const followed = this.repo.transitionWork(work.id, work, { status: 'reported', report });
-        const seen = readDriverActivity(read.outcome)?.lastActivityAt;
-        if (followed && seen !== undefined) this.driverTargets.recordFollowAnchor(work.id, seen);
-        return { work: followed };
-      },
-      ['work', 'follow', 'read'],
-      'follow'
-    )
-    .pipe(async (followed: { work: NeoWork | null }) => {
-      if (followed.work) await this.checkDone(followed.work, true);
-    }, 'follow')
-    .endAsync('follow') as (work: NeoWork, now: number) => Promise<unknown>;
   private readonly checkDone = (superpipe({})('neo-work-done-check') as PipelineAPI)
     .input(['work', 'followed'])
     .pipe(
@@ -823,6 +731,7 @@ export class NeoService {
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged);
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
+    this.todoPrs = new CodingTodoPrRepository(db.getDatabase());
     this.todoRunner = createNeoTodoRunner({
       store: this.todos,
       sessions: this.todoSessions,
@@ -867,7 +776,7 @@ export class NeoService {
         readMergeCommit: (url) => this.readMergeCommit(url),
         cardBase: (workId) => codingCardBase(this.driverTargets.get(workId)),
         cardStartedAt: (workId) => this.repo.workStartedAt(workId),
-        todoPrs: new CodingTodoPrRepository(db.getDatabase()),
+        todoPrs: this.todoPrs,
       }),
       createLifeAdminPack(),
     ];
@@ -1061,12 +970,7 @@ export class NeoService {
     return check?.unchecked ? check.checkedAt : null;
   }
 
-  private pruneReadThrottles(now: number): void {
-    const followed = new Set(
-      this.driverTargets.cardRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS).map((card) => card.workId)
-    );
-    for (const workId of this.followReads.keys())
-      if (!followed.has(workId)) this.followReads.delete(workId);
+  private pruneReadThrottles(_now: number): void {
     const live = new Set(this.askRecords.listLive().map((ask) => ask.id));
     for (const askId of this.askEvidenceReads.keys())
       if (!live.has(askId)) this.askEvidenceReads.delete(askId);
@@ -2137,41 +2041,6 @@ export class NeoService {
     }
     for (const workId of new Set(this.dependencies.edges().map((edge) => edge.workId)))
       scheduleNeoAdmissionWake(this.db.getJobQueueRepo(), workId);
-    await this.reclaimCardPrs();
-  }
-
-  private async attachOpenedPrs(workId: string): Promise<void> {
-    const work = this.repo.getWork(workId);
-    const stored = this.workPrs.get(workId);
-    const opened = this.cardOpenedPrs.get(workId) ?? [];
-    const tried = neoCardOpenedPrs(opened).join(' ');
-    if (
-      !work ||
-      !this.packs().some((pack) => pack.id === CODING_PACK_BRIEF.id) ||
-      this.openedPrsTried.get(workId) === tried ||
-      !hasNeoUnattachedOpenedPrs(opened, stored?.prs ?? [])
-    )
-      return;
-    const read = await readNeoCardPrs(this.cardPrDeps, work, stored, Date.now());
-    if (read.ok) this.openedPrsTried.set(workId, tried);
-  }
-
-  private async reclaimCardPrs(): Promise<void> {
-    if (!this.packs().some((pack) => pack.id === CODING_PACK_BRIEF.id)) return;
-    const works = this.workPrClaims
-      .cardsToReclaim()
-      .flatMap((id) => this.repo.getWork(id) ?? [])
-      .sort((a, b) => a.createdAt - b.createdAt);
-    for (const work of works) {
-      if (this.disposed) return;
-      await readNeoCardPrs(
-        this.cardPrDeps,
-        work,
-        this.workPrs.get(work.id),
-        Date.now(),
-        true
-      ).catch((error) => this.log.warn('Card pull request reclaim pending', error));
-    }
   }
 
   async refreshDriverWork(): Promise<void> {
@@ -2198,26 +2067,15 @@ export class NeoService {
         unprocessed.add(work.id);
         this.log.warn('Driver work refresh pending', error);
       });
-      await this.attachOpenedPrs(work.id).catch((error) =>
-        this.log.warn('Card opened pull request read pending', error)
-      );
-    }
-    for (const { work } of cards) {
-      if (work.status !== 'reported') continue;
-      await this.followWork(work, Date.now()).catch((error) => {
-        unprocessed.add(work.id);
-        this.log.warn('Reported work follow-up pending', error);
-      });
     }
     try {
       this.endUnfollowedCardTopics(Date.now());
     } catch (error) {
       this.log.warn('Card event subscription sweep pending', error);
     }
+    await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
     for (const workId of this.packEvidenceWorkIds()) {
-      await this.refreshWorkPrs(workId, Date.now()).catch((error) =>
-        this.log.warn('Work pull request refresh pending', error)
-      );
+      this.followCardTopics(workId);
       await this.relayCardPr(workId).catch((error) =>
         this.log.warn('Card pull request relay pending', error)
       );
@@ -2264,7 +2122,6 @@ export class NeoService {
         this.log.warn('Ask idle note pending', error)
       );
     }
-    await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
     this.pruneReadThrottles(Date.now());
     if (this.watching || this.disposed) return;
     this.watching = this.sessionWatcher
@@ -2290,28 +2147,15 @@ export class NeoService {
   }
 
   private packEvidenceWorkIds(): string[] {
-    const ids = new Set(this.workPrs.listOpen());
-    for (const ask of this.askRecords.listLive()) {
-      if (this.askPackReadsReport(ask)) ask.workIds.forEach((id) => ids.add(id));
-    }
-    return [...ids];
+    return this.todos.listCheckable().map((todo) => todo.id);
   }
 
-  private followCard(
-    work: NeoWork,
-    readAt: number | null
-  ): NeoWorkFollowCard & { since: number; sent: DriverSent | null } {
-    const driver = this.driverTargets.readCard(work.id);
-    return {
-      ref: driver?.ref ?? null,
-      goal: !!this.workDoneGoal(work.id)?.doneWhen,
-      ask: this.askRecords.forWork(work.id),
-      readAt,
-      since: driver?.followAnchor ?? work.updatedAt,
-      sent: this.driverTargets.readSent(work.id),
-      superseded: this.driverTargets.readSupersededAt(work.id) !== null,
-      live: driver?.liveStatus ?? null,
-    };
+  private followedTodo(workId: string): NeoWork | null {
+    const todo = this.todos.getTodo(workId);
+    const ask = todo ? this.todos.getAsk(todo.askId) : null;
+    return todo && ask?.status === 'open' && (todo.state === 'todo' || todo.state === 'doing')
+      ? neoTodoCard(todo, ask)
+      : null;
   }
 
   async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
@@ -2343,20 +2187,14 @@ export class NeoService {
     return { ok: true };
   }
 
-  followedCardRefs(now: number): WorkRef[] {
-    return this.driverTargets.cardRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS).flatMap((card) => {
-      const work = this.repo.getWork(card.workId);
-      if (!work) return [];
-      if (work.status !== 'reported') return [card.ref];
-      const following = requireNeoWorkFollow(work, this.followCard(work, null), now);
-      return 'value' in following ? [card.ref] : [];
-    });
+  followedCardRefs(_now: number): WorkRef[] {
+    return this.packEvidenceWorkIds().flatMap((id) => this.todoSessions.readRef(id) ?? []);
   }
 
   private readonly relayCardPr = (superpipe({})('neo-card-pr-relay') as PipelineAPI)
     .input(['workId'])
-    .pipe((workId: string) => this.repo.getWork(workId), 'workId', 'work')
-    .pipe((workId: string) => neoPackCardAttention(this.installedPacks(), workId), 'workId', 'read')
+    .pipe((workId: string) => this.followedTodo(workId), 'workId', 'work')
+    .pipe((workId: string) => neoCardPrAttention(this.todoPrs.prs(workId)), 'workId', 'read')
     .pipe(
       (workId: string, read: NeoPackCardAttention) => {
         if (!read.attention && !read.pending) this.cardPrRelays.clear(workId);
@@ -2373,19 +2211,20 @@ export class NeoService {
     )
     .pipe(
       async (work: NeoWork, relay: { signature: string; message: string }) => {
-        const sent = await this.continueWork(work.id, relay.message);
+        const sent = await this.todoRunner.proceed(work.id, relay.message);
         if (sent.ok) {
           this.cardPrRelays.markTold(work.id, relay.signature, Date.now());
           return sent;
         }
         const note = neoCardAttentionNeoNote(work, relay.message, sent.reason);
         if (!note || !this.db.getSession(work.originSessionId)) return sent;
-        await this.wakeCards(
-          [work.id],
+        await this.deliverForward(
           work.originSessionId,
           `neo-card-pr:${work.id}:${hashString32(relay.signature).toString(36)}`,
           note,
-          neoWorkParent(work)
+          work.originSessionId,
+          neoWorkParent(work),
+          'continues'
         );
         this.cardPrRelays.markTold(work.id, relay.signature, Date.now());
         return sent;
@@ -2751,9 +2590,9 @@ export class NeoService {
   }
 
   followCardTopics(workId: string): void {
-    const work = this.repo.getWork(workId);
-    if (!work || !isNeoCardLive(work)) return;
-    const topics = this.packs().flatMap((pack) => pack.externalTopics?.(work) ?? []);
+    const todo = this.todos.getTodo(workId);
+    if (!todo || !this.followedTodo(workId)) return;
+    const topics = this.packs().flatMap((pack) => pack.todos?.topics(todo) ?? []);
     for (const topic of topics) {
       if (!this.cardEvents.subscribe(workId, topic, Date.now())) continue;
       void this.watchExternalTopic?.(topic).catch((error) =>
@@ -2769,11 +2608,7 @@ export class NeoService {
       (rows: NeoCardEventSubscription[]) =>
         new Map(
           [...new Set(rows.map((row) => row.workId))].map(
-            (workId) =>
-              [
-                workId,
-                isNeoCardLive(this.repo.getWork(workId)) && this.cardEventsDelivered(),
-              ] as const
+            (workId) => [workId, !!this.followedTodo(workId) && this.cardEventsDelivered()] as const
           )
         ),
       'rows',
@@ -2791,7 +2626,7 @@ export class NeoService {
     .end('done') as (now: number) => NeoCardEventSubscription[];
 
   cardEventsDelivered(): boolean {
-    return this.packs().some((pack) => !!pack.externalTopics);
+    return this.packs().some((pack) => !!pack.todos);
   }
 
   followedTopics(): { topic: string; session: string | null }[] {
@@ -2800,8 +2635,8 @@ export class NeoService {
         topic: row.topic,
         session: neoCardWorkerSession(
           planNeoCardSend({
-            work: this.repo.getWork(row.workId),
-            ref: this.driverTargets.readRef(row.workId),
+            work: this.followedTodo(row.workId),
+            ref: this.todoSessions.readRef(row.workId),
           })
         ),
       })),
@@ -2894,10 +2729,18 @@ export class NeoService {
       (route: NeoPackEventRoute) =>
         planNeoProjectEventHolders(
           route.workIds.flatMap((id) => {
-            const work = this.repo.getWork(id);
-            const ask = this.askRecords.forWork(id);
+            const todo = this.todos.getTodo(id);
+            const work = this.followedTodo(id);
+            const ask = todo ? this.todos.getAsk(todo.askId) : null;
             return work
-              ? [{ projectId: work.projectId, owner: ask ? this.triggerConcern(ask) : null }]
+              ? [
+                  {
+                    projectId: work.projectId,
+                    owner: ask
+                      ? (this.repo.getBindingBySession(ask.sessionId)?.projectId ?? null)
+                      : null,
+                  },
+                ]
               : [];
           })
         ),
@@ -2922,12 +2765,10 @@ export class NeoService {
     )
     .pipe(
       async (event: ExternalEvent, route: NeoPackEventRoute, delivered: string[]) => {
-        for (const workId of new Set([...route.workIds, ...route.ending.map((row) => row.workId)]))
-          await this.refreshWorkPrs(workId, Date.now(), event.occurredAt).catch((error) =>
-            this.log.warn('Card evidence refresh after its event pending', error)
-          );
+        this.todoRunner.recheck(route.workIds);
+        await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
         for (const workId of delivered) {
-          const told = neoPackCardAttention(this.installedPacks(), workId).attention;
+          const told = neoCardPrAttention(this.todoPrs.prs(workId)).attention;
           if (told) this.cardPrRelays.markTold(workId, told.signature, Date.now());
         }
       },
@@ -2939,8 +2780,8 @@ export class NeoService {
     .endAsync('route') as (payload: ExternalEventPublishedPayload) => Promise<unknown>;
 
   async sendToCard(workId: string, key: string, text: string): Promise<boolean> {
-    const work = this.repo.getWork(workId);
-    const send = planNeoCardSend({ work, ref: this.driverTargets.readRef(workId) });
+    const work = this.followedTodo(workId);
+    const send = planNeoCardSend({ work, ref: this.todoSessions.readRef(workId) });
     if (!work || send.via === 'none') return false;
     if (send.via === 'session') {
       await this.deliver(send.sessionId, key, text, work.originSessionId);
