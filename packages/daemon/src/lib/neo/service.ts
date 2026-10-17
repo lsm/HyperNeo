@@ -333,6 +333,12 @@ import { createNeoPublicationCommit } from './publication-commit.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { runNeoReadWork } from './read-work.ts';
 import {
+  NEO_INBOX_ID,
+  neoDefaultSessionId,
+  openNeoDefaultSession,
+  reopenNeoHolder,
+} from './router.ts';
+import {
   type NeoSavedRulesNote,
   planNeoSavedRulesAppend,
   planNeoSavedRulesNote,
@@ -701,7 +707,7 @@ export class NeoService {
     };
     this.sessionWatcher = new NeoSessionWatcher({
       db,
-      rootSessionId: () => this.repo.defaultBinding()?.sessionId,
+      defaultSessionId: () => neoDefaultSessionId(this.repo),
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
       seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
@@ -1219,11 +1225,11 @@ export class NeoService {
     .end('plan') as (turn: NeoReminderTurnInput) => unknown;
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
-    const root = this.repo.defaultBinding()?.sessionId;
+    const fallback = neoDefaultSessionId(this.repo);
     const settings = this.db.getGlobalSettings?.();
     return effectiveNeoPreference(
       settings?.neo?.preferences,
-      root ? (this.db.getSession(root)?.config ?? null) : null,
+      fallback ? (this.db.getSession(fallback)?.config ?? null) : null,
       settings?.thinkingLevel
     );
   }
@@ -2007,6 +2013,17 @@ export class NeoService {
     if (failed) await this.returnReport(failed);
   }
 
+  defaultSessionId(): string | undefined {
+    return neoDefaultSessionId(this.repo);
+  }
+
+  async openDefault(): Promise<string> {
+    const opened = await openNeoDefaultSession(this.repo, (projectId) =>
+      reopenNeoHolder(this.repo, this.db, (id) => this.open(id), projectId)
+    );
+    return opened.sessionId;
+  }
+
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     this.initializeTriggerFacts();
@@ -2165,7 +2182,7 @@ export class NeoService {
       {
         id: crypto.randomUUID(),
         requestKey: messageId,
-        projectId: null,
+        projectId: NEO_INBOX_ID,
         originSessionId: root,
         originMessageId: messageId,
         title: notice.title,

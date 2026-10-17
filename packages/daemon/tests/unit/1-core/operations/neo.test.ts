@@ -609,18 +609,22 @@ describe('Neo MVP', () => {
   test('open names the conversation, the default session and every Neo session', async () => {
     service.repo.saveProject(project, 0);
     const holder = await service.open(project.id);
-    const opened = (await invoke('neo.open')) as { value: { sessionId: string } };
+    const inbox = await service.openDefault();
+    const opened = (await invoke('neo.open')) as {
+      value: { sessionId: string; neoSessions: unknown[] };
+    };
     const root = opened.value.sessionId;
     expect(opened).toMatchObject({
-      value: {
-        conversationId: root.slice(4),
-        defaultSessionId: root,
-        neoSessions: [
-          { sessionId: root, projectId: null },
-          { sessionId: holder, projectId: project.id },
-        ],
-      },
+      value: { conversationId: root.slice(4), defaultSessionId: inbox },
     });
+    expect(opened.value.neoSessions).toHaveLength(3);
+    expect(opened.value.neoSessions).toEqual(
+      expect.arrayContaining([
+        { sessionId: root, projectId: null },
+        { sessionId: holder, projectId: project.id },
+        { sessionId: inbox, projectId: 'inbox' },
+      ])
+    );
   });
 
   test('trusts bindings, not a claimed role; a project session reads another project', async () => {

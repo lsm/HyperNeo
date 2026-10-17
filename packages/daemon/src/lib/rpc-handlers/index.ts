@@ -1704,6 +1704,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   if (process.env.NODE_ENV !== 'test') {
     const neoFolder = ensureNeoProject(deps.db.workspaceHistory);
     fileNeoSessions(deps.db, neoService.repo, neoFolder);
+    void neoService
+      .openDefault()
+      .catch((error) => log.warn('Neo default session not opened', error));
   }
   void neoService.recover();
   deps.jobProcessor.register(NEO_CONSULTATION_RECOVERY, () =>
@@ -1728,13 +1731,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       lastHumanAt: () => routingLog.recent(1)[0]?.askedAt ?? null,
       reorganize: () => reorganizeTopics({ apply: 'unattended' }),
       digest: async (run, since) => {
-        const root = neoService.repo.defaultBinding()?.sessionId;
-        if (root)
+        const session = neoService.defaultSessionId();
+        if (session && neoService.repo.conversationId())
           await neoService.deliverForward(
-            root,
+            session,
             `neo-health-digest:${Date.now()}`,
             neoHealthDigest(neoService.repo.healthFacts(since), run, since),
-            root,
+            session,
             null,
             null
           );

@@ -60,10 +60,12 @@ const routed = (projectId: string | null): NeoRouted => ({
 const neoCaller: OperationCaller = { source: 'mcp', sessionId: root, role: 'neo' };
 
 describe('admitNeoReorganizer', () => {
-  test('lets main Neo and the human run it, not a project avatar', () => {
+  test('lets main Neo, the default session and the human run it, not a project avatar', () => {
     const main = { sessionId: root, kind: 'neo', projectId: null } as NeoBinding;
+    const inbox = { sessionId: 'i', kind: 'project', projectId: 'inbox' } as NeoBinding;
     const holder = { sessionId: 'h', kind: 'project', projectId: 'c' } as NeoBinding;
     expect(admitNeoReorganizer(neoCaller, main)).toEqual({ value: true });
+    expect(admitNeoReorganizer({ ...neoCaller, sessionId: 'i' }, inbox)).toEqual({ value: true });
     expect(admitNeoReorganizer({ source: 'rpc', principal: 'local' }, null)).toEqual({
       value: true,
     });
@@ -250,6 +252,20 @@ describe('neo.projects.reorganize', () => {
       input,
       caller
     ).then((outcome) => (outcome as { value?: unknown }).value);
+
+  test('without a main session it still merges projects and moves no asks', async () => {
+    const { deps, moves } = runtime([ask('a')], { a: 'drivers' }, [], {}, [
+      { sourceId: 'web-shallow', targetId: 'web' },
+    ]);
+    deps.rootSessionId = () => null;
+    expect(await invoke(deps, { source: 'rpc', principal: 'local' })).toMatchObject({
+      ok: true,
+      merged: [{ sourceId: 'web-shallow', targetId: 'web' }],
+      moved: [],
+      stayed: [],
+    });
+    expect(moves).toEqual([]);
+  });
 
   test('moves each main ask to its project and reports what stayed and why', async () => {
     const { deps, delivered, moves } = runtime(

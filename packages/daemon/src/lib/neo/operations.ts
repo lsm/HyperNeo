@@ -85,6 +85,7 @@ import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './session-status.ts';
 import {
   createNeoRouter,
+  NEO_INBOX_ID,
   type NeoRouter,
   neoNewProject,
   openNeoDefaultSession,
@@ -712,12 +713,12 @@ function readNeoProjectQuestionAsks(
 }
 
 function askNeoProjectQuestion(
-  service: Pick<NeoService, 'repo' | 'askRecords'>,
+  service: Pick<NeoService, 'repo' | 'askRecords' | 'defaultSessionId'>,
   question: NeoProjectQuestion,
   attempt: number
 ): boolean {
-  const root = service.repo.defaultBinding()?.sessionId;
-  if (!root) return false;
+  const session = service.defaultSessionId();
+  if (!session) return false;
   const [source, target] = [question.sourceId, question.targetId].map(
     (id) => service.repo.getProject(id)?.title ?? id
   );
@@ -725,8 +726,8 @@ function askNeoProjectQuestion(
   const opened = service.askRecords.open({
     id: crypto.randomUUID(),
     requestKey: neoProjectQuestionKey(question.key, attempt),
-    projectId: null,
-    originSessionId: root,
+    projectId: NEO_INBOX_ID,
+    originSessionId: session,
     originMessageId: null,
     title: `${source} and ${target}: one project?`,
     ask: `${text} The daemon asked this while reorganizing projects; after the human answers, run neo.projects.reorganize to apply it.`,
@@ -1004,7 +1005,7 @@ export function createNeoOperations(service: NeoService) {
       ...(caller.source === 'rpc'
         ? {
             conversationId: service.repo.conversationId(),
-            defaultSessionId: service.repo.defaultBinding()?.sessionId ?? null,
+            defaultSessionId: service.defaultSessionId() ?? null,
             neoSessions: [
               service.repo.defaultBinding(),
               ...service.repo.listProjectBindings(),
@@ -1160,11 +1161,7 @@ export function createNeoOperations(service: NeoService) {
       'caller',
       'result:track'
     )
-    .pipe(
-      () => requireNeoTrackRoot(service.repo.defaultBinding()?.sessionId),
-      'caller',
-      'result:track'
-    )
+    .pipe(() => requireNeoTrackRoot(service.defaultSessionId()), 'caller', 'result:track')
     .pipe((root: string) => root, 'track', 'root')
     .pipe(
       (input: z.infer<typeof SessionTrack>) =>

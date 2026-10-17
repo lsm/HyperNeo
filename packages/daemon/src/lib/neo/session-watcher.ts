@@ -36,7 +36,7 @@ import {
 
 export type NeoSessionWatcherDeps = {
   db: Pick<Database, 'getSDKMessageRepo'>;
-  rootSessionId: () => string | undefined;
+  defaultSessionId: () => string | undefined;
   announceSessionNoticeGroup: (group: NeoSessionNoticeGroup) => void;
   announceSessionNotice: (notice: NeoSessionNotice) => void;
   log: Logger;
@@ -69,7 +69,7 @@ export class NeoSessionWatcher {
     .input(['now'])
     .pipe(
       () => {
-        const root = this.deps.rootSessionId();
+        const root = this.deps.defaultSessionId();
         return root ? { value: root } : { reason: 'no_root' as const };
       },
       'now',
@@ -304,7 +304,7 @@ export class NeoSessionWatcher {
   flushSessionNoticeGroup(): void {
     const group = neoSessionNoticeGroup(this.openSessionNotices);
     this.openSessionNotices = [];
-    const root = group && this.deps.rootSessionId();
+    const root = group && this.deps.defaultSessionId();
     if (!group || !root) return;
     try {
       this.postSessionNoticeGroup(root, group);
@@ -314,7 +314,7 @@ export class NeoSessionWatcher {
   }
 
   loadSessionNoticeGroups(): void {
-    const root = this.deps.rootSessionId();
+    const root = this.deps.defaultSessionId();
     if (!root) return;
     try {
       this.sessionNoticeGroups = savedNeoSessionNoticeGroups(

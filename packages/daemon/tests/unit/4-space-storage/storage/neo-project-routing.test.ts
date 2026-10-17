@@ -19,7 +19,11 @@ import {
 import {
   chooseNeoRoute,
   createNeoRouter,
+  neoDefaultSessionId,
+  NEO_INBOX_ID,
   type NeoRouterDeps,
+  openNeoDefaultSession,
+  reopenNeoHolder,
 } from '../../../../src/lib/neo/router.ts';
 
 let db: Database;
@@ -142,6 +146,36 @@ describe('readNeoProjectFacts', () => {
         .prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)')
         .run(`repo:lsm/shared\u0000${id}`, id);
     expect(neoFactOwners(readNeoProjectFacts(db.getDatabase(), 'lsm/shared#2'))).toBeNull();
+  });
+});
+
+describe('the default Neo session', () => {
+  const opened: string[] = [];
+  const open = async (projectId: string) => {
+    opened.push(projectId);
+    repo.reserveBinding({ sessionId: `neo:inbox-${opened.length}`, kind: 'project', projectId });
+    return repo.getBindingForProject(projectId)!.sessionId;
+  };
+  const openDefault = async () =>
+    (await openNeoDefaultSession(repo, (id) => reopenNeoHolder(repo, db, open, id))).sessionId;
+
+  test('the default session is the Inbox holder, opened once and then found', async () => {
+    opened.length = 0;
+    expect(neoDefaultSessionId(repo)).toBeUndefined();
+    expect(await openDefault()).toBe('neo:inbox-1');
+    expect(await openDefault()).toBe('neo:inbox-1');
+    expect(opened).toEqual([NEO_INBOX_ID, NEO_INBOX_ID]);
+    expect(repo.getProject(NEO_INBOX_ID)?.title).toBe('Inbox');
+    expect(neoDefaultSessionId(repo)).toBe('neo:inbox-1');
+  });
+
+  test('an archived default session is replaced, not reused', async () => {
+    opened.length = 0;
+    await openDefault();
+    db.createSession(createTestSession('neo:inbox-1'));
+    db.updateSession('neo:inbox-1', { status: 'archived' });
+    expect(await openDefault()).toBe('neo:inbox-2');
+    expect(neoDefaultSessionId(repo)).toBe('neo:inbox-2');
   });
 });
 

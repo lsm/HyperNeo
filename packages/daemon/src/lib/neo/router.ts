@@ -40,6 +40,12 @@ const INBOX_CHOICE: NeoHolder = {
   summary: NEO_INBOX_SUMMARY,
 };
 
+export function neoDefaultSessionId(
+  repo: Pick<NeoRepository, 'getBindingForProject'>
+): string | undefined {
+  return repo.getBindingForProject(NEO_INBOX_ID)?.sessionId;
+}
+
 const NEW_PROJECT_TITLE_CHARS = 60;
 
 export function neoNewProject(
@@ -616,11 +622,11 @@ export function createNeoRouter(
       return readNeoSectionFacts(text, facts, projects);
     },
     holders: async () => {
-      const root = repo.defaultBinding()?.sessionId;
+      const fallback = neoDefaultSessionId(repo);
       const settings = db.getGlobalSettings();
       const opening = effectiveNeoPreference(
         settings.neo?.preferences,
-        root ? (db.getSession(root)?.config ?? null) : null
+        fallback ? (db.getSession(fallback)?.config ?? null) : null
       )?.provider;
       const repositories = repo.repositories();
       const holders = neoProjectHolders(
@@ -670,9 +676,9 @@ export function createNeoRouter(
     inbox: openHolder ? () => openNeoDefaultSession(repo, openHolder) : undefined,
     inboxRunnable: async () => {
       if (process.env.NODE_ENV === 'test') return true;
-      const binding = repo.getBindingForProject(NEO_INBOX_ID) ?? repo.defaultBinding();
+      const session = neoDefaultSessionId(repo);
       const provider =
-        (binding ? db.getSession(binding.sessionId)?.config.provider : undefined) ?? 'anthropic';
+        (session ? db.getSession(session)?.config.provider : undefined) ?? 'anthropic';
       return getProviderService()
         .isProviderAvailable(provider)
         .catch(() => false);
