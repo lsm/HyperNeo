@@ -86,12 +86,14 @@ describe('legacy reclaim candidates', () => {
   });
 
   test.each([
-    { ok: true, rival: true, acknowledged: true },
-    { ok: false, rival: true, acknowledged: false },
-    { ok: true, rival: false, acknowledged: false },
+    { ok: true, rival: true, undated: false, acknowledged: true },
+    { ok: false, rival: true, undated: false, acknowledged: false },
+    { ok: true, rival: false, undated: false, acknowledged: true },
+    { ok: false, rival: false, undated: false, acknowledged: false },
+    { ok: true, rival: false, undated: true, acknowledged: false },
   ])(
-    'acknowledges dropped claims without consuming failed or pending reads: $ok/$rival',
-    async ({ ok, rival, acknowledged }) => {
+    'acknowledges dropped or unreadable rejections while preserving failed or undated reads: $ok/$rival/$undated',
+    async ({ ok, rival, undated, acknowledged }) => {
       const db = await createTestDb();
       try {
         const raw = db.getDatabase();
@@ -116,13 +118,13 @@ describe('legacy reclaim candidates', () => {
             },
             prCandidates: async () =>
               planNeoCardPrCandidates({
-                report: null,
+                report: pull(2),
                 branch: [],
                 stored: [],
                 rejected: repo.rejectedUrls(work.id),
                 window: { start: 1, end: 2 },
               }),
-            readPrs: async () => (ok ? [] : null),
+            readPrs: async () => (ok ? [pr(2, 1), ...(undated ? [pr(1)] : [])] : null),
             workPrs,
             record: (id, prs) => workPrs.record(id, prs, 3),
           },
@@ -133,6 +135,9 @@ describe('legacy reclaim candidates', () => {
         );
         expect(repo.cardsToReclaim().includes(work.id)).toBe(!acknowledged);
         expect(repo.forUrls([pull(1)])[0].scoped === true).toBe(acknowledged);
+        expect(repo.forUrls([pull(1)])[0].claim).toBe('rejected');
+        expect(workPrs.get(work.id)?.prs.map((pr) => pr.url) ?? []).toEqual(ok ? [pull(2)] : []);
+        if (acknowledged) expect(repo.rejectedUrls(work.id)).toEqual([]);
       } finally {
         db.close();
       }
