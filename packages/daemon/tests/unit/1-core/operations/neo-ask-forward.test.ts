@@ -366,12 +366,11 @@ describe('neo.ask.forward', () => {
     expect(yieldTurn).toHaveBeenCalledTimes(2);
     expect(forwards).toHaveLength(1);
     expect(delivered).toHaveLength(1);
-    expect(moved).toEqual([
-      [
-        { sessionId: garden.sessionId, messageIds: ['ask-1'] },
-        { sessionId: pond.sessionId, messageId: 'neo-forward:ask-1:0', projectId: 'pond' },
-      ],
-    ]);
+    const move = [
+      { sessionId: garden.sessionId, messageIds: ['ask-1'] },
+      { sessionId: pond.sessionId, messageId: 'neo-forward:ask-1:0', projectId: 'pond' },
+    ];
+    expect(moved).toEqual([move, move]);
   });
 
   test('a turn resumed after a restart resolves the message it carries', async () => {
