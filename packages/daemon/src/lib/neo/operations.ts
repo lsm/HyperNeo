@@ -182,6 +182,7 @@ import {
 } from './session-track.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import { createNeoAskOperations } from './ask-operations.ts';
+import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations } from './todo-operations.ts';
 import { NeoAskSchema } from './ask-inputs.ts';
 import {
@@ -2503,6 +2504,16 @@ export function createNeoOperations(service: NeoService) {
     createNeoDraftRecoveryOperation(service),
     createNeoPreferenceOperation(service),
     ...createNeoTodoOperations(service.todos),
+    ...createNeoQuestionOperations(service.todos, (ask, question, note) =>
+      service.deliverForward(
+        ask.sessionId,
+        `neo-question:${question.id}`,
+        note,
+        ask.sessionId,
+        ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
+        'continues'
+      )
+    ),
     ...createNeoAskOperations(
       service,
       (caller, name, projectId) => admitNeoCaller(service, caller, name, projectId),

@@ -1,4 +1,10 @@
-import type { NeoAsk, NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
+import type {
+  NeoAsk,
+  NeoQuestion,
+  NeoQuestionAnswer,
+  NeoTodo,
+  NeoTodoCheck,
+} from '@hyperneo/shared/types/neo-ask';
 import type { Database } from '../sqlite-compat.ts';
 
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'>;
@@ -39,6 +45,32 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
   added_after_start AS addedAfterStart, report, evidence, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt FROM neo_todos`;
 
+export type NeoQuestionDraft = Pick<
+  NeoQuestion,
+  'text' | 'kind' | 'options' | 'multiple' | 'noLabel' | 'yesLabel' | 'startTodos'
+>;
+
+const QUESTION_SELECT = `SELECT id, ask_id AS askId, text, kind, options, multiple, no_label AS noLabel,
+  yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
+  answered_at AS answeredAt, created_at AS createdAt FROM neo_questions`;
+
+type QuestionRow = Omit<NeoQuestion, 'options' | 'multiple' | 'startTodos' | 'answer'> & {
+  options: string | null;
+  multiple: number;
+  startTodos: string | null;
+  answer: string | null;
+};
+
+const parsed = <T>(json: string | null): T | null => (json ? (JSON.parse(json) as T) : null);
+
+const toQuestion = (row: QuestionRow): NeoQuestion => ({
+  ...row,
+  options: parsed<string[]>(row.options),
+  multiple: row.multiple === 1,
+  startTodos: parsed<string[]>(row.startTodos),
+  answer: parsed<NeoQuestionAnswer>(row.answer),
+});
+
 type TodoRow = Omit<NeoTodo, 'check' | 'named' | 'addedAfterStart'> & {
   checkJson: string | null;
   named: string | null;
@@ -47,8 +79,8 @@ type TodoRow = Omit<NeoTodo, 'check' | 'named' | 'addedAfterStart'> & {
 
 const toTodo = ({ checkJson, named, addedAfterStart, ...row }: TodoRow): NeoTodo => ({
   ...row,
-  check: checkJson ? (JSON.parse(checkJson) as NeoTodoCheck) : null,
-  named: named ? (JSON.parse(named) as Record<string, unknown>) : null,
+  check: parsed<NeoTodoCheck>(checkJson),
+  named: parsed<Record<string, unknown>>(named),
   addedAfterStart: addedAfterStart === 1,
 });
 
@@ -131,6 +163,65 @@ export class NeoAskTodoRepository {
       .run(...keys.map((key) => patch[key] ?? null), now, todo.id);
     this.touchAsk(todo.askId, now);
     return this.getTodo(todo.id)!;
+  }
+
+  getQuestion(id: string): NeoQuestion | null {
+    const row = this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
+    return row ? toQuestion(row) : null;
+  }
+
+  listQuestions(askId: string): NeoQuestion[] {
+    return (
+      this.db
+        .prepare(`${QUESTION_SELECT} WHERE ask_id = ? ORDER BY created_at, rowid`)
+        .all(askId) as QuestionRow[]
+    ).map(toQuestion);
+  }
+
+  askQuestion(id: string, askId: string, draft: NeoQuestionDraft, now: number): NeoQuestion {
+    this.db
+      .prepare(
+        `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
+           start_todos, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        askId,
+        draft.text,
+        draft.kind,
+        draft.options ? JSON.stringify(draft.options) : null,
+        draft.multiple ? 1 : 0,
+        draft.noLabel,
+        draft.yesLabel,
+        draft.startTodos ? JSON.stringify(draft.startTodos) : null,
+        now
+      );
+    this.touchAsk(askId, now);
+    return this.getQuestion(id)!;
+  }
+
+  answerQuestion(
+    question: NeoQuestion,
+    answer: NeoQuestionAnswer,
+    by: 'button' | 'chat',
+    now: number
+  ): NeoQuestion | null {
+    const changed = this.db
+      .prepare(
+        `UPDATE neo_questions SET state = 'answered', answer = ?, answered_by = ?, answered_at = ?
+         WHERE id = ? AND state = 'open'`
+      )
+      .run(JSON.stringify(answer), by, now, question.id).changes;
+    if (!changed) return null;
+    this.touchAsk(question.askId, now);
+    return this.getQuestion(question.id);
+  }
+
+  retireQuestions(askId: string, now: number): void {
+    this.db
+      .prepare("UPDATE neo_questions SET state = 'retired' WHERE ask_id = ? AND state = 'open'")
+      .run(askId);
+    this.touchAsk(askId, now);
   }
 
   private touchAsk(askId: string, now: number): void {
