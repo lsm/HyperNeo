@@ -15,6 +15,7 @@ import {
 import type { Database } from '../../../../src/storage/database.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import { runMigration344 } from '../../../../src/storage/schema/m344-neo-ask-forwards.ts';
 import { createNeoPublicationTable } from '../../../../src/storage/schema/m288-neo-publications.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration289 } from '../../../../src/storage/schema/m289-neo-conversation-asks.ts';
@@ -38,6 +39,7 @@ describe('neo.message.send replyTo', () => {
     runMigration289(mailbox.db);
     runMigration387(mailbox.db);
     createNeoPublicationTable(mailbox.db);
+    runMigration344(mailbox.db);
     for (const id of [root, holder])
       mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(id);
     repo = new NeoRepository(mailbox.db);
@@ -213,6 +215,30 @@ describe('neo.message.send replyTo', () => {
     await reply(unknown, 'pub-1');
     expect([prompt(unknown).session_id, routed]).toEqual([root, ['Thanks']]);
   });
+
+  test('a reply quoting the human’s own message goes to the session that answered it', async () => {
+    const routed: string[] = [];
+    const router = async (text: string) => {
+      routed.push(text);
+      return { choice: null };
+    };
+    const own = crypto.randomUUID();
+    await send(own, '在做', { kind: 'question', id: 'q1' });
+    expect(prompt(own).session_id).toBe(holder);
+    const id = crypto.randomUUID();
+    await invokeOperation(
+      createOperationRegistry([createNeoIntakeOperation(db, repo, () => {}, router)]),
+      'neo.message.send',
+      {
+        sessionId: root,
+        requestId: id,
+        content: 'And the badge?',
+        replyTo: { kind: 'message', id: own },
+      },
+      human
+    );
+    expect([prompt(id).session_id, routed]).toEqual([holder, []]);
+  });
 });
 
 describe('repliedNeoRoute', () => {
@@ -224,7 +250,7 @@ describe('repliedNeoRoute', () => {
       question: null,
       todo: null,
     };
-    expect(repliedNeoRoute(neoReplyAuthor(reply, null), repo as never)).toEqual({
+    expect(repliedNeoRoute(neoReplyAuthor(reply, null, null, []), repo as never)).toEqual({
       reason: { choice: null, fallback: 'reply' },
     });
     expect(repliedNeoRoute(null, repo as never)).toEqual({ value: null });
@@ -232,7 +258,7 @@ describe('repliedNeoRoute', () => {
 });
 
 describe('neoReplyAuthor', () => {
-  test("names the ask's owner, else the session that wrote the message", () => {
+  test("names the ask's owner, else the message's writer, else whoever answered the human's message", () => {
     const ask = { sessionId: holder } as never;
     const reply = {
       replyTo: { kind: 'question' as const, id: 'q' },
@@ -241,9 +267,16 @@ describe('neoReplyAuthor', () => {
       todo: null,
     };
     const publication = { producerInput: { sessionId: 'neo:holder:c2' } };
-    expect(neoReplyAuthor(reply, publication)).toBe(holder);
-    expect(neoReplyAuthor(null, publication)).toBe('neo:holder:c2');
-    expect(neoReplyAuthor(null, null)).toBeNull();
+    const asked = { askOrigin: { sessionId: 'neo:holder:c3' } };
+    const forwards = [
+      { hop: 1, toSessionId: 'neo:holder:c5' },
+      { hop: 0, toSessionId: 'neo:holder:c4' },
+    ];
+    expect(neoReplyAuthor(reply, publication, null, [])).toBe(holder);
+    expect(neoReplyAuthor(null, publication, null, [])).toBe('neo:holder:c2');
+    expect(neoReplyAuthor(null, null, asked, [])).toBe('neo:holder:c3');
+    expect(neoReplyAuthor(null, null, asked, forwards)).toBe('neo:holder:c5');
+    expect(neoReplyAuthor(null, null, null, [])).toBeNull();
   });
 });
 
