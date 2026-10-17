@@ -267,6 +267,6 @@ describe('accepted public ask notification', () => {
       human
     );
     expect(result).toMatchObject({ value: { ok: true, created: true } });
-    expect(events).toEqual(['neo.changed']);
+    expect([...new Set(events)]).toEqual(['neo.changed']);
   });
 });

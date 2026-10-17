@@ -309,11 +309,11 @@ describe('hierarchical Neo routing', () => {
     ]);
   });
 
-  test('facts descend arbitrary depth and cross-owner messages stay at root', async () => {
+  test('facts descend arbitrary depth and cross-owner messages pick no project', async () => {
     const holders = Array.from({ length: 40 }, (_, index) =>
       holder(String(index), index ? String(index - 1) : null)
     );
-    const classify = mock(async () => 'main' as const);
+    const classify = mock(async () => null);
     const deps = {
       ...routeDeps(holders),
       classify,
@@ -334,7 +334,7 @@ describe('hierarchical Neo routing', () => {
 
   test('exact fact owners remain authoritative when an ancestor provider is unavailable', async () => {
     const tree = [holder('root'), holder('middle', 'root'), holder('owner', 'middle')];
-    const classify = mock(async () => 'main' as const);
+    const classify = mock(async () => null);
     for (const unavailable of ['root', 'middle']) {
       const holders = runnableNeoHolders(
         tree.map((item) => ({
@@ -396,7 +396,7 @@ describe('hierarchical Neo routing', () => {
       ]
     );
     expect(refined.map((fact) => fact.projectId)).toEqual(Array(4).fill(section.projectId));
-    const classify = mock(async () => 'main' as const);
+    const classify = mock(async () => null);
     expect(
       (
         await chooseNeoRoute('same project message', {

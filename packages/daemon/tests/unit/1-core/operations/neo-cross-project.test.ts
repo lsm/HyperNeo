@@ -12,6 +12,7 @@ import {
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { requireNeoCrossProjectParts } from '../../../../src/lib/neo/cross-project-operation.ts';
+import { NEO_INBOX_ID } from '../../../../src/lib/neo/router.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -78,6 +79,11 @@ beforeEach(async () => {
   for (const id of ['alpha', 'beta'])
     service.repo.saveProject({ id, title: id, summary: '', context: '' }, 0);
   root = await service.open(null);
+  const open = service.open.bind(service);
+  service.open = async (projectId) => {
+    if (projectId === NEO_INBOX_ID) throw new Error('main Neo keeps the cross-project ask here');
+    return open(projectId);
+  };
   registry = createOperationRegistry(createNeoOperations(service));
   workA = crypto.randomUUID();
   workB = crypto.randomUUID();
