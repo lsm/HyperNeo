@@ -56,14 +56,18 @@ export function requireNeoAskProject(
   input: { projectId?: string | null },
   sessionId: string,
   projectOf: (sessionId: string) => string | null,
-  resolveProject: (projectId: string) => string | null
+  resolveProject: (projectId: string) => string | null,
+  knownProjects: () => readonly { id: string; title: string }[] = () => []
 ): Gate<string | null> {
   if (input.projectId === undefined) return { value: projectOf(sessionId) };
   if (input.projectId === null) return { value: null };
   const projectId = resolveProject(input.projectId);
-  return projectId
-    ? { value: projectId }
-    : { reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.` } };
+  if (projectId) return { value: projectId };
+  const known = knownProjects().map((project) => `${project.id} (${project.title})`);
+  const list = known.length ? ` Projects: ${known.join('; ')}.` : '';
+  return {
+    reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.${list}` },
+  };
 }
 
 export function createNeoAskRecordOperations(
@@ -72,7 +76,8 @@ export function createNeoAskRecordOperations(
   controls: NeoTodoControls,
   projectOf: (sessionId: string) => string | null,
   resolveProject: (projectId: string) => string | null,
-  isNeoSession: (sessionId: string) => boolean
+  isNeoSession: (sessionId: string) => boolean,
+  knownProjects: () => readonly { id: string; title: string }[]
 ) {
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
@@ -83,7 +88,13 @@ export function createNeoAskRecordOperations(
     )
     .pipe(
       (sessionId: string, input: z.infer<typeof Open>) => {
-        const project = requireNeoAskProject(input, sessionId, projectOf, resolveProject);
+        const project = requireNeoAskProject(
+          input,
+          sessionId,
+          projectOf,
+          resolveProject,
+          knownProjects
+        );
         return 'value' in project ? { value: { sessionId, projectId: project.value } } : project;
       },
       ['outcome', 'input'],

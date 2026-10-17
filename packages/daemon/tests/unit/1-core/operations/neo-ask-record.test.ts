@@ -57,7 +57,8 @@ function setup() {
       },
       () => 'project-1',
       (projectId) => (projectId === 'project-1' ? projectId : null),
-      (sessionId) => sessionId === 'neo-a'
+      (sessionId) => sessionId === 'neo-a',
+      () => [{ id: 'project-1', title: 'P' }]
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
@@ -229,6 +230,27 @@ describe('requireNeoAskProject', () => {
     });
     expect(requireNeoAskProject({ projectId: 'nope' }, 's', projectOf, resolve)).toEqual({
       reason: { ok: false, reason: 'unknown_project: no project nope.' },
+    });
+  });
+
+  test('lists the known projects when an id matches none', () => {
+    const known = () => [
+      { id: 'project:a', title: 'Alpha' },
+      { id: 'b', title: 'Beta' },
+    ];
+    expect(
+      requireNeoAskProject(
+        { projectId: 'nope' },
+        's',
+        () => null,
+        () => null,
+        known
+      )
+    ).toEqual({
+      reason: {
+        ok: false,
+        reason: 'unknown_project: no project nope. Projects: project:a (Alpha); b (Beta).',
+      },
     });
   });
 });

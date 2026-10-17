@@ -198,6 +198,20 @@ export class NeoRepository {
     }>;
   }
 
+  resolveProjectRef(ref: string): string | null {
+    const key = ref.trim();
+    const bare = key.replace(/^project:/i, '');
+    const matches = this.db
+      .prepare(`SELECT id FROM neo_concerns WHERE id IN (?, ?) OR title = ? COLLATE NOCASE`)
+      .all(bare, `project:${bare}`, key) as { id: string }[];
+    const ids = new Set(
+      matches
+        .map(({ id }) => this.projectMerges.resolve(id) ?? id)
+        .filter((id) => this.getProject(id))
+    );
+    return ids.size === 1 ? [...ids][0] : null;
+  }
+
   getProject(id: string): NeoProject | null {
     return this.db
       .prepare(`SELECT ${concernColumns} FROM neo_concerns WHERE id = ?`)
