@@ -1,6 +1,10 @@
 import type { ModelInfo } from '@hyperneo/shared';
 
 export const MODEL_CONTEXT_WINDOWS = {
+  'gpt-6.1-sol': 1050000,
+  'gpt-6-sol': 1050000,
+  'gpt-6-astra': 1050000,
+  'gpt-6-luna': 1050000,
   'gpt-5.6-sol': 1050000,
   'gpt-5.6-terra': 1050000,
   'gpt-5.6-luna': 1050000,
@@ -13,6 +17,10 @@ export const MODEL_CONTEXT_WINDOWS = {
 export type CodexBridgeModelId = keyof typeof MODEL_CONTEXT_WINDOWS;
 
 const CODEX_MODEL_ALIASES = {
+  'codex-6.1-sol': 'gpt-6.1-sol',
+  'codex-6-sol': 'gpt-6-sol',
+  'codex-6-astra': 'gpt-6-astra',
+  'codex-6-luna': 'gpt-6-luna',
   codex: 'gpt-5.3-codex',
   'codex-5.4': 'gpt-5.4',
   'codex-5.5': 'gpt-5.5',
@@ -26,6 +34,30 @@ const CODEX_MODEL_ALIASES = {
 } as const satisfies Record<string, CodexBridgeModelId>;
 
 const CODEX_MODEL_DETAILS = {
+  'gpt-6.1-sol': {
+    name: 'GPT-6.1 Sol',
+    alias: 'codex-6.1-sol',
+    description: 'GPT-6.1 Sol',
+    releaseDate: '',
+  },
+  'gpt-6-sol': {
+    name: 'GPT-6 Sol',
+    alias: 'codex-6-sol',
+    description: 'GPT-6 Sol',
+    releaseDate: '',
+  },
+  'gpt-6-astra': {
+    name: 'GPT-6 Astra',
+    alias: 'codex-6-astra',
+    description: 'GPT-6 Astra',
+    releaseDate: '',
+  },
+  'gpt-6-luna': {
+    name: 'GPT-6 Luna',
+    alias: 'codex-6-luna',
+    description: 'GPT-6 Luna',
+    releaseDate: '',
+  },
   'gpt-5.6-sol': {
     name: 'GPT-5.6 Sol',
     alias: 'codex-latest',
@@ -88,6 +120,10 @@ export function getModelContextWindow(modelId: string): number | undefined {
 }
 
 const CODEX_BACKEND_CONTEXT_WINDOW_OVERRIDES: Partial<Record<CodexBridgeModelId, number>> = {
+  'gpt-6.1-sol': 500000,
+  'gpt-6-sol': 272000,
+  'gpt-6-astra': 272000,
+  'gpt-6-luna': 272000,
   'gpt-5.6-sol': 272000,
   'gpt-5.6-terra': 272000,
   'gpt-5.6-luna': 272000,
@@ -111,6 +147,10 @@ function getProviderAliases(id: CodexBridgeModelId, primaryAlias: string): strin
 }
 
 export const CODEX_TO_SDK_MODEL: Record<CodexBridgeModelId, string> = {
+  'gpt-6.1-sol': 'gpt-6.1-sol',
+  'gpt-6-sol': 'gpt-6-sol',
+  'gpt-6-astra': 'gpt-6-astra',
+  'gpt-6-luna': 'gpt-6-luna',
   'gpt-5.6-sol': 'gpt-5.6-sol',
   'gpt-5.6-terra': 'gpt-5.6-terra',
   'gpt-5.6-luna': 'gpt-5.6-luna',

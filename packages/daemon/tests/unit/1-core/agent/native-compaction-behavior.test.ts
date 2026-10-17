@@ -133,6 +133,10 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
 
   it('the per-model Codex windows that feed CLAUDE_CODE_AUTO_COMPACT_WINDOW are the expected values', () => {
     const EXPECTED_WINDOWS: Record<string, number> = {
+      'gpt-6.1-sol': 1_050_000,
+      'gpt-6-sol': 1_050_000,
+      'gpt-6-astra': 1_050_000,
+      'gpt-6-luna': 1_050_000,
       'gpt-5.6-sol': 1_050_000,
       'gpt-5.6-terra': 1_050_000,
       'gpt-5.6-luna': 1_050_000,
@@ -158,6 +162,14 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     expect(codexBackendContextWindow('codex-latest')).toBe(272_000);
     expect(codexBackendContextWindow('gpt-5.5')).toBe(272_000);
     expect(codexBackendContextWindow('gpt-5.4-mini')).toBe(128_000);
+  });
+
+  it('keeps GPT-6 at the ChatGPT backend default window, not the API window', () => {
+    expect(codexBackendContextWindow('gpt-6-sol')).toBe(272_000);
+    expect(codexBackendContextWindow('gpt-6-astra')).toBe(272_000);
+    expect(codexBackendContextWindow('gpt-6-luna')).toBe(272_000);
+    expect(codexBackendContextWindow('gpt-6.1-sol')).toBe(500_000);
+    expect(getModelContextWindow('codex-6-luna')).toBe(1_050_000);
   });
 
   it('Kimi buildSdkConfig arms CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (K2.7=262144, K3=1M)', () => {
