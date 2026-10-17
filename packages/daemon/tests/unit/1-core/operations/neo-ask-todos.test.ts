@@ -189,6 +189,15 @@ describe('projectNeoAskViews todo projection', () => {
     }
   );
 
+  test('queued work without a session or driver remains not started even with a PR criterion', () => {
+    expect(
+      project(
+        [{ ...work('w', 'queued'), sessionId: null }],
+        [item('merge', { check: 'coding.pr_merged', deliveredBy: 'w' })]
+      ).todos?.[0]
+    ).toMatchObject({ state: 'pending', status: '还没交给会话' });
+  });
+
   test('a report is enough only without a readable completion standard', () => {
     expect(project([work('w')], []).todos?.[0]).toMatchObject({
       state: 'done',
