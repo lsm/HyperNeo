@@ -1,6 +1,8 @@
 import { type DbScopeType, getScopeConfig } from '../../src/lib/db-query/scope-config.ts';
 
 export const EXCLUDED_TABLE_NAMES: string[] = [
+  'claude_desktop_bridge_events',
+  'claude_desktop_bridge_instances',
   'session_incarnations',
   'session_event_subscriptions',
   'session_external_events',

@@ -1,4 +1,5 @@
 import { runMigration386 } from './m386-neo-work-control-failures.ts';
+import { runMigration388 } from './m388-claude-desktop-bridge-events.ts';
 import { runMigration365 } from './m365-neo-cross-project-dispatch.ts';
 import { runMigration361 } from './m361-neo-project-avatars.ts';
 import { runMigration260 } from './m260-direct-start-requests.ts';
@@ -826,6 +827,7 @@ export function createTables(db: BunDatabase): void {
   runMigration360(db);
   runMigration363(db);
   runMigration386(db);
+  runMigration388(db);
 
   db.exec(`
 	      CREATE TABLE IF NOT EXISTS tool_continuation_recovery (

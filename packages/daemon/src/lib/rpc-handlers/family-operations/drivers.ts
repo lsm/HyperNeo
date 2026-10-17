@@ -239,11 +239,13 @@ function claudeCodeAdapters(
 function claudeDesktopAdapters(
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   prepareExecution: WorkExecutionPreparer,
-  inbox: FamilyOperationContext['claudeInbox']
+  inbox: FamilyOperationContext['claudeInbox'],
+  mods: FamilyOperationContext['claudeDesktopMods']
 ): WorkAdapter[] {
   const sessionsDir = CLAUDE_DESKTOP_SESSIONS;
   if (!existsSync(sessionsDir)) return [];
   const deps: ClaudeDesktopAdapterDeps = {
+    mods: mods?.ready,
     sessionsDir,
     sendInbox: inbox?.send,
     admitInbox: inbox?.admit,
@@ -479,7 +481,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       tasks: spaceTaskControl(context),
     }),
     ...codexDesktopAdapters(searchChats, prepareExecution),
-    ...claudeDesktopAdapters(searchChats, prepareExecution, context.claudeInbox),
+    ...claudeDesktopAdapters(
+      searchChats,
+      prepareExecution,
+      context.claudeInbox,
+      context.claudeDesktopMods
+    ),
     ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db()), context.claudeInbox),
     ...acpAgentAdapters(
       () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId))

@@ -7,6 +7,7 @@ import {
   claudeSessionOwner,
   readClaudeSessionOwner,
   requireClaudeCliOwner,
+  requireClaudePeerOwner,
 } from '../../../../src/lib/drivers/claude-session-owner';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 
@@ -92,6 +93,30 @@ describe('requireClaudeCliOwner', () => {
     expect(requireClaudeCliOwner(live.sessionId, sessions)).toMatchObject({
       reason: { reason: 'unreachable', detail: expect.stringContaining('will not resume') },
     });
+  });
+});
+
+describe('requireClaudePeerOwner', () => {
+  test.each(['cli', 'desktop'] as const)(
+    'retains the unique %s owner for endpoint validation',
+    (owner) => {
+      expect(requireClaudePeerOwner(live.sessionId, [{ ...live, owner }])).toEqual({
+        value: { ...live, owner },
+      });
+      expect(requireClaudePeerOwner(live.sessionId, [{ ...live, pid: 0, owner }])).toHaveProperty(
+        'reason.reason',
+        'unreachable'
+      );
+    }
+  );
+
+  test('refuses conflicting owners instead of choosing a known socket', () => {
+    expect(
+      requireClaudePeerOwner(live.sessionId, [
+        { ...live, owner: 'cli' },
+        { ...live, pid: 456, owner: 'desktop' },
+      ])
+    ).toHaveProperty('reason.reason', 'unreachable');
   });
 });
 

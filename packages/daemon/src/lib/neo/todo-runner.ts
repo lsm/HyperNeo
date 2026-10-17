@@ -349,8 +349,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const ask = store.getAsk(todo.askId);
     const live = sessions.readLiveStatus(todo.id);
     const settled = live === 'done' || live === 'failed' || live === 'stopped';
-    if (ref && ask && (todo.state === 'doing' || !settled))
-      await deps.invoke(caller(ask), 'work.stop', { ref }).catch(() => null);
+    if (!ref || !ask || (todo.state !== 'doing' && settled)) return null;
+    const stopped = await deps
+      .invoke(caller(ask), 'work.stop', { ref })
+      .catch((error: unknown) => ({ kind: 'failed' as const, message: String(error) }));
+    if (stopped.kind !== 'completed')
+      return `stop_failed: ${(stopped as { message?: string }).message ?? 'the stop did not complete'}`;
+    const value = stopped.value as { ok?: boolean; reason?: string; detail?: string } | null;
+    return value?.ok === false && value.reason !== 'unsupported'
+      ? `stop_failed: ${value.detail ?? value.reason ?? 'the driver refused'}`
+      : null;
   };
 
   return {
@@ -376,6 +384,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const todo = store.getTodo(todoId);
         const ask = todo ? store.getAsk(todo.askId) : null;
         if (!todo || !ask || starting.has(todoId)) continue;
+        sessions.recordStartInterrupted(todoId);
         await finish(
           todo,
           ask,

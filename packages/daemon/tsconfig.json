@@ -20,6 +20,7 @@
   },
   "include": [
     "src/**/*",
+    "claude-desktop-bridge/hooks/**/*.ts",
     "main.ts",
     "../shared/src/**/*",
     "../prompts/src/**/*",

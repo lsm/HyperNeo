@@ -13,7 +13,13 @@
       "project": ["**/*.ts"]
     },
     "packages/daemon": {
-      "entry": ["main.ts", "vitest.online.config.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+      "entry": [
+        "main.ts",
+        "vitest.online.config.ts",
+        "scripts/**/*.ts",
+        "tests/**/*.ts",
+        "claude-desktop-bridge/hooks/register.ts"
+      ],
       "project": ["**/*.ts"]
     },
     "packages/messaging": {
