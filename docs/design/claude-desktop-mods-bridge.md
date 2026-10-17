@@ -97,3 +97,26 @@ and drains pending persistence before removing only the endpoint's own files.
 Publishing a stable opt-in connection file across daemon restarts, rereading it
 on client transport failure, installing the plugin, and adapter wiring remain
 runtime integration work. This Build slice makes no restart-delivery claim.
+
+## Durable event journal
+
+Migration388 adds external Desktop instance checkpoints and an append-only event
+journal. External Desktop IDs are not HyperNeo `sessions` IDs; these internal
+tables are excluded from agent DB-query scopes. They do not contain or implement
+an input queue. The later outbox will reuse `JobQueueRepository`.
+
+`ClaudeDesktopBridgeRepository.persist` commits each contiguous batch and its
+checkpoint in one immediate SQLite transaction before returning ACK. Replays
+compare canonical event JSON and do not append again. A conflict, gap, owner
+change or SQLite failure rolls back the whole batch. New instances must begin
+with sequence1 `session.start`; they retire earlier instances atomically. A
+retired instance cannot become active again through delayed requests, including
+after a daemon restart. Their history remains available for reconciliation.
+
+Lifecycle state starts `unknown`, becomes `busy` on `turn.start`, and becomes
+`idle` on the matching `turn.complete`. Completion of a different older turn
+cannot clear a newer one. `session.end` records `ended`. Command API receipts
+remain separate facts and do not claim that a turn stopped or an input ran.
+No command is returned by this Build slice. Durable command claims, retirement
+of uncertain submissions, pending-only withdrawal and runtime/adapter wiring
+remain subsequent work; missing execution receipts never authorize blind replay.
