@@ -120,13 +120,13 @@ export function getModelContextWindow(modelId: string): number | undefined {
 }
 
 const CODEX_BACKEND_CONTEXT_WINDOW_OVERRIDES: Partial<Record<CodexBridgeModelId, number>> = {
-  'gpt-6.1-sol': 500000,
-  'gpt-6-sol': 272000,
-  'gpt-6-astra': 272000,
-  'gpt-6-luna': 272000,
-  'gpt-5.6-sol': 272000,
-  'gpt-5.6-terra': 272000,
-  'gpt-5.6-luna': 272000,
+  'gpt-6.1-sol': 872000,
+  'gpt-6-sol': 872000,
+  'gpt-6-astra': 872000,
+  'gpt-6-luna': 872000,
+  'gpt-5.6-sol': 872000,
+  'gpt-5.6-terra': 872000,
+  'gpt-5.6-luna': 872000,
   'gpt-5.5': 272000,
   'gpt-5.3-codex': 272000,
   'gpt-5.4': 272000,
