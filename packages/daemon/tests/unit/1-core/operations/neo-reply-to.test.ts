@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import {
   createNeoIntakeOperation,
+  neoReplyAuthor,
   neoReplyFact,
   readNeoReply,
   repliedNeoRoute,
@@ -14,6 +15,7 @@ import {
 import type { Database } from '../../../../src/storage/database.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import { createNeoPublicationTable } from '../../../../src/storage/schema/m288-neo-publications.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration289 } from '../../../../src/storage/schema/m289-neo-conversation-asks.ts';
 import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
@@ -35,6 +37,7 @@ describe('neo.message.send replyTo', () => {
     runMigration283(mailbox.db);
     runMigration289(mailbox.db);
     runMigration387(mailbox.db);
+    createNeoPublicationTable(mailbox.db);
     for (const id of [root, holder])
       mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(id);
     repo = new NeoRepository(mailbox.db);
@@ -166,14 +169,49 @@ describe('neo.message.send replyTo', () => {
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
-  test('a reply to a message keeps the normal route', async () => {
+  test('a reply to a message goes to the session that wrote it, without the router', async () => {
+    const publicationId = '30000000-0000-4000-8000-000000000001';
+    const origin = { sessionId: holder, messageId: 'turn-1' };
+    mailbox.db
+      .prepare(
+        'INSERT INTO neo_publications (conversation_id, publication_id, payload_json, created_at) VALUES (?, ?, ?, ?)'
+      )
+      .run(
+        root.slice(4),
+        publicationId,
+        JSON.stringify({
+          conversationId: root.slice(4),
+          publicationId,
+          askOrigin: origin,
+          producerInput: origin,
+          shortText: 'Card is redone.',
+          fullText: 'Card is redone.',
+          links: [],
+        }),
+        new Date().toISOString()
+      );
+    const routed: string[] = [];
+    const router = async (text: string) => {
+      routed.push(text);
+      return { choice: null };
+    };
+    const reply = (requestId: string, id: string) =>
+      invokeOperation(
+        createOperationRegistry([createNeoIntakeOperation(db, repo, () => {}, router)]),
+        'neo.message.send',
+        { sessionId: root, requestId, content: 'Thanks', replyTo: { kind: 'message', id } },
+        human
+      );
     const id = crypto.randomUUID();
-    await send(id, 'Thanks', { kind: 'message', id: 'pub-1' });
+    await reply(id, publicationId);
     expect(prompt(id)).toMatchObject({
-      session_id: root,
-      replyTo: { kind: 'message', id: 'pub-1' },
+      session_id: holder,
+      replyTo: { kind: 'message', id: publicationId },
       message: { content: [{ type: 'text', text: 'Thanks' }] },
     });
+    const unknown = crypto.randomUUID();
+    await reply(unknown, 'pub-1');
+    expect([prompt(unknown).session_id, routed]).toEqual([root, ['Thanks']]);
   });
 });
 
@@ -186,10 +224,26 @@ describe('repliedNeoRoute', () => {
       question: null,
       todo: null,
     };
-    expect(repliedNeoRoute(reply, repo as never)).toEqual({
+    expect(repliedNeoRoute(neoReplyAuthor(reply, null), repo as never)).toEqual({
       reason: { choice: null, fallback: 'reply' },
     });
     expect(repliedNeoRoute(null, repo as never)).toEqual({ value: null });
+  });
+});
+
+describe('neoReplyAuthor', () => {
+  test("names the ask's owner, else the session that wrote the message", () => {
+    const ask = { sessionId: holder } as never;
+    const reply = {
+      replyTo: { kind: 'question' as const, id: 'q' },
+      ask,
+      question: null,
+      todo: null,
+    };
+    const publication = { producerInput: { sessionId: 'neo:holder:c2' } };
+    expect(neoReplyAuthor(reply, publication)).toBe(holder);
+    expect(neoReplyAuthor(null, publication)).toBe('neo:holder:c2');
+    expect(neoReplyAuthor(null, null)).toBeNull();
   });
 });
 
