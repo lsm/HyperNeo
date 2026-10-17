@@ -135,6 +135,18 @@ describe('neo todo runner', () => {
     ]);
   });
 
+  test('a start a restart interrupted fails the todo on the next refresh', async () => {
+    const { store, runner, told, add } = setup();
+    const todo = add();
+    store.claimStart(todo, 2);
+    await runner.refresh(() => {});
+    expect(store.getTodo(todo.id)).toMatchObject({
+      state: 'failed',
+      reason: 'Start was interrupted; a session may have started without being recorded.',
+    });
+    expect(told).toEqual([expect.stringContaining('Start was interrupted')]);
+  });
+
   test('a start the driver refuses fails the todo with its reason', async () => {
     const { db, store, add, told } = setup();
     const todo = add();
