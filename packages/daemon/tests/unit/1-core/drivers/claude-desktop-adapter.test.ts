@@ -15,6 +15,7 @@ import {
   type ClaudeDesktopAdapterDeps,
   type ClaudeRecordCache,
   type ClaudeLiveSession,
+  claudeDirectInput,
   claudeInputEvidence,
   claudeTranscriptState,
   createClaudeDesktopAdapter,
@@ -23,7 +24,22 @@ import {
   reuseLiveSessions,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import { WorkDetailSchema } from '../../../../src/lib/drivers/types';
+import { claudeInboxText } from '../../../../src/lib/drivers/claude-inbox';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
+
+describe('claudeDirectInput', () => {
+  test.each([
+    ['a split emoji at the cut', `${'x'.repeat(199)}😀 and more\nsecond line`],
+    ['a quoted inbox tag', 'Quote <cross-session-message from="a"> back to me'],
+  ])('finds the queued copy of a message with %s', (_, message) => {
+    const queued = JSON.stringify({
+      type: 'queue-operation',
+      content: `<cross-session-message from="uds:/x.sock">\n${claudeInboxText(message)}\n</cross-session-message>`,
+    });
+    expect(claudeDirectInput([queued], 'in-1', message)).toBe('in-1');
+    expect(claudeDirectInput([queued], 'in-1', 'something else')).toBeUndefined();
+  });
+});
 
 function record(id: string, fields: Record<string, unknown>) {
   return { sessionId: `local_${id}`, cliSessionId: `cli-${id}`, ...fields };
@@ -223,6 +239,38 @@ describe('claude-desktop adapter against the app session records', () => {
       expect(await lost.send?.(ref, 'load "orders"', context)).toMatchObject({
         detail: expect.stringContaining('the relay failed: relay failed'),
       });
+    });
+
+    test('finds the transcript of a session whose record names no folder', async () => {
+      writeFileSync(
+        join(dir, 'acct-a/scope-1/local_c1.json'),
+        JSON.stringify(record('c1', { title: 'Quick chat' }))
+      );
+      const folder = join(dir, 'projects', '-somewhere-else');
+      mkdirSync(folder, { recursive: true });
+      const chat = join(folder, 'cli-c1.jsonl');
+      writeFileSync(chat, `${JSON.stringify({ type: 'user', uuid: 'older' })}\n`);
+      const live: ClaudeLiveSession[] = [
+        { sessionId: 'cli-c1', status: 'idle', name: 'Quick chat', owner: 'cli', pid: 1 },
+      ];
+      const driver = adapter(live, 0, undefined, undefined, async () => {
+        appendFileSync(chat, `${JSON.stringify({ type: 'user', uuid: 'in-c1' })}\n`);
+        return {
+          ok: true,
+          value: {
+            delivered: false,
+            unconfirmed: true,
+            receipt: { executionId: 'cli-c1', inputId: 'in-c1' },
+          },
+        };
+      });
+      expect(
+        await driver.send?.({ adapter: 'claude-desktop', id: 'local_c1' }, 'hi', context)
+      ).toEqual({
+        ok: true,
+        value: { delivered: true, receipt: { executionId: 'cli-c1', inputId: 'in-c1' } },
+      });
+      expect(spawned).toEqual([]);
     });
 
     test('a relay that never shows up and an expired CLI login are reported as such', async () => {

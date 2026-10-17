@@ -45,6 +45,7 @@ import {
 import { matchChatsBy } from './match-chats.ts';
 import { claudeOpenedPrs } from './opened-prs.ts';
 import { readTailLines } from './transcript-tail.ts';
+import { claudeInboxText } from './claude-inbox.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
 import {
   readClaudeSessionOwner,
@@ -577,7 +578,8 @@ export function claudeRelayPrompt(name: string, message: string): string {
 type ClaudeReceipt = NonNullable<WorkDelivery['receipt']>;
 type ClaudeInputEvidence = NonNullable<WorkDetail['inputEvidence']>;
 
-const messageOpening = (message: string) => message.trim().split('\n')[0].slice(0, 200);
+const messageOpening = (message: string) =>
+  JSON.stringify(Array.from(message.trim().split('\n')[0]).slice(0, 200).join('')).slice(1, -1);
 
 function parseClaudeEntry(line: string): (ClaudeTranscriptEntry & { uuid?: unknown }) | null {
   try {
@@ -593,7 +595,7 @@ export function claudeDirectInput(
   inputId: string,
   message: string
 ): string | undefined {
-  const opening = JSON.stringify(messageOpening(message)).slice(1, -1);
+  const opening = messageOpening(claudeInboxText(message));
   return lines.some((line) => {
     const entry = parseClaudeEntry(line);
     return entry?.uuid === inputId || (entry?.type === 'queue-operation' && line.includes(opening));
@@ -606,7 +608,7 @@ export function claudeRelayedInput(
   lines: readonly string[],
   message: string
 ): string | null | undefined {
-  const opening = JSON.stringify(messageOpening(message)).slice(1, -1);
+  const opening = messageOpening(message);
   const hits = lines
     .filter((line) => line.includes('cross-session-message') && line.includes(opening))
     .map(parseClaudeEntry);
@@ -708,6 +710,19 @@ export function claudeCliFailure(output: { stdout?: string; stderr?: string }, f
   return reject('not_delivered', text || fallback);
 }
 
+async function locateClaudeTranscript(
+  projectsDir: string,
+  record: ClaudeTranscriptLocation
+): Promise<string | null> {
+  const known = claudeTranscriptPath(projectsDir, record);
+  if (known || !record.cliSessionId) return known;
+  for (const folder of await listDir(projectsDir)) {
+    const candidate = join(projectsDir, folder, `${record.cliSessionId}.jsonl`);
+    if (await transcriptSize(candidate)) return candidate;
+  }
+  return null;
+}
+
 async function transcriptSize(path: string | null): Promise<number> {
   if (!path) return 0;
   return stat(path).then(
@@ -746,12 +761,12 @@ async function relayClaudeMessage(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
   message: string,
+  path: string | null,
   deps: ClaudeDesktopAdapterDeps
 ): Promise<Result<string | null>> {
   const name = liveSessions.find((session) => session.sessionId === record.cliSessionId)?.name;
   if (!name || liveSessions.filter((session) => session.name === name).length > 1)
     return reject('not_delivered', `${record.title} has no unique name to relay a message to.`);
-  const path = claudeTranscriptPath(deps.projectsDir, record);
   const before = await transcriptSize(path);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -809,7 +824,7 @@ async function sendOwnedClaudeMessage(
     return reject('unsupported', 'The direct Claude inbox transport is unavailable.');
   if (!context)
     return reject('unsupported', 'The Claude inbox requires a session reply destination.');
-  const path = claudeTranscriptPath(deps.projectsDir, record);
+  const path = await locateClaudeTranscript(deps.projectsDir, record);
   const before = await transcriptSize(path);
   const direct = await deps.sendInbox(record.cliSessionId, message, context);
   const receipt = direct.ok ? direct.value.receipt : undefined;
@@ -822,7 +837,7 @@ async function sendOwnedClaudeMessage(
     ))
   )
     return { ok: true, value: { delivered: true, receipt } };
-  const relayed = await relayClaudeMessage(record, liveSessions, message, deps);
+  const relayed = await relayClaudeMessage(record, liveSessions, message, path, deps);
   if (relayed.ok)
     return {
       ok: true,
