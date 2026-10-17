@@ -34,6 +34,7 @@
     "packages/web": {
       "entry": [
         "src/client.tsx",
+        "src/neo/client.tsx",
         "src/queue-preview.tsx",
         "src/index.ts",
         "src/server-prod.ts",

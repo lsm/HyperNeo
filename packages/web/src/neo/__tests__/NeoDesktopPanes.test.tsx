@@ -1,12 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { URL as NodeURL } from 'node:url';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
-import { withNeoViews } from './neo-test-views.ts';
+import { testAskEntry, testTodo } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
@@ -58,27 +57,17 @@ afterEach(() => {
 });
 
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
-const work = (id: string, status: NeoWork['status']): NeoWork => ({
-  id,
-  status,
-  requestKey: id,
-  projectId: 'a',
-  originSessionId: root,
-  originMessageId: `ask-${id}`,
-  title: `Fictional ${id}`,
-  instruction: `Brief ${id}`,
-  sessionId: null,
-  targetSessionId: null,
-  report: status === 'reported' ? '**Fictional report**' : null,
-  createdAt: 1,
-  updatedAt: 1,
-});
 function mount(publicMode = true, status = 'ready') {
   const snapshot = {
     ok: true,
     sessionId: root,
     projects: [],
-    work: [work('proposal', 'proposed'), work('failure', 'failed'), work('result', 'reported')],
+    work: [],
+    todoAsks: [
+      testAskEntry('proposal', 'Fictional proposal'),
+      testAskEntry('failure', 'Fictional failure', { state: 'dropped' }),
+      testAskEntry('result', 'Fictional result', { state: 'done' }),
+    ],
     consultations: [],
   };
   const publicView = {
@@ -109,13 +98,12 @@ function mount(publicMode = true, status = 'ready') {
     error: null,
     setError: vi.fn(),
     open: vi.fn(),
-    act: vi.fn(),
     send: vi.fn(),
     retry: vi.fn(),
     asks: { retry: vi.fn() },
     publications: { refresh: vi.fn() },
   });
-  useNeoMock.mockImplementation(() => withNeoViews(model.value));
+  useNeoMock.mockImplementation(() => model.value);
   return { ...render(<NeoLive />), model };
 }
 
@@ -127,9 +115,12 @@ describe('Neo desktop panes', () => {
         ...model.value,
         snapshot: {
           ...model.value.snapshot,
-          work: [
-            work('proposal', 'proposed'),
-            { ...work('result', 'reported'), sessionId: 'result-session' },
+          todoAsks: [
+            testAskEntry('proposal', 'Fictional proposal'),
+            testAskEntry('result', 'Fictional result', {
+              state: 'done',
+              todos: [testTodo('result', { state: 'done', link: '/session/result-session' })],
+            }),
           ],
         },
       };
@@ -143,7 +134,7 @@ describe('Neo desktop panes', () => {
       name: 'Draft',
     }) as HTMLTextAreaElement;
     fireEvent.input(draft, { target: { value: 'Keep my fictional draft' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Open chat for Fictional result' }));
+    fireEvent.click(screen.getByRole('button', { name: '打开 Todo result' }));
     expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('result-session');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
     expect(container.querySelector('.neo-chat-rail')).toBe(chat);
@@ -155,8 +146,6 @@ describe('Neo desktop panes', () => {
     expect(screen.queryByTestId('neo-chat-panel')).toBeNull();
     expect(screen.getByRole('region', { name: 'Work scenes' })).toBe(list);
     expect(within(list).getByRole('article', { name: 'Fictional proposal' })).toBeTruthy();
-    expect(within(list).queryByRole('button', { name: 'Start work' })).toBeNull();
-    expect(model.value.act).not.toHaveBeenCalled();
   });
 
   it('uses the chat scroll owner only at the actual desktop boundary and preserves a reader position', () => {
@@ -361,7 +350,7 @@ describe('Neo desktop panes', () => {
     });
     const view = model.value.snapshot;
     act(() => {
-      model.value = { ...model.value, snapshot: { ...view, work: [] } };
+      model.value = { ...model.value, snapshot: { ...view, todoAsks: [] } };
     });
     main.scrollTop = 375;
     fireEvent.scroll(main);
@@ -381,7 +370,7 @@ describe('Neo desktop panes', () => {
     });
     expect(chat.scrollTop).toBe(200);
     act(() => {
-      model.value = { ...model.value, snapshot: { ...view, work: [] } };
+      model.value = { ...model.value, snapshot: { ...view, todoAsks: [] } };
     });
     expect(main.scrollTop).toBe(375);
   });

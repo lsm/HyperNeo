@@ -1,13 +1,10 @@
-import type {
-  NeoConsultation,
-  NeoConsultationWaiter,
-  NeoWork,
-} from '@hyperneo/shared/types/neo-context';
+import type { NeoConsultation, NeoConsultationWaiter } from '@hyperneo/shared/types/neo-context';
 import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
+import { testAskEntry } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
@@ -65,21 +62,6 @@ const waiting = (): NeoConsultationWaiter => ({
   status: 'queued',
   createdAt: 2,
 });
-const work: NeoWork = {
-  id: 'pending',
-  requestKey: 'work-pending',
-  projectId: null,
-  originSessionId: root,
-  originMessageId: 'work-ask',
-  title: 'Fictional execution proposal',
-  instruction: 'Fictional work brief',
-  status: 'proposed',
-  sessionId: null,
-  targetSessionId: null,
-  report: null,
-  createdAt: 3,
-  updatedAt: 3,
-};
 
 function mount(publicMode = true) {
   const snapshot = {
@@ -93,7 +75,8 @@ function mount(publicMode = true) {
       createdAt: 1,
       updatedAt: 1,
     })),
-    work: [work],
+    work: [],
+    todoAsks: [testAskEntry('waiting', 'Fictional execution proposal', { state: 'waiting' })],
     consultations: [
       consultation('pending', 'pending'),
       consultation('reported', 'reported'),
@@ -130,7 +113,6 @@ function mount(publicMode = true) {
     error: null,
     setError: vi.fn(),
     open: vi.fn(),
-    act: vi.fn(),
     send: vi.fn(),
     retry: vi.fn(),
     asks: { retry: vi.fn() },
@@ -145,7 +127,7 @@ function mount(publicMode = true) {
 
 describe('Neo public mixed consultation scenes', () => {
   it('lists no context check in any scene group, whatever its status', () => {
-    const { container, model } = mount();
+    const { container } = mount();
     expect(container.querySelector('[data-consultation-open]')).toBeNull();
     expect(screen.getByRole('region', { name: 'Needs your attention' }).textContent).toContain(
       'Needs your attention · 1'
@@ -154,15 +136,13 @@ describe('Neo public mixed consultation scenes', () => {
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
     expect(container.textContent).not.toContain('Context check');
     expect(container.textContent).not.toContain('Checking with');
-    expect(model.value.act).not.toHaveBeenCalled();
   });
 
   it('shows no pending check banner and only work scene groups in legacy mode', () => {
-    const { container, model } = mount(false);
+    const { container } = mount(false);
     expect(screen.getByRole('region', { name: 'Work scenes' })).toBeTruthy();
     expect(container.textContent).not.toContain('Checking with');
     expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
-    expect(model.value.act).not.toHaveBeenCalled();
   });
 });

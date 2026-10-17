@@ -3,7 +3,7 @@ import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { withNeoViews } from './neo-test-views.ts';
+import { testAskEntry, testTodo } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
@@ -48,26 +48,16 @@ const project = (id: string) => ({
 const snapshot: NeoSnapshot = {
   ok: true,
   cards: [],
-  consultations: [],
   askViews: [],
+  consultations: [],
   sessionId: 'root',
   projects: [project('a'), project('b')],
-  work: [
-    {
-      id: 'w-queued',
-      requestKey: 'w',
-      projectId: 'a',
-      originSessionId: 'root',
-      originMessageId: 'ask-w',
-      title: 'Title w',
-      instruction: 'Instruction w',
-      targetSessionId: null,
-      sessionId: 'w-session',
-      status: 'queued',
-      report: null,
-      createdAt: 20,
-      updatedAt: 21,
-    },
+  work: [],
+  todoAsks: [
+    testAskEntry('ask-w', 'Title w', {
+      state: 'doing',
+      todos: [testTodo('w', { state: 'doing', status: '在做', link: '/session/w-session' })],
+    }),
   ],
 };
 
@@ -104,7 +94,7 @@ const renderLive = () => {
     store,
   };
   const state = signal(model);
-  useNeoMock.mockImplementation(() => withNeoViews(state.value));
+  useNeoMock.mockImplementation(() => state.value);
   const result = render(<NeoLive />);
   return { ...result, state, model, open };
 };
@@ -171,7 +161,7 @@ describe('Neo floating controls', () => {
     renderLive();
     fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'hold this' } });
     const card = screen.getByRole('article', { name: 'Title w' });
-    fireEvent.click(within(card).getByText('Handed to HyperNeo'));
+    fireEvent.click(within(card).getByRole('button', { name: '打开 Todo w' }));
     expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('w-session');
     expect(screen.getByRole('article', { name: 'Title w', hidden: true })).toBe(card);
     expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');

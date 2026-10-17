@@ -16,12 +16,4 @@ const shortApps: Record<string, string> = {
   opencode: 'OpenCode',
 };
 
-const logos: Record<string, string> = {
-  'claude-desktop': 'anthropic',
-  'codex-desktop': 'anthropic-codex',
-};
-
 export const neoAppLabel = (adapter: string): string => shortApps[adapter] ?? adapter;
-
-export const neoAppLogo = (adapter: string | null | undefined): string | undefined =>
-  adapter ? logos[adapter] : undefined;

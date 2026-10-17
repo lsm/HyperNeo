@@ -1,5 +1,5 @@
 import type { MessageHub, SessionState } from '@hyperneo/shared';
-import type { NeoAsk, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,7 +8,6 @@ import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
 import { createNeoIntakeClient, type NeoPendingAsk } from '../neo-intake.ts';
 import type { NeoPublicConversation } from '../public-conversation.ts';
-import { testAskView } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
@@ -204,47 +203,56 @@ describe('Neo quote reply through live chat and durable intake', () => {
         addEventListener() {},
         removeEventListener() {},
       }));
-      const ask: NeoAsk = {
-        id: 'question-ask',
-        requestKey: 'question-ask',
-        projectId: null,
-        originSessionId: root,
-        originMessageId: 'original-ask',
-        title: 'Choose a repo',
-        ask: 'Investigate the repository',
-        doneWhen: 'Repository selected',
-        doneSource: 'human',
-        status: 'waiting',
-        outcome: null,
-        workIds: [],
-        createdAt: 1,
-        updatedAt: 1,
-        settledAt: null,
-      };
       const previous = useNeoMock.getMockImplementation()!;
       useNeoMock.mockImplementation(() => {
         const model = previous();
         return {
           ...model,
-          askDetailFailed: () => false,
-          askDetailEpoch: 0,
           snapshot: {
             ...model.snapshot,
-            asks: [ask],
-            askViews: [
-              testAskView(ask, {
-                needsYou: true,
-                humanActions: [
-                  { kind: 'question', itemId: 'i3', question: 'Which repo?', options: [] },
+            todoAsks: [
+              {
+                ask: {
+                  id: 'question-ask',
+                  projectId: null,
+                  sessionId: root,
+                  originMessageId: 'original-ask',
+                  title: 'Choose a repo',
+                  request: 'Investigate the repository',
+                  status: 'open',
+                  outcome: null,
+                  createdAt: 1,
+                  updatedAt: 1,
+                  settledAt: null,
+                },
+                state: 'waiting',
+                todos: [],
+                questions: [
+                  {
+                    id: 'q3',
+                    askId: 'question-ask',
+                    text: 'Which repo?',
+                    kind: 'reply',
+                    options: null,
+                    multiple: false,
+                    noLabel: null,
+                    yesLabel: null,
+                    startTodos: null,
+                    state: 'open',
+                    answer: null,
+                    answeredBy: null,
+                    answeredAt: null,
+                    createdAt: 1,
+                  },
                 ],
-              }),
+              },
             ],
           },
         };
       });
       sessionId.value = null;
       render(<NeoLive />);
-      expect(screen.getByText('在聊天里回复').closest('button')?.disabled).toBe(true);
+      expect(screen.queryByText('在聊天里回复')).toBeNull();
       sessionId.value = root;
       const input = (await screen.findByRole('textbox')) as HTMLTextAreaElement;
       type(draft);
@@ -268,9 +276,10 @@ describe('Neo quote reply through live chat and durable intake', () => {
       if (!draft) type('Use lsm/HyperNeo.');
       submit();
       await waitFor(() => expect(calls()).toHaveLength(1));
-      expect(calls()[0][1].input.content).toBe(
-        `Replying to Neo:\n> Which repo?\n\n${draft || 'Use lsm/HyperNeo.'}`
-      );
+      expect(calls()[0][1].input).toMatchObject({
+        content: draft || 'Use lsm/HyperNeo.',
+        replyTo: { kind: 'question', id: 'q3' },
+      });
     }
   );
 

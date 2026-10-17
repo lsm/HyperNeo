@@ -1,12 +1,9 @@
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
 import { NeoConversation } from '../NeoConversation.tsx';
-import { testCard } from './neo-test-views.ts';
-import { NeoWorkCard } from '../NeoWorkCard.tsx';
 
 const sendMessage = vi.hoisted(() => vi.fn());
 const interrupt = vi.hoisted(() => vi.fn());
@@ -41,20 +38,6 @@ function makeStore(): SessionStore {
     refresh: vi.fn(),
   } as unknown as SessionStore;
 }
-const work: NeoWork = {
-  id: 'work',
-  requestKey: 'request',
-  projectId: null,
-  originSessionId: 'neo',
-  originMessageId: null,
-  title: 'Draft the agenda',
-  instruction: 'Eight people, Sunday. Do not book anything.',
-  sessionId: null,
-  status: 'proposed',
-  report: null,
-  createdAt: 1,
-  updatedAt: 1,
-};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -69,87 +52,6 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo MVP controls', () => {
-  it('proposals show their brief without work-card decision buttons', () => {
-    const action = vi.fn();
-    render(<NeoWorkCard work={work} card={testCard(work)} />);
-    expect(action).not.toHaveBeenCalled();
-    expect(screen.getByText(work.instruction)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
-  });
-  it('shows no work-card decision controls while busy and leaves reports to the work chat', () => {
-    const action = vi.fn();
-    const view = render(<NeoWorkCard work={work} card={testCard(work)} />);
-    expect(screen.queryByRole('button', { name: 'Starting…' })).toBeNull();
-    expect(action).not.toHaveBeenCalled();
-    view.rerender(
-      <NeoWorkCard
-        work={{
-          ...work,
-          status: 'reported',
-          sessionId: 'worker-one',
-          report: 'A draft, not a booking.',
-        }}
-        card={testCard({
-          ...work,
-          status: 'reported',
-          sessionId: 'worker-one',
-          report: 'A draft, not a booking.',
-        })}
-      />
-    );
-    expect(screen.getByText('Reply received')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
-    expect(screen.queryByRole('link')).toBeNull();
-    expect(screen.queryByText('A draft, not a booking.')).toBeNull();
-  });
-  it('shows existing-chat work status without card actions', () => {
-    const action = vi.fn();
-    const view = render(
-      <NeoWorkCard
-        work={{ ...work, targetSessionId: 'project-chat' }}
-        card={testCard({ ...work, targetSessionId: 'project-chat' })}
-      />
-    );
-    expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
-    view.rerender(
-      <NeoWorkCard
-        work={{
-          ...work,
-          targetSessionId: 'project-chat',
-          sessionId: 'project-chat',
-          status: 'queued',
-        }}
-        card={testCard({
-          ...work,
-          targetSessionId: 'project-chat',
-          sessionId: 'project-chat',
-          status: 'queued',
-        })}
-      />
-    );
-    expect(screen.getByText('Handed to HyperNeo')).toBeTruthy();
-    expect(screen.queryAllByRole('button')).toHaveLength(0);
-    expect(action).not.toHaveBeenCalled();
-    view.rerender(
-      <NeoWorkCard
-        work={{
-          ...work,
-          targetSessionId: 'project-chat',
-          sessionId: 'project-chat',
-          status: 'cancelled',
-        }}
-        card={testCard({
-          ...work,
-          targetSessionId: 'project-chat',
-          sessionId: 'project-chat',
-          status: 'cancelled',
-        })}
-      />
-    );
-    expect(screen.getByText('Stopped')).toBeTruthy();
-    expect(screen.queryAllByRole('button')).toHaveLength(0);
-  });
   it('exposes pending questions and runtime failures instead of hiding them in tool detail', () => {
     const agentState = signal<{ status: string; pendingQuestion?: { toolUseId: string } }>({
       status: 'idle',
