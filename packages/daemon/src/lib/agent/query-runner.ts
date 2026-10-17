@@ -1407,6 +1407,12 @@ export class QueryRunner {
           } catch (error) {
             await this.handleStreamMessageError(message, error, queryGeneration, attemptToken);
           }
+          if (
+            holderTurn &&
+            message.type === 'result' &&
+            (!message.origin || message.origin.kind === 'human')
+          )
+            holderTurn.dispose();
 
           nextPromise = sdkIterator.next();
         }
@@ -2279,7 +2285,7 @@ export class QueryRunner {
       if (viewed) fresh = false;
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
-      if (holderTurn) return;
+      if (holderTurn) return await holderTurn.ended;
     }
   }
 

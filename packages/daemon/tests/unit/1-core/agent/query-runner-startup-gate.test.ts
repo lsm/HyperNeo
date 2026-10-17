@@ -348,24 +348,26 @@ describe('QueryRunner startup gate', () => {
       await runner.start();
       await waitFor(() => spawned.length === 1);
       expect((await inputs[0].next()).value?.uuid).toBe('neo-consult:a:request');
-      expect((await inputs[0].next()).done).toBe(true);
+      const firstEnd = inputs[0].next();
       await first;
       expect(identities[0]()?.consultationId).toBe('a');
       expect(queue.size()).toBe(1);
       deliverFirstMessage(spawned[0]);
       await completeQuery(spawned[0], waitFor);
       await ctx.queryPromise;
+      expect((await firstEnd).done).toBe(true);
       expect(identities[0]()?.isLive()).toBe(false);
       await runner.start();
       await waitFor(() => spawned.length === 2);
       expect((await inputs[1].next()).value?.uuid).toBe('human-input');
-      expect((await inputs[1].next()).done).toBe(true);
+      const secondEnd = inputs[1].next();
       await second;
       expect(identities[1]()?.human).toBe(true);
       expect(identities[1]()?.isLive()).toBe(true);
       expect(reconciled).not.toHaveBeenCalled();
       ctx.queryAbortController?.abort();
       await ctx.queryPromise;
+      expect((await secondEnd).done).toBe(true);
       expect(identities[1]()?.isLive()).toBe(false);
       sql.prepare("UPDATE neo_consultations SET status = 'failed' WHERE id = 'a'").run();
       const stale = queue.enqueueWithId('neo-consult:a:request', 'Stale', false, {

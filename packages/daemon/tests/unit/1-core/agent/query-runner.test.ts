@@ -470,10 +470,7 @@ describe('QueryRunner', () => {
                   human: identity.human,
                   live: identity.isLive(),
                 });
-              const next = await feed.next();
-              endings.push(!!next.done);
-              if (!next.done) received.push(next.value.uuid);
-              if (!next.done) await feed.return?.();
+              const pending = feed.next();
               yield emit({
                 type: 'assistant',
                 uuid: `answer-${first.value!.uuid}`,
@@ -489,6 +486,10 @@ describe('QueryRunner', () => {
                 neoInputOrigin: { sessionId: 'forged', messageId: 'ask-B' },
                 neoAskOrigin: { sessionId: 'forged', messageId: 'ask-B' },
               } as unknown as SDKMessage);
+              const next = await pending;
+              endings.push(!!next.done);
+              if (!next.done) received.push(next.value.uuid);
+              if (!next.done) await feed.return?.();
             },
           })
         );

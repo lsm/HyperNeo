@@ -164,11 +164,12 @@ describe.each(['neo', 'project'] as const)('AgentSession %s coordinator handoff'
             const feed = (args.prompt as AsyncIterable<{ uuid: string }>)[Symbol.asyncIterator]();
             const first = await feed.next();
             received.push(first.value!.uuid);
-            expect((await feed.next()).done).toBe(true);
+            const end = feed.next();
             const initial = received.length === 1;
             (initial ? firstReady : secondReady).resolve();
             await (initial ? finishFirst : finishSecond).promise;
             yield { type: 'result', subtype: 'success', uuid: crypto.randomUUID() };
+            expect((await end).done).toBe(true);
           } finally {
             active--;
           }
