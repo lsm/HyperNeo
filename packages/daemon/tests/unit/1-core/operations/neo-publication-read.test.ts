@@ -65,13 +65,9 @@ describe('authored publication reads', () => {
     expect(requirePublicationReader(page, { source: 'rpc' })).toEqual({
       reason: { ok: false, reason: 'human_only' },
     });
-    expect(requirePublicationConversation(page, root)).toEqual({ value: page });
-    for (const binding of [
-      null,
-      { ...root, sessionId: `neo:${foreignId}` },
-      { ...root, projectId: 'research' },
-    ]) {
-      expect(requirePublicationConversation(page, binding)).toEqual({
+    expect(requirePublicationConversation(page, conversationId)).toEqual({ value: page });
+    for (const conversation of [null, foreignId]) {
+      expect(requirePublicationConversation(page, conversation)).toEqual({
         reason: { ok: false, reason: 'conversation_not_found' },
       });
     }

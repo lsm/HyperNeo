@@ -1728,7 +1728,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       lastHumanAt: () => routingLog.recent(1)[0]?.askedAt ?? null,
       reorganize: () => reorganizeTopics({ apply: 'unattended' }),
       digest: async (run, since) => {
-        const root = neoService.repo.getBindingForProject(null)?.sessionId;
+        const root = neoService.repo.defaultBinding()?.sessionId;
         if (root)
           await neoService.deliverForward(
             root,

@@ -428,6 +428,25 @@ export class NeoRepository {
       .get(projectId) as NeoBinding | null;
   }
 
+  defaultBinding(): NeoBinding | null {
+    return this.getBindingForProject(null);
+  }
+
+  conversationId(): string | null {
+    const stored = this.db.prepare('SELECT id FROM neo_conversation').get() as {
+      id: string;
+    } | null;
+    if (stored) return stored.id;
+    const session = this.defaultBinding()?.sessionId;
+    if (!session?.startsWith('neo:')) return null;
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO neo_conversation (singleton, id, created_at) VALUES (1, ?, ?)'
+      )
+      .run(session.slice(4), Date.now());
+    return (this.db.prepare('SELECT id FROM neo_conversation').get() as { id: string }).id;
+  }
+
   listProjectBindings(projectId?: string): (NeoBinding & { kind: 'project'; projectId: string })[] {
     return this.db
       .prepare(`SELECT ${bindingColumns} FROM neo_session_bindings WHERE kind = 'project'

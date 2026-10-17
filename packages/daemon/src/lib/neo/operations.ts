@@ -240,6 +240,11 @@ const SnapshotOk = z.object({
   ok: z.literal(true),
   sessionId: z.string().nullable(),
   projects: z.array(Project),
+  conversationId: z.string().nullable().optional(),
+  defaultSessionId: z.string().nullable().optional(),
+  neoSessions: z
+    .array(z.object({ sessionId: z.string(), projectId: z.string().nullable() }))
+    .optional(),
   projectRedirects: z.array(z.object({ sourceId: z.string(), targetId: z.string() })).optional(),
   projectFacts: z
     .array(z.object({ reference: z.string(), projectId: z.string().nullable().optional() }))
@@ -638,10 +643,10 @@ export const NEO_HUMAN_TURN_REFUSAL =
   'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.';
 
 function readNeoAskTold(service: NeoService, ask: NeoAsk): NonNullable<NeoSnapshot['told']> {
-  const root = service.repo.getBindingForProject(null)?.sessionId;
-  if (!root?.startsWith('neo:')) return [];
+  const conversation = service.repo.conversationId();
+  if (!conversation) return [];
   return service.publications
-    .toldForAsk(root.slice(4), ask)
+    .toldForAsk(conversation, ask)
     .slice(-NEO_ASK_TOLD_LIMIT)
     .map(({ publicationId, createdAt, shortText, triggerId }) => ({
       publicationId,
@@ -711,7 +716,7 @@ function askNeoProjectQuestion(
   question: NeoProjectQuestion,
   attempt: number
 ): boolean {
-  const root = service.repo.getBindingForProject(null)?.sessionId;
+  const root = service.repo.defaultBinding()?.sessionId;
   if (!root) return false;
   const [source, target] = [question.sourceId, question.targetId].map(
     (id) => service.repo.getProject(id)?.title ?? id
@@ -762,7 +767,7 @@ export function neoReorganizeRuntime(
 ): NeoReorganizeRuntime {
   return {
     getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
-    rootSessionId: () => service.repo.getBindingForProject(null)?.sessionId ?? null,
+    rootSessionId: () => service.repo.defaultBinding()?.sessionId ?? null,
     liveAsks: () => service.askRecords.listLive(),
     ask: (id) => service.askRecords.get(id),
     route: (ask) => router(`${ask.title}\n${ask.ask}`),
@@ -823,7 +828,7 @@ export function neoReorganizeRuntime(
     mirroredAliases: async (folders) => {
       const caller = {
         source: 'internal' as const,
-        sessionId: service.repo.getBindingForProject(null)?.sessionId,
+        sessionId: service.repo.defaultBinding()?.sessionId,
         role: 'neo' as const,
       };
       const places: PlaceGroup[] = [];
@@ -998,6 +1003,14 @@ export function createNeoOperations(service: NeoService) {
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
       ...(caller.source === 'rpc'
         ? {
+            conversationId: service.repo.conversationId(),
+            defaultSessionId: service.repo.defaultBinding()?.sessionId ?? null,
+            neoSessions: [
+              service.repo.defaultBinding(),
+              ...service.repo.listProjectBindings(),
+            ].flatMap((binding) =>
+              binding ? [{ sessionId: binding.sessionId, projectId: binding.projectId }] : []
+            ),
             projectRedirects: service.repo.projectMerges.redirects(),
             routeFailure:
               new NeoRoutingLogRepository(service.db.getDatabase()).latestFailure() ?? undefined,
@@ -1148,7 +1161,7 @@ export function createNeoOperations(service: NeoService) {
       'result:track'
     )
     .pipe(
-      () => requireNeoTrackRoot(service.repo.getBindingForProject(null)?.sessionId),
+      () => requireNeoTrackRoot(service.repo.defaultBinding()?.sessionId),
       'caller',
       'result:track'
     )
@@ -1565,7 +1578,7 @@ export function createNeoOperations(service: NeoService) {
     createNeoPublicationOperation(service.publish),
     ...createNeoPublicationChangeOperations({
       getBinding: (id) => service.repo.getBindingBySession(id),
-      getRootBinding: () => service.repo.getBindingForProject(null),
+      getRootBinding: () => service.repo.defaultBinding(),
       publications: service.publications,
       isConsultationReturn: (conversationId, publicationId) =>
         service.consultations.returnsPublication(conversationId, publicationId),
@@ -1600,10 +1613,8 @@ export function createNeoOperations(service: NeoService) {
           )
         ).sessionId,
       askContent: (ask) => {
-        const root = service.repo.getBindingForProject(null)?.sessionId;
-        const stored = root?.startsWith('neo:')
-          ? service.asks.find(root.slice(4), ask.messageId)
-          : null;
+        const conversation = service.repo.conversationId();
+        const stored = conversation ? service.asks.find(conversation, ask.messageId) : null;
         return stored?.askOrigin.sessionId === ask.sessionId &&
           stored.askOrigin.messageId === ask.messageId
           ? stored.content

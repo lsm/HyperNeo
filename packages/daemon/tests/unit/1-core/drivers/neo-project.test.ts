@@ -45,7 +45,7 @@ describe('fileNeoSessions', () => {
         updateSession: (id, update) => updates.push([id, update]),
       },
       {
-        getBindingForProject: () => ({ sessionId: 'neo:root', kind: 'neo', projectId: null }),
+        defaultBinding: () => ({ sessionId: 'neo:root', kind: 'neo', projectId: null }),
         listProjectBindings: () =>
           ['neo:inbox', 'neo:plans', 'neo:gone'].map((sessionId) => ({
             sessionId,

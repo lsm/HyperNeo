@@ -617,7 +617,7 @@ export function createNeoRouter(
       return readNeoSectionFacts(text, facts, projects);
     },
     holders: async () => {
-      const root = repo.getBindingForProject(null)?.sessionId;
+      const root = repo.defaultBinding()?.sessionId;
       const settings = db.getGlobalSettings();
       const opening = effectiveNeoPreference(
         settings.neo?.preferences,
@@ -671,7 +671,7 @@ export function createNeoRouter(
     inbox: openHolder ? () => openNeoDefaultSession(repo, openHolder) : undefined,
     inboxRunnable: async () => {
       if (process.env.NODE_ENV === 'test') return true;
-      const binding = repo.getBindingForProject(NEO_INBOX_ID) ?? repo.getBindingForProject(null);
+      const binding = repo.getBindingForProject(NEO_INBOX_ID) ?? repo.defaultBinding();
       const provider =
         (binding ? db.getSession(binding.sessionId)?.config.provider : undefined) ?? 'anthropic';
       return getProviderService()
