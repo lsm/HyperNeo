@@ -1,3 +1,4 @@
+import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoAsk,
@@ -154,3 +155,11 @@ export function isNeoAskQuestionItem(
 }
 
 export type NeoAskItemAction = NeoAskHumanAction;
+
+export function neoAskEntryGroup(entry: Pick<NeoAskEntry, 'state'>): NeoSceneGroup {
+  return entry.state === 'waiting'
+    ? 'attention'
+    : entry.state === 'done' || entry.state === 'dropped'
+      ? 'outcomes'
+      : 'running';
+}

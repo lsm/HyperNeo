@@ -1,10 +1,16 @@
 import type { MessageHub, MessageImage } from '@hyperneo/shared';
+import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 export const NEO_SEND_TIMEOUT_MS = 90_000;
 
-export type NeoQuote = { author: 'You' | 'Neo'; text: string; anchor: string };
+export type NeoQuote = {
+  author: 'You' | 'Neo';
+  text: string;
+  anchor: string;
+  replyTo?: NeoReplyTo;
+};
 export type NeoDraft = {
   sessionId: string;
   text: string;
@@ -109,7 +115,7 @@ const thumbnailsMade = new WeakMap<Submission, Promise<NeoThumbnail[]>>();
 export function neoDraftThumbnails(submission: Submission): Promise<NeoThumbnail[]> {
   const made = thumbnailsMade.get(submission);
   if (made) return made;
-  const offset = submission.text.trim() || submission.quote ? 1 : 0;
+  const offset = submission.text.trim() || (submission.quote && !submission.quote.replyTo) ? 1 : 0;
   const making = Promise.all(
     (submission.images ?? []).map((image, index) =>
       neoPhotoThumbnail(image).then(
@@ -128,7 +134,7 @@ export function neoQuoteExcerpt(text: string): string {
 }
 
 function neoDraftText({ text, quote }: NeoDraft): string {
-  if (!quote) return text;
+  if (!quote || quote.replyTo) return text;
   const quoted = neoQuoteExcerpt(quote.text)
     .split('\n')
     .map((line) => (line ? `> ${line}` : '>'))
@@ -153,6 +159,7 @@ export function neoDraftPayload(submission: Submission, thumbnails: readonly Neo
         ]
       : text,
     ...(images?.length && thumbnails.length ? { thumbnails: [...thumbnails] } : {}),
+    ...(submission.quote?.replyTo ? { replyTo: submission.quote.replyTo } : {}),
   };
 }
 

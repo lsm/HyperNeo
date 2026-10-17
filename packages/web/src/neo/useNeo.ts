@@ -5,6 +5,7 @@ import type {
   NeoWorkingEvent,
   NeoWorkingSession,
 } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoQuestionAnswer } from '@hyperneo/shared/types/neo-ask';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { SessionStore } from '../lib/session-store.ts';
@@ -276,6 +277,26 @@ export function useNeo() {
     }
   }
 
+  async function answerQuestion(questionId: string, answer: NeoQuestionAnswer) {
+    if (busyWork) return;
+    setBusyWork(questionId);
+    setError('');
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.question.answer', {
+        questionId,
+        answer,
+      });
+      if (!result.ok) throw new Error(result.reason);
+      await refresh();
+    } catch (cause) {
+      if (alive.current)
+        setError(cause instanceof Error ? cause.message : 'That answer could not be sent.');
+    } finally {
+      if (alive.current) setBusyWork(null);
+    }
+  }
+
   async function answerAskItem(askId: string, itemId: string, choice: string) {
     if (busyWork) return;
     setBusyWork(itemId);
@@ -334,6 +355,7 @@ export function useNeo() {
     muteSession,
     tickAskItem,
     answerAskItem,
+    answerQuestion,
     send: intake.send,
     pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),
     retrySend: intake.retry,
