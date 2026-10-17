@@ -1002,6 +1002,24 @@ describe('NeoRepository.proposeWork', () => {
   });
 });
 
+describe('explicit report ownership', () => {
+  test('a prior branch claim cannot downgrade a report-named PR into competing ownership', () => {
+    const candidates = planNeoCardPrCandidates({
+      report: pull(102),
+      branch: [],
+      stored: [],
+      window: { start: 10, end: 20 },
+    });
+    const rows = [
+      claim({ workId: 'me', urlKey: pull(102).toLowerCase(), claim: 'branch', scoped: true }),
+      claim({ urlKey: pull(102).toLowerCase(), claim: 'branch', cardCreatedAt: 1, scoped: true }),
+    ];
+    expect(
+      planNeoCardPrOwnership({ id: 'me', createdAt: 10 }, candidates, rows, 30)[0]
+    ).toMatchObject({ claim: 'named', url: pull(102) });
+  });
+});
+
 describe('card lifetime PR recovery', () => {
   const kickoff = Date.parse('2026-10-17T00:00:00Z');
   const ended = Date.parse('2026-10-17T00:52:17Z');
