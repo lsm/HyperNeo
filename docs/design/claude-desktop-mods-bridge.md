@@ -1,6 +1,37 @@
 # Claude Desktop mods bridge
 
-## Controller before driver wiring
+## Daemon/adapter integration
+
+Daemon startup owns the explicitly configured mods driver and closes it before
+the other daemon resources. The Desktop adapter maps its `local_*` record to
+the external Claude session ID through the existing record/open-record gates,
+then delegates queue/stop/withdraw to the controller. Without enablement, its
+capabilities and native inbox behavior are unchanged. A configured but failed
+runtime logs the cause and returns unsupported controls; it never falls back
+to headless resume. Authenticated exchanges invoke durable status reporting.
+
+Plugin polling shares a one-second native discovery cache; command admission
+performs fresh native discovery, and endpoint registration is reread on every
+exchange. This avoids a CLI discovery process for every individual plugin poll.
+
+The plugin is a separate source artifact at
+`packages/daemon/claude-desktop-bridge`, not an automatic binary installation.
+Install/enable it through the supported Claude plugin workflow and its public
+user configuration. Restart the daemon with these explicit settings:
+
+```text
+HYPERNEO_CLAUDE_DESKTOP_MODS=1
+HYPERNEO_CLAUDE_DESKTOP_MODS_CONNECTION_FILE=/absolute/private/desktop-mods/connection.json
+```
+
+Set the plugin's `enabled` to `true` and `connectionFile` to the same absolute
+path. Leave both sides disabled to retain existing behavior. HyperNeo creates
+the private connection directory/file and never edits Desktop private settings.
+Installed Desktop UI sync, stop, restart and withdrawal-race acceptance still
+requires the unlocked Mac; real-socket tests with the shipped plugin do not
+claim that UI acceptance has happened.
+
+## Controller
 
 The controller reuses the verified native endpoint and local reply-destination
 gates. Queue/stop additionally require a recently authenticated plugin exchange
@@ -23,12 +54,11 @@ system/peer provenance. Session observation does not correlate a turn with a
 particular submitted prompt. Report-state markers and mailbox entries commit
 in the same SQLite transaction; queue/withdraw also include that report in
 their transaction. Replays/reopens do not repeat committed reports. Finalized
-commands do not subscribe their senders to unrelated future turns. This is a
-Build slice; daemon startup and adapter capability wiring follow separately.
+commands do not subscribe their senders to unrelated future turns.
 
 ## Explicit runtime lifecycle
 
-The runtime factory is built separately from driver wiring. It is off unless
+The runtime factory is off unless
 `HYPERNEO_CLAUDE_DESKTOP_MODS=1`. Enabling it also requires an absolute
 `HYPERNEO_CLAUDE_DESKTOP_MODS_CONNECTION_FILE` in a private, user-owned directory
 (for example a dedicated directory under HyperNeo's data area). The operator
@@ -55,9 +85,8 @@ ACK. Report failure causes retry; consumers must use stable identities when
 persisting reports. API resolution remains distinct from observed execution or
 turn termination. Native Desktop queued-message cancellation remains unsupported.
 
-These are the opt-in client and private transport Build slices of #7350. The
-durable outbox and driver wiring follow separately; installing these slices alone
-does not add driver capabilities. The verified persistent peer inbox from #7354
+The client, private transport, journal, outbox and controller were built in
+separate slices of #7350 before daemon/adapter wiring. The persistent inbox from #7354
 continues to carry send/steer and delayed replies without changing their origin.
 
 ## Public API boundary
@@ -86,7 +115,7 @@ CLI-engine verification does not substitute for installed Desktop/UI verificatio
 Nothing connects until the operator enables the plugin and sets both `enabled:
 true` and `connectionFile` through the plugin's documented `userConfig`. Their
 defaults are `false` and empty. The connection file names an absolute Unix socket
-and a pairing token of at least 32 characters. The daemon integration will own
+and a pairing token of at least 32 characters. The daemon integration owns
 and validate the private directory, socket and connection file. No existing
 Claude credential is read or reused; this plugin does not install itself or edit
 Desktop settings.
@@ -122,16 +151,15 @@ completion claim across process crashes.
 ## Withdrawal
 
 There is no public external cancellation API for Desktop's native prompt queue.
-The client rejects `withdraw` as `unsupported-command`. The following outbox
-slice will cancel only inputs still pending in the daemon's own durable outbox.
+The client rejects `withdraw` as `unsupported-command`. The controller cancels
+only inputs still pending in the daemon's own durable outbox.
 Once claimed/submitted, native withdrawal must remain unsupported or too late;
 it must not be reported as a successful cancellation.
 
 ## Private daemon transport
 
 `createClaudeDesktopModsServer` builds the private HTTP-over-UDS endpoint. It is
-exported for the later runtime Wire slice; it does not start automatically or
-advertise new adapter capabilities. Each explicit start creates a fresh private
+started only by the explicitly enabled runtime. Each start creates a fresh private
 instance directory and returns its `connectionFile`. The socket and connection
 file have mode 0600 and the directory has mode 0700. There is no TCP listener and
 no existing Claude credential is used. A separate private binding path keeps
@@ -141,7 +169,7 @@ The `exchange-claude-desktop-mods` pipeline authenticates the pairing token,
 validates the v1 frame, and reuses `readClaudeInboxEndpoint` to freshly verify the
 unique live Desktop2.1.299 registration on every exchange. CLI, unknown,
 ambiguous or conflicting owners fail closed before persistence. The injected
-`persist(exchange, ownerPid)` must commit its event/command transaction before
+`persist(exchange, ownerPid, observedIdle)` must commit its event/command transaction before
 resolving; failures receive no ACK. Returned ACKs and command instances are
 validated before they reach the plugin. There is no native `withdraw` command.
 
@@ -149,16 +177,15 @@ The transport owns no transition/replay policy or in-memory command queue.
 Durable per-instance event deduplication, owner/sequence reconciliation and
 outbox claims belong to the persistence implementation. Shutdown closes clients
 and drains pending persistence before removing only the endpoint's own files.
-Publishing a stable opt-in connection file across daemon restarts, rereading it
-on client transport failure, installing the plugin, and adapter wiring remain
-runtime integration work. This Build slice makes no restart-delivery claim.
+The runtime publishes the stable opt-in connection file across daemon restarts;
+the plugin rereads it on transport failure. Plugin installation stays explicit.
 
 ## Durable event journal
 
 Migration388 adds external Desktop instance checkpoints and an append-only event
 journal. External Desktop IDs are not HyperNeo `sessions` IDs; these internal
 tables are excluded from agent DB-query scopes. They do not contain or implement
-an input queue. The later outbox will reuse `JobQueueRepository`.
+an input queue. The outbox reuses `JobQueueRepository`.
 
 `ClaudeDesktopBridgeRepository.persist` commits each contiguous batch and its
 checkpoint in one immediate SQLite transaction before returning ACK. Replays
@@ -172,9 +199,8 @@ Lifecycle state starts `unknown`, becomes `busy` on `turn.start`, and becomes
 `idle` on the matching `turn.complete`. Completion of a different older turn
 cannot clear a newer one. `session.end` records `ended`. Command API receipts
 remain separate facts and do not claim that a turn stopped or an input ran.
-No command is returned by this Build slice. Durable command claims, retirement
-of uncertain submissions, pending-only withdrawal and runtime/adapter wiring
-remain subsequent work; missing execution receipts never authorize blind replay.
+The journal itself returns only an ACK. The outbox supplies command claims and
+pending-only withdrawal; missing receipts never authorize blind replay.
 
 ## Durable command outbox
 
@@ -198,5 +224,5 @@ existing pending-only job CAS in a transaction. Unclaimed withdrawn inputs stay
 withdrawn across restart. Claimed or completed inputs return `not_queued`; a
 foreign sender/session, stop command or native Desktop queue ID is unsupported.
 Neither lease reclamation nor instance replacement makes an uncertain input
-withdrawable again. Runtime opt-in, stable connection publication and adapter
-wiring remain separate Wire work; this Build slice advertises no new capability.
+withdrawable again. The adapter advertises these controls only when the runtime
+is explicitly configured, and rejects an absent or unverified plugin endpoint.
