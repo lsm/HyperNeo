@@ -193,6 +193,12 @@ describe('coding PR provenance', () => {
       ]).kept
     ).toEqual([]);
   });
+  test('missing PR timestamps stay pending so reclaim can retry', () => {
+    const owned = planNeoCardPrOwnership(card, candidates([]), [], 50);
+    const read = keepNeoCardPrReads(card, owned, [{ ...pr(15), createdAt: undefined }]);
+    expect(read.pending).toHaveLength(1);
+    expect(read.rejected).toEqual([]);
+  });
   test('a PR the card follows remains valid outside the execution window', () => {
     const owned = planNeoCardPrOwnership(card, candidates([url], url, null), [], 50);
     expect(owned[0].claim).toBe('named');

@@ -272,7 +272,7 @@ export function keepNeoCardPrReads(
         (window.end === null || pr.createdAt <= window.end)
       )
         sorted.kept.push({ ...candidate, scoped: true });
-      else if (!pr && window) sorted.pending.push(candidate);
+      else if (window && (!pr || pr.createdAt === undefined)) sorted.pending.push(candidate);
       else sorted.rejected.push({ ...candidate, scoped: true });
     } else if (
       candidate.claim === 'opened' &&
