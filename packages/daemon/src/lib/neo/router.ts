@@ -131,7 +131,12 @@ export interface NeoRouteMiss {
 }
 export type NeoRouteVerdict = NeoRouteAnswer | NeoRouteDecision | NeoRouteMiss;
 const CLASSIFIER_CONFIDENCE = 0.6;
-export type NeoRouteSignal = 'facts' | 'embedding' | 'classifier' | `classifier:${NeoRouteBasis}`;
+export type NeoRouteSignal =
+  | 'facts'
+  | 'embedding'
+  | 'classifier'
+  | `classifier:${NeoRouteBasis}`
+  | 'default';
 
 function classifierSignal(basis: NeoRouteBasis | null | undefined): NeoRouteSignal {
   return basis ? `classifier:${basis}` : 'classifier';
@@ -514,6 +519,24 @@ export async function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise
 
 export type NeoRouter = (text: string) => Promise<NeoRouted>;
 
+export async function routeNeoDefault(
+  routed: NeoRouted,
+  inbox: NeoRouterDeps['inbox']
+): Promise<NeoRouted> {
+  const holder = routed.choice || !inbox ? null : await inbox().catch(() => null);
+  return holder
+    ? {
+        ...routed,
+        choice: {
+          projectId: holder.projectId,
+          sessionId: holder.sessionId,
+          signal: 'default',
+          confidence: 1,
+        },
+      }
+    : routed;
+}
+
 export interface NeoHolderWake {
   asleep(sessionId: string): boolean;
   wake?(projectId: string): Promise<string | null>;
@@ -685,5 +708,6 @@ export function createNeoRouter(
         }
       : undefined,
   };
-  return async (text) => wakeNeoRoute(await chooseNeoRoute(text, deps), holders);
+  return async (text) =>
+    wakeNeoRoute(await routeNeoDefault(await chooseNeoRoute(text, deps), deps.inbox), holders);
 }

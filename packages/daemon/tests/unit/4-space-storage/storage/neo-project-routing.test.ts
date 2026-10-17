@@ -23,6 +23,7 @@ import {
   NEO_INBOX_ID,
   type NeoRouterDeps,
   openNeoDefaultSession,
+  routeNeoDefault,
 } from '../../../../src/lib/neo/router.ts';
 
 let db: Database;
@@ -162,6 +163,32 @@ describe('openNeoDefaultSession', () => {
     expect(opened).toEqual([NEO_INBOX_ID, NEO_INBOX_ID]);
     expect(repo.getProject(NEO_INBOX_ID)?.title).toBe('Inbox');
     expect(neoDefaultSessionId(repo)).toBe('neo:inbox');
+  });
+});
+
+describe('routeNeoDefault', () => {
+  const inbox = async () => ({
+    projectId: NEO_INBOX_ID,
+    sessionId: 'neo:inbox',
+    title: 'Inbox',
+    summary: '',
+  });
+
+  test('an unrouted message goes to the default session; a routed one keeps its holder', async () => {
+    expect(await routeNeoDefault({ choice: null, fallback: 'facts:unresolved' }, inbox)).toEqual({
+      choice: { projectId: NEO_INBOX_ID, sessionId: 'neo:inbox', signal: 'default', confidence: 1 },
+      fallback: 'facts:unresolved',
+    });
+    const routed = {
+      choice: {
+        projectId: 'alpha',
+        sessionId: 'neo:alpha',
+        signal: 'facts' as const,
+        confidence: 1,
+      },
+    };
+    expect(await routeNeoDefault(routed, inbox)).toBe(routed);
+    expect(await routeNeoDefault({ choice: null }, undefined)).toEqual({ choice: null });
   });
 });
 
