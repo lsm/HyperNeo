@@ -1015,15 +1015,13 @@ describe('Neo MVP', () => {
     expect(jobs).toEqual([]);
   });
 
-  test('admits root consultations only and attributes replies to the exact assigned holder', async () => {
+  test('admits Neo sessions’ consultations and attributes replies to the exact assigned holder', async () => {
     const { item, caller, holder, input } = await consultation();
     service.repo.saveProject({ ...project, id: 'private' }, 0);
     const other = await service.open('private');
     service.repo.reserveBinding({ sessionId: 'worker', projectId: project.id, kind: 'worker' });
     for (const denied of [
       human,
-      holder,
-      { ...caller, sessionId: other },
       { ...caller, sessionId: 'worker' },
       { ...caller, sessionId: 'impostor' },
     ]) {
