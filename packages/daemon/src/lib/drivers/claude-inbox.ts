@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { Stats } from 'node:fs';
 import { chmod, link, lstat, mkdtemp, rmdir, unlink } from 'node:fs/promises';
 import { createConnection, createServer, type Socket } from 'node:net';
@@ -48,6 +48,10 @@ function requireClaudeInboxProtocol(target: ClaudeInboxTarget): void {
   z.string().uuid().parse(target.sessionId);
 }
 
+export function claudeInboxName(identity: string): string {
+  return createHash('sha256').update(identity).digest('hex').slice(0, 16);
+}
+
 function claudeInboxAddress(path: string): string {
   if (!/^\/[A-Za-z0-9/_.-]+\.sock$/.test(path)) throw new Error('Invalid Claude inbox address.');
   return `uds:${path}`;
@@ -85,25 +89,31 @@ export function claudeInboxFrame(
   return frame;
 }
 
+export function claudeInboxReplySession(content: string): string | null {
+  const session = /^<cross-session-message\b[^>]*\sfrom-session="([^"]+)"/.exec(content)?.[1];
+  return session ? session.replace(/^local_/, '') : null;
+}
+
 export function claudeInboxEvent(
   value: unknown,
-  target: ClaudeInboxTarget,
-  sent: ReadonlySet<string>
+  sent: ReadonlyMap<string, ClaudeInboxTarget>
 ): ClaudeInboxEvent | null {
-  const from = `uds:${target.socketPath}`;
   const reply = ReplySchema.safeParse(value);
-  if (reply.success && reply.data.from === from) {
-    return {
-      kind: 'reply',
-      sessionId: target.sessionId,
-      messageId: reply.data.msg_id,
-      from,
-      content: reply.data.message.content,
-    };
+  if (reply.success) {
+    const sessionId = claudeInboxReplySession(reply.data.message.content);
+    return sessionId
+      ? {
+          kind: 'reply',
+          sessionId,
+          messageId: reply.data.msg_id,
+          from: reply.data.from,
+          content: reply.data.message.content,
+        }
+      : null;
   }
   const receipt = ReceiptSchema.safeParse(value);
-  if (!receipt.success || receipt.data.from !== from || !sent.has(receipt.data.orig_msg_id))
-    return null;
+  const target = receipt.success ? sent.get(receipt.data.orig_msg_id) : undefined;
+  if (!receipt.success || !target || receipt.data.from !== `uds:${target.socketPath}`) return null;
   return {
     kind: 'receipt',
     sessionId: target.sessionId,
@@ -183,31 +193,47 @@ function writeClaudeFrame(path: string, frame: string, connections: Set<Socket>)
   });
 }
 
-export async function openClaudeInbox(
-  target: ClaudeInboxTarget,
-  onEvent: (event: ClaudeInboxEvent) => void
-): Promise<{
-  path: string;
-  write: (submission: ClaudeInboxSubmission) => Promise<{ written: true }>;
-  close: () => Promise<void>;
-}> {
+function requireClaudeInboxTarget(target: ClaudeInboxTarget, directory: string): void {
   if (
     !isAbsolute(target.socketPath) ||
+    dirname(target.socketPath) !== directory ||
     !Number.isSafeInteger(target.pid) ||
     target.pid <= 0 ||
     !new RegExp(`^${target.pid}(?:-[a-f0-9]{8})?\\.sock$`).test(basename(target.socketPath))
   )
     throw new Error('Claude inbox path does not match the live PID.');
   requireClaudeInboxProtocol(target);
-  const directory = dirname(target.socketPath);
+}
+
+async function removeStaleClaudeInbox(path: string): Promise<void> {
+  try {
+    const entry = await lstat(path);
+    if (entry.isSocket() && entry.uid === process.getuid?.()) await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+export async function openClaudeInbox(
+  directory: string,
+  name: string,
+  onEvent: (event: ClaudeInboxEvent) => void
+): Promise<{
+  path: string;
+  write: (
+    target: ClaudeInboxTarget,
+    submission: ClaudeInboxSubmission
+  ) => Promise<{ written: true }>;
+  close: () => Promise<void>;
+}> {
+  if (!/^[0-9a-f]{1,16}$/.test(name)) throw new Error('Invalid Claude inbox name.');
   await requirePrivatePath(directory, 'directory');
-  await requirePrivatePath(target.socketPath, 'socket');
-  const path = join(directory, `${process.pid}-${randomUUID().slice(0, 8)}.sock`);
+  const path = join(directory, `${name}.sock`);
   claudeInboxAddress(path);
   const bindingDir = await mkdtemp(join(directory, '.hn-'));
   const bindingPath = join(bindingDir, 's');
   const connections = new Set<Socket>();
-  const sent = new Set<string>();
+  const sent = new Map<string, ClaudeInboxTarget>();
   const writes = new Map<string, { frame: string; result?: Promise<{ written: true }> }>();
   let closed = false;
   const server = createServer((socket) => {
@@ -234,7 +260,7 @@ export async function openClaudeInbox(
           socket.destroy();
           return;
         }
-        const event = claudeInboxEvent(value, target, sent);
+        const event = claudeInboxEvent(value, sent);
         if (event) onEvent(event);
       }
     });
@@ -254,6 +280,7 @@ export async function openClaudeInbox(
       server.listen(bindingPath, resolve);
     });
     bound = await lstat(bindingPath);
+    await removeStaleClaudeInbox(path);
     await link(bindingPath, path);
     await chmod(path, 0o600);
   } catch (error) {
@@ -263,8 +290,9 @@ export async function openClaudeInbox(
   }
   return {
     path,
-    async write(submission) {
+    async write(target, submission) {
       if (closed) return Promise.reject(new Error('Claude reply inbox is closed.'));
+      requireClaudeInboxTarget(target, directory);
       const frame = claudeInboxFrame(target, path, submission);
       const existing = writes.get(submission.messageId);
       if (existing && existing.frame !== frame)
@@ -273,7 +301,7 @@ export async function openClaudeInbox(
       const result = requirePrivatePath(target.socketPath, 'socket')
         .then(() => {
           if (closed) throw new Error('Claude reply inbox is closed.');
-          sent.add(submission.messageId);
+          sent.set(submission.messageId, target);
           return writeClaudeFrame(target.socketPath, frame, connections);
         })
         .then(() => ({ written: true as const }))

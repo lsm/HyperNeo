@@ -1,3 +1,4 @@
+import { dirname } from 'node:path';
 import {
   openClaudeInbox,
   type ClaudeInboxEvent,
@@ -5,19 +6,29 @@ import {
   type ClaudeInboxTarget,
 } from './claude-inbox.ts';
 
+export interface ClaudeInboxRoutes {
+  record(sessionId: string, returnTo: string, inboxDir: string): void;
+  returnTo(sessionId: string): string | null;
+  lastInboxDir(): string | null;
+}
+
 interface ClaudeInboxConversationDeps {
+  name: string;
+  routes: ClaudeInboxRoutes;
   open?: typeof openClaudeInbox;
   onEvent(returnTo: string, event: ClaudeInboxEvent): void | Promise<void>;
   onError(error: unknown): void;
 }
 
 export function createClaudeInboxConversations(deps: ClaudeInboxConversationDeps) {
-  const inboxes = new Map<string, ReturnType<typeof openClaudeInbox>>();
+  let opening: ReturnType<typeof openClaudeInbox> | undefined;
   const events = new Set<Promise<void>>();
   let closed = false;
   let closing: Promise<void> | undefined;
 
-  function route(returnTo: string, event: ClaudeInboxEvent): void {
+  function route(event: ClaudeInboxEvent): void {
+    const returnTo = deps.routes.returnTo(event.sessionId);
+    if (!returnTo) return;
     const task = Promise.resolve().then(() => deps.onEvent(returnTo, event));
     events.add(task);
     void task.then(
@@ -31,46 +42,40 @@ export function createClaudeInboxConversations(deps: ClaudeInboxConversationDeps
     );
   }
 
+  function inbox(directory: string): ReturnType<typeof openClaudeInbox> {
+    if (opening) return opening;
+    const current = (deps.open ?? openClaudeInbox)(directory, deps.name, route);
+    opening = current;
+    void current.catch(() => {
+      if (opening === current) opening = undefined;
+    });
+    return current;
+  }
+
   return {
+    async listen(): Promise<void> {
+      const directory = deps.routes.lastInboxDir();
+      if (directory && !closed) await inbox(directory);
+    },
     async write(target: ClaudeInboxTarget, returnTo: string, submission: ClaudeInboxSubmission) {
       if (closed) throw new Error('Claude inbox conversations are closed.');
       if (!returnTo.trim()) throw new Error('Claude inbox reply destination is missing.');
-      const key = JSON.stringify([
-        target.sessionId,
-        target.pid,
-        target.socketPath,
-        target.version,
-        returnTo,
-      ]);
-      let opening = inboxes.get(key);
-      if (!opening) {
-        opening = (deps.open ?? openClaudeInbox)(target, (event) => route(returnTo, event));
-        inboxes.set(key, opening);
-        const current = opening;
-        void opening.catch(() => {
-          if (inboxes.get(key) === current) inboxes.delete(key);
-        });
-      }
-      const inbox = await opening;
+      const directory = dirname(target.socketPath);
+      const opened = await inbox(directory);
       if (closed) throw new Error('Claude inbox conversations are closed.');
-      return inbox.write(submission);
+      deps.routes.record(target.sessionId, returnTo, directory);
+      return opened.write(target, submission);
     },
     close(): Promise<void> {
       if (closing) return closing;
       closed = true;
       closing = (async () => {
-        const results = await Promise.allSettled(
-          [...inboxes.values()].map(async (opening) => {
-            const inbox = await opening.catch(() => null);
-            await inbox?.close();
-          })
-        );
-        await Promise.allSettled([...events]);
-        inboxes.clear();
-        const failures = results.flatMap((result) =>
-          result.status === 'rejected' ? [result.reason] : []
-        );
-        if (failures.length) throw new AggregateError(failures, 'Claude inbox shutdown failed.');
+        const opened = await opening?.catch(() => null);
+        try {
+          await opened?.close();
+        } finally {
+          await Promise.allSettled([...events]);
+        }
       })();
       return closing;
     },

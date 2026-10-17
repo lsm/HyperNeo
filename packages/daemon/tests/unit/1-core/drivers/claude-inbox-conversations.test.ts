@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { createClaudeInboxConversations } from '../../../../src/lib/drivers/claude-inbox-conversations';
+import {
+  type ClaudeInboxRoutes,
+  createClaudeInboxConversations,
+} from '../../../../src/lib/drivers/claude-inbox-conversations';
 import type {
   ClaudeInboxEvent,
   ClaudeInboxTarget,
@@ -16,17 +19,31 @@ const target: ClaudeInboxTarget = {
 };
 const origin = 'session:origin';
 const input = () => ({ messageId: randomUUID(), inputId: randomUUID(), text: 'continue' });
-const reply = (): ClaudeInboxEvent => ({
+const reply = (sessionId = target.sessionId): ClaudeInboxEvent => ({
   kind: 'reply',
-  sessionId: target.sessionId,
+  sessionId,
   messageId: randomUUID(),
-  from: `uds:${target.socketPath}`,
+  from: 'uds:/tmp/cc-socks/999.sock',
   content: 'answer',
 });
 
+function memoryRoutes(): ClaudeInboxRoutes {
+  const rows = new Map<string, { returnTo: string; dir: string }>();
+  let last: string | null = null;
+  return {
+    record: (sessionId, returnTo, dir) => {
+      rows.set(sessionId, { returnTo, dir });
+      last = dir;
+    },
+    returnTo: (sessionId) => rows.get(sessionId)?.returnTo ?? null,
+    lastInboxDir: () => last,
+  };
+}
+
 describe('Claude inbox conversation lifetime', () => {
   let opened: Array<{
-    target: ClaudeInboxTarget;
+    directory: string;
+    name: string;
     emit: (event: ClaudeInboxEvent) => void;
     inbox: Inbox;
     writes: unknown[];
@@ -34,6 +51,7 @@ describe('Claude inbox conversation lifetime', () => {
   }>;
   let routed: Array<{ returnTo: string; event: ClaudeInboxEvent }>;
   let errors: unknown[];
+  let routes: ClaudeInboxRoutes;
   let manager: ReturnType<typeof createClaudeInboxConversations>;
   let open: typeof openClaudeInbox;
 
@@ -41,11 +59,19 @@ describe('Claude inbox conversation lifetime', () => {
     opened = [];
     routed = [];
     errors = [];
-    open = async (target, emit) => {
-      const record = { target, emit, writes: [] as unknown[], closes: 0, inbox: {} as Inbox };
+    routes = memoryRoutes();
+    open = async (directory, name, emit) => {
+      const record = {
+        directory,
+        name,
+        emit,
+        writes: [] as unknown[],
+        closes: 0,
+        inbox: {} as Inbox,
+      };
       record.inbox = {
-        path: `/tmp/fake-${opened.length}.sock`,
-        write: async (submission) => {
+        path: `${directory}/${name}.sock`,
+        write: async (_target, submission) => {
           record.writes.push(submission);
           return { written: true };
         },
@@ -59,6 +85,8 @@ describe('Claude inbox conversation lifetime', () => {
 
   function create(overrides: Partial<Parameters<typeof createClaudeInboxConversations>[0]> = {}) {
     manager = createClaudeInboxConversations({
+      name: 'abc123',
+      routes,
       open,
       onEvent: (returnTo, event) => void routed.push({ returnTo, event }),
       onError: (error) => void errors.push(error),
@@ -70,46 +98,54 @@ describe('Claude inbox conversation lifetime', () => {
     await manager.close().catch(() => {});
   });
 
-  test('concurrent writes share a listener which remains alive for later replies', async () => {
-    const submissions = [input(), input()];
-    await Promise.all(submissions.map((submission) => manager.write(target, origin, submission)));
-    expect(opened).toHaveLength(1);
-    expect(opened[0].writes).toEqual(submissions);
-    expect(opened[0].closes).toBe(0);
-    const event = reply();
-    opened[0].emit(event);
-    await manager.close();
-    expect(routed).toEqual([{ returnTo: origin, event }]);
-    expect(opened[0].closes).toBe(1);
-  });
-
-  test('different originating conversations retain their own reply destination', async () => {
-    await manager.write(target, 'session:first', input());
-    await manager.write(target, 'session:second', input());
+  test('every send shares one stable listener and replies route by session id', async () => {
+    const other = {
+      ...target,
+      sessionId: randomUUID(),
+      pid: 789,
+      socketPath: '/tmp/cc-socks/789.sock',
+    };
+    await Promise.all([
+      manager.write(target, origin, input()),
+      manager.write(other, 'session:second', input()),
+    ]);
+    expect(opened.map(({ directory, name }) => ({ directory, name }))).toEqual([
+      { directory: '/tmp/cc-socks', name: 'abc123' },
+    ]);
     const first = reply();
-    const second = reply();
-    opened[1].emit(second);
+    const second = reply(other.sessionId);
+    opened[0].emit(second);
     opened[0].emit(first);
+    opened[0].emit(reply(randomUUID()));
     await manager.close();
     expect(routed).toEqual([
       { returnTo: 'session:second', event: second },
-      { returnTo: 'session:first', event: first },
+      { returnTo: origin, event: first },
     ]);
-    expect(opened.map((record) => record.closes)).toEqual([1, 1]);
+    expect(opened[0].closes).toBe(1);
   });
 
-  test('does not reuse a listener after the target process or registered endpoint changes', async () => {
+  test('after a restart, listen reopens the same address and old routes still deliver', async () => {
     await manager.write(target, origin, input());
-    await manager.write(
-      { ...target, pid: 789, socketPath: '/tmp/cc-socks/789.sock' },
-      origin,
-      input()
-    );
-    expect(opened).toHaveLength(2);
-    expect(opened.map((record) => record.target.pid)).toEqual([456, 789]);
+    await manager.close();
+    create();
+    await manager.listen();
+    expect(opened.map(({ directory, name }) => `${directory}/${name}`)).toEqual([
+      '/tmp/cc-socks/abc123',
+      '/tmp/cc-socks/abc123',
+    ]);
+    const event = reply();
+    opened[1].emit(event);
+    await manager.close();
+    expect(routed).toEqual([{ returnTo: origin, event }]);
   });
 
-  test('a failed open can retry instead of poisoning the conversation cache', async () => {
+  test('listen opens nothing before any session was sent to', async () => {
+    await manager.listen();
+    expect(opened).toEqual([]);
+  });
+
+  test('a failed open can retry instead of poisoning the listener', async () => {
     let attempts = 0;
     create({
       open: async (...args) => {
@@ -125,7 +161,7 @@ describe('Claude inbox conversation lifetime', () => {
 
   test('shutdown waits for a pending open and prevents its delayed send', async () => {
     let release!: (inbox: Inbox) => void;
-    const ready = open(target, () => {});
+    const ready = open('/tmp/cc-socks', 'abc123', () => {});
     create({
       open: () =>
         new Promise((resolve) => {
@@ -143,7 +179,7 @@ describe('Claude inbox conversation lifetime', () => {
     await expect(manager.write(target, origin, input())).rejects.toThrow('closed');
   });
 
-  test('shutdown waits for accepted reply persistence after closing listeners', async () => {
+  test('shutdown waits for accepted reply persistence after closing the listener', async () => {
     let finish!: () => void;
     let closed!: () => void;
     const persisted = new Promise<void>((resolve) => {
@@ -152,9 +188,7 @@ describe('Claude inbox conversation lifetime', () => {
     const listenerClosed = new Promise<void>((resolve) => {
       closed = resolve;
     });
-    create({
-      onEvent: () => persisted,
-    });
+    create({ onEvent: () => persisted });
     await manager.write(target, origin, input());
     opened[0].inbox.close = async () => {
       closed();
@@ -182,17 +216,6 @@ describe('Claude inbox conversation lifetime', () => {
     await manager.close();
     expect(errors).toHaveLength(1);
     expect((errors[0] as Error).message).toBe('storage unavailable');
-  });
-
-  test('a failed close does not strand the other listeners', async () => {
-    await manager.write(target, 'session:first', input());
-    await manager.write(target, 'session:second', input());
-    opened[0].inbox.close = async () => {
-      throw new Error('close failed');
-    };
-    await expect(manager.close()).rejects.toThrow('shutdown failed');
-    expect(opened[1].closes).toBe(1);
-    await expect(manager.write(target, origin, input())).rejects.toThrow('closed');
   });
 
   test('does not open an inbox without a reply destination', async () => {

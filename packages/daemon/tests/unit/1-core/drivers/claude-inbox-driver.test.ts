@@ -47,7 +47,14 @@ describe('Claude inbox driver runtime', () => {
     errors = [];
     closes = 0;
     opens = 0;
+    const routes = new Map<string, string>();
     deps = {
+      name: 'abc123',
+      routes: {
+        record: (id, returnTo) => void routes.set(id, returnTo),
+        returnTo: (id) => routes.get(id) ?? null,
+        lastInboxDir: () => null,
+      },
       registrationsDir: dir,
       liveSessions: async () => [{ sessionId, pid: 456, status: 'busy', owner: 'cli' }],
       hasSession: (id) => id === 'origin',
@@ -56,12 +63,12 @@ describe('Claude inbox driver runtime', () => {
         return { kind: 'enqueued', id: 'entry' };
       },
       onError: (error) => void errors.push(error),
-      open: async (_target, emit) => {
+      open: async (_directory, _name, emit) => {
         opens++;
         emits.push(emit);
         return {
           path: '/tmp/fake.sock',
-          write: async (input) => {
+          write: async (_target, input) => {
             writes.push(input);
             return { written: true };
           },
