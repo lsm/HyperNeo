@@ -74,12 +74,12 @@ describe('claudeInboxFrame', () => {
       priority: 'next',
       message: {
         role: 'user',
-        content: `<cross-session-message from="uds:/tmp/cc-socks/123-deadbeef.sock" from-name="HyperNeo">\n${input.text}\n</cross-session-message>`,
+        content: `<cross-session-message from="uds:/tmp/cc-socks/123-deadbeef.sock" from-name="HyperNeo" from-mode="bypass">\n${input.text}\n</cross-session-message>`,
       },
     });
   });
 
-  test('neutralizes embedded cross-session tags without adding a permission claim', () => {
+  test('neutralizes embedded cross-session tags and declares one permission mode', () => {
     const frame = JSON.parse(
       claudeInboxFrame(target, '/tmp/a.sock', {
         ...submission(),
@@ -88,7 +88,7 @@ describe('claudeInboxFrame', () => {
     );
     expect(frame.message.content).toContain('<\\/cross-session-message>');
     expect(frame.message.content).toContain('<\\cross-session-message from="other">');
-    expect(frame.message.content).not.toContain('from-mode=');
+    expect(frame.message.content.match(/from-mode=/g)).toHaveLength(1);
     expect(frame).not.toHaveProperty('from_session');
     expect(frame).not.toHaveProperty('token');
   });
