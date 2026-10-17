@@ -251,6 +251,20 @@ describe('neo.projects.reorganize', () => {
       caller
     ).then((outcome) => (outcome as { value?: unknown }).value);
 
+  test('without a main session it still merges projects and moves no asks', async () => {
+    const { deps, moves } = runtime([ask('a')], { a: 'drivers' }, [], {}, [
+      { sourceId: 'web-shallow', targetId: 'web' },
+    ]);
+    deps.rootSessionId = () => null;
+    expect(await invoke(deps, { source: 'rpc', principal: 'local' })).toMatchObject({
+      ok: true,
+      merged: [{ sourceId: 'web-shallow', targetId: 'web' }],
+      moved: [],
+      stayed: [],
+    });
+    expect(moves).toEqual([]);
+  });
+
   test('moves each main ask to its project and reports what stayed and why', async () => {
     const { deps, delivered, moves } = runtime(
       [ask('a'), ask('b', { status: 'waiting' }), ask('c'), ask('d'), ask('e')],

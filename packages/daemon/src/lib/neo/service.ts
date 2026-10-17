@@ -332,7 +332,7 @@ import { neoPrompt } from './prompt.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { runNeoReadWork } from './read-work.ts';
-import { neoDefaultSessionId, openNeoDefaultSession } from './router.ts';
+import { NEO_INBOX_ID, neoDefaultSessionId, openNeoDefaultSession } from './router.ts';
 import {
   type NeoSavedRulesNote,
   planNeoSavedRulesAppend,
@@ -2174,7 +2174,7 @@ export class NeoService {
       {
         id: crypto.randomUUID(),
         requestKey: messageId,
-        projectId: null,
+        projectId: NEO_INBOX_ID,
         originSessionId: root,
         originMessageId: messageId,
         title: notice.title,

@@ -1004,7 +1004,7 @@ export function createNeoOperations(service: NeoService) {
       ...(caller.source === 'rpc'
         ? {
             conversationId: service.repo.conversationId(),
-            defaultSessionId: service.repo.defaultBinding()?.sessionId ?? null,
+            defaultSessionId: service.defaultSessionId() ?? null,
             neoSessions: [
               service.repo.defaultBinding(),
               ...service.repo.listProjectBindings(),

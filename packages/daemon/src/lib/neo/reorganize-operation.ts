@@ -262,32 +262,23 @@ export function createNeoProjectsReorganizer(
     const root = runtime.rootSessionId();
     const moved: Moved[] = [];
     const stayed: Stay[] = [];
-    if (!root)
-      return {
-        merged: [],
-        asked: [],
-        moved,
-        stayed,
-        cleanupPlanned: [],
-        cleanupApplied: apply === true,
-        cleanupFailed: [],
-      };
     const mirrored = await runtime.mirroredAliases(
       neoCleanupFolders(runtime.projectFacts(), runtime.machine())
     );
     const { merged, asked } = await runtime.mergeProjects();
     for (const merge of merged)
       runtime.log(`neo reorganize: merged project ${merge.sourceId} into ${merge.targetId}`);
-    for (const ask of selectNeoReorganizableAsks(runtime.liveAsks(), root)) {
-      const result = await moveAsk(ask, root).catch((error: unknown) => {
-        runtime.log(
-          `neo reorganize: ask ${ask.id} stays with ${ask.projectId ?? 'main'}, handoff failed: ${String(error)}`
-        );
-        return { askId: ask.id, reason: 'handoff_failed' as const };
-      });
-      if ('reason' in result) stayed.push(result);
-      else moved.push(result);
-    }
+    if (root)
+      for (const ask of selectNeoReorganizableAsks(runtime.liveAsks(), root)) {
+        const result = await moveAsk(ask, root).catch((error: unknown) => {
+          runtime.log(
+            `neo reorganize: ask ${ask.id} stays with ${ask.projectId ?? 'main'}, handoff failed: ${String(error)}`
+          );
+          return { askId: ask.id, reason: 'handoff_failed' as const };
+        });
+        if ('reason' in result) stayed.push(result);
+        else moved.push(result);
+      }
     if (!mirrored) runtime.log('neo reorganize: no project cleanup, the places could not be read');
     const cleanupPlanned = mirrored ? planNeoProjectCleanupNow(mirrored, archive) : [];
     const cleanupFailed: { projectId: string; reason: string }[] = [];
