@@ -24,16 +24,20 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       .run(todoId, JSON.stringify(target));
   }
 
-  readLink(todoId: string): string | null {
+  readLinks(todoId: string): { link: string | null; remoteLink: string | null } {
     const row = this.db
       .prepare('SELECT ref, link, remote_link AS remote FROM neo_todo_sessions WHERE todo_id = ?')
       .get(todoId) as { ref: string | null; link: string | null; remote: string | null } | null;
     const ref = row?.ref ? (JSON.parse(row.ref) as WorkRef) : null;
-    return (
-      neoSafeSessionLink(row?.link, !!ref?.daemon) ??
-      neoSafeSessionLink(row?.remote, true) ??
-      (ref?.adapter === 'hyperneo' && !ref.daemon ? `/session/${ref.id}` : null)
-    );
+    const remote = neoSafeSessionLink(row?.remote, true);
+    const remoteLink = remote?.startsWith('https://') ? remote : null;
+    return {
+      link:
+        neoSafeSessionLink(row?.link, !!ref?.daemon) ??
+        remote ??
+        (ref?.adapter === 'hyperneo' && !ref.daemon ? `/session/${ref.id}` : null),
+      remoteLink,
+    };
   }
 
   unrecordedStarts(): string[] {

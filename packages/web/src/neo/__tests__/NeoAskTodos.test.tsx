@@ -27,6 +27,7 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   finishedAt: null,
   status: '没开始',
   link: null,
+  remoteLink: null,
   ...patch,
 });
 

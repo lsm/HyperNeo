@@ -74,6 +74,7 @@ export interface NeoReplyTo {
 export interface NeoTodoEntry extends NeoTodo {
   status: string;
   link: string | null;
+  remoteLink: string | null;
 }
 
 export type NeoAskEntryState = 'waiting' | 'doing' | 'done' | 'dropped' | 'todo';

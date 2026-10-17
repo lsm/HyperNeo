@@ -22,6 +22,7 @@ export function testTodo(id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodo
     finishedAt: null,
     status: '没开始',
     link: null,
+    remoteLink: null,
     ...patch,
   };
 }

@@ -109,7 +109,7 @@ describe('projectNeoAskEntries', () => {
     const [entry] = projectNeoAskEntries([opened], store, sessions, []);
     expect(entry).toMatchObject({
       state: 'doing',
-      todos: [{ id: 't1', status: '在做', link: '/session/w1' }],
+      todos: [{ id: 't1', status: '在做', link: '/session/w1', remoteLink: null }],
       questions: [],
     });
   });
@@ -149,6 +149,7 @@ describe('fitNeoSnapshotBudget with todoAsks', () => {
           finishedAt: null,
           status: '在做',
           link: null,
+          remoteLink: null,
         },
       ],
       questions: [],
@@ -188,7 +189,7 @@ describe('neoSafeSessionLink', () => {
   });
 });
 
-describe('NeoTodoSessionRepository.readLink', () => {
+describe('NeoTodoSessionRepository.readLinks', () => {
   test('never offers a local session path for a session on another daemon', () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
@@ -212,8 +213,53 @@ describe('NeoTodoSessionRepository.readLink', () => {
     );
     sessions.create('t', { verb: 'send', ref: { adapter: 'hyperneo', id: 'w', daemon: 'imac' } });
     sessions.recordRef('t', { adapter: 'hyperneo', id: 'w', daemon: 'imac' }, 1, '/session/w');
-    expect(sessions.readLink('t')).toBeNull();
+    expect(sessions.readLinks('t')).toEqual({ link: null, remoteLink: null });
     sessions.recordLive('t', 'running', undefined, 'https://imac/session/w');
-    expect(sessions.readLink('t')).toBe('https://imac/session/w');
+    expect(sessions.readLinks('t')).toEqual({
+      link: 'https://imac/session/w',
+      remoteLink: 'https://imac/session/w',
+    });
+  });
+
+  test('sends a Claude Desktop session its claude:// link and its https link apart', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const sessions = new NeoTodoSessionRepository(db);
+    store.openAsk({
+      id: 'a',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'a',
+      request: 'a',
+      createdAt: 1,
+    });
+    store.addTodo(
+      't',
+      'a',
+      { title: 't', doneWhen: 'd', check: null, instruction: 'i', named: null },
+      1
+    );
+    const ref = { adapter: 'claude-desktop', id: 'local_1' };
+    sessions.create('t', { verb: 'send', ref });
+    sessions.recordRef('t', ref, 1, 'claude://resume?session=local_1');
+    expect(sessions.readLinks('t')).toEqual({
+      link: 'claude://resume?session=local_1',
+      remoteLink: null,
+    });
+    sessions.recordLive(
+      't',
+      'running',
+      'claude://resume?session=local_1',
+      'https://claude.ai/code/session_01abc'
+    );
+    expect(sessions.readLinks('t')).toEqual({
+      link: 'claude://resume?session=local_1',
+      remoteLink: 'https://claude.ai/code/session_01abc',
+    });
+    sessions.recordLive('t', 'running', undefined, 'claude://other');
+    expect(sessions.readLinks('t').remoteLink).toBeNull();
   });
 });
