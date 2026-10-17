@@ -47,6 +47,7 @@ import {
   planNeoStartQuestion,
 } from './start-question.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
+import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
@@ -471,6 +472,7 @@ export class NeoService {
   readonly workWakes: NeoWorkWakeRepository;
   readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
+  readonly todos: NeoAskTodoRepository;
   readonly dependencies: NeoDependencyRepository;
   readonly workPrs: NeoWorkPrRepository;
   readonly cardEvents: NeoCardEventSubscriptionRepository;
@@ -812,6 +814,7 @@ export class NeoService {
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
     this.workWakes = new NeoWorkWakeRepository(db.getDatabase());
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
+    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged);
     this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged, (cardId) => {
       for (const id of this.dependencies.dependents(cardId))
         scheduleNeoAdmissionWake(db.getJobQueueRepo(), id);
