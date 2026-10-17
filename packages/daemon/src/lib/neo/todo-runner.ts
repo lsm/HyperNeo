@@ -24,7 +24,11 @@ import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-w
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
-type Startable = { todo: NeoTodo; ask: NeoAsk; target: Exclude<NeoDriverTarget, { verb: 'read' }> };
+type Startable = {
+  todo: NeoTodo;
+  ask: NeoAsk;
+  target: Extract<NeoDriverTarget, { verb: 'start' | 'send' }>;
+};
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 
@@ -79,7 +83,8 @@ export function requireNeoTodoStartable(read: {
   if (todo.state !== 'todo') return fail(`already_started: this todo is ${todo.state}.`);
   if (!todo.instruction || !target)
     return fail('no_session: this todo has no instruction and target; the daemon checks it.');
-  if (target.verb === 'read') return fail('unsupported_target: a todo cannot start a read.');
+  if (target.verb === 'read' || target.verb === 'adopt')
+    return fail(`unsupported_target: a todo cannot ${target.verb} a session.`);
   return { value: { todo, ask, target } };
 }
 

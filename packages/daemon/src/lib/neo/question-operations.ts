@@ -75,10 +75,12 @@ export function planNeoQuestion(
     startTodos: input.kind === 'start' ? [...new Set(input.todos)] : null,
   };
   const unstartable = draft.startTodos?.filter(
-    (id) => !todos.some((todo) => todo.id === id && todo.state === 'todo')
+    (id) => !todos.some((todo) => todo.id === id && todo.state === 'todo' && todo.instruction)
   );
   return unstartable?.length
-    ? fail(`not_startable: ${unstartable.join(', ')} is not a not-started todo on this ask.`)
+    ? fail(
+        `not_startable: ${unstartable.join(', ')} is not a not-started todo with a session on this ask.`
+      )
     : { value: { ask, draft } };
 }
 
