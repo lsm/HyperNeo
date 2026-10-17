@@ -133,6 +133,20 @@ describe('projectNeoAskViews todo projection', () => {
     ).toMatchObject({ state, status });
   });
 
+  test('retains idle wake facts while showing the new todo label', () => {
+    const view = project([], []);
+    expect(view).toMatchObject({ idle: true, label: '没开始', needsYou: false });
+  });
+
+  test('an achieved ask with no active todos remains settled in outcomes', () => {
+    expect(project([], [], [], { status: 'achieved' })).toMatchObject({
+      settled: true,
+      label: '做完',
+      group: 'outcomes',
+      total: 0,
+    });
+  });
+
   test.each([
     ['waiting', ['pending'], true, '等你', 'attention'],
     ['open', ['done'], true, '等你', 'attention'],

@@ -1253,11 +1253,13 @@ export function createNeoOperations(service: NeoService) {
       Date.now(),
       new Set()
     );
-    const { workPrs: allWorkPrs, cards: allCards } = projectCards(
-      caller.source === 'rpc' ? work : visibleWork,
-      asks
-    );
     const visibleIds = new Set(visibleWork.map((row) => row.id));
+    const askWorkIds = new Set(asks.flatMap((ask) => ask.workIds));
+    const projectedWork =
+      caller.source === 'rpc'
+        ? work.filter((row) => visibleIds.has(row.id) || askWorkIds.has(row.id))
+        : visibleWork;
+    const { workPrs: allWorkPrs, cards: allCards } = projectCards(projectedWork, asks);
     const cards = allCards.filter((card) => visibleIds.has(card.workId));
     const cardOf = new Map(cards.map((card) => [card.workId, card]));
     const omittedWork = work.length - visibleWork.length;
@@ -1349,8 +1351,8 @@ export function createNeoOperations(service: NeoService) {
         busyNeoAskSessions(service.askSessions),
         caller.source === 'rpc'
           ? {
-              work,
-              supersessions: service.workSupersessions.list(work.map((row) => row.id)),
+              work: projectedWork,
+              supersessions: service.workSupersessions.list(projectedWork.map((row) => row.id)),
             }
           : undefined
       ),

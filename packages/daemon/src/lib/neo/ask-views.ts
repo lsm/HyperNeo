@@ -184,7 +184,7 @@ export function neoAskTodoScene(
   const needsYou = !abandoned && humanActions.length > 0;
   const running = active.some((todo) => todo.state === 'running');
   const done = active.filter((todo) => todo.state === 'done');
-  const finished = active.length > 0 && done.length === active.length;
+  const finished = active.length ? done.length === active.length : ask.status === 'achieved';
   const failed = active.some((todo) => todo.state === 'failed');
   return {
     label: abandoned
@@ -226,8 +226,6 @@ function withNeoAskTodos(
       ...view,
       todos,
       ...neoAskTodoScene(asks[index], todos, view.humanActions ?? []),
-      idle: undefined,
-      idleReason: undefined,
     };
   });
 }
