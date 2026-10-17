@@ -25,9 +25,9 @@ function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
     `Domain packs carry the field an ask works in. Enabled packs: ${briefs
       .map((pack) => `${pack.id} — ${pack.describe}`)
       .join(' ')}`,
-    'When an ask belongs to an enabled pack’s domain, pass its id as pack to neo.ask.open; its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. An ask opened without a pack is generic.',
+    'A todo in an enabled pack’s domain names it in check {pack, kind, params} so the pack reads it; neo.pack.read {id} returns the pack’s guidance in full.',
     ...briefs.flatMap((pack) =>
-      pack.guidance ? [`\n\nGuidance for asks under the ${pack.id} pack:\n${pack.guidance}`] : []
+      pack.guidance ? [`\n\nGuidance for work under the ${pack.id} pack:\n${pack.guidance}`] : []
     ),
   ].join(' ');
 }
