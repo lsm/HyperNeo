@@ -27,9 +27,7 @@ export type ClaudeInboxEvent =
 
 export type ClaudeInboxFrameEvent =
   | Extract<ClaudeInboxEvent, { kind: 'receipt' }>
-  | (Omit<Extract<ClaudeInboxEvent, { kind: 'reply' }>, 'sessionId'> & {
-      sessionId: string | null;
-    });
+  | Omit<Extract<ClaudeInboxEvent, { kind: 'reply' }>, 'sessionId'>;
 
 const ReplySchema = z.object({
   msgV: z.literal(1),
@@ -95,11 +93,6 @@ export function claudeInboxFrame(
   return frame;
 }
 
-export function claudeInboxReplySession(content: string): string | null {
-  const session = /^<cross-session-message\b[^>]*\sfrom-session="([^"]+)"/.exec(content)?.[1];
-  return session ? session.replace(/^local_/, '') : null;
-}
-
 export function claudeInboxEvent(
   value: unknown,
   sent: ReadonlyMap<string, ClaudeInboxTarget>
@@ -108,7 +101,6 @@ export function claudeInboxEvent(
   if (reply.success)
     return {
       kind: 'reply',
-      sessionId: claudeInboxReplySession(reply.data.message.content),
       messageId: reply.data.msg_id,
       from: reply.data.from,
       content: reply.data.message.content,

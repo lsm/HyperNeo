@@ -20,13 +20,15 @@ const target: ClaudeInboxTarget = {
 };
 const origin = 'session:origin';
 const input = () => ({ messageId: randomUUID(), inputId: randomUUID(), text: 'continue' });
-const reply = (sessionId = target.sessionId): ClaudeInboxEvent => ({
+const reply = (from = `uds:${target.socketPath}`): ClaudeInboxFrameEvent => ({
   kind: 'reply',
-  sessionId,
   messageId: randomUUID(),
-  from: 'uds:/tmp/cc-socks/999.sock',
+  from,
   content: 'answer',
 });
+const named = (frame: ClaudeInboxFrameEvent, sessionId: string): ClaudeInboxEvent =>
+  ({ ...frame, sessionId }) as ClaudeInboxEvent;
+const senders = new Map<string, string>([[`uds:${target.socketPath}`, target.sessionId]]);
 
 function memoryRoutes(): ClaudeInboxRoutes {
   const rows = new Map<string, { returnTo: string; dir: string }>();
@@ -84,8 +86,7 @@ describe('Claude inbox conversation lifetime', () => {
     manager = createClaudeInboxConversations({
       name: 'abc123',
       routes,
-      senderSession: async (from) =>
-        from === 'uds:/tmp/cc-socks/456.sock' ? target.sessionId : null,
+      senderSession: async (from) => senders.get(from) ?? null,
       open,
       onEvent: (returnTo, event) => void routed.push({ returnTo, event }),
       onError: (error) => void errors.push(error),
@@ -111,15 +112,16 @@ describe('Claude inbox conversation lifetime', () => {
     expect(opened.map(({ directory, name }) => ({ directory, name }))).toEqual([
       { directory: '/tmp/cc-socks', name: 'abc123' },
     ]);
+    senders.set(`uds:${other.socketPath}`, other.sessionId);
     const first = reply();
-    const second = reply(other.sessionId);
+    const second = reply(`uds:${other.socketPath}`);
     opened[0].emit(second);
     opened[0].emit(first);
-    opened[0].emit(reply(randomUUID()));
+    opened[0].emit(reply('uds:/tmp/cc-socks/1.sock'));
     await manager.close();
     expect(routed).toEqual([
-      { returnTo: 'session:second', event: second },
-      { returnTo: origin, event: first },
+      { returnTo: 'session:second', event: named(second, other.sessionId) },
+      { returnTo: origin, event: named(first, target.sessionId) },
     ]);
     expect(opened[0].closes).toBe(1);
   });
@@ -136,24 +138,14 @@ describe('Claude inbox conversation lifetime', () => {
     const event = reply();
     opened[1].emit(event);
     await manager.close();
-    expect(routed).toEqual([{ returnTo: origin, event }]);
+    expect(routed).toEqual([{ returnTo: origin, event: named(event, target.sessionId) }]);
   });
 
-  test('a reply without a session in its envelope is named by its sender socket', async () => {
+  test('a reply from a socket with no registered session goes nowhere', async () => {
     await manager.write(target, origin, input());
-    const plain = {
-      kind: 'reply' as const,
-      sessionId: null,
-      messageId: randomUUID(),
-      from: 'uds:/tmp/cc-socks/456.sock',
-      content: 'answer',
-    };
-    opened[0].emit(plain);
-    opened[0].emit({ ...plain, from: 'uds:/tmp/cc-socks/1.sock' });
+    opened[0].emit(reply('uds:/tmp/cc-socks/1.sock'));
     await manager.close();
-    expect(routed).toEqual([
-      { returnTo: origin, event: { ...plain, sessionId: target.sessionId } },
-    ]);
+    expect(routed).toEqual([]);
   });
 
   test('a target in another socket directory gets its own listener, and listen reopens both', async () => {

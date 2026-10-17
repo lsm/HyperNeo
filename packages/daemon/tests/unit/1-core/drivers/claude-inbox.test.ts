@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import {
   claudeInboxEvent,
   claudeInboxFrame,
-  claudeInboxReplySession,
   type ClaudeInboxFrameEvent,
   type ClaudeInboxTarget,
   openClaudeInbox,
@@ -138,7 +137,7 @@ describe('claudeInboxEvent', () => {
     ).toMatchObject({ status: 'refused' });
   });
 
-  test('names a reply by the session in its envelope, from any socket', () => {
+  test('keeps the sender socket of a reply and never trusts a session named in its text', () => {
     const replyMessageId = randomUUID();
     const content = envelope(target.sessionId, 'approved');
     expect(
@@ -154,24 +153,10 @@ describe('claudeInboxEvent', () => {
       )
     ).toEqual({
       kind: 'reply',
-      sessionId: target.sessionId,
       messageId: replyMessageId,
       from: 'uds:/tmp/cc-socks/777.sock',
       content,
     });
-    expect(claudeInboxReplySession('approved')).toBeNull();
-    expect(
-      claudeInboxEvent(
-        {
-          type: 'user',
-          msgV: 1,
-          msg_id: replyMessageId,
-          from: 'uds:/tmp/cc-socks/777.sock',
-          message: { role: 'user', content: 'plain' },
-        },
-        new Map()
-      )
-    ).toMatchObject({ kind: 'reply', sessionId: null, from: 'uds:/tmp/cc-socks/777.sock' });
     expect(
       claudeInboxEvent({ ...receipt, action: 'stop' }, new Map([[messageId, target]]))
     ).toBeNull();
@@ -266,7 +251,7 @@ describe('openClaudeInbox', () => {
           messageId: input.messageId,
           status: 'held',
         },
-        { kind: 'reply', sessionId: session.sessionId, messageId: replyMessageId, from, content },
+        { kind: 'reply', messageId: replyMessageId, from, content },
       ]);
       await expect(inbox.write(session, { ...input, text: 'different' })).rejects.toThrow('reused');
     }
@@ -285,7 +270,7 @@ describe('openClaudeInbox', () => {
     await incoming(
       `${JSON.stringify({ msgV: 1, msg_id: replyMessageId, type: 'user', from: 'uds:/tmp/cc-socks/9.sock', message: { role: 'user', content: envelope(session.sessionId, 'after restart') } })}\n`
     );
-    expect(events).toMatchObject([{ kind: 'reply', sessionId: session.sessionId }]);
+    expect(events).toMatchObject([{ kind: 'reply', from: 'uds:/tmp/cc-socks/9.sock' }]);
   });
 
   test('retries a connection refusal with the same identity while still rejecting changed content', async () => {

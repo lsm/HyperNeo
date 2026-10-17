@@ -27,7 +27,7 @@ async function claudeFrameEvent(
   senderSession: (from: string) => Promise<string | null>
 ): Promise<ClaudeInboxEvent | null> {
   if (frame.kind === 'receipt') return frame;
-  const sessionId = frame.sessionId ?? (await senderSession(frame.from));
+  const sessionId = await senderSession(frame.from);
   return sessionId ? { ...frame, sessionId } : null;
 }
 
