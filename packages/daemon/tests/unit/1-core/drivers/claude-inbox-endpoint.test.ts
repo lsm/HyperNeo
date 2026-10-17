@@ -17,6 +17,13 @@ const registration = {
   version: '2.1.295',
   messagingSocketPath: '/tmp/cc-socks/456.sock',
 };
+const desktop = {
+  ...registration,
+  entrypoint: 'claude-desktop',
+  version: '2.1.299',
+  peerProtocol: 1,
+  peerFeatures: ['notify_idle', 'reply_across_default_dirs', 'artifact_yield'],
+};
 
 describe('requireClaudeInboxEndpoint', () => {
   test.each(['cli', 'sdk-ts'])(
@@ -57,12 +64,30 @@ describe('requireClaudeInboxEndpoint', () => {
     );
   });
 
-  test('Desktop ownership wins even if its registry advertises a usable socket', () => {
-    expect(
-      requireClaudeInboxEndpoint(live, { ...registration, entrypoint: 'claude-desktop' })
-    ).toMatchObject({
-      reason: { reason: 'unsupported', detail: expect.stringContaining('Desktop') },
+  test('verifies the Desktop 2.1.299 endpoint while preserving Desktop ownership', () => {
+    expect(requireClaudeInboxEndpoint({ ...live, owner: 'desktop' }, desktop)).toEqual({
+      value: {
+        sessionId: live.sessionId,
+        pid: live.pid,
+        version: '2.1.299',
+        socketPath: registration.messagingSocketPath,
+      },
     });
+  });
+
+  test.each([
+    { ...desktop, version: '2.1.295' },
+    { ...desktop, version: 'future' },
+    { ...desktop, peerProtocol: undefined },
+    { ...desktop, peerProtocol: 2 },
+    { ...desktop, peerFeatures: undefined },
+    { ...desktop, peerFeatures: [] },
+    { ...desktop, messagingSocketPath: '/tmp/cc-socks/457.sock' },
+  ])('refuses unverified Desktop endpoint evidence %j', (record) => {
+    expect(requireClaudeInboxEndpoint({ ...live, owner: 'desktop' }, record)).toHaveProperty(
+      'reason.ok',
+      false
+    );
   });
 
   test('does not require the default socket directory or guess the registered basename', () => {
@@ -96,7 +121,7 @@ describe('readClaudeInboxEndpoint', () => {
     );
     expect(await readClaudeInboxEndpoint(live.sessionId, [live], dir)).toMatchObject({
       ok: false,
-      reason: 'unsupported',
+      reason: 'unreachable',
     });
   });
 
@@ -108,10 +133,24 @@ describe('readClaudeInboxEndpoint', () => {
         await readClaudeInboxEndpoint(live.sessionId, [{ ...live, owner }], dir)
       ).toMatchObject({
         ok: false,
-        reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
+        reason: 'unreachable',
       });
     }
   );
+
+  test('reads a Desktop endpoint afresh instead of rejecting its owner before validation', async () => {
+    await writeFile(join(dir, '456.json'), JSON.stringify(desktop));
+    const sessions = [{ ...live, owner: 'desktop' as const }];
+    expect(await readClaudeInboxEndpoint(live.sessionId, sessions, dir)).toMatchObject({
+      version: '2.1.299',
+      socketPath: desktop.messagingSocketPath,
+    });
+    await writeFile(join(dir, '456.json'), JSON.stringify({ ...desktop, peerProtocol: 2 }));
+    expect(await readClaudeInboxEndpoint(live.sessionId, sessions, dir)).toMatchObject({
+      ok: false,
+      reason: 'unsupported',
+    });
+  });
 
   test('refuses ambiguous live ownership instead of selecting a socket', async () => {
     await writeFile(join(dir, '456.json'), JSON.stringify(registration));

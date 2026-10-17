@@ -46,7 +46,7 @@ import { readTailLines } from './transcript-tail.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
 import {
   readClaudeSessionOwner,
-  requireClaudeCliOwner,
+  requireClaudePeerOwner,
   type ClaudeSessionOwner,
 } from './claude-session-owner.ts';
 
@@ -689,7 +689,7 @@ export const sendClaudeMessage = (superpipe({})('claude-owner-send') as Pipeline
     'record',
     'cliSessionId'
   )
-  .pipe(requireClaudeCliOwner, ['cliSessionId', 'liveSessions'], 'result:outcome')
+  .pipe(requireClaudePeerOwner, ['cliSessionId', 'liveSessions'], 'result:outcome')
   .pipe(sendOwnedClaudeMessage, ['record', 'message', 'deps', 'context'], 'outcome')
   .endAsync('outcome') as (
   record: ClaudeDesktopRecord & { cliSessionId: string },
