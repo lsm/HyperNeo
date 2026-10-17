@@ -92,7 +92,7 @@ describe('projectNeoAskViews todo projection', () => {
       [work('w', status)],
       [item('要求合并', { check: 'coding.pr_merged', deliveredBy: 'w' })]
     );
-    expect(view.todos).toEqual([
+    expect(view.todos).toMatchObject([
       { id: 'w', workId: 'w', title: 'w', state, status: label, added: false },
     ]);
   });
@@ -109,7 +109,7 @@ describe('projectNeoAskViews todo projection', () => {
         [item('merged', { check: 'coding.pr_merged', deliveredBy: 'w' })],
         [read]
       ).todos
-    ).toEqual([{ id: 'w', workId: 'w', title: 'w', state, status, added: false }]);
+    ).toMatchObject([{ id: 'w', workId: 'w', title: 'w', state, status, added: false }]);
   });
   test.each([
     ['abandoned', 'failed', '会话没有回报结果'],

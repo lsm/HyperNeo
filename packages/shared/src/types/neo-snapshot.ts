@@ -287,6 +287,7 @@ export interface NeoAskSessionView {
 }
 
 export interface NeoAskTodo {
+  open?: NeoCardOpenTarget;
   id: string;
   workId: string | null;
   title: string;

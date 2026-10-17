@@ -103,6 +103,7 @@ export function projectNeoAskTodos(
     return {
       id: row.id,
       workId: row.id,
+      ...(card ? { open: card.open } : {}),
       title: row.title,
       ...progress,
       status: [
