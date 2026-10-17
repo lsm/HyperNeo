@@ -95,6 +95,7 @@ describe('neo.todo operations', () => {
     expect(met.ok && met.todo).toMatchObject({
       title: 'Fix login',
       state: 'done',
+      finishedAt: expect.any(Number),
       evidence: '#12 merged',
       report: null,
     });

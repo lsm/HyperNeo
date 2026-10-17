@@ -91,7 +91,8 @@ export function requireNeoTodoOwner(
 
 export function planNeoTodoEdit(
   todo: NeoTodo,
-  input: z.infer<typeof Edit>
+  input: z.infer<typeof Edit>,
+  now = Date.now()
 ): Gate<{ todo: NeoTodo; patch: NeoTodoPatch }> {
   if (todo.state === 'removed') return fail('todo_removed: this todo was removed.');
   if (input.done && !input.evidence)
@@ -102,8 +103,9 @@ export function planNeoTodoEdit(
       patch: {
         ...(input.title ? { title: input.title } : {}),
         ...(input.doneWhen ? { doneWhen: input.doneWhen } : {}),
-        ...(input.done === 'met' ? { state: 'done', evidence: input.evidence } : {}),
-        ...(input.done === 'reported' ? { state: 'done', report: input.evidence } : {}),
+        ...(input.done ? { state: 'done', finishedAt: now } : {}),
+        ...(input.done === 'met' ? { evidence: input.evidence } : {}),
+        ...(input.done === 'reported' ? { report: input.evidence } : {}),
       },
     },
   };
