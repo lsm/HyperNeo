@@ -1,7 +1,7 @@
 # Claude Desktop mods bridge
 
-This is the opt-in plugin client Build slice of #7350. The daemon listener,
-durable outbox and driver wiring follow separately; installing this slice alone
+These are the opt-in client and private transport Build slices of #7350. The
+durable outbox and driver wiring follow separately; installing these slices alone
 does not add driver capabilities. The verified persistent peer inbox from #7354
 continues to carry send/steer and delayed replies without changing their origin.
 
@@ -71,3 +71,29 @@ The client rejects `withdraw` as `unsupported-command`. The following outbox
 slice will cancel only inputs still pending in the daemon's own durable outbox.
 Once claimed/submitted, native withdrawal must remain unsupported or too late;
 it must not be reported as a successful cancellation.
+
+## Private daemon transport
+
+`createClaudeDesktopModsServer` builds the private HTTP-over-UDS endpoint. It is
+exported for the later runtime Wire slice; it does not start automatically or
+advertise new adapter capabilities. Each explicit start creates a fresh private
+instance directory and returns its `connectionFile`. The socket and connection
+file have mode 0600 and the directory has mode 0700. There is no TCP listener and
+no existing Claude credential is used. A separate private binding path keeps
+socket cleanup from unlinking a replacement published endpoint.
+
+The `exchange-claude-desktop-mods` pipeline authenticates the pairing token,
+validates the v1 frame, and reuses `readClaudeInboxEndpoint` to freshly verify the
+unique live Desktop2.1.299 registration on every exchange. CLI, unknown,
+ambiguous or conflicting owners fail closed before persistence. The injected
+`persist(exchange, ownerPid)` must commit its event/command transaction before
+resolving; failures receive no ACK. Returned ACKs and command instances are
+validated before they reach the plugin. There is no native `withdraw` command.
+
+The transport owns no transition/replay policy or in-memory command queue.
+Durable per-instance event deduplication, owner/sequence reconciliation and
+outbox claims belong to the persistence implementation. Shutdown closes clients
+and drains pending persistence before removing only the endpoint's own files.
+Publishing a stable opt-in connection file across daemon restarts, rereading it
+on client transport failure, installing the plugin, and adapter wiring remain
+runtime integration work. This Build slice makes no restart-delivery claim.
