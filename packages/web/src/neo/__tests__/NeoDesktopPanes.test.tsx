@@ -365,7 +365,7 @@ describe('Neo desktop panes', () => {
     );
   });
 
-  it('transfers a reader’s normalized position across viewport and scene-count owner changes', () => {
+  it('keeps the reader position when work empties and transfers it only across viewport changes', () => {
     const { container, model } = mount();
     const main = container.querySelector('main')!;
     const chat = container.querySelector('.neo-chat-rail')!;
@@ -378,12 +378,13 @@ describe('Neo desktop panes', () => {
       clientHeight: { value: 500 },
     });
     const view = model.value.snapshot;
+    chat.scrollTop = 200;
+    fireEvent.scroll(chat);
     act(() => {
       model.value = { ...model.value, snapshot: { ...view, todoAsks: [] } };
     });
-    main.scrollTop = 375;
-    fireEvent.scroll(main);
-    main.scrollTop = 0;
+    expect(chat.scrollTop).toBe(200);
+    expect(main.scrollTop).toBe(0);
     act(() => {
       model.value = { ...model.value, snapshot: view };
     });
@@ -401,6 +402,7 @@ describe('Neo desktop panes', () => {
     act(() => {
       model.value = { ...model.value, snapshot: { ...view, todoAsks: [] } };
     });
+    expect(chat.scrollTop).toBe(200);
     expect(main.scrollTop).toBe(375);
   });
 });
