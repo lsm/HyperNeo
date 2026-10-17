@@ -345,7 +345,6 @@ export function NeoAskCard({
           />
         )}
       </div>
-      {view.idleReason && <p class="mt-1 text-xs text-fg-muted">{view.idleReason}</p>}
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}
       </h3>
@@ -399,6 +398,7 @@ export function NeoAskCard({
               </ul>
             </div>
           )}
+          {view.idleReason && <p class="text-xs text-fg-muted">{view.idleReason}</p>}
           {view.sessions
             .filter(
               (session) =>

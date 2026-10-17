@@ -272,6 +272,8 @@ describe('describeNeoAskFromView', () => {
     expect(stuck.label).toBe("Needs you · Couldn't start: No adapter can start work");
     expect(stuck.idleReason).toBeUndefined();
     const card = render(<NeoAskCard view={trying} />);
+    expect(card.queryByText("Couldn't start: No adapter can start work")).toBeNull();
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
     expect(card.getByText("Couldn't start: No adapter can start work")).toBeTruthy();
     cleanup();
   });
