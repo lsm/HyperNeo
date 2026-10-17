@@ -6,6 +6,9 @@ export function neoCodingTodoProgress(
 ): Pick<NeoAskTodo, 'state' | 'status'> | null {
   const coding = items.filter((item) => item.check?.startsWith('coding.pr_'));
   if (!prs.length) return coding.length ? { state: 'running', status: '等 PR 开出来' } : null;
+  const current = prs.some((pr) => pr.state !== 'CLOSED')
+    ? prs.filter((pr) => pr.state !== 'CLOSED')
+    : prs;
   const labels = prs.map((pr) => {
     const number = `#${pr.url.split('/').pop()}`;
     if (pr.state === 'MERGED') return `${number} 已合并`;
@@ -27,7 +30,7 @@ export function neoCodingTodoProgress(
   );
   const done =
     !otherChecks &&
-    prs.every(
+    current.every(
       (pr) =>
         pr.state === 'MERGED' ||
         (pr.state === 'OPEN' &&
@@ -37,7 +40,7 @@ export function neoCodingTodoProgress(
   return {
     state: done
       ? 'done'
-      : prs.some((pr) => pr.state === 'OPEN') || otherChecks
+      : current.some((pr) => pr.state === 'OPEN') || otherChecks
         ? 'running'
         : 'failed',
     status: labels.join('；'),

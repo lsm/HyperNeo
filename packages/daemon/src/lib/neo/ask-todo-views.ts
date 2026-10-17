@@ -47,6 +47,7 @@ export function projectNeoAskTodos(
   const rows: NeoAskTodo[] = work.map((row) => {
     const card = cards.find((view) => view.workId === row.id);
     const owned = items.filter((item) => item.deliveredBy === row.id && !item.removed);
+    const removed = items.filter((item) => item.deliveredBy === row.id && item.removed);
     const replacedBy = parts.supersessions.find((link) => link.workId === row.id)?.supersededBy;
     const replacement = parts.work.find((candidate) => candidate.id === replacedBy);
     let progress: Pick<NeoAskTodo, 'state' | 'status'>;
@@ -104,6 +105,13 @@ export function projectNeoAskTodos(
       workId: row.id,
       title: row.title,
       ...progress,
+      status: [
+        progress.status,
+        ...removed.map(
+          (item) =>
+            `已取消标准：${item.text}${item.removedReason ? `（${item.removedReason}）` : ''}`
+        ),
+      ].join('；'),
       added: start !== null && row.createdAt > start,
     };
   });

@@ -180,6 +180,30 @@ describe('projectNeoAskViews todo projection', () => {
       status: '已取消部署',
     });
   });
+  test('a removed bound standard stays visible on its work row with the reason', () => {
+    expect(
+      project(
+        [work('w')],
+        [item('removed', { deliveredBy: 'w', removed: true, removedReason: '改为只读说明' })]
+      ).todos
+    ).toMatchObject([
+      { id: 'w', status: '会话说做完了，没查到 PR；已取消标准：removed（改为只读说明）' },
+    ]);
+  });
+
+  test.each(['MERGED', 'OPEN'] as const)(
+    'a superseded closed PR does not fail its %s replacement',
+    (state) => {
+      const view = project(
+        [work('w')],
+        [],
+        [pr('CLOSED'), { ...pr(state), url: 'https://github.com/o/r/pull/104' }]
+      );
+      expect(view.todos?.[0].state).toBe(state === 'MERGED' ? 'done' : 'running');
+      expect(view.todos?.[0].status).toContain('#103 已关闭，没合并');
+    }
+  );
+
   test('keeps the ask order when snapshot work arrives newest first', () => {
     const rows = [work('first'), work('second')];
     expect(
