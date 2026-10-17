@@ -30,10 +30,30 @@ export class NeoWorkPrClaimRepository {
                   OR EXISTS (SELECT 1 FROM neo_work_prs p
                               WHERE p.work_id = w.id AND p.prs_json <> '[]')))
                OR EXISTS (SELECT 1 FROM neo_work_pr_claims c
-                           WHERE c.work_id = w.id AND c.claim <> 'rejected' AND c.claim <> 'named' AND c.scoped = 0)`
+                           WHERE c.work_id = w.id AND c.claim <> 'named' AND c.scoped = 0)`
         )
         .all() as { workId: string }[]
     ).map((row) => row.workId);
+  }
+
+  rejectedUrls(workId: string): { url: string }[] {
+    return this.db
+      .prepare(
+        `SELECT url_key AS url FROM neo_work_pr_claims
+          WHERE work_id = ? AND claim = 'rejected' AND scoped = 0`
+      )
+      .all(workId) as { url: string }[];
+  }
+
+  markReclaimed(workId: string, rejected: readonly { url: string }[]): void {
+    if (!rejected.length) return;
+    this.db
+      .prepare(
+        `UPDATE neo_work_pr_claims SET scoped = 1
+          WHERE work_id = ? AND claim = 'rejected' AND scoped = 0
+            AND url_key IN (SELECT value FROM json_each(?))`
+      )
+      .run(workId, JSON.stringify(rejected.map((item) => item.url.toLowerCase())));
   }
 
   drop(workId: string, urlKey: string, claim: NeoPrClaimState): void {

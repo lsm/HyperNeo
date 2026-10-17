@@ -31,6 +31,16 @@ export interface NeoPrClaimRow {
 const RANK: Record<NeoPrClaim, number> = { branch: 0, opened: 0, named: 1, mentioned: 2 };
 const key = githubUrlKey;
 
+export function neoCardPrWindow(
+  work: Pick<NeoWork, 'createdAt' | 'updatedAt' | 'status'>,
+  kickoff: number | null
+): PrWindow {
+  return {
+    start: kickoff ?? work.createdAt,
+    end: work.status === 'queued' || work.status === 'proposed' ? null : work.updatedAt,
+  };
+}
+
 export function planNeoCardPrCandidates(input: {
   window?: PrWindow | null;
   report: string | null;
@@ -39,6 +49,7 @@ export function planNeoCardPrCandidates(input: {
   branch: readonly string[];
   opened?: readonly string[];
   stored: readonly { url: string }[];
+  rejected?: readonly { url: string }[];
   mentioned?: readonly string[];
 }): NeoCardPrCandidate[] {
   const pr = input.follows ? parsePrUrl(input.follows) : null;
@@ -46,12 +57,18 @@ export function planNeoCardPrCandidates(input: {
     ...(pr ? [`https://${pr.host}/${pr.owner}/${pr.repo}/pull/${pr.number}`] : []),
     ...(input.subscribed ?? []),
   ];
-  const named = new Set(followed.map(key));
+  const reported = [...extractNeoWorkPrUrls(input.report), ...(input.mentioned ?? [])];
+  const named = new Set([...followed, ...reported].map(key));
   const onBranch = new Set(input.branch.map(key));
   const opened = new Set((input.opened ?? []).map(key));
   const seen = new Set<string>();
   const listed = neoCardPrUrls(
-    [...followed, ...extractNeoWorkPrUrls(input.report, input.stored), ...(input.mentioned ?? [])],
+    [
+      ...followed,
+      ...reported,
+      ...extractNeoWorkPrUrls(null, input.stored),
+      ...(input.rejected ?? []).map((item) => item.url),
+    ],
     input.branch
   );
   const known = new Set(listed.map(key));
@@ -61,17 +78,17 @@ export function planNeoCardPrCandidates(input: {
   ].flatMap((url) => {
     if (seen.has(key(url))) return [];
     seen.add(key(url));
-    const claim: NeoPrClaim = onBranch.has(key(url))
-      ? 'branch'
-      : named.has(key(url))
-        ? 'named'
+    const claim: NeoPrClaim = named.has(key(url))
+      ? 'named'
+      : onBranch.has(key(url))
+        ? 'branch'
         : opened.has(key(url))
           ? 'opened'
           : 'mentioned';
     return [
       {
         url,
-        claim: input.window !== undefined && named.has(key(url)) ? 'named' : claim,
+        claim,
         ...(input.window !== undefined
           ? { scope: { window: input.window, onBranch: onBranch.has(key(url)) } }
           : {}),
@@ -159,6 +176,7 @@ export function planNeoCardPrOwnership(
       return [];
     const prior = mine && isRanked(mine) ? mine : undefined;
     const claim =
+      candidate.claim !== 'named' &&
       prior &&
       (prior.scoped || prior.claim === 'named' || candidate.scope === undefined) &&
       RANK[prior.claim] < RANK[candidate.claim]
@@ -251,18 +269,17 @@ export function keepNeoCardPrReads(
   for (const candidate of owned) {
     const pr = prs.find((item) => key(item.url) === key(candidate.url));
     if (candidate.scope !== undefined && candidate.claim !== 'named') {
-      const { window, onBranch } = candidate.scope;
+      const { window } = candidate.scope;
       if (candidate.scoped) sorted.kept.push(candidate);
       else if (
         window &&
-        onBranch &&
         pr?.createdAt !== undefined &&
         pr.createdAt >= window.start &&
         (window.end === null || pr.createdAt <= window.end)
       )
         sorted.kept.push({ ...candidate, scoped: true });
-      else if (!pr && window && onBranch) sorted.pending.push(candidate);
-      else sorted.rejected.push(candidate);
+      else if (window && (!pr || pr.createdAt === undefined)) sorted.pending.push(candidate);
+      else sorted.rejected.push({ ...candidate, scoped: true });
     } else if (
       candidate.claim === 'opened' &&
       pr &&

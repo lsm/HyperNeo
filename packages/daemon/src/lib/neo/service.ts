@@ -277,6 +277,7 @@ import {
   type NeoCardPrCandidate,
   neoCardOpenedPrs,
   planNeoCardPrCandidates,
+  neoCardPrWindow,
 } from './packs/coding/card-pr-claims.ts';
 import {
   type NeoDeployReader,
@@ -3475,10 +3476,15 @@ export class NeoService {
       ref && sent
         ? await this.invokeAsCard(work, 'work.status', { ref, since: sent.inputBefore })
         : null;
-    const window = outcome ? readDriverCardExchange(outcome, sent) : null;
-    const cwd = currentCodingExecutionDirectory(ref, outcome, hostname(), window?.current === true);
+    const exchange = outcome ? readDriverCardExchange(outcome, sent) : null;
+    const cwd = currentCodingExecutionDirectory(
+      ref,
+      outcome,
+      hostname(),
+      exchange?.current === true
+    );
     const worker = neoCardWorkerSession(planNeoCardSend({ work, ref }));
-    const startedAt = this.driverTargets.readStartedAt(work.id) ?? work.createdAt;
+    const window = neoCardPrWindow(work, this.repo.workStartedAt(work.id));
     return planNeoCardPrCandidates({
       window,
       report: work.report,
@@ -3486,12 +3492,13 @@ export class NeoService {
       subscribed: worker
         ? this.sessionSubscriptions
             .listBySession(worker)
-            .filter((row) => row.createdAt >= startedAt)
+            .filter((row) => row.createdAt >= window.start)
             .flatMap((row) => pullRequestUrlOfTopic(row.topic) ?? [])
         : [],
       branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),
       opened: this.cardOpenedPrs.get(work.id) ?? [],
       stored: stored?.prs ?? [],
+      rejected: this.workPrClaims.rejectedUrls(work.id),
       mentioned: await this.cardPrRefs(work, outcome),
     });
   }

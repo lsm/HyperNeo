@@ -2414,13 +2414,16 @@ describe('Neo work with a drivers target', () => {
         review: 'none',
       }));
     Object.assign(service, { deliver: async () => {} });
+    const clock = spyOn(Date, 'now');
     try {
       db.createSession({ ...createTestSession('card-session'), worktree });
       await service.start('work-1');
+      clock.mockReturnValue(at + 3);
       await service.refreshDriverWork();
       expect(branches).toContain('neo/font');
       expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);
     } finally {
+      clock.mockRestore();
       db.close();
     }
   });
@@ -2556,9 +2559,8 @@ describe('Neo work with a drivers target', () => {
     fileUnderAsk(service);
     try {
       await service.start('work-1');
-      sql
-        .prepare('UPDATE neo_work_driver_targets SET started_at = ? WHERE work_id = ?')
-        .run(at - 1_000, 'work-1');
+      sql.prepare('UPDATE neo_work SET started_at = ? WHERE id = ?').run(at - 1_000, 'work-1');
+      service.driverTargets.recordStartedAt('work-1', at + 1);
       sql
         .prepare('UPDATE session_event_subscriptions SET created_at = ? WHERE topic LIKE ?')
         .run(at, '%/18.*');
@@ -2635,7 +2637,11 @@ describe('Neo work with a drivers target', () => {
         expect(service.repo.getWork('work-1')?.status).toBe('reported');
         expect(cwds.length > 0).toBe(evidence === 'local');
         expect(cwds.every((cwd) => cwd === '/actual/checkout')).toBe(true);
-        expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url) ?? []).toEqual([]);
+        expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url) ?? []).toEqual(
+          evidence === 'local'
+            ? [6651, 6652].map((number) => `https://github.com/actual/checkout/pull/${number}`)
+            : []
+        );
       } finally {
         db.close();
       }
@@ -2652,7 +2658,7 @@ describe('Neo work with a drivers target', () => {
     { adapter: 'codex-desktop', evidence: 'other-ref' },
     { adapter: 'codex-desktop', evidence: 'missing-directory' },
   ])(
-    'attributes checkout PRs only to current local cards: $adapter/$evidence',
+    'discovers checkout PRs locally while retaining report-named PRs: $adapter/$evidence',
     async ({ adapter, evidence }) => {
       const ref = { adapter, id: 'worker', ...(evidence === 'remote' ? { daemon: 'other' } : {}) };
       const at = Date.now() + 10_000;
@@ -2709,28 +2715,40 @@ describe('Neo work with a drivers target', () => {
       db.createSession(createTestSession('neo:root'));
       service.workGoals.record('work-1', 'Fix the font', '- merged to dev');
       fileUnderAsk(service);
+      const clock = spyOn(Date, 'now');
       try {
         await service.start('work-1');
+        db.getDatabase()
+          .prepare('UPDATE neo_work SET started_at = ? WHERE id = ?')
+          .run(at, 'work-1');
+        clock.mockReturnValue(at + 5);
         await service.refreshDriverWork();
         const claimed = () => service.workPrs.get('work-1')?.prs.map((pr) => pr.url) ?? [];
         expect(cwds.length > 0).toBe(evidence === 'current');
         expect(cwds.every((cwd) => cwd === '/actual/checkout')).toBe(true);
-        expect(claimed()).toEqual(evidence === 'current' ? [urls[0]] : []);
+        expect(claimed()).toEqual(
+          evidence === 'current'
+            ? [urls[2], urls[0]]
+            : evidence === 'missing-exchange'
+              ? []
+              : [urls[2]]
+        );
         if (evidence === 'current') {
           cwds.length = 0;
           laterInput = true;
           await service.refreshDriverWork();
           expect(cwds).toEqual([]);
-          expect(claimed()).toEqual([urls[0]]);
+          expect(claimed()).toEqual([urls[2], urls[0]]);
           expect(service.repo.getWork('work-1')?.report).toBe(`Agent: Fixed it. ${urls[2]}`);
         }
       } finally {
+        clock.mockRestore();
         db.close();
       }
     }
   );
 
-  test('does not claim PRs mentioned only in a report', async () => {
+  test('claims report-named PRs while excluding issue references', async () => {
     const ref = { adapter: 'hyperneo', id: 'card-session' };
     const pull = (n: number) => `https://github.com/lsm/HyperNeo/pull/${n}`;
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
@@ -2774,7 +2792,10 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(cwds).toContain('/repo');
-      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([]);
+      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([
+        pull(6403),
+        pull(6440),
+      ]);
     } finally {
       db.close();
     }

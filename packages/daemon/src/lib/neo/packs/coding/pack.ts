@@ -76,7 +76,8 @@ export const codingPrOpenedCheck: NeoPackCheck = (item, evidence: readonly NeoEv
 export interface NeoCardPrDeps {
   readPrs: NeoWorkPrReader;
   prCandidates: (work: NeoWork, stored: NeoWorkPrRow | null) => Promise<NeoCardPrCandidate[]>;
-  claims: Pick<NeoWorkPrClaimRepository, 'forUrls' | 'replace' | 'drop'>;
+  claims: Pick<NeoWorkPrClaimRepository, 'forUrls' | 'replace' | 'drop'> &
+    Partial<Pick<NeoWorkPrClaimRepository, 'markReclaimed'>>;
   workPrs: Pick<NeoWorkPrRepository, 'get' | 'list' | 'recordFailedRead'>;
   record: (
     workId: string,
@@ -216,6 +217,29 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
     },
     ['deps', 'work', 'current', 'unbeaten', 'fetched'],
     'result:read'
+  )
+  .pipe(
+    (
+      deps: NeoCardPrDeps,
+      work: NeoWork,
+      found: { candidates: NeoCardPrCandidate[] },
+      unbeaten: NeoCardPrPlan,
+      fetched: { prs: NeoWorkPr[] | null },
+      read: NeoCardPrRead,
+      force: boolean | undefined
+    ) => {
+      if (!force || !read.ok) return;
+      const owned = new Set(ownedUrls(unbeaten).map(githubUrlKey));
+      const observed = new Set((fetched.prs ?? []).map((pr) => githubUrlKey(pr.url)));
+      deps.claims.markReclaimed?.(
+        work.id,
+        found.candidates.filter(
+          (candidate) =>
+            !owned.has(githubUrlKey(candidate.url)) || !observed.has(githubUrlKey(candidate.url))
+        )
+      );
+    },
+    ['deps', 'work', 'found', 'unbeaten', 'fetched', 'read', 'force']
   )
   .pipe(
     (deps: NeoCardPrDeps, work: NeoWork, read: NeoCardPrRead) => ({
