@@ -153,11 +153,11 @@ describe('Neo isolated holder turns', () => {
     const active = turn();
     const input = runner.createMessageGeneratorWrapper(1, undefined, active);
     expect((await input.next()).value?.uuid).toBe('human-input');
-    await sent;
     let finished = false;
     const end = input.next().then((step) => {
       finished = step.done === true;
     });
+    await sent;
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(finished).toBe(false);
     active.dispose();
