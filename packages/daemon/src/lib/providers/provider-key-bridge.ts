@@ -54,13 +54,24 @@ function keyedUpstream(providerId: string, env: KeyedEnv) {
   };
 }
 
+function stopUnreferencedBridge(key: string | undefined): void {
+  if (!key || [...scopeBridgeKeys.values()].includes(key)) return;
+  readyBridges.get(key)?.server.stop();
+  readyBridges.delete(key);
+}
+
 function retireScopeBridge(scope: string, nextKey: string): void {
   const previousKey = scopeBridgeKeys.get(scope);
   scopeBridgeKeys.set(scope, nextKey);
-  if (!previousKey || previousKey === nextKey) return;
-  if ([...scopeBridgeKeys.values()].includes(previousKey)) return;
-  readyBridges.get(previousKey)?.server.stop();
-  readyBridges.delete(previousKey);
+  stopUnreferencedBridge(previousKey);
+}
+
+export function releaseSessionKeyBridges(sessionId: string): void {
+  for (const [scope, key] of [...scopeBridgeKeys]) {
+    if (!scope.endsWith(`:${sessionId}`)) continue;
+    scopeBridgeKeys.delete(scope);
+    stopUnreferencedBridge(key);
+  }
 }
 
 export async function startProviderKeyBridge(

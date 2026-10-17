@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { createAnthropicMessagesBridgeServer } from '../../../../src/lib/providers/anthropic-messages-bridge/server';
 import {
+  releaseSessionKeyBridges,
   shieldProviderKey,
   startProviderKeyBridge,
 } from '../../../../src/lib/providers/provider-key-bridge';
@@ -35,6 +36,16 @@ describe('shieldProviderKey', () => {
 });
 
 describe('startProviderKeyBridge', () => {
+  it('stops a session-scoped bridge when its session is released', async () => {
+    const env = { ANTHROPIC_BASE_URL: 'https://session.invalid', ANTHROPIC_AUTH_TOKEN: 's-key' };
+    await startProviderKeyBridge('deepseek', env, 'deepseek:s-9');
+    expect(shieldProviderKey('deepseek', env).ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127/);
+
+    releaseSessionKeyBridges('s-9');
+
+    expect(() => shieldProviderKey('deepseek', env)).toThrow(/not started/);
+  });
+
   it('stops the previous bridge when a scope rotates its key', async () => {
     const base = 'https://rotate.invalid';
     const first = { ANTHROPIC_BASE_URL: base, ANTHROPIC_AUTH_TOKEN: 'old-key' };
