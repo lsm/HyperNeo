@@ -106,7 +106,10 @@ describe('legacy reclaim candidates', () => {
         await readNeoCardPrs(
           {
             claims: {
-              forUrls: (urls) => [...repo.forUrls(urls), claim({ claim: 'branch', scoped: true })],
+              forUrls: (urls) => [
+                ...repo.forUrls(urls),
+                ...(rival ? [claim({ claim: 'branch', scoped: true })] : []),
+              ],
               replace: repo.replace.bind(repo),
               drop: repo.drop.bind(repo),
               markReclaimed: repo.markReclaimed.bind(repo),
