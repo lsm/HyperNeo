@@ -195,7 +195,18 @@ describe('requireNeoTodoStartable', () => {
         ask,
         target: { verb: 'read', operation: 'x', input: {} } as never,
       })
-    ).toEqual({ reason: { ok: false, reason: 'unsupported_target: a todo cannot start a read.' } });
+    ).toEqual({
+      reason: { ok: false, reason: 'unsupported_target: a todo cannot read a session.' },
+    });
+    expect(
+      requireNeoTodoStartable({
+        todo: { ...todo, instruction: 'x' },
+        ask,
+        target: { verb: 'adopt', ref: { adapter: 'hyperneo', id: 'w' } },
+      })
+    ).toEqual({
+      reason: { ok: false, reason: 'unsupported_target: a todo cannot adopt a session.' },
+    });
   });
 });
 
