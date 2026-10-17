@@ -380,7 +380,7 @@ describe('NeoService session ask links', () => {
       doneSource: 'human',
     })!;
 
-  test("a session that opened a PR the ask's card owns shows on the ask, and its needs-you moves the ask to attention instead of a loose notice", async () => {
+  test('a linked session keeps its attention facts without inventing an ask question', async () => {
     const opened = openAsk('Ship the fix');
     service.driverTargets.propose(
       service.repo,
@@ -416,9 +416,9 @@ describe('NeoService session ask links', () => {
     await watch('needs_you', now - 1_000, [pr(7)]);
     expect(notices()).toEqual([]);
     expect((await askViews())[0]).toMatchObject({
-      group: 'attention',
-      label: 'Needs you',
-      needsYou: true,
+      group: 'running',
+      label: '在做',
+      needsYou: false,
       sessions: [
         {
           key,
@@ -432,7 +432,7 @@ describe('NeoService session ask links', () => {
     });
   });
 
-  test('a linked session already waiting when the daemon starts puts its ask in attention', async () => {
+  test('a linked session already waiting keeps its facts while the ask waits for a real question', async () => {
     openAsk(`Land ${pr(12)}`);
     const at = Date.now() - 1_000;
     sessions = [
@@ -448,7 +448,9 @@ describe('NeoService session ask links', () => {
     status = { status: 'needs_you', lastActivityAt: at, openedPrs: [pr(12)] };
     await service.refreshDriverWork();
     expect((await askViews())[0]).toMatchObject({
-      group: 'attention',
+      group: 'running',
+      label: '没开始',
+      needsYou: false,
       sessions: [{ key, kind: 'needs_you' }],
     });
   });
@@ -460,7 +462,9 @@ describe('NeoService session ask links', () => {
     await watch('failed', now - 1_000, [pr(12)]);
     expect(notices()).toEqual([]);
     expect((await askViews())[0]).toMatchObject({
-      group: 'attention',
+      group: 'running',
+      label: '没开始',
+      needsYou: false,
       sessions: [{ key, kind: 'failed' }],
     });
   });

@@ -110,6 +110,7 @@ export const NeoAskViewSchema = z.object({
   todos: z
     .array(
       z.object({
+        open: OpenTarget.optional(),
         id: z.string(),
         workId: z.string().nullable(),
         title: z.string(),

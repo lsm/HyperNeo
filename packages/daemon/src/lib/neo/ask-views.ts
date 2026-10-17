@@ -2,6 +2,7 @@ import {
   type NeoAsk,
   type NeoAskHumanAction,
   type NeoAskItem,
+  type NeoAskTodo,
   type NeoAskSessionView,
   type NeoAskStatus,
   type NeoAskView,
@@ -110,7 +111,7 @@ export function neoAskItemAction(item: NeoAskItem): NeoAskHumanAction | null {
   return {
     kind: 'question',
     itemId: item.id,
-    question: steps.length === 1 ? neoStartQuestionTitle(steps) : (item.question ?? item.text),
+    question: steps.length ? neoStartQuestionTitle(steps) : (item.question ?? item.text),
     ...(steps.length ? { steps } : {}),
     options: item.options ?? [],
   };
@@ -173,6 +174,48 @@ export function describeNeoAskViews(asks: readonly NeoAsk[], index: AskViewIndex
   return asks.map((ask) => describeNeoAskView(ask, index));
 }
 
+export function neoAskTodoScene(
+  ask: NeoAsk,
+  todos: readonly NeoAskTodo[],
+  humanActions: readonly NeoAskHumanAction[]
+): Pick<NeoAskView, 'group' | 'label' | 'needsYou' | 'done' | 'total' | 'doneWorkIds'> {
+  const active = todos.filter((todo) => todo.state !== 'cancelled');
+  const abandoned = ask.status === 'abandoned';
+  const achieved = ask.status === 'achieved';
+  const needsYou = !abandoned && !achieved && humanActions.length > 0;
+  const running = active.some((todo) => todo.state === 'running');
+  const done = active.filter((todo) => todo.state === 'done');
+  const finished = active.length ? done.length === active.length : ask.status === 'achieved';
+  const failed = active.some((todo) => todo.state === 'failed');
+  return {
+    label: abandoned
+      ? '放弃了'
+      : achieved
+        ? '做完'
+        : needsYou
+          ? '等你'
+          : running
+            ? '在做'
+            : finished
+              ? '做完'
+              : failed
+                ? '没做成'
+                : '没开始',
+    group:
+      abandoned || achieved
+        ? 'outcomes'
+        : needsYou
+          ? 'attention'
+          : finished || (failed && !running)
+            ? 'outcomes'
+            : 'running',
+    needsYou,
+    done: done.length,
+    total: active.length,
+    doneWorkIds: done.flatMap((todo) => todo.workId ?? []),
+  };
+}
+
 function withNeoAskTodos(
   views: NeoAskView[],
   asks: readonly NeoAsk[],
@@ -181,10 +224,14 @@ function withNeoAskTodos(
   parts?: NeoAskTodoParts
 ): NeoAskView[] {
   if (!parts) return views;
-  return views.map((view, index) => ({
-    ...view,
-    todos: projectNeoAskTodos(asks[index], cards, prs, parts),
-  }));
+  return views.map((view, index) => {
+    const todos = projectNeoAskTodos(asks[index], cards, prs, parts);
+    return {
+      ...view,
+      todos,
+      ...neoAskTodoScene(asks[index], todos, view.humanActions ?? []),
+    };
+  });
 }
 
 export const projectNeoAskViews = (superpipe({})('neo-ask-views') as PipelineAPI)

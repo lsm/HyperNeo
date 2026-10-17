@@ -129,7 +129,7 @@ describe('grouped card start question', () => {
     for (const id of ['one', 'two', 'three']) propose(id);
     expect(questions()).toHaveLength(1);
     expect(questions()[0]).toMatchObject({
-      question: '开始这 3 步？',
+      question: '开始这 3 件？',
       options: ['先不做', '开始'],
       kind: 'approval',
     });
@@ -167,7 +167,7 @@ describe('grouped card start question', () => {
       {
         kind: 'question',
         itemId: questions()[0].id,
-        question: '开始这 3 步？',
+        question: '开始这 3 件？',
         options: ['先不做', '开始'],
         steps: expect.arrayContaining([
           { id: 'one', title: 'Card one' },

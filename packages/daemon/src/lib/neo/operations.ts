@@ -1161,14 +1161,15 @@ export function createNeoOperations(service: NeoService) {
     );
   }
   function projectCards(visibleWork: NeoWork[], asks: NeoAsk[]) {
-    const workIds = visibleWork.map((item) => item.id);
+    const workOf = new Map(visibleWork.map((item) => [item.id, item]));
+    const workIds = [...workOf.keys()];
     const workPrs = service.workPrs
       .list(workIds)
       .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));
     const cards = projectNeoCardViews({
       work: visibleWork,
-      drivers: workDrivers(workIds),
-      waits: service.cardWaits(workIds),
+      drivers: workDrivers(workOf),
+      waits: service.cardWaits(workIds, Date.now(), workOf),
       prs: workPrs,
       goals: service.workGoals.list(workIds),
       continues: service.workContinues.list(workIds),
@@ -1179,15 +1180,17 @@ export function createNeoOperations(service: NeoService) {
     });
     return { workPrs, cards };
   }
-  function workDrivers(workIds: string[]) {
-    return service.driverTargets.receipts(workIds).map((receipt) => {
+  function workDrivers(workOf: ReadonlyMap<string, NeoWork>) {
+    return service.driverTargets.receipts([...workOf.keys()]).map((receipt) => {
       const since = service.uncheckedSince(receipt.workId);
       const checkedAt = service.checkedAt(receipt.workId);
       return {
         ...receipt,
         ...(since === null ? {} : { uncheckedSince: since }),
         ...(checkedAt === null ? {} : { checkedAt }),
-        ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
+        ...(service.isRetryable(receipt.workId, workOf.get(receipt.workId) ?? null)
+          ? { retryable: true as const }
+          : {}),
       };
     });
   }
@@ -1253,7 +1256,14 @@ export function createNeoOperations(service: NeoService) {
       Date.now(),
       new Set()
     );
-    const { workPrs, cards } = projectCards(visibleWork, asks);
+    const visibleIds = new Set(visibleWork.map((row) => row.id));
+    const askWorkIds = new Set(asks.flatMap((ask) => ask.workIds));
+    const projectedWork =
+      caller.source === 'rpc'
+        ? work.filter((row) => visibleIds.has(row.id) || askWorkIds.has(row.id))
+        : visibleWork;
+    const { workPrs: allWorkPrs, cards: allCards } = projectCards(projectedWork, asks);
+    const cards = allCards.filter((card) => visibleIds.has(card.workId));
     const cardOf = new Map(cards.map((card) => [card.workId, card]));
     const omittedWork = work.length - visibleWork.length;
     const omittedAsks = listed.length - asks.length;
@@ -1338,14 +1348,14 @@ export function createNeoOperations(service: NeoService) {
       working: readNeoWorking(service.db.getDatabase()).slice(0, 100),
       askViews: projectNeoAskViews(
         asks,
-        cards,
-        workPrs,
+        allCards,
+        allWorkPrs,
         unmutedAskSessions(),
         busyNeoAskSessions(service.askSessions),
         caller.source === 'rpc'
           ? {
-              work: visibleWork,
-              supersessions: service.workSupersessions.list(visibleWork.map((row) => row.id)),
+              work: projectedWork,
+              supersessions: service.workSupersessions.list(projectedWork.map((row) => row.id)),
             }
           : undefined
       ),

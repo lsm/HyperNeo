@@ -48,7 +48,7 @@ export function neoStartDecision(ask: NeoAsk, target: NeoStartTarget) {
 export function neoStartQuestionTitle(steps: readonly { title?: string }[]): string {
   return steps.length === 1 && steps[0].title
     ? `开始「${steps[0].title}」？`
-    : `开始这 ${steps.length} 步？`;
+    : `开始这 ${steps.length} 件？`;
 }
 
 export function planNeoStartQuestion(ask: NeoAsk, proposed: NeoStartTarget[]) {

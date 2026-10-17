@@ -84,7 +84,7 @@ describe('projectNeoAskViews todo projection', () => {
   test.each([
     ['proposed', 'pending', '要求合并'],
     ['queued', 'running', '等 PR 开出来'],
-    ['reported', 'running', '等 PR 开出来'],
+    ['reported', 'running', '会话说做完了，没查到 PR'],
     ['failed', 'failed', '没交出去：测试没过'],
     ['cancelled', 'cancelled', '已取消'],
   ] as const)('%s is a single todo with its own state', (status, state, label) => {
@@ -92,7 +92,7 @@ describe('projectNeoAskViews todo projection', () => {
       [work('w', status)],
       [item('要求合并', { check: 'coding.pr_merged', deliveredBy: 'w' })]
     );
-    expect(view.todos).toEqual([
+    expect(view.todos).toMatchObject([
       { id: 'w', workId: 'w', title: 'w', state, status: label, added: false },
     ]);
   });
@@ -109,7 +109,7 @@ describe('projectNeoAskViews todo projection', () => {
         [item('merged', { check: 'coding.pr_merged', deliveredBy: 'w' })],
         [read]
       ).todos
-    ).toEqual([{ id: 'w', workId: 'w', title: 'w', state, status, added: false }]);
+    ).toMatchObject([{ id: 'w', workId: 'w', title: 'w', state, status, added: false }]);
   });
   test.each([
     ['abandoned', 'failed', '会话没有回报结果'],
@@ -133,6 +133,125 @@ describe('projectNeoAskViews todo projection', () => {
     ).toMatchObject({ state, status });
   });
 
+  test.each(['achieved', 'abandoned'] as const)(
+    'settled %s asks retain evidence without claiming any work is still running',
+    (status) => {
+      for (const workStatus of ['queued', 'proposed', 'reported'] as const) {
+        const standard = item('merge', { check: 'coding.pr_merged', deliveredBy: 'w' });
+        const view = project([work('w', workStatus)], [standard], [], { status });
+        expect(view).toMatchObject({
+          group: 'outcomes',
+          label: status === 'achieved' ? '做完' : '放弃了',
+          done: 0,
+        });
+        expect(view.todos?.[0]).toMatchObject({ state: 'failed' });
+        expect(view.todos?.[0].status).not.toMatch(/等 PR|会话在做|等你开始/);
+        if (workStatus === 'reported')
+          expect(view.todos?.[0].status).toBe('会话说做完了，没查到 PR');
+        expect(standard.state).toBe('pending');
+      }
+      const view = project(
+        [work('w')],
+        [
+          item('merge', { check: 'coding.pr_merged', deliveredBy: 'w' }),
+          item('pending'),
+          item('reported', { state: 'reported' }),
+          item('verified', { check: 'coding.deployed', state: 'met', metBy: 'daemon' }),
+        ],
+        [pr('OPEN')],
+        { status }
+      );
+      expect(view.todos?.map((todo) => todo.state)).toEqual(['failed', 'failed', 'failed', 'done']);
+      expect(view.todos?.map((todo) => todo.status)).toEqual([
+        '#103 还没合并，ask 已结束',
+        '结束时没做完',
+        '已回报，结束时尚未核实',
+        '完成标准已满足',
+      ]);
+      expect(project([work('w')], [], [], { status }).todos?.[0].state).toBe('done');
+      expect(project([work('w')], [], [pr('MERGED')], { status }).todos?.[0].state).toBe('done');
+    }
+  );
+
+  test.each(['proposed', 'queued'] as const)(
+    'verified completion survives settlement of undispatched %s work',
+    (status) => {
+      for (const askStatus of ['open', 'achieved', 'abandoned'] as const)
+        for (const check of ['coding.pr_merged', 'coding.deployed']) {
+          const view = project(
+            [{ ...work('w', status), sessionId: null }],
+            [item('verified', { deliveredBy: 'w', check, state: 'met', metBy: 'human' })],
+            [],
+            { status: askStatus }
+          );
+          expect(view.todos?.[0]).toMatchObject({ state: 'done', status: '完成标准已满足' });
+          expect(view.done).toBe(1);
+        }
+    }
+  );
+
+  test('a verified coding criterion does not cover an unverified deployment', () => {
+    expect(
+      project(
+        [work('w')],
+        [
+          item('merge', {
+            check: 'coding.pr_merged',
+            deliveredBy: 'w',
+            state: 'met',
+            metBy: 'daemon',
+          }),
+          item('deployment', { check: 'coding.deployed', deliveredBy: 'w' }),
+        ]
+      ).todos?.[0].state
+    ).toBe('running');
+  });
+
+  test('retains idle wake facts while showing the new todo label', () => {
+    const view = project([], []);
+    expect(view).toMatchObject({ idle: true, label: '没开始', needsYou: false });
+  });
+
+  test('an achieved ask with no active todos remains settled in outcomes', () => {
+    expect(project([], [], [], { status: 'achieved' })).toMatchObject({
+      settled: true,
+      label: '做完',
+      group: 'outcomes',
+      total: 0,
+    });
+  });
+
+  test.each([
+    ['waiting', ['pending'], true, '等你', 'attention'],
+    ['open', ['done'], true, '等你', 'attention'],
+    ['open', ['running', 'failed'], false, '在做', 'running'],
+    ['open', ['done', 'cancelled'], false, '做完', 'outcomes'],
+    ['abandoned', ['running'], false, '放弃了', 'outcomes'],
+    ['open', ['failed'], false, '没做成', 'outcomes'],
+    ['open', ['pending'], false, '没开始', 'running'],
+  ] as const)(
+    'top status follows questions and todo facts (%s %j)',
+    (status, states, question, label, group) => {
+      const rows = states.map((state, n) =>
+        work(
+          String(n),
+          state === 'done'
+            ? 'reported'
+            : state === 'running'
+              ? 'queued'
+              : state === 'pending'
+                ? 'proposed'
+                : state
+        )
+      );
+      const questions = question
+        ? [item('q', { state: 'needs_you', decision: true, question: '继续？' })]
+        : [];
+      const view = project(rows, questions, [], { status });
+      expect(view).toMatchObject({ label, group, needsYou: question });
+    }
+  );
+
   test('merged PRs do not claim an unmet deployment is done', () => {
     expect(
       project(
@@ -142,6 +261,31 @@ describe('projectNeoAskViews todo projection', () => {
       ).todos?.[0].state
     ).toBe('running');
   });
+  test.each(['neo', 'daemon', 'human'] as const)(
+    'a readable criterion uses the verification record, not just a claim by %s',
+    (metBy) => {
+      const view = project(
+        [work('w')],
+        [
+          item('merged', { check: 'coding.pr_merged', state: 'met', metBy, deliveredBy: 'w' }),
+          item('standalone', { check: 'coding.deployed', state: 'met', metBy }),
+        ]
+      );
+      expect(view.todos?.map((todo) => todo.state)).toEqual(
+        metBy === 'neo' ? ['running', 'pending'] : ['done', 'done']
+      );
+    }
+  );
+
+  test('queued work without a session or driver remains not started even with a PR criterion', () => {
+    expect(
+      project(
+        [{ ...work('w', 'queued'), sessionId: null }],
+        [item('merge', { check: 'coding.pr_merged', deliveredBy: 'w' })]
+      ).todos?.[0]
+    ).toMatchObject({ state: 'pending', status: '还没交给会话' });
+  });
+
   test('a report is enough only without a readable completion standard', () => {
     expect(project([work('w')], []).todos?.[0]).toMatchObject({
       state: 'done',

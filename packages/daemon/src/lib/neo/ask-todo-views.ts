@@ -7,6 +7,7 @@ import type {
   NeoWorkPrReceipt,
   NeoWorkSupersession,
 } from '@hyperneo/shared/types/neo-snapshot';
+import { neoTodoCriterionMet } from './todo-criterion.ts';
 import { neoCodingTodoProgress } from './packs/coding/todo-progress.ts';
 
 export type NeoAskTodoParts = {
@@ -28,9 +29,14 @@ function startedAt(ask: NeoAsk): number | null {
   return answers.length ? Math.min(...answers) : (ask.approvedAt ?? null);
 }
 
-function itemProgress(item: NeoAskItem): Pick<NeoAskTodo, 'state' | 'status'> {
+function itemProgress(item: NeoAskItem, settled: boolean): Pick<NeoAskTodo, 'state' | 'status'> {
   if (item.removed) return { state: 'cancelled', status: item.removedReason ?? '已取消' };
-  if (item.state === 'met') return { state: 'done', status: '完成标准已满足' };
+  if (neoTodoCriterionMet(item)) return { state: 'done', status: '完成标准已满足' };
+  if (settled)
+    return {
+      state: 'failed',
+      status: item.state === 'reported' ? '已回报，结束时尚未核实' : '结束时没做完',
+    };
   if (item.state === 'reported') return { state: 'running', status: '已回报，等核实' };
   return { state: 'pending', status: '等 daemon 核实' };
 }
@@ -44,6 +50,7 @@ export function projectNeoAskTodos(
   const items = (ask.doneItems ?? []).filter((item) => !question(item));
   const work = ask.workIds.flatMap((id) => parts.work.find((row) => row.id === id) ?? []);
   const start = startedAt(ask);
+  const settled = ask.status === 'achieved' || ask.status === 'abandoned';
   const rows: NeoAskTodo[] = work.map((row) => {
     const card = cards.find((view) => view.workId === row.id);
     const owned = items.filter((item) => item.deliveredBy === row.id && !item.removed);
@@ -53,7 +60,9 @@ export function projectNeoAskTodos(
     let progress: Pick<NeoAskTodo, 'state' | 'status'>;
     const coding = neoCodingTodoProgress(
       owned,
-      prs.find((receipt) => receipt.workId === row.id)?.prs ?? []
+      prs.find((receipt) => receipt.workId === row.id)?.prs ?? [],
+      row.status === 'reported',
+      settled
     );
     if (row.status === 'cancelled' || replacedBy)
       progress = {
@@ -73,21 +82,22 @@ export function projectNeoAskTodos(
       };
     else if (card?.phase === 'abandoned')
       progress = { state: 'failed', status: '会话没有回报结果' };
+    else if (owned.length && owned.every(neoTodoCriterionMet))
+      progress = { state: 'done', status: '完成标准已满足' };
+    else if (coding?.state === 'done') progress = coding;
     else if (row.status === 'proposed')
       progress = {
         state: 'pending',
         status: owned.map((item) => item.text).join('；') || card?.doneWhen || '等你开始',
       };
+    else if (row.status === 'queued' && !row.sessionId && !card?.adapter)
+      progress = { state: 'pending', status: '还没交给会话' };
     else if (coding) progress = coding;
-    else if (owned.length && owned.every((item) => item.state === 'met'))
-      progress = { state: 'done', status: '完成标准已满足' };
     else if (row.status === 'reported')
       progress = {
         state: owned.some((item) => item.check || item.watch?.length) ? 'running' : 'done',
         status: '会话说做完了，没查到 PR',
       };
-    else if (!row.sessionId && !card?.adapter)
-      progress = { state: 'pending', status: '还没交给会话' };
     else
       progress = {
         state: 'running',
@@ -100,9 +110,17 @@ export function projectNeoAskTodos(
                 ? '会话已结束，daemon 正在核实'
                 : '会话在做',
       };
+    if (settled && (progress.state === 'running' || progress.state === 'pending'))
+      progress = {
+        state: 'failed',
+        status:
+          coding?.status ??
+          (row.status === 'reported' ? '会话说做完了，结束时尚未核实' : '结束时没做完'),
+      };
     return {
       id: row.id,
       workId: row.id,
+      ...(card ? { open: card.open } : {}),
       title: row.title,
       ...progress,
       status: [
@@ -121,7 +139,7 @@ export function projectNeoAskTodos(
       id: item.id,
       workId: null,
       title: item.text,
-      ...itemProgress(item),
+      ...itemProgress(item, settled),
       added: start !== null && item.addedAt !== null && item.addedAt > start,
     });
   return rows;
