@@ -52,7 +52,8 @@ function setup() {
         },
       },
       () => 'project-1',
-      (projectId) => (projectId === 'project-1' ? projectId : null)
+      (projectId) => (projectId === 'project-1' ? projectId : null),
+      (sessionId) => sessionId === 'neo-a'
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
@@ -155,6 +156,10 @@ describe('neo.ask.open and neo.ask.settle', () => {
     });
     expect(stopped).toHaveLength(2);
     expect(store.getQuestion('q')?.state).toBe('retired');
+    expect(store.listTodos(opened.ask.id).map((todo) => [todo.state, todo.reason])).toEqual([
+      ['removed', 'The ask was settled dropped.'],
+      ['removed', 'The ask was settled dropped.'],
+    ]);
     expect(
       await call(
         'neo.ask.settle',
@@ -197,8 +202,12 @@ describe('requireNeoAskProject', () => {
 
 describe('requireNeoAskSession', () => {
   test('needs a Neo session', () => {
-    expect(requireNeoAskSession({ source: 'rpc' })).toEqual({
+    const refused = {
       reason: { ok: false, reason: 'no_session: only a Neo session opens an ask.' },
-    });
+    };
+    expect(requireNeoAskSession({ source: 'rpc' }, () => true)).toEqual(refused);
+    expect(requireNeoAskSession({ source: 'mcp', sessionId: 'worker-1' }, () => false)).toEqual(
+      refused
+    );
   });
 });
