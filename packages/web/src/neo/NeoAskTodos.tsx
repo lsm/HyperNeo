@@ -268,7 +268,7 @@ export function NeoAskTodos({
     asked.flatMap((question) => (question.kind === 'start' ? (question.startTodos ?? []) : []))
   );
   const live = todos.filter((todo) => todo.state !== 'removed');
-  const removed = todos.filter((todo) => todo.state === 'removed');
+  const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
   const hasDetails = answered.length > 0 || !!ask.outcome || removed.length > 0;
   const [label, tone] = states[entry.state];
   return (

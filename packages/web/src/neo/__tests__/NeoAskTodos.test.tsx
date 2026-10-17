@@ -223,6 +223,20 @@ describe('NeoAskTodos', () => {
     expect(line.id).toBe('neo-ref-todo-d');
   });
 
+  it('keeps a removed todo still listed in an open start question out of Details', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [todo('d', { state: 'removed', status: '不要了' })],
+          questions: [question('q', { kind: 'start', state: 'open', startTodos: ['d'] })],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    expect(app.queryByRole('button', { name: 'Details' })).toBeNull();
+    expect(app.container.querySelectorAll('[data-ask-todo="d"]')).toHaveLength(1);
+  });
+
   it('shows no Details button when there is nothing to put in it', () => {
     const app = render(
       <NeoAskTodos entry={entry({ todos: [todo('a', { state: 'doing' })] })} onAnswer={() => {}} />
