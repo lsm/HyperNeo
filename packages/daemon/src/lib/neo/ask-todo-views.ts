@@ -82,6 +82,9 @@ export function projectNeoAskTodos(
       };
     else if (card?.phase === 'abandoned')
       progress = { state: 'failed', status: '会话没有回报结果' };
+    else if (owned.length && owned.every(neoTodoCriterionMet))
+      progress = { state: 'done', status: '完成标准已满足' };
+    else if (coding?.state === 'done') progress = coding;
     else if (row.status === 'proposed')
       progress = {
         state: 'pending',
@@ -90,8 +93,6 @@ export function projectNeoAskTodos(
     else if (row.status === 'queued' && !row.sessionId && !card?.adapter)
       progress = { state: 'pending', status: '还没交给会话' };
     else if (coding) progress = coding;
-    else if (owned.length && owned.every(neoTodoCriterionMet))
-      progress = { state: 'done', status: '完成标准已满足' };
     else if (row.status === 'reported')
       progress = {
         state: owned.some((item) => item.check || item.watch?.length) ? 'running' : 'done',

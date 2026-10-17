@@ -173,6 +173,23 @@ describe('projectNeoAskViews todo projection', () => {
     }
   );
 
+  test.each(['proposed', 'queued'] as const)(
+    'verified completion survives settlement of undispatched %s work',
+    (status) => {
+      for (const askStatus of ['open', 'achieved', 'abandoned'] as const)
+        for (const check of ['coding.pr_merged', 'coding.deployed']) {
+          const view = project(
+            [{ ...work('w', status), sessionId: null }],
+            [item('verified', { deliveredBy: 'w', check, state: 'met', metBy: 'human' })],
+            [],
+            { status: askStatus }
+          );
+          expect(view.todos?.[0]).toMatchObject({ state: 'done', status: '完成标准已满足' });
+          expect(view.done).toBe(1);
+        }
+    }
+  );
+
   test('a verified coding criterion does not cover an unverified deployment', () => {
     expect(
       project(
