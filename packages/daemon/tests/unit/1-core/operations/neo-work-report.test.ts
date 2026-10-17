@@ -406,6 +406,42 @@ describe('Neo recipient report actual SQLite effects', () => {
 });
 
 describe('NeoService recipient report facade', () => {
+  test('returns a report only to the session that started the work', async () => {
+    const db = new Database(':memory:', { messageSearchIndexFlushIntervalMs: 0 });
+    await db.initialize(createReactiveDatabase(db));
+    const service = new NeoService(
+      db,
+      {} as unknown as SessionManager,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    const sql = db.getDatabase();
+    try {
+      for (const id of ['root', 'existing-recipient', 'starter'])
+        sql
+          .prepare(`INSERT INTO sessions(id, title, workspace_path, created_at, last_active_at,
+          status, config, metadata) VALUES (?, ?, NULL, '2026-09-28T12:00:00Z',
+          '2026-09-28T12:00:00Z', 'active', '{}', '{}')`)
+          .run(id, id);
+      service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
+      const current = service.repo.proposeWork({ ...work, originSessionId: 'starter' });
+      service.repo.transitionWork(current.id, current, {
+        status: 'queued',
+        sessionId: caller.sessionId,
+      });
+
+      await service.reportWork(input, caller);
+
+      const jobs = db.getJobQueueRepo().listActiveByPayload('mailbox', { messageUuid: work.id });
+      expect(jobs.map((job) => (job.payload.to as { sessionId: string }).sessionId)).toEqual([
+        'starter',
+      ]);
+    } finally {
+      service.dispose();
+      db.close();
+    }
+  });
+
   test('uses real work CAS and deduplicated mailbox returns, not SDK terminal/text inference', async () => {
     const db = new Database(':memory:', { messageSearchIndexFlushIntervalMs: 0 });
     await db.initialize(createReactiveDatabase(db));

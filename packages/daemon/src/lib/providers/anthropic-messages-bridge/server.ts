@@ -29,6 +29,8 @@ export type AnthropicMessagesBridgeConfig = {
   fetchImpl?: typeof fetch;
   models?: AnthropicMessagesBridgeModel[];
   thinkingSupported?: boolean;
+  accessToken?: string;
+  forwardHeaders?: string[];
 };
 
 export function buildUpstreamUrl(
@@ -71,6 +73,12 @@ function extractSessionIdFromRequest(req: Request): string | undefined {
   return undefined;
 }
 
+function presentsToken(req: Request, token: string): boolean {
+  return (
+    req.headers.get('Authorization') === `Bearer ${token}` || req.headers.get('x-api-key') === token
+  );
+}
+
 function enforceThinking(bodyBytes: ArrayBuffer, desired: SessionThinkingConfig): ArrayBuffer {
   const text = new TextDecoder().decode(bodyBytes);
   const body: Partial<AnthropicRequest> = JSON.parse(text);
@@ -105,6 +113,9 @@ export async function createAnthropicMessagesBridgeServer(
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
+      if (config.accessToken && !presentsToken(req, config.accessToken)) {
+        return sendJsonError(401, 'authentication_error', 'Unauthorized');
+      }
       if (url.pathname === '/v1/models' && req.method === 'GET') {
         if (config.models?.length) {
           const data = config.models.map((model) => ({
@@ -156,7 +167,10 @@ export async function createAnthropicMessagesBridgeServer(
       const target = isMessages ? messagesUrl : countTokensUrl;
       const forwardedAnthropicHeaders: Record<string, string> = {};
       for (const [name, value] of req.headers.entries()) {
-        if (name.toLowerCase().startsWith('anthropic-')) {
+        if (
+          name.toLowerCase().startsWith('anthropic-') ||
+          config.forwardHeaders?.some((forwarded) => forwarded.toLowerCase() === name.toLowerCase())
+        ) {
           forwardedAnthropicHeaders[name] = value;
         }
       }

@@ -36,9 +36,20 @@ describe('neoTodoStatusLine', () => {
     const next = todo({ id: 'n', title: 'Claude Code 新会话' });
     expect(neoTodoStatusLine(todo({}), [], null)).toBe('没开始');
     expect(neoTodoStatusLine(todo({ state: 'doing' }), [], null)).toBe('在做');
-    expect(neoTodoStatusLine(todo({ state: 'doing', report: 'r' }), [], null)).toBe(
-      '会话回报了，正在检查'
+    expect(neoTodoStatusLine(todo({ state: 'doing', report: 'r', check: null }), [], null)).toBe(
+      '会话停了，等 Neo 核对'
     );
+    expect(
+      neoTodoStatusLine(
+        todo({
+          state: 'doing',
+          report: 'r',
+          check: { pack: 'coding', kind: 'pr_merged', params: {} },
+        }),
+        [],
+        null
+      )
+    ).toBe('会话回报了，正在检查');
     expect(neoTodoStatusLine(todo({ state: 'doing' }), [], '#103 开着，等 CI')).toBe(
       '#103 开着，等 CI'
     );

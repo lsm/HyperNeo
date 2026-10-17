@@ -48,7 +48,7 @@ export const returnWorkThroughHolder = (superpipe({})('neo-work-holder-return') 
         id,
         requestKey: id,
         projectId: work.projectId!,
-        originSessionId: rootId,
+        originSessionId: work.originSessionId,
         sessionId: holderId,
         question: `${NEO_WORK_RETURN_REVIEW}${move}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`,
       });

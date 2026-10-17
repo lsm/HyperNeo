@@ -7904,6 +7904,18 @@ describe('QueryRunner environment variable handling', () => {
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
   });
 
+  it('should not copy ambient provider API keys into the query env', () => {
+    const env = refreshQueryEnvFromProcess(
+      { ANTHROPIC_AUTH_TOKEN: 'bridge-token' },
+      { ANTHROPIC_AUTH_TOKEN: 'bridge-token', GLM_API_KEY: 'glm-key', KIMI_API_KEY: 'kimi-key' },
+      { clearProviderManaged: true }
+    );
+
+    expect(env.GLM_API_KEY).toBeUndefined();
+    expect(env.KIMI_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('bridge-token');
+  });
+
   it('should not copy ambient OAuth tokens for bridge providers', () => {
     const env = refreshQueryEnvFromProcess(
       {

@@ -203,7 +203,7 @@ describe('neo todo runner', () => {
       evidence: '#1 已合并',
     });
     expect(told).toEqual([
-      expect.stringContaining('Todo "Rows" reported:'),
+      expect.stringContaining('Todo "Rows": its session stopped'),
       'Todo "Rows" is done: #1 已合并',
     ]);
   });
@@ -405,21 +405,11 @@ describe('requireNeoTodoStartable', () => {
 });
 
 describe('planNeoTodoSettled', () => {
-  test('a report finishes a todo without a check and waits for the check otherwise', () => {
-    const todo = { check: null } as NeoTodo;
-    expect(planNeoTodoSettled(todo, { status: 'reported', report: 'Done' }, 5)).toEqual({
-      report: 'Done',
-      state: 'done',
-      finishedAt: 5,
-    });
+  test('a stopped session records its report and never finishes the todo; a failure fails it', () => {
     expect(
-      planNeoTodoSettled(
-        { check: { pack: 'coding', kind: 'pr_merged', params: {} } } as NeoTodo,
-        { status: 'reported', report: 'Done' },
-        5
-      )
-    ).toEqual({ report: 'Done' });
-    expect(planNeoTodoSettled(todo, { status: 'failed', report: 'It stopped.' }, 5)).toEqual({
+      planNeoTodoSettled({ status: 'reported', report: 'Opened #12, waiting on CI' }, 5)
+    ).toEqual({ report: 'Opened #12, waiting on CI' });
+    expect(planNeoTodoSettled({ status: 'failed', report: 'It stopped.' }, 5)).toEqual({
       state: 'failed',
       reason: 'It stopped.',
       finishedAt: 5,
@@ -446,6 +436,14 @@ describe('neoTodoNote', () => {
   test('says a failure with its reason', () => {
     expect(neoTodoNote({ title: 'T', state: 'failed', reason: 'gone' } as NeoTodo)).toBe(
       'Todo "T" failed: gone'
+    );
+  });
+
+  test('says a stopped session is not completion', () => {
+    expect(
+      neoTodoNote({ title: 'T', state: 'doing', check: null, report: 'Waiting on CI' } as NeoTodo)
+    ).toBe(
+      'Todo "T": its session stopped, which is not completion; the todo stays doing until it is ticked with evidence. Its last report:\nWaiting on CI'
     );
   });
 });
