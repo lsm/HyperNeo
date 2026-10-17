@@ -15,6 +15,8 @@ import {
 import { neoImageSize } from './image-size.ts';
 import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
+import type { NeoAskOrigin } from './ask-origin.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -140,9 +142,21 @@ export function neoReplyFact(reply: NeoReply | null): string | null {
 
 export function neoReplyAuthor(
   reply: NeoReply | null,
-  publication: { producerInput: { sessionId: string } } | null
+  publication: { producerInput: { sessionId: string } } | null,
+  asked: { askOrigin: { sessionId: string } } | null,
+  forwards: readonly { hop: number; toSessionId: string }[]
 ): string | null {
-  return reply?.ask?.sessionId ?? publication?.producerInput.sessionId ?? null;
+  const answering = forwards.reduce<{ hop: number; toSessionId: string } | null>(
+    (latest, forward) => (!latest || forward.hop > latest.hop ? forward : latest),
+    null
+  );
+  return (
+    reply?.ask?.sessionId ??
+    publication?.producerInput.sessionId ??
+    answering?.toSessionId ??
+    asked?.askOrigin.sessionId ??
+    null
+  );
 }
 
 export function repliedNeoRoute(
@@ -404,7 +418,21 @@ const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
     ['input', 'db', 'conversationId'],
     'publication'
   )
-  .pipe(neoReplyAuthor, ['reply', 'publication'], 'author')
+  .pipe(
+    (input: IntakeInput, db: Database, conversationId: string) =>
+      input.replyTo?.kind === 'message'
+        ? new NeoConversationAskRepository(db.getDatabase()).find(conversationId, input.replyTo.id)
+        : null,
+    ['input', 'db', 'conversationId'],
+    'quoted'
+  )
+  .pipe(
+    (quoted: { askOrigin: NeoAskOrigin } | null, db: Database) =>
+      quoted ? new NeoAskForwardRepository(db.getDatabase()).list(quoted.askOrigin) : [],
+    ['quoted', 'db'],
+    'forwards'
+  )
+  .pipe(neoReplyAuthor, ['reply', 'publication', 'quoted', 'forwards'], 'author')
   .pipe(repliedNeoRoute, ['author', 'repo'], 'result:route')
   .pipe(wantsNeoRoute, ['binding', 'router'], 'result:route')
   .pipe(
@@ -571,7 +599,7 @@ export function createNeoIntakeOperation(
   return defineOperation({
     name: 'neo.message.send',
     description:
-      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered. replyTo {kind, id} quotes a question, todo or message: a reply to a question or todo goes to the Neo session that owns its ask, a reply to a message goes to the session that wrote it, and a reply to a question is recorded as its answer. For each photo, thumbnails may carry a small preview { index, mediaType, data, width?, height? } keyed by the photo’s content index; it is stored for conversation pages and never sent to the model.',
+      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered. replyTo {kind, id} quotes a question, todo or message: a reply to a question or todo goes to the Neo session that owns its ask, a reply to a Neo message goes to the session that wrote it, a reply to the human’s own message goes to the session that answered it, and a reply to a question is recorded as its answer. For each photo, thumbnails may carry a small preview { index, mediaType, data, width?, height? } keyed by the photo’s content index; it is stored for conversation pages and never sent to the model.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
