@@ -1,6 +1,8 @@
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
+import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { ExternalEvent } from '../../external-events/types.ts';
 import type { NeoEvidence, NeoEvidenceRead } from '../evidence.ts';
 
@@ -40,7 +42,21 @@ export interface NeoPackCardAttention {
   pending: boolean;
 }
 
+export interface NeoTodoCheckResult {
+  done: boolean;
+  evidence: string | null;
+}
+
+export interface NeoTodoPack {
+  schema(db: Database): void;
+  check(todo: NeoTodo): Promise<NeoTodoCheckResult | null>;
+  statusLine(todo: NeoTodo): string | null;
+  topics(todo: NeoTodo): string[];
+  event(event: ExternalEvent): string[];
+}
+
 export interface NeoPack extends NeoPackBrief {
+  todos?: NeoTodoPack;
   prepareExecution?: NeoExecutionPreparation;
   prerequisiteParameters?(
     items: readonly NeoAskItem[]

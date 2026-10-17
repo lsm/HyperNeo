@@ -48,6 +48,7 @@ import {
 } from './start-question.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
@@ -842,9 +843,11 @@ export class NeoService {
         readMergeCommit: (url) => this.readMergeCommit(url),
         cardBase: (workId) => codingCardBase(this.driverTargets.get(workId)),
         cardStartedAt: (workId) => this.repo.workStartedAt(workId),
+        todoPrs: new CodingTodoPrRepository(db.getDatabase()),
       }),
       createLifeAdminPack(),
     ];
+    for (const pack of this.builtinPacks) pack.todos?.schema(db.getDatabase());
     this.crossProjects = new NeoCrossProjectRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), this.notifyChanged);
     this.consultationWaiters = new NeoConsultationWaiterRepository(
