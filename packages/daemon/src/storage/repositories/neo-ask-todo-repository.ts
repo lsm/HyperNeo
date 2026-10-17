@@ -165,6 +165,28 @@ export class NeoAskTodoRepository {
     return this.getTodo(todo.id)!;
   }
 
+  claimStart(todo: NeoTodo, now: number): NeoTodo | null {
+    const changed = this.db
+      .prepare(
+        "UPDATE neo_todos SET state = 'doing', started_at = ?, updated_at = ? WHERE id = ? AND state = 'todo'"
+      )
+      .run(now, now, todo.id).changes;
+    if (!changed) return null;
+    this.touchAsk(todo.askId, now);
+    return this.getTodo(todo.id);
+  }
+
+  listCheckable(): NeoTodo[] {
+    return (
+      this.db
+        .prepare(
+          `${TODO_SELECT} WHERE check_json IS NOT NULL AND state IN ('todo', 'doing')
+             AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
+        )
+        .all() as TodoRow[]
+    ).map(toTodo);
+  }
+
   getQuestion(id: string): NeoQuestion | null {
     const row = this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
     return row ? toQuestion(row) : null;

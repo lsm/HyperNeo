@@ -5,7 +5,9 @@ import type {
   NeoAskTodoRepository,
   NeoTodoPatch,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { isLocalUser } from '../operations/caller.ts';
+import { NeoTodoTargetSchema } from './driver-work.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -22,14 +24,21 @@ const TodoCheck = z.object({
   params: z.record(z.string(), z.unknown()).default({}),
 });
 
-const Add = z.object({
-  askId: Text,
-  title: Text,
-  doneWhen: Text,
-  check: TodoCheck.nullable().default(null),
-  instruction: Text.nullable().default(null),
-  named: z.record(z.string(), z.unknown()).nullable().default(null),
-});
+const Add = z
+  .object({
+    askId: Text,
+    title: Text,
+    doneWhen: Text,
+    check: TodoCheck.nullable().default(null),
+    instruction: Text.nullable().default(null),
+    target: NeoTodoTargetSchema.optional(),
+    named: z.record(z.string(), z.unknown()).nullable().default(null),
+    start: z.boolean().default(false),
+  })
+  .refine((input) => !input.instruction === !input.target, {
+    message: 'A todo with an instruction needs a target, and a target needs an instruction.',
+  })
+  .refine((input) => !input.start || input.target, { message: 'start needs a target.' });
 
 const Edit = z.object({
   todoId: Text,
@@ -77,6 +86,17 @@ export function requireNeoAskOwner(ask: NeoAsk | null, caller: OperationCaller):
   if (!isLocalUser(caller) && caller.sessionId !== ask.sessionId)
     return fail('not_owner: another Neo session owns this ask.');
   return { value: ask };
+}
+
+export function requireNeoHumanStart(
+  input: { start: boolean },
+  caller: OperationCaller
+): Gate<true> {
+  return !input.start || isLocalUser(caller) || (caller.neoTurn?.human && caller.neoTurn.isLive())
+    ? { value: true }
+    : fail(
+        'start_needs_human: start:true only in a turn the human started; ask a start question instead.'
+      );
 }
 
 export function requireNeoTodoOwner(
@@ -130,7 +150,11 @@ export function planNeoTodoRemove(
   };
 }
 
-export function createNeoTodoOperations(todos: NeoAskTodoRepository) {
+export function createNeoTodoOperations(
+  todos: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  start: (todoId: string) => Promise<{ ok: true; todo: NeoTodo } | Rejection>
+) {
   const write = (plan: { todo: NeoTodo; patch: NeoTodoPatch }): TodoReceipt => {
     const todo = todos.updateTodo(plan.todo, plan.patch, Date.now());
     return { ok: true, todo, todos: todos.listTodos(todo.askId) };
@@ -144,6 +168,7 @@ export function createNeoTodoOperations(todos: NeoAskTodoRepository) {
 
   const add = (superpipe({})('neo.todo.add') as PipelineAPI)
     .input(['input', 'caller'])
+    .pipe(requireNeoHumanStart, ['input', 'caller'], 'result:outcome')
     .pipe(
       (input: z.infer<typeof Add>, caller: OperationCaller) =>
         requireNeoAskOwner(todos.getAsk(input.askId), caller),
@@ -151,17 +176,21 @@ export function createNeoTodoOperations(todos: NeoAskTodoRepository) {
       'result:outcome'
     )
     .pipe(
-      (ask: NeoAsk, input: z.infer<typeof Add>): TodoReceipt => {
-        const todo = todos.addTodo(crypto.randomUUID(), ask.id, input, Date.now());
-        return { ok: true, todo, todos: todos.listTodos(ask.id) };
+      async (ask: NeoAsk, input: z.infer<typeof Add>): Promise<TodoReceipt | Rejection> => {
+        const added = todos.addTodo(crypto.randomUUID(), ask.id, input, Date.now());
+        if (input.target) sessions.create(added.id, input.target);
+        const started = input.start ? await start(added.id) : { ok: true as const, todo: added };
+        return started.ok
+          ? { ok: true, todo: started.todo, todos: todos.listTodos(ask.id) }
+          : started;
       },
       ['outcome', 'input'],
       'outcome'
     )
-    .end('outcome') as (
+    .endAsync('outcome') as (
     input: z.infer<typeof Add>,
     caller: OperationCaller
-  ) => TodoReceipt | Rejection;
+  ) => Promise<TodoReceipt | Rejection>;
 
   const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
@@ -188,7 +217,7 @@ export function createNeoTodoOperations(todos: NeoAskTodoRepository) {
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own: title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it. instruction is the task for a session; without it the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder).',
+        'Add a todo to an open ask you own: title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). start:true starts it now, only in a turn the human started; otherwise ask a start question.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

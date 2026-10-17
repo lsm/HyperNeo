@@ -3,6 +3,7 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -24,7 +25,12 @@ function setup() {
     request: 'Fix login and ship it',
     createdAt: 1,
   });
-  const ops = Object.fromEntries(createNeoTodoOperations(repo).map((op) => [op.name, op]));
+  const ops = Object.fromEntries(
+    createNeoTodoOperations(repo, new NeoTodoSessionRepository(db), async () => ({
+      ok: false as const,
+      reason: 'not started',
+    })).map((op) => [op.name, op])
+  );
   const call = async (name: string, input: unknown, caller = owner) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as
       | { ok: true; todo: NeoTodo; todos: NeoTodo[] }
@@ -41,6 +47,7 @@ describe('neo.todo operations', () => {
       doneWhen: 'PR merged',
       check: { pack: 'coding', kind: 'pr_merged' },
       instruction: 'Fix the login bug and open a PR.',
+      target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'dev-1' } },
     });
     if (!first.ok) throw new Error(first.reason);
     expect(first.todo).toMatchObject({
@@ -59,6 +66,21 @@ describe('neo.todo operations', () => {
     expect(second.todo).toMatchObject({ position: 1, instruction: null, addedAfterStart: true });
     expect(second.todos.map((todo) => todo.title)).toEqual(['Fix login', 'Deploy']);
     expect(changes()).toBeGreaterThan(0);
+  });
+
+  test('accepts only start and send targets', () => {
+    const add = createNeoTodoOperations(
+      {} as NeoAskTodoRepository,
+      {} as NeoTodoSessionRepository,
+      async () => ({ ok: false as const, reason: 'x' })
+    ).find((op) => op.name === 'neo.todo.add')!;
+    const input = { askId: 'ask', title: 'T', doneWhen: 'D', instruction: 'Do' };
+    const ref = { adapter: 'hyperneo', id: 'dev-1' };
+    expect(add.inputSchema.safeParse({ ...input, target: { verb: 'send', ref } }).success).toBe(
+      true
+    );
+    for (const verb of ['adopt', 'read'])
+      expect(add.inputSchema.safeParse({ ...input, target: { verb, ref } }).success).toBe(false);
   });
 
   test('only the owning Neo session changes an open ask', async () => {

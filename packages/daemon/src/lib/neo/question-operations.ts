@@ -75,10 +75,12 @@ export function planNeoQuestion(
     startTodos: input.kind === 'start' ? [...new Set(input.todos)] : null,
   };
   const unstartable = draft.startTodos?.filter(
-    (id) => !todos.some((todo) => todo.id === id && todo.state === 'todo')
+    (id) => !todos.some((todo) => todo.id === id && todo.state === 'todo' && todo.instruction)
   );
   return unstartable?.length
-    ? fail(`not_startable: ${unstartable.join(', ')} is not a not-started todo on this ask.`)
+    ? fail(
+        `not_startable: ${unstartable.join(', ')} is not a not-started todo with a session on this ask.`
+      )
     : { value: { ask, draft } };
 }
 
@@ -136,7 +138,8 @@ export function neoQuestionAnsweredNote(question: NeoQuestion, todos: NeoTodo[])
 
 export function createNeoQuestionOperations(
   store: NeoAskTodoRepository,
-  told: (ask: NeoAsk, question: NeoQuestion, note: string) => Promise<void>
+  told: (ask: NeoAsk, question: NeoQuestion, note: string) => Promise<void>,
+  start: (todoId: string) => Promise<{ ok: boolean; reason?: string }>
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
@@ -185,10 +188,20 @@ export function createNeoQuestionOperations(
     .pipe(requireNeoQuestionAnswered, 'written', 'result:outcome')
     .pipe(
       async (answered: { question: NeoQuestion; ask: NeoAsk }): Promise<QuestionReceipt> => {
+        const refused: string[] = [];
+        if (answered.question.kind === 'start')
+          for (const todoId of [answered.question.answer ?? []].flat()) {
+            const started = await start(todoId);
+            if (!started.ok)
+              refused.push(`${store.getTodo(todoId)?.title ?? todoId}: ${started.reason}`);
+          }
         await told(
           answered.ask,
           answered.question,
-          neoQuestionAnsweredNote(answered.question, store.listTodos(answered.ask.id))
+          [
+            neoQuestionAnsweredNote(answered.question, store.listTodos(answered.ask.id)),
+            ...(refused.length ? [`These did not start: ${refused.join(' ')}`] : []),
+          ].join('\n')
         );
         return { ok: true, question: answered.question };
       },
