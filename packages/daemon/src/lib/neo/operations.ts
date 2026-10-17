@@ -136,7 +136,7 @@ import {
 } from './session-track.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
-import { createNeoTodoOperations } from './todo-operations.ts';
+import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { NeoAskEntrySchema, projectNeoAskEntries } from './ask-entries.ts';
 import { NeoAskSchema } from './ask-inputs.ts';
@@ -1591,6 +1591,12 @@ export function createNeoOperations(service: NeoService) {
         await invokeOperation(registry, 'work.find', { id, limit: 50 }, caller);
     }
   );
+  const todoControls: NeoTodoControls = {
+    start: (todoId) => service.todoRunner.start(todoId),
+    proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
+    retry: (todoId) => service.todoRunner.retry(todoId),
+    stop: (todo) => service.todoRunner.stop(todo),
+  };
   return [
     ...createNeoProjectTreeOperations(service.repo),
     createNeoCrossProjectOperation(service),
@@ -1666,11 +1672,11 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     createNeoPreferenceOperation(service),
-    ...createNeoTodoOperations(service.todos, service.todoSessions, service.todoRunner),
+    ...createNeoTodoOperations(service.todos, service.todoSessions, todoControls),
     ...createNeoAskRecordOperations(
       service.todos,
       service.todoSessions,
-      service.todoRunner,
+      todoControls,
       (sessionId) => service.repo.getBindingBySession(sessionId)?.projectId ?? null
     ),
     ...createNeoQuestionOperations(
@@ -1684,7 +1690,7 @@ export function createNeoOperations(service: NeoService) {
           ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
           'continues'
         ),
-      service.todoRunner.start
+      (todoId) => service.todoRunner.start(todoId)
     ),
     defineOperation({
       name: 'neo.project.cancel',

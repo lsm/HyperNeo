@@ -202,7 +202,6 @@ export function createNeoTodoOperations(
   sessions: NeoTodoSessionRepository,
   controls: NeoTodoControls
 ) {
-  const { start } = controls;
   const write = (plan: { todo: NeoTodo; patch: NeoTodoPatch }): TodoReceipt => {
     const todo = todos.updateTodo(plan.todo, plan.patch, Date.now());
     return { ok: true, todo, todos: todos.listTodos(todo.askId) };
@@ -231,7 +230,7 @@ export function createNeoTodoOperations(
     )
     .pipe(
       async (ask: NeoAsk, input: z.infer<typeof Add>): Promise<TodoReceipt | Rejection> =>
-        ran(await addNeoTodo(todos, sessions, start, ask.id, input)),
+        ran(await addNeoTodo(todos, sessions, controls.start, ask.id, input)),
       ['outcome', 'input'],
       'outcome'
     )
