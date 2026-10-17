@@ -40,7 +40,10 @@ function setup() {
         start: async (todoId) => {
           if (refuse.value) return { ok: false, reason: 'busy' };
           started.push(todoId);
-          return { ok: true, todo: store.getTodo(todoId)! };
+          return {
+            ok: true,
+            todo: store.updateTodo(store.getTodo(todoId)!, { state: 'doing' }, 2),
+          };
         },
         proceed: async () => ({ ok: false, reason: 'unused' }),
         retry: async () => ({ ok: false, reason: 'unused' }),
@@ -96,7 +99,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
   });
 
   test('a retry after a refused start adds the todos that are still missing', async () => {
-    const { call, refuse } = setup();
+    const { call, refuse, started } = setup();
     refuse.value = true;
     expect(await call('neo.ask.open', opening, turn('m3'))).toEqual({
       ok: false,
@@ -105,6 +108,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     refuse.value = false;
     const retry = await call('neo.ask.open', opening, turn('m3'));
     expect(retry.ok && retry.todos.map((todo) => todo.title)).toEqual(['Fix it', 'Deploy']);
+    expect(started).toEqual([retry.ok && retry.todos[0].id]);
   });
 
   test('start in a turn the human did not start is refused before anything is written', async () => {
