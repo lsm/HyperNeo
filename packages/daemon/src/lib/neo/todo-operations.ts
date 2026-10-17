@@ -54,7 +54,7 @@ const Remove = z.object({
   replacedBy: Text.optional(),
 });
 
-const NeoTodoSchema = z.object({
+export const NeoTodoSchema = z.object({
   id: z.string(),
   askId: z.string(),
   position: z.number(),

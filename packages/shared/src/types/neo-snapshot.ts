@@ -1,3 +1,4 @@
+import type { NeoAskEntry } from './neo-ask.ts';
 import type { DaemonInventoryLink } from './daemon-snapshot.ts';
 import type { NeoProject, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
 import type { NeoModelPreference } from './settings.ts';
@@ -394,6 +395,7 @@ export interface NeoSnapshot {
   sessionLoad?: NeoSessionLoad[];
   working?: NeoWorkingSession[];
   askViews: NeoAskView[];
+  todoAsks?: NeoAskEntry[];
   waitingOnHuman?: NeoWaitingOnHuman;
   routeFailure?: NeoRouteFailure;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;

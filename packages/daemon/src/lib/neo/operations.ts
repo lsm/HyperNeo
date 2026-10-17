@@ -184,6 +184,7 @@ import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import { createNeoAskOperations } from './ask-operations.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations } from './todo-operations.ts';
+import { NeoAskEntrySchema, projectNeoAskEntries } from './ask-entries.ts';
 import { NeoAskSchema } from './ask-inputs.ts';
 import {
   planNeoAskQuestion,
@@ -350,6 +351,7 @@ const SnapshotOk = z.object({
   sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
   asks: z.array(NeoAskSchema).optional(),
+  todoAsks: z.array(NeoAskEntrySchema).optional(),
   told: z
     .array(
       z.object({
@@ -1333,6 +1335,12 @@ export function createNeoOperations(service: NeoService) {
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
       asks: compact ? compactNeoSnapshotAsks(asks) : asks,
+      todoAsks: projectNeoAskEntries(
+        focus ? [] : service.todos.listAsks(scope, caller.source === 'rpc' ? 50 : 10),
+        service.todos,
+        service.todoSessions,
+        service.installedPacks()
+      ),
       ...(focus ? { told: readNeoAskTold(service, focus) } : {}),
       ...(summarize
         ? { moreSettled: listed.filter(isNeoAskSettled).length > NEO_SNAPSHOT_SETTLED_ASKS }

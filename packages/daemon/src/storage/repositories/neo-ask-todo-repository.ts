@@ -114,6 +114,15 @@ export class NeoAskTodoRepository {
     return (this.db.prepare(`${ASK_SELECT} WHERE id = ?`).get(id) as NeoAsk | null) ?? null;
   }
 
+  listAsks(projectId: string | null | undefined, limit: number): NeoAsk[] {
+    return this.db
+      .prepare(
+        `${ASK_SELECT} WHERE (?1 = 0 OR project_id IS ?2)
+          ORDER BY status = 'open' DESC, updated_at DESC LIMIT ?3`
+      )
+      .all(projectId === undefined ? 0 : 1, projectId ?? null, limit) as NeoAsk[];
+  }
+
   getTodo(id: string): NeoTodo | null {
     const row = this.db.prepare(`${TODO_SELECT} WHERE id = ?`).get(id) as TodoRow | null;
     return row ? toTodo(row) : null;
