@@ -81,6 +81,11 @@ describe('neoActivityItems', () => {
       'Waiting for context · Fictional sources',
     ]);
   });
+  it('drops doing todos of a settled ask', () => {
+    const snapshot = view(todo('late'));
+    snapshot.todoAsks![0].ask.status = 'done';
+    expect(neoActivityItems(snapshot, projects)).toEqual([]);
+  });
   it('names an unknown holder without exposing its id', () => {
     expect(neoActivityItems(view(check('internal-check')), []).map((item) => item.text)).toEqual([
       'Checking context · Your context holder',

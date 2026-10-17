@@ -17,11 +17,13 @@ export function neoActivityItems(
     findNeoProject(projects, snapshot?.projectRedirects, projectId)?.title.trim() ||
     'Your context holder';
   return [
-    ...(snapshot?.todoAsks ?? []).flatMap((entry) =>
-      entry.todos
-        .filter((todo) => todo.state === 'doing')
-        .map((todo) => ({ key: `todo:${todo.id}`, text: `${todo.status} · ${todo.title}` }))
-    ),
+    ...(snapshot?.todoAsks ?? [])
+      .filter((entry) => entry.ask.status === 'open')
+      .flatMap((entry) =>
+        entry.todos
+          .filter((todo) => todo.state === 'doing')
+          .map((todo) => ({ key: `todo:${todo.id}`, text: `${todo.status} · ${todo.title}` }))
+      ),
     ...(snapshot?.consultations ?? [])
       .filter((item) => item.status === 'pending')
       .map((item) => ({
