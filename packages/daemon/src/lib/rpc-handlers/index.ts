@@ -1732,7 +1732,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       reorganize: () => reorganizeTopics({ apply: 'unattended' }),
       digest: async (run, since) => {
         const session = neoService.defaultSessionId();
-        if (session)
+        if (session && neoService.repo.conversationId())
           await neoService.deliverForward(
             session,
             `neo-health-digest:${Date.now()}`,
