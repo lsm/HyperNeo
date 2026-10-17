@@ -197,13 +197,13 @@ describe('neo.conversation.read', () => {
     }
   );
 
-  test('refuses a foreign conversation and a missing current root without a ledger read', async () => {
+  test('refuses a foreign or missing conversation without a ledger read', async () => {
     const spy = vi.spyOn(reader, 'read');
     expect(await read({ conversationId: foreignId })).toMatchObject({
       kind: 'completed',
       value: { ok: false, reason: 'conversation_not_found' },
     });
-    db.getDatabase().exec('DELETE FROM neo_session_bindings');
+    db.getDatabase().exec('DELETE FROM neo_conversation; DELETE FROM neo_session_bindings');
     expect(await read({ conversationId }, human)).toMatchObject({
       kind: 'completed',
       value: { ok: false, reason: 'conversation_not_found' },

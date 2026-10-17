@@ -1,4 +1,3 @@
-import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -6,7 +5,6 @@ import type { NeoRepository } from '../../storage/repositories/neo-repository.ts
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { NeoPublicationSchema } from './publication.ts';
-import { isMainNeoBinding } from './binding-roles.ts';
 
 export const NeoStoredPublicationSchema = NeoPublicationSchema.extend({
   sequence: z.number().int().positive(),
@@ -43,9 +41,9 @@ export function requirePublicationReader(page: Page, caller: OperationCaller): G
 
 export function requirePublicationConversation<Page extends { conversationId: string }>(
   page: Page,
-  root: NeoBinding | null
+  conversation: string | null
 ): { value: Page } | { reason: Failure } {
-  return isMainNeoBinding(root) && root.sessionId === `neo:${page.conversationId}`
+  return conversation !== null && page.conversationId === conversation
     ? { value: page }
     : { reason: { ok: false, reason: 'conversation_not_found' } };
 }
@@ -73,8 +71,8 @@ export function readNeoConversationPage<T extends { sequence: number }>(
 const read = (superpipe({})('neo-publication-read') as PipelineAPI)
   .input(['page', 'caller', 'repo', 'ledger'])
   .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
-  .pipe((repo: NeoRepository) => repo.getBindingForProject(null), 'repo', 'root')
-  .pipe(requirePublicationConversation, ['page', 'root'], 'result:page')
+  .pipe((repo: NeoRepository) => repo.conversationId(), 'repo', 'conversation')
+  .pipe(requirePublicationConversation, ['page', 'conversation'], 'result:page')
   .pipe(
     (page: Page, ledger: NeoPublicationRepository) =>
       readNeoConversationPage(page, ledger, 'publication'),

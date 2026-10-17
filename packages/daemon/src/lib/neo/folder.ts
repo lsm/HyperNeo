@@ -35,10 +35,10 @@ export function fileNeoSessions(
     getSession(id: string): Pick<Session, 'id' | 'workspacePath'> | null;
     updateSession(id: string, updates: Partial<Session>): void;
   },
-  repo: Pick<NeoRepository, 'getBindingForProject' | 'listProjectBindings'>,
+  repo: Pick<NeoRepository, 'defaultBinding' | 'listProjectBindings'>,
   folder: string
 ): void {
-  const bindings = [repo.getBindingForProject(null), ...repo.listProjectBindings()];
+  const bindings = [repo.defaultBinding(), ...repo.listProjectBindings()];
   const sessions = bindings.map((binding) => (binding ? db.getSession(binding.sessionId) : null));
   for (const id of planNeoSessionFiling(sessions)) db.updateSession(id, { workspacePath: folder });
 }

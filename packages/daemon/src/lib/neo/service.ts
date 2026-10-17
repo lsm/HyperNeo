@@ -701,7 +701,7 @@ export class NeoService {
     };
     this.sessionWatcher = new NeoSessionWatcher({
       db,
-      rootSessionId: () => this.repo.getBindingForProject(null)?.sessionId,
+      rootSessionId: () => this.repo.defaultBinding()?.sessionId,
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
       seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
@@ -821,7 +821,7 @@ export class NeoService {
     };
     this.publish = createNeoPublisher({
       getBinding: (id) => this.repo.getBindingBySession(id),
-      getRootBinding: () => this.repo.getBindingForProject(null),
+      getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
       getWork: (id) => this.repo.getWork(id),
       getConsultation: (id) => this.consultations.get(id),
@@ -1111,10 +1111,10 @@ export class NeoService {
   }
 
   private reconcilePublishedAnswer(ask: NeoAsk): void {
-    const root = this.repo.getBindingForProject(null);
-    if (!isNeoAskAnswerReady(ask) || !root?.sessionId.startsWith('neo:')) return;
+    const conversation = this.repo.conversationId();
+    if (!isNeoAskAnswerReady(ask) || !conversation) return;
     for (const triggerId of this.triggers.triggerIdsFor(ask.id, neoAskOutcomeBase(ask))) {
-      const publication = this.publications.byTrigger(root.sessionId.slice(4), triggerId);
+      const publication = this.publications.byTrigger(conversation, triggerId);
       if (publication) this.notePublishedAnswer(publication);
     }
   }
@@ -1219,7 +1219,7 @@ export class NeoService {
     .end('plan') as (turn: NeoReminderTurnInput) => unknown;
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
-    const root = this.repo.getBindingForProject(null)?.sessionId;
+    const root = this.repo.defaultBinding()?.sessionId;
     const settings = this.db.getGlobalSettings?.();
     return effectiveNeoPreference(
       settings?.neo?.preferences,
@@ -1232,10 +1232,7 @@ export class NeoService {
     const neo = this.db.getGlobalSettings().neo;
     const updated = this.db.updateGlobalSettings({ neo: { ...neo, preferences } });
     this.publishSettings?.(updated);
-    for (const binding of [
-      this.repo.getBindingForProject(null),
-      ...this.repo.listProjectBindings(),
-    ]) {
+    for (const binding of [this.repo.defaultBinding(), ...this.repo.listProjectBindings()]) {
       if (binding)
         await this.alignModelPreference(binding.sessionId).catch((error) =>
           this.log.warn('Neo model preference not applied', error)
@@ -1324,7 +1321,7 @@ export class NeoService {
     }
     if (!binding) throw new Error('Could not reserve Neo context.');
     if (!this.db.getSession(binding.sessionId)) {
-      const root = projectId ? this.repo.getBindingForProject(null)?.sessionId : undefined;
+      const root = projectId ? this.repo.defaultBinding()?.sessionId : undefined;
       const rootSession = root ? this.db.getSession(root) : null;
       const preference = this.modelPreference();
       await this.sessions.createSession({
@@ -2013,10 +2010,7 @@ export class NeoService {
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     this.initializeTriggerFacts();
-    for (const binding of [
-      this.repo.getBindingForProject(null),
-      ...this.repo.listProjectBindings(),
-    ])
+    for (const binding of [this.repo.defaultBinding(), ...this.repo.listProjectBindings()])
       if (binding) await this.removeTurnLimit(binding.sessionId);
     await this.recoverConsultations();
     await this.clearStaleNeedsYou().catch((error) =>
@@ -3099,8 +3093,8 @@ export class NeoService {
   }
 
   humanAskText(ask: NeoAskOrigin): string | null {
-    const root = this.repo.getBindingForProject(null)?.sessionId;
-    return root ? neoForwardedText(this.asks.find(root.slice(4), ask.messageId), ask) : null;
+    const conversation = this.repo.conversationId();
+    return conversation ? neoForwardedText(this.asks.find(conversation, ask.messageId), ask) : null;
   }
 
   private readonly returnCrossProjectGroup = (
@@ -3731,9 +3725,8 @@ export class NeoService {
   }
 
   async preemptForHumanMessage(sessionId: string): Promise<void> {
-    const root = this.repo.getBindingForProject(null);
-    if (!root?.sessionId.startsWith('neo:') || !this.repo.getBindingBySession(sessionId)) return;
-    const conversationId = root.sessionId.slice(4);
+    const conversationId = this.repo.conversationId();
+    if (!conversationId || !this.repo.getBindingBySession(sessionId)) return;
     if (
       !shouldPreemptNeoTurn(
         this.db.getSession(sessionId)?.processingState,
