@@ -84,7 +84,7 @@ describe('projectNeoAskViews todo projection', () => {
   test.each([
     ['proposed', 'pending', '要求合并'],
     ['queued', 'running', '等 PR 开出来'],
-    ['reported', 'running', '等 PR 开出来'],
+    ['reported', 'running', '会话说做完了，没查到 PR'],
     ['failed', 'failed', '没交出去：测试没过'],
     ['cancelled', 'cancelled', '已取消'],
   ] as const)('%s is a single todo with its own state', (status, state, label) => {

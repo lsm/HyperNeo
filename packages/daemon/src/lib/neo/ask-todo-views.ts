@@ -54,7 +54,8 @@ export function projectNeoAskTodos(
     let progress: Pick<NeoAskTodo, 'state' | 'status'>;
     const coding = neoCodingTodoProgress(
       owned,
-      prs.find((receipt) => receipt.workId === row.id)?.prs ?? []
+      prs.find((receipt) => receipt.workId === row.id)?.prs ?? [],
+      row.status === 'reported'
     );
     if (row.status === 'cancelled' || replacedBy)
       progress = {

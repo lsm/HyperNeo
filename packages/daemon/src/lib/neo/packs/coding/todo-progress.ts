@@ -3,10 +3,14 @@ import { neoTodoCriterionMet } from '../../todo-criterion.ts';
 
 export function neoCodingTodoProgress(
   items: readonly NeoAskItem[],
-  prs: readonly NeoWorkPr[]
+  prs: readonly NeoWorkPr[],
+  reported = false
 ): Pick<NeoAskTodo, 'state' | 'status'> | null {
   const coding = items.filter((item) => item.check?.startsWith('coding.pr_'));
-  if (!prs.length) return coding.length ? { state: 'running', status: '等 PR 开出来' } : null;
+  if (!prs.length)
+    return coding.length
+      ? { state: 'running', status: reported ? '会话说做完了，没查到 PR' : '等 PR 开出来' }
+      : null;
   const current = prs.some((pr) => pr.state !== 'CLOSED')
     ? prs.filter((pr) => pr.state !== 'CLOSED')
     : prs;
