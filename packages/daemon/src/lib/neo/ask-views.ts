@@ -10,6 +10,7 @@ import {
   type NeoWorkPrReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { projectNeoAskTodos, type NeoAskTodoParts } from './ask-todo-views.ts';
 import { neoQuestionStartTargets, neoStartQuestionTitle } from './start-question.ts';
 
 const NEO_ASK_SUMMARY_LIMIT = 160;
@@ -172,14 +173,30 @@ export function describeNeoAskViews(asks: readonly NeoAsk[], index: AskViewIndex
   return asks.map((ask) => describeNeoAskView(ask, index));
 }
 
+function withNeoAskTodos(
+  views: NeoAskView[],
+  asks: readonly NeoAsk[],
+  cards: readonly NeoCardView[],
+  prs: readonly NeoWorkPrReceipt[],
+  parts?: NeoAskTodoParts
+): NeoAskView[] {
+  if (!parts) return views;
+  return views.map((view, index) => ({
+    ...view,
+    todos: projectNeoAskTodos(asks[index], cards, prs, parts),
+  }));
+}
+
 export const projectNeoAskViews = (superpipe({})('neo-ask-views') as PipelineAPI)
-  .input(['asks', 'cards', 'prs', 'sessions', 'busy'])
+  .input(['asks', 'cards', 'prs', 'sessions', 'busy', 'parts'])
   .pipe(indexNeoAskViewParts, ['cards', 'prs', 'sessions', 'busy'], 'index')
   .pipe(describeNeoAskViews, ['asks', 'index'], 'askViews')
+  .pipe(withNeoAskTodos, ['askViews', 'asks', 'cards', 'prs', 'parts'], 'askViews')
   .end('askViews') as (
   asks: readonly NeoAsk[],
   cards: readonly NeoCardView[],
   prs: readonly NeoWorkPrReceipt[],
   sessions?: ReadonlyMap<string, readonly NeoAskSessionView[]>,
-  busy?: ReadonlySet<string>
+  busy?: ReadonlySet<string>,
+  parts?: NeoAskTodoParts
 ) => NeoAskView[];
