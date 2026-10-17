@@ -464,7 +464,27 @@ describe('NeoAskCard', () => {
         }),
       ],
     });
-    const app = render(<NeoAskCard view={view} onOpenSession={openSession} />);
+    const withSession: typeof view = {
+      ...view,
+      sessions: [
+        {
+          key: 'old-session',
+          title: '旧会话',
+          adapter: 'hyperneo',
+          status: 'done',
+          kind: null,
+          open: {
+            sessionId: 'old-session',
+            link: '/session/old-session',
+            daemon: null,
+            remoteLink: null,
+          },
+        },
+      ],
+    };
+    const app = render(<NeoAskCard view={withSession} onOpenSession={openSession} />);
+    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    expect(app.queryByRole('button', { name: 'Open 旧会话' })).toBeNull();
     fireEvent.click(app.getByRole('button', { name: '打开 任务 old' }));
     expect(openSession).toHaveBeenCalledExactlyOnceWith('old-session', '任务 old');
   });

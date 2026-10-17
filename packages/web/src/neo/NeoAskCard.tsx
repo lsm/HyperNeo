@@ -406,9 +406,10 @@ export function NeoAskCard({
                   (todo) =>
                     todo.workId &&
                     ((session.open.sessionId &&
-                      cards?.get(todo.workId)?.open.sessionId === session.open.sessionId) ||
+                      (todo.open ?? cards?.get(todo.workId)?.open)?.sessionId ===
+                        session.open.sessionId) ||
                       (session.open.link &&
-                        cards?.get(todo.workId)?.open.link === session.open.link))
+                        (todo.open ?? cards?.get(todo.workId)?.open)?.link === session.open.link))
                 )
             )
             .map((session) => (
