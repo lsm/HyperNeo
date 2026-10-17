@@ -73,6 +73,21 @@ describe('neo.todo operations', () => {
     expect(changes()).toBeGreaterThan(0);
   });
 
+  test('accepts only start and send targets', () => {
+    const add = createNeoTodoOperations(
+      {} as NeoAskTodoRepository,
+      {} as NeoTodoSessionRepository,
+      async () => ({ ok: false as const, reason: 'x' })
+    ).find((op) => op.name === 'neo.todo.add')!;
+    const input = { askId: 'ask', title: 'T', doneWhen: 'D', instruction: 'Do' };
+    const ref = { adapter: 'hyperneo', id: 'dev-1' };
+    expect(add.inputSchema.safeParse({ ...input, target: { verb: 'send', ref } }).success).toBe(
+      true
+    );
+    for (const verb of ['adopt', 'read'])
+      expect(add.inputSchema.safeParse({ ...input, target: { verb, ref } }).success).toBe(false);
+  });
+
   test('only the owning Neo session changes an open ask', async () => {
     const { db, call } = setup();
     expect(await call('neo.todo.add', { askId: 'ask', title: 'x', doneWhen: 'y' }, other)).toEqual({

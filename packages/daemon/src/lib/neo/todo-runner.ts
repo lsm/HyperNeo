@@ -153,6 +153,7 @@ export function neoTodoNote(todo: NeoTodo): string {
 export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const { store, sessions } = deps;
   const checked = new Map<string, number>();
+  const starting = new Set<string>();
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
   const finish = async (todo: NeoTodo, ask: NeoAsk, patch: NeoTodoPatch, now: number) => {
     const next = store.updateTodo(todo, patch, now);
@@ -239,7 +240,18 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'outcome',
       'result:outcome'
     )
-    .pipe(dispatch, 'outcome', 'outcome')
+    .pipe(
+      async (plan: Startable) => {
+        starting.add(plan.todo.id);
+        try {
+          return await dispatch(plan);
+        } finally {
+          starting.delete(plan.todo.id);
+        }
+      },
+      'outcome',
+      'outcome'
+    )
     .endAsync('outcome') as (todoId: string) => Promise<{ ok: true; todo: NeoTodo } | Rejection>;
 
   const settleDeps = (ask: NeoAsk): NeoDriverSettleDeps => ({
@@ -357,6 +369,21 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       for (const id of todoIds) checked.delete(id);
     },
     async refresh(warn: (message: string, error: unknown) => void): Promise<void> {
+      for (const todoId of sessions.unrecordedStarts()) {
+        const todo = store.getTodo(todoId);
+        const ask = todo ? store.getAsk(todo.askId) : null;
+        if (!todo || !ask || starting.has(todoId)) continue;
+        await finish(
+          todo,
+          ask,
+          {
+            state: 'failed',
+            reason: 'Start was interrupted; a session may have started without being recorded.',
+            finishedAt: Date.now(),
+          },
+          Date.now()
+        ).catch((error) => warn('Todo start recovery pending', error));
+      }
       for (const { todoId, ref } of sessions.awaitingReports())
         await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
       for (const todo of store.listCheckable())

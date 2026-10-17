@@ -14,6 +14,18 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       .run(todoId, JSON.stringify(target));
   }
 
+  unrecordedStarts(): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT s.todo_id AS todoId FROM neo_todo_sessions s
+             JOIN neo_todos t ON t.id = s.todo_id
+            WHERE s.ref IS NULL AND t.state = 'doing'`
+        )
+        .all() as { todoId: string }[]
+    ).map((row) => row.todoId);
+  }
+
   awaitingReports(): { todoId: string; ref: WorkRef }[] {
     return (
       this.db
