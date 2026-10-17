@@ -1,6 +1,6 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -65,14 +65,20 @@ describe('claude-desktop start', () => {
     return createClaudeDesktopAdapter({
       sessionsDir: join(dir, 'sessions'),
       admitInbox: () => ({ value: user.from }),
-      sendInbox: async () => ({
-        ok: true,
-        value: {
-          delivered: false,
-          unconfirmed: true,
-          receipt: { executionId: 'u1', inputId: 'u-brief' },
-        },
-      }),
+      sendInbox: async () => {
+        appendFileSync(
+          join(transcripts, 'u1.jsonl'),
+          `${JSON.stringify({ type: 'user', uuid: 'u-brief' })}\n`
+        );
+        return {
+          ok: true,
+          value: {
+            delivered: false,
+            unconfirmed: true,
+            receipt: { executionId: 'u1', inputId: 'u-brief' },
+          },
+        };
+      },
       prepareExecution: options.prepareExecution,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
@@ -190,7 +196,7 @@ describe('claude-desktop start', () => {
         ref: { adapter: 'claude-desktop', id: 'local_u1' },
         title: 'Bigger font',
         place,
-        status: 'queued',
+        status: 'running',
         lastActivityAt: 1_000,
         link: 'claude://claude.ai/epitaxy/local_u1',
         receipt: { executionId: 'u1', inputId: 'u-brief' },
@@ -225,7 +231,7 @@ describe('claude-desktop start', () => {
       await adapter({ appearsAfter: 0, owner: 'desktop' }).start?.(request, user)
     ).toMatchObject({
       ok: true,
-      value: { status: 'queued', receipt: { executionId: 'u1', inputId: 'u-brief' } },
+      value: { status: 'running', receipt: { executionId: 'u1', inputId: 'u-brief' } },
     });
     expect(spawned).toHaveLength(2);
     expect(spawned.some((args) => args.includes('HyperNeo relay'))).toBe(false);

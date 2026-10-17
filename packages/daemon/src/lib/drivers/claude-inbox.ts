@@ -53,6 +53,10 @@ function claudeInboxAddress(path: string): string {
   return `uds:${path}`;
 }
 
+export function claudeInboxText(text: string): string {
+  return text.replace(/<(?=\/?cross-session-message(?:\s|>))/gi, '<\\');
+}
+
 export function claudeInboxFrame(
   target: ClaudeInboxTarget,
   replyPath: string,
@@ -63,7 +67,7 @@ export function claudeInboxFrame(
   z.string().uuid().parse(submission.inputId);
   if (!submission.text.trim()) throw new Error('Claude inbox message is empty.');
   const from = claudeInboxAddress(replyPath);
-  const text = submission.text.replace(/<(?=\/?cross-session-message(?:\s|>))/gi, '<\\');
+  const text = claudeInboxText(submission.text);
   const frame = `${JSON.stringify({
     msgV: 1,
     type: 'user',

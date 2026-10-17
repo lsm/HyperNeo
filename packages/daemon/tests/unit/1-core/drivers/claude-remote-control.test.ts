@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
@@ -126,16 +126,26 @@ describe('runClaudeRemoteControlRequest', () => {
     live = [{ sessionId: 'cli-rc', status: 'idle', pid: 1, owner: 'cli' }];
     const calls: unknown[] = [];
     const context = { from: 'session:origin', caller: { source: 'internal' as const } };
+    const transcripts = join(dir, 'projects', '-Users-test');
+    mkdirSync(transcripts, { recursive: true });
+    const receipt = { executionId: 'cli-rc', inputId: 'rc-in' };
     const configured = {
       ...deps(),
       sendInbox: async (...args: unknown[]) => {
         calls.push(args);
-        return { ok: true as const, value: { delivered: false, unconfirmed: true as const } };
+        appendFileSync(
+          join(transcripts, 'cli-rc.jsonl'),
+          `${JSON.stringify({ type: 'user', uuid: 'rc-in' })}\n`
+        );
+        return {
+          ok: true as const,
+          value: { delivered: false, unconfirmed: true as const, receipt },
+        };
       },
     };
     expect(
       await runClaudeRemoteControlRequest(target, configured, new Map(), context)
-    ).toMatchObject({ ok: true, value: { unconfirmed: true } });
+    ).toMatchObject({ ok: true, value: { delivered: true, receipt } });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual(['cli-rc', expect.stringContaining('local_t1'), context]);
     expect(spawned).toEqual([]);
