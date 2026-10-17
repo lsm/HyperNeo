@@ -1,4 +1,5 @@
 import type { createClaudeInboxDriver } from '../../drivers/claude-inbox-driver.ts';
+import type { createClaudeDesktopModsDriver } from '../../drivers/claude-desktop-mods-driver.ts';
 import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { DirectTaskWorkerIdentity } from '../../tasks/direct-task-worker-identity.ts';
@@ -38,6 +39,7 @@ import type { RPCHandlerDependencies } from '../index.ts';
 
 export interface FamilyOperationContext {
   readonly claudeInbox?: ReturnType<typeof createClaudeInboxDriver>;
+  readonly claudeDesktopMods?: ReturnType<typeof createClaudeDesktopModsDriver>;
   readonly executionPreparations?: () => readonly {
     id: string;
     prepareExecution?: WorkExecutionPreparation;

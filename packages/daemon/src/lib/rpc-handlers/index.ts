@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { createClaudeInboxDriver } from '../drivers/claude-inbox-driver.ts';
+import { createClaudeDesktopModsDriver } from '../drivers/claude-desktop-mods-driver.ts';
 import { readLiveClaudeSessions } from '../drivers/claude-desktop-adapter.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
@@ -1417,7 +1418,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     handoff: (args) => handoffPromptToMailbox({ ...args, jobQueue: deps.jobQueue }),
     onError: (error) => log.warn('Claude inbox reply could not be persisted', error),
   });
+  const claudeDesktopMods = createClaudeDesktopModsDriver({
+    db: deps.db.getDatabase(),
+    env: process.env,
+    registrationsDir: join(homedir(), '.claude', 'sessions'),
+    liveSessions: () => readLiveClaudeSessions(spawnProcess),
+    hasSession: (id) => {
+      const session = deps.sessionManager.getSessionFromDB(id);
+      return !!session && !['archived', 'ended'].includes(session.status);
+    },
+    onError: (error) => log.warn('Claude Desktop mods bridge unavailable', error),
+  });
   const familyContext: FamilyOperationContext = {
+    claudeDesktopMods,
     claudeInbox,
     deps,
     spaceRuntimeService,
@@ -1753,7 +1766,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   return {
     cleanup: async () => {
       try {
-        await claudeInbox.close();
+        try {
+          await claudeDesktopMods?.close();
+        } finally {
+          await claudeInbox.close();
+        }
       } finally {
         await neoService.dispose();
         inactivityRunNowCancelled = true;

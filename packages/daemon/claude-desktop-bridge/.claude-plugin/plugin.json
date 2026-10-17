@@ -1,0 +1,20 @@
+{
+  "name": "hyperneo-desktop-bridge",
+  "version": "0.1.0",
+  "description": "Explicitly enabled HyperNeo bridge using the public Claude Code mods API",
+  "author": { "name": "HyperNeo" },
+  "userConfig": {
+    "enabled": {
+      "type": "boolean",
+      "title": "Enable HyperNeo Desktop control",
+      "description": "Allow the configured local HyperNeo bridge to stop turns and submit peer input",
+      "default": false
+    },
+    "connectionFile": {
+      "type": "string",
+      "title": "HyperNeo bridge connection file",
+      "description": "Absolute path to a private HyperNeo-created socket/token connection file",
+      "default": ""
+    }
+  }
+}
