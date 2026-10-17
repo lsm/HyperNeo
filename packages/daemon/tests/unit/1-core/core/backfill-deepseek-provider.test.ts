@@ -188,6 +188,7 @@ describe('migrateProvidersIfNeeded', () => {
     delete process.env.ANTHROPIC_AUTH_TOKEN;
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'inherited-oauth-token';
     const credentials = {
+      getCredentials: mock(async () => null),
       storeApiKey: mock(async () => {}),
       storeOAuthTokens: mock(async () => {}),
     };
@@ -196,5 +197,50 @@ describe('migrateProvidersIfNeeded', () => {
 
     expect(db.providers.getProviderByProviderId('anthropic')?.isEnabled).toBe(true);
     expect(credentials.storeApiKey).not.toHaveBeenCalledWith('anthropic', expect.anything());
+  });
+});
+
+describe('migrateProvidersIfNeeded', () => {
+  let db: Database;
+  let dbPath: string;
+  const originalKey = process.env.GLM_API_KEY;
+
+  beforeEach(async () => {
+    dbPath = `/tmp/test-provider-import-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+    db = new Database(dbPath);
+    await db.initialize(createReactiveDatabase(db));
+    process.env.GLM_API_KEY = 'glm-from-env';
+  });
+
+  afterEach(() => {
+    db.close();
+    try {
+      unlinkSync(dbPath);
+    } catch {}
+    if (originalKey === undefined) delete process.env.GLM_API_KEY;
+    else process.env.GLM_API_KEY = originalKey;
+  });
+
+  it('keeps a stored key and only fills an empty slot from the environment', async () => {
+    const stored = new Set(['glm']);
+    const credentials = {
+      getCredentials: mock(async (id: string) =>
+        stored.has(id) ? { type: 'api_key' as const, apiKey: 'stored' } : null
+      ),
+      storeApiKey: mock(async () => {}),
+      storeOAuthTokens: mock(async () => {}),
+    };
+    await migrateProvidersIfNeeded(db, credentials);
+    expect(db.providers.getProviderByProviderId('glm')).not.toBeNull();
+    expect(credentials.storeApiKey).not.toHaveBeenCalledWith('glm', expect.anything());
+
+    stored.clear();
+    for (const provider of db.providers.listProviders()) db.providers.deleteProvider(provider.id);
+    db.close();
+    unlinkSync(dbPath);
+    db = new Database(dbPath);
+    await db.initialize(createReactiveDatabase(db));
+    await migrateProvidersIfNeeded(db, credentials);
+    expect(credentials.storeApiKey).toHaveBeenCalledWith('glm', 'glm-from-env');
   });
 });

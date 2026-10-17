@@ -72,6 +72,23 @@ export function requireClaudeInboxEndpoint(
   };
 }
 
+export async function readClaudeSenderSession(
+  from: string,
+  sessionsDir: string
+): Promise<string | null> {
+  const path = from.startsWith('uds:') ? from.slice(4) : '';
+  const pid = /^(\d+)(?:-[0-9a-f]{8})?\.sock$/.exec(basename(path))?.[1];
+  if (!pid || !isAbsolute(path)) return null;
+  try {
+    const registration = JSON.parse(await readFile(join(sessionsDir, `${pid}.json`), 'utf8'));
+    return registration?.messagingSocketPath === path && typeof registration.sessionId === 'string'
+      ? registration.sessionId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function readRegistration(
   live: ClaudeSessionIdentity,
   sessionsDir: string

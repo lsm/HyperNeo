@@ -598,3 +598,106 @@ describe('work.find operation', () => {
     expect(asked).toBe(false);
   });
 });
+
+describe('work.find session', () => {
+  const titled = (id: string, title: string) => {
+    const base = group('laptop', '/focus/neo-ios', 'claude-desktop', 1);
+    return { ...base.work[0], ref: { adapter: 'claude-desktop', id }, title };
+  };
+  const desktop = (titles: [string, string][], seen: unknown[] = []): WorkAdapter => ({
+    id: 'claude-desktop',
+    capabilities: ['find'],
+    find: (query) => {
+      seen.push(query.text);
+      return Promise.resolve([
+        {
+          ...group('laptop', '/focus/neo-ios', 'claude-desktop', 1),
+          work: titles.map(([id, title]) => titled(id, title)),
+        },
+      ]);
+    },
+  });
+  const find = async (adapter: WorkAdapter, session: string) => {
+    const outcome = await invokeOperation(
+      createOperationRegistry([
+        createFindWorkOperation({
+          adapters: () => [adapter],
+          remote: { list: () => [], invoke: async () => ({}) },
+        }),
+      ]),
+      'work.find',
+      { session },
+      { source: 'mcp', sessionId: 'neo:root' }
+    );
+    return outcome.kind === 'completed'
+      ? (outcome.value as {
+          places: PlaceGroup[];
+          session?: { name: string; match: string; near?: { ref: unknown; title: string }[] };
+        })
+      : null;
+  };
+  const ids = (places: PlaceGroup[] | undefined) =>
+    (places ?? []).flatMap((place) => place.work.map((item) => item.ref.id));
+
+  test('resolves a named session by exact title only, never by a looser hit', async () => {
+    const seen: unknown[] = [];
+    const found = await find(
+      desktop(
+        [
+          ['coordinator', 'Neo iOS app'],
+          ['worker', 'iOS-2'],
+        ],
+        seen
+      ),
+      ' ios-2 '
+    );
+    expect(seen).toEqual(['ios-2']);
+    expect(found?.session?.match).toBe('exact');
+    expect(ids(found?.places)).toEqual(['worker']);
+  });
+
+  test('lists every candidate when the name is ambiguous, and reports a miss with near titles', async () => {
+    const twins = await find(
+      desktop([
+        ['a', 'iOS-2'],
+        ['b', 'ios-2'],
+      ]),
+      'iOS-2'
+    );
+    expect(twins?.session?.match).toBe('ambiguous');
+    expect(ids(twins?.places)).toEqual(['a', 'b']);
+    const missed = await find(desktop([['coordinator', 'Neo iOS app']]), 'iOS');
+    expect(missed?.session).toEqual({
+      name: 'iOS',
+      match: 'none',
+      near: [{ ref: { adapter: 'claude-desktop', id: 'coordinator' }, title: 'Neo iOS app' }],
+    });
+    expect(missed?.places).toEqual([]);
+  });
+
+  test('judges the match before the place limit cuts the result', () => {
+    const places = Array.from({ length: 25 }, (_, n) =>
+      group('laptop', `/focus/p${n}`, 'claude-desktop', 100 - n)
+    );
+    const named = (n: number) => ({
+      ...places[n],
+      work: [{ ...places[n].work[0], title: 'iOS-2' }],
+    });
+    const input = { session: 'iOS-2', includeClosed: false, limit: 20, localOnly: true };
+    const empty = { groups: [], unreachable: [] };
+    const late = combineFindResults(
+      { groups: [...places.slice(0, 24), named(24)], unreachable: [] },
+      empty,
+      input
+    );
+    expect(late.session?.match).toBe('exact');
+    expect(late.places.map((place) => place.place.folder)).toEqual(['/focus/p24']);
+    const twins = combineFindResults(
+      { groups: [named(0), ...places.slice(1, 24), named(24)], unreachable: [] },
+      empty,
+      input
+    );
+    expect(twins.session?.match).toBe('ambiguous');
+    expect(twins.places).toHaveLength(2);
+  });
+});

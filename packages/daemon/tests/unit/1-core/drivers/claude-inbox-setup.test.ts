@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { join } from 'node:path';
@@ -43,12 +42,7 @@ describe('openClaudeInbox chmod-failure cleanup', () => {
           }
           throw denied;
         });
-        await expect(
-          openClaudeInbox(
-            { sessionId: randomUUID(), pid: 456, socketPath: targetPath, version: '2.1.295' },
-            () => {}
-          )
-        ).rejects.toBe(denied);
+        await expect(openClaudeInbox(dir, 'abc123', () => {})).rejects.toBe(denied);
         expect(replyPath).not.toBe('');
         expect(replyPath).not.toBe(targetPath);
         if (replace) {
@@ -76,10 +70,7 @@ describe('openClaudeInbox chmod-failure cleanup', () => {
       const path = join(dir, '456.sock');
       await listen(peer, path);
       await chmod(path, 0o600);
-      inbox = await openClaudeInbox(
-        { sessionId: randomUUID(), pid: 456, socketPath: path, version: '2.1.295' },
-        () => {}
-      );
+      inbox = await openClaudeInbox(dir, 'abc123', () => {});
       await rename(inbox.path, join(dir, 'saved.sock'));
       await listen(replacement, inbox.path);
       const inode = (await lstat(inbox.path)).ino;

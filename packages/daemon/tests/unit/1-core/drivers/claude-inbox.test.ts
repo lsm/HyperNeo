@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import {
   claudeInboxEvent,
   claudeInboxFrame,
-  type ClaudeInboxEvent,
+  type ClaudeInboxFrameEvent,
   type ClaudeInboxTarget,
   openClaudeInbox,
   removeOwnedClaudeInboxPath,
@@ -109,6 +109,9 @@ describe('claudeInboxFrame', () => {
   });
 });
 
+const envelope = (sessionId: string, text: string) =>
+  `<cross-session-message from="uds:/tmp/cc-socks/9.sock" from-session="local_${sessionId}" from-name="worker">\n${text}\n</cross-session-message>`;
+
 describe('claudeInboxEvent', () => {
   const messageId = randomUUID();
   const receipt = {
@@ -120,51 +123,45 @@ describe('claudeInboxEvent', () => {
   };
 
   test('only correlates receipts from the target to a sent transport identity', () => {
-    expect(claudeInboxEvent(receipt, target, new Set([messageId]))).toMatchObject({
+    const sent = new Map([[messageId, target]]);
+    expect(claudeInboxEvent(receipt, sent)).toMatchObject({
       kind: 'receipt',
       messageId,
       status: 'delivered',
       sessionId: target.sessionId,
     });
-    expect(claudeInboxEvent(receipt, target, new Set())).toBeNull();
+    expect(claudeInboxEvent(receipt, new Map())).toBeNull();
+    expect(claudeInboxEvent({ ...receipt, from: 'uds:/tmp/other.sock' }, sent)).toBeNull();
     expect(
-      claudeInboxEvent({ ...receipt, from: 'uds:/tmp/other.sock' }, target, new Set([messageId]))
-    ).toBeNull();
-    expect(
-      claudeInboxEvent(
-        { ...receipt, status: 'expired', status_detail: 'refused' },
-        target,
-        new Set([messageId])
-      )
+      claudeInboxEvent({ ...receipt, status: 'expired', status_detail: 'refused' }, sent)
     ).toMatchObject({ status: 'refused' });
   });
 
-  test('does not interpret peer reply text as a human decision', () => {
+  test('keeps the sender socket of a reply and never trusts a session named in its text', () => {
     const replyMessageId = randomUUID();
+    const content = envelope(target.sessionId, 'approved');
     expect(
       claudeInboxEvent(
         {
           type: 'user',
           msgV: 1,
           msg_id: replyMessageId,
-          from: `uds:${target.socketPath}`,
-          message: { role: 'user', content: 'approved' },
+          from: 'uds:/tmp/cc-socks/777.sock',
+          message: { role: 'user', content },
         },
-        target,
-        new Set()
+        new Map()
       )
     ).toEqual({
       kind: 'reply',
-      sessionId: target.sessionId,
       messageId: replyMessageId,
-      from: `uds:${target.socketPath}`,
-      content: 'approved',
+      from: 'uds:/tmp/cc-socks/777.sock',
+      content,
     });
     expect(
-      claudeInboxEvent({ ...receipt, action: 'stop' }, target, new Set([messageId]))
+      claudeInboxEvent({ ...receipt, action: 'stop' }, new Map([[messageId, target]]))
     ).toBeNull();
     const raw = { ...receipt, type: 'user', msgV: 1, message: { role: 'user', content: 'x' } };
-    expect(claudeInboxEvent(raw, target, new Set())).toBeNull();
+    expect(claudeInboxEvent(raw, new Map())).toBeNull();
   });
 });
 
@@ -174,11 +171,12 @@ describe('openClaudeInbox', () => {
   let session: ClaudeInboxTarget;
   let inbox: Awaited<ReturnType<typeof openClaudeInbox>> | undefined;
   let frames: unknown[];
-  let events: ClaudeInboxEvent[];
+  let events: ClaudeInboxFrameEvent[];
   let peers: Set<Socket>;
 
   beforeEach(async () => {
     dir = await mkdtemp('/tmp/hn-inbox-');
+    await chmod(dir, 0o700);
     session = { ...target, socketPath: join(dir, '456.sock') };
     frames = [];
     events = [];
@@ -225,23 +223,25 @@ describe('openClaudeInbox', () => {
   }
 
   test.each(['2.1.295', '2.1.299'])(
-    'keeps a private %s reply endpoint alive after sending and reuses submission identities',
+    'keeps a private %s reply endpoint at a stable name and reuses submission identities',
     async (version) => {
       session.version = version;
-      inbox = await openClaudeInbox(session, (event) => events.push(event));
+      inbox = await openClaudeInbox(dir, 'abc123', (event) => events.push(event));
+      expect(inbox.path).toBe(join(dir, 'abc123.sock'));
       expect((await lstat(inbox.path)).mode & 0o777).toBe(0o600);
       const input = submission();
-      expect(await inbox.write(input)).toEqual({ written: true });
+      expect(await inbox.write(session, input)).toEqual({ written: true });
       expect(events).toEqual([]);
-      expect(await inbox.write(input)).toEqual({ written: true });
+      expect(await inbox.write(session, input)).toEqual({ written: true });
       expect(frames).toHaveLength(1);
       const from = `uds:${session.socketPath}`;
       const replyMessageId = randomUUID();
+      const content = envelope(session.sessionId, '答复\nnext line');
       await incoming(
         `${JSON.stringify({ type: 'control', action: 'peer_message_status', from, orig_msg_id: input.messageId, status: 'held' })}\n`
       );
       await incoming(
-        `${JSON.stringify({ msgV: 1, msg_id: replyMessageId, type: 'user', from, message: { role: 'user', content: '答复\nnext line' } })}\n`,
+        `${JSON.stringify({ msgV: 1, msg_id: replyMessageId, type: 'user', from, message: { role: 'user', content } })}\n`,
         true
       );
       expect(events).toEqual([
@@ -251,50 +251,60 @@ describe('openClaudeInbox', () => {
           messageId: input.messageId,
           status: 'held',
         },
-        {
-          kind: 'reply',
-          sessionId: session.sessionId,
-          messageId: replyMessageId,
-          from,
-          content: '答复\nnext line',
-        },
+        { kind: 'reply', messageId: replyMessageId, from, content },
       ]);
-      await expect(inbox.write({ ...input, text: 'different' })).rejects.toThrow('reused');
+      await expect(inbox.write(session, { ...input, text: 'different' })).rejects.toThrow('reused');
     }
   );
 
+  test('a restarted inbox takes over the same address left by a dead one', async () => {
+    const first = await openClaudeInbox(dir, 'abc123', () => {});
+    const address = first.path;
+    const kept = join(dir, 'kept.sock');
+    await rename(address, kept);
+    await first.close();
+    await rename(kept, address);
+    inbox = await openClaudeInbox(dir, 'abc123', (event) => events.push(event));
+    expect(inbox.path).toBe(address);
+    const replyMessageId = randomUUID();
+    await incoming(
+      `${JSON.stringify({ msgV: 1, msg_id: replyMessageId, type: 'user', from: 'uds:/tmp/cc-socks/9.sock', message: { role: 'user', content: envelope(session.sessionId, 'after restart') } })}\n`
+    );
+    expect(events).toMatchObject([{ kind: 'reply', from: 'uds:/tmp/cc-socks/9.sock' }]);
+  });
+
   test('retries a connection refusal with the same identity while still rejecting changed content', async () => {
-    inbox = await openClaudeInbox(session, (event) => events.push(event));
+    inbox = await openClaudeInbox(dir, 'abc123', (event) => events.push(event));
     const input = submission();
     const stale = join(dir, 'stale.sock');
     await rename(session.socketPath, stale);
     await new Promise<void>((resolve) => peer.close(() => resolve()));
     await rename(stale, session.socketPath);
-    await expect(inbox.write(input)).rejects.toThrow();
+    await expect(inbox.write(session, input)).rejects.toThrow();
     expect(frames).toEqual([]);
-    await expect(inbox.write({ ...input, text: 'different' })).rejects.toThrow('reused');
+    await expect(inbox.write(session, { ...input, text: 'different' })).rejects.toThrow('reused');
     await rm(session.socketPath);
     await new Promise<void>((resolve) => peer.listen(session.socketPath, resolve));
     await chmod(session.socketPath, 0o600);
-    expect(await inbox.write(input)).toEqual({ written: true });
-    expect(await inbox.write(input)).toEqual({ written: true });
+    expect(await inbox.write(session, input)).toEqual({ written: true });
+    expect(await inbox.write(session, input)).toEqual({ written: true });
     expect(frames).toHaveLength(1);
   });
 
   test('drops malformed and oversized connections while retaining the listener', async () => {
-    inbox = await openClaudeInbox(session, (event) => events.push(event));
+    inbox = await openClaudeInbox(dir, 'abc123', (event) => events.push(event));
     await incoming('{bad}\n');
     await incoming('x'.repeat(1_048_577));
     expect(events).toEqual([]);
-    expect(await inbox.write(submission())).toEqual({ written: true });
+    expect(await inbox.write(session, submission())).toEqual({ written: true });
   });
 
   test.each([{ text: '' }, { inputId: 'invalid' }, { text: 'x'.repeat(1_048_576) }])(
     'write rejects invalid submissions through its Promise %j',
     async (invalid) => {
-      inbox = await openClaudeInbox(session, (event) => events.push(event));
+      inbox = await openClaudeInbox(dir, 'abc123', (event) => events.push(event));
       const failed = await inbox
-        .write({ ...submission(), ...invalid })
+        .write(session, { ...submission(), ...invalid })
         .catch((error: Error) => error.message);
       expect(typeof failed).toBe('string');
       expect(frames).toEqual([]);
@@ -302,33 +312,36 @@ describe('openClaudeInbox', () => {
   );
 
   test('closing removes its endpoint and refuses further writes without removing the target', async () => {
-    inbox = await openClaudeInbox(session, (event) => events.push(event));
+    inbox = await openClaudeInbox(dir, 'abc123', (event) => events.push(event));
     const path = inbox.path;
     await inbox.close();
     await expect(lstat(path)).rejects.toThrow();
     expect((await lstat(session.socketPath)).isSocket()).toBe(true);
-    await expect(inbox.write(submission())).rejects.toThrow('closed');
+    await expect(inbox.write(session, submission())).rejects.toThrow('closed');
   });
 
   test('closing before the transport effect prevents a pending write', async () => {
-    inbox = await openClaudeInbox(session, (event) => events.push(event));
-    const rejected = expect(inbox.write(submission())).rejects.toThrow('closed');
+    inbox = await openClaudeInbox(dir, 'abc123', (event) => events.push(event));
+    const rejected = expect(inbox.write(session, submission())).rejects.toThrow('closed');
     await inbox.close();
     await rejected;
     expect(frames).toEqual([]);
   });
 
-  test('rejects PID mismatch and non-private or symlink endpoints', async () => {
-    await expect(openClaudeInbox({ ...session, pid: 999 }, () => {})).rejects.toThrow('PID');
+  test('rejects a bad name, PID mismatch and non-private or symlink endpoints', async () => {
+    await expect(openClaudeInbox(dir, 'not-hex', () => {})).rejects.toThrow('name');
     await chmod(dir, 0o755);
-    await expect(openClaudeInbox(session, () => {})).rejects.toThrow('private');
+    await expect(openClaudeInbox(dir, 'abc123', () => {})).rejects.toThrow('private');
     await chmod(dir, 0o700);
+    inbox = await openClaudeInbox(dir, 'abc123', () => {});
+    await expect(inbox.write({ ...session, pid: 999 }, submission())).rejects.toThrow('PID');
     await chmod(session.socketPath, 0o666);
-    await expect(openClaudeInbox(session, () => {})).rejects.toThrow('private');
+    await expect(inbox.write(session, submission())).rejects.toThrow('private');
+    await chmod(session.socketPath, 0o600);
     const alias = join(dir, '999.sock');
     await symlink(session.socketPath, alias);
     await expect(
-      openClaudeInbox({ ...session, pid: 999, socketPath: alias }, () => {})
+      inbox.write({ ...session, pid: 999, socketPath: alias }, submission())
     ).rejects.toThrow('private');
     expect((await lstat(alias)).isSymbolicLink()).toBe(true);
   });

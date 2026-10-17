@@ -6,6 +6,7 @@ import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { neoMessageAnchor, type NeoReplyContext } from './reply-context.ts';
 import { neoMessageImageSources } from './neo-message-images.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { NeoClampedText } from './NeoClampedText.tsx';
 
 export function messageTime(timestamp: unknown, now = new Date()) {
   if (typeof timestamp !== 'number' && typeof timestamp !== 'string') return null;
@@ -57,7 +58,7 @@ export function NeoMessage({
   return (
     <article
       id={sessionId && message.uuid ? neoMessageAnchor(sessionId, message.uuid) : undefined}
-      class={`neo-arrive neo-message w-fit break-words ${user ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%]'}`}
+      class={`neo-arrive neo-message w-fit break-words ${user ? 'neo-message-user ml-auto max-w-[88%]' : 'neo-message-assistant mr-auto max-w-[94%]'}`}
     >
       <div
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${user ? 'justify-end' : ''}`}
@@ -109,14 +110,17 @@ export function NeoMessage({
             ))}
           </div>
         )}
-        {/^\s*\d+[.)]?\s*$/.test(text) ? (
-          <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
-        ) : (
-          <MarkdownRenderer
-            content={text}
-            class={`neo-markdown ${user ? 'neo-markdown-user' : 'neo-markdown-assistant'} text-base leading-relaxed`}
-          />
-        )}
+        {(() => {
+          const body = /^\s*\d+[.)]?\s*$/.test(text) ? (
+            <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
+          ) : (
+            <MarkdownRenderer
+              content={text}
+              class={`neo-markdown ${user ? 'neo-markdown-user' : 'neo-markdown-assistant'} text-base leading-relaxed`}
+            />
+          );
+          return user ? <NeoClampedText text={text}>{body}</NeoClampedText> : body;
+        })()}
         {work?.report && !user && (
           <details class="mt-4 border-t border-line pt-3">
             <summary class="cursor-pointer text-sm font-medium text-accent hover:underline">
