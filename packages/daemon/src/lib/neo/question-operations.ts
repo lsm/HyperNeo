@@ -37,26 +37,28 @@ const Ask = z.discriminatedUnion('kind', [
 
 const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array(z.string())]) });
 
+export const NeoQuestionSchema = z.object({
+  id: z.string(),
+  askId: z.string(),
+  text: z.string(),
+  kind: z.enum(['yesno', 'choice', 'reply', 'start']),
+  options: z.array(z.string()).nullable(),
+  multiple: z.boolean(),
+  noLabel: z.string().nullable(),
+  yesLabel: z.string().nullable(),
+  startTodos: z.array(z.string()).nullable(),
+  state: z.enum(['open', 'answered', 'retired']),
+  answer: z.union([z.string(), z.array(z.string())]).nullable(),
+  answeredBy: z.enum(['button', 'chat']).nullable(),
+  answeredAt: z.number().nullable(),
+  createdAt: z.number(),
+});
+
 const QuestionResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
   z.object({
     ok: z.literal(true),
-    question: z.object({
-      id: z.string(),
-      askId: z.string(),
-      text: z.string(),
-      kind: z.enum(['yesno', 'choice', 'reply', 'start']),
-      options: z.array(z.string()).nullable(),
-      multiple: z.boolean(),
-      noLabel: z.string().nullable(),
-      yesLabel: z.string().nullable(),
-      startTodos: z.array(z.string()).nullable(),
-      state: z.enum(['open', 'answered', 'retired']),
-      answer: z.union([z.string(), z.array(z.string())]).nullable(),
-      answeredBy: z.enum(['button', 'chat']).nullable(),
-      answeredAt: z.number().nullable(),
-      createdAt: z.number(),
-    }),
+    question: NeoQuestionSchema,
   }),
 ]);
 

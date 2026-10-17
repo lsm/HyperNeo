@@ -14,6 +14,18 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       .run(todoId, JSON.stringify(target));
   }
 
+  readLink(todoId: string): string | null {
+    const row = this.db
+      .prepare('SELECT ref, link, remote_link AS remote FROM neo_todo_sessions WHERE todo_id = ?')
+      .get(todoId) as { ref: string | null; link: string | null; remote: string | null } | null;
+    const ref = row?.ref ? (JSON.parse(row.ref) as WorkRef) : null;
+    return (
+      row?.link ??
+      row?.remote ??
+      (ref?.adapter === 'hyperneo' && !ref.daemon ? `/session/${ref.id}` : null)
+    );
+  }
+
   awaitingReports(): { todoId: string; ref: WorkRef }[] {
     return (
       this.db

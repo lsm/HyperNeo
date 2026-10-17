@@ -70,3 +70,17 @@ export interface NeoReplyTo {
   kind: 'question' | 'todo' | 'message';
   id: string;
 }
+
+export interface NeoTodoEntry extends NeoTodo {
+  status: string;
+  link: string | null;
+}
+
+export type NeoAskEntryState = 'waiting' | 'doing' | 'done' | 'dropped' | 'todo';
+
+export interface NeoAskEntry {
+  ask: NeoAsk;
+  state: NeoAskEntryState;
+  todos: NeoTodoEntry[];
+  questions: NeoQuestion[];
+}
