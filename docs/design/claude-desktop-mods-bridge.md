@@ -1,5 +1,31 @@
 # Claude Desktop mods bridge
 
+## Controller before driver wiring
+
+The controller reuses the verified native endpoint and local reply-destination
+gates. Queue/stop additionally require a recently authenticated plugin exchange
+and a matching Desktop owner PID/active instance. A stored journal alone is not
+a live management endpoint. Unknown turn IDs stay unsupported; there is no
+headless fallback. Queue returns an own outbox ID with delivery unconfirmed.
+
+Stop targets the exact observed turn ID and waits for its completion event in
+that same instance. Only an observed aborted completion yields `stopped: true`;
+API resolution, normal completion, rejection, owner change, disconnect and
+timeout retain their distinct factual outcomes. Closing the runtime wakes waiters.
+
+Own pending outbox input can be withdrawn even when Desktop is unavailable.
+Sender/session/native-queue isolation and the existing pending-only CAS remain
+authoritative. Claimed inputs cannot be reported as successfully withdrawn.
+
+Command state, API receipt, observed session state and matching stop completion
+are reported to the original local session through the existing mailbox with
+system/peer provenance. Session observation does not correlate a turn with a
+particular submitted prompt. Report-state markers and mailbox entries commit
+in the same SQLite transaction; queue/withdraw also include that report in
+their transaction. Replays/reopens do not repeat committed reports. Finalized
+commands do not subscribe their senders to unrelated future turns. This is a
+Build slice; daemon startup and adapter capability wiring follow separately.
+
 ## Explicit runtime lifecycle
 
 The runtime factory is built separately from driver wiring. It is off unless
