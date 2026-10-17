@@ -35,6 +35,7 @@ describe('SDKMessageRenderer', () => {
       />
     );
     expect(app.container.querySelector('span.font-medium')?.textContent).toBe('neo.snapshot');
+    expect(app.getAllByText('neo.snapshot')).toHaveLength(1);
   });
 
   describe('Basic Rendering', () => {

@@ -136,7 +136,10 @@ describe('ToolResultCard Component', () => {
           variant={variant}
         />
       );
-      expect(app.getByText('neo.snapshot')).toBeTruthy();
+      const title = app.container.querySelector(
+        variant === 'default' || variant === 'detailed' ? 'span.font-semibold' : 'span.font-medium'
+      );
+      expect(title?.textContent).toBe('neo.snapshot');
       expect(app.queryByText('invoke')).toBeNull();
     }
   );
