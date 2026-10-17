@@ -167,6 +167,7 @@ export interface NeoWorkPr {
   review: 'approved' | 'changes_requested' | 'none';
   blockers?: string[];
   createdAt?: number;
+  mergedAt?: number;
   title?: string;
   branch?: string;
   refs?: number[];

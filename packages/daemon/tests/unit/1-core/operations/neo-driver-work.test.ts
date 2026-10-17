@@ -565,6 +565,22 @@ describe('readDriverOutcome', () => {
         value: { ok: true, value: { delivered: true } },
       })
     ).toEqual({ ref: sendTarget.ref });
+    const written = { executionId: 'cli-1', inputId: 'u-1' };
+    expect(
+      readDriverOutcome(sendTarget, {
+        kind: 'completed',
+        value: { ok: true, value: { delivered: false, unconfirmed: true, receipt: written } },
+      })
+    ).toEqual({ ref: sendTarget.ref, receipt: written });
+    expect(
+      readDriverOutcome(sendTarget, {
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: { delivered: false, unconfirmed: true, queuedSubmissionId: 'q' },
+        },
+      })
+    ).toEqual({ ref: sendTarget.ref, queued: true });
     expect(
       readDriverOutcome(sendTarget, {
         kind: 'completed',

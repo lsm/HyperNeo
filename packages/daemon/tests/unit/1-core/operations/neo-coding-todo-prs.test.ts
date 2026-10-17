@@ -1,14 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import {
   CodingTodoPrRepository,
   codingTodoCheck,
+  codingTodoOwnPrs,
   codingTodoStatusLine,
   createCodingTodoPack,
   planCodingTodoClaims,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
-import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -100,6 +101,19 @@ describe('coding todo pack', () => {
     expect(repo.urls(row.id)).toHaveLength(2);
   });
 
+  test('never counts a PR the session merged before the todo started', async () => {
+    const { pack, todo, db } = setup(async () => [pr(7381, 'MERGED', { mergedAt: 50 })]);
+    const row = {
+      ...todo({ pack: 'coding', kind: 'pr_merged', params: {} }),
+      state: 'doing' as const,
+      startedAt: 100,
+    };
+    pack.openedPrs!(row, [pr(7381, 'MERGED').url]);
+    expect(await pack.check(row)).toEqual({ done: false, evidence: null });
+    expect(pack.statusLine(row)).toBeNull();
+    db.close();
+  });
+
   test('leaves todos of other packs and unreadable PRs to the core', async () => {
     const { pack, todo } = setup(async () => null);
     expect(await pack.check(todo(null))).toBeNull();
@@ -180,6 +194,26 @@ describe('codingTodoStatusLine', () => {
     expect(codingTodoStatusLine({ state: 'done', report: 'Done', evidence: null }, [])).toBe(
       '会话说做完了，没查到 PR'
     );
+  });
+});
+
+describe('codingTodoOwnPrs', () => {
+  test('drops PRs merged before the todo started unless the todo names them', () => {
+    const named = pr(1, 'MERGED', { mergedAt: 50 });
+    expect(
+      codingTodoOwnPrs(
+        {
+          check: { pack: 'coding', kind: 'pr_merged', params: { urls: [named.url] } },
+          startedAt: 100,
+        },
+        [
+          named,
+          pr(2, 'MERGED', { mergedAt: 50 }),
+          pr(3, 'MERGED', { mergedAt: 150 }),
+          pr(4, 'OPEN'),
+        ]
+      ).map((item) => item.url)
+    ).toEqual([named.url, pr(3, 'MERGED').url, pr(4, 'OPEN').url]);
   });
 });
 
