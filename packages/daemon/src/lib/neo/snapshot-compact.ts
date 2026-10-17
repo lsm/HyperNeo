@@ -138,6 +138,27 @@ function keepWork(snapshot: NeoSnapshot, keep: ReadonlySet<string>): NeoSnapshot
   };
 }
 
+function withTodoText(snapshot: NeoSnapshot, limit: number): NeoSnapshot {
+  const cut = (text: string | null) => (text === null ? null : text.slice(0, limit));
+  return {
+    ...snapshot,
+    todoAsks: snapshot.todoAsks?.map((entry) => ({
+      ...entry,
+      ask: { ...entry.ask, request: entry.ask.request.slice(0, limit) },
+      todos: entry.todos.map((todo) => ({
+        ...todo,
+        instruction: cut(todo.instruction),
+        report: cut(todo.report),
+        evidence: cut(todo.evidence),
+      })),
+      questions: entry.questions.map((question) => ({
+        ...question,
+        text: question.text.slice(0, Math.max(limit, 80)),
+      })),
+    })),
+  };
+}
+
 function withoutSettled(snapshot: NeoSnapshot): NeoSnapshot {
   const open = (snapshot.asks ?? []).filter((ask) => !isNeoAskSettled(ask));
   const openIds = new Set(open.map((ask) => ask.id));
@@ -312,6 +333,7 @@ function bareMinimum(snapshot: NeoSnapshot): NeoSnapshot {
     cards: snapshot.cards,
     askViews: snapshot.askViews.map((view) => ({ ...view, summary: null, sessions: [] })),
     standingRules: snapshot.standingRules,
+    ...(snapshot.todoAsks ? { todoAsks: snapshot.todoAsks } : {}),
     ...(snapshot.told ? { told: snapshot.told } : {}),
   };
 }
@@ -323,13 +345,21 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
 ): T {
   if (size(snapshot) <= budget) return snapshot;
   const room = budget - TRIMMED_NOTE_RESERVE;
-  let fitted: NeoSnapshot = focused ? snapshot : withoutSettled(snapshot);
-  if (size(fitted) > room) fitted = withShortText(fitted);
+  let fitted: NeoSnapshot = focused
+    ? snapshot
+    : {
+        ...withoutSettled(snapshot),
+        todoAsks: snapshot.todoAsks?.filter((entry) => entry.ask.status === 'open'),
+      };
+  if (size(fitted) > room) fitted = withTodoText(withShortText(fitted), 300);
   const openAsks = fitted.asks?.length ?? 0;
   if (!focused)
     for (let count = fitted.asks?.length ?? 0; size(fitted) > room && count > 1; )
       fitted = withNewestAsks(fitted, (count = Math.floor(count / 2)));
-  if (size(fitted) > room) fitted = withBareText(fitted);
+  if (!focused)
+    for (let count = fitted.todoAsks?.length ?? 0; size(fitted) > room && count > 1; )
+      fitted = { ...fitted, todoAsks: fitted.todoAsks?.slice(0, (count = Math.floor(count / 2))) };
+  if (size(fitted) > room) fitted = withTodoText(withBareText(fitted), 0);
   if (size(fitted) <= room)
     return {
       ...fitted,
