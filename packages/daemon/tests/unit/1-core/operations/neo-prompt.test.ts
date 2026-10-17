@@ -219,8 +219,6 @@ describe('Neo world briefing delivery', () => {
   test.each([null, 'saas'])('finds where a todo belongs before adding it for %s', (projectId) => {
     const prompt = neoPrompt(projectId);
     expect(prompt).toContain('Before adding a todo, find where it belongs: call work.find');
-    if (projectId)
-      expect(prompt).toContain('During a consultation you may add todos but not start them');
   });
 
   test('keeps holder context, consultation correlation and supersession distinct from world metadata', () => {

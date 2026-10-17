@@ -92,6 +92,20 @@ describe('NeoAskTodos', () => {
     expect(onAnswer).toHaveBeenLastCalledWith('q', []);
   });
 
+  it('ticks a todo the daemon appends to a start question already on screen', () => {
+    const onAnswer = vi.fn();
+    const start = (startTodos: string[]) =>
+      entry({
+        state: 'waiting',
+        todos: [todo('a'), todo('b')],
+        questions: [question('q', { kind: 'start', text: '开始', startTodos })],
+      });
+    const app = render(<NeoAskTodos entry={start(['a'])} onAnswer={onAnswer} />);
+    app.rerender(<NeoAskTodos entry={start(['a', 'b'])} onAnswer={onAnswer} />);
+    fireEvent.click(app.getByRole('button', { name: '开始' }));
+    expect(onAnswer).toHaveBeenCalledWith('q', ['a', 'b']);
+  });
+
   it('puts no on the left and yes on the right, and offers a chat reply', () => {
     const onAnswer = vi.fn();
     const onReply = vi.fn();

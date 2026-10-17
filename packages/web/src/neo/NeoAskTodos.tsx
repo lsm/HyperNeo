@@ -294,7 +294,7 @@ export function NeoAskTodos({
       </h3>
       {asked.map((question) => (
         <QuestionBox
-          key={question.id}
+          key={`${question.id}:${(question.startTodos ?? []).join(',')}`}
           question={question}
           todos={todos}
           disabled={disabled}

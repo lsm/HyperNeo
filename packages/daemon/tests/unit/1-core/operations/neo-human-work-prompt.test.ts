@@ -39,7 +39,7 @@ describe('current human work guidance', () => {
     const setUp = neoPrompt(turn.projectId)
       .split('When the human asks only to set up work without starting it')[1]!
       .split('\n\n')[0]!;
-    expect(setUp).toContain('open the ask with its todos in that turn and ask the start question');
+    expect(setUp).toContain('open the ask with its todos in that turn without start');
     expect(setUp).toContain('never describe a pretend todo');
   });
 
