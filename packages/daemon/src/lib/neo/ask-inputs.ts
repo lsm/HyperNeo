@@ -1,20 +1,11 @@
-import type {
-  NeoAsk,
-  NeoAskItemKind,
-  NeoAskQuestionBecause,
-} from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAskItemKind, NeoAskQuestionBecause } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { NEO_ASK_QUESTION_REASONS } from '@hyperneo/shared/types/neo-snapshot';
 import { GITHUB_REF_PATH } from '../github/parse-pr-url.ts';
-import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAskItemInput } from '../../storage/repositories/neo-ask-repository.ts';
 
 export type Rejection = { ok: false; reason: string };
-
-export type Gate<T> = { value: T } | { reason: Rejection };
-
-export type AskReceipt = { ok: true; ask: NeoAsk };
 
 const CheckKind = z
   .string()
@@ -118,24 +109,6 @@ const Item = z.object({
       'state: something in the world changes (merged, deployed, fixed, booked); it needs evidence you or the daemon can read. answer: the human asked to know something (a count, a list, an explanation); it is met when you publish the answer to them.'
     ),
 });
-
-export const Open = z
-  .object({
-    projectId: z.string().min(1).nullable().default(null),
-    title: z.string().trim().min(1).max(160).describe('Use the human’s language.'),
-    ask: z.string().trim().min(1).max(4000),
-    doneWhen: z.string().trim().min(1).max(2000).optional(),
-    doneItems: z.array(Item).min(1).optional(),
-    doneSource: z.string().trim().min(1).max(160),
-    pack: z.string().trim().min(1).max(80).optional(),
-  })
-  .refine((input) => input.doneWhen || input.doneItems, 'Pass doneItems, or doneWhen.')
-  .refine(
-    (input) => countNeoAskWatches(input.doneItems ?? []) <= NEO_ASK_WATCH_MAX,
-    `An ask watches at most ${NEO_ASK_WATCH_MAX} pull requests and issues across its items.`
-  );
-
-export type OpenRequest = z.infer<typeof Open> & { requestKey: string };
 
 const Options = z
   .array(z.string().trim().min(1).max(80))
