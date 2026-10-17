@@ -44,6 +44,8 @@ describe('NeoRepository', () => {
     expect(repo.resolveProjectRef('legacy-1')).toBe('legacy-1');
     expect(repo.resolveProjectRef('project:legacy-1')).toBe('legacy-1');
     expect(repo.resolveProjectRef('missing')).toBeNull();
+    repo.saveProject({ ...concern, id: 'project:x', title: 'legacy-1' }, 0);
+    expect(repo.resolveProjectRef('legacy-1')).toBe('legacy-1');
   });
 
   test('creates projects once and rejects stale changes without losing context', () => {
