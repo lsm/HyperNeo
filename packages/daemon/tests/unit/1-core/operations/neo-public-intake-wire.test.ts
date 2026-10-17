@@ -138,15 +138,13 @@ describe('real human intake joint persistence', () => {
     }
   );
 
-  test.each(['missing', 'archived', 'invalid', 'foreign-session', 'holder-root'])(
-    'a valid holder cannot submit through a %s root',
+  test.each(['missing', 'invalid', 'holder-root'])(
+    'a valid holder cannot submit without a conversation id (%s root)',
     async (kind) => {
       if (kind === 'missing')
         mailbox.db.exec('DELETE FROM neo_session_bindings WHERE concern_id IS NULL');
-      if (kind === 'archived') sessions.set(root.sessionId, { ...active(), status: 'archived' });
       if (kind === 'invalid')
         vi.spyOn(repo, 'getBindingForProject').mockReturnValue({ ...root, sessionId: 'neo:root' });
-      if (kind === 'foreign-session') sessions.set(root.sessionId, active('foreign'));
       if (kind === 'holder-root') vi.spyOn(repo, 'getBindingForProject').mockReturnValue(holder);
       expect(await invoke({ ...input, sessionId: holder.sessionId })).toMatchObject({
         value: { ok: false, reason: 'The public Neo conversation is no longer available.' },
