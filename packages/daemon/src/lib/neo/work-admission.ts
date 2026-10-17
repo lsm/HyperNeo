@@ -6,7 +6,7 @@ import {
   type NeoAskItem,
 } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { NeoDriverTargetCard } from '../../storage/repositories/neo-work-driver-target-repository.ts';
+import type { NeoDriverTargetCard } from '../../storage/repositories/neo-driver-session-rows.ts';
 import type { buildNeoCheckRegistry } from './packs/check-registry.ts';
 
 type NeoAdmissionBlocker = { workId: string; reason: string; itemIds: string[] };
