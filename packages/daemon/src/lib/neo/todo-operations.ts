@@ -179,7 +179,6 @@ export function createNeoTodoOperations(
   sessions: NeoTodoSessionRepository,
   controls: NeoTodoControls
 ) {
-  const { start } = controls;
   const write = (plan: { todo: NeoTodo; patch: NeoTodoPatch }): TodoReceipt => {
     const todo = todos.updateTodo(plan.todo, plan.patch, Date.now());
     return { ok: true, todo, todos: todos.listTodos(todo.askId) };
@@ -210,7 +209,9 @@ export function createNeoTodoOperations(
       async (ask: NeoAsk, input: z.infer<typeof Add>): Promise<TodoReceipt | Rejection> => {
         const added = todos.addTodo(crypto.randomUUID(), ask.id, input, Date.now());
         if (input.target) sessions.create(added.id, input.target);
-        const started = input.start ? await start(added.id) : { ok: true as const, todo: added };
+        const started = input.start
+          ? await controls.start(added.id)
+          : { ok: true as const, todo: added };
         return started.ok
           ? { ok: true, todo: started.todo, todos: todos.listTodos(ask.id) }
           : started;
