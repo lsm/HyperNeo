@@ -5,8 +5,8 @@ import type { ExternalEvent } from '../../../external-events/types.ts';
 import {
   buildPrEventTopicPattern,
   githubUrlKey,
-  parseGitHubTopic,
   parsePrUrl,
+  pullRequestUrlOfTopic,
 } from '../../../github/parse-pr-url.ts';
 import type { NeoTodoCheckResult, NeoTodoPack } from '../types.ts';
 import { createCodingPackTables } from './schema/coding-tables.ts';
@@ -14,14 +14,34 @@ import { extractNeoWorkPrUrls, type NeoWorkPrReader } from './work-prs.ts';
 
 export type CodingPrClaim = 'named' | 'reported' | 'branch';
 
+export function codingPrKey(url: string): string | null {
+  const parsed = parsePrUrl(url);
+  return parsed
+    ? githubUrlKey(`https://${parsed.host}/${parsed.owner}/${parsed.repo}/pull/${parsed.number}`)
+    : null;
+}
+
 export class CodingTodoPrRepository {
   constructor(private readonly db: Database) {}
 
   claim(todoId: string, claims: readonly { url: string; claim: CodingPrClaim }[], now: number) {
+    const keyed = claims.flatMap(({ url, claim }) => {
+      const key = codingPrKey(url);
+      return key ? [{ key, claim }] : [];
+    });
+    this.db
+      .prepare(
+        `DELETE FROM pack_coding_pr_claims WHERE todo_id = ? AND claim = 'reported'
+           AND url NOT IN (SELECT value FROM json_each(?))`
+      )
+      .run(
+        todoId,
+        JSON.stringify(keyed.filter((item) => item.claim === 'reported').map((item) => item.key))
+      );
     const insert = this.db.prepare(
       'INSERT OR IGNORE INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at) VALUES (?, ?, ?, ?)'
     );
-    for (const { url, claim } of claims) insert.run(todoId, githubUrlKey(url), claim, now);
+    for (const { key, claim } of keyed) insert.run(todoId, key, claim, now);
   }
 
   urls(todoId: string): string[] {
@@ -38,7 +58,9 @@ export class CodingTodoPrRepository {
         .prepare(
           'SELECT DISTINCT todo_id AS todoId FROM pack_coding_pr_claims WHERE url IN (SELECT value FROM json_each(?))'
         )
-        .all(JSON.stringify(urls.map(githubUrlKey))) as { todoId: string }[]
+        .all(JSON.stringify(urls.flatMap((url) => codingPrKey(url) ?? []))) as {
+        todoId: string;
+      }[]
     ).map((row) => row.todoId);
   }
 
@@ -131,7 +153,7 @@ export function createCodingTodoPack(
       const urls = repo.urls(todo.id);
       if (!urls.length) return codingTodoCheck(todo.check.kind, []);
       const prs = await readPrs(urls);
-      if (!prs) return null;
+      if (!prs || urls.some((url) => !prs.some((pr) => codingPrKey(pr.url) === url))) return null;
       repo.record(todo.id, prs, Date.now());
       return codingTodoCheck(todo.check.kind, prs);
     },
@@ -142,10 +164,8 @@ export function createCodingTodoPack(
         return parsed ? [buildPrEventTopicPattern(parsed)] : [];
       }),
     event: (event: ExternalEvent) => {
-      const topic = parseGitHubTopic(event.topic);
-      return topic?.resource === 'pull_request' && /^\d+$/.test(topic.entity)
-        ? repo.todosFor([`https://github.com/${topic.owner}/${topic.repo}/pull/${topic.entity}`])
-        : [];
+      const url = pullRequestUrlOfTopic(event.topic);
+      return url ? repo.todosFor([url]) : [];
     },
   };
 }

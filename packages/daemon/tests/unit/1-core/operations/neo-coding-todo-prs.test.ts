@@ -108,6 +108,35 @@ describe('coding todo pack', () => {
   });
 });
 
+describe('coding todo claims', () => {
+  test('canonical claims, re-derived reports, and no verdict from a partial read', async () => {
+    let read: NeoWorkPr[] = [pr(102, 'MERGED')];
+    const { pack, repo, todo } = setup(async () => read);
+    const row = todo(
+      {
+        pack: 'coding',
+        kind: 'pr_merged',
+        params: { urls: ['http://GitHub.com/lsm/neo-ios/pull/102/files?x=1'] },
+      },
+      'Opened https://github.com/lsm/neo-ios/pull/103'
+    );
+    expect(await pack.check(row)).toBeNull();
+    expect(repo.urls(row.id)).toEqual([
+      'https://github.com/lsm/neo-ios/pull/102',
+      'https://github.com/lsm/neo-ios/pull/103',
+    ]);
+    expect(
+      pack.event({ topic: 'github/lsm/neo-ios/pull_request/102.closed' } as ExternalEvent)
+    ).toEqual([row.id]);
+    read = [pr(102, 'MERGED')];
+    expect(await pack.check({ ...row, report: 'Superseded; only #102 now' })).toEqual({
+      done: true,
+      evidence: '#102 已合并',
+    });
+    expect(repo.urls(row.id)).toEqual(['https://github.com/lsm/neo-ios/pull/102']);
+  });
+});
+
 describe('codingTodoCheck', () => {
   test('pr_merged needs every PR merged and pr_opened any live PR', () => {
     expect(codingTodoCheck('pr_merged', [pr(1, 'MERGED'), pr(2, 'MERGED')])).toEqual({
