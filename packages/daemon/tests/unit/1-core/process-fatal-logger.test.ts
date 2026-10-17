@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { installProcessFatalLogging } from '../../../src/lib/process-fatal-logger';
+import { installProcessFatalLogging, SHUTDOWN_ABORT } from '../../../src/lib/process-fatal-logger';
 import { subscribeToStructuredLogs } from '../../../src/lib/logger';
 import type { StructuredLogEvent } from '@hyperneo/shared';
 
@@ -56,6 +56,22 @@ describe('installProcessFatalLogging', () => {
     } finally {
       dispose();
       unsubscribe();
+    }
+  });
+
+  it('ignores a rejection carrying the shutdown abort reason', async () => {
+    const exitCodes: number[] = [];
+    const dispose = installProcessFatalLogging({
+      flush: () => Promise.resolve(),
+      exit: (code) => exitCodes.push(code),
+    });
+
+    try {
+      process.emit('unhandledRejection', SHUTDOWN_ABORT, Promise.resolve());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(exitCodes).toEqual([]);
+    } finally {
+      dispose();
     }
   });
 
