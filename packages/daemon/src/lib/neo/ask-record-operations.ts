@@ -106,8 +106,8 @@ export function createNeoAskRecordOperations(
             createdAt: Date.now(),
           });
         const recorded = store.listTodos(ask.id);
-        for (const [index, todo] of input.todos.entries()) {
-          const row = recorded[index];
+        for (const todo of input.todos) {
+          const row = recorded.find((item) => item.title === todo.title);
           const added = !row
             ? await addNeoTodo(store, sessions, controls.start, ask.id, todo)
             : todo.start && row.state === 'todo'
