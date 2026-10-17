@@ -1149,7 +1149,8 @@ export function createNeoOperations(service: NeoService) {
       cards,
       workPrs,
       unmutedAskSessions(),
-      busyNeoAskSessions(service.askSessions)
+      busyNeoAskSessions(service.askSessions),
+      { work, supersessions: service.workSupersessions.list(work.map((row) => row.id)) }
     );
     return neoWorkAskView(ask, work, view?.humanActions ?? [], cards, workPrs);
   }
@@ -1340,7 +1341,11 @@ export function createNeoOperations(service: NeoService) {
         cards,
         workPrs,
         unmutedAskSessions(),
-        busyNeoAskSessions(service.askSessions)
+        busyNeoAskSessions(service.askSessions),
+        {
+          work: visibleWork,
+          supersessions: service.workSupersessions.list(visibleWork.map((row) => row.id)),
+        }
       ),
       workResources: visibleWork.map((item) => ({
         workId: item.id,

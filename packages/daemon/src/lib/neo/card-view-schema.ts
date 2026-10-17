@@ -107,6 +107,18 @@ const HumanAction = z.object({
 });
 
 export const NeoAskViewSchema = z.object({
+  todos: z
+    .array(
+      z.object({
+        id: z.string(),
+        workId: z.string().nullable(),
+        title: z.string(),
+        state: z.enum(['pending', 'running', 'done', 'failed', 'cancelled']),
+        status: z.string(),
+        added: z.boolean(),
+      })
+    )
+    .optional(),
   askId: z.string(),
   group: CardGroup,
   label: z.string(),

@@ -286,7 +286,17 @@ export interface NeoAskSessionView {
   open: NeoCardOpenTarget;
 }
 
+export interface NeoAskTodo {
+  id: string;
+  workId: string | null;
+  title: string;
+  state: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+  status: string;
+  added: boolean;
+}
+
 export interface NeoAskView {
+  todos?: NeoAskTodo[];
   askId: string;
   group: NeoCardGroup;
   label: string;
