@@ -87,8 +87,8 @@ vi.mock('../../../ui/ConfirmModal.tsx', () => ({
     ) : null,
 }));
 
-vi.mock('../tool-utils.ts', () => ({
-  getToolDisplayName: (name: string) => name,
+vi.mock('../tool-utils.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../tool-utils.ts')>()),
   getToolColors: () => ({
     bg: 'bg-accent/10',
     border: 'border-accent/40',
