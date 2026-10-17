@@ -47,6 +47,26 @@ export async function readClaudeSessionOwner(
   }
 }
 
+export function requireClaudePeerOwner(
+  sessionId: string,
+  live: readonly (ClaudeSessionIdentity & { owner?: ClaudeSessionOwner })[]
+): { value: ClaudeSessionIdentity & { owner: 'cli' | 'desktop' } } | { reason: Rejected } {
+  const candidates = live.filter((session) => session.sessionId === sessionId);
+  const session = candidates[0];
+  return candidates.length === 1 &&
+    (session.owner === 'cli' || session.owner === 'desktop') &&
+    typeof session.pid === 'number' &&
+    Number.isSafeInteger(session.pid) &&
+    session.pid > 0
+    ? { value: { sessionId, pid: session.pid, owner: session.owner } }
+    : {
+        reason: reject(
+          'unreachable',
+          'Claude session ownership is unknown or ambiguous. The daemon will not resume it or choose a fallback channel.'
+        ),
+      };
+}
+
 export function requireClaudeCliOwner(
   sessionId: string,
   live: readonly (ClaudeSessionIdentity & { owner?: ClaudeSessionOwner })[]

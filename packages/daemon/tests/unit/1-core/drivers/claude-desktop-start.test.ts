@@ -220,6 +220,17 @@ describe('claude-desktop start', () => {
     expect(spawned).toHaveLength(2);
   });
 
+  test('hands the new Desktop-owned session task to its verified inbox callback', async () => {
+    expect(
+      await adapter({ appearsAfter: 0, owner: 'desktop' }).start?.(request, user)
+    ).toMatchObject({
+      ok: true,
+      value: { status: 'queued', receipt: { executionId: 'u1', inputId: 'u-brief' } },
+    });
+    expect(spawned).toHaveLength(2);
+    expect(spawned.some((args) => args.includes('HyperNeo relay'))).toBe(false);
+  });
+
   test('refuses to resume or relay after Desktop ownership probing fails', async () => {
     expect(await adapter({ probeFails: true }).start?.(request, user)).toMatchObject({
       ok: false,
@@ -284,18 +295,15 @@ describe('claude-desktop start', () => {
     expect(clock).toBe(1_000);
   });
 
-  test.each(['desktop', 'unknown'] as const)(
-    'reports partial creation without task delivery for a live %s owner',
-    async (owner) => {
-      expect(await adapter({ appearsAfter: 0, owner }).start?.(request, user)).toMatchObject({
-        ok: false,
-        reason: 'not_delivered',
-        detail: expect.stringContaining(
-          owner === 'desktop' ? 'Desktop owns' : 'ownership is unknown'
-        ),
-      });
-      expect(spawned).toHaveLength(2);
-      expect(spawned.some((args) => args.includes('HyperNeo relay'))).toBe(false);
-    }
-  );
+  test('reports partial creation without task delivery for an unknown live owner', async () => {
+    expect(
+      await adapter({ appearsAfter: 0, owner: 'unknown' }).start?.(request, user)
+    ).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail: expect.stringContaining('ownership is unknown'),
+    });
+    expect(spawned).toHaveLength(2);
+    expect(spawned.some((args) => args.includes('HyperNeo relay'))).toBe(false);
+  });
 });

@@ -131,7 +131,7 @@ describe('owner-verified Claude inbox submission', () => {
             : [{ ...live, owner: owner === 'desktop' ? 'desktop' : 'unknown' }];
       expect(await submitClaudeInboxMessage(sessionId, submission(), context, deps)).toMatchObject({
         ok: false,
-        reason: owner === 'desktop' ? 'unsupported' : 'unreachable',
+        reason: 'unreachable',
       });
       expect(writes).toEqual([]);
     }
@@ -145,7 +145,7 @@ describe('owner-verified Claude inbox submission', () => {
     );
     expect(await submitClaudeInboxMessage(sessionId, submission(), context, deps)).toMatchObject({
       ok: false,
-      reason: 'unsupported',
+      reason: 'unreachable',
     });
     expect(writes).toHaveLength(1);
     expect(reads).toBe(2);

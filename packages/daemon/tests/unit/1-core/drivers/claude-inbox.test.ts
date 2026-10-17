@@ -224,35 +224,44 @@ describe('openClaudeInbox', () => {
     });
   }
 
-  test('keeps a private reply endpoint alive after sending and reuses submission identities', async () => {
-    inbox = await openClaudeInbox(session, (event) => events.push(event));
-    expect((await lstat(inbox.path)).mode & 0o777).toBe(0o600);
-    const input = submission();
-    expect(await inbox.write(input)).toEqual({ written: true });
-    expect(events).toEqual([]);
-    expect(await inbox.write(input)).toEqual({ written: true });
-    expect(frames).toHaveLength(1);
-    const from = `uds:${session.socketPath}`;
-    const replyMessageId = randomUUID();
-    await incoming(
-      `${JSON.stringify({ type: 'control', action: 'peer_message_status', from, orig_msg_id: input.messageId, status: 'held' })}\n`
-    );
-    await incoming(
-      `${JSON.stringify({ msgV: 1, msg_id: replyMessageId, type: 'user', from, message: { role: 'user', content: '答复\nnext line' } })}\n`,
-      true
-    );
-    expect(events).toEqual([
-      { kind: 'receipt', sessionId: session.sessionId, messageId: input.messageId, status: 'held' },
-      {
-        kind: 'reply',
-        sessionId: session.sessionId,
-        messageId: replyMessageId,
-        from,
-        content: '答复\nnext line',
-      },
-    ]);
-    await expect(inbox.write({ ...input, text: 'different' })).rejects.toThrow('reused');
-  });
+  test.each(['2.1.295', '2.1.299'])(
+    'keeps a private %s reply endpoint alive after sending and reuses submission identities',
+    async (version) => {
+      session.version = version;
+      inbox = await openClaudeInbox(session, (event) => events.push(event));
+      expect((await lstat(inbox.path)).mode & 0o777).toBe(0o600);
+      const input = submission();
+      expect(await inbox.write(input)).toEqual({ written: true });
+      expect(events).toEqual([]);
+      expect(await inbox.write(input)).toEqual({ written: true });
+      expect(frames).toHaveLength(1);
+      const from = `uds:${session.socketPath}`;
+      const replyMessageId = randomUUID();
+      await incoming(
+        `${JSON.stringify({ type: 'control', action: 'peer_message_status', from, orig_msg_id: input.messageId, status: 'held' })}\n`
+      );
+      await incoming(
+        `${JSON.stringify({ msgV: 1, msg_id: replyMessageId, type: 'user', from, message: { role: 'user', content: '答复\nnext line' } })}\n`,
+        true
+      );
+      expect(events).toEqual([
+        {
+          kind: 'receipt',
+          sessionId: session.sessionId,
+          messageId: input.messageId,
+          status: 'held',
+        },
+        {
+          kind: 'reply',
+          sessionId: session.sessionId,
+          messageId: replyMessageId,
+          from,
+          content: '答复\nnext line',
+        },
+      ]);
+      await expect(inbox.write({ ...input, text: 'different' })).rejects.toThrow('reused');
+    }
+  );
 
   test('retries a connection refusal with the same identity while still rejecting changed content', async () => {
     inbox = await openClaudeInbox(session, (event) => events.push(event));
