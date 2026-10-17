@@ -396,9 +396,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     await waitFor(() => expect(input.value).toBe('Please explain'));
     expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(fullReply);
-    expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(
-      'Replying to Neo'
-    );
+    expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain('回复');
     fireEvent.click(screen.getByRole('button', { name: 'Remove reply' }));
     submit();
     await waitFor(() => expect(calls()).toHaveLength(2));
@@ -479,10 +477,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     fireEvent.click(button, { detail: 0 });
     expect(document.activeElement).toBe(input);
     expect(input.getAttribute('aria-describedby')).toBe('neo-quote-label');
-    expect(document.getElementById('neo-quote-label')).toHaveProperty(
-      'textContent',
-      'Replying to Neo'
-    );
+    expect(document.getElementById('neo-quote-label')).toHaveProperty('textContent', '回复');
     expect(document.getElementById('neo-quote-label')?.getAttribute('role')).toBe('status');
     const cancel = screen.getByRole('button', { name: 'Remove reply' }) as HTMLButtonElement;
     expect(cancel.type).toBe('button');
@@ -515,7 +510,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       type('Keep this');
       quote('Neo');
       const region = screen.getByRole('region', { name: /^Replying to Neo/ });
-      expect(region.textContent).toContain('Replying to Neo');
+      expect(region.textContent).toContain('回复');
       const preview = region.querySelector('.line-clamp-2')!;
       expect(Array.from(preview.textContent!)).toHaveLength(501);
       expect(preview.textContent).toContain('<img src=x onerror=alert(1)> **literal**\n');

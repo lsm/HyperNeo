@@ -44,7 +44,7 @@ describe('admitNeoDraft', () => {
 });
 
 describe('neoDraftPayload', () => {
-  it('quotes every source line and keeps the reply outside the quote', () => {
+  it('sends the reply text alone and names the quoted message in replyTo', () => {
     expect(
       neoDraftPayload({
         sessionId: 'neo:root',
@@ -54,35 +54,38 @@ describe('neoDraftPayload', () => {
           author: 'Neo',
           text: '**Answer**\r\n\r\n> nested\n```js\ncode\n```',
           anchor: 'neo-message-source',
+          replyTo: { kind: 'message', id: 'publication-1' },
         },
       })
     ).toEqual({
       sessionId: 'neo:root',
       requestId: uuid,
-      content:
-        'Replying to Neo:\n> **Answer**\n>\n> > nested\n> ```js\n> code\n> ```\n\nPlease explain',
+      content: 'Please explain',
+      replyTo: { kind: 'message', id: 'publication-1' },
     });
   });
 
-  it('includes quote context before an image-only reply without adding protocol fields', () => {
+  it('sends an image-only reply without inventing quote text', () => {
     const payload = neoDraftPayload(
       {
         sessionId: 'neo:root',
         requestId: uuid,
         text: '',
         images: [image],
-        quote: { author: 'You', text: 'Which photo?', anchor: 'neo-message-question' },
+        quote: {
+          author: 'You',
+          text: 'Which photo?',
+          anchor: 'neo-message-question',
+          replyTo: { kind: 'message', id: 'request-1' },
+        },
       },
       [{ index: 1, mediaType: 'image/jpeg', data: 'thumb' }]
     );
     expect(payload).toEqual({
       sessionId: 'neo:root',
       requestId: uuid,
+      replyTo: { kind: 'message', id: 'request-1' },
       content: [
-        {
-          type: 'text',
-          text: 'Replying to my earlier message:\n> Which photo?',
-        },
         {
           type: 'image',
           source: { type: 'base64', data: image.data, media_type: image.media_type },
