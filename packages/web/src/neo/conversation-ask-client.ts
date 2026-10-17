@@ -132,6 +132,7 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
     return null;
   const content = askContent(row.content);
   if (!content) return null;
+  const replyTo = object(row.replyTo);
   return {
     conversationId: page.conversationId,
     requestId: row.requestId,
@@ -140,6 +141,11 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
     createdAt: row.createdAt,
     content,
     ...(object(row.delivery)?.state === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
+    ...(replyTo &&
+    (replyTo.kind === 'question' || replyTo.kind === 'todo' || replyTo.kind === 'message') &&
+    text(replyTo.id, 160)
+      ? { replyTo: { kind: replyTo.kind, id: replyTo.id } }
+      : {}),
   };
 }
 

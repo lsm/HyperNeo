@@ -87,7 +87,7 @@ export function NeoConversation({
   onEditAsk?: (requestId: string) => void;
   projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
-  replyLabels?: ReadonlyMap<string, string>;
+  replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   sessionId: string;
   works?: NeoWork[];
   publicConversation?: PublicConversation;

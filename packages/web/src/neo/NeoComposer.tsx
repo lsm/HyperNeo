@@ -222,7 +222,7 @@ export function NeoComposer({
           />
           <div class="min-w-0 flex-1">
             <p id="neo-quote-label" role="status" class="text-xs font-medium text-fg-muted">
-              Replying to {quote.author}
+              {quote.replyTo ? '回复' : `Replying to ${quote.author}`}
             </p>
             <p class="line-clamp-2 break-words text-sm text-fg">{neoQuoteExcerpt(quote.text)}</p>
           </div>

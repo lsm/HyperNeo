@@ -187,8 +187,13 @@ export function NeoLive() {
   const askGroups = groupNeoAsks(view?.asks, scenes, view?.askViews, cards);
   const replyLabels = new Map(
     (view?.todoAsks ?? []).flatMap((entry) => [
-      ...entry.questions.map((question) => [`question:${question.id}`, question.text] as const),
-      ...entry.todos.map((todo) => [`todo:${todo.id}`, todo.title] as const),
+      ...entry.questions.map(
+        (question) =>
+          [`question:${question.id}`, { label: question.text, askId: entry.ask.id }] as const
+      ),
+      ...entry.todos.map(
+        (todo) => [`todo:${todo.id}`, { label: todo.title, askId: entry.ask.id }] as const
+      ),
     ])
   );
   const sceneGroups = [

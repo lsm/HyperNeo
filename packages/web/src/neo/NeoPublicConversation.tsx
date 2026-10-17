@@ -294,7 +294,7 @@ function PublicEntry({
   status?: NeoMessageStatus;
   projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
-  replyLabels?: ReadonlyMap<string, string>;
+  replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   onQuote?: (quote: NeoQuote) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
@@ -415,12 +415,15 @@ function PublicEntry({
           data-reply-to={`${ask.replyTo.kind}:${ask.replyTo.id}`}
           class="mb-1 block max-w-full truncate px-1 text-left text-xs text-fg-muted hover:underline"
           onClick={() =>
-            document
-              .getElementById(`neo-ref-${ask.replyTo!.kind}-${ask.replyTo!.id}`)
-              ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+            (
+              document.getElementById(`neo-ref-${ask.replyTo!.kind}-${ask.replyTo!.id}`) ??
+              document.querySelector(
+                `[data-ask="${replyLabels?.get(`${ask.replyTo!.kind}:${ask.replyTo!.id}`)?.askId}"]`
+              )
+            )?.scrollIntoView({ block: 'center' })
           }
         >
-          回复：{replyLabels?.get(`${ask.replyTo.kind}:${ask.replyTo.id}`) ?? '之前的内容'}
+          回复：{replyLabels?.get(`${ask.replyTo.kind}:${ask.replyTo.id}`)?.label ?? '之前的内容'}
         </button>
       )}
       <div
@@ -719,7 +722,7 @@ export function NeoPublicConversation({
   onQuote,
 }: {
   conversation: Conversation;
-  replyLabels?: ReadonlyMap<string, string>;
+  replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   statuses?: ReadonlyMap<string, NeoMessageStatus>;
   onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
