@@ -181,7 +181,8 @@ export function neoAskTodoScene(
 ): Pick<NeoAskView, 'group' | 'label' | 'needsYou' | 'done' | 'total' | 'doneWorkIds'> {
   const active = todos.filter((todo) => todo.state !== 'cancelled');
   const abandoned = ask.status === 'abandoned';
-  const needsYou = !abandoned && humanActions.length > 0;
+  const achieved = ask.status === 'achieved';
+  const needsYou = !abandoned && !achieved && humanActions.length > 0;
   const running = active.some((todo) => todo.state === 'running');
   const done = active.filter((todo) => todo.state === 'done');
   const finished = active.length ? done.length === active.length : ask.status === 'achieved';
@@ -189,22 +190,25 @@ export function neoAskTodoScene(
   return {
     label: abandoned
       ? '放弃了'
-      : needsYou
-        ? '等你'
-        : running
-          ? '在做'
-          : finished
-            ? '做完'
-            : failed
-              ? '没做成'
-              : '没开始',
-    group: abandoned
-      ? 'outcomes'
-      : needsYou
-        ? 'attention'
-        : finished || (failed && !running)
-          ? 'outcomes'
-          : 'running',
+      : achieved
+        ? '做完'
+        : needsYou
+          ? '等你'
+          : running
+            ? '在做'
+            : finished
+              ? '做完'
+              : failed
+                ? '没做成'
+                : '没开始',
+    group:
+      abandoned || achieved
+        ? 'outcomes'
+        : needsYou
+          ? 'attention'
+          : finished || (failed && !running)
+            ? 'outcomes'
+            : 'running',
     needsYou,
     done: done.length,
     total: active.length,

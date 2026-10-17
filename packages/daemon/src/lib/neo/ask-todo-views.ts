@@ -29,9 +29,14 @@ function startedAt(ask: NeoAsk): number | null {
   return answers.length ? Math.min(...answers) : (ask.approvedAt ?? null);
 }
 
-function itemProgress(item: NeoAskItem): Pick<NeoAskTodo, 'state' | 'status'> {
+function itemProgress(item: NeoAskItem, settled: boolean): Pick<NeoAskTodo, 'state' | 'status'> {
   if (item.removed) return { state: 'cancelled', status: item.removedReason ?? '已取消' };
   if (neoTodoCriterionMet(item)) return { state: 'done', status: '完成标准已满足' };
+  if (settled)
+    return {
+      state: 'failed',
+      status: item.state === 'reported' ? '已回报，结束时尚未核实' : '结束时没做完',
+    };
   if (item.state === 'reported') return { state: 'running', status: '已回报，等核实' };
   return { state: 'pending', status: '等 daemon 核实' };
 }
@@ -45,6 +50,7 @@ export function projectNeoAskTodos(
   const items = (ask.doneItems ?? []).filter((item) => !question(item));
   const work = ask.workIds.flatMap((id) => parts.work.find((row) => row.id === id) ?? []);
   const start = startedAt(ask);
+  const settled = ask.status === 'achieved' || ask.status === 'abandoned';
   const rows: NeoAskTodo[] = work.map((row) => {
     const card = cards.find((view) => view.workId === row.id);
     const owned = items.filter((item) => item.deliveredBy === row.id && !item.removed);
@@ -55,7 +61,8 @@ export function projectNeoAskTodos(
     const coding = neoCodingTodoProgress(
       owned,
       prs.find((receipt) => receipt.workId === row.id)?.prs ?? [],
-      row.status === 'reported'
+      row.status === 'reported',
+      settled
     );
     if (row.status === 'cancelled' || replacedBy)
       progress = {
@@ -102,6 +109,13 @@ export function projectNeoAskTodos(
                 ? '会话已结束，daemon 正在核实'
                 : '会话在做',
       };
+    if (settled && (progress.state === 'running' || progress.state === 'pending'))
+      progress = {
+        state: 'failed',
+        status:
+          coding?.status ??
+          (row.status === 'reported' ? '会话说做完了，结束时尚未核实' : '结束时没做完'),
+      };
     return {
       id: row.id,
       workId: row.id,
@@ -124,7 +138,7 @@ export function projectNeoAskTodos(
       id: item.id,
       workId: null,
       title: item.text,
-      ...itemProgress(item),
+      ...itemProgress(item, settled),
       added: start !== null && item.addedAt !== null && item.addedAt > start,
     });
   return rows;

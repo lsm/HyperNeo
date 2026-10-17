@@ -133,6 +133,63 @@ describe('projectNeoAskViews todo projection', () => {
     ).toMatchObject({ state, status });
   });
 
+  test.each(['achieved', 'abandoned'] as const)(
+    'settled %s asks retain evidence without claiming any work is still running',
+    (status) => {
+      for (const workStatus of ['queued', 'proposed', 'reported'] as const) {
+        const standard = item('merge', { check: 'coding.pr_merged', deliveredBy: 'w' });
+        const view = project([work('w', workStatus)], [standard], [], { status });
+        expect(view).toMatchObject({
+          group: 'outcomes',
+          label: status === 'achieved' ? '做完' : '放弃了',
+          done: 0,
+        });
+        expect(view.todos?.[0]).toMatchObject({ state: 'failed' });
+        expect(view.todos?.[0].status).not.toMatch(/等 PR|会话在做|等你开始/);
+        if (workStatus === 'reported')
+          expect(view.todos?.[0].status).toBe('会话说做完了，没查到 PR');
+        expect(standard.state).toBe('pending');
+      }
+      const view = project(
+        [work('w')],
+        [
+          item('merge', { check: 'coding.pr_merged', deliveredBy: 'w' }),
+          item('pending'),
+          item('reported', { state: 'reported' }),
+          item('verified', { check: 'coding.deployed', state: 'met', metBy: 'daemon' }),
+        ],
+        [pr('OPEN')],
+        { status }
+      );
+      expect(view.todos?.map((todo) => todo.state)).toEqual(['failed', 'failed', 'failed', 'done']);
+      expect(view.todos?.map((todo) => todo.status)).toEqual([
+        '#103 还没合并，ask 已结束',
+        '结束时没做完',
+        '已回报，结束时尚未核实',
+        '完成标准已满足',
+      ]);
+      expect(project([work('w')], [], [], { status }).todos?.[0].state).toBe('done');
+      expect(project([work('w')], [], [pr('MERGED')], { status }).todos?.[0].state).toBe('done');
+    }
+  );
+
+  test('a verified coding criterion does not cover an unverified deployment', () => {
+    expect(
+      project(
+        [work('w')],
+        [
+          item('merge', {
+            check: 'coding.pr_merged',
+            deliveredBy: 'w',
+            state: 'met',
+            metBy: 'daemon',
+          }),
+          item('deployment', { check: 'coding.deployed', deliveredBy: 'w' }),
+        ]
+      ).todos?.[0].state
+    ).toBe('running');
+  });
+
   test('retains idle wake facts while showing the new todo label', () => {
     const view = project([], []);
     expect(view).toMatchObject({ idle: true, label: '没开始', needsYou: false });
