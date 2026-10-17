@@ -10,7 +10,7 @@ import {
 export interface ClaudeInboxRoutes {
   record(sessionId: string, returnTo: string, inboxDir: string): void;
   returnTo(sessionId: string): string | null;
-  lastInboxDir(): string | null;
+  inboxDirs(): string[];
 }
 
 interface ClaudeInboxConversationDeps {
@@ -32,7 +32,7 @@ async function claudeFrameEvent(
 }
 
 export function createClaudeInboxConversations(deps: ClaudeInboxConversationDeps) {
-  let opening: ReturnType<typeof openClaudeInbox> | undefined;
+  const inboxes = new Map<string, ReturnType<typeof openClaudeInbox>>();
   const events = new Set<Promise<void>>();
   let closed = false;
   let closing: Promise<void> | undefined;
@@ -58,19 +58,19 @@ export function createClaudeInboxConversations(deps: ClaudeInboxConversationDeps
   }
 
   function inbox(directory: string): ReturnType<typeof openClaudeInbox> {
-    if (opening) return opening;
+    const existing = inboxes.get(directory);
+    if (existing) return existing;
     const current = (deps.open ?? openClaudeInbox)(directory, deps.name, route);
-    opening = current;
+    inboxes.set(directory, current);
     void current.catch(() => {
-      if (opening === current) opening = undefined;
+      if (inboxes.get(directory) === current) inboxes.delete(directory);
     });
     return current;
   }
 
   return {
     async listen(): Promise<void> {
-      const directory = deps.routes.lastInboxDir();
-      if (directory && !closed) await inbox(directory);
+      if (!closed) await Promise.all(deps.routes.inboxDirs().map(inbox));
     },
     async write(target: ClaudeInboxTarget, returnTo: string, submission: ClaudeInboxSubmission) {
       if (closed) throw new Error('Claude inbox conversations are closed.');
@@ -85,12 +85,15 @@ export function createClaudeInboxConversations(deps: ClaudeInboxConversationDeps
       if (closing) return closing;
       closed = true;
       closing = (async () => {
-        const opened = await opening?.catch(() => null);
-        try {
-          await opened?.close();
-        } finally {
-          await Promise.allSettled([...events]);
-        }
+        const opened = await Promise.all(
+          [...inboxes.values()].map((opening) => opening.catch(() => null))
+        );
+        const results = await Promise.allSettled(opened.map((item) => item?.close()));
+        await Promise.allSettled([...events]);
+        const failures = results.flatMap((result) =>
+          result.status === 'rejected' ? [result.reason] : []
+        );
+        if (failures.length) throw new AggregateError(failures, 'Claude inbox shutdown failed.');
       })();
       return closing;
     },

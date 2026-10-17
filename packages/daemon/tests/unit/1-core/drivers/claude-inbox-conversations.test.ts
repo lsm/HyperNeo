@@ -30,14 +30,10 @@ const reply = (sessionId = target.sessionId): ClaudeInboxEvent => ({
 
 function memoryRoutes(): ClaudeInboxRoutes {
   const rows = new Map<string, { returnTo: string; dir: string }>();
-  let last: string | null = null;
   return {
-    record: (sessionId, returnTo, dir) => {
-      rows.set(sessionId, { returnTo, dir });
-      last = dir;
-    },
+    record: (sessionId, returnTo, dir) => void rows.set(sessionId, { returnTo, dir }),
     returnTo: (sessionId) => rows.get(sessionId)?.returnTo ?? null,
-    lastInboxDir: () => last,
+    inboxDirs: () => [...new Set([...rows.values()].map((row) => row.dir))],
   };
 }
 
@@ -157,6 +153,25 @@ describe('Claude inbox conversation lifetime', () => {
     await manager.close();
     expect(routed).toEqual([
       { returnTo: origin, event: { ...plain, sessionId: target.sessionId } },
+    ]);
+  });
+
+  test('a target in another socket directory gets its own listener, and listen reopens both', async () => {
+    const elsewhere = {
+      ...target,
+      sessionId: randomUUID(),
+      socketPath: '/run/user/501/cc-socks/456.sock',
+    };
+    await manager.write(target, origin, input());
+    await manager.write(elsewhere, origin, input());
+    await manager.close();
+    create();
+    await manager.listen();
+    expect(opened.map(({ directory }) => directory)).toEqual([
+      '/tmp/cc-socks',
+      '/run/user/501/cc-socks',
+      '/tmp/cc-socks',
+      '/run/user/501/cc-socks',
     ]);
   });
 

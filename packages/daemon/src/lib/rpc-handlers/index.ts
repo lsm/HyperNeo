@@ -6,7 +6,7 @@ import { createClaudeDesktopModsDriver } from '../drivers/claude-desktop-mods-dr
 import { readLiveClaudeSessions } from '../drivers/claude-desktop-adapter.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { stampActiveAttemptList } from '../tasks/direct-attempt-flag.ts';
 import { registerDirectStartJobs } from '../tasks/direct-start-jobs.ts';
 import {
@@ -1411,7 +1411,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const directTaskExecutionRepo = new DirectTaskExecutionRepository(deps.db.getDatabase());
   const directTaskWorkerResolver = createDatabaseDirectTaskWorkerResolver(deps.db.getDatabase());
   const claudeInbox = createClaudeInboxDriver({
-    name: claudeInboxName(deps.config.dbPath),
+    name: claudeInboxName(resolve(deps.config.dbPath)),
     routes: new ClaudeInboxRouteRepository(deps.db.getDatabase()),
     registrationsDir: join(homedir(), '.claude', 'sessions'),
     liveSessions: () => readLiveClaudeSessions(spawnProcess),

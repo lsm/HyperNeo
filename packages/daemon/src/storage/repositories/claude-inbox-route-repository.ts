@@ -21,10 +21,11 @@ export class ClaudeInboxRouteRepository {
     return row?.returnTo ?? null;
   }
 
-  lastInboxDir(): string | null {
-    const row = this.db
-      .prepare('SELECT inbox_dir AS dir FROM claude_inbox_routes ORDER BY updated_at DESC LIMIT 1')
-      .get() as { dir: string } | null | undefined;
-    return row?.dir ?? null;
+  inboxDirs(): string[] {
+    return (
+      this.db.prepare('SELECT DISTINCT inbox_dir AS dir FROM claude_inbox_routes').all() as {
+        dir: string;
+      }[]
+    ).map((row) => row.dir);
   }
 }

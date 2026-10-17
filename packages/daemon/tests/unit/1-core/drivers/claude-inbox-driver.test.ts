@@ -53,7 +53,7 @@ describe('Claude inbox driver runtime', () => {
       routes: {
         record: (id, returnTo) => void routes.set(id, returnTo),
         returnTo: (id) => routes.get(id) ?? null,
-        lastInboxDir: () => null,
+        inboxDirs: () => [],
       },
       registrationsDir: dir,
       liveSessions: async () => [{ sessionId, pid: 456, status: 'busy', owner: 'cli' }],
