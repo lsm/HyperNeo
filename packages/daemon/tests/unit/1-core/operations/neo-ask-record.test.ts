@@ -32,6 +32,7 @@ function setup() {
   const started: string[] = [];
   const stopped: string[] = [];
   const refuse = { value: false };
+  const stopFails = { value: false };
   const ops = Object.fromEntries(
     createNeoAskRecordOperations(
       store,
@@ -49,6 +50,7 @@ function setup() {
         retry: async () => ({ ok: false, reason: 'unused' }),
         stop: async (todo) => {
           stopped.push(todo.id);
+          return stopFails.value ? 'stop_failed: offline' : null;
         },
       },
       () => 'project-1',
@@ -58,7 +60,7 @@ function setup() {
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
-  return { store, call, started, stopped, refuse };
+  return { store, call, started, stopped, refuse, stopFails };
 }
 
 const opening = {
@@ -124,6 +126,21 @@ describe('neo.ask.open and neo.ask.settle', () => {
         'start_needs_human: start:true only in a turn the human started; ask a start question instead.',
     });
     expect(store.listAsks(undefined, 10)).toEqual([]);
+  });
+
+  test('a settle whose stop fails leaves the ask open and says so', async () => {
+    const { call, store, stopFails } = setup();
+    const opened = await call('neo.ask.open', opening, turn('m5'));
+    if (!opened.ok) throw new Error(opened.reason);
+    stopFails.value = true;
+    const settled = await call(
+      'neo.ask.settle',
+      { askId: opened.ask.id, status: 'dropped', outcome: 'x' },
+      turn('m5')
+    );
+    expect(settled.ok).toBe(false);
+    expect(!settled.ok && settled.reason).toContain('the ask is unchanged');
+    expect(store.getAsk(opened.ask.id)?.status).toBe('open');
   });
 
   test('settling stops running sessions, retires open questions and ends the ask', async () => {
