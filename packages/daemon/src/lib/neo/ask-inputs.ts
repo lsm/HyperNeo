@@ -1,4 +1,3 @@
-import type { OperationCaller } from '../operations/registry.ts';
 import type {
   NeoAsk,
   NeoAskItemKind,
@@ -10,21 +9,12 @@ import { GITHUB_REF_PATH } from '../github/parse-pr-url.ts';
 import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAskItemInput } from '../../storage/repositories/neo-ask-repository.ts';
-import type { planNeoAskRestate } from './ask-plans.ts';
 
 export type Rejection = { ok: false; reason: string };
 
 export type Gate<T> = { value: T } | { reason: Rejection };
 
-export type NeoAdmit = (
-  caller: OperationCaller,
-  name: string,
-  projectId?: string | null
-) => Gate<OperationCaller>;
-
 export type AskReceipt = { ok: true; ask: NeoAsk };
-
-export type AskOpened = AskReceipt & { packBriefing?: string };
 
 const CheckKind = z
   .string()
@@ -147,8 +137,6 @@ export const Open = z
 
 export type OpenRequest = z.infer<typeof Open> & { requestKey: string };
 
-export type Opening = Omit<OpenRequest, 'doneItems' | 'doneWhen'> & { doneWhen: string };
-
 const Options = z
   .array(z.string().trim().min(1).max(80))
   .min(2)
@@ -228,12 +216,6 @@ export const Edit = z
     'Pass items to add, remove, track or bind.'
   );
 
-export type WorkAskInput = { askId?: string; projectId: string | null };
-
-export type NeoAskNameable = { id: string; title: string; cardIds: string[]; refs: string[] };
-
-export type NeoDaemonTicked = { ok: true; ask: NeoAsk; note: string };
-
 export type NeoOutcomeCard = Pick<NeoWork, 'id' | 'status'>;
 
 export type NeoAskQuestionItem = NeoAskItemInput & {
@@ -247,11 +229,3 @@ export type NeoAskQuestionItem = NeoAskItemInput & {
 };
 
 export type NeoAskSettleFacts = { offered: boolean; stalled: boolean; failed: boolean };
-
-export type NeoAskSettlePlan = {
-  waits: boolean;
-  approval: boolean;
-  item: NeoAskQuestionItem | null;
-  restate: ReturnType<typeof planNeoAskRestate>;
-  waitingItem: string | null;
-};

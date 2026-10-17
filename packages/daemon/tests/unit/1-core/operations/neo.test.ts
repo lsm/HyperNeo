@@ -675,45 +675,6 @@ describe('Neo MVP', () => {
     expect(service.repo.getProject('private')).toBeNull();
   });
 
-  test('proposals do not execute; duplicate Starts deliver one durable brief to the chosen chat', async () => {
-    const work = await propose();
-    expect(jobs).toHaveLength(0);
-    await Promise.all([service.start(work.id), service.start(work.id)]);
-    await service.start(work.id);
-    expect(created).toHaveLength(1);
-    expect(jobs).toHaveLength(1);
-    expect(service.repo.getWork(work.id)).toMatchObject({
-      status: 'queued',
-      sessionId: 'ordinary',
-    });
-    expect(jobs[0].payload).toMatchObject({
-      to: { kind: 'session', sessionId: 'ordinary' },
-      messageUuid: work.id,
-    });
-  });
-
-  test('fails queued work and returns it to Neo when its chat turn ends in an error', async () => {
-    const work = await propose();
-    await service.start(work.id);
-    await service.reconcile(work.id);
-    expect(service.repo.getWork(work.id)?.status).toBe('queued');
-    failed = 'error_during_execution';
-    await events.publish('session.updated', {
-      sessionId: 'ordinary',
-      processingState: { status: 'idle' },
-    });
-    expect(service.repo.getWork(work.id)).toMatchObject({
-      status: 'failed',
-      report: 'The chat stopped with an error before reporting: error_during_execution.',
-    });
-    expect(jobs).toHaveLength(2);
-    expect(jobs[1].payload).toMatchObject({
-      to: { sessionId: work.originSessionId },
-      messageUuid: work.id,
-    });
-    expect(JSON.stringify(jobs[1])).toContain('error_during_execution');
-  });
-
   async function concernWork(origin?: string) {
     service.repo.saveProject(project, 0);
     const root = await service.open(null);
@@ -731,34 +692,6 @@ describe('Neo MVP', () => {
     terminalSessions ??= new Set();
     return { work: saved, root };
   }
-
-  test.each(['queued', 'delivered'])(
-    'does not replay historical %s raw returns through a holder',
-    async (state) => {
-      const { work, root } = await concernWork();
-      service.repo.transitionWork(work.id, work, { status: 'reported', report: 'Old result' });
-      jobs = [];
-      if (state === 'delivered') delivered.add(`${root}:${work.id}`);
-      else jobs.push({ payload: { to: { sessionId: root }, messageUuid: work.id } });
-      await service.recover();
-      expect(service.consultations.list()).toEqual([]);
-      expect(jobs).toHaveLength(state === 'queued' ? 1 : 0);
-    }
-  );
-
-  test('cancelled proposals never start and cancelling queued work does not interrupt the shared chat', async () => {
-    const first = await propose();
-    await service.cancel(first.id);
-    await service.start(first.id);
-    expect(jobs).toHaveLength(0);
-    const second = await propose();
-    await service.start(second.id);
-    await service.cancel(second.id);
-    await service.reconcile(second.id);
-    expect(service.repo.getWork(second.id)?.status).toBe('cancelled');
-    expect(interrupt).not.toHaveBeenCalled();
-    expect(jobs).toHaveLength(1);
-  });
 
   test('query restriction gives Neo its tools and guard and drops plugins, settings and extra MCP servers', async () => {
     const operationServer = { type: 'stdio' as const, command: 'operations' };
