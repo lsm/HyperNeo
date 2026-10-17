@@ -144,7 +144,12 @@ describe('Neo durable busy consultation intake', () => {
     expect(jobs(a.sessionId, `neo-consult:${waiter.id}:request`)).toEqual([]);
     expect((await consult(2, 'family')).receipt.consultation?.status).toBe('pending');
     await ask(3);
-    expect(service.repo.listProjects()).toHaveLength(2);
+    expect(
+      service.repo
+        .listProjects()
+        .map((project) => project.id)
+        .sort()
+    ).toEqual(['family', 'inbox', 'research']);
     expect(service.repo.listWork()).toEqual([]);
     const snapshot = await invoke('neo.snapshot', {}, b.source);
     expect(snapshot).toMatchObject({

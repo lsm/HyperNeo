@@ -486,7 +486,7 @@ describe('chooseNeoRoute with an inbox', () => {
       },
       inboxRunnable: async () => false,
     });
-    expect([route.choice, offered, opened]).toEqual([null, [['drivers']], 0]);
+    expect([route.choice, offered, opened]).toEqual([null, [['drivers'], ['drivers']], 0]);
   });
 
   test('never matches the inbox by embedding', async () => {
