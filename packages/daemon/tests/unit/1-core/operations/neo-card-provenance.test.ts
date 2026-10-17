@@ -169,19 +169,19 @@ describe('coding PR provenance', () => {
     planNeoCardPrCandidates({
       follows,
       branch,
-      report: url,
+      report: null,
       stored: [],
       opened: [url],
       window: scope,
     });
-  test.each([10, 21, 40])('rejects a same-branch PR outside the card exchange at %s', (at) => {
+  test.each([10, 21, 40])('rejects an inferred PR outside the card lifetime at %s', (at) => {
     const owned = planNeoCardPrOwnership(card, candidates(), [], 50);
     expect(keepNeoCardPrReads(card, owned, [pr(at)]).rejected).toHaveLength(1);
   });
-  test('requires branch and timestamp proof even for report mentions or session-opened PRs', () => {
+  test('requires lifetime timestamp proof without requiring the current branch', () => {
     expect(
       keepNeoCardPrReads(card, planNeoCardPrOwnership(card, candidates([]), [], 50), [pr(15)]).kept
-    ).toEqual([]);
+    ).toHaveLength(1);
     expect(
       keepNeoCardPrReads(card, planNeoCardPrOwnership(card, candidates(), [], 50), [
         { ...pr(15), createdAt: undefined },

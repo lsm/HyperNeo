@@ -6,6 +6,7 @@ import {
   hasNeoUnattachedOpenedPrs,
   keepNeoCardPrReads,
   neoCardOpenedPrs,
+  neoCardPrWindow,
   keepNeoUnbeatenPrs,
   neoPrMatchScore,
   planNeoCardPrCandidates,
@@ -45,7 +46,7 @@ const pr = (n: number, createdAt?: number): NeoWorkPr => ({
 });
 
 describe('planNeoCardPrCandidates', () => {
-  test('marks branch PRs, the PR the card follows, and PRs only the report mentions', () => {
+  test('keeps report-named PRs explicit alongside follows and inferred stored PRs', () => {
     expect(
       planNeoCardPrCandidates({
         report: `Opened ${pull(1)}; see also ${pull(2)} and ${pull(3)}.`,
@@ -56,14 +57,14 @@ describe('planNeoCardPrCandidates', () => {
     ).toEqual([
       { url: pull(2), claim: 'named' },
       { url: pull(4), claim: 'mentioned' },
-      { url: pull(1), claim: 'branch' },
-      { url: pull(3), claim: 'mentioned' },
+      { url: pull(1), claim: 'named' },
+      { url: pull(3), claim: 'named' },
     ]);
   });
 });
 
 describe('planNeoCardPrCandidates with resolved refs', () => {
-  test('a PR the report cites by number is mentioned', () => {
+  test('a PR the report cites by number is named', () => {
     expect(
       planNeoCardPrCandidates({
         report: 'CI on #6440.',
@@ -71,7 +72,7 @@ describe('planNeoCardPrCandidates with resolved refs', () => {
         stored: [],
         mentioned: [pull(6440)],
       })
-    ).toEqual([{ url: pull(6440), claim: 'mentioned' }]);
+    ).toEqual([{ url: pull(6440), claim: 'named' }]);
   });
 });
 
@@ -340,7 +341,7 @@ describe('PRs the worker session opened', () => {
         stored: [],
       })
     ).toEqual([
-      { url: pull(9), claim: 'opened' },
+      { url: pull(9), claim: 'named' },
       { url: pull(8), claim: 'opened' },
       { url: pull(7), claim: 'opened' },
     ]);
@@ -983,6 +984,86 @@ describe('NeoRepository.proposeWork', () => {
         follows: pull(5),
       });
       expect(work.follows).toBe(pull(5));
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('card lifetime PR recovery', () => {
+  const kickoff = Date.parse('2026-10-17T00:00:00Z');
+  const ended = Date.parse('2026-10-17T00:52:17Z');
+  const ios = (number: number) => `https://github.com/lsm/neo-ios/pull/${number}`;
+
+  test('uses the original kickoff through completion, not the last follow-up', () => {
+    const work = { createdAt: kickoff - 1000, updatedAt: ended, status: 'reported' as const };
+    expect(neoCardPrWindow(work, kickoff)).toEqual({ start: kickoff, end: ended });
+    expect(neoCardPrWindow({ ...work, status: 'queued' }, kickoff)).toEqual({
+      start: kickoff,
+      end: null,
+    });
+    expect(neoCardPrWindow(work, null).start).toBe(work.createdAt);
+  });
+
+  test('reclaims 16152bb9 report PRs across branches and keeps old reference PRs rejected', async () => {
+    const db = await createTestDb();
+    try {
+      const raw = db.getDatabase();
+      raw
+        .prepare(
+          `INSERT INTO neo_work(id,request_key,origin_session_id,title,instruction,status,report,created_at,updated_at,started_at)
+         VALUES ('16152bb9','ios-v2','root','iOS ask cards','Use #101 as reference','reported',?, ?, ?, ?)`
+        )
+        .run(`Merged ${ios(102)} and ${ios(103)}.`, kickoff - 1000, ended, kickoff);
+      const work = new NeoRepository(raw).getWork('16152bb9')!;
+      const claims = new NeoWorkPrClaimRepository(raw);
+      claims.replace(
+        work.id,
+        [101, 102, 103].map((number) => ({
+          url: ios(number),
+          claim: 'rejected' as const,
+          claimedAt: ended,
+        }))
+      );
+      const workPrs = new NeoWorkPrRepository(raw);
+      workPrs.record(work.id, [], ended);
+      expect(claims.cardsToReclaim()).toContain(work.id);
+      const reads = [101, 102, 103].map((number) => ({
+        ...pr(number),
+        url: ios(number),
+        state: 'MERGED' as const,
+        createdAt:
+          number === 101
+            ? kickoff - 1000
+            : Date.parse(number === 102 ? '2026-10-17T00:09:46Z' : '2026-10-17T00:24:39Z'),
+        branch: number === 102 ? 'ask-card-step-rows' : 'ask-card-answered-details',
+      }));
+      const result = await readNeoCardPrs(
+        {
+          claims,
+          workPrs,
+          prCandidates: async () =>
+            planNeoCardPrCandidates({
+              window: neoCardPrWindow(work, new NeoRepository(raw).workStartedAt(work.id)),
+              report: work.report,
+              branch: [ios(103)],
+              stored: claims.rejectedUrls(work.id),
+            }),
+          readPrs: async () => reads,
+          record: (id, prs) => workPrs.record(id, prs, ended + 1000),
+        },
+        work,
+        workPrs.get(work.id),
+        ended + 1000,
+        true
+      );
+      expect(result.row?.prs.map((item) => item.url)).toEqual([ios(102), ios(103)]);
+      expect(claims.forUrls([ios(102), ios(103)]).map((row) => row.claim)).toEqual([
+        'named',
+        'named',
+      ]);
+      expect(claims.forUrls([ios(101)])[0]).toMatchObject({ claim: 'rejected', scoped: true });
+      expect(claims.cardsToReclaim()).not.toContain(work.id);
     } finally {
       db.close();
     }
