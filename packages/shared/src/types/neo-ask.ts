@@ -65,3 +65,8 @@ export interface NeoQuestion {
   answeredAt: number | null;
   createdAt: number;
 }
+
+export interface NeoReplyTo {
+  kind: 'question' | 'todo' | 'message';
+  id: string;
+}
