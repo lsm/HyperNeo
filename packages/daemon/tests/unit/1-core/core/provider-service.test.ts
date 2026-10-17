@@ -324,8 +324,6 @@ class AnthropicMockProvider extends MockProvider {
   }
 }
 
-const KEY_BRIDGE_URL = /^http:\/\/127\.0\.0\.1:\d+$/;
-
 async function applyForModel(service: ProviderService, modelId: string, providerId: string) {
   return service.applyResolvedProviderEnvVarsToProcess(
     { config: { provider: providerId } } as unknown as Session,
@@ -1592,8 +1590,7 @@ describe('ProviderService', () => {
     it('should return env vars for GLM model', async () => {
       const envVars = await service.getEnvVarsForModel('glm-4', 'glm');
 
-      expect(envVars.ANTHROPIC_BASE_URL).toMatch(KEY_BRIDGE_URL);
-      expect(Object.values(envVars)).not.toContain('glm-key');
+      expect(envVars.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
       expect(envVars.API_TIMEOUT_MS).toBe('120000');
     });
 
@@ -1801,9 +1798,8 @@ describe('ProviderService', () => {
         },
       };
 
-      await service.resolveSessionProviderEnvVars(session);
       const envVars = service.getProviderEnvVars(session);
-      expect(envVars.ANTHROPIC_BASE_URL).toMatch(KEY_BRIDGE_URL);
+      expect(envVars.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
     });
 
     it('should use session config API key override', async () => {
@@ -1833,10 +1829,8 @@ describe('ProviderService', () => {
         },
       };
 
-      const resolved = await service.resolveSessionProviderEnvVars(session);
-      expect(service.getProviderEnvVars(session)).toEqual(resolved);
-      expect(resolved.ANTHROPIC_BASE_URL).toMatch(KEY_BRIDGE_URL);
-      expect(Object.values(resolved)).not.toContain('custom-api-key');
+      const envVars = service.getProviderEnvVars(session);
+      expect(envVars.ANTHROPIC_AUTH_TOKEN).toBe('custom-api-key');
     });
 
     it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', async () => {
@@ -2041,7 +2035,7 @@ describe('ProviderService', () => {
 
       const original = await applyForModel(service, 'minimax-m3', 'opencode');
 
-      expect(process.env.ANTHROPIC_BASE_URL).toMatch(KEY_BRIDGE_URL);
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://opencode.ai/zen/go');
       expect(process.env.ANTHROPIC_CUSTOM_HEADERS).toBe(
         'User-Agent: hyperneo/1.0\nx-opencode-session: hyperneo-daemon'
       );
@@ -2069,7 +2063,7 @@ describe('ProviderService', () => {
       expect(original.ANTHROPIC_AUTH_TOKEN).toBe('original-token');
       expect(original.ANTHROPIC_BASE_URL).toBe('original-url');
 
-      expect(process.env.ANTHROPIC_BASE_URL).toMatch(KEY_BRIDGE_URL);
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
     });
 
     it('applies session-scoped bridge env vars from the full session', async () => {
@@ -2229,7 +2223,7 @@ describe('ProviderService', () => {
       const original = await applyForModel(service, 'glm-4', 'glm');
 
       expect(process.env.ANTHROPIC_MODEL).toBeUndefined();
-      expect(process.env.ANTHROPIC_BASE_URL).toMatch(KEY_BRIDGE_URL);
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
       expect(original.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
 
       service.restoreEnvVars(original);
@@ -2240,7 +2234,7 @@ describe('ProviderService', () => {
       process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
 
       const originalFromGlm = await applyForModel(service, 'glm-4', 'glm');
-      expect(process.env.ANTHROPIC_BASE_URL).toMatch(KEY_BRIDGE_URL);
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 
       service.restoreEnvVars(originalFromGlm);
 
@@ -2296,17 +2290,13 @@ describe('ProviderService', () => {
       process.env.ANTHROPIC_AUTH_TOKEN = 'original-token';
       process.env.ANTHROPIC_MODEL = 'stale-model';
       process.env.PORT = '8399';
-      process.env.GLM_API_KEY = 'ambient-glm-key';
-      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient-oauth';
 
       const [glm, again] = await Promise.all([
         service.getIsolatedEnvForModel('glm', 'glm-4'),
         service.getIsolatedEnvForModel('glm', 'glm-4'),
       ]);
 
-      expect(glm.ANTHROPIC_BASE_URL).toMatch(KEY_BRIDGE_URL);
-      expect(Object.values(glm)).not.toContain('ambient-glm-key');
-      expect(glm.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      expect(glm.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
       expect(glm.ANTHROPIC_MODEL).not.toBe('stale-model');
       expect(again).toEqual(glm);
       expect(process.env.ANTHROPIC_BASE_URL).toBe('original-url');
@@ -2324,7 +2314,7 @@ describe('ProviderService', () => {
 
       const original = await applyForModel(service, 'glm-4', 'glm');
 
-      expect(process.env.ANTHROPIC_BASE_URL).toMatch(KEY_BRIDGE_URL);
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 
       service.restoreEnvVars(original);
 
@@ -2338,7 +2328,7 @@ describe('ProviderService', () => {
 
       const original = await applyForModel(service, 'glm-4', 'glm');
 
-      expect(process.env.ANTHROPIC_BASE_URL).toMatch(KEY_BRIDGE_URL);
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 
       service.restoreEnvVars(original);
 

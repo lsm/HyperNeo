@@ -1683,25 +1683,6 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
-    it('keeps ambient provider keys out of a Kimi session env', async () => {
-      process.env.KIMI_API_KEY = 'test-kimi-key';
-      process.env.KIMI_BASE_URL = 'http://127.0.0.1:9';
-      process.env.GLM_API_KEY = 'test-glm-key';
-      try {
-        mockSession.config.provider = 'kimi';
-        mockSession.config.model = 'kimi-k3';
-
-        const options = await builder.build();
-
-        expect(options.env?.KIMI_API_KEY).toBeUndefined();
-        expect(options.env?.GLM_API_KEY).toBeUndefined();
-      } finally {
-        process.env.KIMI_API_KEY = '';
-        process.env.KIMI_BASE_URL = '';
-        delete process.env.GLM_API_KEY;
-      }
-    });
-
     it('keeps the thinking derivation tied to the fallback captured at build', async () => {
       getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3[1m]' }]);
       process.env.KIMI_API_KEY = 'test-kimi-key';

@@ -85,7 +85,6 @@ import {
   waitForOptionalProviderRegistration,
   disableBuiltInProvidersWithoutEnabledRecord,
 } from './lib/providers/factory.js';
-import { releaseSessionKeyBridges } from './lib/providers/provider-key-bridge.js';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
@@ -582,18 +581,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.start('providers (register + credentials)');
     const providerRegistry = initializeProviders();
-    internalEventBus.subscribe(
-      'session.deleted',
-      ({ sessionId }) => releaseSessionKeyBridges(sessionId),
-      { subscriberName: 'ProviderKeyBridge.sessionDeleted' }
-    );
-    internalEventBus.subscribe(
-      'session.updated',
-      ({ sessionId, session }) => {
-        if (session?.status === 'archived') releaseSessionKeyBridges(sessionId);
-      },
-      { subscriberName: 'ProviderKeyBridge.sessionArchived' }
-    );
     await waitForOptionalProviderRegistration(providerRegistry);
     await applyStoredProviderCredentials(
       providerRegistry.getAll(),

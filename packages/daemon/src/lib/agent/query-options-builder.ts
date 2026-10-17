@@ -35,7 +35,6 @@ import { join } from 'path';
 import type { Database } from '../../storage/database.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
-import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { getDataDir } from '../data-dir.ts';
 import { Logger } from '../logger.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
@@ -883,8 +882,7 @@ export class QueryOptionsBuilder {
         (entry): entry is [string, string] =>
           entry[1] !== undefined &&
           !excludedEnvVars.has(entry[0]) &&
-          !processProviderEnvVars.has(entry[0]) &&
-          !PROVIDER_KEY_ENV_VARS.has(entry[0])
+          !processProviderEnvVars.has(entry[0])
       )
     );
 

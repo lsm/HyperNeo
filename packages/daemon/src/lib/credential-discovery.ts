@@ -181,13 +181,6 @@ const BUILT_IN_PROVIDER_ENV_MAP: BuiltInProviderEnvMapping[] = [
   },
 ];
 
-export const PROVIDER_KEY_ENV_VARS: ReadonlySet<string> = new Set([
-  ...BUILT_IN_PROVIDER_ENV_MAP.flatMap((mapping) =>
-    mapping.altEnvVar ? [mapping.envVar, mapping.altEnvVar] : [mapping.envVar]
-  ),
-  'OPENCODE_GO_API_KEY',
-]);
-
 function readHyperNeoAuthJson(): Record<string, unknown> {
   try {
     const path = join(getDataDir(), 'auth.json');

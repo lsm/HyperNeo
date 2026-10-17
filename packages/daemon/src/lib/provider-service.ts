@@ -1,19 +1,17 @@
 import type { Provider, ProviderInfo, Session } from '@hyperneo/shared';
 import type {
+  Provider as SdkProvider,
   ProviderInfo as NewProviderInfo,
   ProviderSdkConfig,
   ProviderSessionConfig,
-  Provider as SdkProvider,
 } from '@hyperneo/shared/provider';
-import { PROVIDER_KEY_ENV_VARS } from './credential-discovery.ts';
 import { Logger } from './logger.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
-import { shieldProviderKey, startProviderKeyBridge } from './providers/provider-key-bridge.js';
-import { providerSessionConfigForSession } from './providers/session-config.js';
 import {
   makeSessionProviderEnvStages,
   runSessionProviderEnvPipeline,
 } from './providers/session-provider-env-pipeline.js';
+import { providerSessionConfigForSession } from './providers/session-config.js';
 import { selectTitleGenerationModel } from './title-model-selection.js';
 
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
@@ -126,26 +124,6 @@ export class ProviderService {
     try {
       await provider?.ensureBridgeStarted?.(modelId, sessionConfig);
     } catch {}
-  }
-
-  private async startProviderBridges(
-    provider: SdkProvider | undefined,
-    modelId: string,
-    sessionConfig?: ProviderSessionConfig
-  ): Promise<void> {
-    if (!provider) return;
-    await provider.ensureBridgeStarted?.(modelId, sessionConfig);
-    let sdkConfig: ProviderSdkConfig;
-    try {
-      sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
-    } catch {
-      return;
-    }
-    await startProviderKeyBridge(
-      provider.id,
-      sdkConfigToEnvVars(sdkConfig),
-      sessionConfig?.sessionId ? `${provider.id}:${sessionConfig.sessionId}` : provider.id
-    );
   }
 
   private getRegistry() {
@@ -408,9 +386,7 @@ export class ProviderService {
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
       };
     }
-    const envVars = sdkConfigToEnvVars(sdkConfig);
-    await startProviderKeyBridge(provider.id, envVars);
-    return shieldProviderKey(provider.id, envVars);
+    return sdkConfigToEnvVars(sdkConfig);
   }
 
   getProviderEnvVars(session: Session): ProviderEnvVars {
@@ -440,10 +416,11 @@ export class ProviderService {
       makeSessionProviderEnvStages({
         getProvider: (id) => registry.get(id),
         ensureBridgeBestEffort: async (provider, modelId, sessionConfig) => {
-          await this.startProviderBridges(provider, modelId, sessionConfig).catch(() => {});
+          await this.ensureProviderBridges(provider, modelId, sessionConfig);
         },
-        retryBridgeStart: (provider, modelId, sessionConfig) =>
-          this.startProviderBridges(provider, modelId, sessionConfig),
+        retryBridgeStart: async (provider, modelId, sessionConfig) => {
+          await provider.ensureBridgeStarted?.(modelId, sessionConfig);
+        },
         buildEnvVars: (provider, modelId, sessionConfig) =>
           this.buildSessionEnvVars(provider, modelId, sessionConfig),
       }),
@@ -469,7 +446,7 @@ export class ProviderService {
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
       };
     }
-    return shieldProviderKey(provider.id, sdkConfigToEnvVars(sdkConfig));
+    return sdkConfigToEnvVars(sdkConfig);
   }
 
   applyEnvVarsToProcessForSession(session: Session): OriginalEnvVars {
@@ -499,8 +476,6 @@ export class ProviderService {
     const preserve = providerId === 'anthropic';
     const providerEnvVars = await this.getEnvVarsForModel(modelId, providerId);
     const env: NodeJS.ProcessEnv = { ...process.env };
-    for (const key of PROVIDER_KEY_ENV_VARS) if (key !== 'ANTHROPIC_API_KEY') delete env[key];
-    if (!preserve) delete env.CLAUDE_CODE_OAUTH_TOKEN;
     this.clearProviderRoutingEnvVars({ preserveUserSettings: preserve }, env);
     this.applyEnvVars(providerEnvVars, { preserveApiKey: preserve }, env);
     return { ...env, ...providerEnvVars };

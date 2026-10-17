@@ -16,7 +16,6 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
-import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
@@ -264,7 +263,6 @@ export function refreshQueryEnvFromProcess(
     if (options.skipAmbientAnthropicApiKey && key === 'ANTHROPIC_API_KEY') {
       continue;
     }
-    if (PROVIDER_KEY_ENV_VARS.has(key) && !providerManagedEnvVars.has(key)) continue;
     if (providerManagedEnvVars.has(key)) {
       refreshedEnv[key] = value;
     } else if (!(key in refreshedEnv)) {
