@@ -106,7 +106,11 @@ describe('neo.ask.open and neo.ask.settle', () => {
       reason: 'busy',
     });
     refuse.value = false;
-    const retry = await call('neo.ask.open', opening, turn('m3'));
+    const retry = await call(
+      'neo.ask.open',
+      { ...opening, todos: [opening.todos[1], opening.todos[0]] },
+      turn('m3')
+    );
     expect(retry.ok && retry.todos.map((todo) => todo.title)).toEqual(['Fix it', 'Deploy']);
     expect(started).toEqual([retry.ok && retry.todos[0].id]);
   });
