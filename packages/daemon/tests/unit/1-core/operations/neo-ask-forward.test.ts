@@ -10,7 +10,6 @@ import {
   neoTurnOwnsMessage,
   planNeoAskForward,
   requireForwardingHolder,
-  requireForwardTarget,
   staleNeoForwardHops,
 } from '../../../../src/lib/neo/ask-forward-operation.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
@@ -163,14 +162,6 @@ describe('planNeoAskForward', () => {
   );
 });
 
-describe('requireForwardTarget', () => {
-  test('targets the resolved project id, not the reference the caller passed', () => {
-    expect(
-      requireForwardTarget({ hop: 0, to: '4ce2' }, { id: 'project:4ce2', title: 'Daemon' }, [])
-    ).toEqual({ value: { hop: 0, to: 'project:4ce2', title: 'Daemon' } });
-  });
-});
-
 describe('neoTurnOwnsMessage', () => {
   const toPond = { hop: 0, toSessionId: pond.sessionId };
   const toMain = { hop: 1, toSessionId: root.sessionId };
@@ -292,7 +283,11 @@ describe('neo.ask.forward', () => {
         return origin;
       },
       forwards: () => forwards,
-      getProject: (id) => (id === 'garden' || id === 'pond' ? { id, title: id } : null),
+      getProject: (ref) =>
+        [
+          { id: 'garden', title: 'Garden' },
+          { id: 'pond', title: 'Pond' },
+        ].find((project) => project.id === ref || project.title === ref) ?? null,
       listProjects: () => [
         { id: 'garden', title: 'Garden' },
         { id: 'pond', title: 'Pond' },
@@ -343,6 +338,15 @@ describe('neo.ask.forward', () => {
       },
     };
   }
+
+  test('resolves the target before the same-project check', async () => {
+    const { invoke, forwards } = runtime();
+    expect(await invoke(caller(garden.sessionId, 'ask-1'), 'Garden')).toMatchObject({
+      ok: false,
+      reason: 'same_project',
+    });
+    expect(forwards).toEqual([]);
+  });
 
   test('hands the ask between owners, stamping every hand-off with the original ask', async () => {
     const { invoke, forwards, delivered } = runtime();

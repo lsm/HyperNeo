@@ -181,7 +181,7 @@ export function requireForwardTarget(
 ): Gate<Target> {
   if (plan.to === NEO_INBOX_ID) return { value: { ...plan, title: 'Inbox' } };
   return project
-    ? { value: { ...plan, to: project.id, title: project.title } }
+    ? { value: { ...plan, title: project.title } }
     : {
         reason: {
           ok: false,
@@ -228,6 +228,14 @@ function createForward(runtime: NeoAskForwardRuntime) {
   const take = <T>(value: T) => value;
   return (superpipe({})('neo-ask-forward') as PipelineAPI)
     .input(['input', 'caller'])
+    .pipe(
+      (input: Input): Input =>
+        input.to === NEO_INBOX_ID
+          ? input
+          : { ...input, to: runtime.getProject(input.to)?.id ?? input.to },
+      'input',
+      'input'
+    )
     .pipe(
       (caller: OperationCaller) => runtime.getBinding(caller.sessionId ?? ''),
       'caller',
