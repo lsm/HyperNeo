@@ -128,22 +128,41 @@ describe('Neo isolated holder turns', () => {
     expect((await input.next()).value?.uuid).toBe('neo-consult:a:request');
     expect(runner.acceptsPrompt(1)).toBe(false);
     expect(first.identity()?.consultationId).toBe('a');
+    first.dispose();
     expect((await input.next()).done).toBe(true);
     await firstSent;
     expect(queue.size()).toBe(1);
-    first.dispose();
     queue.stop();
     queue.start();
     const successor = turn();
     const next = runner.createMessageGeneratorWrapper(2, undefined, successor);
     expect(runner.acceptsPrompt(2)).toBe(true);
     expect((await next.next()).value?.uuid).toBe('human-input');
+    expect(runner.acceptsPrompt(2)).toBe(false);
+    expect(successor.identity()?.human).toBe(true);
+    successor.dispose();
     expect((await next.next()).done).toBe(true);
     await nextSent;
-    expect(runner.acceptsPrompt(2)).toBe(false);
     expect(successor.identity()?.human).toBe(true);
     expect(first.identity()?.isLive()).toBe(false);
     expect(queue.size()).toBe(0);
+  });
+
+  test('keeps the prompt stream open until the bound turn ends', async () => {
+    const sent = queue.enqueueWithId('human-input', 'Next', false, { durable: true });
+    const active = turn();
+    const input = runner.createMessageGeneratorWrapper(1, undefined, active);
+    expect((await input.next()).value?.uuid).toBe('human-input');
+    await sent;
+    let finished = false;
+    const end = input.next().then((step) => {
+      finished = step.done === true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(finished).toBe(false);
+    active.dispose();
+    await end;
+    expect(finished).toBe(true);
   });
 
   test('a bound input is recorded consumed the moment its turn takes it', async () => {
@@ -158,9 +177,11 @@ describe('Neo isolated holder turns', () => {
       markHolderInputConsumed: (uuid: string) => consumed.push(uuid),
     } as unknown as QueryRunnerContext);
     const sent = queue.enqueueWithId('human-input', 'Next', false, { durable: true });
-    const input = bound.createMessageGeneratorWrapper(1, undefined, turn());
+    const active = turn();
+    const input = bound.createMessageGeneratorWrapper(1, undefined, active);
     expect((await input.next()).value?.uuid).toBe('human-input');
     expect(consumed).toEqual(['human-input']);
+    active.dispose();
     expect((await input.next()).done).toBe(true);
     await sent;
   });
@@ -182,9 +203,10 @@ describe('Neo isolated holder turns', () => {
     const successor = turn();
     const next = runner.createMessageGeneratorWrapper(2, undefined, successor);
     expect((await next.next()).value?.uuid).toBe('human-input');
+    expect(successor.identity()?.human).toBe(true);
+    successor.dispose();
     expect((await next.next()).done).toBe(true);
     await nextSent;
-    expect(successor.identity()?.human).toBe(true);
     expect(queue.size()).toBe(0);
   });
 

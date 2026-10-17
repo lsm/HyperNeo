@@ -14,6 +14,10 @@ export class NeoHolderTurn {
   private bound = false;
   private closed = false;
   private turn?: OperationCaller['neoTurn'];
+  private end: () => void = () => {};
+  readonly ended = new Promise<void>((resolve) => {
+    this.end = resolve;
+  });
 
   constructor(
     private readonly db: Database,
@@ -80,5 +84,6 @@ export class NeoHolderTurn {
 
   dispose(): void {
     this.closed = true;
+    this.end();
   }
 }
