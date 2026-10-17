@@ -4148,8 +4148,6 @@ describe('readDriverSettlement', () => {
   });
 });
 
-describe('neo.work.propose with a drivers target', () => {});
-
 describe('planNeoStartReceiptAdoption', () => {
   const startReceipt = { executionId: 's-code', inputId: 'kickoff' };
   const status = (extra: Record<string, unknown> = { startReceipt }) =>

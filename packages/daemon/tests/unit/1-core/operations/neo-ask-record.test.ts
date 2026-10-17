@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
   createNeoAskRecordOperations,
+  requireNeoAskProject,
   requireNeoAskSession,
 } from '../../../../src/lib/neo/ask-record-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
@@ -23,16 +24,21 @@ function setup() {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
+  db.exec(
+    "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('project-1', 'P', '', '', 1, 1, 1)"
+  );
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   const started: string[] = [];
   const stopped: string[] = [];
+  const refuse = { value: false };
   const ops = Object.fromEntries(
     createNeoAskRecordOperations(
       store,
       sessions,
       {
         start: async (todoId) => {
+          if (refuse.value) return { ok: false, reason: 'busy' };
           started.push(todoId);
           return { ok: true, todo: store.getTodo(todoId)! };
         },
@@ -42,12 +48,13 @@ function setup() {
           stopped.push(todo.id);
         },
       },
-      () => 'project-1'
+      () => 'project-1',
+      (projectId) => (projectId === 'project-1' ? projectId : null)
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
-  return { store, call, started, stopped };
+  return { store, call, started, stopped, refuse };
 }
 
 const opening = {
@@ -86,6 +93,18 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(retry.ok && retry.ask.id).toBe(first.ask.id);
     expect(retry.ok && retry.todos).toHaveLength(2);
     expect(started).toHaveLength(1);
+  });
+
+  test('a retry after a refused start adds the todos that are still missing', async () => {
+    const { call, refuse } = setup();
+    refuse.value = true;
+    expect(await call('neo.ask.open', opening, turn('m3'))).toEqual({
+      ok: false,
+      reason: 'busy',
+    });
+    refuse.value = false;
+    const retry = await call('neo.ask.open', opening, turn('m3'));
+    expect(retry.ok && retry.todos.map((todo) => todo.title)).toEqual(['Fix it', 'Deploy']);
   });
 
   test('start in a turn the human did not start is refused before anything is written', async () => {
@@ -135,6 +154,23 @@ describe('neo.ask.open and neo.ask.settle', () => {
         turn('m4')
       )
     ).toEqual({ ok: false, reason: 'ask_settled: this ask is dropped.' });
+  });
+});
+
+describe('requireNeoAskProject', () => {
+  test('uses the session project, keeps an explicit null and refuses an unknown id', () => {
+    const projectOf = () => 'bound';
+    const resolve = (id: string) => (id === 'old' ? 'kept' : null);
+    expect(requireNeoAskProject({}, 's', projectOf, resolve)).toEqual({ value: 'bound' });
+    expect(requireNeoAskProject({ projectId: null }, 's', projectOf, resolve)).toEqual({
+      value: null,
+    });
+    expect(requireNeoAskProject({ projectId: 'old' }, 's', projectOf, resolve)).toEqual({
+      value: 'kept',
+    });
+    expect(requireNeoAskProject({ projectId: 'nope' }, 's', projectOf, resolve)).toEqual({
+      reason: { ok: false, reason: 'unknown_project: no project nope.' },
+    });
   });
 });
 

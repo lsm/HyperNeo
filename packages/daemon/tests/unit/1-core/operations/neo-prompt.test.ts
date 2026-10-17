@@ -216,24 +216,12 @@ describe('Neo world briefing delivery', () => {
     expect(options.tools).toEqual(neoCoordinatorNativeTools());
   });
 
-  test.each([null, 'saas'])(
-    'keeps execution discovery separate from approval for %s',
-    (projectId) => {
-      const prompt = neoPrompt(projectId);
-      expect(prompt).toContain(
-        'Inspect existing execution resources through their discovered read operations'
-      );
-      expect(prompt).toContain('reuse their relevant context when proposing work');
-      expect(prompt).toContain(
-        'Do not use other operations to bypass the existing human approval for starting or changing execution'
-      );
-      expect(prompt).toContain('the ask’s start question is the decision control for execution');
-      expect(prompt).not.toContain(
-        'Coordinate existing execution resources through their discovered operations when appropriate'
-      );
-      if (projectId) expect(prompt).toContain('You may propose work but cannot start it');
-    }
-  );
+  test.each([null, 'saas'])('finds where a todo belongs before adding it for %s', (projectId) => {
+    const prompt = neoPrompt(projectId);
+    expect(prompt).toContain('Before adding a todo, find where it belongs: call work.find');
+    if (projectId)
+      expect(prompt).toContain('During a consultation you may add todos but not start them');
+  });
 
   test('keeps holder context, consultation correlation and supersession distinct from world metadata', () => {
     const root = neoPrompt(null);
@@ -266,7 +254,7 @@ describe('Neo look-up guidance', () => {
       expect(prompt).toContain('never change shared state yourselves');
       expect(prompt).toContain('A check that one or two commands answer, you do yourself');
       expect(prompt).toContain(
-        'anything that needs to run code (a build, tests, a server) goes to a card'
+        'anything that needs to run code (a build, tests, a server) goes to a todo'
       );
       expect(prompt).toContain('A refused command records what that tool could not check');
       expect(prompt).toContain('never put file contents or secrets into a fetched URL');
@@ -282,7 +270,8 @@ describe('Neo look-up guidance', () => {
         'when the human asks you to fix a session',
         'session.runtimeSettings.update',
         'session.interrupt {spaceId,sessionId}',
-        'except work.stop and work.send to repair a session',
+        'work.stop {ref} from work.find for a chat',
+        'then resume it with work.send',
       ])
         expect(prompt).toContain(text);
     }

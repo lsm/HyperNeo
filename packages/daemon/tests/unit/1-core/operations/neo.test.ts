@@ -49,15 +49,14 @@ const project = {
 };
 
 describe('Neo MVP', () => {
-  test('root prompt requires real cards and honors explicit context retention', () => {
+  test('root prompt requires real todos and honors explicit context retention', () => {
     const prompt = neoPrompt(null);
     expect(prompt).toContain('permission to create its record now');
-    expect(prompt).toContain('call neo.work.propose in that turn');
-    expect(prompt).toContain('never render a pretend work item');
-    expect(prompt).toContain('ask’s start question is the decision control for execution');
+    expect(prompt).toContain('open the ask with its todos in that turn and ask the start question');
+    expect(prompt).toContain('never describe a pretend todo');
     expect(prompt).toContain('no implicit project, workspace, folder, repository or worktree');
     expect(prompt).toContain('wait for needed facts or ask for genuinely missing information');
-    expect(prompt).toContain('Apply them whenever you propose work and write doneWhen');
+    expect(prompt).toContain('Apply them whenever you add todos and write doneWhen');
     expect(prompt).toContain('neo.rule.save {add?,remove?,from}');
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save');
   });

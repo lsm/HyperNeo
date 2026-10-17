@@ -1677,7 +1677,11 @@ export function createNeoOperations(service: NeoService) {
       service.todos,
       service.todoSessions,
       todoControls,
-      (sessionId) => service.repo.getBindingBySession(sessionId)?.projectId ?? null
+      (sessionId) => service.repo.getBindingBySession(sessionId)?.projectId ?? null,
+      (projectId) => {
+        const resolved = service.repo.projectMerges.resolve(projectId) ?? projectId;
+        return service.repo.getProject(resolved) ? resolved : null;
+      }
     ),
     ...createNeoQuestionOperations(
       service.todos,

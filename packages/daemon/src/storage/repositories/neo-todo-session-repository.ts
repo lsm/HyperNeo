@@ -3,6 +3,16 @@ import type { NeoDriverTarget } from '../../lib/neo/driver-work.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoDriverSessionRows } from './neo-driver-session-rows.ts';
 
+export function neoSafeSessionLink(
+  link: string | null | undefined,
+  remote: boolean
+): string | null {
+  if (!link || [...link].some((char) => char <= ' ' || char === '\\')) return null;
+  if (/^(codex|claude|ghapp):\/\//.test(link)) return link;
+  if (remote) return /^https?:\/\//.test(link) ? link : null;
+  return /^\/(?!\/)/.test(link) ? link : null;
+}
+
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   constructor(db: Database) {
     super(db, 'neo_todo_sessions', 'todo_id');
@@ -19,12 +29,23 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       .prepare('SELECT ref, link, remote_link AS remote FROM neo_todo_sessions WHERE todo_id = ?')
       .get(todoId) as { ref: string | null; link: string | null; remote: string | null } | null;
     const ref = row?.ref ? (JSON.parse(row.ref) as WorkRef) : null;
-    const local = row?.link && !(ref?.daemon && row.link.startsWith('/')) ? row.link : null;
     return (
-      local ??
-      row?.remote ??
+      neoSafeSessionLink(row?.link, !!ref?.daemon) ??
+      neoSafeSessionLink(row?.remote, true) ??
       (ref?.adapter === 'hyperneo' && !ref.daemon ? `/session/${ref.id}` : null)
     );
+  }
+
+  unrecordedStarts(): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT s.todo_id AS todoId FROM neo_todo_sessions s
+             JOIN neo_todos t ON t.id = s.todo_id
+            WHERE s.ref IS NULL AND t.state = 'doing'`
+        )
+        .all() as { todoId: string }[]
+    ).map((row) => row.todoId);
   }
 
   awaitingReports(): { todoId: string; ref: WorkRef }[] {

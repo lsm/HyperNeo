@@ -47,11 +47,26 @@ export function requireNeoAskSession(caller: OperationCaller): Gate<string> {
     : { reason: { ok: false, reason: 'no_session: only a Neo session opens an ask.' } };
 }
 
+export function requireNeoAskProject(
+  input: { projectId?: string | null },
+  sessionId: string,
+  projectOf: (sessionId: string) => string | null,
+  resolveProject: (projectId: string) => string | null
+): Gate<string | null> {
+  if (input.projectId === undefined) return { value: projectOf(sessionId) };
+  if (input.projectId === null) return { value: null };
+  const projectId = resolveProject(input.projectId);
+  return projectId
+    ? { value: projectId }
+    : { reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.` } };
+}
+
 export function createNeoAskRecordOperations(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
   controls: NeoTodoControls,
-  projectOf: (sessionId: string) => string | null
+  projectOf: (sessionId: string) => string | null,
+  resolveProject: (projectId: string) => string | null
 ) {
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
@@ -63,8 +78,16 @@ export function createNeoAskRecordOperations(
     )
     .pipe(requireNeoAskSession, 'caller', 'result:outcome')
     .pipe(
+      (sessionId: string, input: z.infer<typeof Open>) => {
+        const project = requireNeoAskProject(input, sessionId, projectOf, resolveProject);
+        return 'value' in project ? { value: { sessionId, projectId: project.value } } : project;
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
       async (
-        sessionId: string,
+        { sessionId, projectId }: { sessionId: string; projectId: string | null },
         input: z.infer<typeof Open>,
         caller: OperationCaller
       ): Promise<AskReceipt | Rejection> => {
@@ -73,18 +96,17 @@ export function createNeoAskRecordOperations(
           store.findAsk(sessionId, origin, input.title) ??
           store.openAsk({
             id: crypto.randomUUID(),
-            projectId: input.projectId === undefined ? projectOf(sessionId) : input.projectId,
+            projectId,
             sessionId,
             originMessageId: origin,
             title: input.title,
             request: input.request,
             createdAt: Date.now(),
           });
-        if (!store.listTodos(ask.id).length)
-          for (const todo of input.todos) {
-            const added = await addNeoTodo(store, sessions, controls.start, ask.id, todo);
-            if (!added.ok) return added;
-          }
+        for (const todo of input.todos.slice(store.listTodos(ask.id).length)) {
+          const added = await addNeoTodo(store, sessions, controls.start, ask.id, todo);
+          if (!added.ok) return added;
+        }
         return { ok: true, ask, todos: store.listTodos(ask.id) };
       },
       ['outcome', 'input', 'caller'],
