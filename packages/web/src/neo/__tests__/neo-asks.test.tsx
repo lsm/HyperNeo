@@ -431,6 +431,26 @@ describe('NeoAskCard', () => {
     expect(app.getAllByRole('link')).toHaveLength(1);
   });
 
+  it('opens an older local todo directly from its structured target without a recent-work scene', () => {
+    const openSession = vi.fn();
+    const view = describeAsk(ask('older', 'open', []), [], {
+      todos: [
+        todo('old', 'done', {
+          workId: 'old',
+          open: {
+            sessionId: 'old-session',
+            link: '/session/old-session',
+            daemon: null,
+            remoteLink: null,
+          },
+        }),
+      ],
+    });
+    const app = render(<NeoAskCard view={view} onOpenSession={openSession} />);
+    fireEvent.click(app.getByRole('button', { name: '打开 任务 old' }));
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('old-session', '任务 old');
+  });
+
   it('loads a summarized ask only when expanded and retries an unsuccessful detail read', () => {
     const expand = vi.fn();
     const view = describeAsk({ ...ask('a', 'achieved', []), summarized: true }, []);

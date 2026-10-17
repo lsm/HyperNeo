@@ -300,12 +300,14 @@ export function NeoAskCard({
       <a href={link} class={neoSecondaryClass} aria-label={name}>
         打开
       </a>
-    ) : sessionId && onOpen ? (
+    ) : sessionId && (onOpen || onOpenSession) ? (
       <button
         type="button"
         class={neoSecondaryClass}
         aria-label={name}
-        onClick={() => onOpen(todo.workId!)}
+        onClick={() =>
+          onOpenSession ? onOpenSession(sessionId, todo.title) : onOpen?.(todo.workId!)
+        }
       >
         打开
       </button>
