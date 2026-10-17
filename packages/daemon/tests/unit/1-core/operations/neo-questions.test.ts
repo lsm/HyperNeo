@@ -11,7 +11,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const owner: OperationCaller = { source: 'mcp', sessionId: 'neo-a', role: 'neo' };
-const human: OperationCaller = { source: 'rpc' };
+const human: OperationCaller = { source: 'rpc', principal: 'local' };
 
 type Receipt = { ok: true; question: NeoQuestion } | { ok: false; reason: string };
 
@@ -115,8 +115,13 @@ describe('neo.question operations', () => {
     ]);
   });
 
-  test('another Neo session cannot ask on the ask', async () => {
-    const { call } = setup();
+  test('only the human answers, and another Neo session cannot ask on the ask', async () => {
+    const { call, asked } = setup();
+    const reply = await asked({ kind: 'reply', text: 'Which?' });
+    expect(await call('neo.question.answer', { questionId: reply.id, answer: 'x' })).toEqual({
+      ok: false,
+      reason: 'This action needs the user.',
+    });
     expect(
       await call(
         'neo.question.ask',
