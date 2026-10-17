@@ -283,7 +283,7 @@ export function NeoAskCard({
         : view.group === 'outcomes'
           ? 'ended'
           : 'running';
-  const itemActions = [...view.humanActions];
+  const itemActions = view.humanActions.slice(-1);
   const questioned = new Set(
     itemActions.flatMap((action) => action.steps?.map((step) => step.id) ?? [])
   );

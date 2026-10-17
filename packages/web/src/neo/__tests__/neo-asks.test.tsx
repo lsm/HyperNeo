@@ -370,6 +370,21 @@ describe('NeoAskCard', () => {
     }
   );
 
+  it('presents one current question while retaining the remaining question records in the view', () => {
+    const answer = vi.fn();
+    const view = describeAsk(ask('multiple', 'waiting', []), [], {
+      humanActions: [
+        { kind: 'question', itemId: 'older', question: '旧决定？', options: ['不要', '要'] },
+        { kind: 'question', itemId: 'latest', question: '当前决定？', options: ['先不做', '继续'] },
+      ],
+    });
+    const app = render(<NeoAskCard view={view} onAnswer={answer} />);
+    expect(app.queryByText('旧决定？')).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Answer 当前决定？: 继续' }));
+    expect(answer).toHaveBeenCalledExactlyOnceWith('latest', '继续');
+    expect(view.humanActions).toHaveLength(2);
+  });
+
   it('shows decisions above todos and replies to the original question from the chat control', () => {
     const reply = vi.fn();
     const view = describeAsk(ask('decision', 'waiting', []), [], {
