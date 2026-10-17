@@ -4,7 +4,6 @@ import { conversationText } from '../NeoConversation.tsx';
 import {
   matchNeoReplyInput,
   neoMessageAnchor,
-  neoQuestionReply,
   presentNeoReplyContext,
   projectNeoReplyContext,
   selectNeoReplyOrigin,
@@ -171,21 +170,5 @@ describe('neoMessageAnchor', () => {
   it('encodes exact DOM anchors without session navigation or UUID collisions', () => {
     expect(neoMessageAnchor('neo:/one', 'ask:A')).toBe('neo-message-neo%3A%2Fone-ask%3AA');
     expect(neoMessageAnchor('neo:/one', 'ask:A')).not.toBe(neoMessageAnchor('neo', '/one-ask:A'));
-  });
-});
-
-describe('neoQuestionReply', () => {
-  it('quotes a question with an exact, distinct ask/item anchor', () => {
-    const question = { itemId: 'i/2', question: 'Which repo?\nUse its full name.' };
-    const quote = neoQuestionReply('ask:one', question);
-    expect(quote).toEqual({
-      author: 'Neo',
-      text: question.question,
-      anchor: 'neo-question-ask%3Aone-i%2F2',
-    });
-    expect(neoQuestionReply('ask:two', question).anchor).not.toBe(quote.anchor);
-    expect(neoQuestionReply('ask:one', { ...question, itemId: 'i3' }).anchor).not.toBe(
-      quote.anchor
-    );
   });
 });

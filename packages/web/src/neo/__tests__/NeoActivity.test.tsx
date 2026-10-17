@@ -3,52 +3,49 @@ import { cleanup, render, screen } from '@testing-library/preact';
 import { act } from 'preact/test-utils';
 import { readFileSync } from 'node:fs';
 import { URL as NodeURL } from 'node:url';
-import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoConsultation } from '@hyperneo/shared/types/neo-context';
+import type { NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoActivity, neoActivityItems } from '../NeoActivity.tsx';
 import { NeoBusyRow } from '../NeoBusyRow.tsx';
 import { NEO_BUSY_WORDS } from '../processing-activity.ts';
-import {
-  classifyNeoScene,
-  classifyNeoScenes,
-  groupNeoScenes,
-  projectNeoScenes,
-  type NeoScene,
-} from '../neo-scenes.ts';
-import { projectNeoProjectBoard } from '../neo-project-board.ts';
+import { testAskEntry, testTodo } from './neo-test-views.ts';
 
 const projects = [{ id: 'sources', title: 'Fictional sources' }];
-const work = (id: string, status: NeoWork['status'] = 'queued'): NeoWork => ({
-  id,
-  requestKey: id,
-  projectId: 'sources',
-  originSessionId: 'root',
-  originMessageId: `ask-${id}`,
-  title: `Compare ${id}`,
-  instruction: 'Fictional comparison',
-  status,
-  report: null,
-  sessionId: 'worker',
-  createdAt: 1,
-  updatedAt: 2,
+type Item = { todo: NeoTodoEntry } | { check: NeoConsultation };
+const todo = (
+  id: string,
+  state: NeoTodoEntry['state'] = 'doing',
+  title = `Compare ${id}`
+): Item => ({
+  todo: testTodo(id, { state, title, status: state === 'doing' ? '在做' : '做完了' }),
 });
-const check = (id: string, status: NeoConsultation['status'] = 'pending'): NeoConsultation => ({
-  id,
-  requestKey: id,
-  projectId: 'sources',
-  originSessionId: 'root',
-  originMessageId: `ask-${id}`,
-  sessionId: 'holder',
-  question: 'Which source is current?',
-  status,
-  answer: null,
-  createdAt: 1,
+const check = (id: string, status: NeoConsultation['status'] = 'pending'): Item => ({
+  check: {
+    id,
+    requestKey: id,
+    projectId: 'sources',
+    originSessionId: 'root',
+    originMessageId: `ask-${id}`,
+    sessionId: 'holder',
+    question: 'Which source is current?',
+    status,
+    answer: null,
+    createdAt: 1,
+  },
 });
-const workScene = (id: string, status: NeoWork['status'] = 'queued') =>
-  classifyNeoScene({ ...work(id, status), kind: 'work' });
-const checkScene = (id: string) => classifyNeoScene({ ...check(id), kind: 'consultation' });
-const mount = (scenes: readonly NeoScene[], enabled = true) =>
-  render(<NeoActivity scenes={scenes} projects={projects} enabled={enabled} />);
+const view = (...items: Item[]) =>
+  ({
+    todoAsks: [
+      testAskEntry('ask', 'Ask', {
+        todos: items.flatMap((item) => ('todo' in item ? [item.todo] : [])),
+      }),
+    ],
+    consultations: items.flatMap((item) => ('check' in item ? [item.check] : [])),
+    consultationWaiters: [],
+  }) as unknown as NeoSnapshot;
+const mount = (snapshot: NeoSnapshot, enabled = true) =>
+  render(<NeoActivity snapshot={snapshot} projects={projects} enabled={enabled} />);
 const rotate = () =>
   act(() => {
     vi.advanceTimersByTime(6000);
@@ -65,70 +62,49 @@ afterEach(() => {
 });
 
 describe('neoActivityItems', () => {
-  it.each(['proposed', 'reported', 'failed', 'cancelled'] as const)(
-    'does not invent activity for %s work',
-    (status) => {
-      expect(neoActivityItems([workScene('one', status)], projects)).toEqual([]);
+  it.each(['todo', 'done', 'failed', 'removed'] as const)(
+    'does not invent activity for a %s todo',
+    (state) => {
+      expect(neoActivityItems(view(todo('one', state)), projects)).toEqual([]);
     }
   );
-  it('uses real receipt truth for work, context checks and queued checks', () => {
-    const snapshot: NeoSnapshot = {
-      ok: true,
-      cards: [],
-      askViews: [],
-      sessionId: 'root',
-      projects: [],
-      work: [work('same-id')],
-      consultations: [check('same-id')],
-      consultationWaiters: [{ ...check('waiting'), originMessageId: 'original', status: 'queued' }],
-    };
-    const board = projectNeoProjectBoard(snapshot, null, null)!;
-    expect(
-      neoActivityItems(projectNeoScenes(board)!.running, projects).map((item) => item.text)
-    ).toEqual(['Handed to HyperNeo · Compare same-id']);
-    const items = neoActivityItems(
-      groupNeoScenes(classifyNeoScenes(board.receipts)).running,
-      projects
-    );
-    expect(items).toHaveLength(3);
+  it('lists doing todos, pending context checks and queued checks', () => {
+    const snapshot = {
+      ...view(todo('same-id'), check('same-id'), check('done', 'reported')),
+      consultationWaiters: [{ id: 'waiting', projectId: 'sources', status: 'queued' }],
+    } as unknown as NeoSnapshot;
+    const items = neoActivityItems(snapshot, projects);
     expect(new Set(items.map((item) => item.key)).size).toBe(3);
-    expect(items.map((item) => item.text)).toEqual(
-      expect.arrayContaining([
-        'Handed to HyperNeo · Compare same-id',
-        'Checking context · Fictional sources',
-        'Waiting for context · Fictional sources',
-      ])
-    );
-    expect(items.some((item) => /complete|working|verified/i.test(item.text))).toBe(false);
-  });
-  it('uses safe fallback labels without exposing internal ids or summaries', () => {
-    const empty = classifyNeoScene({
-      ...work('private-id'),
-      title: '',
-      kind: 'work',
-    });
-    const items = neoActivityItems([empty, checkScene('internal-check')], []);
     expect(items.map((item) => item.text)).toEqual([
-      'Handed to HyperNeo · Work',
+      '在做 · Compare same-id',
+      'Checking context · Fictional sources',
+      'Waiting for context · Fictional sources',
+    ]);
+  });
+  it('drops doing todos of a settled ask', () => {
+    const snapshot = view(todo('late'));
+    snapshot.todoAsks![0].ask.status = 'done';
+    expect(neoActivityItems(snapshot, projects)).toEqual([]);
+  });
+  it('names an unknown holder without exposing its id', () => {
+    expect(neoActivityItems(view(check('internal-check')), []).map((item) => item.text)).toEqual([
       'Checking context · Your context holder',
     ]);
   });
-  it('preserves all receipts and input objects for long lists', () => {
-    const scenes = Array.from({ length: 120 }, (_, index) => workScene(String(index)));
-    const before = structuredClone(scenes);
-    expect(neoActivityItems(scenes, projects)).toHaveLength(120);
-    expect(scenes).toEqual(before);
+  it('keeps every doing todo for long lists', () => {
+    const items = Array.from({ length: 120 }, (_, index) => todo(String(index)));
+    expect(neoActivityItems(view(...items), projects)).toHaveLength(120);
   });
 });
 
 describe('NeoActivity', () => {
   it('shows a quiet non-action line with the full text available when truncated', () => {
-    const result = mount([workScene('one')]);
+    const result = mount(view(todo('one')));
     const line = screen.getByRole('note', { name: 'Neo activity' });
     expect(line.getAttribute('aria-live')).toBe('off');
-    expect(line.textContent).toContain('Handed to HyperNeo · Compare one');
+    expect(line.textContent).toContain('在做 · Compare one');
     expect(result.container.querySelector('[title]')?.getAttribute('title')).toBe(
-      'Handed to HyperNeo · Compare one'
+      '在做 · Compare one'
     );
     expect(result.container.querySelectorAll('button, a, input')).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
@@ -137,7 +113,7 @@ describe('NeoActivity', () => {
     const result = render(
       <>
         <textarea aria-label="Draft" defaultValue="Keep this draft" />
-        <NeoActivity scenes={[workScene('one'), checkScene('two')]} projects={projects} enabled />
+        <NeoActivity snapshot={view(todo('one'), check('two'))} projects={projects} enabled />
       </>
     );
     const draft = screen.getByRole('textbox', {
@@ -160,28 +136,26 @@ describe('NeoActivity', () => {
     result.unmount();
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('anchors the visible item by kind/id when order and titles change', () => {
-    const one = workScene('same');
-    const two = checkScene('same');
-    const result = mount([one, two]);
+  it('anchors the visible item by kind/id when titles change', () => {
+    const result = mount(view(todo('same'), check('same')));
     rotate();
     result.rerender(
       <NeoActivity
-        scenes={[two, one]}
+        snapshot={view(todo('same', 'doing', 'Renamed'), check('same'))}
         projects={[{ id: 'sources', title: 'Corrected sources' }]}
         enabled
       />
     );
     expect(screen.getByRole('note').textContent).toContain('Checking context · Corrected sources');
-    expect(screen.getByRole('note').textContent).toContain('1/2');
+    expect(screen.getByRole('note').textContent).toContain('2/2');
     expect(vi.getTimerCount()).toBe(1);
   });
   it('removes stale activity immediately on terminal status and cancels its rotation', () => {
-    const result = mount([workScene('one'), checkScene('two')]);
+    const result = mount(view(todo('one'), check('two')));
     rotate();
     result.rerender(
       <NeoActivity
-        scenes={[workScene('one', 'reported'), workScene('remaining')]}
+        snapshot={view(todo('one', 'done'), todo('remaining'))}
         projects={projects}
         enabled
       />
@@ -194,7 +168,7 @@ describe('NeoActivity', () => {
     const result = render(
       <NeoActivity
         key="root"
-        scenes={[workScene('one'), checkScene('two')]}
+        snapshot={view(todo('one'), check('two'))}
         projects={projects}
         enabled
       />
@@ -203,7 +177,7 @@ describe('NeoActivity', () => {
     result.rerender(
       <NeoActivity
         key="holder"
-        scenes={[workScene('new-one'), workScene('new-two')]}
+        snapshot={view(todo('new-one'), todo('new-two'))}
         projects={projects}
         enabled
       />
@@ -213,24 +187,20 @@ describe('NeoActivity', () => {
     expect(vi.getTimerCount()).toBe(1);
   });
   it('suppresses stale disconnected evidence and reserves an empty line without an announcement', () => {
-    const result = mount([workScene('one'), checkScene('two')]);
+    const result = mount(view(todo('one'), check('two')));
     result.rerender(
-      <NeoActivity
-        scenes={[workScene('one'), checkScene('two')]}
-        projects={projects}
-        enabled={false}
-      />
+      <NeoActivity snapshot={view(todo('one'), check('two'))} projects={projects} enabled={false} />
     );
     expect(screen.queryByRole('note')).toBeNull();
     expect(result.container.querySelector('.neo-activity')?.hasAttribute('hidden')).toBe(true);
     expect(result.container.textContent).toBe('');
     expect(vi.getTimerCount()).toBe(0);
-    result.rerender(<NeoActivity scenes={[]} projects={projects} enabled />);
+    result.rerender(<NeoActivity snapshot={view()} projects={projects} enabled />);
     expect(result.container.querySelector('.neo-activity')).not.toBeNull();
     expect(screen.queryByRole('note')).toBeNull();
   });
   it('does not rotate in a background tab and resumes without a burst', () => {
-    mount([workScene('one'), checkScene('two')]);
+    mount(view(todo('one'), check('two')));
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
     act(() => {
       vi.advanceTimersByTime(18000);

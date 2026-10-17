@@ -1,6 +1,4 @@
 import { neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
-import type { PendingUserQuestion } from '@hyperneo/shared';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { getBannerLevel } from '../components/ConnectionOverlay.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
@@ -12,7 +10,6 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoActivity } from './NeoActivity.tsx';
-import { NeoAskCard } from './NeoAskCard.tsx';
 import { NeoAskTodos } from './NeoAskTodos.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
@@ -20,34 +17,20 @@ import { NeoDrawer } from './NeoDrawer.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { publicAskText } from './NeoPublicConversation.tsx';
 import { NeoSessionPane } from './NeoSessionPane.tsx';
-import { NeoWorkCard } from './NeoWorkCard.tsx';
-import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
-import { groupNeoAsks, neoAskEntryGroup } from './neo-asks.ts';
+import { type NeoAskGroup, neoAskEntryGroup } from './neo-asks.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
-import { projectNeoProjectBoard } from './neo-project-board.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
-import {
-  NEO_QUICK_CHOICE_LABEL,
-  type NeoScene,
-  type NeoSceneGroup,
-  type NeoSceneRef,
-  projectNeoScenes,
-} from './neo-scenes.ts';
 import { neoAwaitingReply, neoBusyWords } from './processing-activity.ts';
-import { neoWorkSummaries, neoWorkSummary } from './public-conversation.ts';
 import { resolveNeoProjectId } from './project-redirects.ts';
-import { revealNeoWork } from './reveal-work.ts';
 import { useNeo } from './useNeo.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoSheetSwipe } from './useNeoSheetSwipe.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
-import { neoWorkPresentation } from './work-actions.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 import { neoForwardKey } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoQuote } from './neo-intake.ts';
-import { isNeoSummarized } from './neo-ask-detail.ts';
 
 export function NeoLive() {
   const neo = useNeo();
@@ -81,7 +64,6 @@ export function NeoLive() {
   const projects = neo.snapshot?.projects ?? [];
   const view = neo.snapshot;
   const relevant = view?.work ?? [];
-  const cards = new Map((view?.cards ?? []).map((card) => [card.workId, card]));
   const projectTitles = new Map(
     (view?.publicAuthorBindings ?? []).flatMap((binding) => {
       const title = binding.projectId
@@ -111,7 +93,6 @@ export function NeoLive() {
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
       ? neo.viewPublicConversation
       : undefined;
-  const summaries = neoWorkSummaries(publicConversation?.entries);
   const sceneScope = neo.sessionId;
   const loadedScope = useRef<string | null>(null);
   if (publicConversation?.status === 'ready') loadedScope.current = sceneScope;
@@ -120,71 +101,6 @@ export function NeoLive() {
   useEffect(() => setChat(null), [sceneScope]);
   const currentScope = useRef(sceneScope);
   currentScope.current = sceneScope;
-  const [questions, setQuestions] = useState<{
-    scope: string | null;
-    values: ReadonlyMap<string, PendingUserQuestion>;
-  }>({ scope: null, values: new Map() });
-  const [unavailableSessions, setUnavailableSessions] = useState<{
-    scope: string | null;
-    values: ReadonlyMap<string, string>;
-  }>({ scope: null, values: new Map() });
-  const [slots, setSlots] = useState<{
-    scope: string | null;
-    values: ReadonlyMap<string, HTMLElement>;
-  }>({ scope: null, values: new Map() });
-  const recordQuestion = useCallback(
-    (work: NeoWork, question: PendingUserQuestion | null) => {
-      if (currentScope.current !== sceneScope) return;
-      setQuestions((prior) => {
-        const values = new Map(prior.scope === sceneScope ? prior.values : []);
-        if (question === values.get(work.id) || (!question && !values.has(work.id))) return prior;
-        if (question) values.set(work.id, question);
-        else if (values.get(work.id)?.inputOrigin?.sessionId === work.sessionId)
-          values.delete(work.id);
-        return { scope: sceneScope, values };
-      });
-    },
-    [sceneScope]
-  );
-  const attachQuestion = useCallback(
-    (id: string, node: HTMLElement | null, previous: HTMLElement | null) => {
-      if (currentScope.current !== sceneScope) return;
-      setSlots((prior) => {
-        const values = new Map(prior.scope === sceneScope ? prior.values : []);
-        if (node === values.get(id) || (!node && values.get(id) !== previous)) return prior;
-        if (node) values.set(id, node);
-        else values.delete(id);
-        return { scope: sceneScope, values };
-      });
-    },
-    [sceneScope]
-  );
-  const recordUnavailable = useCallback(
-    (work: NeoWork, unavailable: boolean) => {
-      if (currentScope.current !== sceneScope || !work.sessionId) return;
-      setUnavailableSessions((prior) => {
-        const values = new Map(prior.scope === sceneScope ? prior.values : []);
-        if (unavailable) {
-          if (values.get(work.id) === work.sessionId) return prior;
-          values.set(work.id, work.sessionId!);
-        } else {
-          if (values.get(work.id) !== work.sessionId) return prior;
-          values.delete(work.id);
-        }
-        return { scope: sceneScope, values };
-      });
-    },
-    [sceneScope]
-  );
-  const scenes = projectNeoScenes(
-    projectNeoProjectBoard(view, null, null),
-    publicConversation && questions.scope === sceneScope ? questions.values : undefined,
-    publicConversation && unavailableSessions.scope === sceneScope
-      ? unavailableSessions.values
-      : undefined,
-    cards
-  );
-  const askGroups = groupNeoAsks(view?.asks, scenes, view?.askViews, cards);
   const replyLabels = new Map(
     (view?.todoAsks ?? []).flatMap((entry) => [
       ...entry.questions.map(
@@ -201,19 +117,14 @@ export function NeoLive() {
     { key: 'running', label: 'In progress' },
     { key: 'outcomes', label: 'Recent outcomes' },
   ].map((group) => {
-    const key = group.key as NeoSceneGroup;
+    const key = group.key as NeoAskGroup;
     return {
       ...group,
       key,
       entries: (view?.todoAsks ?? []).filter((entry) => neoAskEntryGroup(entry) === key),
-      asks: askGroups.asks[key],
-      scenes: askGroups.loose[key],
     };
   });
-  const workCount = sceneGroups.reduce(
-    (total, group) => total + group.entries.length + group.asks.length + group.scenes.length,
-    0
-  );
+  const workCount = sceneGroups.reduce((total, group) => total + group.entries.length, 0);
   const columns = !!publicConversation && (workCount > 0 || !!chat);
   const sheet = !!publicConversation && narrow;
   useNeoSheetSwipe({
@@ -224,34 +135,11 @@ export function NeoLive() {
     sheet: sceneSheet,
   });
   const attention = sceneGroups.find((group) => group.key === 'attention');
-  const attentionCount =
-    (attention?.entries.length ?? 0) +
-    (attention?.asks.length ?? 0) +
-    (attention?.scenes.length ?? 0);
+  const attentionCount = attention?.entries.length ?? 0;
   const ready =
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
     neo.store.activeSessionId.value === neo.sessionId;
-  function renderScene(scene: NeoScene, groupKey: NeoSceneGroup) {
-    const card = cards.get(scene.ref.id);
-    return scene.receipt.kind === 'work' && card ? (
-      <NeoWorkCard
-        key={JSON.stringify(scene.ref)}
-        work={scene.receipt}
-        card={card}
-        onOpen={() => openScene(scene.ref)}
-        onOpenWork={(id) => openScene({ kind: 'work', id })}
-        canOpenWork={canOpenScene}
-        presentation={neoWorkPresentation(card, {
-          compact: !!publicConversation,
-          attention: groupKey === 'attention',
-        })}
-        questionSlot={publicConversation ? attachQuestion : undefined}
-        waiting={questions.scope === sceneScope && questions.values.has(scene.ref.id)}
-        summary={neoWorkSummary(summaries, scene.receipt)}
-      />
-    ) : null;
-  }
   const liveDraft = useRef(draft);
   liveDraft.current = draft;
   const liveSession = useRef(neo.sessionId);
@@ -423,28 +311,9 @@ export function NeoLive() {
     neo.publications.refresh();
   }
 
-  function sceneShown(id: string) {
-    return sceneGroups.some(
-      (group) =>
-        group.scenes.some((scene) => scene.ref.id === id) ||
-        group.asks.some((ask) => ask.scenes.some((scene) => scene.ref.id === id))
-    );
-  }
-
-  function canOpenScene(id: string) {
-    return !!relevant.find((item) => item.id === id)?.sessionId || sceneShown(id);
-  }
-
-  function openScene(ref: NeoSceneRef) {
-    const work = relevant.find((item) => item.id === ref.id);
-    if (work?.sessionId) {
-      setChat({ sessionId: work.sessionId, title: work.title });
-      return;
-    }
-    if (!sceneShown(ref.id)) return;
-    setChat(null);
-    setScenesOpen(true);
-    requestAnimationFrame(() => revealNeoWork(sceneSheet.current, ref.id));
+  function openWork(id: string) {
+    const work = relevant.find((item) => item.id === id);
+    if (work?.sessionId) setChat({ sessionId: work.sessionId, title: work.title });
   }
 
   return (
@@ -452,18 +321,6 @@ export function NeoLive() {
       ref={shell}
       class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}`}
     >
-      {publicConversation &&
-        relevant
-          .filter((work) => work.status === 'queued' && work.sessionId)
-          .map((work) => (
-            <NeoWorkQuestionResource
-              key={`${sceneScope}:${work.id}:${work.sessionId}`}
-              work={work}
-              target={slots.scope === sceneScope ? (slots.values.get(work.id) ?? null) : null}
-              onQuestion={(_, question) => recordQuestion(work, question)}
-              onUnavailable={(_, unavailable) => recordUnavailable(work, unavailable)}
-            />
-          ))}
       {dragging && (
         <div
           role="status"
@@ -588,12 +445,12 @@ export function NeoLive() {
               onQuote={ready ? (quote) => setQuoted({ scope: neo.sessionId!, quote }) : undefined}
               store={neo.store}
               sessionId={neo.sessionId}
-              works={relevant}
+              works={relevant.filter((work) => work.sessionId)}
               projects={projectTitles}
               forwarders={forwarders}
               replyLabels={replyLabels}
               publicConversation={publicConversation}
-              onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
+              onOpenPublicWork={openWork}
               onRetryPublic={retryPublicConversation}
               busy={neoBusyWords(
                 neo.snapshot?.working ?? [],
@@ -603,7 +460,9 @@ export function NeoLive() {
                   conversationLoaded &&
                   neo.store.agentState.value.status !== 'waiting_for_input' &&
                   !neo.store.error.value &&
-                  !scenes?.attention.some((scene) => scene.label === NEO_QUICK_CHOICE_LABEL) &&
+                  !view?.todoAsks?.some((entry) =>
+                    entry.questions.some((question) => question.state === 'open')
+                  ) &&
                   neoAwaitingReply(publicConversation.entries)
                 )
               )}
@@ -720,7 +579,7 @@ export function NeoLive() {
             </div>
           )}
           {sceneGroups.map((group) =>
-            group.entries.length + group.asks.length + group.scenes.length === 0 ? null : (
+            group.entries.length === 0 ? null : (
               <section
                 key={group.key}
                 aria-label={group.label}
@@ -728,7 +587,7 @@ export function NeoLive() {
                 data-scene-group={group.key}
               >
                 <h2 class="text-xs font-medium text-fg-muted">
-                  {group.label} · {group.entries.length + group.asks.length + group.scenes.length}
+                  {group.label} · {group.entries.length}
                 </h2>
                 {group.entries.map((entry) => (
                   <NeoAskTodos
@@ -764,36 +623,6 @@ export function NeoLive() {
                     }
                   />
                 ))}
-                {group.asks.map((ask) => (
-                  <NeoAskCard
-                    key={ask.ask.id}
-                    view={ask}
-                    cards={cards}
-                    disabled={!connected || !!neo.busyWork}
-                    onReply={
-                      ready
-                        ? (quote) => {
-                            setQuoted({ scope: neo.sessionId!, quote });
-                            setScenesOpen(false);
-                            scrollToBottom();
-                            const input = footer.current?.querySelector('textarea');
-                            input?.scrollIntoView({ block: 'nearest' });
-                            input?.focus({ preventScroll: true });
-                          }
-                        : undefined
-                    }
-                    onExpand={
-                      isNeoSummarized(ask.ask)
-                        ? () => void neo.loadAskDetail(ask.ask.id)
-                        : undefined
-                    }
-                    detailFailed={neo.askDetailFailed(ask.ask.id)}
-                    detailEpoch={neo.askDetailEpoch}
-                    onOpen={(id) => openScene({ kind: 'work', id })}
-                    onOpenSession={(sessionId, title) => setChat({ sessionId, title })}
-                  />
-                ))}
-                {group.scenes.map((scene) => renderScene(scene, group.key))}
               </section>
             )
           )}
@@ -824,10 +653,7 @@ export function NeoLive() {
               activity={
                 <NeoActivity
                   key={sceneScope}
-                  redirects={view?.projectRedirects}
-                  scenes={(scenes?.running ?? []).filter(
-                    (scene) => !askGroups.settledWork.has(scene.ref.id)
-                  )}
+                  snapshot={view ?? null}
                   projects={projects}
                   enabled={connected && conversationReady}
                 />
