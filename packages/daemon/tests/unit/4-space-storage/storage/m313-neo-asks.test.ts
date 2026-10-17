@@ -22,6 +22,7 @@ import { runMigration373 } from '../../../../src/storage/schema/m373-neo-ask-ite
 import { runMigration374 } from '../../../../src/storage/schema/m374-neo-ask-item-because';
 import { runMigration376 } from '../../../../src/storage/schema/m376-neo-ask-item-outcome-kind';
 import { runMigration381 } from '../../../../src/storage/schema/m381-neo-ask-refusal';
+import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -56,6 +57,7 @@ function withAsks() {
     runMigration374,
     runMigration376,
     runMigration381,
+    runMigration387,
   ])
     migrate(db);
   return db;

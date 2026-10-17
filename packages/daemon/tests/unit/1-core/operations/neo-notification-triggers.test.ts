@@ -608,7 +608,7 @@ describe('NeoService notification triggers', () => {
     expect(mailbox()).toEqual([]);
     expect(deliver).not.toHaveBeenCalled();
     db.getDatabase()
-      .prepare('UPDATE neo_asks SET revision = revision + 1 WHERE id = ?')
+      .prepare('UPDATE legacy_neo_asks SET revision = revision + 1 WHERE id = ?')
       .run(opened.id);
     initialize();
     await sweep();

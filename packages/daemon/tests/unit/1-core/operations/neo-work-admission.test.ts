@@ -189,18 +189,22 @@ describe('NeoService.admitWork', () => {
     try {
       const ask = service.askRecords.get('ask-a')!;
       db.getDatabase()
-        .prepare('UPDATE neo_asks SET revision = revision + 1 WHERE id = ?')
+        .prepare('UPDATE legacy_neo_asks SET revision = revision + 1 WHERE id = ?')
         .run(ask.id);
       expect(await service.admitWork('a', false)).toEqual({
         ok: false,
         reason: 'approval_stale',
       });
       db.getDatabase()
-        .prepare('UPDATE neo_asks SET approved_at = NULL, approved_revision = NULL WHERE id = ?')
+        .prepare(
+          'UPDATE legacy_neo_asks SET approved_at = NULL, approved_revision = NULL WHERE id = ?'
+        )
         .run(ask.id);
       expect(await service.admitWork('a', false)).toEqual({ ok: false, reason: 'not_approved' });
       db.getDatabase()
-        .prepare('UPDATE neo_asks SET approved_at = 1, approved_revision = revision WHERE id = ?')
+        .prepare(
+          'UPDATE legacy_neo_asks SET approved_at = 1, approved_revision = revision WHERE id = ?'
+        )
         .run(ask.id);
       expect(await service.admitWork('a', false)).toEqual({
         ok: true,

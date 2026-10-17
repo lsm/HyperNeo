@@ -131,14 +131,14 @@ export class NeoAskRepository {
     })();
     if (created) this.notify();
     const row = this.db
-      .prepare(`SELECT ${askColumns} FROM neo_asks WHERE request_key = ?`)
+      .prepare(`SELECT ${askColumns} FROM legacy_neo_asks WHERE request_key = ?`)
       .get(input.requestKey) as NeoAskRow;
     return this.withWork([row])[0];
   }
 
   private insertAsk(input: NeoAskInput, now: number): boolean {
     const result = this.db
-      .prepare(`INSERT INTO neo_asks
+      .prepare(`INSERT INTO legacy_neo_asks
         (id, request_key, concern_id, origin_session_id, origin_message_id, title, ask,
           done_when, done_source, pack, status, outcome, created_at, updated_at, settled_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?, NULL)
@@ -161,7 +161,7 @@ export class NeoAskRepository {
   }
 
   get(id: string): NeoAsk | null {
-    const row = this.db.prepare(`SELECT ${askColumns} FROM neo_asks WHERE id = ?`).get(id) as
+    const row = this.db.prepare(`SELECT ${askColumns} FROM legacy_neo_asks WHERE id = ?`).get(id) as
       | NeoAskRow
       | undefined;
     return row ? this.withWork([row])[0] : null;
@@ -178,9 +178,9 @@ export class NeoAskRepository {
   }
 
   forRequest(requestKey: string): NeoAsk | null {
-    const row = this.db.prepare('SELECT id FROM neo_asks WHERE request_key = ?').get(requestKey) as
-      | { id: string }
-      | undefined;
+    const row = this.db
+      .prepare('SELECT id FROM legacy_neo_asks WHERE request_key = ?')
+      .get(requestKey) as { id: string } | undefined;
     return row ? this.get(row.id) : null;
   }
 
@@ -194,7 +194,7 @@ export class NeoAskRepository {
   liveForOrigin(originSessionId: string, originMessageId: string): NeoAsk | null {
     const row = this.db
       .prepare(
-        `SELECT ${askColumns} FROM neo_asks
+        `SELECT ${askColumns} FROM legacy_neo_asks
           WHERE origin_session_id = ? AND origin_message_id = ?
             AND status NOT IN ('achieved', 'abandoned')
           ORDER BY created_at LIMIT 1`
@@ -206,7 +206,7 @@ export class NeoAskRepository {
   listLive(): NeoAsk[] {
     const rows = this.db
       .prepare(
-        `SELECT ${askColumns} FROM neo_asks WHERE status NOT IN ('achieved', 'abandoned')
+        `SELECT ${askColumns} FROM legacy_neo_asks WHERE status NOT IN ('achieved', 'abandoned')
           ORDER BY updated_at DESC, id`
       )
       .all() as NeoAskRow[];
@@ -216,7 +216,9 @@ export class NeoAskRepository {
   list(projectId?: string | null): NeoAsk[] {
     const condition = projectId === undefined ? '' : 'WHERE concern_id IS ?';
     const rows = this.db
-      .prepare(`SELECT ${askColumns} FROM neo_asks ${condition} ORDER BY updated_at DESC, id`)
+      .prepare(
+        `SELECT ${askColumns} FROM legacy_neo_asks ${condition} ORDER BY updated_at DESC, id`
+      )
       .all(...(projectId === undefined ? [] : [projectId])) as NeoAskRow[];
     return this.withWork(rows);
   }
@@ -265,7 +267,8 @@ export class NeoAskRepository {
           askId,
           item.id
         ).changes;
-      if (ticked) this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
+      if (ticked)
+        this.db.prepare('UPDATE legacy_neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
       if (ticked && verified && current.deliveredBy) this.outcomeVerified(current.deliveredBy);
       return ticked > 0;
     })();
@@ -317,7 +320,7 @@ export class NeoAskRepository {
           at
         );
       this.db
-        .prepare(`UPDATE neo_asks SET status = 'waiting', waiting_item = ?, outcome = ?, evidence = ?,
+        .prepare(`UPDATE legacy_neo_asks SET status = 'waiting', waiting_item = ?, outcome = ?, evidence = ?,
         revision = revision + 1, updated_at = ? WHERE id = ?`)
         .run(question.id, question.text, question.decides, at, askId);
       return true;
@@ -356,7 +359,7 @@ export class NeoAskRepository {
         ).changes;
       if (!restated) return false;
       this.db
-        .prepare(`UPDATE neo_asks SET outcome = CASE WHEN waiting_item = ? THEN ? ELSE outcome END,
+        .prepare(`UPDATE legacy_neo_asks SET outcome = CASE WHEN waiting_item = ? THEN ? ELSE outcome END,
           evidence = CASE WHEN waiting_item = ? THEN ? ELSE evidence END, updated_at = ? WHERE id = ?`)
         .run(item.id, item.text, item.id, item.text, at, askId);
       return true;
@@ -442,7 +445,7 @@ export class NeoAskRepository {
       }
       if (plan.invalidateApproval) {
         this.db
-          .prepare(`UPDATE neo_asks SET revision = ?, approved_at = NULL,
+          .prepare(`UPDATE legacy_neo_asks SET revision = ?, approved_at = NULL,
           approved_revision = NULL, updated_at = ? WHERE id = ?`)
           .run(plan.revision, at, askId);
         this.db
@@ -451,7 +454,7 @@ export class NeoAskRepository {
           WHERE ask_id = ? AND id IN (SELECT value FROM json_each(?))`)
           .run(askId, JSON.stringify(plan.invalidateItemIds));
       }
-      this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
+      this.db.prepare('UPDATE legacy_neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
       return true;
     })();
     if (changed) this.notify();
@@ -523,7 +526,7 @@ export class NeoAskRepository {
             if (plan.invalidateItemIds.includes(binding.itemId))
               write.run(binding.deliveredBy, at, askId, binding.itemId);
           this.db
-            .prepare(`UPDATE neo_asks SET revision = ?, approved_at = NULL,
+            .prepare(`UPDATE legacy_neo_asks SET revision = ?, approved_at = NULL,
           approved_revision = NULL, updated_at = ? WHERE id = ?`)
             .run(plan.revision, at, askId);
           return { ok: true };
@@ -552,11 +555,11 @@ export class NeoAskRepository {
         ? this.bindingPolicy.planFold(this.get(source.id)!, this.get(target.id)!, moves)
         : null;
       const closed = this.db
-        .prepare(`UPDATE neo_asks SET status = 'abandoned', outcome = ?, evidence = ?,
+        .prepare(`UPDATE legacy_neo_asks SET status = 'abandoned', outcome = ?, evidence = ?,
           settled_at = ?, updated_at = ?, waiting_item = NULL WHERE id = ? AND status = ?`)
         .run(outcome, outcome, at, at, source.id, source.status).changes;
       const kept = this.db
-        .prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ? AND status = ?')
+        .prepare('UPDATE legacy_neo_asks SET updated_at = ? WHERE id = ? AND status = ?')
         .run(at, target.id, target.status).changes;
       if (!closed || !kept) throw new Error('neo-ask-fold-lost');
       this.withdrawQuestions(source.id, outcome, at);
@@ -589,7 +592,7 @@ export class NeoAskRepository {
             item.id
           );
         this.db
-          .prepare(`UPDATE neo_asks SET revision = ?, approved_at = NULL,
+          .prepare(`UPDATE legacy_neo_asks SET revision = ?, approved_at = NULL,
           approved_revision = NULL, approved_continues = 0 WHERE id = ?`)
           .run(bindingPlan.revision, target.id);
       }
@@ -606,7 +609,7 @@ export class NeoAskRepository {
 
   reopen(expected: Pick<NeoAsk, 'id' | 'status'>): NeoAsk | null {
     const row = this.db
-      .prepare(`UPDATE neo_asks SET ${REOPEN}, updated_at = ?
+      .prepare(`UPDATE legacy_neo_asks SET ${REOPEN}, updated_at = ?
         WHERE id = ? AND status = ? RETURNING ${askColumns}`)
       .get(Date.now(), expected.id, expected.status) as NeoAskRow | null;
     if (!row) return null;
@@ -619,7 +622,7 @@ export class NeoAskRepository {
     owner: NeoAskOwner
   ): NeoAsk | null {
     const row = this.db
-      .prepare(`UPDATE neo_asks SET concern_id = ?, origin_session_id = ?, origin_message_id = ?
+      .prepare(`UPDATE legacy_neo_asks SET concern_id = ?, origin_session_id = ?, origin_message_id = ?
         WHERE id = ? AND concern_id IS ? AND origin_session_id = ?
           AND status IN ('open', 'waiting', 'blocked') RETURNING ${askColumns}`)
       .get(
@@ -637,7 +640,7 @@ export class NeoAskRepository {
 
   reopenForWork(workId: string): void {
     const reopened = this.db
-      .prepare(`UPDATE neo_asks SET ${REOPEN}, updated_at = ?
+      .prepare(`UPDATE legacy_neo_asks SET ${REOPEN}, updated_at = ?
         WHERE ${REOPENABLE} AND id = (SELECT ask_id FROM neo_ask_work WHERE work_id = ?)`)
       .run(Date.now(), workId);
     if (reopened.changes > 0) this.notify();
@@ -652,8 +655,10 @@ export class NeoAskRepository {
         .run(workId, askId);
       if (added.changes === 0) return false;
       const now = Date.now();
-      this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(now, askId);
-      this.db.prepare(`UPDATE neo_asks SET ${REOPEN} WHERE id = ? AND ${REOPENABLE}`).run(askId);
+      this.db.prepare('UPDATE legacy_neo_asks SET updated_at = ? WHERE id = ?').run(now, askId);
+      this.db
+        .prepare(`UPDATE legacy_neo_asks SET ${REOPEN} WHERE id = ? AND ${REOPENABLE}`)
+        .run(askId);
       return true;
     })();
     if (linked) this.notify();
@@ -666,7 +671,7 @@ export class NeoAskRepository {
   approve(id: string, at: number, expectedRevision = 0): NeoAsk | null {
     const row = this.db.transaction(() => {
       const approved = this.db
-        .prepare(`UPDATE neo_asks SET approved_at = ?, approved_revision = revision, approved_continues = 0, updated_at = ?
+        .prepare(`UPDATE legacy_neo_asks SET approved_at = ?, approved_revision = revision, approved_continues = 0, updated_at = ?
           WHERE id = ? AND revision = ? AND status NOT IN ('achieved', 'abandoned') RETURNING ${askColumns}`)
         .get(at, at, id, expectedRevision) as NeoAskRow | null;
       if (approved)
@@ -684,7 +689,7 @@ export class NeoAskRepository {
   reserveApprovedContinue(id: string): boolean {
     return (
       this.db
-        .prepare(`UPDATE neo_asks SET approved_continues = approved_continues + 1
+        .prepare(`UPDATE legacy_neo_asks SET approved_continues = approved_continues + 1
           WHERE id = ? AND approved_at IS NOT NULL`)
         .run(id).changes === 1
     );
@@ -693,7 +698,7 @@ export class NeoAskRepository {
   refundApprovedContinue(id: string): void {
     this.db
       .prepare(
-        'UPDATE neo_asks SET approved_continues = MAX(0, approved_continues - 1) WHERE id = ?'
+        'UPDATE legacy_neo_asks SET approved_continues = MAX(0, approved_continues - 1) WHERE id = ?'
       )
       .run(id);
   }
@@ -722,7 +727,7 @@ export class NeoAskRepository {
     const lost = new Error('neo-ask-settle-lost');
     const settle = this.db.transaction(() => {
       const settled = this.db
-        .prepare(`UPDATE neo_asks SET status = ?, outcome = ?, evidence = ?, updated_at = ?,
+        .prepare(`UPDATE legacy_neo_asks SET status = ?, outcome = ?, evidence = ?, updated_at = ?,
           settled_at = ?, waiting_item = ? WHERE id = ? AND status = ?
           RETURNING ${askColumns}`)
         .get(
@@ -791,7 +796,7 @@ export class NeoAskRepository {
 
   waitingFor(sessionId: string): (NeoAsk & { remindedAt: number | null })[] {
     const rows = this.db
-      .prepare(`SELECT ${askColumns}, reminded_at AS remindedAt FROM neo_asks
+      .prepare(`SELECT ${askColumns}, reminded_at AS remindedAt FROM legacy_neo_asks
         WHERE origin_session_id = ? AND status IN ('waiting', 'blocked') ORDER BY updated_at, id`)
       .all(sessionId) as (NeoAskRow & { remindedAt: number | null })[];
     return this.withWork(rows) as (NeoAsk & { remindedAt: number | null })[];
@@ -799,7 +804,7 @@ export class NeoAskRepository {
 
   needingHuman(): NeoAsk[] {
     const rows = this.db
-      .prepare(`SELECT ${askColumns} FROM neo_asks a
+      .prepare(`SELECT ${askColumns} FROM legacy_neo_asks a
         WHERE status IN ('open', 'waiting', 'blocked') AND EXISTS (SELECT 1 FROM neo_ask_items i
           WHERE i.ask_id = a.id AND i.state = 'needs_you' AND i.removed = 0)
         ORDER BY updated_at, id`)
@@ -810,7 +815,7 @@ export class NeoAskRepository {
   recordRefusal(id: string, refused: string | null): void {
     this.db
       .prepare(
-        'UPDATE neo_asks SET refused = ?, refused_count = CASE WHEN ? IS NULL THEN 0 ELSE refused_count + 1 END WHERE id = ?'
+        'UPDATE legacy_neo_asks SET refused = ?, refused_count = CASE WHEN ? IS NULL THEN 0 ELSE refused_count + 1 END WHERE id = ?'
       )
       .run(refused, refused, id);
   }
@@ -818,7 +823,9 @@ export class NeoAskRepository {
   markReminded(ids: readonly string[], at: number): void {
     if (!ids.length) return;
     this.db
-      .prepare('UPDATE neo_asks SET reminded_at = ? WHERE id IN (SELECT value FROM json_each(?))')
+      .prepare(
+        'UPDATE legacy_neo_asks SET reminded_at = ? WHERE id IN (SELECT value FROM json_each(?))'
+      )
       .run(at, JSON.stringify(ids));
   }
 

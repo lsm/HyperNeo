@@ -52,8 +52,8 @@ export class NeoRepository {
       .prepare(`SELECT c.id, c.title, c.created_at AS createdAt,
           (c.epic_url IS NOT NULL OR EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)) AS section,
           length(c.context) AS context,
-          (SELECT count(*) FROM neo_asks a WHERE a.concern_id = c.id) AS asks,
-          (SELECT count(*) FROM neo_asks a WHERE a.concern_id = c.id
+          (SELECT count(*) FROM legacy_neo_asks a WHERE a.concern_id = c.id) AS asks,
+          (SELECT count(*) FROM legacy_neo_asks a WHERE a.concern_id = c.id
             AND a.status IN ('open', 'waiting', 'blocked')) AS liveAsks,
           (SELECT count(*) FROM neo_work w WHERE w.concern_id = c.id
             AND w.status IN ('proposed', 'queued')) AS liveWork,
@@ -93,7 +93,7 @@ export class NeoRepository {
         .prepare(`SELECT 1 FROM neo_concerns c WHERE c.id = ? AND length(c.context) = 0
           AND c.epic_url IS NULL
           AND NOT EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)
-          AND NOT EXISTS (SELECT 1 FROM neo_asks a WHERE a.concern_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM legacy_neo_asks a WHERE a.concern_id = c.id)
           AND NOT EXISTS (SELECT 1 FROM neo_work w WHERE w.concern_id = c.id)
           AND NOT EXISTS (SELECT 1 FROM neo_routing_log r WHERE r.concern_id = c.id)
           AND NOT EXISTS (SELECT 1 FROM neo_session_bindings b JOIN sdk_messages m
@@ -177,7 +177,7 @@ export class NeoRepository {
           GROUP BY conversation_id, trigger HAVING count(*) > 1 ORDER BY count DESC`)
         .all(new Date(since).toISOString()) as NeoHealthFacts['repeatedReplies'],
       liveAsks: this.db
-        .prepare(`SELECT id, title, status, updated_at AS updatedAt FROM neo_asks
+        .prepare(`SELECT id, title, status, updated_at AS updatedAt FROM legacy_neo_asks
           WHERE status IN ('open', 'waiting', 'blocked') ORDER BY updated_at`)
         .all() as NeoHealthFacts['liveAsks'],
       unreadRepos: this.db

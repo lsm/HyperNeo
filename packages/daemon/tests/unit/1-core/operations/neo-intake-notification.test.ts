@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,6 +63,7 @@ describe('accepted public ask notification', () => {
     runMigration313(writer);
     runMigration314(writer);
     runMigration340(writer);
+    runMigration387(writer);
     sessions = new SessionRepository(writer);
     sdk = new SDKMessageRepository(writer as never);
     jobs = new JobQueueRepository(writer);

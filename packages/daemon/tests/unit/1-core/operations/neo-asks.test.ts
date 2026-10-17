@@ -184,7 +184,9 @@ describe('neo.ask operations', () => {
 
   function unapprove(askId: string): string {
     db.getDatabase()
-      .prepare('UPDATE neo_asks SET approved_at = NULL, approved_revision = NULL WHERE id = ?')
+      .prepare(
+        'UPDATE legacy_neo_asks SET approved_at = NULL, approved_revision = NULL WHERE id = ?'
+      )
       .run(askId);
     return askId;
   }
@@ -1882,7 +1884,9 @@ describe('neo.ask operations', () => {
   test('reading an old settled ask retires unanswered questions without rewriting the record', async () => {
     const askId = await openAsk();
     await invoke('neo.ask.question', { askId, question: 'Still needed?', kind: 'decision' });
-    db.getDatabase().prepare("UPDATE neo_asks SET status = 'achieved' WHERE id = ?").run(askId);
+    db.getDatabase()
+      .prepare("UPDATE legacy_neo_asks SET status = 'achieved' WHERE id = ?")
+      .run(askId);
     expect(service.askRecords.get(askId)!.doneItems!.find((item) => item.question)).toMatchObject({
       question: 'Still needed?',
       state: 'needs_you',
