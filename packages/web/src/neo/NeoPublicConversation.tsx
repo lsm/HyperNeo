@@ -10,6 +10,7 @@ import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { type NeoAskItem, readNeoConversationImage } from './conversation-ask-client.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { NeoClampedText } from './NeoClampedText.tsx';
 import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from './NeoMessageMenu.tsx';
 import { copyToClipboard } from '../lib/utils.ts';
 import { messageTime } from './NeoMessage.tsx';
@@ -366,7 +367,7 @@ function PublicEntry({
       id={anchor || undefined}
       data-message-ref={messageId || undefined}
       data-public-entry={entry.key}
-      class={`neo-arrive neo-message w-fit break-words focus:outline-none ${ask ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%] max-md:w-full max-md:max-w-full'}`}
+      class={`neo-arrive neo-message w-fit break-words focus:outline-none ${ask ? 'neo-message-user ml-auto max-w-[88%]' : 'neo-message-assistant mr-auto max-w-[94%] max-md:w-full max-md:max-w-full'}`}
       {...(copyText.trim() ? menu.bind : {})}
     >
       <div
@@ -489,6 +490,7 @@ function PublicEntry({
               class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
             />
           );
+          const shown = ask ? <NeoClampedText text={text}>{body}</NeoClampedText> : body;
           const chevron = hasDetails && (
             <button
               type="button"
@@ -509,12 +511,12 @@ function PublicEntry({
               {chevron && !links.length ? (
                 <div class="flex items-end gap-2">
                   <div ref={bubbleText} class="min-w-0 flex-1">
-                    {body}
+                    {shown}
                   </div>
                   {chevron}
                 </div>
               ) : (
-                <div ref={bubbleText}>{body}</div>
+                <div ref={bubbleText}>{shown}</div>
               )}
               {hasDetails && expanded && (
                 <div
@@ -659,7 +661,7 @@ export function PendingAsk({
   return (
     <article
       data-pending-ask={ask.requestId}
-      class="neo-arrive neo-message neo-message-user ml-auto w-fit max-w-[78%] break-words"
+      class="neo-arrive neo-message neo-message-user ml-auto w-fit max-w-[88%] break-words"
     >
       <div class="mb-2 flex flex-wrap items-baseline justify-end gap-x-2 px-1 text-xs">
         <span class="neo-message-name font-medium">You</span>
@@ -725,7 +727,9 @@ export function PendingAsk({
             ))}
           </div>
         )}
-        <p class="whitespace-pre-wrap text-base leading-relaxed">{ask.text}</p>
+        <NeoClampedText text={ask.text}>
+          <p class="whitespace-pre-wrap text-base leading-relaxed">{ask.text}</p>
+        </NeoClampedText>
       </div>
       {failed && showReason && <p class="mt-1 px-1 text-right text-xs text-danger">{notSent}</p>}
       {failed && (
