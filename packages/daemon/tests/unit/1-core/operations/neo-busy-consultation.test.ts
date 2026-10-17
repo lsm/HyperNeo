@@ -4,6 +4,7 @@ import type { NeoConsultation, NeoConsultationWaiter } from '@hyperneo/shared/ty
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { NEO_INBOX_ID } from '../../../../src/lib/neo/router.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -44,6 +45,11 @@ describe('Neo durable busy consultation intake', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       events
     );
+    const open = service.open.bind(service);
+    service.open = async (projectId) => {
+      if (projectId === NEO_INBOX_ID) throw new Error('main Neo keeps these asks here');
+      return open(projectId);
+    };
   }
   beforeEach(async () => {
     db = await createTestDb();
