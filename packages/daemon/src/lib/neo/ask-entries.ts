@@ -61,7 +61,7 @@ export function projectNeoAskEntries(
           todos,
           packs.find((pack) => pack.id === todo.check?.pack)?.todos?.statusLine(todo) ?? null
         ),
-        link: sessions.readLink(todo.id),
+        ...sessions.readLinks(todo.id),
       })),
       questions,
     };
@@ -85,6 +85,8 @@ export const NeoAskEntrySchema = z.object({
     settledAt: z.number().nullable(),
   }),
   state: z.enum(['waiting', 'doing', 'done', 'dropped', 'todo']),
-  todos: z.array(NeoTodoSchema.extend({ status: z.string(), link: Nullable })),
+  todos: z.array(
+    NeoTodoSchema.extend({ status: z.string(), link: Nullable, remoteLink: Nullable })
+  ),
   questions: z.array(NeoQuestionSchema),
 });
