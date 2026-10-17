@@ -1,5 +1,34 @@
 # Claude Desktop mods bridge
 
+## Explicit runtime lifecycle
+
+The runtime factory is built separately from driver wiring. It is off unless
+`HYPERNEO_CLAUDE_DESKTOP_MODS=1`. Enabling it also requires an absolute
+`HYPERNEO_CLAUDE_DESKTOP_MODS_CONNECTION_FILE` in a private, user-owned directory
+(for example a dedicated directory under HyperNeo's data area). The operator
+explicitly enables the plugin and sets its `connectionFile` to that same path
+through supported plugin configuration; HyperNeo never edits Desktop private settings.
+
+The factory acquires the existing `DatabaseLock` protocol for publication,
+creates a fresh private Unix socket/token, then atomically publishes a mode-0600
+connection file. A concurrent runtime cannot take that path. Shutdown drains the
+transport and removes only its own published inode. After a crash, the existing
+stale-PID lock protocol allows the next runtime to replace the old pointer.
+
+The plugin retries reading this file if it is initially absent/invalid or a
+transport request fails. It keeps its instance, command-ID deduplication and
+unacknowledged lifecycle/receipt events across daemon reconnects. It does not
+wait for an old HTTP request when a new session starts, and ignores old-instance
+responses. Durability across a plugin crash is provided by daemon journal/outbox
+fencing, not by replaying uncertain prompts into a new instance.
+
+Each authenticated exchange uses the same verified owner's idle fact to
+bootstrap unknown lifecycle state, commits the journal and outbox first, then
+notifies subscribers and awaits optional durable reporting before returning the
+ACK. Report failure causes retry; consumers must use stable identities when
+persisting reports. API resolution remains distinct from observed execution or
+turn termination. Native Desktop queued-message cancellation remains unsupported.
+
 These are the opt-in client and private transport Build slices of #7350. The
 durable outbox and driver wiring follow separately; installing these slices alone
 does not add driver capabilities. The verified persistent peer inbox from #7354

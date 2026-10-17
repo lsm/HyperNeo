@@ -150,9 +150,51 @@ describe('Claude Desktop mods client', () => {
     h.config(config);
     await h.emit('session.start');
     await h.tick();
-    expect(h.reads()).toBe(1);
+    expect(h.reads()).toBe(2);
     expect(h.requests).toEqual([]);
   });
+
+  test('recovers from missing startup configuration without losing observed turns', async () => {
+    const h = host();
+    h.config('{}');
+    await h.emit('session.start');
+    await h.emit('turn.start', { turnId: 'observed-while-offline' });
+    h.config(JSON.stringify({ socketPath: '/private/bridge.sock', token: 'x'.repeat(32) }));
+    await h.tick();
+    expect(h.requests.at(-1)!.events).toEqual([
+      { sequence: 1, kind: 'session.start' },
+      { sequence: 2, kind: 'turn.start', turnId: 'observed-while-offline' },
+    ]);
+  });
+
+  test.each(['http', 'network'])(
+    'rereads connection after %s failure while retaining dedup and unacked receipts',
+    async (failure) => {
+      const h = host();
+      const command = { id: 'input-1', kind: 'submit', from: 'peer', text: 'once' };
+      h.reply(async (body) => commandReply(body, command, 1));
+      await h.emit('session.start');
+      await flush();
+      const instance = h.requests[0].instanceId;
+      h.reply(async () => {
+        if (failure === 'network') throw new Error('daemon stopped');
+        return { ok: false, text: '' };
+      });
+      await h.tick();
+      const retained = h.requests.at(-1)!.events;
+      h.config('{}');
+      const attempts = h.requests.length;
+      await h.tick();
+      expect(h.requests).toHaveLength(attempts);
+      h.config(JSON.stringify({ socketPath: '/private/bridge.sock', token: 'x'.repeat(32) }));
+      h.reply(async (body) => commandReply(body, command, 1));
+      await h.tick();
+      expect(h.requests.at(-1)!.instanceId).toBe(instance);
+      expect(h.requests.at(-1)!.events).toEqual(retained);
+      expect(h.submissions).toHaveLength(1);
+      expect(h.reads()).toBe(3);
+    }
+  );
 
   test('retains session and turn facts until the server acknowledges the sent sequence', async () => {
     const h = host();

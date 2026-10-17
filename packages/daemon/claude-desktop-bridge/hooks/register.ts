@@ -50,24 +50,21 @@ export function register(on: On, options: Readonly<Record<string, unknown>>) {
     timer?.cancel();
     sessionId = '';
     instanceId = '';
-    try {
-      const config = JSON.parse(await $.fs.read(connectionFile));
-      if (
-        typeof config.socketPath !== 'string' ||
-        !/^\/[^\x00-\x1f]{1,98}\.sock$/.test(config.socketPath) ||
-        typeof config.token !== 'string' ||
-        config.token.length < 32
-      )
-        throw new Error('Invalid bridge connection file');
-      connection = { socketPath: config.socketPath, token: config.token };
-      selectSession(await $.session.id(), await $.clock.now());
-    } catch {
-      connection = undefined;
-      return next(event);
-    }
+    connection = undefined;
+    selectSession(await $.session.id(), await $.clock.now());
     const exchange = async () => {
-      if (!connection) return;
       try {
+        if (!connection) {
+          const config = JSON.parse(await $.fs.read(connectionFile));
+          if (
+            typeof config.socketPath !== 'string' ||
+            !/^\/[^\x00-\x1f]{1,98}\.sock$/.test(config.socketPath) ||
+            typeof config.token !== 'string' ||
+            config.token.length < 32
+          )
+            throw new Error('Invalid bridge connection file');
+          connection = { socketPath: config.socketPath, token: config.token };
+        }
         selectSession(await $.session.id(), await $.clock.now());
         const instance = instanceId;
         const sent = sequence;
@@ -81,7 +78,8 @@ export function register(on: On, options: Readonly<Record<string, unknown>>) {
           body: JSON.stringify({ version: 1, sessionId, instanceId: instance, events }),
         });
         const currentSessionId = await $.session.id();
-        if (!response.ok || instance !== instanceId || currentSessionId !== sessionId) return;
+        if (!response.ok) throw new Error('Desktop bridge unavailable');
+        if (instance !== instanceId || currentSessionId !== sessionId) return;
         const reply = JSON.parse(response.text);
         if (!Number.isSafeInteger(reply.ack) || reply.ack < 0 || reply.ack > sent) return;
         events = events.filter((entry) => Number(entry.sequence) > reply.ack);
@@ -124,6 +122,7 @@ export function register(on: On, options: Readonly<Record<string, unknown>>) {
           }
         );
       } catch {
+        connection = undefined;
         return;
       }
     };
@@ -141,7 +140,7 @@ export function register(on: On, options: Readonly<Record<string, unknown>>) {
     timer = $.clock.every(250, () => {
       if (!inFlight) void poll();
     });
-    await poll();
+    if (!inFlight) await poll();
     return next(event);
   });
   on('turn.start', async ($, event, next) => {
