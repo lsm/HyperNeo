@@ -14,8 +14,6 @@ import { readNeoConversationAsks } from './conversation-ask-client.ts';
 import { useNeoConversationAsks } from './useNeoConversationAsks.ts';
 import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import { projectNeoProjectBoard } from './neo-project-board.ts';
-import type { NeoWorkAction } from './NeoWorkCard.tsx';
-import type { NeoAskOutcome } from './neo-asks.ts';
 import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
 import { projectNeoPublicConversation } from './public-conversation.ts';
@@ -172,67 +170,22 @@ export function useNeo() {
     }
   }
 
-  async function act(id: string, action: NeoWorkAction) {
+  async function settleAsk(askId: string, status: 'done' | 'dropped') {
     if (busyWork) return;
-    setBusyWork(id);
-    setError('');
-    try {
-      const hub = await connectionManager.getHub();
-      const call = {
-        start: ['neo.work.start', { id }],
-        retry: ['neo.work.retry', { id }],
-        cancel: ['neo.work.cancel', { id }],
-        done: ['neo.work.close', { id, outcome: 'done' }],
-        close: ['neo.work.close', { id, outcome: 'cancelled' }],
-      } as const;
-      const [name, input] = call[action];
-      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, name, input);
-      if (!result.ok) throw new Error(result.reason);
-      await refresh();
-    } catch (cause) {
-      if (alive.current)
-        setError(cause instanceof Error ? cause.message : 'That action could not be completed.');
-    } finally {
-      if (alive.current) setBusyWork(null);
-    }
-  }
-
-  async function settleAsk(id: string, outcome: NeoAskOutcome) {
-    if (busyWork) return;
-    setBusyWork(id);
+    setBusyWork(askId);
     setError('');
     try {
       const hub = await connectionManager.getHub();
       const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.ask.settle', {
-        id,
-        outcome,
-        evidence: 'Closed by the user.',
+        askId,
+        status,
+        outcome: status === 'done' ? 'Closed by the user.' : 'Dropped by the user.',
       });
       if (!result.ok) throw new Error(result.reason);
       await refresh();
     } catch (cause) {
       if (alive.current)
         setError(cause instanceof Error ? cause.message : 'That ask could not be closed.');
-    } finally {
-      if (alive.current) setBusyWork(null);
-    }
-  }
-
-  async function approveAsk(askId: string) {
-    if (busyWork) return;
-    setBusyWork(askId);
-    setError('');
-    try {
-      const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.ask.approve', {
-        askId,
-        expectedRevision: snapshot?.asks?.find((ask) => ask.id === askId)?.revision ?? 0,
-      });
-      if (!result.ok) throw new Error(result.reason);
-      await refresh();
-    } catch (cause) {
-      if (alive.current)
-        setError(cause instanceof Error ? cause.message : 'That ask could not be approved.');
     } finally {
       if (alive.current) setBusyWork(null);
     }
@@ -254,29 +207,6 @@ export function useNeo() {
     }
   }
 
-  async function tickAskItem(askId: string, itemId: string) {
-    if (busyWork) return;
-    setBusyWork(itemId);
-    setError('');
-    try {
-      const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.ask.tick', {
-        askId,
-        expectedRevision: snapshot?.asks?.find((ask) => ask.id === askId)?.revision ?? 0,
-        itemId,
-        state: 'met',
-        evidence: 'Confirmed by the user.',
-      });
-      if (!result.ok) throw new Error(result.reason);
-      await refresh();
-    } catch (cause) {
-      if (alive.current)
-        setError(cause instanceof Error ? cause.message : 'That item could not be marked done.');
-    } finally {
-      if (alive.current) setBusyWork(null);
-    }
-  }
-
   async function answerQuestion(questionId: string, answer: NeoQuestionAnswer) {
     if (busyWork) return;
     setBusyWork(questionId);
@@ -286,28 +216,6 @@ export function useNeo() {
       const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.question.answer', {
         questionId,
         answer,
-      });
-      if (!result.ok) throw new Error(result.reason);
-      await refresh();
-    } catch (cause) {
-      if (alive.current)
-        setError(cause instanceof Error ? cause.message : 'That answer could not be sent.');
-    } finally {
-      if (alive.current) setBusyWork(null);
-    }
-  }
-
-  async function answerAskItem(askId: string, itemId: string, choice: string) {
-    if (busyWork) return;
-    setBusyWork(itemId);
-    setError('');
-    try {
-      const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.ask.answer', {
-        askId,
-        expectedRevision: snapshot?.asks?.find((ask) => ask.id === askId)?.revision ?? 0,
-        itemId,
-        choice,
       });
       if (!result.ok) throw new Error(result.reason);
       await refresh();
@@ -349,12 +257,8 @@ export function useNeo() {
     loadAskDetail,
     askDetailFailed: (askId: string) => askDetailFailures.has(askId),
     askDetailEpoch,
-    act,
     settleAsk,
-    approveAsk,
     muteSession,
-    tickAskItem,
-    answerAskItem,
     answerQuestion,
     send: intake.send,
     pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),

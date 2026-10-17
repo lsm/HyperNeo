@@ -116,7 +116,6 @@ const mount = (
     destroy: vi.fn(),
   };
   const act = vi.fn();
-  const answerAskItem = vi.fn();
   if (question) {
     snapshot.work[0].sessionId = null;
     const ask: NeoAsk = {
@@ -162,13 +161,12 @@ const mount = (
       setError: vi.fn(),
       open: vi.fn(),
       act,
-      answerAskItem,
       askDetailFailed: () => false,
       busyWork: null,
     })
   );
   if (live) render(<NeoLive />);
-  return { act, answerAskItem };
+  return { act };
 };
 
 describe('original work surface reconciled with the live scenes', () => {
@@ -183,24 +181,6 @@ describe('original work surface reconciled with the live scenes', () => {
     expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
     expect(act).not.toHaveBeenCalled();
   });
-
-  it.each(['先不做', '开始'])(
-    'routes %s through the owning question for recovered work without a session',
-    (choice) => {
-      const { act, answerAskItem } = mount(null, true, true, true);
-      const buttons = ['先不做', '开始'].map((name) =>
-        screen.getByRole('button', { name: `Answer 开始这 1 步？: ${name}` })
-      );
-      expect(
-        buttons[0].compareDocumentPosition(buttons[1]) & Node.DOCUMENT_POSITION_FOLLOWING
-      ).toBeTruthy();
-      expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: `Answer 开始这 1 步？: ${choice}` }));
-      expect(answerAskItem).toHaveBeenCalledExactlyOnceWith('legacy-ask', 'start-question', choice);
-      expect(act).not.toHaveBeenCalled();
-    }
-  );
 
   it('opens the work chat without firing a native action and preserves the composer', () => {
     const { act } = mount('ask');

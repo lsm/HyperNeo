@@ -5,11 +5,6 @@ const NEO_ASK_ANSWER_LINE = 'Their answer: ';
 
 const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
 
-export function neoAskAnswerChoice(note: string): string | null {
-  const line = note.split('\n')[1] ?? '';
-  return line.startsWith(NEO_ASK_ANSWER_LINE) ? line.slice(NEO_ASK_ANSWER_LINE.length) : null;
-}
-
 export function neoAskAnswerNote(
   ask: Pick<NeoAsk, 'id' | 'title'>,
   item: Pick<NeoAskItem, 'id' | 'text'>,

@@ -24,21 +24,53 @@ const TodoCheck = z.object({
   params: z.record(z.string(), z.unknown()).default({}),
 });
 
-const Add = z
-  .object({
-    askId: Text,
-    title: Text,
-    doneWhen: Text,
-    check: TodoCheck.nullable().default(null),
-    instruction: Text.nullable().default(null),
-    target: NeoDriverTargetSchema.optional(),
-    named: z.record(z.string(), z.unknown()).nullable().default(null),
-    start: z.boolean().default(false),
-  })
-  .refine((input) => !input.instruction === !input.target, {
-    message: 'A todo with an instruction needs a target, and a target needs an instruction.',
-  })
-  .refine((input) => !input.start || input.target, { message: 'start needs a target.' });
+type Ran = Promise<{ ok: true; todo: NeoTodo } | Rejection>;
+
+export interface NeoTodoControls {
+  start(todoId: string): Ran;
+  proceed(todoId: string, message: string): Ran;
+  retry(todoId: string): Ran;
+  stop(todo: NeoTodo): Promise<void>;
+}
+
+const TodoDraft = z.object({
+  title: Text,
+  doneWhen: Text,
+  check: TodoCheck.nullable().default(null),
+  instruction: Text.nullable().default(null),
+  target: NeoDriverTargetSchema.optional(),
+  named: z.record(z.string(), z.unknown()).nullable().default(null),
+  start: z.boolean().default(false),
+});
+
+function refineNeoTodoDraft(
+  input: Pick<z.infer<typeof TodoDraft>, 'instruction' | 'target' | 'start'>,
+  context: z.RefinementCtx
+): void {
+  if (!input.instruction !== !input.target)
+    context.addIssue({
+      code: 'custom',
+      message: 'A todo with an instruction needs a target, and a target needs an instruction.',
+    });
+  if (input.start && !input.target)
+    context.addIssue({ code: 'custom', message: 'start needs a target.' });
+}
+
+export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
+
+const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
+
+export async function addNeoTodo(
+  todos: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  start: NeoTodoControls['start'],
+  askId: string,
+  input: z.infer<typeof NeoTodoDraftSchema>
+): Promise<{ ok: true; todo: NeoTodo } | Rejection> {
+  const added = todos.addTodo(crypto.randomUUID(), askId, input, Date.now());
+  if (input.target) sessions.create(added.id, input.target);
+  return input.start ? start(added.id) : { ok: true, todo: added };
+}
 
 const Edit = z.object({
   todoId: Text,
@@ -150,15 +182,6 @@ export function planNeoTodoRemove(
   };
 }
 
-type Ran = Promise<{ ok: true; todo: NeoTodo } | Rejection>;
-
-export interface NeoTodoControls {
-  start(todoId: string): Ran;
-  proceed(todoId: string, message: string): Ran;
-  retry(todoId: string): Ran;
-  stop(todo: NeoTodo): Promise<void>;
-}
-
 const Continue = z.object({ todoId: Text, message: Text });
 const Retry = z.object({ todoId: Text });
 const Close = z.object({ todoId: Text, reason: Text });
@@ -207,14 +230,8 @@ export function createNeoTodoOperations(
       'result:outcome'
     )
     .pipe(
-      async (ask: NeoAsk, input: z.infer<typeof Add>): Promise<TodoReceipt | Rejection> => {
-        const added = todos.addTodo(crypto.randomUUID(), ask.id, input, Date.now());
-        if (input.target) sessions.create(added.id, input.target);
-        const started = input.start ? await start(added.id) : { ok: true as const, todo: added };
-        return started.ok
-          ? { ok: true, todo: started.todo, todos: todos.listTodos(ask.id) }
-          : started;
-      },
+      async (ask: NeoAsk, input: z.infer<typeof Add>): Promise<TodoReceipt | Rejection> =>
+        ran(await addNeoTodo(todos, sessions, start, ask.id, input)),
       ['outcome', 'input'],
       'outcome'
     )

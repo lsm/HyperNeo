@@ -168,6 +168,23 @@ describe('NeoAskTodos', () => {
     expect(onOpen).toHaveBeenCalledWith('/session/w', 'Todo a');
   });
 
+  it('marks an open ask done or drops it from its menu', () => {
+    const onSettle = vi.fn();
+    const app = render(<NeoAskTodos entry={entry({})} onAnswer={() => {}} onSettle={onSettle} />);
+    fireEvent.click(app.getByRole('button', { name: 'Ask actions' }));
+    fireEvent.click(app.getByRole('menuitem', { name: 'Mark done' }));
+    expect(onSettle).toHaveBeenCalledWith('done');
+    cleanup();
+    const settled = render(
+      <NeoAskTodos
+        entry={entry({ ask: { ...entry({}).ask, status: 'done' } })}
+        onAnswer={() => {}}
+        onSettle={onSettle}
+      />
+    );
+    expect(settled.queryByRole('button', { name: 'Ask actions' })).toBeNull();
+  });
+
   it('keeps answered questions in Details', () => {
     const app = render(
       <NeoAskTodos

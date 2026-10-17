@@ -5,7 +5,10 @@ import type {
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
 import { useState } from 'preact/hooks';
+import { Dropdown } from '../components/ui/Dropdown.tsx';
+import { IconButton } from '../components/ui/IconButton.tsx';
 import {
+  NeoMoreIcon,
   neoCardClass,
   neoFooterClass,
   neoPlainClass,
@@ -239,12 +242,14 @@ export function NeoAskTodos({
   onAnswer,
   onReply,
   onOpen,
+  onSettle,
 }: {
   entry: NeoAskEntry;
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onReply?: (question: NeoQuestion) => void;
   onOpen?: (link: string, title: string) => void;
+  onSettle?: (status: 'done' | 'dropped') => void;
 }) {
   const [open, setOpen] = useState(false);
   const { ask, todos } = entry;
@@ -263,6 +268,26 @@ export function NeoAskTodos({
     >
       <div class="flex min-h-7 items-center gap-2">
         <span class={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${tone}`}>{label}</span>
+        <span class="flex-1" />
+        {onSettle && ask.status === 'open' && (
+          <Dropdown
+            position="right"
+            items={[
+              { label: 'Mark done', onClick: () => onSettle('done'), disabled },
+              {
+                label: 'Drop this ask',
+                onClick: () => onSettle('dropped'),
+                danger: true,
+                disabled,
+              },
+            ]}
+            trigger={
+              <IconButton title="Ask actions" size="sm" class="text-fg-faint">
+                <NeoMoreIcon />
+              </IconButton>
+            }
+          />
+        )}
       </div>
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}

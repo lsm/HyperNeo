@@ -31,17 +31,7 @@ const codex = (extra: Partial<NeoCardView>) =>
     ...extra,
   });
 const renderCard = (card: NeoCardView, props: Partial<Parameters<typeof NeoWorkCard>[0]> = {}) =>
-  render(
-    <NeoWorkCard
-      work={work}
-      card={card}
-      busy={false}
-      disabled={false}
-      onAction={vi.fn()}
-      onOpen={vi.fn()}
-      {...props}
-    />
-  );
+  render(<NeoWorkCard work={work} card={card} onOpen={vi.fn()} {...props} />);
 
 afterEach(cleanup);
 
@@ -101,26 +91,6 @@ describe('NeoWorkCard with drivers work', () => {
       })
     );
     expect(screen.getByText('Needs you in Codex Desktop on laptop')).toBeTruthy();
-    const link = screen.getByRole('link', { name: 'Open Bigger font' });
-    expect([link.getAttribute('href'), link.textContent]).toEqual([
-      'codex://threads/t1',
-      'Open in Codex',
-    ]);
-  });
-
-  it('keeps abandoned work openable with stop in its menu', () => {
-    const onAction = vi.fn();
-    renderCard(
-      codex({
-        phase: 'abandoned',
-        primary: { kind: 'close', label: 'Close', link: 'codex://threads/t1' },
-      }),
-      { onAction }
-    );
-    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Card actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Stop work' }));
-    expect(onAction).toHaveBeenCalledWith('w1', 'close');
     const link = screen.getByRole('link', { name: 'Open Bigger font' });
     expect([link.getAttribute('href'), link.textContent]).toEqual([
       'codex://threads/t1',

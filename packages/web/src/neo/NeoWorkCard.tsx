@@ -1,8 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
 import { useMemo } from 'preact/hooks';
-import { Dropdown } from '../components/ui/Dropdown.tsx';
-import { IconButton } from '../components/ui/IconButton.tsx';
 import {
   neoCardLabel,
   neoCardMeta,
@@ -17,7 +15,6 @@ import {
 import {
   NeoAppMark,
   NeoChatMark,
-  NeoMoreIcon,
   NeoStatusChip,
   neoCardClass,
   neoFooterClass,
@@ -47,9 +44,6 @@ function insideUserSelection(scope: Element): boolean {
 export function NeoWorkCard({
   work,
   card,
-  busy,
-  disabled,
-  onAction,
   onOpen,
   onOpenWork,
   canOpenWork,
@@ -60,9 +54,6 @@ export function NeoWorkCard({
 }: {
   work: NeoWork;
   card: NeoCardView;
-  busy: boolean;
-  disabled: boolean;
-  onAction: (id: string, action: NeoWorkAction) => void;
   onOpen?: (id: string) => void;
   onOpenWork?: (id: string) => void;
   canOpenWork?: (id: string) => boolean;
@@ -201,7 +192,6 @@ export function NeoWorkCard({
       </div>
     );
   const openable = !!onOpen && !!work.sessionId && work.status !== 'proposed' && !answering;
-  const closable = presentation === 'detail' && !answering && (active || work.status === 'failed');
   const chatButton = onOpen && work.sessionId && (
     <button type="button" onClick={() => onOpen(work.id)} class={neoSecondaryClass}>
       <NeoChatMark />
@@ -243,24 +233,6 @@ export function NeoWorkCard({
       <div class="flex min-h-7 items-center gap-2">
         {chip}
         <span class="flex-1" />
-        {closable && (
-          <Dropdown
-            position="right"
-            items={[
-              {
-                label: active ? 'Stop work' : 'Close work',
-                onClick: () => onAction(work.id, 'close'),
-                danger: true,
-                disabled: disabled || busy,
-              },
-            ]}
-            trigger={
-              <IconButton title="Card actions" size="sm" class="text-fg-faint">
-                <NeoMoreIcon />
-              </IconButton>
-            }
-          />
-        )}
       </div>
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {work.title}

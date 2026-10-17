@@ -71,15 +71,7 @@ afterEach(cleanup);
 describe('Neo MVP controls', () => {
   it('proposals show their brief without work-card decision buttons', () => {
     const action = vi.fn();
-    render(
-      <NeoWorkCard
-        work={work}
-        card={testCard(work)}
-        busy={false}
-        disabled={false}
-        onAction={action}
-      />
-    );
+    render(<NeoWorkCard work={work} card={testCard(work)} />);
     expect(action).not.toHaveBeenCalled();
     expect(screen.getByText(work.instruction)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
@@ -87,9 +79,7 @@ describe('Neo MVP controls', () => {
   });
   it('shows no work-card decision controls while busy and leaves reports to the work chat', () => {
     const action = vi.fn();
-    const view = render(
-      <NeoWorkCard work={work} card={testCard(work)} busy disabled={false} onAction={action} />
-    );
+    const view = render(<NeoWorkCard work={work} card={testCard(work)} />);
     expect(screen.queryByRole('button', { name: 'Starting…' })).toBeNull();
     expect(action).not.toHaveBeenCalled();
     view.rerender(
@@ -106,9 +96,6 @@ describe('Neo MVP controls', () => {
           sessionId: 'worker-one',
           report: 'A draft, not a booking.',
         })}
-        busy={false}
-        disabled={false}
-        onAction={action}
       />
     );
     expect(screen.getByText('Reply received')).toBeTruthy();
@@ -116,15 +103,12 @@ describe('Neo MVP controls', () => {
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.queryByText('A draft, not a booking.')).toBeNull();
   });
-  it('shows existing-chat work status with stop only in its menu', () => {
+  it('shows existing-chat work status without card actions', () => {
     const action = vi.fn();
     const view = render(
       <NeoWorkCard
         work={{ ...work, targetSessionId: 'project-chat' }}
         card={testCard({ ...work, targetSessionId: 'project-chat' })}
-        busy={false}
-        disabled={false}
-        onAction={action}
       />
     );
     expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
@@ -142,15 +126,10 @@ describe('Neo MVP controls', () => {
           sessionId: 'project-chat',
           status: 'queued',
         })}
-        busy={false}
-        disabled={false}
-        onAction={action}
       />
     );
     expect(screen.getByText('Handed to HyperNeo')).toBeTruthy();
-    expect(
-      screen.queryAllByRole('button').map((button) => button.getAttribute('aria-label'))
-    ).toEqual(['Card actions']);
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
     expect(action).not.toHaveBeenCalled();
     view.rerender(
       <NeoWorkCard
@@ -166,9 +145,6 @@ describe('Neo MVP controls', () => {
           sessionId: 'project-chat',
           status: 'cancelled',
         })}
-        busy={false}
-        disabled={false}
-        onAction={action}
       />
     );
     expect(screen.getByText('Stopped')).toBeTruthy();

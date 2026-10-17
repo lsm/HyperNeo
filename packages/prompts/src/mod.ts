@@ -95,7 +95,6 @@ import mdneoSystemRootRuleSave from './neo/system/root-rule-save.md' with { type
 import mdneoSystemRootSnapshotScope from './neo/system/root-snapshot-scope.md' with {
   type: 'text',
 };
-import mdneoWorkProposeDescription from './neo/operations/work-propose.md' with { type: 'text' };
 import mdneoWorkDelegated from './neo/work/delegated.md' with { type: 'text' };
 import mdneoWorkDoneCheck from './neo/work/done-check.md' with { type: 'text' };
 import mdneoWorkDoneCheckAskForeign from './neo/work/done-check-ask-foreign.md' with {
@@ -387,7 +386,6 @@ const registry: Record<string, string> = {
   'neo/system/root-role.md': mdneoSystemRootRole,
   'neo/system/root-rule-save.md': mdneoSystemRootRuleSave,
   'neo/system/root-snapshot-scope.md': mdneoSystemRootSnapshotScope,
-  'neo/operations/work-propose.md': mdneoWorkProposeDescription,
   'neo/work/delegated.md': mdneoWorkDelegated,
   'neo/work/done-check-ask-foreign.md': mdneoWorkDoneCheckAskForeign,
   'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
@@ -577,7 +575,6 @@ export const {
   NEO_ROOT_ROLE,
   NEO_ROOT_RULE_SAVE,
   NEO_ROOT_SNAPSHOT_SCOPE,
-  NEO_WORK_PROPOSE_DESCRIPTION,
   NEO_WORK_DELEGATED,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
   NEO_WORK_DONE_CHECK_ASK_OWNED,

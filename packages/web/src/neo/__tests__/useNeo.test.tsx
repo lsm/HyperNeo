@@ -192,59 +192,6 @@ describe('useNeo root conversation', () => {
   });
 });
 
-function RevisionProbe({ action }: { action: 'approve' | 'answer' | 'tick' }) {
-  const neo = useNeo();
-  return (
-    <>
-      <button
-        disabled={!neo.snapshot}
-        onClick={() =>
-          void (action === 'approve'
-            ? neo.approveAsk('ask-1')
-            : action === 'answer'
-              ? neo.answerAskItem('ask-1', 'i1', 'Yes')
-              : neo.tickAskItem('ask-1', 'i1'))
-        }
-      >
-        Apply
-      </button>
-      {neo.error && <p role="alert">{neo.error}</p>}
-    </>
-  );
-}
-
-describe('useNeo revision guards', () => {
-  it.each(['approve', 'answer', 'tick'] as const)(
-    'sends the displayed revision with %s and exposes a stale refusal',
-    async (action) => {
-      request.mockImplementation(async (_method: string, { name }: { name: string }) =>
-        name === `neo.ask.${action}`
-          ? { ok: false, reason: 'stale_revision: refresh the ask.' }
-          : {
-              ok: true,
-              sessionId: 'root',
-              projects: [],
-              work: [],
-              asks: [{ id: 'ask-1', revision: 7 }],
-            }
-      );
-      render(<RevisionProbe action={action} />);
-      const button = screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement;
-      await waitFor(() => expect(button.disabled).toBe(false));
-      fireEvent.click(button);
-      await waitFor(() =>
-        expect(request).toHaveBeenCalledWith('operation.invoke', {
-          name: `neo.ask.${action}`,
-          input: expect.objectContaining({ askId: 'ask-1', expectedRevision: 7 }),
-        })
-      );
-      await waitFor(() =>
-        expect(screen.getByRole('alert').textContent).toContain('stale_revision')
-      );
-    }
-  );
-});
-
 function DetailProbe() {
   const neo = useNeo();
   return (

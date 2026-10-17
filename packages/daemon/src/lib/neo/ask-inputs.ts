@@ -6,7 +6,6 @@ import type {
 } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { NEO_ASK_QUESTION_REASONS } from '@hyperneo/shared/types/neo-snapshot';
-import { NeoAskStateViewSchema } from './card-view-schema.ts';
 import { GITHUB_REF_PATH } from '../github/parse-pr-url.ts';
 import { countNeoAskWatches, NEO_ASK_WATCH_MAX } from './packs/coding/watch-checks.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -37,8 +36,6 @@ const CheckKind = z
 const NEO_ASK_ITEM_KINDS = ['decision', 'action', 'approval', 'wait'] as const;
 
 const NEO_ASK_ITEM_OUTCOME_KINDS = ['state', 'answer'] as const;
-
-const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 
 export const NeoAskSchema = z.object({
   revision: z.number().int().nonnegative().optional(),
@@ -102,17 +99,6 @@ export const NeoAskSchema = z.object({
   updatedAt: z.number(),
   settledAt: z.number().nullable(),
 });
-
-export const AskResult = z.union([
-  Failure,
-  z.object({
-    ok: z.literal(true),
-    ask: NeoAskSchema,
-    view: NeoAskStateViewSchema.nullable().optional(),
-    packBriefing: z.string().optional(),
-    note: z.string().optional(),
-  }),
-]);
 
 const WatchUrl = z
   .string()
@@ -214,43 +200,6 @@ const ExpectedRevision = z
   .nonnegative()
   .default(0)
   .describe('The revision from the current ask view; refresh after stale_revision.');
-
-export const Tick = z.object({
-  expectedRevision: ExpectedRevision,
-  askId: z.string().min(1),
-  itemId: z.string().min(1),
-  state: z.enum(['pending', 'met', 'needs_you', 'reported']),
-  evidence: z.string().trim().min(1).max(2000).optional(),
-});
-
-export const Question = z.object({
-  askId: z.string().min(1),
-  question: z.string().trim().min(1).max(200),
-  decides: Decides,
-  because: Because.optional(),
-  options: z
-    .union([z.tuple([]), Options])
-    .default([])
-    .describe(
-      'Optional choices in display order: decline/negative first (left), agree/positive last (right). Omit or pass [] for an open question answered in chat.'
-    ),
-  kind: z.enum(NEO_ASK_ITEM_KINDS),
-});
-
-export const Answer = z.object({
-  expectedRevision: ExpectedRevision,
-  askId: z.string().min(1),
-  itemId: z.string().min(1),
-  choice: z.string().trim().min(1).max(1000),
-  option: z.string().optional(),
-  humanMessageId: z.string().min(1).max(200).optional(),
-});
-
-export const Approve = z.object({ askId: z.string().min(1), expectedRevision: ExpectedRevision });
-
-export const Fold = z
-  .object({ askId: z.string().min(1), intoAskId: z.string().min(1) })
-  .refine((input) => input.askId !== input.intoAskId, 'Fold an ask into another ask.');
 
 export const Edit = z
   .object({

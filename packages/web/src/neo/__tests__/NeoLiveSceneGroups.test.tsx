@@ -197,7 +197,7 @@ describe('NeoLive work scene groups', () => {
       within(card)
         .queryAllByRole('button')
         .map((button) => button.getAttribute('aria-label') ?? button.textContent)
-    ).toEqual(['Card actions', 'Open chat']);
+    ).toEqual(['Open chat']);
     fireEvent.click(within(card).getByText('Handed to HyperNeo'));
     expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('shared-session');
     expect(model.act).not.toHaveBeenCalled();
