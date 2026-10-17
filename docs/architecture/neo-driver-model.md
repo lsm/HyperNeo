@@ -57,6 +57,8 @@ What each layer never does:
 
 ## The adapter interface
 
+The sketch below shows the core operations. The current contract in `packages/daemon/src/lib/drivers/types.ts` also has optional capabilities such as `steer`, `queue`, `withdraw` and `archive`; each adapter declares its actual supported set.
+
 ```ts
 type WorkStatus = 'queued' | 'running' | 'needs_you' | 'done' | 'failed' | 'stopped';
 type Place = { machine: string; folder?: string; spaceId?: string; name: string };
@@ -102,9 +104,9 @@ interface WorkAdapter {
 }
 ```
 
-- Five verbs. Finding a place is part of `find`, a deep link is a field, and push events wait: status is refreshed on read and on a timer until a backend can push.
+- Five core verbs in this sketch. Finding a place is part of `find`, a deep link is a field, and push events wait: status is refreshed on read and on a timer until a backend can push.
 - Rejections are result values with a named reason, following ADR 0006; `detail` carries the backend's own words. `unknown_adapter` and `unsupported` come from the operation layer (an adapter id that isn't registered, or a verb it doesn't declare). `not_found` and `not_open` cover a ref that doesn't exist or is archived or ended, such as `message.send`'s archived and ended rejections. `not_delivered` means the backend refused or dropped the message. `unreachable` means the other daemon didn't answer. `invalid_place` is a folder or Space the adapter can't start work in.
-- `capabilities` makes a missing verb explicit. Claude Code Desktop has no `stop` today, so its adapter declares four verbs and Neo tells the user instead of failing.
+- `capabilities` makes a missing verb explicit. The `claude-desktop` adapter declares `find`, `start`, `send`, `steer`, `status` and `archive`; its send/steer owner gate may refuse a particular session. It declares no `stop`, `queue` or `withdraw`, so Neo reports unsupported control and offers Open session.
 - A different implementation of the same backend can replace an adapter in the registry without touching Neo.
 
 ## Operations
@@ -230,12 +232,13 @@ Uses Claude Desktop's local session records for discovery and its standard deep 
 | `start` | Validate a local daemon-session reply destination before creation. Bootstrap a short `claude -p --session-id <uuid> -n <title>` opening, then launch `claude --desktop --resume <uuid>` under a pseudo-terminal. Recheck the resulting owner before sending the real task. If Desktop owns it or ownership is unknown, report partial creation without task delivery; never resume it headlessly. |
 | `send`, `steer` | For a confirmed live CLI/SDK owner only, use the registered inbox socket through the same daemon-owned sender. Exact message bytes and native receipt IDs replace the one-shot Haiku relay and text matching. Desktop-owned sessions return unsupported; unknown owners return `unreachable` without fallback. |
 | `find`, `status` | `claude agents --json` supplies live status, PID and session identity; join the exact registration to classify the owner. App records supply title, folder, archive state and activity; transcripts supply replies and exact input-receipt evidence. Observation does not grant control. |
+| `archive` | Existing record-based archive path: require exactly one matching app record, recheck its identity and live status, then call the archive admission gate. Atomically replace the record with `isArchived: true`, preserving its other fields; this does not stop a turn. |
 | `link` | `claude://claude.ai/epitaxy/local_<uuid>`. |
 | `stop`, `queue`, `withdraw` | No verified outside-daemon Desktop management interface. These capabilities are not declared for external sessions; open the app to act there. |
 
 Constraints:
 
-- `claude --desktop` is only a UI launcher and requires a terminal, so use `script -q /dev/null claude --desktop --resume <uuid>`. Do not spoof a renderer, inject JavaScript, bypass origin checks or rewrite app records.
+- `claude --desktop` is only a UI launcher and requires a terminal, so use `script -q /dev/null claude --desktop --resume <uuid>`. Do not spoof a renderer, inject JavaScript, bypass origin checks or rewrite app records to claim ownership, change permissions or manufacture delivery/control evidence. The existing admitted `archive` record update above is a separate, version-sensitive mechanism; it is not an outside-daemon Desktop management API.
 - CLI/SDK ownership requires the inspected CLI 2.1.295 or app-bundled CLI 2.1.299; a matching Desktop registration remains Desktop-owned even on a newer version. Direct inbox delivery accepts only the verified 2.1.295 protocol and revalidates the live PID/session registration and its registered path. A version or owner mismatch is a refusal, not permission to restore a session.
 - The inbox NDJSON framing is undocumented and may change. `next` wakes idle CLI sessions or delivers at the next tool round; it does not interrupt a tool. No reliable external turn-end queue, withdrawal or stop command was verified, so no such socket control is invented.
 - A completed socket write returns `delivered:false, unconfirmed:true` with its exact input receipt. Immediate peer acceptance need not produce an ACK. Neither a write nor a peer transport receipt proves work completion or human approval.
