@@ -98,6 +98,25 @@ export function planCodingTodoClaims(
   ];
 }
 
+export function codingTodoOwnPrs(
+  todo: Pick<NeoTodo, 'check' | 'startedAt'>,
+  prs: readonly NeoWorkPr[]
+): NeoWorkPr[] {
+  const named = todo.check?.params.urls;
+  const keys = new Set(
+    (Array.isArray(named) ? named : []).flatMap((url) =>
+      typeof url === 'string' ? (codingPrKey(url) ?? []) : []
+    )
+  );
+  return prs.filter(
+    (pr) =>
+      keys.has(codingPrKey(pr.url) ?? '') ||
+      todo.startedAt === null ||
+      pr.mergedAt === undefined ||
+      pr.mergedAt >= todo.startedAt
+  );
+}
+
 const prNumber = (pr: NeoWorkPr) => `#${pr.url.replace(/\/+$/, '').split('/').pop()}`;
 
 export function codingTodoCheck(
@@ -161,8 +180,9 @@ export function createCodingTodoPack(
       repo.claim(todo.id, planCodingTodoClaims(todo, todo.report, []), Date.now());
       const urls = repo.urls(todo.id);
       if (!urls.length) return codingTodoCheck(todo.check.kind, []);
-      const prs = await readPrs(urls);
-      if (!prs || urls.some((url) => !prs.some((pr) => codingPrKey(pr.url) === url))) return null;
+      const read = await readPrs(urls);
+      if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url))) return null;
+      const prs = codingTodoOwnPrs(todo, read);
       repo.record(todo.id, prs, Date.now());
       return codingTodoCheck(todo.check.kind, prs);
     },
