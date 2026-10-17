@@ -105,8 +105,14 @@ export function createNeoAskRecordOperations(
             request: input.request,
             createdAt: Date.now(),
           });
-        for (const todo of input.todos.slice(store.listTodos(ask.id).length)) {
-          const added = await addNeoTodo(store, sessions, controls.start, ask.id, todo);
+        const recorded = store.listTodos(ask.id);
+        for (const [index, todo] of input.todos.entries()) {
+          const row = recorded[index];
+          const added = !row
+            ? await addNeoTodo(store, sessions, controls.start, ask.id, todo)
+            : todo.start && row.state === 'todo'
+              ? await controls.start(row.id)
+              : { ok: true as const };
           if (!added.ok) return added;
         }
         return { ok: true, ask, todos: store.listTodos(ask.id) };
