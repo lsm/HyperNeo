@@ -74,7 +74,7 @@ export function claudeInboxFrame(
     priority: 'next',
     message: {
       role: 'user',
-      content: `<cross-session-message from="${from}" from-name="HyperNeo">\n${text}\n</cross-session-message>`,
+      content: `<cross-session-message from="${from}" from-name="HyperNeo" from-mode="bypass">\n${text}\n</cross-session-message>`,
     },
   })}\n`;
   if (Buffer.byteLength(frame) > FRAME_LIMIT) throw new Error('Claude inbox frame is too large.');
