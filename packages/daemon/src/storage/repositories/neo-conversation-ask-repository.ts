@@ -6,6 +6,7 @@ import type {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import { admitNeoConversationAsk } from '../../lib/neo/conversation-ask.ts';
 import {
   ensurePrompt,
@@ -26,7 +27,11 @@ export type NeoConversationAskImageRow = {
   height: number | null;
   thumbnail: { mediaType: string; data: string } | null;
 };
-type IntakePrompt = SDKUserMessage & { inputKind?: unknown };
+type IntakePrompt = SDKUserMessage & {
+  inputKind?: unknown;
+  replyTo?: NeoReplyTo;
+  humanContent?: SDKUserMessage['message']['content'];
+};
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
 const page = z.object({
   conversationId: z.uuid(),
@@ -106,7 +111,8 @@ export function prepareNeoIntakeAsk(conversationId: string, message: IntakePromp
     conversationId,
     requestId: message.uuid,
     askOrigin: { sessionId: message.session_id, messageId: message.uuid },
-    content: message.message.content,
+    content: message.humanContent ?? message.message.content,
+    ...(message.replyTo ? { replyTo: message.replyTo } : {}),
   });
   return 'value' in admitted
     ? admitted

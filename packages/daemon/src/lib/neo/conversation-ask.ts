@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { SendMessageInputSchema } from '../messaging/message-send.ts';
 
+export const NeoReplyToSchema = z
+  .object({ kind: z.enum(['question', 'todo', 'message']), id: z.string().trim().min(1).max(160) })
+  .strict();
+
 export const NeoConversationAskSchema = z
   .object({
     conversationId: z.uuid(),
@@ -18,6 +22,7 @@ export const NeoConversationAskSchema = z
       })
       .strict(),
     content: SendMessageInputSchema.shape.message.shape.message.shape.content,
+    replyTo: NeoReplyToSchema.optional(),
   })
   .strict()
   .superRefine((input, context) => {

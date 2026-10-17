@@ -12,7 +12,7 @@ import type {
 } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
-import { NeoConversationAskSchema } from './conversation-ask.ts';
+import { NeoConversationAskSchema, NeoReplyToSchema } from './conversation-ask.ts';
 import { neoImageSize } from './image-size.ts';
 import {
   NeoConversationPageInput,
@@ -80,6 +80,7 @@ export const NeoConversationAskPageSchema = z.object({
   content: z.array(z.union([ImageRefSchema, z.record(z.string(), z.unknown())])),
   sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   createdAt: z.iso.datetime(),
+  replyTo: NeoReplyToSchema.optional(),
   delivery: z.object({ state: z.literal('failed') }).optional(),
 });
 

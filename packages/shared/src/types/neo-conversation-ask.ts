@@ -1,4 +1,5 @@
 import type { SDKUserMessage } from '../sdk/sdk.d.ts';
+import type { NeoReplyTo } from './neo-ask.ts';
 import type { NeoInputOrigin } from './neo-message.ts';
 
 export interface NeoConversationAskInput {
@@ -6,6 +7,7 @@ export interface NeoConversationAskInput {
   readonly requestId: string;
   readonly askOrigin: NeoInputOrigin;
   readonly content: SDKUserMessage['message']['content'];
+  readonly replyTo?: NeoReplyTo;
 }
 
 export interface NeoConversationAsk extends NeoConversationAskInput {
