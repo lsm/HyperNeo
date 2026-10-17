@@ -56,14 +56,13 @@ export function planNeoCardPrCandidates(input: {
     ...(pr ? [`https://${pr.host}/${pr.owner}/${pr.repo}/pull/${pr.number}`] : []),
     ...(input.subscribed ?? []),
   ];
-  const named = new Set(
-    [...followed, ...extractNeoWorkPrUrls(input.report), ...(input.mentioned ?? [])].map(key)
-  );
+  const reported = [...extractNeoWorkPrUrls(input.report), ...(input.mentioned ?? [])];
+  const named = new Set([...followed, ...reported].map(key));
   const onBranch = new Set(input.branch.map(key));
   const opened = new Set((input.opened ?? []).map(key));
   const seen = new Set<string>();
   const listed = neoCardPrUrls(
-    [...followed, ...extractNeoWorkPrUrls(input.report, input.stored), ...(input.mentioned ?? [])],
+    [...followed, ...reported, ...extractNeoWorkPrUrls(null, input.stored)],
     input.branch
   );
   const known = new Set(listed.map(key));

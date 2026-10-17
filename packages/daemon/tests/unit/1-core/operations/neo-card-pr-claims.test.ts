@@ -56,10 +56,22 @@ describe('planNeoCardPrCandidates', () => {
       })
     ).toEqual([
       { url: pull(2), claim: 'named' },
-      { url: pull(4), claim: 'mentioned' },
       { url: pull(1), claim: 'named' },
       { url: pull(3), claim: 'named' },
+      { url: pull(4), claim: 'mentioned' },
     ]);
+  });
+});
+
+describe('report candidates with legacy rejections', () => {
+  test('includes report PRs even when the stored legacy candidates fill their read batch', () => {
+    const candidates = planNeoCardPrCandidates({
+      report: pull(102),
+      branch: [],
+      stored: Array.from({ length: 9 }, (_, index) => ({ url: pull(index + 1) })),
+      window: { start: 10, end: 20 },
+    });
+    expect(candidates[0]).toMatchObject({ url: pull(102), claim: 'named' });
   });
 });
 
