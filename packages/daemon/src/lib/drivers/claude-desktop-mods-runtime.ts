@@ -43,6 +43,7 @@ async function startRuntime(file: string, deps: Deps) {
   const lock = new DatabaseLock(`${file}.owner`);
   const outbox = new ClaudeDesktopOutboxRepository(deps.db);
   const listeners = new Set<(sessionId: string) => void>();
+  const seen = new Map<string, { pid: number; at: number }>();
   let server: Awaited<ReturnType<typeof createClaudeDesktopModsServer>> | undefined;
   let published: Stats | undefined;
   let staged: string | undefined;
@@ -79,6 +80,7 @@ async function startRuntime(file: string, deps: Deps) {
       onError: deps.onError,
       persist: async (exchange, pid, idle) => {
         const reply = outbox.exchange(exchange, pid, idle);
+        seen.set(exchange.sessionId, { pid, at: Date.now() });
         for (const listener of listeners) listener(exchange.sessionId);
         await deps.onExchange?.(exchange.sessionId);
         return reply;
@@ -97,12 +99,21 @@ async function startRuntime(file: string, deps: Deps) {
   return {
     connectionFile: file,
     outbox,
+    connected(sessionId: string, pid: number) {
+      const entry = seen.get(sessionId);
+      return entry?.pid === pid && Date.now() - entry.at < 5000;
+    },
     subscribe(listener: (sessionId: string) => void) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
     },
     close() {
-      closing ??= clean().finally(() => listeners.clear());
+      closing ??= clean().finally(() => {
+        const sessions = [...seen.keys()];
+        seen.clear();
+        for (const sessionId of sessions) for (const listener of listeners) listener(sessionId);
+        listeners.clear();
+      });
       return closing;
     },
   };

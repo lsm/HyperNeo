@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { canonicalJson } from '../../lib/agent/prompt-comparison.ts';
 import type { Result, WorkWithdrawal } from '../../lib/drivers/types.ts';
 import { reject } from '../../lib/drivers/work-operations.ts';
 import { withBusyRetry } from '../busy-retry.ts';
@@ -134,6 +135,9 @@ export class ClaudeDesktopOutboxRepository {
   enqueue(sessionId: string, from: string, input: Input): Job {
     return enqueueCommand(sessionId, from, input, this);
   }
+  transaction<T>(effect: () => T): T {
+    return withBusyRetry(() => this.db.transaction(effect, 'immediate')());
+  }
   withdraw(sessionId: string, from: string, id: string): Result<WorkWithdrawal> {
     return withBusyRetry(() =>
       this.db.transaction(() => withdrawCommand(sessionId, from, id, this), 'immediate')()
@@ -155,6 +159,62 @@ export class ClaudeDesktopOutboxRepository {
       (job.queue === queue(sessionId, 'stop') || job.queue === queue(sessionId, 'submit'))
       ? job
       : null;
+  }
+  reportChanges(sessionId: string, publish: (job: Job, fact: Record<string, unknown>) => void) {
+    return withBusyRetry(() =>
+      this.db.transaction(() => {
+        const active = this.journal.active(sessionId);
+        for (const kind of ['stop', 'submit'] as const) {
+          let after: { createdAt: number; id: string } | undefined;
+          for (;;) {
+            const batch = this.jobs.listJobs({
+              queue: queue(sessionId, kind),
+              oldestFirst: true,
+              after,
+            });
+            if (!batch.length) break;
+            for (const job of batch) {
+              if (job.payload.reportFinal) continue;
+              const completedTurn =
+                kind === 'stop' && typeof job.payload.instanceId === 'string'
+                  ? this.journal
+                      .events(sessionId, job.payload.instanceId)
+                      .find(
+                        (event) =>
+                          event.kind === 'turn.complete' && event.turnId === job.payload.turnId
+                      )
+                  : undefined;
+              const fact = {
+                commandId: job.id,
+                operation: kind,
+                status: job.status,
+                error: job.error,
+                apiReceipt: job.result,
+                sessionObservation: active?.state ?? null,
+                ownerChanged:
+                  typeof job.payload.instanceId === 'string' &&
+                  job.payload.instanceId !== active?.instanceId,
+                ...(completedTurn ? { completedTurn } : {}),
+              };
+              const state = canonicalJson(fact);
+              if (job.payload.reportState === state) continue;
+              publish(job, fact);
+              const final =
+                job.status === 'dead' ||
+                (job.status === 'completed' &&
+                  (kind === 'submit' || !!completedTurn || fact.ownerChanged));
+              this.db
+                .prepare(
+                  "UPDATE job_queue SET payload = json_set(payload, '$.reportState', ?, '$.reportFinal', ?) WHERE id = ?"
+                )
+                .run(state, final ? 1 : 0, job.id);
+            }
+            const last = batch.at(-1)!;
+            after = { createdAt: last.createdAt, id: last.id };
+          }
+        }
+      }, 'immediate')()
+    );
   }
   applyFacts(exchange: Exchange, after: number, ownerPid: number): void {
     for (const kind of ['stop', 'submit'] as const) {

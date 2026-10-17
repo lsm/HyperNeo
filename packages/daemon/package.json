@@ -14,6 +14,7 @@
     "./lib/data-dir": "./src/lib/data-dir.ts",
     "./lib/drivers/claude-desktop-mods-server": "./src/lib/drivers/claude-desktop-mods-server.ts",
     "./lib/drivers/claude-desktop-mods-runtime": "./src/lib/drivers/claude-desktop-mods-runtime.ts",
+    "./lib/drivers/claude-desktop-mods-control": "./src/lib/drivers/claude-desktop-mods-control.ts",
     "./storage/repositories/claude-desktop-bridge": "./src/storage/repositories/claude-desktop-bridge-repository.ts",
     "./storage/repositories/claude-desktop-outbox": "./src/storage/repositories/claude-desktop-outbox-repository.ts",
     "./lib/runtime-server": "./src/lib/runtime-server/index.ts",
