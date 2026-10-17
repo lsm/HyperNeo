@@ -4,7 +4,7 @@ import type {
   NeoQuestionAnswer,
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import {
@@ -127,6 +127,15 @@ function QuestionBox({
   const [picked, setPicked] = useState<string[]>(
     question.kind === 'start' ? listed.map((todo) => todo.id) : []
   );
+  const seen = useRef(listed.map((todo) => todo.id));
+  const ids = listed.map((todo) => todo.id).join(',');
+  useEffect(() => {
+    const now = ids ? ids.split(',') : [];
+    const added = now.filter((id) => !seen.current.includes(id));
+    seen.current = now;
+    if (added.length)
+      setPicked((current) => [...current.filter((id) => now.includes(id)), ...added]);
+  }, [ids]);
   const toggle = (value: string, on: boolean) =>
     setPicked((current) => (on ? [...current, value] : current.filter((item) => item !== value)));
   const reply = onReply && (

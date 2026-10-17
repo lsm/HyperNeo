@@ -120,14 +120,11 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(started).toEqual([retry.ok && retry.todos[0].id]);
   });
 
-  test('start in a turn the human did not start is refused before anything is written', async () => {
-    const { call, store } = setup();
-    expect(await call('neo.ask.open', opening, turn('m2', false))).toEqual({
-      ok: false,
-      reason:
-        'start_needs_human: start:true only in a turn the human started; ask a start question instead.',
-    });
-    expect(store.listAsks(undefined, 10)).toEqual([]);
+  test('start in a turn the human did not start still starts', async () => {
+    const { call, started } = setup();
+    const opened = await call('neo.ask.open', opening, turn('m2', false));
+    if (!opened.ok) throw new Error(opened.reason);
+    expect(started).toEqual([opened.todos[0].id]);
   });
 
   test('a start that lands while settle stops other sessions is stopped after the ask settles', async () => {

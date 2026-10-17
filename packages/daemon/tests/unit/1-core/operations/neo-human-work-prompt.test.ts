@@ -17,7 +17,9 @@ describe('current human work guidance', () => {
     expect(delegation).toContain(
       "When the human's current message asks you to do clear, bounded work, add its todos with start:true"
     );
-    expect(delegation).toContain('otherwise add them without start and ask one start question');
+    expect(delegation).toContain(
+      "otherwise add them without start; the daemon lists them in the ask's start question"
+    );
   });
 
   test.each([
@@ -37,7 +39,7 @@ describe('current human work guidance', () => {
     const setUp = neoPrompt(turn.projectId)
       .split('When the human asks only to set up work without starting it')[1]!
       .split('\n\n')[0]!;
-    expect(setUp).toContain('open the ask with its todos in that turn and ask the start question');
+    expect(setUp).toContain('open the ask with its todos in that turn without start');
     expect(setUp).toContain('never describe a pretend todo');
   });
 

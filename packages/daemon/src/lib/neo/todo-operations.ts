@@ -1,4 +1,4 @@
-import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
@@ -8,6 +8,7 @@ import type {
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { isLocalUser } from '../operations/caller.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
+import { neoStartQuestionTitle } from './start-question.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -69,7 +70,49 @@ export async function addNeoTodo(
 ): Promise<{ ok: true; todo: NeoTodo } | Rejection> {
   const added = todos.addTodo(crypto.randomUUID(), askId, input, Date.now());
   if (input.target) sessions.create(added.id, input.target);
-  return input.start ? start(added.id) : { ok: true, todo: added };
+  if (input.start) return start(added.id);
+  if (added.instruction) joinNeoStartQuestion(todos, added);
+  return { ok: true, todo: added };
+}
+
+export function planNeoStartQuestionJoin(
+  todo: NeoTodo,
+  questions: readonly NeoQuestion[],
+  todos: readonly NeoTodo[]
+): { questionId: string | null; startTodos: string[]; text: string } {
+  const open = questions.find((question) => question.kind === 'start' && question.state === 'open');
+  const startable = (id: string) =>
+    todos.some((item) => item.id === id && item.state === 'todo' && item.instruction);
+  const startTodos = [...new Set([...(open?.startTodos ?? []).filter(startable), todo.id])];
+  const text = neoStartQuestionTitle(
+    startTodos.map((id) => ({ title: todos.find((item) => item.id === id)?.title }))
+  );
+  return { questionId: open?.id ?? null, startTodos, text };
+}
+
+function joinNeoStartQuestion(todos: NeoAskTodoRepository, todo: NeoTodo): void {
+  const plan = planNeoStartQuestionJoin(
+    todo,
+    todos.listQuestions(todo.askId),
+    todos.listTodos(todo.askId)
+  );
+  const now = Date.now();
+  if (plan.questionId) todos.extendStartQuestion(plan.questionId, plan.startTodos, plan.text, now);
+  else
+    todos.askQuestion(
+      crypto.randomUUID(),
+      todo.askId,
+      {
+        text: plan.text,
+        kind: 'start',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: plan.startTodos,
+      },
+      now
+    );
 }
 
 const Edit = z.object({
@@ -118,17 +161,6 @@ export function requireNeoAskOwner(ask: NeoAsk | null, caller: OperationCaller):
   if (!isLocalUser(caller) && caller.sessionId !== ask.sessionId)
     return fail('not_owner: another Neo session owns this ask.');
   return { value: ask };
-}
-
-export function requireNeoHumanStart(
-  input: { start: boolean },
-  caller: OperationCaller
-): Gate<true> {
-  return !input.start || isLocalUser(caller) || (caller.neoTurn?.human && caller.neoTurn.isLive())
-    ? { value: true }
-    : fail(
-        'start_needs_human: start:true only in a turn the human started; ask a start question instead.'
-      );
 }
 
 export function requireNeoTodoOwner(
@@ -226,7 +258,6 @@ export function createNeoTodoOperations(
 
   const add = (superpipe({})('neo.todo.add') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(requireNeoHumanStart, ['input', 'caller'], 'result:outcome')
     .pipe(
       (input: z.infer<typeof Add>, caller: OperationCaller) =>
         requireNeoAskOwner(todos.getAsk(input.askId), caller),
@@ -296,7 +327,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own: title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). start:true starts it now, only in a turn the human started; otherwise ask a start question.',
+        'Add a todo to an open ask you own: title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

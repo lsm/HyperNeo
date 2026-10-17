@@ -1,4 +1,4 @@
-import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
@@ -49,6 +49,7 @@ export interface NeoTodoRunnerDeps {
   ): Promise<OperationOutcome>;
   packs(): readonly NeoPack[];
   tell(ask: NeoAsk, todo: NeoTodo, note: string): Promise<void>;
+  tellAsk(ask: NeoAsk, messageId: string, note: string): Promise<void>;
   changed(): void;
 }
 
@@ -151,6 +152,19 @@ export function neoTodoNote(todo: NeoTodo): string {
   return `Todo "${todo.title}": its session stopped, which is not completion; the todo stays doing ${
     todo.check ? 'until its check passes' : 'until it is ticked with evidence'
   }. Its last report:\n${todo.report ?? '(none)'}`;
+}
+
+export function neoAskIdleNote(
+  ask: NeoAsk,
+  todos: readonly NeoTodo[],
+  questions: readonly NeoQuestion[]
+): string | null {
+  if (todos.some((todo) => todo.state === 'doing')) return null;
+  if (questions.some((question) => question.state === 'open')) return null;
+  const listed = todos.filter((todo) => todo.state !== 'removed');
+  return `Ask "${ask.title}" is open, but no todo is running and no question is open. Todos: ${
+    listed.map((todo) => `"${todo.title}" ${todo.state}`).join(', ') || 'none'
+  }.`;
 }
 
 export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
@@ -460,6 +474,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         await check(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
           warn('Todo check pending', error)
         );
+      }
+      for (const ask of store.listOpenAsks()) {
+        const note = neoAskIdleNote(ask, store.listTodos(ask.id), store.listQuestions(ask.id));
+        if (note)
+          await deps
+            .tellAsk(ask, `neo-ask-idle:${ask.id}:${ask.updatedAt}`, note)
+            .catch((error) => warn('Idle ask note pending', error));
       }
     },
   };
