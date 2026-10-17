@@ -2153,7 +2153,11 @@ export class NeoService {
   private followedTodo(workId: string): NeoWork | null {
     const todo = this.todos.getTodo(workId);
     const ask = todo ? this.todos.getAsk(todo.askId) : null;
-    return todo && ask?.status === 'open' && (todo.state === 'todo' || todo.state === 'doing')
+    return todo &&
+      ask &&
+      ask.status !== 'dropped' &&
+      ((ask.status === 'open' && (todo.state === 'todo' || todo.state === 'doing')) ||
+        (todo.state === 'done' && this.todoPrs.prs(workId).some((pr) => pr.state === 'MERGED')))
       ? neoTodoCard(todo, ask)
       : null;
   }

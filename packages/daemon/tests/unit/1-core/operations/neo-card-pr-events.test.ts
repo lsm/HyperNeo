@@ -268,6 +268,19 @@ describe('Neo todo pull request events', () => {
     expect(service.todos.getTodo(row.id)?.state).toBe('doing');
     expect(service.cardEvents.listActive()).toEqual([]);
   });
+
+  test('a poll can check the todo before its merge event without dropping that delivery', async () => {
+    const row = todo();
+    prs = [{ ...open, state: 'MERGED' }];
+    await service.todoRunner.refresh(() => {});
+    expect(service.todos.getTodo(row.id)?.state).toBe('done');
+    service.todos.settleAsk(service.todos.getAsk('ask')!, 'done', 'Merged', Date.now());
+    expect(service.endUnfollowedCardTopics(Date.now())).toEqual([]);
+    await event('closed', { state: 'closed', merged: true });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message).toContain('7.closed');
+    expect(service.cardEvents.listActive()).toEqual([]);
+  });
   test('poll evidence relays a new CI problem once and again after it clears', async () => {
     const row = todo();
     service.todoPrs.record(row.id, [{ ...open, checks: 'failing' }], 3);
