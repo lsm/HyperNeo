@@ -136,6 +136,17 @@ describe('neo.message.send replyTo', () => {
     });
   });
 
+  test('a retry records an answer the first send missed, and a reply without words answers nothing', async () => {
+    const id = crypto.randomUUID();
+    await send(id, '在做', { kind: 'question', id: 'q1' });
+    mailbox.db.exec("UPDATE neo_questions SET state = 'open', answer = NULL");
+    await send(id, '在做', { kind: 'question', id: 'q1' });
+    expect(store.getQuestion('q1')).toMatchObject({ state: 'answered', answer: '在做' });
+    mailbox.db.exec("UPDATE neo_questions SET state = 'open', answer = NULL");
+    await send(crypto.randomUUID(), '   ', { kind: 'question', id: 'q1' });
+    expect(store.getQuestion('q1')?.state).toBe('open');
+  });
+
   test('a reply about a todo goes to the ask owner without answering anything', async () => {
     const id = crypto.randomUUID();
     await send(id, 'Use the new session', { kind: 'todo', id: 't1' });

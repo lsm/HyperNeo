@@ -166,8 +166,9 @@ export function recordNeoReplyAnswer(
   input: IntakeInput,
   store: NeoAskTodoRepository
 ): IntakeResult {
-  if (receipt.ok && receipt.created && reply?.question?.state === 'open')
-    store.answerQuestion(reply.question, neoAskText(input.content), 'chat', Date.now());
+  const words = neoAskText(input.content).trim();
+  if (receipt.ok && words && reply?.question?.state === 'open')
+    store.answerQuestion(reply.question, words, 'chat', Date.now());
   return receipt;
 }
 
