@@ -96,7 +96,7 @@ export function toFindQuery(input: FindInput): FindQuery {
         folder: input.folder,
         spaceId: input.spaceId,
         includeClosed: input.includeClosed,
-        limit: input.limit,
+        limit: input.session ? 50 : input.limit,
       };
 }
 
@@ -151,25 +151,29 @@ export function searchFindSession(input: FindInput): FindInput {
   return input.session ? { ...input, text: input.session } : input;
 }
 
-export function resolveFindSession(result: FindResult, input: FindInput): FindResult {
-  if (!input.session) return result;
-  const name = sessionName(input.session);
-  const places = result.places.flatMap((group) => {
+export function keepFindSession(
+  groups: readonly PlaceGroup[],
+  session: string | undefined
+): PlaceGroup[] {
+  if (!session) return [...groups];
+  const name = sessionName(session);
+  return groups.flatMap((group) => {
     const work = group.work.filter((item) => sessionName(item.title) === name);
     return work.length ? [{ ...group, work }] : [];
   });
-  const count = places.reduce((total, group) => total + group.work.length, 0);
-  if (count)
-    return {
-      ...result,
-      places,
-      more: false,
-      session: { name: input.session, match: count === 1 ? 'exact' : 'ambiguous' },
-    };
-  const near = result.places
+}
+
+export function findSessionVerdict(
+  session: string,
+  matched: readonly PlaceGroup[],
+  searched: readonly PlaceGroup[]
+): NonNullable<FindResult['session']> {
+  const count = matched.reduce((total, group) => total + group.work.length, 0);
+  if (count) return { name: session, match: count === 1 ? 'exact' : 'ambiguous' };
+  const near = searched
     .flatMap((group) => group.work.map(({ ref, title }) => ({ ref, title })))
     .slice(0, NEAR_SESSIONS);
-  return { ...result, places: [], session: { name: input.session, match: 'none', near } };
+  return { name: session, match: 'none', near };
 }
 
 export function keepFindId(groups: readonly PlaceGroup[], id: string | undefined): PlaceGroup[] {
@@ -304,11 +308,13 @@ export function combineFindResults(
   budget = FIND_RESULT_BUDGET_CHARS,
   own: ReadonlySet<string> = new Set()
 ): FindResult {
+  const searched = ownPlacesFirst(
+    mergePlaceGroups([...local.groups, ...remote.groups], Number.MAX_SAFE_INTEGER),
+    input.id ? new Set() : own
+  );
+  const named = keepFindSession(searched, input.session);
   const merged = keepFindId(
-    ownPlacesFirst(
-      mergePlaceGroups([...local.groups, ...remote.groups], Number.MAX_SAFE_INTEGER),
-      input.id ? new Set() : own
-    ).slice(0, input.id ? 51 : input.limit + 1),
+    named.slice(0, input.id || input.session ? 51 : input.limit + 1),
     input.id
   );
   const open =
@@ -318,11 +324,12 @@ export function combineFindResults(
           ...group,
           work: group.work.filter((work) => work.status !== 'stopped'),
         }));
-  const fitted = fitFindBudget(open.slice(0, input.limit), budget);
+  const fitted = fitFindBudget(open.slice(0, input.session ? 51 : input.limit), budget);
   return {
     places: fitted.places,
     unreachable: [...local.unreachable, ...remote.unreachable],
     more: fitted.more || remote.more === true || merged.length > input.limit,
+    ...(input.session ? { session: findSessionVerdict(input.session, open, searched) } : {}),
   };
 }
 
@@ -348,7 +355,6 @@ const runFindWork = (superpipe({})('find-work') as PipelineAPI)
   )
   .pipe((asked: { pending: Promise<SourceOutcome> }) => asked.pending, 'asked', 'remote')
   .pipe(combineFindResults, ['local', 'remote', 'input', 'budget', 'own'], 'result')
-  .pipe(resolveFindSession, ['result', 'input'], 'result')
   .pipe(
     (result: FindResult, deps: FindWorkDeps) => {
       deps.mirrorProjects?.(result.places);

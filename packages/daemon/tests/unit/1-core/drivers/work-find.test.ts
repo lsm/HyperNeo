@@ -674,4 +674,30 @@ describe('work.find session', () => {
     });
     expect(missed?.places).toEqual([]);
   });
+
+  test('judges the match before the place limit cuts the result', () => {
+    const places = Array.from({ length: 25 }, (_, n) =>
+      group('laptop', `/focus/p${n}`, 'claude-desktop', 100 - n)
+    );
+    const named = (n: number) => ({
+      ...places[n],
+      work: [{ ...places[n].work[0], title: 'iOS-2' }],
+    });
+    const input = { session: 'iOS-2', includeClosed: false, limit: 20, localOnly: true };
+    const empty = { groups: [], unreachable: [] };
+    const late = combineFindResults(
+      { groups: [...places.slice(0, 24), named(24)], unreachable: [] },
+      empty,
+      input
+    );
+    expect(late.session?.match).toBe('exact');
+    expect(late.places.map((place) => place.place.folder)).toEqual(['/focus/p24']);
+    const twins = combineFindResults(
+      { groups: [named(0), ...places.slice(1, 24), named(24)], unreachable: [] },
+      empty,
+      input
+    );
+    expect(twins.session?.match).toBe('ambiguous');
+    expect(twins.places).toHaveLength(2);
+  });
 });
