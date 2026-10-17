@@ -78,7 +78,7 @@ interface Deps {
   parentDirectory: string;
   registrationsDir: string;
   liveSessions(): Promise<readonly ClaudeLiveSession[]>;
-  persist(exchange: Exchange, ownerPid: number): Promise<Reply>;
+  persist(exchange: Exchange, ownerPid: number, observedIdle: boolean): Promise<Reply>;
   onError(error: unknown): void;
 }
 interface RequestData {
@@ -105,22 +105,24 @@ function parseExchange(request: RequestData): Gate<Exchange> {
   } catch {}
   return { reason: new Response(null, { status: 400 }) };
 }
-async function requireDesktop(exchange: Exchange, deps: Deps): Promise<Gate<number>> {
-  const target = await readClaudeInboxEndpoint(
-    exchange.sessionId,
-    await deps.liveSessions(),
-    deps.registrationsDir
-  );
+async function requireDesktop(exchange: Exchange, deps: Deps) {
+  const live = await deps.liveSessions();
+  const target = await readClaudeInboxEndpoint(exchange.sessionId, live, deps.registrationsDir);
   return !('ok' in target) && target.version === '2.1.299'
-    ? { value: target.pid }
+    ? {
+        value: {
+          pid: target.pid,
+          idle: live.find((row) => row.pid === target.pid)?.status === 'idle',
+        },
+      }
     : { reason: new Response(null, { status: 409 }) };
 }
 async function persistExchange(
   exchange: Exchange,
-  ownerPid: number,
+  owner: { pid: number; idle: boolean },
   deps: Deps
 ): Promise<Response> {
-  const reply = ReplySchema.parse(await deps.persist(exchange, ownerPid));
+  const reply = ReplySchema.parse(await deps.persist(exchange, owner.pid, owner.idle));
   const last = exchange.events.at(-1)?.sequence;
   if (
     (last !== undefined && reply.ack > last) ||
