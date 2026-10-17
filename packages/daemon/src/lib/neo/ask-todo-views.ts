@@ -7,6 +7,7 @@ import type {
   NeoWorkPrReceipt,
   NeoWorkSupersession,
 } from '@hyperneo/shared/types/neo-snapshot';
+import { neoTodoCriterionMet } from './todo-criterion.ts';
 import { neoCodingTodoProgress } from './packs/coding/todo-progress.ts';
 
 export type NeoAskTodoParts = {
@@ -30,7 +31,7 @@ function startedAt(ask: NeoAsk): number | null {
 
 function itemProgress(item: NeoAskItem): Pick<NeoAskTodo, 'state' | 'status'> {
   if (item.removed) return { state: 'cancelled', status: item.removedReason ?? '已取消' };
-  if (item.state === 'met') return { state: 'done', status: '完成标准已满足' };
+  if (neoTodoCriterionMet(item)) return { state: 'done', status: '完成标准已满足' };
   if (item.state === 'reported') return { state: 'running', status: '已回报，等核实' };
   return { state: 'pending', status: '等 daemon 核实' };
 }
@@ -79,7 +80,7 @@ export function projectNeoAskTodos(
         status: owned.map((item) => item.text).join('；') || card?.doneWhen || '等你开始',
       };
     else if (coding) progress = coding;
-    else if (owned.length && owned.every((item) => item.state === 'met'))
+    else if (owned.length && owned.every(neoTodoCriterionMet))
       progress = { state: 'done', status: '完成标准已满足' };
     else if (row.status === 'reported')
       progress = {

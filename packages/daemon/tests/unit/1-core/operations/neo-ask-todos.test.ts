@@ -173,6 +173,22 @@ describe('projectNeoAskViews todo projection', () => {
       ).todos?.[0].state
     ).toBe('running');
   });
+  test.each(['neo', 'daemon', 'human'] as const)(
+    'a readable criterion uses the verification record, not just a claim by %s',
+    (metBy) => {
+      const view = project(
+        [work('w')],
+        [
+          item('merged', { check: 'coding.pr_merged', state: 'met', metBy, deliveredBy: 'w' }),
+          item('standalone', { check: 'coding.deployed', state: 'met', metBy }),
+        ]
+      );
+      expect(view.todos?.map((todo) => todo.state)).toEqual(
+        metBy === 'neo' ? ['running', 'pending'] : ['done', 'done']
+      );
+    }
+  );
+
   test('a report is enough only without a readable completion standard', () => {
     expect(project([work('w')], []).todos?.[0]).toMatchObject({
       state: 'done',

@@ -1,4 +1,5 @@
 import type { NeoAskItem, NeoAskTodo, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { neoTodoCriterionMet } from '../../todo-criterion.ts';
 
 export function neoCodingTodoProgress(
   items: readonly NeoAskItem[],
@@ -26,7 +27,7 @@ export function neoCodingTodoProgress(
     return `${number} 开着，${waiting}`;
   });
   const otherChecks = items.some(
-    (item) => item.check && !item.check.startsWith('coding.pr_') && item.state !== 'met'
+    (item) => item.check && !item.check.startsWith('coding.pr_') && !neoTodoCriterionMet(item)
   );
   const done =
     !otherChecks &&
