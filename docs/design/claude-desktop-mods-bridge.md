@@ -1,5 +1,14 @@
 # Claude Desktop mods bridge
 
+The operation door exposes `work.queue({ ref, message })` and
+`work.withdraw({ ref, queuedSubmissionId })`. `work.adapters` lists them only
+when the adapter advertises and implements the method. They share existing
+remote-caller restrictions and authoritative sender-origin selection with
+`work.send`; unsupported owners never fall back to another delivery path.
+Desktop still requires a local session reply destination, so a qualified
+cross-daemon sender is rejected rather than relabeled as a local peer.
+Integration tests start at `invokeOperation`, not only the adapter boundary.
+
 ## Daemon/adapter integration
 
 Daemon startup owns the explicitly configured mods driver and closes it before
