@@ -753,6 +753,20 @@ export class NeoService {
           ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
           'continues'
         ),
+      tellAsk: async (ask, messageId, note) => {
+        const status =
+          this.processingStatus.get(ask.sessionId) ??
+          neoSessionStatus(this.db.getSession(ask.sessionId)?.processingState);
+        if (status !== 'idle' || this.hasDelivery(ask.sessionId, messageId)) return;
+        await this.deliverForward(
+          ask.sessionId,
+          messageId,
+          note,
+          ask.sessionId,
+          ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
+          'continues'
+        );
+      },
       changed: this.notifyChanged,
     });
     this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged, (cardId) => {

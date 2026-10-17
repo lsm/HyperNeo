@@ -17,7 +17,9 @@ describe('current human work guidance', () => {
     expect(delegation).toContain(
       "When the human's current message asks you to do clear, bounded work, add its todos with start:true"
     );
-    expect(delegation).toContain('otherwise add them without start and ask one start question');
+    expect(delegation).toContain(
+      "otherwise add them without start; the daemon lists them in the ask's start question"
+    );
   });
 
   test.each([

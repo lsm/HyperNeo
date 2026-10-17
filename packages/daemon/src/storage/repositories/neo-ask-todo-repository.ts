@@ -163,6 +163,10 @@ export class NeoAskTodoRepository {
       .all(projectId === undefined ? 0 : 1, projectId ?? null, limit) as NeoAsk[];
   }
 
+  listOpenAsks(): NeoAsk[] {
+    return this.db.prepare(`${ASK_SELECT} WHERE status = 'open'`).all() as NeoAsk[];
+  }
+
   getTodo(id: string): NeoTodo | null {
     const row = this.db.prepare(`${TODO_SELECT} WHERE id = ?`).get(id) as TodoRow | null;
     return row ? toTodo(row) : null;
@@ -269,6 +273,15 @@ export class NeoAskTodoRepository {
       );
     this.touchAsk(askId, now);
     return this.getQuestion(id)!;
+  }
+
+  extendStartQuestion(id: string, startTodos: readonly string[], text: string, now: number): void {
+    const question = this.getQuestion(id);
+    if (!question) return;
+    this.db
+      .prepare("UPDATE neo_questions SET start_todos = ?, text = ? WHERE id = ? AND state = 'open'")
+      .run(JSON.stringify(startTodos), text, id);
+    this.touchAsk(question.askId, now);
   }
 
   answerQuestion(

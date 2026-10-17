@@ -202,30 +202,45 @@ describe('neo.todo operations', () => {
     expect(repo.getTodo(added.todo.id)?.state).toBe('todo');
   });
 
-  test('start:true needs a turn the human started', async () => {
+  test('start:true starts in any Neo turn, not only one the human started', async () => {
     const { call } = setup();
-    const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
     expect(
       await call('neo.todo.add', {
         askId: 'ask',
         title: 'Fix',
         doneWhen: 'Merged',
         instruction: 'Fix it',
-        target,
+        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
         start: true,
       })
-    ).toEqual({
-      ok: false,
-      reason:
-        'start_needs_human: start:true only in a turn the human started; ask a start question instead.',
+    ).toEqual({ ok: false, reason: 'not started' });
+  });
+
+  test('an unstarted todo with an instruction joins the ask start question, ticked', async () => {
+    const { repo, call } = setup();
+    const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
+    const fix = await call('neo.todo.add', {
+      askId: 'ask',
+      title: 'Fix',
+      doneWhen: 'Merged',
+      instruction: 'Fix it',
+      target,
     });
-    await expect(
-      call('neo.todo.add', {
-        askId: 'ask',
-        title: 'Fix',
-        doneWhen: 'Merged',
-        instruction: 'Fix it',
-      })
-    ).rejects.toThrow();
+    if (!fix.ok) throw new Error(fix.reason);
+    expect(repo.listQuestions('ask')).toMatchObject([
+      { kind: 'start', state: 'open', text: '开始「Fix」？', startTodos: [fix.todo.id] },
+    ]);
+    await call('neo.todo.add', { askId: 'ask', title: 'Note', doneWhen: 'Written' });
+    const deploy = await call('neo.todo.add', {
+      askId: 'ask',
+      title: 'Deploy',
+      doneWhen: 'Live',
+      instruction: 'Deploy it',
+      target,
+    });
+    if (!deploy.ok) throw new Error(deploy.reason);
+    expect(repo.listQuestions('ask')).toMatchObject([
+      { kind: 'start', text: '开始这 2 件？', startTodos: [fix.todo.id, deploy.todo.id] },
+    ]);
   });
 });

@@ -3,6 +3,7 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import {
   createNeoTodoRunner,
+  neoAskIdleNote,
   neoTodoNote,
   planNeoTodoCheck,
   planNeoTodoSettled,
@@ -35,6 +36,7 @@ function setup(packDone: boolean | null = null) {
   });
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
+  const askNotes: string[] = [];
   let status: unknown = null;
   const pack = {
     id: 'coding',
@@ -61,6 +63,9 @@ function setup(packDone: boolean | null = null) {
     tell: async (_ask, _todo, note) => {
       told.push(note);
     },
+    tellAsk: async (_ask, messageId) => {
+      askNotes.push(messageId);
+    },
     changed: () => {},
   });
   const add = (check: NeoTodo['check'] = null) => {
@@ -84,12 +89,52 @@ function setup(packDone: boolean | null = null) {
     runner,
     calls,
     told,
+    askNotes,
     add,
     setStatus: (value: unknown) => {
       status = value;
     },
   };
 }
+
+describe('neoAskIdleNote', () => {
+  test('names an open ask that nothing moves, and stays quiet while a todo runs or a question waits', () => {
+    const { store, add } = setup();
+    const ask = store.getAsk('ask')!;
+    const todo = add();
+    expect(neoAskIdleNote(ask, store.listTodos('ask'), [])).toBe(
+      'Ask "iOS card" is open, but no todo is running and no question is open. Todos: "Rows" todo.'
+    );
+    const doing = store.updateTodo(todo, { state: 'doing' }, 2);
+    expect(neoAskIdleNote(ask, [doing], [])).toBeNull();
+    const question = store.askQuestion(
+      'q',
+      'ask',
+      {
+        text: 'Which?',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+      },
+      3
+    );
+    expect(neoAskIdleNote(ask, [todo], [question])).toBeNull();
+  });
+});
+
+describe('idle open asks', () => {
+  test('refresh keys the idle note by ask state, so delivery tells it once', async () => {
+    const { store, runner, add, askNotes } = setup();
+    add();
+    await runner.refresh(() => {});
+    await runner.refresh(() => {});
+    const updatedAt = store.getAsk('ask')!.updatedAt;
+    expect(askNotes).toEqual([`neo-ask-idle:ask:${updatedAt}`, `neo-ask-idle:ask:${updatedAt}`]);
+  });
+});
 
 describe('neo todo runner', () => {
   test('follows a reported todo session for a later PR report without writing legacy work', async () => {
@@ -199,6 +244,7 @@ describe('neo todo runner', () => {
       },
       packs: () => [],
       tell: async () => {},
+      tellAsk: async () => {},
       changed: () => {},
     });
     await runner.start(todo.id);
@@ -232,6 +278,7 @@ describe('neo todo runner', () => {
       tell: async (_ask, _todo, note) => {
         told.push(note);
       },
+      tellAsk: async () => {},
       changed: () => {},
     });
     const result = await failing.start(todo.id);
@@ -279,6 +326,7 @@ describe('neo todo runner uncertainty', () => {
       },
       packs: () => [],
       tell: async () => {},
+      tellAsk: async () => {},
       changed: () => {},
     });
     const result = await flaky.start(todo.id);
@@ -308,6 +356,7 @@ describe('neo todo runner uncertainty', () => {
         completed({ ok: false, reason: 'unsupported', detail: 'This adapter cannot stop.' }),
       packs: () => [],
       tell: async () => {},
+      tellAsk: async () => {},
       changed: () => {},
     });
     expect(await unsupported.stop(store.getTodo(resumed.id)!)).toBeNull();
@@ -317,6 +366,7 @@ describe('neo todo runner uncertainty', () => {
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'Offline.' }),
       packs: () => [],
       tell: async () => {},
+      tellAsk: async () => {},
       changed: () => {},
     });
     expect(await refusing.stop(store.getTodo(resumed.id)!)).toBe('stop_failed: Offline.');

@@ -11,7 +11,6 @@ import {
   type NeoTodoControls,
   NeoTodoDraftSchema,
   requireNeoAskOwner,
-  requireNeoHumanStart,
 } from './todo-operations.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -75,12 +74,6 @@ export function createNeoAskRecordOperations(
 ) {
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(
-      (input: z.infer<typeof Open>, caller: OperationCaller) =>
-        requireNeoHumanStart({ start: input.todos.some((todo) => todo.start) }, caller),
-      ['input', 'caller'],
-      'result:outcome'
-    )
     .pipe(
       (caller: OperationCaller) => requireNeoAskSession(caller, isNeoSession),
       'caller',
