@@ -166,7 +166,7 @@ describe('NeoService.admitWork on the remaining start paths', () => {
         report: 'Could not start the execution: logged out',
       })!;
       db.getDatabase()
-        .prepare("UPDATE neo_asks SET status = 'abandoned' WHERE id = 'ask-bc'")
+        .prepare("UPDATE legacy_neo_asks SET status = 'abandoned' WHERE id = 'ask-bc'")
         .run();
       expect(await service.retryWork(failed)).toEqual({ ok: false, reason: 'ask_not_live' });
       expect(service.repo.getWork('c')).toMatchObject({

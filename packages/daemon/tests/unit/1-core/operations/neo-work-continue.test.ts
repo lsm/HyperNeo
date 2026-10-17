@@ -385,7 +385,7 @@ describe('neo.work.continue', () => {
     service.askRecords.link(opened.id, work.id);
     service.askRecords.approve(opened.id, Date.now());
     db.getDatabase()
-      .prepare('UPDATE neo_asks SET approved_continues = 500 WHERE id = ?')
+      .prepare('UPDATE legacy_neo_asks SET approved_continues = 500 WHERE id = ?')
       .run(opened.id);
     for (let index = 0; index < 3; index++)
       expect(await invoke({ id: work.id, message: `Step ${index}.` })).toMatchObject({

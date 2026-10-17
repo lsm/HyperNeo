@@ -1,4 +1,5 @@
 import { hostname } from 'node:os';
+import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
 import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -61,6 +62,7 @@ describe('mirrorNeoWorkspaceProjects', () => {
     createNeoTables(db);
     runMigration313(db);
     runMigration361(db);
+    runMigration387(db);
     repo = new NeoRepository(db);
   });
   afterEach(() => db.close());
@@ -596,7 +598,7 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     expect(allowed()).toBe(true);
     ask();
     expect(allowed()).toBe(false);
-    raw.prepare('DELETE FROM neo_asks').run();
+    raw.prepare('DELETE FROM legacy_neo_asks').run();
     ask(NEO_PROJECT_SEPARATE);
     expect(allowed()).toBe(false);
     for (const id of ['project:a', 'project:b']) {
@@ -636,7 +638,7 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
     expect(
       raw.prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?').get(folder)
     ).toEqual({ project_id: kept });
-    raw.prepare('DELETE FROM neo_asks').run();
+    raw.prepare('DELETE FROM legacy_neo_asks').run();
     ask(NEO_PROJECT_SAME);
     expect(allowed()).toBe(true);
     full.close();

@@ -130,7 +130,7 @@ export class NeoDependencyRepository {
             );
             for (const id of plan.dependsOn) insert.run(input.workId, id);
             this.db
-              .prepare(`UPDATE neo_asks SET revision = ?, approved_at = NULL,
+              .prepare(`UPDATE legacy_neo_asks SET revision = ?, approved_at = NULL,
             approved_revision = NULL, updated_at = ? WHERE id = ?`)
               .run(plan.revision, at, plan.askId);
           }

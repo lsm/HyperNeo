@@ -127,7 +127,7 @@ export class NeoProjectMergeRepository {
       .all() as { id: string }[])
       unavailable.add(row.id);
     for (const [table, condition] of [
-      ['neo_asks', "status IN ('waiting', 'blocked')"],
+      ['legacy_neo_asks', "status IN ('waiting', 'blocked')"],
       ['neo_consultations', "status = 'pending'"],
       ['neo_consultation_waiters', "status = 'queued'"],
     ]) {
@@ -162,7 +162,7 @@ export class NeoProjectMergeRepository {
           VALUES (?, ?, ?, ?)`)
             .run(source.id, target.id, binding?.session_id ?? null, Date.now());
           for (const table of [
-            'neo_asks',
+            'legacy_neo_asks',
             'neo_work',
             'neo_consultations',
             'neo_consultation_waiters',

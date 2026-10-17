@@ -157,7 +157,7 @@ describe('runNeoAdmissionWake', () => {
       });
       tick('human', true);
       db.getDatabase()
-        .prepare("UPDATE neo_asks SET revision = revision + 1 WHERE id = 'ask-b'")
+        .prepare("UPDATE legacy_neo_asks SET revision = revision + 1 WHERE id = 'ask-b'")
         .run();
       expect(await runNeoAdmissionWake(job, service)).toEqual({
         admitted: false,

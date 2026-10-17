@@ -1,4 +1,5 @@
 import { runMigration366 } from '../../../../src/storage/schema/m366-neo-work-dependencies.ts';
+import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
 import { runMigration381 } from '../../../../src/storage/schema/m381-neo-ask-refusal.ts';
 import { runMigration386 } from '../../../../src/storage/schema/m386-neo-work-control-failures.ts';
 import { runMigration358 } from '../../../../src/storage/schema/m358-neo-ask-revisions.ts';
@@ -346,6 +347,7 @@ describe('real SQLite ask lineage facade', () => {
     runMigration366(mailbox.db);
     runMigration381(mailbox.db);
     runMigration386(mailbox.db);
+    runMigration387(mailbox.db);
     db = {
       getDatabase: () => mailbox.db,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,

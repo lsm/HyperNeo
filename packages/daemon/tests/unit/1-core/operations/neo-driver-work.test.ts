@@ -2267,7 +2267,7 @@ describe('Neo work with a drivers target', () => {
     db.updateGlobalSettings({ neo: { packs: ['coding', 'life-admin'] } });
     fileUnderAsk(service);
     db.getDatabase()
-      .prepare(`UPDATE neo_asks SET pack = 'life-admin' WHERE id = ?`)
+      .prepare(`UPDATE legacy_neo_asks SET pack = 'life-admin' WHERE id = ?`)
       .run('ask-work-1');
     service.workGoals.record('work-1', 'Reorder', '- an order confirmation');
     const open: NeoWorkPr = { url, state: 'OPEN', checks: 'passing', review: 'none' };
@@ -2307,7 +2307,7 @@ describe('Neo work with a drivers target', () => {
     db.updateGlobalSettings({ neo: { packs: ['coding', 'inbox-triage'] } });
     fileUnderAsk(service);
     db.getDatabase()
-      .prepare(`UPDATE neo_asks SET pack = 'inbox-triage' WHERE id = ?`)
+      .prepare(`UPDATE legacy_neo_asks SET pack = 'inbox-triage' WHERE id = ?`)
       .run('ask-work-1');
     service.workGoals.record('work-1', 'Triage the inbox', '- merged');
     const merged: NeoWorkPr = { url, state: 'MERGED', checks: 'passing', review: 'approved' };
@@ -2347,7 +2347,7 @@ describe('Neo work with a drivers target', () => {
     db.updateGlobalSettings({ neo: { packs: ['coding', 'life-admin'] } });
     fileUnderAsk(service);
     db.getDatabase()
-      .prepare(`UPDATE neo_asks SET pack = 'life-admin' WHERE id = ?`)
+      .prepare(`UPDATE legacy_neo_asks SET pack = 'life-admin' WHERE id = ?`)
       .run('ask-work-1');
     service.workGoals.record(
       'work-1',

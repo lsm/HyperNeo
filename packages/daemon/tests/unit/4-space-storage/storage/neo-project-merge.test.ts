@@ -1,4 +1,5 @@
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -150,6 +151,7 @@ beforeEach(() => {
   runMigration285(db);
   runMigration313(db);
   runMigration361(db);
+  runMigration387(db);
   repo = new NeoRepository(db);
   for (const id of ['source', 'target', 'child', 'next'])
     repo.saveProject({ id, title: id, summary: id, context: id }, 0);
@@ -162,7 +164,7 @@ afterEach(() => {
 });
 const askRow = (status = 'open') =>
   db
-    .prepare(`INSERT INTO neo_asks
+    .prepare(`INSERT INTO legacy_neo_asks
   (id, request_key, concern_id, origin_session_id, title, ask, done_when, done_source, status, created_at, updated_at)
   VALUES ('ask', 'ask', 'source', 'human', 'ask', 'ask', 'done', 'human', ?, 1, 1)`)
     .run(status);
@@ -215,7 +217,7 @@ describe('Neo project merge storage', () => {
       revision: 2,
     });
     expect(repo.getProject('child')).toMatchObject({ parentId: 'target', revision: 3 });
-    for (const table of ['neo_asks', 'neo_work'])
+    for (const table of ['legacy_neo_asks', 'neo_work'])
       expect(db.prepare(`SELECT concern_id, origin_session_id FROM ${table}`).get()).toEqual({
         concern_id: 'target',
         origin_session_id: 'human',
@@ -313,7 +315,9 @@ describe('Neo project merge storage', () => {
       BEGIN SELECT RAISE(ABORT, 'injected failure'); END`);
     expect(() => repo.projectMerges.merge(input)).toThrow('injected failure');
     expect(db.prepare('SELECT * FROM neo_project_merges').all()).toEqual([]);
-    expect(db.prepare('SELECT concern_id FROM neo_asks').get()).toEqual({ concern_id: 'source' });
+    expect(db.prepare('SELECT concern_id FROM legacy_neo_asks').get()).toEqual({
+      concern_id: 'source',
+    });
     expect(repo.getBindingForProject('source')?.sessionId).toBe('avatar');
   });
 });

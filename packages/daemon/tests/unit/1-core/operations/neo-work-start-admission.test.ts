@@ -137,7 +137,7 @@ describe('neo.work.start', () => {
     const { db, service, calls, start } = await setup();
     try {
       db.getDatabase()
-        .prepare("UPDATE neo_asks SET revision = revision + 1 WHERE id = 'ask-a'")
+        .prepare("UPDATE legacy_neo_asks SET revision = revision + 1 WHERE id = 'ask-a'")
         .run();
       expect(await start('a', neo)).toEqual({
         kind: 'completed',
