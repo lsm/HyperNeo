@@ -207,13 +207,13 @@ describe('neo.ask.open and neo.ask.settle', () => {
 });
 
 describe('requireNeoAskProject', () => {
-  test('keeps a project holder to its own project', () => {
+  test('lets a project session open an ask in another project or none', () => {
     const resolve = (id: string) => id;
     expect(requireNeoAskProject({ projectId: 'other' }, 's', () => 'held', resolve)).toEqual({
-      reason: { ok: false, reason: 'wrong_project: this session holds project held.' },
+      value: 'other',
     });
     expect(requireNeoAskProject({ projectId: null }, 's', () => 'held', resolve)).toEqual({
-      reason: { ok: false, reason: 'wrong_project: this session holds project held.' },
+      value: null,
     });
     expect(requireNeoAskProject({ projectId: 'held' }, 's', () => 'held', resolve)).toEqual({
       value: 'held',
@@ -245,5 +245,29 @@ describe('requireNeoAskSession', () => {
     expect(requireNeoAskSession({ source: 'mcp', sessionId: 'worker-1' }, () => false)).toEqual(
       refused
     );
+  });
+});
+
+describe('NeoAskTodoRepository.moveAsks', () => {
+  test('hands the open ask of a forwarded message to its receiver, which then reuses it', async () => {
+    const { call, store } = setup();
+    const opened = await call(
+      'neo.ask.open',
+      { ...opening, todos: [] },
+      turn('restart-recovery:m1')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    expect(opened.ask.originMessageId).toBe('m1');
+    store.moveAsks(
+      { sessionId: 'neo-a', messageIds: ['m1'] },
+      { sessionId: 'neo-b', messageId: 'neo-forward:m1:0', projectId: null }
+    );
+    expect(store.findAsk('neo-a', 'm1', opening.title)).toBeNull();
+    expect(store.findAsk('neo-b', 'neo-forward:m1:0', opening.title)).toMatchObject({
+      id: opened.ask.id,
+      sessionId: 'neo-b',
+      projectId: null,
+    });
+    expect(store.listAsks(undefined, 10)).toHaveLength(1);
   });
 });

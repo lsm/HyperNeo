@@ -17,18 +17,23 @@ describe('admitNeoConsultationOrigin', () => {
       value: origin,
     });
   });
+  test('admits a project Neo session the same way', () => {
+    const holder: NeoBinding = { sessionId: 'neo:club', projectId: 'club', kind: 'project' };
+    expect(admitNeoConsultationOrigin({ ...caller, sessionId: holder.sessionId }, holder)).toEqual({
+      value: { ...origin, originSessionId: holder.sessionId },
+    });
+  });
   test.each([
     [{ ...caller, source: 'rpc', principal: 'local' }, root],
     [{ ...caller, source: 'internal' }, root],
     [caller, null],
     [caller, { ...root, kind: 'worker' }],
-    [caller, { ...root, kind: 'project', projectId: 'club' }],
     [{ ...caller, sessionId: 'other' }, root],
   ] as [OperationCaller, NeoBinding | null][])(
-    'preserves root ownership before input admission: %j',
+    'admits only the calling Neo session before input admission: %j',
     (request, binding) => {
       expect(admitNeoConsultationOrigin(request, binding)).toEqual({
-        reason: { ok: false, reason: 'Only root Neo can consult.' },
+        reason: { ok: false, reason: 'Only a Neo session can consult.' },
       });
     }
   );

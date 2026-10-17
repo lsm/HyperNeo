@@ -97,7 +97,9 @@ describe('planNeoAskForward', () => {
         projectId: 'pond',
         input: { sessionId: pond.sessionId, messageId: `${prefix}neo-forward:ask-1:7` },
       };
-      const forwards = [{ hop: 7, toSessionId: pond.sessionId }];
+      const forwards = [
+        { hop: 7, fromSessionId: root.sessionId, toSessionId: pond.sessionId, toProjectId: 'pond' },
+      ];
       expect(planNeoAskForward({ to: 'main' }, current, ask, forwards)).toEqual({
         value: { hop: 8, to: 'main' },
       });
@@ -106,6 +108,17 @@ describe('planNeoAskForward', () => {
       });
     }
   );
+  test('a sender repeating its last forward gets that hand-off back', () => {
+    const forwards = [
+      { hop: 0, fromSessionId: garden.sessionId, toSessionId: pond.sessionId, toProjectId: 'pond' },
+    ];
+    expect(planNeoAskForward({ to: 'pond' }, holder, ask, forwards)).toEqual({
+      reason: { ok: true, hop: 0, to: 'pond' },
+    });
+    expect(planNeoAskForward({ to: 'main' }, holder, ask, forwards)).toEqual({
+      reason: { ok: false, reason: 'not_your_ask' },
+    });
+  });
   test('only the original request owner can make the first forward', () => {
     expect(planNeoAskForward({ to: 'pond' }, holder, ask, [])).toEqual({
       value: { hop: 0, to: 'pond' },
@@ -121,7 +134,9 @@ describe('planNeoAskForward', () => {
   test.each([0, 1, 7])(
     'the current owner can forward after hop %s without a main-only rule',
     (hop) => {
-      const forwards = [{ hop, toSessionId: pond.sessionId }];
+      const forwards = [
+        { hop, fromSessionId: root.sessionId, toSessionId: pond.sessionId, toProjectId: 'pond' },
+      ];
       const current = {
         sessionId: pond.sessionId,
         projectId: 'pond',
@@ -256,9 +271,14 @@ describe('neo.ask.forward', () => {
     const forwards: NeoAskForward[] = [];
     let failDelivery = false;
     const delivered: unknown[] = [];
+    const moved: unknown[] = [];
+    const resolved: unknown[] = [];
     const deps: NeoAskForwardRuntime = {
       getBinding: (id) => bindings.get(id) ?? null,
-      resolveAskOrigin: () => origin,
+      resolveAskOrigin: (input) => {
+        resolved.push(input);
+        return origin;
+      },
       forwards: () => forwards,
       getProject: (id) => (id === 'garden' || id === 'pond' ? { id, title: id } : null),
       listProjects: () => [
@@ -272,6 +292,9 @@ describe('neo.ask.forward', () => {
         if (forwards.some((item) => item.hop === forward.hop)) return false;
         forwards.push(forward);
         return true;
+      },
+      moveAsks: (from, to) => {
+        moved.push([from, to]);
       },
       unrecord: (_ask, hop) => {
         forwards.splice(
@@ -301,6 +324,8 @@ describe('neo.ask.forward', () => {
       deps,
       forwards,
       delivered,
+      moved,
+      resolved,
       failNextDelivery: (fail: boolean) => {
         failDelivery = fail;
       },
@@ -326,6 +351,39 @@ describe('neo.ask.forward', () => {
     expect(delivered.map((args) => (args as unknown[]).filter((_, i) => i !== 2))).toEqual([
       [pond.sessionId, 'neo-forward:ask-1:0', garden.sessionId, ask],
       [root.sessionId, 'neo-forward:ask-1:1', pond.sessionId, ask],
+    ]);
+  });
+
+  test('a repeated forward to the same project answers with the first hand-off', async () => {
+    const { invoke, forwards, delivered, moved } = runtime();
+    const yieldTurn = mock(() => {});
+    const base = caller(garden.sessionId, 'ask-1');
+    const current = { ...base, neoTurn: { ...base.neoTurn!, yield: yieldTurn } };
+    for (let attempt = 0; attempt < 2; attempt++)
+      expect(await invoke(current, 'pond')).toMatchObject({
+        value: { ok: true, hop: 0, to: 'pond' },
+      });
+    expect(yieldTurn).toHaveBeenCalledTimes(2);
+    expect(forwards).toHaveLength(1);
+    expect(delivered).toHaveLength(1);
+    const move = [
+      { sessionId: garden.sessionId, messageIds: ['ask-1'] },
+      { sessionId: pond.sessionId, messageId: 'neo-forward:ask-1:0', projectId: 'pond' },
+    ];
+    expect(moved).toEqual([move, move]);
+  });
+
+  test('a turn resumed after a restart resolves the message it carries', async () => {
+    const { invoke, resolved, moved } = runtime();
+    expect(await invoke(caller(garden.sessionId, 'restart-recovery:ask-1'), 'pond')).toMatchObject({
+      value: { ok: true, hop: 0, to: 'pond' },
+    });
+    expect(resolved).toEqual([{ sessionId: garden.sessionId, messageId: 'ask-1' }]);
+    expect(moved).toEqual([
+      [
+        { sessionId: garden.sessionId, messageIds: ['restart-recovery:ask-1', 'ask-1'] },
+        { sessionId: pond.sessionId, messageId: 'neo-forward:ask-1:0', projectId: 'pond' },
+      ],
     ]);
   });
 

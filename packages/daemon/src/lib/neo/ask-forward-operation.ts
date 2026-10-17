@@ -48,6 +48,10 @@ export interface NeoAskForwardRuntime {
   askContent(ask: NeoAskOrigin): MailboxMessageContent | null;
   open(projectId: string): Promise<string>;
   record(ask: NeoAskOrigin, forward: NeoAskForward): boolean;
+  moveAsks(
+    from: { sessionId: string; messageIds: readonly string[] },
+    to: { sessionId: string; messageId: string; projectId: string | null }
+  ): void;
   unrecord(ask: NeoAskOrigin, hop: number): void;
   delivered(sessionId: string, messageId: string): boolean;
   delivering?(sessionId: string, messageId: string): boolean;
@@ -149,13 +153,18 @@ export function planNeoAskForward(
   input: Input,
   holder: Pick<Holder, 'sessionId' | 'projectId' | 'input'>,
   ask: NeoAskOrigin,
-  forwards: readonly Pick<NeoAskForward, 'hop' | 'toSessionId'>[]
-): Gate<Plan> {
+  forwards: readonly Pick<NeoAskForward, 'hop' | 'toSessionId' | 'fromSessionId' | 'toProjectId'>[]
+): { value: Plan } | { reason: Outcome } {
   if (input.to === (holder.projectId ?? NEO_FORWARD_MAIN)) return refuse('same_project');
-  const last = forwards.reduce<Pick<NeoAskForward, 'hop' | 'toSessionId'> | null>(
+  const last = forwards.reduce<(typeof forwards)[number] | null>(
     (latest, forward) => (!latest || forward.hop > latest.hop ? forward : latest),
     null
   );
+  if (
+    last?.fromSessionId === holder.sessionId &&
+    (last.toProjectId ?? NEO_FORWARD_MAIN) === input.to
+  )
+    return { reason: { ok: true, hop: last.hop, to: input.to } };
   const messageId = resumedPromptUuid(holder.input.messageId);
   const owns = last
     ? last.toSessionId === holder.sessionId && messageId === neoForwardMessageId(ask, last.hop)
@@ -194,6 +203,25 @@ export function neoForwardContent(
     : [{ type: 'text', text }, ...content.filter((block) => block.type !== 'text')];
 }
 
+function moveForwardedAsks(
+  runtime: NeoAskForwardRuntime,
+  holder: Holder,
+  ask: NeoAskOrigin,
+  forward: Pick<NeoAskForward, 'hop' | 'toSessionId' | 'toProjectId'>
+): void {
+  runtime.moveAsks(
+    {
+      sessionId: holder.sessionId,
+      messageIds: [...new Set([holder.input.messageId, resumedPromptUuid(holder.input.messageId)])],
+    },
+    {
+      sessionId: forward.toSessionId,
+      messageId: neoForwardMessageId(ask, forward.hop),
+      projectId: forward.toProjectId,
+    }
+  );
+}
+
 function createForward(runtime: NeoAskForwardRuntime) {
   const take = <T>(value: T) => value;
   return (superpipe({})('neo-ask-forward') as PipelineAPI)
@@ -205,7 +233,15 @@ function createForward(runtime: NeoAskForwardRuntime) {
     )
     .pipe(requireForwardingHolder, ['caller', 'binding'], 'result:outcome')
     .pipe(take, 'outcome', 'holder')
-    .pipe((holder: Holder) => runtime.resolveAskOrigin(holder.input), 'holder', 'resolved')
+    .pipe(
+      (holder: Holder) =>
+        runtime.resolveAskOrigin({
+          ...holder.input,
+          messageId: resumedPromptUuid(holder.input.messageId),
+        }),
+      'holder',
+      'resolved'
+    )
     .pipe(requireForwardedAsk, 'resolved', 'result:outcome')
     .pipe(take, 'outcome', 'ask')
     .pipe(
@@ -224,9 +260,23 @@ function createForward(runtime: NeoAskForwardRuntime) {
       'forwards'
     )
     .pipe(
-      (input: Input, holder: Holder, ask: NeoAskOrigin, forwards: NeoAskForward[]) =>
-        planNeoAskForward(input, holder, ask, forwards),
-      ['input', 'holder', 'ask', 'forwards'],
+      (
+        input: Input,
+        holder: Holder,
+        ask: NeoAskOrigin,
+        forwards: NeoAskForward[],
+        caller: OperationCaller
+      ) => {
+        const plan = planNeoAskForward(input, holder, ask, forwards);
+        const done = 'reason' in plan && plan.reason.ok ? plan.reason : null;
+        const repeated = done && forwards.find((forward) => forward.hop === done.hop);
+        if (repeated) {
+          moveForwardedAsks(runtime, holder, ask, repeated);
+          caller.neoTurn?.yield?.();
+        }
+        return plan;
+      },
+      ['input', 'holder', 'ask', 'forwards', 'caller'],
       'result:outcome'
     )
     .pipe(take, 'outcome', 'plan')
@@ -293,6 +343,11 @@ function createForward(runtime: NeoAskForwardRuntime) {
           runtime.unrecord(ask, target.hop);
           throw error;
         }
+        moveForwardedAsks(runtime, holder, ask, {
+          hop: target.hop,
+          toSessionId: session,
+          toProjectId: target.to === NEO_FORWARD_MAIN ? null : target.to,
+        });
         caller.neoTurn.yield?.();
         return { ok: true, hop: target.hop, to: target.to };
       },

@@ -10,15 +10,20 @@ export function requireLiveNeoConsultationOrigin(
 ): Admission {
   return turn?.isLive() && origin.originMessageId && turn.messageId === origin.originMessageId
     ? { value: origin }
-    : { reason: { ok: false, reason: 'A live root Neo input is required to consult a holder.' } };
+    : { reason: { ok: false, reason: 'A live Neo input is required to consult a project.' } };
 }
 
 export function admitNeoConsultationOrigin(
   caller: OperationCaller,
   binding: NeoBinding | null
 ): Admission {
-  if (caller.source !== 'mcp' || binding?.kind !== 'neo' || binding.sessionId !== caller.sessionId)
-    return { reason: { ok: false, reason: 'Only root Neo can consult.' } };
+  if (
+    caller.source !== 'mcp' ||
+    !binding ||
+    binding.kind === 'worker' ||
+    binding.sessionId !== caller.sessionId
+  )
+    return { reason: { ok: false, reason: 'Only a Neo session can consult.' } };
   return requireLiveNeoConsultationOrigin(
     { originSessionId: binding.sessionId, originMessageId: caller.neoTurn?.messageId ?? '' },
     caller.neoTurn

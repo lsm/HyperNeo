@@ -16,7 +16,7 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoOperations, NEO_HUMAN_TURN_REFUSAL } from '../../../../src/lib/neo/operations.ts';
 import {
   neoCoordinatorAllowedTools,
   neoCoordinatorBinding,
@@ -302,7 +302,7 @@ describe('Neo MVP', () => {
         { remove: rules },
         { source: 'mcp', role: 'neo', sessionId: holder }
       )
-    ).toMatchObject({ value: { ok: false, reason: 'Only root Neo can save standing rules.' } });
+    ).toMatchObject({ value: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } });
     expect(settings.neo?.standingRules).toEqual(rules);
   });
 
@@ -606,16 +606,14 @@ describe('Neo MVP', () => {
     expect(order).toEqual(['open', 'read']);
   });
 
-  test('trusts bindings, not a claimed role; project holders cannot read or mutate other contexts', async () => {
+  test('trusts bindings, not a claimed role; a project session reads another project', async () => {
     service.repo.saveProject(project, 0);
+    service.repo.saveProject({ ...project, id: 'other', title: 'Other project' }, 0);
     const id = await service.open(project.id);
     const caller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: id };
-    expect(await invoke('neo.snapshot', { projectId: 'private' }, caller)).toMatchObject({
-      value: { ok: false },
-    });
-    expect(await invoke('neo.project.save', { ...project, id: 'private' }, caller)).toMatchObject({
-      value: { ok: false },
-    });
+    const other = await invoke('neo.snapshot', { projectId: 'other' }, caller);
+    expect(other).toMatchObject({ value: { ok: true } });
+    expect(JSON.stringify(other)).toContain('Other project');
     expect(await invoke('neo.snapshot', {}, { ...caller, sessionId: 'impostor' })).toMatchObject({
       value: { ok: false },
     });
@@ -1017,15 +1015,13 @@ describe('Neo MVP', () => {
     expect(jobs).toEqual([]);
   });
 
-  test('admits root consultations only and attributes replies to the exact assigned holder', async () => {
+  test('admits Neo sessions’ consultations and attributes replies to the exact assigned holder', async () => {
     const { item, caller, holder, input } = await consultation();
     service.repo.saveProject({ ...project, id: 'private' }, 0);
     const other = await service.open('private');
     service.repo.reserveBinding({ sessionId: 'worker', projectId: project.id, kind: 'worker' });
     for (const denied of [
       human,
-      holder,
-      { ...caller, sessionId: other },
       { ...caller, sessionId: 'worker' },
       { ...caller, sessionId: 'impostor' },
     ]) {
@@ -1136,7 +1132,7 @@ describe('Neo MVP', () => {
     expect(service.consultations.get(item.id)?.status).toBe('pending');
   });
 
-  test('root may create a project but only its holder or the human may revise its context', async () => {
+  test('every Neo session may create a project and revise one at its current revision', async () => {
     const root = await service.open(null);
     const caller: OperationCaller = {
       source: 'mcp',
@@ -1156,18 +1152,18 @@ describe('Neo MVP', () => {
     expect(service.repo.listProjects()).toHaveLength(1);
     const correction = { ...project, id, expectedRevision: 1, context: 'Host at my home' };
     expect(await invoke('neo.project.save', correction, caller)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('Consult') },
+      value: { ok: true, project: { context: correction.context, revision: 2 } },
     });
-    expect(service.repo.getProject(id)?.context).toBe(project.context);
     const holder = await service.open(id);
-    expect(await invoke('neo.project.save', fresh, holderInput(holder))).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('own project') },
-    });
-    expect(await invoke('neo.project.save', correction, holderInput(holder))).toMatchObject({
-      value: { ok: true, project: { context: correction.context } },
+    expect(
+      await invoke('neo.project.save', { ...fresh, title: 'Another' }, holderInput(holder))
+    ).toMatchObject({ value: { ok: true, project: { title: 'Another', revision: 1 } } });
+    const moved = { ...correction, expectedRevision: 2, context: 'Host at the café' };
+    expect(await invoke('neo.project.save', moved, holderInput(holder))).toMatchObject({
+      value: { ok: true, project: { context: moved.context, revision: 3 } },
     });
     expect(
-      await invoke('neo.project.save', { ...correction, expectedRevision: 2 }, human)
+      await invoke('neo.project.save', { ...correction, expectedRevision: 3 }, human)
     ).toMatchObject({ value: { ok: true } });
   });
 

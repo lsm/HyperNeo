@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { resumedPromptUuid } from '../agent/restart-turn-recovery.ts';
 import { NeoAskEntrySchema } from './ask-entries.ts';
 import {
   addNeoTodo,
@@ -56,14 +57,12 @@ export function requireNeoAskProject(
   projectOf: (sessionId: string) => string | null,
   resolveProject: (projectId: string) => string | null
 ): Gate<string | null> {
-  const bound = projectOf(sessionId);
-  if (input.projectId === undefined) return { value: bound };
-  const projectId = input.projectId === null ? null : resolveProject(input.projectId);
-  if (input.projectId !== null && !projectId)
-    return { reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.` } };
-  return bound !== null && projectId !== bound
-    ? { reason: { ok: false, reason: `wrong_project: this session holds project ${bound}.` } }
-    : { value: projectId };
+  if (input.projectId === undefined) return { value: projectOf(sessionId) };
+  if (input.projectId === null) return { value: null };
+  const projectId = resolveProject(input.projectId);
+  return projectId
+    ? { value: projectId }
+    : { reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.` } };
 }
 
 export function createNeoAskRecordOperations(
@@ -101,7 +100,7 @@ export function createNeoAskRecordOperations(
         input: z.infer<typeof Open>,
         caller: OperationCaller
       ): Promise<AskReceipt | Rejection> => {
-        const origin = caller.neoTurn?.messageId ?? null;
+        const origin = caller.neoTurn ? resumedPromptUuid(caller.neoTurn.messageId) : null;
         const ask =
           store.findAsk(sessionId, origin, input.title) ??
           store.openAsk({

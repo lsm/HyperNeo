@@ -507,7 +507,7 @@ describe('real SQLite ask lineage facade', () => {
       ])
     );
   });
-  test('snapshot origin metadata preserves holder scope and root detail redaction', async () => {
+  test('snapshot origin metadata keeps the holder default scope and root detail redaction', async () => {
     const a = await intake();
     const b = await intake(root.sessionId, 'e4da4c3c-d629-46dc-a550-047144cf9499');
     service.repo.saveProject(
@@ -554,7 +554,7 @@ describe('real SQLite ask lineage facade', () => {
         { projectId: 'b' },
         holderCaller
       )
-    ).toMatchObject({ kind: 'completed', value: { ok: false } });
+    ).toMatchObject({ kind: 'completed', value: { ok: true } });
   });
   test('snapshot projects only already-visible bounded receipts for humans and root agents', async () => {
     const a = await intake();
