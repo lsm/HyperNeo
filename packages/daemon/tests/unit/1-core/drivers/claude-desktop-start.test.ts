@@ -196,7 +196,7 @@ describe('claude-desktop start', () => {
         ref: { adapter: 'claude-desktop', id: 'local_u1' },
         title: 'Bigger font',
         place,
-        status: 'queued',
+        status: 'running',
         lastActivityAt: 1_000,
         link: 'claude://claude.ai/epitaxy/local_u1',
         receipt: { executionId: 'u1', inputId: 'u-brief' },
@@ -231,7 +231,7 @@ describe('claude-desktop start', () => {
       await adapter({ appearsAfter: 0, owner: 'desktop' }).start?.(request, user)
     ).toMatchObject({
       ok: true,
-      value: { status: 'queued', receipt: { executionId: 'u1', inputId: 'u-brief' } },
+      value: { status: 'running', receipt: { executionId: 'u1', inputId: 'u-brief' } },
     });
     expect(spawned).toHaveLength(2);
     expect(spawned.some((args) => args.includes('HyperNeo relay'))).toBe(false);
