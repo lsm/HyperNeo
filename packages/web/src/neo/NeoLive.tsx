@@ -578,7 +578,7 @@ export function NeoLive() {
               </button>
             </div>
           )}
-          {workCount === 0 && (
+          {publicConversation && workCount === 0 && (
             <p role="status" class="mt-6 text-sm text-fg-muted">
               No work yet.
             </p>

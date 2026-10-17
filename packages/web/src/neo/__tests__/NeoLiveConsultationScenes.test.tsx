@@ -143,6 +143,13 @@ describe('Neo public mixed consultation scenes', () => {
     }
   });
 
+  it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
+    const { container } = mount(false, true);
+    expect(screen.queryByText('No work yet.')).toBeNull();
+    expect(container.querySelector('.neo-has-scenes')).toBeNull();
+    expect(container.querySelector('.neo-scene-list')?.childElementCount).toBe(0);
+  });
+
   it('keeps the Work column when the last ask disappears and reuses it for new work', () => {
     const { container, model } = mount();
     const entries = model.value.snapshot.todoAsks;

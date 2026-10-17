@@ -377,6 +377,7 @@ describe('Neo desktop panes', () => {
       scrollHeight: { value: 2000 },
       clientHeight: { value: 500 },
     });
+    act(() => void window.dispatchEvent(new Event('resize')));
     const view = model.value.snapshot;
     chat.scrollTop = 200;
     fireEvent.scroll(chat);
