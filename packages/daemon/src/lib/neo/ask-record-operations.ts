@@ -142,8 +142,17 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
-      async (ask: NeoAsk, input: z.infer<typeof Settle>): Promise<AskReceipt> => {
-        for (const todo of store.listTodos(ask.id)) await controls.stop(todo);
+      async (ask: NeoAsk, input: z.infer<typeof Settle>): Promise<AskReceipt | Rejection> => {
+        const failed: string[] = [];
+        for (const todo of store.listTodos(ask.id)) {
+          const stopped = await controls.stop(todo);
+          if (stopped) failed.push(`${todo.title}: ${stopped}`);
+        }
+        if (failed.length)
+          return {
+            ok: false,
+            reason: `${failed.join(' ')}; the ask is unchanged, those sessions may still run.`,
+          };
         const settled = store.settleAsk(ask, input.status, input.outcome, Date.now());
         return { ok: true, ask: settled, todos: store.listTodos(ask.id) };
       },
