@@ -267,6 +267,9 @@ export function NeoAskTodos({
   const inQuestion = new Set(
     asked.flatMap((question) => (question.kind === 'start' ? (question.startTodos ?? []) : []))
   );
+  const live = todos.filter((todo) => todo.state !== 'removed');
+  const removed = todos.filter((todo) => todo.state === 'removed');
+  const hasDetails = answered.length > 0 || !!ask.outcome || removed.length > 0;
   const [label, tone] = states[entry.state];
   return (
     <article
@@ -311,17 +314,36 @@ export function NeoAskTodos({
           onReply={onReply ? () => onReply(question) : undefined}
         />
       ))}
-      {todos.some((todo) => !inQuestion.has(todo.id)) && (
+      {live.some((todo) => !inQuestion.has(todo.id)) && (
         <div class="mt-3" aria-label="Todos">
-          {todos
+          {live
             .filter((todo) => !inQuestion.has(todo.id))
             .map((todo) => (
               <TodoRow key={todo.id} todo={todo} onOpen={onOpen} />
             ))}
         </div>
       )}
-      {open && (
+      {open && hasDetails && (
         <div data-ask-details class="mt-3 space-y-3 text-sm text-fg-muted">
+          {removed.length > 0 && (
+            <div>
+              <p class="text-xs font-medium text-fg-faint">已移除</p>
+              <ul class="mt-1.5 space-y-1.5" aria-label="已移除">
+                {removed.map((todo) => (
+                  <li
+                    key={todo.id}
+                    id={`neo-ref-todo-${todo.id}`}
+                    data-ask-todo={todo.id}
+                    data-todo-state="removed"
+                    class="truncate"
+                    title={`${todo.title} — ${todo.status}`}
+                  >
+                    <span class="line-through">{todo.title}</span> — {todo.status}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {answered.length > 0 && (
             <div>
               <p class="text-xs font-medium text-fg-faint">已回答</p>
@@ -348,21 +370,23 @@ export function NeoAskTodos({
           )}
         </div>
       )}
-      <div class={neoFooterClass}>
-        <span class="flex-1" />
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen(!open)}
-          class={neoPlainClass}
-        >
-          Details
-          <NeoIcon
-            name="chevron"
-            class={`!h-3.5 !w-3.5 transition-transform${open ? '' : ' rotate-180'}`}
-          />
-        </button>
-      </div>
+      {hasDetails && (
+        <div class={neoFooterClass}>
+          <span class="flex-1" />
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+            class={neoPlainClass}
+          >
+            Details
+            <NeoIcon
+              name="chevron"
+              class={`!h-3.5 !w-3.5 transition-transform${open ? '' : ' rotate-180'}`}
+            />
+          </button>
+        </div>
+      )}
     </article>
   );
 }
