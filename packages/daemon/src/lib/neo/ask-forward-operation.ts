@@ -241,9 +241,18 @@ function createForward(runtime: NeoAskForwardRuntime) {
       'forwards'
     )
     .pipe(
-      (input: Input, holder: Holder, ask: NeoAskOrigin, forwards: NeoAskForward[]) =>
-        planNeoAskForward(input, holder, ask, forwards),
-      ['input', 'holder', 'ask', 'forwards'],
+      (
+        input: Input,
+        holder: Holder,
+        ask: NeoAskOrigin,
+        forwards: NeoAskForward[],
+        caller: OperationCaller
+      ) => {
+        const plan = planNeoAskForward(input, holder, ask, forwards);
+        if ('reason' in plan && plan.reason.ok) caller.neoTurn?.yield?.();
+        return plan;
+      },
+      ['input', 'holder', 'ask', 'forwards', 'caller'],
       'result:outcome'
     )
     .pipe(take, 'outcome', 'plan')

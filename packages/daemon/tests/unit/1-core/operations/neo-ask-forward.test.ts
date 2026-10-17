@@ -356,10 +356,14 @@ describe('neo.ask.forward', () => {
 
   test('a repeated forward to the same project answers with the first hand-off', async () => {
     const { invoke, forwards, delivered, moved } = runtime();
+    const yieldTurn = mock(() => {});
+    const base = caller(garden.sessionId, 'ask-1');
+    const current = { ...base, neoTurn: { ...base.neoTurn!, yield: yieldTurn } };
     for (let attempt = 0; attempt < 2; attempt++)
-      expect(await invoke(caller(garden.sessionId, 'ask-1'), 'pond')).toMatchObject({
+      expect(await invoke(current, 'pond')).toMatchObject({
         value: { ok: true, hop: 0, to: 'pond' },
       });
+    expect(yieldTurn).toHaveBeenCalledTimes(2);
     expect(forwards).toHaveLength(1);
     expect(delivered).toHaveLength(1);
     expect(moved).toEqual([
