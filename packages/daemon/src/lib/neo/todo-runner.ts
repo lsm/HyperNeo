@@ -404,7 +404,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       await deps.invoke(caller(ask), 'work.send', { ref, message: text })
     );
     if (!('ref' in delivered)) return { ok: false as const, reason: delivered.failure };
-    sessions.recordStartedAt(todo.id, 'queued' in delivered ? null : baseline);
+    sessions.recordStartedAt(
+      todo.id,
+      'queued' in delivered ? null : (delivered.startedAt ?? baseline)
+    );
     sessions.recordSent(todo.id, sent && { ...sent, receipt: delivered.receipt });
     const next = store.updateTodo(
       todo,

@@ -271,10 +271,11 @@ export function readDriverOutcome(
     };
   }
   if (target.verb !== 'send') return { failure: 'work.start returned no reference.' };
-  const { delivered, receipt } = reply.data.value;
+  const { delivered, receipt, confirmedAt } = reply.data.value;
   return {
     ref: target.ref,
     ...(delivered === false ? { queued: true as const } : {}),
+    ...(delivered && confirmedAt !== undefined ? { startedAt: confirmedAt } : {}),
     ...(receipt ? { receipt } : {}),
   };
 }

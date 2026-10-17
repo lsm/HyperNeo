@@ -590,31 +590,40 @@ function parseClaudeEntry(line: string): (ClaudeTranscriptEntry & { uuid?: unkno
   }
 }
 
+type ClaudeConfirmed = { inputId: string | null; at: number | undefined };
+
 export function claudeDirectInput(
   lines: readonly string[],
   inputId: string,
   message: string
-): string | undefined {
+): ClaudeConfirmed | undefined {
   const opening = messageOpening(claudeInboxText(message));
-  return lines.some((line) => {
-    const entry = parseClaudeEntry(line);
-    return entry?.uuid === inputId || (entry?.type === 'queue-operation' && line.includes(opening));
-  })
-    ? inputId
-    : undefined;
+  const entry = lines
+    .map((line) => ({ line, entry: parseClaudeEntry(line) }))
+    .find(
+      ({ line, entry }) =>
+        entry?.uuid === inputId || (entry?.type === 'queue-operation' && line.includes(opening))
+    )?.entry;
+  return entry ? { inputId, at: workEntryTime(entry.timestamp) } : undefined;
 }
 
 export function claudeRelayedInput(
   lines: readonly string[],
   message: string
-): string | null | undefined {
+): ClaudeConfirmed | undefined {
   const opening = messageOpening(message);
   const hits = lines
     .filter((line) => line.includes('cross-session-message') && line.includes(opening))
     .map(parseClaudeEntry);
   const input = hits.find((entry) => typeof entry?.uuid === 'string' && entry.uuid);
-  if (input) return input.uuid as string;
-  return hits.some((entry) => entry?.type === 'queue-operation') ? null : undefined;
+  const queued = hits.find((entry) => entry?.type === 'queue-operation');
+  const found = input ?? queued;
+  return found
+    ? {
+        inputId: input ? (input.uuid as string) : null,
+        at: workEntryTime(found.timestamp),
+      }
+    : undefined;
 }
 
 function claudeTurnEnded(entry: ClaudeTranscriptEntry): boolean {
@@ -763,7 +772,7 @@ async function relayClaudeMessage(
   message: string,
   path: string | null,
   deps: ClaudeDesktopAdapterDeps
-): Promise<Result<string | null>> {
+): Promise<Result<ClaudeConfirmed>> {
   const name = liveSessions.find((session) => session.sessionId === record.cliSessionId)?.name;
   if (!name || liveSessions.filter((session) => session.name === name).length > 1)
     return reject('not_delivered', `${record.title} has no unique name to relay a message to.`);
@@ -798,13 +807,13 @@ async function relayClaudeMessage(
       proc.exited,
     ]);
     if (code !== 0) return claudeCliFailure({ stdout, stderr }, `The relay exited with ${code}.`);
-    const inputId = await awaitClaudeInput(
+    const confirmed = await awaitClaudeInput(
       () => readLinesAfter(path, before),
       (lines) => claudeRelayedInput(lines, message),
       deps
     );
-    return inputId !== undefined
-      ? { ok: true, value: inputId }
+    return confirmed
+      ? { ok: true, value: confirmed }
       : reject('not_delivered', 'the relayed message did not appear either');
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
@@ -828,24 +837,28 @@ async function sendOwnedClaudeMessage(
   const before = await transcriptSize(path);
   const direct = await deps.sendInbox(record.cliSessionId, message, context);
   const receipt = direct.ok ? direct.value.receipt : undefined;
-  if (
+  const confirmed =
     receipt &&
     (await awaitClaudeInput(
       () => readLinesAfter(path, before),
       (lines) => claudeDirectInput(lines, receipt.inputId, message),
       deps
-    ))
-  )
-    return { ok: true, value: { delivered: true, receipt } };
+    ));
+  if (confirmed)
+    return {
+      ok: true,
+      value: { delivered: true, receipt, confirmedAt: confirmed.at ?? deps.now() },
+    };
   const relayed = await relayClaudeMessage(record, liveSessions, message, path, deps);
   if (relayed.ok)
     return {
       ok: true,
       value: {
         delivered: true,
-        ...(relayed.value
-          ? { receipt: { executionId: record.cliSessionId, inputId: relayed.value } }
+        ...(relayed.value.inputId
+          ? { receipt: { executionId: record.cliSessionId, inputId: relayed.value.inputId } }
           : {}),
+        confirmedAt: relayed.value.at ?? deps.now(),
       },
     };
   const first = direct.ok
