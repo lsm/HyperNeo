@@ -3,7 +3,11 @@ import { externalEventTopicSuffix } from '../../../external-events/event-tiers.t
 import { requireClosedPrEvent } from '../../../external-events/session-subscription-close.ts';
 import { topicMatchesPattern } from '../../../external-events/topic-trie.ts';
 import type { ExternalEvent } from '../../../external-events/types.ts';
-import { buildPrEventTopicPattern, parsePrUrl } from '../../../github/parse-pr-url.ts';
+import {
+  buildPrEventTopicPattern,
+  parsePrUrl,
+  pullRequestUrlOfTopic,
+} from '../../../github/parse-pr-url.ts';
 import type { NeoCardEventSubscription, NeoPackEventRoute } from '../types.ts';
 
 export function neoCardPrTopics(prs: readonly NeoWorkPr[]): string[] {
@@ -14,9 +18,25 @@ export function neoCardPrTopics(prs: readonly NeoWorkPr[]): string[] {
   });
 }
 
+function isNeoCardPrEventCurrent(
+  read: { pr: NeoWorkPr; readAt: number } | null,
+  event: ExternalEvent
+): boolean {
+  if (!read) return true;
+  const head = event.payload.headSha ?? event.payload.commitId;
+  return (
+    read.pr.state === 'OPEN' &&
+    (typeof head !== 'string' ||
+      !read.pr.head ||
+      read.readAt < event.occurredAt ||
+      head === read.pr.head)
+  );
+}
+
 export function routeNeoCardPrEvent(
   event: ExternalEvent,
-  subscriptions: readonly NeoCardEventSubscription[]
+  subscriptions: readonly NeoCardEventSubscription[],
+  prOf: (url: string) => { pr: NeoWorkPr; readAt: number } | null
 ): NeoPackEventRoute | null {
   const matched = subscriptions.filter(
     (row) => row.topic.startsWith('github/') && topicMatchesPattern(row.topic, event.topic)
@@ -34,6 +54,8 @@ export function routeNeoCardPrEvent(
     'value' in
     requireClosedPrEvent({ record: { event, state: 'published', createdAt: 0, updatedAt: 0 } });
   if (!closed && !isNeoCardPrActionable(externalEventTopicSuffix(event.topic))) return null;
+  if (!closed && !isNeoCardPrEventCurrent(prOf(pullRequestUrlOfTopic(event.topic) ?? ''), event))
+    return null;
   return {
     workIds: [...new Set(matched.map((row) => row.workId))],
     ending: closed ? matched : [],

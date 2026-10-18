@@ -330,6 +330,7 @@ export function normalizeGitHubWebhook(
       originalSide: getString(comment.original_side),
       inReplyToId: getNumber(comment.in_reply_to_id) || undefined,
       pullRequestReviewId: getNumber(comment.pull_request_review_id) || undefined,
+      commitId: getString(comment.commit_id) || undefined,
     };
   } else if (eventType === 'pull_request_review_thread') {
     const pr = asObject(root.pull_request);
@@ -364,6 +365,7 @@ export function normalizeGitHubWebhook(
       originalLine: getNumber(rootComment.original_line) || undefined,
       originalSide: getString(rootComment.original_side),
       originalStartLine: getNumber(rootComment.original_start_line) || undefined,
+      commitId: getString(rootComment.commit_id) || undefined,
     };
   } else {
     const pr = asObject(root.pull_request);

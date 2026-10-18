@@ -90,10 +90,7 @@ describe('coding todo pack', () => {
       ['https://github.com/lsm/neo-ios/pull/102', 'https://github.com/lsm/neo-ios/pull/103'],
     ]);
     expect(pack.statusLine(row)?.status).toBe('#102 merged; #103 open, waiting on CI');
-    expect(pack.topics(row)).toEqual([
-      'github/lsm/neo-ios/pull_request/102.*',
-      'github/lsm/neo-ios/pull_request/103.*',
-    ]);
+    expect(pack.topics(row)).toEqual(['github/lsm/neo-ios/pull_request/103.*']);
     expect(
       pack.event({ topic: 'github/lsm/neo-ios/pull_request/103.closed' } as ExternalEvent)
     ).toEqual([row.id]);

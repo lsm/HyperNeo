@@ -170,6 +170,7 @@ export interface NeoWorkPr {
   mergedAt?: number;
   title?: string;
   branch?: string;
+  head?: string;
   refs?: number[];
 }
 

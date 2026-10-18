@@ -320,10 +320,12 @@ describe('readGithubPrs', () => {
         kill: () => {},
       };
     };
-    expect(await readGithubPrs([pr.url], spawn as never)).toEqual([{ ...pr, checks: 'none' }]);
+    expect(await readGithubPrs([pr.url], spawn as never)).toEqual([
+      { ...pr, checks: 'none', head },
+    ]);
     expect(
       await readGithubPrs([pr.url, 'https://github.com/lsm/HyperNeo/pull/7'], spawn as never)
-    ).toEqual([{ ...pr, checks: 'none' }]);
+    ).toEqual([{ ...pr, checks: 'none', head }]);
     expect(await readGithubPrs(['https://github.com/lsm/HyperNeo/pull/7'], spawn as never)).toBe(
       null
     );
@@ -502,6 +504,7 @@ describe('readGithubPrs blockers', () => {
         state: 'OPEN',
         checks: 'none',
         review: 'none',
+        head: '1bad987',
         blockers: ['unsigned commits: dev requires signed commits (1bad987)'],
       },
     ]);

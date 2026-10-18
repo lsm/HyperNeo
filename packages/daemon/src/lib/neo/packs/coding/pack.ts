@@ -308,7 +308,8 @@ export function createCodingPack(
       CODING_CHECK_DEPLOYED,
     ],
     externalTopics: (work: NeoWork) => neoCardPrTopics(deps.workPrs.get(work.id)?.prs ?? []),
-    routeExternalEvent: routeNeoCardPrEvent,
+    routeExternalEvent: (event, subscriptions) =>
+      routeNeoCardPrEvent(event, subscriptions, (url) => deps.todoPrs.latest(url)),
     cardFacts: (workId: string, stale: boolean) =>
       neoCardPrFacts(deps.workPrs.get(workId)?.prs, stale),
     cardAttention: (workId: string) => neoCardPrAttention(deps.workPrs.get(workId)?.prs ?? []),

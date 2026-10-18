@@ -330,8 +330,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     checked.set(todo.id, now);
     for (const pack of packs) {
       const result = await pack.check(todo);
-      const patch = todo.check ? planNeoTodoCheck(todo, result, now) : null;
-      if (patch) await finish(todo, ask, patch, now);
+      const live = store.listCheckable().find((item) => item.id === todo.id);
+      const patch = live?.check ? planNeoTodoCheck(live, result, now) : null;
+      if (patch && live) await finish(live, ask, patch, now);
     }
     deps.changed();
   };
@@ -458,6 +459,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     },
     recheck(todoIds: readonly string[]) {
       for (const id of todoIds) checked.delete(id);
+    },
+    async checkNow(
+      todoIds: readonly string[],
+      warn: (message: string, error: unknown) => void
+    ): Promise<void> {
+      for (const todo of store.listCheckable().filter((item) => todoIds.includes(item.id))) {
+        checked.delete(todo.id);
+        await check(todo, Date.now()).catch((error) => warn('Todo check pending', error));
+      }
     },
     async refresh(warn: (message: string, error: unknown) => void): Promise<void> {
       for (const todoId of sessions.unrecordedStarts()) {
