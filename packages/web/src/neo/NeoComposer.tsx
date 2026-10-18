@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { Button } from '../components/ui/Button.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
+import { t } from '../lib/i18n/index.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import {
@@ -63,18 +64,17 @@ export function NeoComposer({
   const attachments = useNeoAttachments(sessionId);
   const hasAttachments = attachments.files.length > 0 || attachments.reading > 0;
   const needsDraft = hasAttachments || !!quote;
-  const draftContext = quote ? 'your quoted reply' : 'your attachments';
+  const draftContext = t(quote ? 'composer.quoteContext' : 'composer.attachmentsContext');
   const voiceStatus = recordingVoice
     ? needsDraft
-      ? `Recording · Stop adds it to your draft; send it with ${draftContext}`
-      : coarsePointer
-        ? 'Recording · Tap the arrow to stop and send'
-        : 'Recording · Click the arrow to stop and send'
+      ? t('composer.recordingDraft', { context: draftContext })
+      : t(coarsePointer ? 'composer.recordingTap' : 'composer.recordingClick')
     : voicePhase === 'drafting'
-      ? 'Transcribing into your draft…'
+      ? t('composer.transcribing')
       : voicePhase === 'sending' && draft.trim()
-        ? 'Sending with your draft…'
+        ? t('composer.sendingDraft')
         : null;
+  const quoteAuthor = quote?.author === 'You' ? t('chat.you') : 'Neo';
   const thought = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
     if (quote) thought.current?.focus();
@@ -127,7 +127,7 @@ export function NeoComposer({
       }
       finishVoice.current?.('draft');
       onError(
-        `Added to your draft so it goes out with ${draftContext}. ${coarsePointer ? 'Tap' : 'Click'} send when ready.`
+        t(coarsePointer ? 'composer.addedTap' : 'composer.addedClick', { context: draftContext })
       );
       return;
     }
@@ -136,11 +136,11 @@ export function NeoComposer({
     if (!submitted.trim() && !files.length) return;
     if (voiceBusy) return;
     if (!connected) {
-      onError('Reconnecting… your message is still here. Send again once connected.');
+      onError(t('composer.reconnecting'));
       return;
     }
     if (attachments.reading) {
-      onError('Still reading your attachment. Send again in a moment.');
+      onError(t('composer.stillReading'));
       return;
     }
     if (sendingText.current === submitted) return;
@@ -213,7 +213,10 @@ export function NeoComposer({
       {quote && (
         <div
           role="region"
-          aria-label={`Replying to ${quote.author}: ${neoQuoteExcerpt(quote.text)}`}
+          aria-label={t('composer.replyingToExcerpt', {
+            author: quoteAuthor,
+            excerpt: neoQuoteExcerpt(quote.text),
+          })}
           class="mb-2 flex items-start gap-2.5 rounded-xl bg-surface py-1.5 pl-2.5"
         >
           <span
@@ -222,14 +225,14 @@ export function NeoComposer({
           />
           <div class="min-w-0 flex-1">
             <p id="neo-quote-label" role="status" class="text-xs font-medium text-fg-muted">
-              {quote.replyTo ? '回复' : `Replying to ${quote.author}`}
+              {quote.replyTo ? t('chat.reply') : t('composer.replyingTo', { author: quoteAuthor })}
             </p>
             <p class="line-clamp-2 break-words text-sm text-fg">{neoQuoteExcerpt(quote.text)}</p>
           </div>
           <button
             type="button"
-            aria-label="Remove reply"
-            title="Remove reply (Esc)"
+            aria-label={t('composer.removeReply')}
+            title={t('composer.removeReplyTitle')}
             class="p-2 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             onClick={() => {
               onCancelQuote?.();
@@ -245,7 +248,7 @@ export function NeoComposer({
       )}
       {attachments.reading > 0 && (
         <p role="status" class="mb-2 text-xs text-fg-muted">
-          Reading attachments…
+          {t('composer.reading')}
         </p>
       )}
       <input
@@ -253,7 +256,7 @@ export function NeoComposer({
         type="file"
         multiple
         accept={NEO_FILE_ACCEPT}
-        aria-label="Attach photos or files"
+        aria-label={t('composer.attach')}
         class="hidden"
         onChange={(event) => {
           const files = Array.from(event.currentTarget.files ?? []);
@@ -268,7 +271,7 @@ export function NeoComposer({
           end={draft.length}
           transcribing={voicePhase === 'sending' || voicePhase === 'drafting'}
           newLine
-          hint={listening ? 'Listening. Your words appear here.' : undefined}
+          hint={listening ? t('composer.listening') : undefined}
           heightPx={idleHeight.current || undefined}
           class="text-base leading-relaxed text-fg-muted"
         />
@@ -276,7 +279,7 @@ export function NeoComposer({
         <textarea
           ref={thought}
           id="neo-thought"
-          aria-label="Message Neo"
+          aria-label={t('composer.message')}
           aria-describedby={quote ? 'neo-quote-label' : undefined}
           value={draft}
           onInput={(event) => onDraft(event.currentTarget.value)}
@@ -306,11 +309,7 @@ export function NeoComposer({
           }}
           rows={2}
           maxLength={16000}
-          placeholder={
-            coarsePointer
-              ? 'Return adds a line · Tap the arrow to send'
-              : 'Enter to send · Shift + Enter for a new line'
-          }
+          placeholder={t(coarsePointer ? 'composer.placeholderTouch' : 'composer.placeholderKeys')}
           class="w-full resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
         />
       )}
@@ -318,8 +317,8 @@ export function NeoComposer({
         <div class={`min-w-0 items-center gap-1 ${voiceBusy ? 'hidden' : 'flex'}`}>
           <button
             type="button"
-            aria-label="Attach photos or files"
-            title="Attach photos or text files"
+            aria-label={t('composer.attach')}
+            title={t('composer.attachTitle')}
             onClick={() => fileInput.current?.click()}
             class="rounded-full p-2 text-fg-muted hover:bg-fill-soft hover:text-accent"
           >
@@ -348,7 +347,7 @@ export function NeoComposer({
           {voiceBusy
             ? voiceStatus
             : store.agentState.value.status === 'waiting_for_input'
-              ? 'A quick question for you above.'
+              ? t('composer.question')
               : null}
         </span>
         <div class={`flex gap-2 ${voiceBusy ? 'min-w-0 flex-1' : 'ml-auto shrink-0'}`}>
@@ -369,18 +368,18 @@ export function NeoComposer({
           <Button
             type="submit"
             size="sm"
-            aria-label={
+            aria-label={t(
               recordingVoice && needsDraft
-                ? 'Stop recording and add it to your draft'
+                ? 'composer.stopDraft'
                 : recordingVoice
-                  ? 'Stop recording and send the message'
-                  : 'Send message'
-            }
+                  ? 'composer.stopSend'
+                  : 'composer.send'
+            )}
             title={
               recordingVoice && needsDraft
-                ? `Stop and add it to your draft, to send with ${draftContext}`
+                ? t('composer.stopDraftTitle', { context: draftContext })
                 : recordingVoice
-                  ? 'Stop recording and send it now'
+                  ? t('composer.stopSendTitle')
                   : undefined
             }
           >

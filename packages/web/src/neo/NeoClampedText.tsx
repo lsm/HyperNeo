@@ -1,5 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { t } from '../lib/i18n/index.ts';
 
 export function NeoClampedText({ text, children }: { text: string; children: ComponentChildren }) {
   const box = useRef<HTMLDivElement>(null);
@@ -31,7 +32,7 @@ export function NeoClampedText({ text, children }: { text: string; children: Com
           onClick={() => setOpen(!open)}
           class="mt-1 text-xs text-fg-muted hover:text-fg hover:underline"
         >
-          {open ? 'Show less' : 'Show more'}
+          {t(open ? 'chat.showLess' : 'chat.showMore')}
         </button>
       )}
     </>

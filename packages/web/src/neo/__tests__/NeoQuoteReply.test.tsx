@@ -160,19 +160,19 @@ afterEach(async () => {
 
 async function open() {
   render(<NeoLive />);
-  return (await screen.findByRole('textbox', { name: 'Message Neo' })) as HTMLTextAreaElement;
+  return (await screen.findByRole('textbox', { name: '给 Neo 发消息' })) as HTMLTextAreaElement;
 }
 function type(text: string) {
-  fireEvent.input(screen.getByRole('textbox', { name: 'Message Neo' }), {
+  fireEvent.input(screen.getByRole('textbox', { name: '给 Neo 发消息' }), {
     target: { value: text },
   });
 }
 function submit() {
-  fireEvent.submit(screen.getByRole('textbox', { name: 'Message Neo' }).closest('form')!);
+  fireEvent.submit(screen.getByRole('textbox', { name: '给 Neo 发消息' }).closest('form')!);
 }
 function quote(author: 'You' | 'Neo') {
   const button = screen.getByRole('button', {
-    name: author === 'You' ? 'Reply to your message' : 'Reply to Neo’s message',
+    name: author === 'You' ? '回复你的消息' : '回复 Neo 的消息',
   });
   const anchor = button.closest('article')!.id;
   fireEvent.click(button);
@@ -273,7 +273,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       const intoView = vi.spyOn(input, 'scrollIntoView');
       fireEvent.click(screen.getByRole('button', { name: '在聊天里回复' }));
       await waitFor(() => expect(document.activeElement).toBe(input));
-      expect(screen.getByRole('region', { name: /^Replying to Neo:/ }).textContent).toContain(
+      expect(screen.getByRole('region', { name: /^回复Neo：/ }).textContent).toContain(
         'Which repo?'
       );
       expect(input.value).toBe(draft);
@@ -295,13 +295,11 @@ describe('Neo quote reply through live chat and durable intake', () => {
     const input = await open();
     type('My existing draft');
     quote('You');
-    expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(
-      originalText
-    );
+    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(originalText);
     expect(input.value).toBe('My existing draft');
     expect(screen.queryByRole('heading', { name: 'Full evidence' })).toBeNull();
     const anchor = quote('Neo');
-    expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(fullReply);
+    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(fullReply);
     expect(input.value).toBe('My existing draft');
     submit();
     await waitFor(() => expect(calls()).toHaveLength(1));
@@ -319,7 +317,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       { timeout: 90_000 },
     ]);
     expect(document.getElementById(anchor)).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull());
     await waitFor(() => expect(input.value).toBe(''));
     type('Next message');
     submit();
@@ -331,9 +329,9 @@ describe('Neo quote reply through live chat and durable intake', () => {
     const input = await open();
     type('Keep my words');
     quote('You');
-    fireEvent.click(screen.getByRole('button', { name: 'Remove reply' }));
+    fireEvent.click(screen.getByRole('button', { name: '移除回复' }));
     expect(input.value).toBe('Keep my words');
-    expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull();
+    expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull();
     submit();
     await waitFor(() => expect(calls()).toHaveLength(1));
     expect(calls()[0][1].input.content).toBe('Keep my words');
@@ -366,13 +364,13 @@ describe('Neo quote reply through live chat and durable intake', () => {
       store.activeSessionId.value = 'holder';
       store.sessionState.value = nativeState('holder');
     });
-    expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull();
+    expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull();
     await act(async () => {
       sessionId.value = root;
       store.activeSessionId.value = root;
       store.sessionState.value = nativeState(root);
     });
-    expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull();
+    expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull();
     type('Fresh message');
     submit();
     await waitFor(() => expect(calls()).toHaveLength(1));
@@ -385,7 +383,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     const anchor = quote('Neo');
     request.mockImplementationOnce(async () => ({ ok: false, reason: 'Try again.' }));
     submit();
-    const retry = await screen.findByRole('button', { name: 'Retry' });
+    const retry = await screen.findByRole('button', { name: '重试' });
     const failed = document.querySelector('[data-pending-ask]')!;
     expect(failed.textContent).toContain(`回复：${fullReply.split('\n')[0]}`);
     fireEvent.click(retry);
@@ -395,7 +393,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       replyTo: replyTo(anchor),
     });
     expect(calls()[1][1].input).toEqual(calls()[0][1].input);
-    await waitFor(() => expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull());
   });
   it('restores failed replies as a cancellable quote with the raw draft on Edit', async () => {
     const input = await open();
@@ -403,13 +401,13 @@ describe('Neo quote reply through live chat and durable intake', () => {
     quote('Neo');
     request.mockImplementationOnce(async () => ({ ok: false, reason: 'Try again.' }));
     submit();
-    await screen.findByRole('button', { name: /^Not sent/ });
+    await screen.findByRole('button', { name: /^未发送/ });
     quote('You');
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
     await waitFor(() => expect(input.value).toBe('Please explain'));
-    expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(fullReply);
-    expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain('回复');
-    fireEvent.click(screen.getByRole('button', { name: 'Remove reply' }));
+    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(fullReply);
+    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain('回复');
+    fireEvent.click(screen.getByRole('button', { name: '移除回复' }));
     submit();
     await waitFor(() => expect(calls()).toHaveLength(2));
     expect(calls()[1][1].input.content).toBe('Please explain');
@@ -426,12 +424,10 @@ describe('Neo quote reply through live chat and durable intake', () => {
         return failure === 'invalid' ? { ok: true } : { ok: false, reason: 'Try again.' };
       });
       submit();
-      const retry = await screen.findByRole('button', { name: 'Retry' });
-      expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(fullReply);
+      const retry = await screen.findByRole('button', { name: '重试' });
+      expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(fullReply);
       fireEvent.click(retry);
-      await waitFor(() =>
-        expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull()
-      );
+      await waitFor(() => expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull());
       expect(calls()[1][1].input).toEqual(calls()[0][1].input);
     }
   );
@@ -445,10 +441,10 @@ describe('Neo quote reply through live chat and durable intake', () => {
       const finish = deferredSend();
       submit();
       await waitFor(() => expect(calls()).toHaveLength(1));
-      expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(fullReply);
+      expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(fullReply);
       if (change === 'replacement') quote('You');
       if (change === 'cancel' || change === 'reselection') {
-        fireEvent.click(screen.getByRole('button', { name: 'Remove reply' }));
+        fireEvent.click(screen.getByRole('button', { name: '移除回复' }));
         if (change === 'reselection') quote('Neo');
       }
       if (change === 'session') {
@@ -462,15 +458,13 @@ describe('Neo quote reply through live chat and durable intake', () => {
       type('New draft');
       await finish();
       if (change === 'cancel' || change === 'unchanged') {
-        await waitFor(() =>
-          expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull()
-        );
+        await waitFor(() => expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull());
       } else {
-        expect(screen.getByRole('region', { name: /^Replying to/ }).textContent).toContain(
+        expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(
           change === 'reselection' ? fullReply : originalText
         );
       }
-      expect(screen.getByRole('textbox', { name: 'Message Neo' })).toHaveProperty(
+      expect(screen.getByRole('textbox', { name: '给 Neo 发消息' })).toHaveProperty(
         'value',
         'New draft'
       );
@@ -481,7 +475,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     const input = await open();
     type('Keep my draft');
     const button = screen.getByRole('button', {
-      name: 'Reply to Neo’s message',
+      name: '回复 Neo 的消息',
     }) as HTMLButtonElement;
     expect(button.type).toBe('button');
     expect(button.tabIndex).toBe(0);
@@ -491,7 +485,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     expect(input.getAttribute('aria-describedby')).toBe('neo-quote-label');
     expect(document.getElementById('neo-quote-label')).toHaveProperty('textContent', '回复');
     expect(document.getElementById('neo-quote-label')?.getAttribute('role')).toBe('status');
-    const cancel = screen.getByRole('button', { name: 'Remove reply' }) as HTMLButtonElement;
+    const cancel = screen.getByRole('button', { name: '移除回复' }) as HTMLButtonElement;
     expect(cancel.type).toBe('button');
     expect(cancel.tabIndex).toBe(0);
     cancel.focus();
@@ -501,9 +495,9 @@ describe('Neo quote reply through live chat and durable intake', () => {
     quote('Neo');
     fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
     fireEvent.keyDown(input, { key: 'Escape', keyCode: 229 });
-    expect(screen.getByRole('region', { name: /^Replying to/ })).toBeTruthy();
+    expect(screen.getByRole('region', { name: /^回复/ })).toBeTruthy();
     fireEvent.keyDown(input, { key: 'Escape' });
-    expect(screen.queryByRole('region', { name: /^Replying to/ })).toBeNull();
+    expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull();
     expect(input.value).toBe('Keep my draft');
     expect(document.activeElement).toBe(input);
     expect(calls()).toHaveLength(0);
@@ -521,7 +515,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       await open();
       type('Keep this');
       quote('Neo');
-      const region = screen.getByRole('region', { name: /^Replying to Neo/ });
+      const region = screen.getByRole('region', { name: /^回复Neo/ });
       expect(region.textContent).toContain('回复');
       const preview = region.querySelector('.line-clamp-2')!;
       expect(Array.from(preview.textContent!)).toHaveLength(501);
@@ -529,7 +523,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       expect(preview.textContent!.endsWith('…')).toBe(true);
       expect(preview.querySelector('img')).toBeNull();
       expect(preview.querySelector('strong')).toBeNull();
-      expect(screen.getByRole('textbox', { name: 'Message Neo' })).toHaveProperty(
+      expect(screen.getByRole('textbox', { name: '给 Neo 发消息' })).toHaveProperty(
         'value',
         'Keep this'
       );

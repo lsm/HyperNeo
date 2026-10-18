@@ -8,6 +8,7 @@ import { neoForwardKey, type NeoSessionNoticeGroup } from '@hyperneo/shared/type
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
+import { t } from '../lib/i18n/index.ts';
 import { type NeoAskItem, readNeoConversationImage } from './conversation-ask-client.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoClampedText } from './NeoClampedText.tsx';
@@ -120,7 +121,7 @@ function RefPhoto({
     <div class="flex max-w-full flex-col items-start gap-1">
       <button
         type="button"
-        aria-label={`Open ${label.toLowerCase()}`}
+        aria-label={t('chat.openNamed', { name: label.toLowerCase() })}
         aria-busy={loading}
         disabled={loading}
         ref={frame}
@@ -140,13 +141,13 @@ function RefPhoto({
             aria-label={label}
             class="flex h-full w-full items-center justify-center text-xs text-fg-faint"
           >
-            Photo
+            {t('chat.photo')}
           </span>
         )}
         {loading && (
           <span
             role="status"
-            aria-label="Loading photo"
+            aria-label={t('chat.loadingPhoto')}
             class="absolute inset-0 m-auto h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent text-fg-faint"
           />
         )}
@@ -157,7 +158,7 @@ function RefPhoto({
           class="text-xs text-danger hover:underline"
           onClick={() => void load()}
         >
-          Photo could not load. Retry
+          {t('chat.photoRetry')}
         </button>
       )}
     </div>
@@ -199,7 +200,6 @@ export function publicAskText(content: NeoAskItem['content']): string {
     .join('\n\n');
 }
 
-const NOT_DELIVERED = 'Not delivered: Neo never got this message.';
 const RESTORED_KEY = 'neo:restored-undelivered';
 
 function restoredUndelivered(): string[] {
@@ -218,11 +218,6 @@ function markRestored(requestId: string) {
   } catch {}
 }
 
-const NOTICE_KINDS = {
-  needs_you: 'needs you',
-  failed: 'failed',
-  finished: 'finished',
-} as const;
 const NOTICES_SHOWN = 5;
 
 export type NeoSessionMute = {
@@ -261,10 +256,12 @@ function NoticeRow({
               <button
                 type="button"
                 class="min-h-9 justify-self-start rounded-md px-3 text-left text-fg-faint hover:bg-fill-soft hover:text-fg"
-                aria-label={`${mute.muted.has(notice.key) ? 'Unmute' : 'Mute'} ${notice.title}`}
+                aria-label={t(mute.muted.has(notice.key) ? 'chat.unmuteNamed' : 'chat.muteNamed', {
+                  name: notice.title,
+                })}
                 onClick={() => mute.onMute(notice.key, !mute.muted.has(notice.key))}
               >
-                {mute.muted.has(notice.key) ? 'Unmute' : 'Mute'}
+                {t(mute.muted.has(notice.key) ? 'chat.unmute' : 'chat.mute')}
               </button>
             ) : (
               <span />
@@ -277,17 +274,17 @@ function NoticeRow({
               )}
               {neoAppLabel(notice.ref.adapter)} · {notice.title}{' '}
               <span class={notice.kind === 'needs_you' ? 'font-medium text-fg' : ''}>
-                {NOTICE_KINDS[notice.kind]}
+                {t(`chat.notice.${notice.kind}`)}
               </span>
             </span>
             {link ? (
               <a
                 href={link}
                 class="flex min-h-9 items-center gap-1.5 justify-self-end rounded-md px-3 text-accent hover:bg-fill-soft"
-                aria-label={`Open ${notice.title}`}
+                aria-label={t('chat.openNamed', { name: notice.title })}
               >
                 <NeoSessionMark kind={neoSessionKind(notice.ref.adapter, link)} />
-                Open
+                {t('todo.open')}
               </a>
             ) : (
               <span />
@@ -298,7 +295,7 @@ function NoticeRow({
       {more > 0 && (
         <p class="text-center">
           <button type="button" class="text-accent hover:underline" onClick={() => setAll(true)}>
-            {more} more
+            {t('chat.more', { count: String(more) })}
           </button>
         </p>
       )}
@@ -348,12 +345,15 @@ function PublicEntry({
   const text = ask ? publicAskText(ask.content) : hasDetails ? short : full || short;
   const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
-  const author = publication?.producerInput.sessionId ? 'Neo' : 'You';
+  const author = publication?.producerInput.sessionId ? 'Neo' : t('chat.you');
   const replier = publication ? projects?.get(publication.producerInput.sessionId) : undefined;
   const forwarder = publication
     ? forwarders?.get(neoForwardKey(publication.askOrigin, publication.producerInput.sessionId))
     : undefined;
-  const project = forwarder ? `${replier ?? 'Neo'} (forwarded from ${forwarder})` : replier;
+  const project = forwarder
+    ? t('chat.forwarded', { name: replier ?? 'Neo', from: forwarder })
+    : replier;
+  const notDelivered = t('chat.notDelivered');
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   const anchor = ask
     ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId)
@@ -390,20 +390,20 @@ function PublicEntry({
           <button
             type="button"
             data-publication-edited
-            aria-label="Edited: show revision history"
+            aria-label={t('chat.editedHistory')}
             aria-expanded={history}
             aria-controls={`${anchor}-history`}
             onClick={() => setHistory(!history)}
             class="text-[11px] text-fg-faint hover:text-fg hover:underline"
           >
-            Edited
+            {t('chat.edited')}
           </button>
         ) : null}
         {ask && !undelivered && (
           <span
             role="img"
-            aria-label="Message accepted"
-            title="Accepted by Neo. This does not mean work is complete."
+            aria-label={t('chat.accepted')}
+            title={t('chat.acceptedTitle')}
             class="inline-flex self-center text-fg-faint"
           >
             <NeoIcon name="received" class="!h-3.5 !w-3.5" />
@@ -429,8 +429,8 @@ function PublicEntry({
         {undelivered && (
           <button
             type="button"
-            aria-label={NOT_DELIVERED}
-            title={NOT_DELIVERED}
+            aria-label={notDelivered}
+            title={notDelivered}
             aria-expanded={showReason}
             onClick={() => setShowReason((shown) => !shown)}
             class="inline-flex self-center text-danger"
@@ -456,7 +456,10 @@ function PublicEntry({
             )?.scrollIntoView({ block: 'center' })
           }
         >
-          回复：{replyLabels?.get(`${ask.replyTo.kind}:${ask.replyTo.id}`)?.label ?? '之前的内容'}
+          {t('chat.replyTo', {
+            label:
+              replyLabels?.get(`${ask.replyTo.kind}:${ask.replyTo.id}`)?.label ?? t('chat.earlier'),
+          })}
         </button>
       )}
       <div
@@ -470,13 +473,13 @@ function PublicEntry({
                   key={photo.ref.imageId}
                   conversationId={ask!.conversationId}
                   photo={photo.ref}
-                  label={`Attached photo ${index + 1}`}
+                  label={t('chat.attachedPhoto', { n: String(index + 1) })}
                 />
               ) : (
                 <img
                   key={index}
                   src={photo.src}
-                  alt={`Attached photo ${index + 1}`}
+                  alt={t('chat.attachedPhoto', { n: String(index + 1) })}
                   class="max-h-64 max-w-full rounded-xl object-contain"
                 />
               )
@@ -497,8 +500,8 @@ function PublicEntry({
             <button
               type="button"
               aria-expanded={expanded}
-              aria-label={expanded ? 'Hide details' : 'Show details'}
-              title={expanded ? 'Hide details' : 'Show details'}
+              aria-label={t(expanded ? 'chat.hideDetails' : 'chat.showDetails')}
+              title={t(expanded ? 'chat.hideDetails' : 'chat.showDetails')}
               onClick={() => setExpanded(!expanded)}
               class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-fill-soft text-fg-muted hover:text-fg"
             >
@@ -535,7 +538,7 @@ function PublicEntry({
               {publication && links.length > 0 && (
                 <div class="mt-3 flex items-end gap-3">
                   <ul
-                    aria-label="Related Neo scenes"
+                    aria-label={t('chat.scenes')}
                     class="flex min-w-0 flex-1 flex-wrap gap-3 text-sm text-accent"
                   >
                     {links.map((link) => (
@@ -565,14 +568,14 @@ function PublicEntry({
         <NeoPublicationHistory publication={publication} id={`${anchor}-history`} />
       )}
       {undelivered && showReason && (
-        <p class="mt-1 px-1 text-right text-xs text-danger">{NOT_DELIVERED}</p>
+        <p class="mt-1 px-1 text-right text-xs text-danger">{notDelivered}</p>
       )}
       <div class={`mt-1 flex items-center gap-3 ${ask ? 'justify-end' : ''}`}>
         {undelivered && onEditUndelivered && !restored && (
           <button
             type="button"
-            aria-label="Edit and send again"
-            title="Edit and send again"
+            aria-label={t('chat.editResend')}
+            title={t('chat.editResend')}
             disabled={restoring}
             onClick={() => {
               const settle = (result: boolean | void) => {
@@ -593,15 +596,15 @@ function PublicEntry({
         )}
         <CopyButton
           text={copyText}
-          label={ask ? 'Copy your message' : 'Copy Neo’s message'}
+          label={t(ask ? 'chat.copyYours' : 'chat.copyNeo')}
           disabled={!text.trim()}
           copiedAt={copiedAt}
         />
         {onQuote && (ask ? text : full || text).trim() && (
           <button
             type="button"
-            aria-label={ask ? 'Reply to your message' : 'Reply to Neo’s message'}
-            title="Reply"
+            aria-label={t(ask ? 'chat.replyYours' : 'chat.replyNeo')}
+            title={t('chat.reply')}
             class="rounded p-1.5 text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             onClick={() =>
               onQuote({
@@ -659,14 +662,14 @@ export function PendingAsk({
   const failed = ask.state === 'failed';
   const [showReason, setShowReason] = useState(false);
   const time = messageTime(ask.createdAt);
-  const notSent = `Not sent${ask.reason ? `: ${ask.reason}` : ''}`;
+  const notSent = ask.reason ? t('chat.notSentReason', { reason: ask.reason }) : t('chat.notSent');
   return (
     <article
       data-pending-ask={ask.requestId}
       class="neo-arrive neo-message neo-message-user ml-auto w-fit max-w-[88%] break-words"
     >
       <div class="mb-2 flex flex-wrap items-baseline justify-end gap-x-2 px-1 text-xs">
-        <span class="neo-message-name font-medium">You</span>
+        <span class="neo-message-name font-medium">{t('chat.you')}</span>
         {time && (
           <time dateTime={time.iso} title={time.full} class="neo-message-time text-[11px]">
             {time.label}
@@ -675,16 +678,16 @@ export function PendingAsk({
         {ask.state === 'sending' && (
           <span
             role="img"
-            aria-label="Sending"
-            title="Sending"
+            aria-label={t('chat.sending')}
+            title={t('chat.sending')}
             class="inline-block h-3 w-3 animate-spin self-center rounded-full border-[1.5px] border-current border-t-transparent text-fg-faint"
           />
         )}
         {ask.state === 'accepted' && (
           <span
             role="img"
-            aria-label="Message accepted"
-            title="Accepted by Neo. This does not mean work is complete."
+            aria-label={t('chat.accepted')}
+            title={t('chat.acceptedTitle')}
             class="inline-flex self-center text-fg-faint"
           >
             <NeoIcon name="received" class="!h-3.5 !w-3.5" />
@@ -711,7 +714,7 @@ export function PendingAsk({
             document.getElementById(ask.quote!.anchor)?.scrollIntoView({ block: 'center' })
           }
         >
-          回复：{neoQuoteExcerpt(ask.quote.text)}
+          {t('chat.replyTo', { label: neoQuoteExcerpt(ask.quote.text) })}
         </button>
       )}
       <div
@@ -723,7 +726,7 @@ export function PendingAsk({
               <img
                 key={index}
                 src={`data:${image.media_type};base64,${image.data}`}
-                alt={`Attached photo ${index + 1}`}
+                alt={t('chat.attachedPhoto', { n: String(index + 1) })}
                 class="max-h-64 max-w-full rounded-xl object-contain"
               />
             ))}
@@ -738,8 +741,8 @@ export function PendingAsk({
         <div class="mt-1 flex items-center justify-end gap-1">
           <button
             type="button"
-            aria-label="Retry"
-            title="Retry"
+            aria-label={t('chat.retry')}
+            title={t('chat.retry')}
             onClick={() => onRetry?.(ask.requestId)}
             class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
@@ -747,8 +750,8 @@ export function PendingAsk({
           </button>
           <button
             type="button"
-            aria-label="Edit"
-            title="Edit"
+            aria-label={t('chat.edit')}
+            title={t('chat.edit')}
             onClick={() => onEdit?.(ask.requestId)}
             class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
@@ -789,23 +792,21 @@ export function NeoPublicConversation({
 }) {
   const labels = new Map([...neoMessageReplyLabels(conversation.entries), ...(replyLabels ?? [])]);
   return (
-    <div class="space-y-6" aria-label="Public conversation">
+    <div class="space-y-6" aria-label={t('chat.public')}>
       {conversation.status !== 'ready' && (
         <p role="status" class="text-sm text-fg-muted">
           {conversation.status === 'loading'
-            ? 'Loading saved conversation…'
-            : conversation.entries.length > 0
-              ? 'Saved conversation is unavailable. Showing retained messages.'
-              : 'Saved conversation is unavailable.'}
+            ? t('chat.loading')
+            : t(conversation.entries.length > 0 ? 'chat.unavailableRetained' : 'chat.unavailable')}
         </p>
       )}
       {conversation.status === 'unavailable' && onRetry && (
         <button type="button" class="text-sm text-accent hover:underline" onClick={onRetry}>
-          Retry saved conversation
+          {t('chat.retryLoad')}
         </button>
       )}
       {(conversation.hasEarlier || conversation.hasMore) && (
-        <p class="text-xs text-fg-muted">Showing part of your saved conversation.</p>
+        <p class="text-xs text-fg-muted">{t('chat.partial')}</p>
       )}
       {conversation.hasEarlier && onLoadEarlier && (
         <button
@@ -814,7 +815,7 @@ export function NeoPublicConversation({
           disabled={conversation.status !== 'ready'}
           onClick={onLoadEarlier}
         >
-          Load earlier saved conversation
+          {t('chat.loadEarlier')}
         </button>
       )}
       {conversation.entries.map((entry) =>
@@ -842,7 +843,7 @@ export function NeoPublicConversation({
           disabled={conversation.status !== 'ready'}
           onClick={onRetry}
         >
-          Load more saved conversation
+          {t('chat.loadMore')}
         </button>
       )}
     </div>
