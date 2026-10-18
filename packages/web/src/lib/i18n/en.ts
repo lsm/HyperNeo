@@ -69,4 +69,6 @@ export const en = {
   'live.scenes': 'Work scenes',
   'live.closeWork': 'Close work list',
   'live.noWork': 'No work yet.',
+  'live.attachWait': 'Wait for the conversation to load before attaching files.',
+  'live.photosFailed': 'Could not load this message’s photos. Please try again.',
 } as const;

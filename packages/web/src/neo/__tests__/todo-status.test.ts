@@ -30,5 +30,8 @@ describe('neoTodoStatus', () => {
         statusCodes: [merged, { code: 'todo.future', params: {} }],
       })
     ).toBe('Something new');
+    expect(neoTodoStatus({ status: 'Done', statusCodes: [{ code: 'toString', params: {} }] })).toBe(
+      'Done'
+    );
   });
 });

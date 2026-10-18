@@ -69,4 +69,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'live.scenes': '工作场景',
   'live.closeWork': '关闭工作列表',
   'live.noWork': '还没有工作。',
+  'live.attachWait': '等对话加载完再添加文件。',
+  'live.photosFailed': '这条消息的照片加载失败，请重试。',
 };

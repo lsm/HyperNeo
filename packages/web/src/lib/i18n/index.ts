@@ -22,7 +22,7 @@ export function applyLanguage(language: LanguageSetting | undefined): void {
 }
 
 export function isMessageKey(key: string): key is MessageKey {
-  return key in en;
+  return Object.hasOwn(en, key);
 }
 
 export function t(key: MessageKey, params?: Record<string, string | number>): string {

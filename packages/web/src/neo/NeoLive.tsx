@@ -251,7 +251,7 @@ export function NeoLive() {
       dragDepth.current = 0;
       setDragging(false);
       if (!ready) {
-        neo.setError('Wait for the conversation to load before attaching files.');
+        neo.setError(t('live.attachWait'));
         return;
       }
       void attachments.add(files, neo.setError);
@@ -508,7 +508,7 @@ export function NeoLive() {
                 const images = await readNeoAskImages(ask, () => connectionManager.getHub());
                 if (liveSession.current !== sessionId) return false;
                 if (!images) {
-                  neo.setError('Could not load this message’s photos. Please try again.');
+                  neo.setError(t('live.photosFailed'));
                   return false;
                 }
                 if (!restoreNeoImages(sessionId, images)) {
