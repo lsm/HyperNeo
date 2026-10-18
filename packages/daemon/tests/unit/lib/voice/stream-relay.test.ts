@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { VoiceSettings } from '@hyperneo/shared';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -115,6 +116,41 @@ describe('VoiceStream against a stub ASR server', () => {
     expect(pushed.at(-1)).toEqual({ streamId: 's1', text: 'heard 6400', isFinal: true });
     expect(pushed.some((text) => !text.isFinal)).toBe(true);
     expect(batches).toEqual([]);
+  });
+
+  test('a second stop while one is running joins it instead of finishing twice', async () => {
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    const [first, second] = await Promise.all([stream.stop(), stream.stop()]);
+    expect(first).toEqual({ text: 'heard 3200', via: 'streaming' });
+    expect(second).toEqual(first);
+    expect(pushed.filter((text) => text.isFinal)).toHaveLength(1);
+    expect(batches).toEqual([]);
+  });
+
+  test('a start whose connection takes too long falls back to batch in auto mode', async () => {
+    let release: (value: null) => void = () => {};
+    const endpoint = `http://127.0.0.1:${port}/v1/audio/transcriptions`;
+    vi.useFakeTimers();
+    try {
+      const starting = VoiceStream.start('s1', {
+        ...deps({ apiKeyEndpoint: endpoint }),
+        credentialManager: {
+          getCredentials: () =>
+            new Promise<null>((resolve) => {
+              release = resolve;
+            }),
+        },
+      });
+      await vi.advanceTimersByTimeAsync(8_001);
+      expect(await starting).toMatchObject({
+        via: 'batch',
+        fallback: expect.stringContaining('8000 ms'),
+      });
+    } finally {
+      vi.useRealTimers();
+      release(null);
+    }
   });
 
   test('joins final segments with the trailing partial', async () => {

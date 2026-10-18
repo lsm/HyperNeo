@@ -1208,6 +1208,30 @@ describe('voice stream RPC handlers', () => {
     ).resolves.toEqual({ ok: true });
   });
 
+  it('two starts at once from one client leave only one stream', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const start = () =>
+      handlers.get('voice.stream.start')?.({ encoding: 'pcm16', sampleRate: 16_000 }) as Promise<{
+        streamId: string;
+      }>;
+    const started = await Promise.all([start(), start()]);
+    const alive = await Promise.all(
+      started.map(({ streamId }) =>
+        (
+          handlers.get('voice.stream.chunk')?.({
+            streamId,
+            audioBase64: 'AAA=',
+          }) as Promise<unknown>
+        ).then(
+          () => true,
+          () => false
+        )
+      )
+    );
+    expect(alive.filter(Boolean)).toHaveLength(1);
+  });
+
   it('an abandoned stream expires after three idle minutes', async () => {
     const { hub, handlers } = createMockMessageHub();
     registerVoiceHandlers(hub, createSettings({ voice }));

@@ -105,10 +105,11 @@ export function registerVoiceHandlers(
           started.stream.close();
           throw new Error('The client disconnected while the voice stream was starting');
         }
-        for (const [id, owned] of replaced) {
-          owned.stream.close();
-          voiceStreams.delete(id);
-        }
+        for (const [id, owned] of voiceStreams)
+          if (owned.clientId === clientId) {
+            owned.stream.close();
+            voiceStreams.delete(id);
+          }
         voiceStreams.set(streamId, { stream: started.stream, clientId, touchedAt: Date.now() });
         return {
           streamId,

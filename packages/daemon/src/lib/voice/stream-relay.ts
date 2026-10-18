@@ -8,6 +8,7 @@ import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipelin
 
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
+const START_TIMEOUT_MS = 8_000;
 const CREDENTIAL_LOOKUP_TIMEOUT_MS = 16_000;
 const SETTLE_QUIET_MS = 700;
 const SETTLE_MAX_MS = 3_000;
@@ -138,6 +139,28 @@ async function openAsrSocket(
   }
 }
 
+async function openAsrSocketWithin(
+  voice: VoiceSettings,
+  url: URL,
+  deps: VoiceStreamDeps
+): Promise<Gate<WebSocket>> {
+  const opening = openAsrSocket(voice, url, deps);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<Gate<WebSocket>>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ reason: `no connection within ${START_TIMEOUT_MS} ms` }),
+      START_TIMEOUT_MS
+    );
+  });
+  const opened = await Promise.race([opening, expired]);
+  clearTimeout(timer);
+  if ('reason' in opened)
+    void opening.then((late) => {
+      if ('value' in late) late.value.close(1000);
+    });
+  return opened;
+}
+
 export const planVoiceStream = (superpipe({})('voice-stream-start') as PipelineAPI)
   .input(['voice'])
   .pipe(admitVoiceStream, 'voice', 'result:plan')
@@ -161,6 +184,9 @@ export class VoiceStream {
   private finals: string[] = [];
   private partial = '';
   private lastMessageAt = 0;
+  private stopping: Promise<
+    { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
+  > | null = null;
 
   private constructor(
     readonly id: string,
@@ -185,7 +211,7 @@ export class VoiceStream {
             ...(plan.mode === 'auto' ? { fallback: 'no streaming route' } : {}),
           };
     }
-    const opened = await openAsrSocket(plan.voice, plan.url, deps);
+    const opened = await openAsrSocketWithin(plan.voice, plan.url, deps);
     if ('reason' in opened)
       return plan.mode === 'streaming'
         ? { error: `Streaming transcription is unavailable: ${opened.reason}` }
@@ -228,7 +254,16 @@ export class VoiceStream {
     return null;
   }
 
-  async stop(): Promise<
+  stop(): Promise<
+    { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
+  > {
+    this.stopping ??= this.finish().finally(() => {
+      this.stopping = null;
+    });
+    return this.stopping;
+  }
+
+  private async finish(): Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > {
     if (this.socket) {
