@@ -55,6 +55,7 @@ export class OapStdioClient {
   constructor(private readonly options: OapStdioClientOptions) {}
 
   async connect(): Promise<void> {
+    if (this.child || this.failure) throw new Error('OAP client connects once');
     const child = spawn(this.options.command, this.options.args, {
       cwd: this.options.cwd,
       env: this.options.env,
@@ -69,16 +70,21 @@ export class OapStdioClient {
     child.on('exit', (code, signal) =>
       this.fail(new Error(`OAP endpoint exited (code=${code}, signal=${signal})`))
     );
-    const initialized = await this.request('protocol.initialize.request', {
-      protocol_versions: [OAP_VERSION],
-      profiles: [OAP_AGENT_PROFILE],
-      participant: { id: 'hyperneo' },
-    });
-    if (initialized.payload.profile !== OAP_AGENT_PROFILE) {
-      throw new Error('OAP endpoint did not negotiate the agent-control-core profile');
+    try {
+      const initialized = await this.request('protocol.initialize.request', {
+        protocol_versions: [OAP_VERSION],
+        profiles: [OAP_AGENT_PROFILE],
+        participant: { id: 'hyperneo' },
+      });
+      if (initialized.payload.profile !== OAP_AGENT_PROFILE) {
+        throw new Error('OAP endpoint did not negotiate the agent-control-core profile');
+      }
+      const capabilities = await this.request('capabilities.request', {});
+      this.revision = capabilities.capability_revision;
+    } catch (error) {
+      this.close();
+      throw error;
     }
-    const capabilities = await this.request('capabilities.request', {});
-    this.revision = capabilities.capability_revision;
   }
 
   async openSession(sessionId: string): Promise<void> {
@@ -166,13 +172,18 @@ export class OapStdioClient {
   }
 
   private dispatch(line: string): void {
-    let envelope: OapEnvelope;
+    let parsed: unknown;
     try {
-      envelope = JSON.parse(line) as OapEnvelope;
+      parsed = JSON.parse(line);
     } catch {
       this.fail(new Error('OAP endpoint wrote a line that is not JSON'));
       return;
     }
+    if (!isEnvelope(parsed)) {
+      this.fail(new Error('OAP endpoint wrote a line that is not an OAP envelope'));
+      return;
+    }
+    const envelope = parsed;
     const waiting = envelope.in_reply_to ? this.pending.get(envelope.in_reply_to) : undefined;
     if (waiting && envelope.in_reply_to) {
       clearTimeout(waiting.timer);
@@ -193,4 +204,14 @@ export class OapStdioClient {
     this.pending.clear();
     for (const listener of this.listeners) listener(error);
   }
+}
+
+function isEnvelope(value: unknown): value is OapEnvelope {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Partial<OapEnvelope>;
+  return (
+    typeof candidate.type === 'string' &&
+    typeof candidate.payload === 'object' &&
+    candidate.payload !== null
+  );
 }

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OapStdioClient } from '../../../../src/lib/oap/oap-stdio-client';
 import type { OapEnvelope } from '../../../../src/lib/oap/oap-stdio-client';
@@ -15,6 +18,21 @@ function client(args: string[] = [endpoint]): OapStdioClient {
   });
   clients.push(created);
   return created;
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100 && !condition(); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 afterEach(() => {
@@ -65,11 +83,31 @@ describe('OapStdioClient', () => {
     expect(failures).toHaveLength(1);
   });
 
-  test('an endpoint that answers on another profile is refused at connect', async () => {
+  test('an endpoint that answers on another profile is refused at connect and stopped', async () => {
+    const pidFile = join(mkdtempSync(join(tmpdir(), 'oap-client-')), 'pid');
     const wrong = client([
       '-e',
-      'process.stdin.once("data", (d) => { const r = JSON.parse(String(d)); process.stdout.write(JSON.stringify({ type: "protocol.initialize.response", in_reply_to: r.id, payload: { profile: "other" } }) + "\\n"); })',
+      `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.stdin.once("data", (d) => { const r = JSON.parse(String(d)); process.stdout.write(JSON.stringify({ type: "protocol.initialize.response", in_reply_to: r.id, payload: { profile: "other" } }) + "\\n"); }); setInterval(() => {}, 1000);`,
     ]);
     await expect(wrong.connect()).rejects.toThrow('did not negotiate the agent-control-core');
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    await waitFor(() => !alive(pid));
+    expect(alive(pid)).toBe(false);
+    await expect(wrong.connect()).rejects.toThrow('OAP client connects once');
+  });
+
+  test('a frame that is not an envelope fails pending requests and subscribers', async () => {
+    const garbled = client([
+      '-e',
+      'process.stdin.once("data", () => process.stdout.write("null\\n")); setInterval(() => {}, 1000);',
+    ]);
+    const failures: Error[] = [];
+    garbled.subscribe((frame) => {
+      if (frame instanceof Error) failures.push(frame);
+    });
+    await expect(garbled.connect()).rejects.toThrow('not an OAP envelope');
+    expect(failures.map((failure) => failure.message)).toEqual([
+      'OAP endpoint wrote a line that is not an OAP envelope',
+    ]);
   });
 });
