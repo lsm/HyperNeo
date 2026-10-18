@@ -161,6 +161,9 @@ A todo whose session stopped and is waiting for its check (`awaitingReports`, `t
 One piece of work is one ask:
 - **`neo.ask.open` refuses overlapping asks.** If the request names a PR, issue or todo that is already linked to an open ask in this project, or the human's message replies to an item of one, the call is refused with `ask_open: <askId> "<title>" already covers <ref>`. Neo adds a todo to that ask with `neo.todo.add`.
 - **A PR links to one open todo.** Linking a ledger row that already has an open todo is refused with `pr_linked: <todoId>`. A follow-up change on the same PR is a new todo only once the earlier one is done.
+- **A merged PR takes no more work.**
+  - `neo.todo.continue` on a todo whose linked PR the ledger reads `merged` or `closed` is refused with `pr_merged: <url> merged at <time>`. Neo adds a new todo that starts from fresh `dev` instead.
+  - A push event on a merged PR's branch tells the owner and Neo that the commit reaches nothing.
 
 ### Titles in the human's language
 
@@ -248,7 +251,7 @@ Each PR is about 100–200 lines of production code, opened from fresh `dev`, an
 | L4 | Delete the transcript probe, claim rules, `pack_coding_pr_claims`, the card-attention relay and the old route-PR reads | −400, split by caller | No `openedPrs` in `work.status`; todos still show their PRs, now from the ledger |
 | L5 | Idle and awaiting-check todo sessions on the sweep; delete the legacy ask stall/idle loops (R5, R6) | +60 / −250, split | A doing todo whose session is idle 20 min is told, then escalated; an awaiting-check todo is checked within one cycle |
 | L6 | Prompts: merge owner, ledger-only done; `goal-merge.md` and `instructions.md` | text | A new coding todo's instruction names its session as the merge owner |
-| L7 | Follow-ups join the existing ask: the `ask_open` refusal on `neo.ask.open`; the one-open-todo-per-PR link (`pr_linked`) | +100 | Asking for a change to work an open ask already covers adds a todo there; `neo.ask.open` naming that PR is refused |
+| L7 | Follow-ups join the existing ask: the `ask_open` refusal on `neo.ask.open`; the one-open-todo-per-PR link (`pr_linked`); the `pr_merged` refusal on `neo.todo.continue`; the push-to-merged-branch notice | +130 | Asking for a change to work an open ask already covers adds a todo there; `neo.ask.open` naming that PR is refused; continuing a todo whose PR merged is refused, and a push to that branch is reported |
 | L8 | Titles in the human's language: resolve `GlobalSettings.language`, add it to the turn context, check the script in `ask.open`, `todo.add` and `todo.edit` | +90 | With language `zh-Hans`, an English instruction still produces Chinese ask and todo titles; an English title is refused with `title_language` |
 | R1–R3 | Snapshot is the same for every caller; project links (#7420); don't echo Neo's own changes (#7424) | as in the re-cut | as in the re-cut |
 | R4, R7–R9 | Close in-flight legacy cards; delete reroute, environment-move, old approvals | as in the re-cut | as in the re-cut |
@@ -287,3 +290,4 @@ These are the cases seen on two live Neo cards on 2026-10-18. After the plan shi
 | 3 | One piece of work became two asks. The header-row follow-up opened a new ask, and #7492 sits on a todo in each | The two cards are one ask. The follow-up is a todo on the original ask, and #7492 is linked to exactly one open todo | Follow-ups join the existing ask (L7) |
 | 4 | A todo shows "session stopped, waiting for Neo to check", and nothing checks it | A stopped session is noticed within one sweep cycle: the daemon runs the check, or Neo is told the facts. The line never sits longer than one cycle | Sweep for idle and awaiting-check sessions (L5) |
 | 5 | Card and todo titles mix Chinese and English, following whichever language the instruction came in | Every new ask and todo title is in `GlobalSettings.language`; a title in another script is refused with `title_language` | Titles in the human's language (L8) |
+| 6 | Neo and the working session treated lsm/HyperNeo#7492 as still open after it merged at 15:22:20Z (head `d8066d8`, merge commit `040c67df67`). A follow-up change (code-block copy button always visible) was pushed at 15:40Z to the merged branch as `37ac5142`, where it reached nothing: dev still hid the button until hover. A corrective PR re-lands it from fresh dev | Within one reconcile of the merge, the ledger reads #7492 `merged` and its todo is met. `neo.todo.continue` on that todo is refused with `pr_merged`, so the follow-up becomes a new todo from fresh `dev`. A push to the merged branch is reported to the owner and Neo instead of passing silently | Live ledger state (L1), ledger-only done (L3), merged-PR refusal and push notice (L7) |
