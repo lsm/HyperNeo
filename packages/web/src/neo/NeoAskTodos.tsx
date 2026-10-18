@@ -19,6 +19,7 @@ import {
 import { neoSessionKind } from './work-driver.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { t } from '../lib/i18n/index.ts';
+import { neoTodoStatus } from './todo-status.ts';
 
 const states = {
   waiting: ['ask.state.waiting', 'text-warning bg-warning/10'],
@@ -98,7 +99,9 @@ function TodoRow({
           </span>
         )}
         <span class="block break-words text-xs text-fg-muted">
-          {number === undefined ? todo.status : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
+          {number === undefined
+            ? neoTodoStatus(todo)
+            : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
         </span>
       </div>
       {todo.link && todo.state !== 'removed' && onOpen && (
@@ -346,9 +349,9 @@ export function NeoAskTodos({
                     data-ask-todo={todo.id}
                     data-todo-state="removed"
                     class="truncate"
-                    title={`${todo.title} — ${todo.status}`}
+                    title={`${todo.title} — ${neoTodoStatus(todo)}`}
                   >
-                    <span class="line-through">{todo.title}</span> — {todo.status}
+                    <span class="line-through">{todo.title}</span> — {neoTodoStatus(todo)}
                   </li>
                 ))}
               </ul>

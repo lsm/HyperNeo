@@ -265,7 +265,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       const input = (await screen.findByRole('textbox')) as HTMLTextAreaElement;
       type(draft);
       quote('You');
-      const sheet = screen.queryByRole('button', { name: /^Your work/ });
+      const sheet = screen.queryByRole('button', { name: /^你的事/ });
       if (sheet) fireEvent.click(sheet);
       const scroll = desktop ? document.querySelector('.neo-chat-rail')! : screen.getByRole('main');
       Object.defineProperty(scroll, 'scrollHeight', { value: 1600 });
