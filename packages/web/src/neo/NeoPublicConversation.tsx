@@ -558,9 +558,13 @@ function PublicEntry({
               {hasDetails && expanded && (
                 <div
                   data-publication-details
-                  class="mt-3 rounded-[10px] bg-fill-soft px-3 py-2 text-sm text-fg-muted"
+                  class="mt-3 rounded-[10px] bg-fill-soft px-3 pt-1 pb-2 text-sm text-fg-muted"
                   style={{ '--prose-fg': 'var(--fg-muted)' }}
                 >
+                  <div class="-mr-2 mb-1 flex items-center justify-between">
+                    <span class="text-xs text-fg-faint">{t('ask.details')}</span>
+                    <CopyButton text={full} label={t('chat.copyDetails')} />
+                  </div>
                   <MarkdownRenderer
                     content={full}
                     trailing={fold('chat.foldLess')}
