@@ -11,7 +11,8 @@ export async function fetchTranscriptionWithRedirects(
   form: FormData,
   allowPrivateNetwork: boolean,
   allowInsecureTls: boolean,
-  signal: AbortSignal
+  signal: AbortSignal,
+  tlsCaPem?: string
 ): Promise<Response> {
   let logicalEndpoint = endpoint;
   let candidates = await resolveTranscriptionEndpoint(
@@ -38,8 +39,11 @@ export async function fetchTranscriptionWithRedirects(
           tls: {
             rejectUnauthorized: !(allowInsecureTls && logicalEndpoint.host === endpoint.host),
             serverName: stripBrackets(logicalEndpoint.hostname),
+            ...(tlsCaPem && logicalEndpoint.host === endpoint.host ? { ca: tlsCaPem } : {}),
           },
-        } as RequestInit & { tls?: { rejectUnauthorized: boolean; serverName: string } });
+        } as RequestInit & {
+          tls?: { rejectUnauthorized: boolean; serverName: string; ca?: string };
+        });
         break;
       } catch (error) {
         if (signal.aborted) throw error;

@@ -74,6 +74,7 @@ interface VoiceTranscribeCtx extends VoiceTranscribeInput {
   model?: string;
   allowPrivateNetwork?: boolean;
   allowInsecureTls?: boolean;
+  tlsCaPem?: string;
   audio?: Uint8Array;
   apiKey?: string;
   headers?: Record<string, string>;
@@ -236,6 +237,7 @@ function resolveTranscriptionEndpoint(ctx: VoiceTranscribeCtx): VoiceTranscribeC
     model: voice.model.trim(),
     allowPrivateNetwork: voice.allowPrivateNetwork ?? false,
     allowInsecureTls: voice.allowInsecureTls ?? false,
+    tlsCaPem: voice.tlsCaPem?.trim() || undefined,
     audio,
   };
 }
@@ -270,6 +272,7 @@ async function acquireTranscriptionCredentials(
   let model = ctx.model!;
   let allowPrivateNetwork = ctx.allowPrivateNetwork!;
   let allowInsecureTls = ctx.allowInsecureTls!;
+  let tlsCaPem = ctx.tlsCaPem;
   const key = await withVoiceCredentialLock(async () => {
     const liveVoice = ctx.deps.settingsManager.getGlobalSettings().voice;
     if (liveVoice?.endpoint) {
@@ -281,6 +284,7 @@ async function acquireTranscriptionCredentials(
       } catch {}
       allowPrivateNetwork = liveVoice.allowPrivateNetwork ?? false;
       allowInsecureTls = liveVoice.allowInsecureTls ?? false;
+      tlsCaPem = liveVoice.tlsCaPem?.trim() || undefined;
       model = liveVoice.model?.trim() || model;
     }
     return withTimeout(
@@ -295,7 +299,15 @@ async function acquireTranscriptionCredentials(
       ctx.controller.signal
     );
   }, ctx.controller.signal);
-  return { ...ctx, apiKey: key, model, endpoint, allowPrivateNetwork, allowInsecureTls };
+  return {
+    ...ctx,
+    apiKey: key,
+    model,
+    endpoint,
+    allowPrivateNetwork,
+    allowInsecureTls,
+    tlsCaPem,
+  };
 }
 
 function buildTranscriptionRequest(ctx: VoiceTranscribeCtx): VoiceTranscribeCtx {
@@ -322,7 +334,8 @@ async function fetchTranscription(ctx: VoiceTranscribeCtx): Promise<VoiceTranscr
     ctx.form!,
     ctx.allowPrivateNetwork!,
     ctx.allowInsecureTls!,
-    ctx.controller.signal
+    ctx.controller.signal,
+    ctx.tlsCaPem
   );
   return { ...ctx, response };
 }

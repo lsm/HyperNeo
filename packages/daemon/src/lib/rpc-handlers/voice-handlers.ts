@@ -63,6 +63,11 @@ export function registerVoiceHandlers(
             ),
       });
       if ('error' in started) throw new Error(started.error);
+      const router = messageHub.getRouter?.();
+      if (context?.clientId && router && !router.getClientById(context.clientId)) {
+        started.stream.close();
+        throw new Error('The client disconnected while the voice stream was starting');
+      }
       voiceStreams.set(streamId, { stream: started.stream, clientId });
       return {
         streamId,

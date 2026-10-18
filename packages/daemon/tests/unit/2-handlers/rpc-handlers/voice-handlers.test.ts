@@ -1119,6 +1119,41 @@ describe('voice stream RPC handlers', () => {
     ).rejects.toThrow('Voice streams take pcm16 audio at 16000 Hz');
   });
 
+  it('the pinned CA also reaches the batch fetch for the configured host', async () => {
+    let tls: { ca?: string; rejectUnauthorized?: boolean } | undefined;
+    globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+      tls = (init as RequestInit & { tls?: typeof tls }).tls;
+      return new Response(JSON.stringify({ text: 'pinned' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(
+      hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://ai0.example.com/v1/audio/transcriptions',
+          model: 'asr',
+          tlsCaPem: ' PEM ',
+        },
+      })
+    );
+    expect(
+      await handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
+    ).toEqual({ text: 'pinned' });
+    expect(tls).toMatchObject({ ca: 'PEM', rejectUnauthorized: true });
+  });
+
+  it('closes a stream whose client disconnected while it was starting', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    (hub as unknown as { getRouter: () => unknown }).getRouter = () => ({
+      getClientById: () => undefined,
+    });
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    await expect(
+      handlers.get('voice.stream.start')?.({ encoding: 'pcm16', sampleRate: 16_000 })
+    ).rejects.toThrow('The client disconnected while the voice stream was starting');
+  });
+
   it('voice.stream.chunk and stop refuse a stream the caller does not own', async () => {
     const { hub, handlers } = createMockMessageHub();
     registerVoiceHandlers(hub, createSettings({ voice }));
