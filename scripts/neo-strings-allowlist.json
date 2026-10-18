@@ -1,6 +1,7 @@
 [
   "NeoActivity.tsx",
   "NeoAttachments.tsx",
+  "NeoClampedText.tsx",
   "NeoComposer.tsx",
   "NeoConversation.tsx",
   "NeoDrawer.tsx",

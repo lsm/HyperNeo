@@ -28,17 +28,39 @@ export function findHardCodedStrings(source: string, fileName = 'file.tsx'): str
   );
   const found: string[] = [];
   const at = (node: ts.Node) => `${file.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
+  const rendered = (expression: ts.Expression): ts.StringLiteralLike[] => {
+    if (ts.isStringLiteralLike(expression)) return [expression];
+    if (ts.isParenthesizedExpression(expression)) return rendered(expression.expression);
+    if (ts.isConditionalExpression(expression))
+      return [...rendered(expression.whenTrue), ...rendered(expression.whenFalse)];
+    if (ts.isBinaryExpression(expression)) {
+      const operator = expression.operatorToken.kind;
+      if (operator === ts.SyntaxKind.AmpersandAmpersandToken) return rendered(expression.right);
+      if (
+        operator === ts.SyntaxKind.BarBarToken ||
+        operator === ts.SyntaxKind.QuestionQuestionToken
+      )
+        return [...rendered(expression.left), ...rendered(expression.right)];
+    }
+    return [];
+  };
+  const report = (label: string, expression: ts.Expression | undefined) => {
+    for (const literal of expression ? rendered(expression) : [])
+      if (LETTERS.test(literal.text)) found.push(`line ${at(literal)}: ${label} "${literal.text}"`);
+  };
   const visit = (node: ts.Node) => {
     if (ts.isJsxText(node) && LETTERS.test(node.text.trim()))
       found.push(`line ${at(node)}: JSX text "${node.text.trim()}"`);
+    if (ts.isJsxExpression(node) && !ts.isJsxAttribute(node.parent))
+      report('JSX expression', node.expression);
     if (
       ts.isJsxAttribute(node) &&
       TEXT_ATTRIBUTES.has(node.name.getText(file)) &&
-      node.initializer &&
-      ts.isStringLiteral(node.initializer) &&
-      LETTERS.test(node.initializer.text)
-    )
-      found.push(`line ${at(node)}: ${node.name.getText(file)}="${node.initializer.text}"`);
+      node.initializer
+    ) {
+      const value = node.initializer;
+      report(node.name.getText(file), ts.isJsxExpression(value) ? value.expression : value);
+    }
     ts.forEachChild(node, visit);
   };
   visit(file);

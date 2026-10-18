@@ -186,9 +186,7 @@ describe('NeoAskTodos', () => {
     );
     expect(app.getByText('在做')).toBeTruthy();
     expect(app.getByText('#102 已合并')).toBeTruthy();
-    expect(app.container.querySelector('[aria-label="Todos"]')?.textContent).not.toContain(
-      'Todo d'
-    );
+    expect(app.container.querySelector('[aria-label="待办"]')?.textContent).not.toContain('Todo d');
     expect(app.getByText('新')).toBeTruthy();
     fireEvent.click(app.getByRole('button', { name: '打开 Todo a' }));
     expect(onOpen).toHaveBeenCalledWith('/session/w', 'Todo a');
