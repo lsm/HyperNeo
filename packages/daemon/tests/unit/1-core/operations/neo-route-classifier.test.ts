@@ -200,7 +200,7 @@ describe('neoRouteTimeoutMs', () => {
 describe('neoRouteEndpoint', () => {
   test('uses the title model by default and the configured model from its provider env', () => {
     const title = { modelId: 'glm-4.7-air', baseUrl: 'https://open.bigmodel.cn/api/anthropic' };
-    expect(neoRouteEndpoint(title, 'glm-4.7-air', {})).toBe(title);
+    expect(neoRouteEndpoint(title, 'glm-4.7-air', {})).toEqual(title);
     expect(
       neoRouteEndpoint(null, 'deepseek-v4-flash', {
         ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
@@ -210,6 +210,17 @@ describe('neoRouteEndpoint', () => {
       modelId: 'claude-haiku-4-5',
       baseUrl: 'https://api.anthropic.com',
     });
+  });
+
+  test('drops the CLI-only [1m] context tag, which the HTTP API rejects', () => {
+    const zai = 'https://api.z.ai/api/anthropic';
+    expect(neoRouteEndpoint(null, 'glm-5.3[1m]', { ANTHROPIC_BASE_URL: zai })).toEqual({
+      modelId: 'glm-5.3',
+      baseUrl: zai,
+    });
+    expect(neoRouteEndpoint({ modelId: 'glm-5.3[1m]', baseUrl: zai }, 'x', {}).modelId).toBe(
+      'glm-5.3'
+    );
   });
 });
 

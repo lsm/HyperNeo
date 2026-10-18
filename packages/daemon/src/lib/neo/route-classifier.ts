@@ -140,12 +140,11 @@ export function neoRouteEndpoint(
   requested: string,
   env: Record<string, string | undefined>
 ): { modelId: string; baseUrl: string } {
-  return (
-    title ?? {
-      modelId: env.ANTHROPIC_MODEL || requested,
-      baseUrl: env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
-    }
-  );
+  const endpoint = title ?? {
+    modelId: env.ANTHROPIC_MODEL || requested,
+    baseUrl: env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
+  };
+  return { ...endpoint, modelId: endpoint.modelId.replace(/(\[1m\])+$/i, '') };
 }
 
 export function readNeoRouteStream(stream: string): string {
@@ -271,7 +270,10 @@ async function askNeoRouteModel(
         body: JSON.stringify(call.body),
         signal: abortController.signal,
       });
-      if (!response.ok) throw new Error(`route model returned ${response.status}`);
+      if (!response.ok) {
+        const detail = neoExcerpt(await response.text().catch(() => ''), 300);
+        throw new Error(`route model ${config.modelId} returned ${response.status}: ${detail}`);
+      }
       return readNeoRouteAnswer(readNeoRouteStream(await response.text()), candidates);
     }
     leanCwd ??= mkdtempSync(join(tmpdir(), 'neo-route-'));
