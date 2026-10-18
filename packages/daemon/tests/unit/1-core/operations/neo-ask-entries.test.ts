@@ -32,13 +32,31 @@ const ask = (status: NeoAsk['status'] = 'open') => ({ status }) as NeoAsk;
 const question = (state: NeoQuestion['state']) => ({ state }) as NeoQuestion;
 
 describe('neoTodoStatusLine', () => {
-  test('says each state in one line, the pack line first', () => {
-    const next = todo({ id: 'n', title: 'Claude Code 新会话' });
-    expect(neoTodoStatusLine(todo({}), [], null)).toBe('没开始');
-    expect(neoTodoStatusLine(todo({ state: 'doing' }), [], null)).toBe('在做');
-    expect(neoTodoStatusLine(todo({ state: 'doing', report: 'r', check: null }), [], null)).toBe(
-      '会话停了，等 Neo 核对'
+  const next = todo({ id: 'n', title: 'Claude Code 新会话' });
+  const coded = (status: string, code: string, params: Record<string, string> = {}) => ({
+    status,
+    statusCodes: [{ code, params }],
+  });
+  const text = (status: string) => ({ status, statusCodes: [] });
+  const packLine = coded('#103 open, waiting on CI', 'todo.pr.waitingCi', { pr: '#103' });
+
+  test('a todo not started yet', () => {
+    expect(neoTodoStatusLine(todo({}), [], null)).toEqual(coded('Not started', 'todo.notStarted'));
+  });
+
+  test('a todo being worked on', () => {
+    expect(neoTodoStatusLine(todo({ state: 'doing' }), [], null)).toEqual(
+      coded('In progress', 'todo.doing')
     );
+  });
+
+  test('a session that stopped without a check', () => {
+    expect(neoTodoStatusLine(todo({ state: 'doing', report: 'r', check: null }), [], null)).toEqual(
+      coded('Session stopped; waiting for Neo to check', 'todo.awaitingNeo')
+    );
+  });
+
+  test('a session that reported, with a check running', () => {
     expect(
       neoTodoStatusLine(
         todo({
@@ -49,26 +67,64 @@ describe('neoTodoStatusLine', () => {
         [],
         null
       )
-    ).toBe('会话回报了，正在检查');
-    expect(neoTodoStatusLine(todo({ state: 'doing' }), [], '#103 开着，等 CI')).toBe(
-      '#103 开着，等 CI'
+    ).toEqual(coded('Session reported; checking', 'todo.checking'));
+  });
+
+  test('the pack line wins over the core state', () => {
+    expect(neoTodoStatusLine(todo({ state: 'doing' }), [], packLine)).toEqual(packLine);
+  });
+
+  test('a done todo the session reported', () => {
+    expect(neoTodoStatusLine(todo({ state: 'done', report: 'r' }), [], null)).toEqual(
+      coded('Session says it is done', 'todo.reportedDone')
     );
-    expect(neoTodoStatusLine(todo({ state: 'done', report: 'r' }), [], null)).toBe('会话说做完了');
-    expect(neoTodoStatusLine(todo({ state: 'done', evidence: '#102 已合并' }), [], null)).toBe(
-      '#102 已合并'
+  });
+
+  test('a done todo with nothing reported', () => {
+    expect(neoTodoStatusLine(todo({ state: 'done' }), [], null)).toEqual(
+      coded('Done', 'todo.done')
     );
+  });
+
+  test('stored evidence stays as written, with no code', () => {
+    expect(neoTodoStatusLine(todo({ state: 'done', evidence: '#102 已合并' }), [], null)).toEqual(
+      text('#102 已合并')
+    );
+  });
+
+  test('a failed todo keeps its reason, or says not done', () => {
     expect(
-      neoTodoStatusLine(todo({ state: 'failed', reason: '会话停了：测试没过' }), [], 'x')
-    ).toBe('会话停了：测试没过');
+      neoTodoStatusLine(todo({ state: 'failed', reason: '会话停了：测试没过' }), [], packLine)
+    ).toEqual(text('会话停了：测试没过'));
+    expect(neoTodoStatusLine(todo({ state: 'failed' }), [], null)).toEqual(
+      coded('Not done', 'todo.failed')
+    );
+  });
+
+  test('a replaced todo names its replacement, with the reason when there is one', () => {
     expect(
       neoTodoStatusLine(
         todo({ state: 'removed', replacedBy: 'n', reason: 'iOS-2 在 Desktop 里' }),
         [next],
         null
       )
-    ).toBe('换成「Claude Code 新会话」——iOS-2 在 Desktop 里');
-    expect(neoTodoStatusLine(todo({ state: 'removed', reason: '人说不用了' }), [], null)).toBe(
-      '人说不用了'
+    ).toEqual(
+      coded('Replaced by "Claude Code 新会话": iOS-2 在 Desktop 里', 'todo.replaced.reason', {
+        title: 'Claude Code 新会话',
+        reason: 'iOS-2 在 Desktop 里',
+      })
+    );
+    expect(neoTodoStatusLine(todo({ state: 'removed', replacedBy: 'n' }), [next], null)).toEqual(
+      coded('Replaced by "Claude Code 新会话"', 'todo.replaced', { title: 'Claude Code 新会话' })
+    );
+  });
+
+  test('a removed todo keeps its reason, or says removed', () => {
+    expect(neoTodoStatusLine(todo({ state: 'removed', reason: '人说不用了' }), [], null)).toEqual(
+      text('人说不用了')
+    );
+    expect(neoTodoStatusLine(todo({ state: 'removed' }), [], null)).toEqual(
+      coded('Removed', 'todo.removed')
     );
   });
 });
@@ -120,7 +176,15 @@ describe('projectNeoAskEntries', () => {
     const [entry] = projectNeoAskEntries([opened], store, sessions, []);
     expect(entry).toMatchObject({
       state: 'doing',
-      todos: [{ id: 't1', status: '在做', link: '/session/w1', remoteLink: null }],
+      todos: [
+        {
+          id: 't1',
+          status: 'In progress',
+          statusCodes: [{ code: 'todo.doing', params: {} }],
+          link: '/session/w1',
+          remoteLink: null,
+        },
+      ],
       questions: [],
     });
   });

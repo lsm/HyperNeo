@@ -9,24 +9,47 @@ import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { NeoPack } from './packs/types.ts';
+import { neoStatusLine, neoTextStatus, type NeoStatusLine } from './status-codes.ts';
 import { NeoQuestionSchema } from './question-operations.ts';
 import { NeoTodoSchema } from './todo-operations.ts';
+
+const NEO_TODO_STATUS_EN = {
+  'todo.replaced': 'Replaced by "{title}"',
+  'todo.replaced.reason': 'Replaced by "{title}": {reason}',
+  'todo.removed': 'Removed',
+  'todo.failed': 'Not done',
+  'todo.notStarted': 'Not started',
+  'todo.doing': 'In progress',
+  'todo.checking': 'Session reported; checking',
+  'todo.awaitingNeo': 'Session stopped; waiting for Neo to check',
+  'todo.reportedDone': 'Session says it is done',
+  'todo.done': 'Done',
+} as const;
+
+const coded = (code: keyof typeof NEO_TODO_STATUS_EN, params: Record<string, string> = {}) =>
+  neoStatusLine(NEO_TODO_STATUS_EN, [{ code, params }]);
 
 export function neoTodoStatusLine(
   todo: NeoTodo,
   todos: readonly NeoTodo[],
-  packLine: string | null
-): string {
+  packLine: NeoStatusLine | null
+): NeoStatusLine {
   if (todo.state === 'removed') {
-    const by = todos.find((other) => other.id === todo.replacedBy)?.title;
-    return by ? `换成「${by}」${todo.reason ? `——${todo.reason}` : ''}` : (todo.reason ?? '删了');
+    const title = todos.find((other) => other.id === todo.replacedBy)?.title;
+    if (title)
+      return todo.reason
+        ? coded('todo.replaced.reason', { title, reason: todo.reason })
+        : coded('todo.replaced', { title });
+    return todo.reason ? neoTextStatus(todo.reason) : coded('todo.removed');
   }
-  if (todo.state === 'failed') return todo.reason ?? '没做成';
+  if (todo.state === 'failed')
+    return todo.reason ? neoTextStatus(todo.reason) : coded('todo.failed');
   if (packLine) return packLine;
-  if (todo.state === 'todo') return '没开始';
+  if (todo.state === 'todo') return coded('todo.notStarted');
   if (todo.state === 'doing')
-    return !todo.report ? '在做' : todo.check ? '会话回报了，正在检查' : '会话停了，等 Neo 核对';
-  return todo.evidence ?? (todo.report ? '会话说做完了' : '做完了');
+    return coded(!todo.report ? 'todo.doing' : todo.check ? 'todo.checking' : 'todo.awaitingNeo');
+  if (todo.evidence) return neoTextStatus(todo.evidence);
+  return coded(todo.report ? 'todo.reportedDone' : 'todo.done');
 }
 
 export function neoAskEntryState(
@@ -56,7 +79,7 @@ export function projectNeoAskEntries(
       state: neoAskEntryState(ask, todos, questions),
       todos: todos.map((todo) => ({
         ...todo,
-        status: neoTodoStatusLine(
+        ...neoTodoStatusLine(
           todo,
           todos,
           packs.find((pack) => pack.id === todo.check?.pack)?.todos?.statusLine(todo) ?? null
@@ -86,7 +109,14 @@ export const NeoAskEntrySchema = z.object({
   }),
   state: z.enum(['waiting', 'doing', 'done', 'dropped', 'todo']),
   todos: z.array(
-    NeoTodoSchema.extend({ status: z.string(), link: Nullable, remoteLink: Nullable })
+    NeoTodoSchema.extend({
+      status: z.string(),
+      statusCodes: z
+        .array(z.object({ code: z.string(), params: z.record(z.string(), z.string()) }))
+        .optional(),
+      link: Nullable,
+      remoteLink: Nullable,
+    })
   ),
   questions: z.array(NeoQuestionSchema),
 });

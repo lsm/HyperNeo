@@ -73,8 +73,14 @@ export interface NeoReplyTo {
   id: string;
 }
 
+export interface NeoStatusCode {
+  code: string;
+  params: Record<string, string>;
+}
+
 export interface NeoTodoEntry extends NeoTodo {
   status: string;
+  statusCodes?: NeoStatusCode[];
   link: string | null;
   remoteLink: string | null;
 }
