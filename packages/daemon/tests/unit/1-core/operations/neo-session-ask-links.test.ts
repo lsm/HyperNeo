@@ -420,7 +420,7 @@ describe('NeoService session ask links', () => {
     expect(notices()).toEqual([]);
     expect((await askViews())[0]).toMatchObject({
       group: 'running',
-      label: '在做',
+      label: 'In progress',
       needsYou: false,
       sessions: [
         {
@@ -452,7 +452,7 @@ describe('NeoService session ask links', () => {
     await service.refreshDriverWork();
     expect((await askViews())[0]).toMatchObject({
       group: 'running',
-      label: '没开始',
+      label: 'Not started',
       needsYou: false,
       sessions: [{ key, kind: 'needs_you' }],
     });
@@ -466,7 +466,7 @@ describe('NeoService session ask links', () => {
     expect(notices()).toEqual([]);
     expect((await askViews())[0]).toMatchObject({
       group: 'running',
-      label: '没开始',
+      label: 'Not started',
       needsYou: false,
       sessions: [{ key, kind: 'failed' }],
     });

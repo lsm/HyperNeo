@@ -8,6 +8,7 @@ import type {
   NeoCardWaiting,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
+import { NeoStatusCodesSchema } from './status-codes.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -123,6 +124,7 @@ export const NeoAskViewSchema = z.object({
   askId: z.string(),
   group: CardGroup,
   label: z.string(),
+  labelCodes: NeoStatusCodesSchema,
   settled: z.boolean(),
   needsYou: z.boolean(),
   idle: z.literal(true).optional(),

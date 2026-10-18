@@ -1,4 +1,9 @@
 import type { NeoStatusCode } from '@hyperneo/shared/types/neo-ask';
+import { z } from 'zod';
+
+export const NeoStatusCodesSchema = z
+  .array(z.object({ code: z.string(), params: z.record(z.string(), z.string()) }))
+  .optional();
 
 export interface NeoStatusLine {
   status: string;

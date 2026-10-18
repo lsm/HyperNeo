@@ -188,6 +188,56 @@ describe('projectNeoAskEntries', () => {
       questions: [],
     });
   });
+
+  test('a start question carries its title as English text and a code', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const sessions = new NeoTodoSessionRepository(db);
+    const opened = store.openAsk({
+      id: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'iOS card',
+      request: 'Redo the iOS card',
+      createdAt: 1,
+    });
+    const draft = { doneWhen: 'Merged', check: null, instruction: 'Do', named: null };
+    store.addTodo('t1', 'ask', { ...draft, title: 'Rows' }, 1);
+    store.addTodo('t2', 'ask', { ...draft, title: 'Icons' }, 1);
+    const ask = (id: string, startTodos: string[]) =>
+      store.askQuestion(
+        id,
+        'ask',
+        {
+          text: '开始「Rows」？',
+          kind: 'start',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos,
+        },
+        1
+      );
+    ask('q1', ['t1']);
+    ask('q2', ['t1', 't2']);
+    const [entry] = projectNeoAskEntries([opened], store, sessions, []);
+    expect(entry.questions).toMatchObject([
+      {
+        id: 'q1',
+        text: 'Start "Rows"?',
+        textCodes: [{ code: 'question.startOne', params: { title: 'Rows' } }],
+      },
+      {
+        id: 'q2',
+        text: 'Start these 2?',
+        textCodes: [{ code: 'question.startMany', params: { count: '2' } }],
+      },
+    ]);
+  });
 });
 
 describe('fitNeoSnapshotBudget with todoAsks', () => {

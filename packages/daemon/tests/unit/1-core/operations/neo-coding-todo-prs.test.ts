@@ -235,7 +235,7 @@ describe('coding todo claims', () => {
     read = [pr(102, 'MERGED')];
     expect(await pack.check({ ...row, report: 'Superseded; only #102 now' })).toEqual({
       done: true,
-      evidence: '#102 已合并',
+      evidence: '#102 merged',
     });
     expect(repo.urls(row.id)).toEqual(['https://github.com/lsm/neo-ios/pull/102']);
   });
@@ -245,12 +245,12 @@ describe('codingTodoCheck', () => {
   test('pr_merged needs every PR merged and pr_opened any live PR', () => {
     expect(codingTodoCheck('pr_merged', [pr(1, 'MERGED'), pr(2, 'MERGED')])).toEqual({
       done: true,
-      evidence: '#1 #2 已合并',
+      evidence: '#1 #2 merged',
     });
     expect(codingTodoCheck('pr_merged', [])).toEqual({ done: false, evidence: null });
     expect(codingTodoCheck('pr_opened', [pr(1, 'CLOSED'), pr(2, 'OPEN')])).toEqual({
       done: true,
-      evidence: '#2 已开出',
+      evidence: '#2 opened',
     });
     expect(codingTodoCheck('deployed', [])).toBeNull();
   });

@@ -198,12 +198,12 @@ export function codingTodoCheck(
   const merged = prs.filter((pr) => pr.state === 'MERGED');
   if (kind === 'pr_merged')
     return prs.length && merged.length === prs.length
-      ? { done: true, evidence: `${merged.map(prNumber).join(' ')} 已合并` }
+      ? { done: true, evidence: `${merged.map(prNumber).join(' ')} merged` }
       : { done: false, evidence: null };
   if (kind === 'pr_opened') {
     const opened = prs.filter((pr) => pr.state !== 'CLOSED');
     return opened.length
-      ? { done: true, evidence: `${opened.map(prNumber).join(' ')} 已开出` }
+      ? { done: true, evidence: `${opened.map(prNumber).join(' ')} opened` }
       : { done: false, evidence: null };
   }
   return null;
