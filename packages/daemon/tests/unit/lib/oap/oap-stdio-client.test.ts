@@ -110,4 +110,52 @@ describe('OapStdioClient', () => {
       'OAP endpoint wrote a line that is not an OAP envelope',
     ]);
   });
+
+  test('a malformed frame after connect stops the endpoint and delivers nothing after it', async () => {
+    const pidFile = join(mkdtempSync(join(tmpdir(), 'oap-client-')), 'pid');
+    const script = [
+      `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+      'const profile = "open-agent-protocol.agent-control-core";',
+      'require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {',
+      '  const r = JSON.parse(line);',
+      '  const reply = (type, payload) => process.stdout.write(JSON.stringify({ type, in_reply_to: r.id, payload }) + "\\n");',
+      '  if (r.type === "protocol.initialize.request") return reply("protocol.initialize.response", { profile });',
+      '  if (r.type === "capabilities.request") return reply("capabilities.response", {});',
+      '  process.stdout.write("null\\n" + JSON.stringify({ type: "run.started", payload: {} }) + "\\n");',
+      '});',
+      'setInterval(() => {}, 1000);',
+    ].join('\n');
+    const failing = client(['-e', script]);
+    await failing.connect();
+    const frames: Array<OapEnvelope | Error> = [];
+    failing.subscribe((frame) => frames.push(frame));
+    await expect(failing.request('session.open.request', { session_id: 's-1' })).rejects.toThrow(
+      'not an OAP envelope'
+    );
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    await waitFor(() => !alive(pid));
+    expect(alive(pid)).toBe(false);
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toBeInstanceOf(Error);
+  });
+
+  test('a subscriber that throws does not keep frames from the next one', async () => {
+    const connected = client();
+    await connected.connect();
+    await connected.openSession('s-1');
+    const types: string[] = [];
+    connected.subscribe(() => {
+      throw new Error('listener failed');
+    });
+    connected.subscribe((frame) => {
+      if (!(frame instanceof Error)) types.push(frame.type);
+    });
+    await connected.request('session.message.submit.request', {
+      session_id: 's-1',
+      messages: [{ role: 'user', content: 'tools' }],
+      delivery: 'auto',
+    });
+    await waitFor(() => types.includes('run.completed'));
+    expect(types.at(-1)).toBe('run.completed');
+  });
 });

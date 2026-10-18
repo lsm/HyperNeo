@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { generateUUID } from '@hyperneo/shared';
+import { Logger } from '../logger.ts';
 
 export const OAP_AGENT_PROFILE = 'open-agent-protocol.agent-control-core';
 const OAP_PROTOCOL = 'open-agent-protocol';
 const OAP_VERSION = '0.1';
 const DEFAULT_TIMEOUT_MS = 30_000;
+const logger = new Logger('OapStdioClient');
 const UNREVISED_TYPES = new Set(['protocol.initialize.request', 'capabilities.request']);
 
 export interface OapEnvelope {
@@ -148,17 +150,12 @@ export class OapStdioClient {
 
   subscribe(listener: OapFrameListener): () => void {
     this.listeners.add(listener);
-    if (this.failure) listener(this.failure);
+    if (this.failure) notify(listener, this.failure);
     return () => this.listeners.delete(listener);
   }
 
   close(): void {
-    const child = this.child;
-    if (!child) return;
-    this.child = null;
     this.fail(new Error('OAP client closed'));
-    child.stdin.end();
-    child.kill('SIGTERM');
   }
 
   private receive(chunk: string): void {
@@ -173,6 +170,7 @@ export class OapStdioClient {
   }
 
   private dispatch(line: string): void {
+    if (this.failure) return;
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
@@ -192,18 +190,24 @@ export class OapStdioClient {
       waiting.resolve(envelope);
       return;
     }
-    for (const listener of this.listeners) listener(envelope);
+    for (const listener of this.listeners) notify(listener, envelope);
   }
 
   private fail(error: Error): void {
     if (this.failure) return;
     this.failure = error;
+    const child = this.child;
+    this.child = null;
+    if (child) {
+      child.stdin.end();
+      child.kill('SIGTERM');
+    }
     for (const waiting of this.pending.values()) {
       clearTimeout(waiting.timer);
       waiting.reject(error);
     }
     this.pending.clear();
-    for (const listener of this.listeners) listener(error);
+    for (const listener of this.listeners) notify(listener, error);
   }
 }
 
@@ -215,4 +219,15 @@ function isEnvelope(value: unknown): value is OapEnvelope {
     typeof candidate.payload === 'object' &&
     candidate.payload !== null
   );
+}
+
+function notify(listener: OapFrameListener, frame: OapEnvelope | Error): void {
+  try {
+    listener(frame);
+  } catch (error) {
+    logger.warn(
+      'OAP frame listener threw:',
+      error instanceof Error ? error.message : String(error)
+    );
+  }
 }
