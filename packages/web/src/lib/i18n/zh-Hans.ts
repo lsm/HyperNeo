@@ -145,4 +145,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'composer.send': '发送消息',
   'composer.stopDraftTitle': '停止并加入草稿，和{context}一起发送',
   'composer.stopSendTitle': '停止录音并立即发送',
+  'question.startOne': '开始「{title}」？',
+  'question.startMany': '开始这 {count} 件？',
 };
