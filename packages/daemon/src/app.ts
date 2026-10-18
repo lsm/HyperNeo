@@ -1387,8 +1387,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
-    if (usesHumanLogin()) oauthRefreshScheduler.start();
-    logInfo('[Daemon] OAuth refresh scheduler started');
+    if (usesHumanLogin()) {
+      oauthRefreshScheduler.start();
+      logInfo('[Daemon] OAuth refresh scheduler started');
+    } else {
+      logInfo('[Daemon] OAuth refresh scheduler skipped: test daemon without the human login');
+    }
 
     const pendingCleanup = jobQueue.listJobs({
       queue: JOB_QUEUE_CLEANUP,
