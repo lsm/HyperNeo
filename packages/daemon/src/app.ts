@@ -101,6 +101,7 @@ import {
   backfillDeepSeekProvider,
   migrateProvidersIfNeeded,
   refreshGlmDisplayName,
+  usesHumanLogin,
 } from './lib/credential-discovery.ts';
 import { createReactiveDatabase } from './storage/reactive-database.ts';
 import { LiveQueryEngine } from './storage/live-query.ts';
@@ -1386,7 +1387,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
-    oauthRefreshScheduler.start();
+    if (usesHumanLogin()) oauthRefreshScheduler.start();
     logInfo('[Daemon] OAuth refresh scheduler started');
 
     const pendingCleanup = jobQueue.listJobs({
