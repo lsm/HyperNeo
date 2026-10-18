@@ -2287,6 +2287,21 @@ describe('AgentSession', () => {
         expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
       });
 
+      it('keeps a stored pending switch when an idle request names an invalid model', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        // biome-ignore lint: test mock access
+        const manager = agentSession.stateManager as unknown as Record<string, unknown>;
+        manager.getState = () => ({ status: 'idle' });
+        expect(await agentSession.requestModelSwitch('typo', 'anthropic')).toEqual({
+          success: false,
+          model: 'claude-sonnet-4-20250514',
+          error: 'Invalid model: typo. Use a valid model ID or alias.',
+        });
+        expect(switchModel).not.toHaveBeenCalled();
+        expect(mockSession.metadata.pendingModelSwitch).toMatchObject({ model: 'opus' });
+      });
+
       it('keeps the pending switch when a new turn has already started at the idle callback', async () => {
         await agentSession.stateManager.setProcessing('turn-1');
         await agentSession.requestModelSwitch('opus', 'anthropic');

@@ -1611,12 +1611,12 @@ export class AgentSession
     model: string,
     provider: string
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
+    const invalid = await this.modelSwitchHandler.invalidModel(model, provider);
+    if (invalid) return { success: false, model: this.session.config.model, error: invalid };
     if (modelSwitchTiming(this.stateManager.getState().status) === 'now') {
       await this.setPendingModelSwitch(undefined);
       return this.handleModelSwitch(model, provider);
     }
-    const invalid = await this.modelSwitchHandler.invalidModel(model, provider);
-    if (invalid) return { success: false, model: this.session.config.model, error: invalid };
     const pending = { model, provider, requestedAt: Date.now() };
     await this.setPendingModelSwitch(pending);
     const applied =
