@@ -173,7 +173,7 @@ describe('claude-desktop start', () => {
     const started = await driver.start?.(request, user);
     expect(started).toMatchObject({ ok: true });
     expect(
-      await driver.status({ adapter: 'claude-desktop', id: 'local_u1' }, undefined)
+      await driver.status!({ adapter: 'claude-desktop', id: 'local_u1' }, undefined)
     ).toMatchObject({ ok: true, value: { ref: { id: 'local_u1' }, title: 'Bigger font' } });
   });
 
