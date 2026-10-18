@@ -20,8 +20,8 @@ const registration = {
 };
 
 describe('claudeSessionOwner', () => {
-  test.each(['2.1.295', '2.1.299'])(
-    'recognizes matched CLI and SDK registrations for inspected version %s',
+  test.each(['2.1.295', '2.1.299', '2.1.302', '2.2.0'])(
+    'recognizes matched CLI and SDK registrations on any engine version %s',
     (version) => {
       for (const entrypoint of ['cli', 'sdk-ts']) {
         expect(claudeSessionOwner(live, { ...registration, version, entrypoint })).toBe('cli');
@@ -49,7 +49,6 @@ describe('claudeSessionOwner', () => {
     { ...registration, entrypoint: undefined },
     { ...registration, entrypoint: 'claude-vscode' },
     { ...registration, entrypoint: 'future-owner' },
-    { ...registration, version: '2.1.300' },
   ])('does not infer an owner from incomplete or conflicting evidence %j', (record) => {
     expect(claudeSessionOwner(live, record)).toBe('unknown');
   });

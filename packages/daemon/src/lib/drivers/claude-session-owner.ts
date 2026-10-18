@@ -28,7 +28,6 @@ export function claudeSessionOwner(
   const record = parsed.data;
   if (live.pid !== record.pid || live.sessionId !== record.sessionId) return 'unknown';
   if (record.entrypoint === 'claude-desktop') return 'desktop';
-  if (!['2.1.295', '2.1.299'].includes(record.version)) return 'unknown';
   return ['cli', 'sdk-ts'].includes(record.entrypoint) ? 'cli' : 'unknown';
 }
 

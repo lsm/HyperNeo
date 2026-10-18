@@ -14,7 +14,7 @@ import { reject } from './work-operations.ts';
 const InboxRegistrationSchema = z.object({
   sessionId: z.string().uuid(),
   pid: z.number().int().positive(),
-  version: z.enum(['2.1.295', '2.1.299']),
+  version: z.string().min(1),
   messagingSocketPath: z.string().min(1),
   peerProtocol: z.number().optional(),
   peerFeatures: z.array(z.string()).optional(),
@@ -23,7 +23,7 @@ const InboxRegistrationSchema = z.object({
 export interface ClaudeCliInboxEndpoint {
   sessionId: string;
   pid: number;
-  version: '2.1.295' | '2.1.299';
+  version: string;
   socketPath: string;
 }
 
@@ -44,11 +44,8 @@ export function requireClaudeInboxEndpoint(
     };
   const record = parsed.data;
   const verified =
-    owner.value.owner === 'desktop'
-      ? record.version === '2.1.299' &&
-        record.peerProtocol === 1 &&
-        record.peerFeatures?.includes('notify_idle')
-      : record.version === '2.1.295';
+    (record.peerProtocol === 1 && record.peerFeatures?.includes('notify_idle')) ||
+    (owner.value.owner === 'cli' && record.version === '2.1.295');
   if (!verified)
     return {
       reason: reject('unsupported', 'No registered inbox with a verified Claude protocol.'),

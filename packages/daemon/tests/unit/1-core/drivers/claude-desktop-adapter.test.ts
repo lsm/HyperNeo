@@ -103,6 +103,7 @@ describe('claude-desktop adapter against the app session records', () => {
 
   let spawned: Array<{ args: string[]; cwd?: string }>;
   let liveReads = 0;
+  let clock = 0;
 
   function adapter(
     live: ClaudeLiveSession[] | Error = [
@@ -114,6 +115,7 @@ describe('claude-desktop adapter against the app session records', () => {
     sendInbox?: ClaudeDesktopAdapterDeps['sendInbox']
   ) {
     spawned = [];
+    clock = 0;
     return createClaudeDesktopAdapter({
       sendInbox,
       admitInbox: sendInbox
@@ -132,8 +134,10 @@ describe('claude-desktop adapter against the app session records', () => {
       homeDir: '/Users/test',
       gitCheckout: async () => null,
       newId: () => 'unused',
-      sleep: async () => {},
-      now: () => 0,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      now: () => clock,
       spawn: (args, options) => {
         spawned.push({ args, cwd: options?.cwd });
         onSpawn();
@@ -671,21 +675,58 @@ describe('claude-desktop adapter against the app session records', () => {
   });
 
   test('send asks the CLI afresh which sessions the app is running', async () => {
-    const reader = adapter([]);
+    const reader = adapter([
+      { sessionId: 'cli-b2', status: 'idle', name: 'woodpecker', owner: 'cli', pid: 2 },
+    ]);
     await reader.find({ includeClosed: false, limit: 20 });
     const before = liveReads;
     await reader.send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user);
     expect(liveReads).toBe(before + 1);
   });
 
-  test('send never resumes absent owners and still refuses archived sessions', async () => {
+  test('send opens an idle session in Desktop and delivers once it is live', async () => {
+    const live: ClaudeLiveSession[] = [];
+    const folder = join(dir, 'projects', '-focus-ops');
+    mkdirSync(folder, { recursive: true });
+    const chat = join(folder, 'cli-b2.jsonl');
+    writeFileSync(chat, `${JSON.stringify({ type: 'user', uuid: 'older' })}\n`);
+    const receipt = { executionId: 'cli-b2', inputId: 'in-b2' };
+    const driver = adapter(
+      live,
+      0,
+      () =>
+        live.push({
+          sessionId: 'cli-b2',
+          status: 'idle',
+          name: 'woodpecker',
+          owner: 'desktop',
+          pid: 2,
+        }),
+      undefined,
+      async () => {
+        appendFileSync(chat, `${JSON.stringify({ type: 'user', uuid: 'in-b2' })}\n`);
+        return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
+      }
+    );
+    expect(
+      await driver.send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user)
+    ).toMatchObject({ ok: true, value: { delivered: true, receipt } });
+    expect(spawned).toEqual([
+      {
+        args: ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', 'cli-b2'],
+        cwd: '/focus/ops',
+      },
+    ]);
+  });
+
+  test('send reports a session Desktop never opens and still refuses archived sessions', async () => {
     const ref = { adapter: 'claude-desktop', id: 'local_b2' };
-    expect(await adapter([]).send?.(ref, '-v next', user)).toMatchObject({
+    expect(await adapter([]).send?.(ref, '-v next', user)).toEqual({
       ok: false,
-      reason: 'unreachable',
-      detail: expect.stringContaining('will not resume'),
+      reason: 'not_delivered',
+      detail: 'Claude Code Desktop did not open woodpecker.',
     });
-    expect(spawned).toEqual([]);
+    expect(spawned.map((call) => call.args.at(-1))).toEqual(['cli-b2']);
     expect(
       await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_a2' }, 'next', user)
     ).toMatchObject({ ok: false, reason: 'not_open' });
