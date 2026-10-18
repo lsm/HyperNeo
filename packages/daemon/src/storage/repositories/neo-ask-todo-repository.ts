@@ -233,7 +233,7 @@ export class NeoAskTodoRepository {
     return (
       this.db
         .prepare(
-          `${TODO_SELECT} WHERE check_json IS NOT NULL AND state IN ('todo', 'doing')
+          `${TODO_SELECT} WHERE state IN ('todo', 'doing')
              AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
         )
         .all() as TodoRow[]

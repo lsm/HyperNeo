@@ -2803,7 +2803,7 @@ export class NeoService {
         this.todoRunner.recheck(route.workIds);
         await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
         for (const workId of delivered) {
-          const told = neoCardPrAttention(this.todoPrs.prs(workId)).attention;
+          const told = neoCardPrAttention(this.todoPrs.prs(workId), false).attention;
           if (told) this.cardPrRelays.markTold(workId, told.signature, Date.now());
         }
       },

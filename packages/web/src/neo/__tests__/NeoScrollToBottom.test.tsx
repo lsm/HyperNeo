@@ -1,6 +1,6 @@
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { signal } from '@preact/signals';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
@@ -65,15 +65,19 @@ const snapshot: NeoSnapshot = {
 };
 
 const resized: Array<() => void> = [];
+const observed = new Set<Element>();
 const renderLive = () => {
   resized.length = 0;
+  observed.clear();
   vi.stubGlobal(
     'ResizeObserver',
     class {
       constructor(callback: () => void) {
         resized.push(callback);
       }
-      observe() {}
+      observe(element: Element) {
+        observed.add(element);
+      }
       disconnect() {}
     }
   );
@@ -136,6 +140,15 @@ describe('Neo scroll to bottom', () => {
     expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeTruthy();
     placeScroll(main, 1500);
     expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
+  });
+
+  it('watches the chat rail content, including content added after first load', async () => {
+    renderLive();
+    const rail = document.querySelector('.neo-chat-rail')!;
+    expect([...rail.children].every((child) => observed.has(child))).toBe(true);
+    const late = document.createElement('div');
+    rail.append(late);
+    await waitFor(() => expect(observed.has(late)).toBe(true));
   });
 
   it('follows content that an opened detail grows or shrinks without a scroll event', () => {

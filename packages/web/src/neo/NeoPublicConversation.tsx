@@ -22,7 +22,8 @@ import {
   NEO_MESSAGE_STATUS_TITLES,
   type NeoMessageStatus,
 } from './message-status.ts';
-import { neoAppLabel, neoSessionLink } from './work-driver.ts';
+import { neoAppLabel, neoSessionKind, neoSessionLink } from './work-driver.ts';
+import { NeoSessionMark } from './NeoCardParts.tsx';
 import { type NeoPendingAsk, type NeoQuote, neoQuoteExcerpt } from './neo-intake.ts';
 import type {
   NeoPublicConversation as Conversation,
@@ -282,9 +283,10 @@ function NoticeRow({
             {link ? (
               <a
                 href={link}
-                class="flex min-h-9 items-center justify-self-end rounded-md px-3 text-accent hover:bg-fill-soft"
+                class="flex min-h-9 items-center gap-1.5 justify-self-end rounded-md px-3 text-accent hover:bg-fill-soft"
                 aria-label={`Open ${notice.title}`}
               >
+                <NeoSessionMark kind={neoSessionKind(notice.ref.adapter, link)} />
                 Open
               </a>
             ) : (
