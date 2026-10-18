@@ -228,6 +228,7 @@ export interface ModelSwitchResult {
   success: boolean;
   model: string;
   error?: string;
+  reported?: true;
 }
 
 export class ModelSwitchHandler {
@@ -616,6 +617,7 @@ export class ModelSwitchHandler {
         success: false,
         model: session.config.model,
         error: errorMessage,
+        reported: true,
       };
     }
   }

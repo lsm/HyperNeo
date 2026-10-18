@@ -241,6 +241,7 @@ import {
   ModelSwitchHandler,
   modelSwitchTiming,
   type ModelSwitchHandlerContext,
+  type ModelSwitchResult,
   type RuntimeSettingsCommit,
 } from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
@@ -1576,7 +1577,7 @@ export class AgentSession
     newProvider: string,
     nonInterrupting = false,
     commit?: RuntimeSettingsCommit
-  ): Promise<{ success: boolean; model: string; error?: string }> {
+  ): Promise<ModelSwitchResult> {
     if (commit)
       return this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting, commit);
     return nonInterrupting
@@ -1612,7 +1613,10 @@ export class AgentSession
     provider: string
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
     const invalid = await this.modelSwitchHandler.invalidModel(model, provider);
-    if (invalid) return { success: false, model: this.session.config.model, error: invalid };
+    if (invalid) {
+      await this.applyPendingModelSwitch();
+      return { success: false, model: this.session.config.model, error: invalid };
+    }
     if (modelSwitchTiming(this.stateManager.getState().status) === 'now') {
       await this.setPendingModelSwitch(undefined);
       return this.handleModelSwitch(model, provider);
@@ -1633,7 +1637,7 @@ export class AgentSession
     if (!pending || modelSwitchTiming(this.stateManager.getState().status) !== 'now') return false;
     await this.setPendingModelSwitch(undefined);
     const result = await this.handleModelSwitch(pending.model, pending.provider);
-    if (!result.success) {
+    if (!result.success && !result.reported) {
       const message = `The switch to ${pending.model} requested during the last turn failed: ${result.error ?? 'unknown error'}`;
       this.logger.warn(message);
       await this.errorManager

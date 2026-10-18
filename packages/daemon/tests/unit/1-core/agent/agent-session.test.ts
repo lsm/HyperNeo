@@ -2287,7 +2287,7 @@ describe('AgentSession', () => {
         expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
       });
 
-      it('keeps a stored pending switch when an idle request names an invalid model', async () => {
+      it('applies a stored pending switch when an idle request names an invalid model', async () => {
         await agentSession.stateManager.setProcessing('turn-1');
         await agentSession.requestModelSwitch('opus', 'anthropic');
         // biome-ignore lint: test mock access
@@ -2298,8 +2298,9 @@ describe('AgentSession', () => {
           model: 'claude-sonnet-4-20250514',
           error: 'Invalid model: typo. Use a valid model ID or alias.',
         });
-        expect(switchModel).not.toHaveBeenCalled();
-        expect(mockSession.metadata.pendingModelSwitch).toMatchObject({ model: 'opus' });
+        expect(switchModel).toHaveBeenCalledTimes(1);
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
       });
 
       it('keeps the pending switch when a new turn has already started at the idle callback', async () => {
@@ -2376,6 +2377,23 @@ describe('AgentSession', () => {
         await agentSession.stateManager.setIdle();
         expect(handleError).toHaveBeenCalledTimes(1);
         expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('does not report a deferred switch failure the handler already reported', async () => {
+        const handleError = mock(async () => {});
+        // biome-ignore lint: test mock access
+        (agentSession as unknown as Record<string, unknown>).errorManager = { handleError };
+        switchModel.mockImplementation(async () => ({
+          success: false,
+          model: 'claude-sonnet-4-20250514',
+          error: 'provider gone',
+          reported: true,
+        }));
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).toHaveBeenCalledTimes(1);
+        expect(handleError).not.toHaveBeenCalled();
       });
 
       it('a later request replaces the pending one', async () => {
