@@ -134,7 +134,7 @@ describe('AnthropicProvider', () => {
   });
 
   describe('getModels with SDK failure', () => {
-    it('should apply stored API key env while loading SDK models', async () => {
+    it('passes the stored API key to the model discovery query only', async () => {
       const seenEnv: Array<string | undefined> = [];
       class MockMcpServer {
         readonly _registeredTools: Record<string, object> = {};
@@ -142,8 +142,8 @@ describe('AnthropicProvider', () => {
         disconnect(): void {}
       }
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: () => {
-          seenEnv.push(process.env.ANTHROPIC_API_KEY);
+        query: ({ options }: { options: { env: Record<string, string | undefined> } }) => {
+          seenEnv.push(options.env.ANTHROPIC_API_KEY);
           return {
             interrupt: mock(async () => {}),
             supportedModels: mock(async () => [
@@ -181,7 +181,7 @@ describe('AnthropicProvider', () => {
       expect(models.map((model) => model.id)).toEqual(['sonnet']);
     });
 
-    it('should apply stored OAuth env while loading SDK models', async () => {
+    it('passes the stored OAuth token to the model discovery query only', async () => {
       const seenEnv: Array<string | undefined> = [];
       class MockMcpServer {
         readonly _registeredTools: Record<string, object> = {};
@@ -189,8 +189,8 @@ describe('AnthropicProvider', () => {
         disconnect(): void {}
       }
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: () => {
-          seenEnv.push(process.env.CLAUDE_CODE_OAUTH_TOKEN);
+        query: ({ options }: { options: { env: Record<string, string | undefined> } }) => {
+          seenEnv.push(options.env.CLAUDE_CODE_OAUTH_TOKEN);
           return {
             interrupt: mock(async () => {}),
             supportedModels: mock(async () => [
@@ -685,6 +685,45 @@ describe('AnthropicProvider', () => {
       expect(ids).toContain('claude-haiku-4-5-20251001');
       expect(ids).not.toContain('MiniMax-M2.5');
       expect(converted.find((m) => m.id === 'fable')?.family).toBe('fable');
+    });
+
+    it('keeps every row the CLI lists with its own id and label', () => {
+      const sdkModels = [
+        {
+          value: 'default',
+          resolvedModel: 'claude-haiku-5-5',
+          displayName: 'Default (recommended)',
+          description: 'Haiku 5.5',
+        },
+        {
+          value: 'opus[1m]',
+          resolvedModel: 'claude-opus-5[1m]',
+          displayName: 'Opus (1M context)',
+          description: 'Opus 5 with 1M context · Best for everyday, complex tasks',
+        },
+        {
+          value: 'sonnet',
+          resolvedModel: 'claude-sonnet-5-5',
+          displayName: 'Sonnet 5.5',
+          description: 'Most efficient for simpler tasks',
+        },
+        {
+          value: 'claude-sonnet-5',
+          resolvedModel: 'claude-sonnet-5',
+          displayName: 'Sonnet 5',
+          description: 'Efficient for routine tasks',
+        },
+      ];
+
+      const converted = provider.convertSdkModels(sdkModels);
+
+      expect(converted.map((m) => [m.id, m.name, m.family])).toEqual([
+        ['default', 'Default (recommended)', 'haiku'],
+        ['opus[1m]', 'Opus (1M context)', 'opus'],
+        ['sonnet', 'Sonnet 5.5', 'sonnet'],
+        ['claude-sonnet-5', 'Sonnet 5', 'sonnet'],
+      ]);
+      expect(converted.map((m) => m.contextWindow)).toEqual([200000, 1_000_000, 200000, 200000]);
     });
 
     it('claims the fable SDK alias as Anthropic', () => {

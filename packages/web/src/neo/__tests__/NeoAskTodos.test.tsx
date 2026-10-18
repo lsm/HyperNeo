@@ -178,7 +178,9 @@ describe('NeoAskTodos', () => {
     );
     expect(app.getByText('在做')).toBeTruthy();
     expect(app.getByText('#102 已合并')).toBeTruthy();
-    expect(app.getByText('Todo d').className).toContain('line-through');
+    expect(app.container.querySelector('[aria-label="Todos"]')?.textContent).not.toContain(
+      'Todo d'
+    );
     expect(app.getByText('新')).toBeTruthy();
     fireEvent.click(app.getByRole('button', { name: '打开 Todo a' }));
     expect(onOpen).toHaveBeenCalledWith('/session/w', 'Todo a');
@@ -199,6 +201,47 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(settled.queryByRole('button', { name: 'Ask actions' })).toBeNull();
+  });
+
+  it('moves removed todos into Details, one line each with what replaced them', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          state: 'doing',
+          todos: [
+            todo('d', { state: 'removed', status: '换成「Todo e」' }),
+            todo('e', { state: 'doing' }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    expect(app.queryByText('Todo d')).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    const line = app.getByRole('list', { name: '已移除' }).querySelector('li')!;
+    expect(line.textContent).toBe('Todo d — 换成「Todo e」');
+    expect(line.id).toBe('neo-ref-todo-d');
+  });
+
+  it('keeps a removed todo still listed in an open start question out of Details', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [todo('d', { state: 'removed', status: '不要了' })],
+          questions: [question('q', { kind: 'start', state: 'open', startTodos: ['d'] })],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    expect(app.queryByRole('button', { name: 'Details' })).toBeNull();
+    expect(app.container.querySelectorAll('[data-ask-todo="d"]')).toHaveLength(1);
+  });
+
+  it('shows no Details button when there is nothing to put in it', () => {
+    const app = render(
+      <NeoAskTodos entry={entry({ todos: [todo('a', { state: 'doing' })] })} onAnswer={() => {}} />
+    );
+    expect(app.queryByRole('button', { name: 'Details' })).toBeNull();
   });
 
   it('keeps answered questions in Details', () => {

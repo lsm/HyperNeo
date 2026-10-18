@@ -191,7 +191,6 @@ describe('QueryRunner stream silence watchdog', () => {
       queryAbortController: null,
       firstMessageReceived: false,
       startupTimeoutTimer: null,
-      originalEnvVars: {},
       processExitedPromise: null,
       resetProcessExitedPromise: () => {},
       trackAgentProcess: () => {},

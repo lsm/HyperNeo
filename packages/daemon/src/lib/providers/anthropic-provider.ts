@@ -14,7 +14,7 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { providerEnvCoordinator } from './provider-env-enrollment.ts';
-import { canonicalAnthropicSdkAlias, isAnthropicSdkModelId } from './anthropic-sdk-models.js';
+import { isAnthropicSdkModelId } from './anthropic-sdk-models.js';
 import {
   CLAUDE_SUBSCRIPTION_OAUTH_CONFIG,
   buildClaudeSubscriptionAuthorizeUrl,
@@ -36,56 +36,24 @@ const STORED_CREDENTIAL_ENV_KEYS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKE
 
 type StoredCredentialEnvKey = (typeof STORED_CREDENTIAL_ENV_KEYS)[number];
 
-function isFullVersionId(modelId: string): boolean {
-  return /^claude-(sonnet|opus|haiku|fable)-[\d-]+$/.test(modelId);
+interface SdkModelRow {
+  value: string;
+  resolvedModel?: string;
+  displayName: string;
+  description: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: ModelInfo['effortLevels'];
+}
+
+function anthropicFamily(label: string): ModelInfo['family'] {
+  const lower = label.toLowerCase();
+  return (['opus', 'haiku', 'fable'] as const).find((family) => lower.includes(family)) ?? 'sonnet';
 }
 
 function readAccountEmail(credentials: ProviderCredentials | null): string | undefined {
   if (credentials?.type !== 'oauth') return undefined;
   const account = credentials.raw?.account as { email_address?: unknown } | undefined;
   return typeof account?.email_address === 'string' ? account.email_address : undefined;
-}
-
-function extractVersionFromDescription(description: string): string | null {
-  const match = description.match(/(?:Opus|Sonnet|Haiku|Fable)\s+(\d+\.\d+)/i);
-  return match ? match[1] : null;
-}
-
-function parseModelId(
-  modelId: string,
-  description?: string
-): { family: string; version?: string } | null {
-  const canonicalFamilies: Record<string, string> = {
-    sonnet: 'sonnet',
-    default: 'sonnet',
-    opus: 'opus',
-    haiku: 'haiku',
-    fable: 'fable',
-    'sonnet[1m]': 'sonnet',
-  };
-
-  if (modelId in canonicalFamilies) {
-    const family = canonicalFamilies[modelId];
-    const version = description ? extractVersionFromDescription(description) : null;
-    const versionSuffix = modelId === 'sonnet[1m]' ? '-1m' : '';
-    return {
-      family,
-      version: version ? `${version}${versionSuffix}` : undefined,
-    };
-  }
-
-  const match = modelId.match(/^claude-(sonnet|opus|haiku|fable)-(\d+)-(\d+)(?:-\d{8})?$/);
-  if (match) {
-    const family = match[1];
-    const major = match[2];
-    const minor = match[3];
-    return {
-      family,
-      version: `${major}.${minor}`,
-    };
-  }
-
-  return null;
 }
 
 export class AnthropicProvider implements Provider {
@@ -106,7 +74,6 @@ export class AnthropicProvider implements Provider {
   private credentials: ProviderCredentials | null = null;
   private credentialsVersion = 0;
   private credentialSignature: string | undefined;
-  private readonly capturedAnthropicBaseUrl: string | undefined;
   private readonly credentialListeners = new Set<
     (credentials: ProviderCredentials) => void | Promise<void>
   >();
@@ -122,9 +89,7 @@ export class AnthropicProvider implements Provider {
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly modelCacheKey: string = 'anthropic-global',
     private readonly fetchImpl: typeof fetch = fetch
-  ) {
-    this.capturedAnthropicBaseUrl = env.ANTHROPIC_BASE_URL;
-  }
+  ) {}
 
   setCredentials(credentials: ProviderCredentials): void {
     const signature = JSON.stringify(credentials);
@@ -385,125 +350,55 @@ export class AnthropicProvider implements Provider {
 
   private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const env = this.buildSdkConfig().envVars;
-    const restoreEnv = this.applyEnvVarsForSdk(env);
+    const env: Record<string, string | undefined> = { ...this.env };
+    for (const [key, value] of Object.entries(this.buildSdkConfig().envVars)) {
+      env[key] = value === '' ? undefined : value;
+    }
+    const tmpQuery = query({
+      prompt: '',
+      options: {
+        model: 'default',
+        env,
+        cwd: process.cwd(),
+        maxTurns: 0,
+        pathToClaudeCodeExecutable: resolveSDKCliPath(),
+        executable: isRunningUnderBun() ? 'bun' : undefined,
+        settings: withSdkTranscriptRetention(),
+      },
+    });
 
     try {
-      const tmpQuery = query({
-        prompt: '',
-        options: {
-          model: 'default',
-          cwd: process.cwd(),
-          maxTurns: 0,
-          pathToClaudeCodeExecutable: resolveSDKCliPath(),
-          executable: isRunningUnderBun() ? 'bun' : undefined,
-          settings: withSdkTranscriptRetention(),
-        },
-      });
-
-      try {
-        const sdkModels = await Promise.race([
-          tmpQuery.supportedModels(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('SDK model load timeout')), timeout)
-          ),
-        ]);
-        return this.convertSdkModels(sdkModels);
-      } finally {
-        tmpQuery.interrupt().catch(() => {});
-      }
+      const sdkModels = await Promise.race([
+        tmpQuery.supportedModels(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('SDK model load timeout')), timeout)
+        ),
+      ]);
+      return this.convertSdkModels(sdkModels);
     } finally {
-      restoreEnv();
+      tmpQuery.interrupt().catch(() => {});
     }
   }
 
-  convertSdkModels(
-    sdkModels: Array<{
-      value: string;
-      displayName: string;
-      description: string;
-      supportsEffort?: boolean;
-      supportedEffortLevels?: ModelInfo['effortLevels'];
-    }>
-  ): ModelInfo[] {
-    sdkModels = sdkModels.filter((m) => isAnthropicSdkModelId(m.value));
-
-    const canonicalIdsByFamily = new Map<string, string>();
-
-    for (const sdkModel of sdkModels) {
-      const alias = canonicalAnthropicSdkAlias(sdkModel.value);
-      if (alias) {
-        const parsed = parseModelId(alias, sdkModel.description);
-        if (parsed && parsed.version) {
-          const key = `${parsed.family}-${parsed.version}`;
-          canonicalIdsByFamily.set(key, alias);
-        }
-      }
-    }
-
+  convertSdkModels(sdkModels: SdkModelRow[]): ModelInfo[] {
     return sdkModels
-      .filter((sdkModel) => {
-        if (canonicalAnthropicSdkAlias(sdkModel.value)) {
-          return true;
-        }
-
-        if (isFullVersionId(sdkModel.value)) {
-          const parsed = parseModelId(sdkModel.value, sdkModel.description);
-          if (parsed && parsed.version) {
-            const key = `${parsed.family}-${parsed.version}`;
-            const canonicalId = canonicalIdsByFamily.get(key);
-
-            if (canonicalId) {
-              return false;
-            }
-          }
-        }
-
-        return true;
-      })
-      .map((sdkModel) => {
-        const alias = canonicalAnthropicSdkAlias(sdkModel.value);
-        const modelId = alias === 'default' ? 'sonnet' : (alias ?? sdkModel.value);
-
-        const description = sdkModel.description || '';
-        const separatorIndex = description.indexOf(' · ');
-        let displayName = description;
-        if (separatorIndex > 0) {
-          displayName = description.substring(0, separatorIndex);
-        } else {
-          displayName = sdkModel.displayName || sdkModel.value;
-        }
-
-        const currentlyMatch = displayName.match(/currently\s+([^)]+)/);
-        if (currentlyMatch) {
-          displayName = currentlyMatch[1].trim();
-        }
-
-        let family: 'opus' | 'sonnet' | 'haiku' | 'fable' = 'sonnet';
-        const nameLower = displayName.toLowerCase();
-        if (nameLower.includes('opus')) {
-          family = 'opus';
-        } else if (nameLower.includes('haiku')) {
-          family = 'haiku';
-        } else if (nameLower.includes('fable')) {
-          family = 'fable';
-        }
-
-        return {
-          id: modelId,
-          name: displayName,
-          alias: modelId,
-          family,
-          provider: 'anthropic',
-          contextWindow: 200000,
-          description: sdkModel.description || '',
-          releaseDate: '',
-          available: true,
-          ...(sdkModel.supportsEffort && sdkModel.supportedEffortLevels?.length
-            ? { effortLevels: sdkModel.supportedEffortLevels }
-            : {}),
-        };
-      });
+      .filter((sdkModel) => isAnthropicSdkModelId(sdkModel.value))
+      .map((sdkModel) => ({
+        id: sdkModel.value,
+        name: sdkModel.displayName || sdkModel.value,
+        alias: sdkModel.value,
+        family: anthropicFamily(
+          `${sdkModel.resolvedModel ?? sdkModel.value} ${sdkModel.displayName}`
+        ),
+        provider: 'anthropic',
+        contextWindow: /\[1m\]$/i.test(sdkModel.value) ? 1_000_000 : 200000,
+        description: sdkModel.description || '',
+        releaseDate: '',
+        available: true,
+        ...(sdkModel.supportsEffort && sdkModel.supportedEffortLevels?.length
+          ? { effortLevels: sdkModel.supportedEffortLevels }
+          : {}),
+      }));
   }
 
   getModelEffortLevels(modelId: string): ModelInfo['effortLevels'] {
@@ -567,40 +462,6 @@ export class AnthropicProvider implements Provider {
       envVars,
       isAnthropicCompatible: true,
       apiVersion: 'v1',
-    };
-  }
-
-  private applyEnvVarsForSdk(envVars: Record<string, string>): () => void {
-    const originals = new Map<string, string | undefined>();
-
-    if (process.env.ANTHROPIC_BASE_URL !== undefined) {
-      if (process.env.ANTHROPIC_BASE_URL !== this.capturedAnthropicBaseUrl) {
-        originals.set('ANTHROPIC_BASE_URL', process.env.ANTHROPIC_BASE_URL);
-        delete process.env.ANTHROPIC_BASE_URL;
-      }
-    }
-    if (process.env.ANTHROPIC_AUTH_TOKEN?.startsWith('anthropic-copilot-proxy:')) {
-      originals.set('ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN);
-      delete process.env.ANTHROPIC_AUTH_TOKEN;
-    }
-
-    for (const [key, value] of Object.entries(envVars)) {
-      originals.set(key, process.env[key]);
-      if (value === '') {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-
-    return () => {
-      for (const [key, value] of originals) {
-        if (value === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = value;
-        }
-      }
     };
   }
 

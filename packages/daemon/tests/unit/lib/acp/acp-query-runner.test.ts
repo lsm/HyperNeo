@@ -266,7 +266,6 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     queryAbortController: null,
     firstMessageReceived: false,
     startupTimeoutTimer: null,
-    originalEnvVars: {},
     processExitedPromise: null,
     resetProcessExitedPromise: mock(() => {}),
     trackAgentProcess,
@@ -4529,7 +4528,6 @@ describe('AcpQueryRunner', () => {
 
     expect(buildRanUnderLease).toBe(true);
     expect(constructorOptions[0].env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-acp-token');
-    expect(ctx.originalEnvVars).toEqual({});
   });
 
   test('aborts the ACP startup if the query generation is bumped while awaiting build', async () => {
@@ -4558,7 +4556,6 @@ describe('AcpQueryRunner', () => {
     await stalePromise;
 
     expect(constructorOptions).toHaveLength(0);
-    expect(ctx.originalEnvVars).toEqual({});
     expect(ctx.queryPromise).toBe(stalePromise);
   });
 

@@ -9,6 +9,7 @@ import type { ProcessingStateManager } from '../../../../src/lib/agent/processin
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
 import {
+  isProviderAuthRejection,
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
@@ -1727,6 +1728,32 @@ describe('SDKMessageHandler', () => {
         attempt: 1,
         max_retries: 3,
       });
+    });
+
+    it('hands a 401 or 403 retry to the session once per retry and leaves other retries alone', async () => {
+      const onProviderAuthRejected = mock(async () => {});
+      mockContext.onProviderAuthRejected = onProviderAuthRejected;
+      const retry = (status: number) =>
+        ({
+          type: 'system',
+          subtype: 'api_retry',
+          uuid: `retry-${status}`,
+          session_id: 'retry-session-id',
+          attempt: 1,
+          max_retries: 10,
+          retry_delay_ms: 1000,
+          error_status: status,
+          error: 'authentication_error',
+        }) as unknown as SDKMessage;
+      await handler.handleMessage(retry(429));
+      expect(onProviderAuthRejected).not.toHaveBeenCalled();
+      await handler.handleMessage(retry(401));
+      await handler.handleMessage(retry(403));
+      expect(onProviderAuthRejected.mock.calls.map((call) => call[0])).toEqual([
+        'HTTP 401: authentication_error',
+        'HTTP 403: authentication_error',
+      ]);
+      expect(isProviderAuthRejection(500)).toBe(false);
     });
 
     it('should reset thinking token tracking on system init (new query start)', async () => {

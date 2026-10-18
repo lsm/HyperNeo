@@ -544,7 +544,6 @@
 85	packages/daemon/tests/unit/4-space-storage/file-manager.test.ts
 377	packages/daemon/tests/unit/4-space-storage/model-service-provider-routing.test.ts
 85	packages/daemon/tests/unit/4-space-storage/provider-repository.test.ts
-4	packages/daemon/tests/unit/4-space-storage/provider-service-port-restore.test.ts
 5	packages/daemon/tests/unit/4-space-storage/reference-context-builder.test.ts
 5	packages/daemon/tests/unit/4-space-storage/reference-handlers.test.ts
 30	packages/daemon/tests/unit/4-space-storage/reference-message-persistence.test.ts

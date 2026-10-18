@@ -116,7 +116,7 @@ export function applyCodexDiscoveryPolicy(
 export function normalizeCodexRemoteModel(model: CodexRemoteModel): ModelInfo {
   const staticModel = staticModelForSlug(model.slug);
   const contextWindow =
-    model.context_window ?? model.max_context_window ?? staticModel?.contextWindow ?? 128000;
+    model.max_context_window ?? model.context_window ?? staticModel?.contextWindow ?? 128000;
   const description =
     model.description ?? staticModel?.description ?? (model.display_name || model.slug);
   return {

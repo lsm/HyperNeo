@@ -13,6 +13,13 @@ import { createCodingPackTables } from './schema/coding-tables.ts';
 import { extractNeoWorkPrUrls, type NeoWorkPrReader } from './work-prs.ts';
 
 export type CodingPrClaim = 'named' | 'reported' | 'branch';
+export type CodingPrClaimRow = {
+  todoId: string;
+  url: string;
+  claim: CodingPrClaim;
+  claimedAt: number;
+};
+export type CodingTodoWindow = { start: number | null; end: number | null };
 
 export function codingPrKey(url: string): string | null {
   const parsed = parsePrUrl(url);
@@ -39,7 +46,10 @@ export class CodingTodoPrRepository {
         JSON.stringify(keyed.filter((item) => item.claim === 'reported').map((item) => item.key))
       );
     const insert = this.db.prepare(
-      'INSERT OR IGNORE INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at) VALUES (?, ?, ?, ?)'
+      `INSERT INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(todo_id, url) DO UPDATE SET claim = excluded.claim, claimed_at = excluded.claimed_at
+        WHERE (claim = 'branch' AND excluded.claim != 'branch')
+           OR (claim = 'reported' AND excluded.claim = 'named')`
     );
     for (const { key, claim } of keyed) insert.run(todoId, key, claim, now);
   }
@@ -50,6 +60,30 @@ export class CodingTodoPrRepository {
         .prepare('SELECT url FROM pack_coding_pr_claims WHERE todo_id = ? ORDER BY claimed_at, url')
         .all(todoId) as { url: string }[]
     ).map((row) => row.url);
+  }
+
+  claimsOn(urls: readonly string[]): CodingPrClaimRow[] {
+    return this.db
+      .prepare(
+        `SELECT todo_id AS todoId, url, claim, claimed_at AS claimedAt FROM pack_coding_pr_claims
+          WHERE url IN (SELECT value FROM json_each(?))`
+      )
+      .all(JSON.stringify(urls)) as CodingPrClaimRow[];
+  }
+
+  window(todoId: string): CodingTodoWindow {
+    const row = this.db
+      .prepare(
+        `SELECT t.started_at AS start,
+                (SELECT MIN(next.started_at) FROM neo_todo_sessions other
+                   JOIN neo_todos next ON next.id = other.todo_id
+                  WHERE other.ref = own.ref AND other.todo_id != t.id
+                    AND next.started_at > t.started_at) AS end
+           FROM neo_todos t LEFT JOIN neo_todo_sessions own ON own.todo_id = t.id
+          WHERE t.id = ?`
+      )
+      .get(todoId) as CodingTodoWindow | null;
+    return row ?? { start: null, end: null };
   }
 
   todosFor(urls: readonly string[]): string[] {
@@ -98,23 +132,54 @@ export function planCodingTodoClaims(
   ];
 }
 
+const CLAIM_RANK: Record<CodingPrClaim, number> = { named: 0, reported: 1, branch: 2 };
+
+const outranks = (rival: CodingPrClaimRow, own: CodingPrClaimRow) =>
+  CLAIM_RANK[rival.claim] < CLAIM_RANK[own.claim] ||
+  (own.claim !== 'branch' &&
+    rival.claim === own.claim &&
+    (rival.claimedAt < own.claimedAt ||
+      (rival.claimedAt === own.claimedAt && rival.todoId < own.todoId)));
+
+const inWindow = (window: CodingTodoWindow, pr: NeoWorkPr) =>
+  window.start !== null &&
+  pr.createdAt !== undefined &&
+  pr.createdAt >= window.start &&
+  (window.end === null || pr.createdAt < window.end);
+
 export function codingTodoOwnPrs(
-  todo: Pick<NeoTodo, 'check' | 'startedAt'>,
-  prs: readonly NeoWorkPr[]
+  todo: Pick<NeoTodo, 'id' | 'startedAt'>,
+  claims: readonly CodingPrClaimRow[],
+  prs: readonly NeoWorkPr[],
+  window: CodingTodoWindow
 ): NeoWorkPr[] {
-  const named = todo.check?.params.urls;
-  const keys = new Set(
-    (Array.isArray(named) ? named : []).flatMap((url) =>
-      typeof url === 'string' ? (codingPrKey(url) ?? []) : []
-    )
+  const mine = claims.filter(
+    (row) =>
+      row.todoId === todo.id &&
+      !claims.some(
+        (rival) => rival.todoId !== todo.id && rival.url === row.url && outranks(rival, row)
+      )
   );
-  return prs.filter(
-    (pr) =>
-      keys.has(codingPrKey(pr.url) ?? '') ||
-      todo.startedAt === null ||
-      pr.mergedAt === undefined ||
-      pr.mergedAt >= todo.startedAt
-  );
+  const read = (row: CodingPrClaimRow) =>
+    prs.filter((pr) => codingPrKey(pr.url) === row.url).slice(0, 1);
+  const answered = mine
+    .filter((row) => row.claim !== 'branch')
+    .flatMap((row) =>
+      read(row).filter(
+        (pr) =>
+          row.claim === 'named' ||
+          todo.startedAt === null ||
+          pr.mergedAt === undefined ||
+          pr.mergedAt >= todo.startedAt
+      )
+    );
+  if (answered.length) return answered;
+  return mine
+    .filter((row) => row.claim === 'branch')
+    .flatMap(read)
+    .filter((pr) => inWindow(window, pr))
+    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
+    .slice(0, 1);
 }
 
 const prNumber = (pr: NeoWorkPr) => `#${pr.url.replace(/\/+$/, '').split('/').pop()}`;
@@ -182,7 +247,7 @@ export function createCodingTodoPack(
       if (!urls.length) return codingTodoCheck(todo.check.kind, []);
       const read = await readPrs(urls);
       if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url))) return null;
-      const prs = codingTodoOwnPrs(todo, read);
+      const prs = codingTodoOwnPrs(todo, repo.claimsOn(urls), read, repo.window(todo.id));
       repo.record(todo.id, prs, Date.now());
       return codingTodoCheck(todo.check.kind, prs);
     },

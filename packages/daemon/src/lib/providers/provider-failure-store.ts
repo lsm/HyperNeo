@@ -28,6 +28,8 @@ const CREDENTIAL_MESSAGE_PATTERNS: readonly RegExp[] = [
 
 const providerFailures = new Map<string, ProviderFailureRecord>();
 
+const noticedFailures = new Map<string, number>();
+
 const failureChangeListeners = new Set<ProviderFailureChangeListener>();
 
 export function classifyProviderFailureMessage(message: string): ProviderFailureErrorKind {
@@ -76,11 +78,19 @@ export function recordClassifiedProviderFailure(
   return record;
 }
 
+export function claimProviderFailureNotice(providerId: string): boolean {
+  const record = providerFailures.get(providerId);
+  if (!record || noticedFailures.get(providerId) === record.firstRecordedAt) return false;
+  noticedFailures.set(providerId, record.firstRecordedAt);
+  return true;
+}
+
 export function clearProviderFailure(providerId: string): boolean {
   if (!providerFailures.has(providerId)) {
     return false;
   }
   providerFailures.delete(providerId);
+  noticedFailures.delete(providerId);
   notifyFailureChange({ providerId, record: null });
   return true;
 }

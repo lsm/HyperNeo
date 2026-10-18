@@ -229,6 +229,14 @@ function createForward(runtime: NeoAskForwardRuntime) {
   return (superpipe({})('neo-ask-forward') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
+      (input: Input): Input =>
+        input.to === NEO_INBOX_ID
+          ? input
+          : { ...input, to: runtime.getProject(input.to)?.id ?? input.to },
+      'input',
+      'input'
+    )
+    .pipe(
       (caller: OperationCaller) => runtime.getBinding(caller.sessionId ?? ''),
       'caller',
       'binding'
@@ -364,7 +372,7 @@ export function createNeoAskForwardOperation(runtime: NeoAskForwardRuntime) {
   return defineOperation({
     name: 'neo.ask.forward',
     description:
-      'Hand the human message you are answering to the project that owns it, when it is clearly not your subject; the receiver then owns the message, answers it and may start its work. to is that project id, or "inbox" for the default session; an unknown id is refused with the list of projects, so call again with the right one. The original request and attachments follow each transfer. A successful delivery yields your turn; the current owner can forward again when another project owns the request.',
+      'Hand the human message you are answering to the project that owns it, when it is clearly not your subject; the receiver then owns the message, answers it and may start its work. to is the project id (with or without the project: prefix) or title, or "inbox" for the default session; an unknown id is refused with the list of projects, so call again with the right one. The original request and attachments follow each transfer. A successful delivery yields your turn; the current owner can forward again when another project owns the request.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

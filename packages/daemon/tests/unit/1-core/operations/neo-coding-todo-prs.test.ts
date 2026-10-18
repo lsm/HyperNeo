@@ -3,6 +3,7 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import {
+  type CodingPrClaim,
   CodingTodoPrRepository,
   codingTodoCheck,
   codingTodoOwnPrs,
@@ -114,6 +115,53 @@ describe('coding todo pack', () => {
     db.close();
   });
 
+  test('a PR belongs only to the todo whose dispatch on that session it answers', async () => {
+    const opened = [
+      pr(7409, 'CLOSED', { createdAt: 50 }),
+      pr(7426, 'OPEN', { createdAt: 250 }),
+      pr(7427, 'MERGED', { createdAt: 120, mergedAt: 300 }),
+      pr(7430, 'OPEN', { createdAt: 130 }),
+    ];
+    const { db, pack, todo } = setup(async (urls) =>
+      opened.filter((item) => urls.includes(item.url))
+    );
+    const dispatch = (id: string, at: number, session: string) => {
+      db.prepare('UPDATE neo_todos SET state = ?, started_at = ? WHERE id = ?').run(
+        'doing',
+        at,
+        id
+      );
+      db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
+        id,
+        '{}',
+        JSON.stringify({ adapter: 'claude-desktop', id: session })
+      );
+    };
+    const check = { pack: 'coding', kind: 'pr_opened', params: {} };
+    const gpt = { ...todo(check), state: 'doing' as const, startedAt: 100 };
+    const ids = { ...todo(check), state: 'doing' as const, startedAt: 200 };
+    const elsewhere = todo(check);
+    dispatch(gpt.id, 100, 'fullstack-1');
+    dispatch(ids.id, 200, 'fullstack-1');
+    dispatch(elsewhere.id, 150, 'fullstack-2');
+    for (const row of [gpt, ids])
+      pack.openedPrs!(
+        row,
+        opened.map((item) => item.url)
+      );
+    await pack.check(gpt);
+    await pack.check(ids);
+    expect(pack.statusLine(gpt)).toBe('#7427 已合并');
+    expect(pack.statusLine(ids)).toBe('#7426 开着，等 review');
+
+    const reported = { ...ids, report: `Done: ${opened[3].url}` };
+    await pack.check(reported);
+    await pack.check(gpt);
+    expect(pack.statusLine(reported)).toBe('#7430 开着，等 review');
+    expect(pack.statusLine(gpt)).toBe('#7427 已合并');
+    db.close();
+  });
+
   test('leaves todos of other packs and unreadable PRs to the core', async () => {
     const { pack, todo } = setup(async () => null);
     expect(await pack.check(todo(null))).toBeNull();
@@ -198,22 +246,54 @@ describe('codingTodoStatusLine', () => {
 });
 
 describe('codingTodoOwnPrs', () => {
-  test('drops PRs merged before the todo started unless the todo names them', () => {
-    const named = pr(1, 'MERGED', { mergedAt: 50 });
+  const row = (todoId: string, number: number, claim: CodingPrClaim, claimedAt = 1) => ({
+    todoId,
+    url: pr(number, 'OPEN').url,
+    claim,
+    claimedAt,
+  });
+  test('the report names the PRs, else the first PR opened in the dispatch window', () => {
+    const prs = [
+      pr(1, 'MERGED', { mergedAt: 50 }),
+      pr(2, 'MERGED', { mergedAt: 50 }),
+      pr(3, 'MERGED', { mergedAt: 150 }),
+      pr(4, 'OPEN', { createdAt: 120 }),
+      pr(5, 'OPEN', { createdAt: 110 }),
+      pr(6, 'OPEN', { createdAt: 90 }),
+    ];
+    const todo = { id: 'a', startedAt: 100 };
+    const window = { start: 100, end: 200 };
     expect(
       codingTodoOwnPrs(
-        {
-          check: { pack: 'coding', kind: 'pr_merged', params: { urls: [named.url] } },
-          startedAt: 100,
-        },
-        [
-          named,
-          pr(2, 'MERGED', { mergedAt: 50 }),
-          pr(3, 'MERGED', { mergedAt: 150 }),
-          pr(4, 'OPEN'),
-        ]
+        todo,
+        [row('a', 1, 'named'), row('a', 2, 'reported'), row('a', 3, 'reported')],
+        prs,
+        window
       ).map((item) => item.url)
-    ).toEqual([named.url, pr(3, 'MERGED').url, pr(4, 'OPEN').url]);
+    ).toEqual([prs[0].url, prs[2].url]);
+    expect(
+      codingTodoOwnPrs(
+        todo,
+        [row('a', 4, 'branch'), row('a', 5, 'branch'), row('a', 6, 'branch')],
+        prs,
+        window
+      ).map((item) => item.url)
+    ).toEqual([prs[4].url]);
+    expect(codingTodoOwnPrs(todo, [row('a', 4, 'branch')], prs, { start: 100, end: 115 })).toEqual(
+      []
+    );
+  });
+
+  test('never counts one PR for two todos', () => {
+    const prs = [pr(4, 'OPEN', { createdAt: 120 })];
+    const window = { start: 100, end: null };
+    const own = (claims: ReturnType<typeof row>[], id: string) =>
+      codingTodoOwnPrs({ id, startedAt: 100 }, claims, prs, window).length;
+    expect(own([row('a', 4, 'branch'), row('b', 4, 'reported')], 'a')).toBe(0);
+    expect(own([row('a', 4, 'reported', 2), row('b', 4, 'reported', 1)], 'a')).toBe(0);
+    expect(own([row('a', 4, 'reported', 2), row('b', 4, 'reported', 1)], 'b')).toBe(1);
+    expect(own([row('a', 4, 'reported'), row('b', 4, 'named')], 'a')).toBe(0);
+    expect(own([row('a', 4, 'branch'), row('b', 4, 'branch')], 'a')).toBe(1);
   });
 });
 

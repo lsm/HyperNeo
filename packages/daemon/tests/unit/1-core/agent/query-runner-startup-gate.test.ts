@@ -228,7 +228,6 @@ describe('QueryRunner startup gate', () => {
       queryAbortController: null,
       firstMessageReceived: false,
       startupTimeoutTimer: null,
-      originalEnvVars: {},
       processExitedPromise: null,
       resetProcessExitedPromise: () => {},
       trackAgentProcess: () => {},

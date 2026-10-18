@@ -188,6 +188,10 @@ import {
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
 import {
+  claimProviderFailureNotice,
+  recordClassifiedProviderFailure,
+} from '../providers/provider-failure-store.ts';
+import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
@@ -249,12 +253,7 @@ import {
   QueryOptionsBuilder,
   type QueryOptionsBuilderContext,
 } from './query-options-builder.ts';
-import {
-  type OriginalEnvVars,
-  QueryRunner,
-  type QueryRunnerContext,
-  type TrackedAgentProcess,
-} from './query-runner.ts';
+import { QueryRunner, type QueryRunnerContext, type TrackedAgentProcess } from './query-runner.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
@@ -463,7 +462,6 @@ export class AgentSession
   private outstandingToolUseIds = new Set<string>();
 
   private readonly deliveryErrorSubs: Array<() => void> = [];
-  originalEnvVars: OriginalEnvVars = {};
   processExitedPromise: Promise<void> | null = null;
   private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
   private agentChildRepo: AgentChildProcessRepository | null = null;
@@ -2744,6 +2742,21 @@ export class AgentSession
       errorText,
       this.queryRunner.resolveRetryUserMessage(userMessageUuid),
       queryGeneration
+    );
+  }
+
+  async onProviderAuthRejected(error: string, queryGeneration?: number): Promise<void> {
+    if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) return;
+    const providerId = this.session.config.provider ?? 'anthropic';
+    if (providerId === 'anthropic') return;
+    recordClassifiedProviderFailure(providerId, { errorKind: 'credential', message: error });
+    if (claimProviderFailureNotice(providerId))
+      await this.queryRunner.displayErrorAsAssistantMessage(
+        `${getProviderRegistry().get(providerId)?.displayName ?? providerId} key rejected; update it in Providers.`,
+        { markAsError: true }
+      );
+    void this.handleInterrupt().catch((interruptError: unknown) =>
+      this.logger.warn(`Stopping after a rejected provider key failed: ${String(interruptError)}`)
     );
   }
 

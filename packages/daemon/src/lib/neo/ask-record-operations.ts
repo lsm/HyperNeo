@@ -56,14 +56,20 @@ export function requireNeoAskProject(
   input: { projectId?: string | null },
   sessionId: string,
   projectOf: (sessionId: string) => string | null,
-  resolveProject: (projectId: string) => string | null
+  resolveProject: (projectId: string) => string | null,
+  knownProjects: () => readonly { id: string; title: string }[] = () => []
 ): Gate<string | null> {
   if (input.projectId === undefined) return { value: projectOf(sessionId) };
   if (input.projectId === null) return { value: null };
   const projectId = resolveProject(input.projectId);
-  return projectId
-    ? { value: projectId }
-    : { reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.` } };
+  if (projectId) return { value: projectId };
+  const known = knownProjects()
+    .slice(0, 50)
+    .map((project) => `${project.id} (${project.title})`);
+  const list = known.length ? ` Projects: ${known.join('; ')}.` : '';
+  return {
+    reason: { ok: false, reason: `unknown_project: no project ${input.projectId}.${list}` },
+  };
 }
 
 export function createNeoAskRecordOperations(
@@ -72,7 +78,8 @@ export function createNeoAskRecordOperations(
   controls: NeoTodoControls,
   projectOf: (sessionId: string) => string | null,
   resolveProject: (projectId: string) => string | null,
-  isNeoSession: (sessionId: string) => boolean
+  isNeoSession: (sessionId: string) => boolean,
+  knownProjects: () => readonly { id: string; title: string }[]
 ) {
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
@@ -83,7 +90,13 @@ export function createNeoAskRecordOperations(
     )
     .pipe(
       (sessionId: string, input: z.infer<typeof Open>) => {
-        const project = requireNeoAskProject(input, sessionId, projectOf, resolveProject);
+        const project = requireNeoAskProject(
+          input,
+          sessionId,
+          projectOf,
+          resolveProject,
+          knownProjects
+        );
         return 'value' in project ? { value: { sessionId, projectId: project.value } } : project;
       },
       ['outcome', 'input'],
@@ -170,7 +183,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add). A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
+        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add). projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
