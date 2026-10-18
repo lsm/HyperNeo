@@ -127,6 +127,13 @@ There is one table, `pack_coding_pr_ledger`, with one row for each PR in a proje
   - `neo_todo_pr_refs` (m392) links a todo to ledger rows. A PR the todo's title or instruction names is linked automatically.
   - While a linked row is open, `neo.todo.edit` with `done` and `neo.todo.close` are refused with `pr_open: <url>`. To give up on a PR, Neo removes the todo with a reason.
 - **Routing.** `project-route-facts.ts` `prOwners` reads the ledger owner's project, so a `#NNNN` with no todo still routes.
+- **The router sees each project's GitHub activity.**
+  - Today a project's routing profile is its title, its summary and the human's last 8 asks to it (`router.ts:180`, `PROFILE_ASKS`, at `2cb6f5b47c`). Work a session does on its own never reaches the profile.
+  - The profile adds the project's ledger rows: the titles of its open PRs, and of PRs merged in the last 7 days, newest first and capped at about 10. They are labelled as GitHub activity, separate from the human's words.
+  - Evidence from 5 unlabelled test messages on 2026-10-18:
+    - "customer's own Devin key" went to devin-claude instead of hyperneo-review. The work is lsm/hyperneo-review#1349 and #1356, "Let the devin engine run on a customer's own Devin key" and "Serve devin lanes on a customer's own Devin key", both merged.
+    - "the doc that teaches agents to set up the server" went to Inbox at confidence 0.4 instead of dolmen. The work is lsm/dolmen#666, "Teach agents how to set up the server in the admin skill", open.
+    - In both cases the project's own session did the work, and Neo never heard of it.
 
 ### The sweep
 
@@ -246,6 +253,7 @@ Each PR is about 100–200 lines of production code, opened from fresh `dev`, an
 | # | PR | Prod lines | Verify after deploy |
 |---|---|---|---|
 | L1 | Ledger table, state function and reconcile (repo topics plus batched GraphQL), feeding the snapshot's PR view | +180 | `neo.snapshot` lists every open PR in hyperneo-review, OAP, dolmen and HyperNeo, including PRs no todo opened |
+| L1b | Router profile reads the ledger: each project's open and recently merged PR titles, labelled as GitHub activity | +60 | The two misroutes in Acceptance case 7 route to hyperneo-review and dolmen |
 | L2 | Sweep: deadlines, re-tell the owner, act at 2 nudges; branch→session owner | +170 | An `approved_green` PR with an idle owner is told at 20 min and 40 min, then reassigned or asked about |
 | L3 | Todo gate: link named PRs; refuse `done` or `close` while a linked PR is open; reopen done todos with open PRs (once, logged) | +120 | `neo.todo.close` on a todo with an open PR returns `pr_open`; merging the PR marks it met |
 | L4 | Delete the transcript probe, claim rules, `pack_coding_pr_claims`, the card-attention relay and the old route-PR reads | −400, split by caller | No `openedPrs` in `work.status`; todos still show their PRs, now from the ledger |
@@ -262,6 +270,7 @@ Each PR is about 100–200 lines of production code, opened from fresh `dev`, an
 
 **Order and conflicts:**
 - L1 → L2 → L3 → L4 in sequence. L5 needs L2, L6 needs L3, and L7 needs L3.
+- L1b needs L1 and can run alongside L2.
 - L8 is independent and can run alongside.
 - R1–R3 and the guard lane (R22–R24) don't touch the ledger files and can run alongside.
 - R5 and R6 are absorbed into L5.
@@ -281,7 +290,7 @@ Each PR is about 100–200 lines of production code, opened from fresh `dev`, an
 
 ## 8. Acceptance
 
-These are the cases seen on two live Neo cards on 2026-10-18. After the plan ships, each line can be ticked by reading `neo.snapshot` and GitHub.
+Cases 1–6 were seen on two live Neo cards on 2026-10-18, and case 7 in a routing test the same day. After the plan ships, each line can be ticked by reading `neo.snapshot` and GitHub.
 
 | # | Seen | Accepted when | Fixed by |
 |---|---|---|---|
@@ -291,3 +300,4 @@ These are the cases seen on two live Neo cards on 2026-10-18. After the plan shi
 | 4 | A todo shows "session stopped, waiting for Neo to check", and nothing checks it | A stopped session is noticed within one sweep cycle: the daemon runs the check, or Neo is told the facts. The line never sits longer than one cycle | Sweep for idle and awaiting-check sessions (L5) |
 | 5 | Card and todo titles mix Chinese and English, following whichever language the instruction came in | Every new ask and todo title is in `GlobalSettings.language`; a title in another script is refused with `title_language` | Titles in the human's language (L8) |
 | 6 | Neo and the working session treated lsm/HyperNeo#7492 as still open after it merged at 15:22:20Z (head `d8066d8`, merge commit `040c67df67`). A follow-up change (code-block copy button always visible) was pushed at 15:40Z to the merged branch as `37ac5142`, where it reached nothing: dev still hid the button until hover. A corrective PR re-lands it from fresh dev | Within one reconcile of the merge, the ledger reads #7492 `merged` and its todo is met. `neo.todo.continue` on that todo is refused with `pr_merged`, so the follow-up becomes a new todo from fresh `dev`. A push to the merged branch is reported to the owner and Neo instead of passing silently | Live ledger state (L1), ledger-only done (L3), merged-PR refusal and push notice (L7) |
+| 7 | Of 5 unlabelled test messages, "customer's own Devin key" went to devin-claude instead of hyperneo-review (lsm/hyperneo-review#1349, #1356). "the doc that teaches agents to set up the server" went to Inbox at confidence 0.4 instead of dolmen (lsm/dolmen#666). Each project's session had done the work, but the human never mentioned it to Neo | Both messages route to the project whose open or recently merged PR titles match them: hyperneo-review and dolmen, at normal confidence | Router reads the ledger (L1, L1b) |
