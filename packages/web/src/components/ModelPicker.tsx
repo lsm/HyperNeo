@@ -131,7 +131,7 @@ export function ModelPicker({
           ·
         </span>
         <span class="shrink-0" role="img" aria-label={`Thinking: ${thinking}`}>
-          <ThinkingLevelIcon ring level={level} />
+          <ThinkingLevelIcon level={level} />
         </span>
         <NeoIcon
           name="chevron"
