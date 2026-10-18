@@ -396,7 +396,7 @@ export class AnthropicProvider implements Provider {
           `${sdkModel.resolvedModel ?? sdkModel.value} ${sdkModel.displayName}`
         ),
         provider: 'anthropic',
-        contextWindow: 200000,
+        contextWindow: /\[1m\]$/i.test(sdkModel.value) ? 1_000_000 : 200000,
         description: sdkModel.description || '',
         releaseDate: '',
         available: true,

@@ -723,6 +723,7 @@ describe('AnthropicProvider', () => {
         ['sonnet', 'Sonnet 5.5', 'sonnet'],
         ['claude-sonnet-5', 'Sonnet 5', 'sonnet'],
       ]);
+      expect(converted.map((m) => m.contextWindow)).toEqual([200000, 1_000_000, 200000, 200000]);
     });
 
     it('claims the fable SDK alias as Anthropic', () => {
