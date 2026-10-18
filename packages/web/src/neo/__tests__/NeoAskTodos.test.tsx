@@ -1,10 +1,18 @@
 import type { NeoAskEntry, NeoQuestion, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
 import { neoAskEntryGroup } from '../neo-asks.ts';
+import { locale } from '../../lib/i18n/index.ts';
 
-afterEach(cleanup);
+beforeEach(() => {
+  locale.value = 'zh-Hans';
+});
+
+afterEach(() => {
+  cleanup();
+  locale.value = 'en';
+});
 
 const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   id,
@@ -180,9 +188,7 @@ describe('NeoAskTodos', () => {
     );
     expect(app.getByText('在做')).toBeTruthy();
     expect(app.getByText('#102 已合并')).toBeTruthy();
-    expect(app.container.querySelector('[aria-label="Todos"]')?.textContent).not.toContain(
-      'Todo d'
-    );
+    expect(app.container.querySelector('[aria-label="待办"]')?.textContent).not.toContain('Todo d');
     expect(app.getByText('新')).toBeTruthy();
     fireEvent.click(app.getByRole('button', { name: '打开 Todo a' }));
     expect(onOpen).toHaveBeenCalledWith('/session/w', 'Todo a');
@@ -191,8 +197,8 @@ describe('NeoAskTodos', () => {
   it('marks an open ask done or drops it from its menu', () => {
     const onSettle = vi.fn();
     const app = render(<NeoAskTodos entry={entry({})} onAnswer={() => {}} onSettle={onSettle} />);
-    fireEvent.click(app.getByRole('button', { name: 'Ask actions' }));
-    fireEvent.click(app.getByRole('menuitem', { name: 'Mark done' }));
+    fireEvent.click(app.getByRole('button', { name: '更多操作' }));
+    fireEvent.click(app.getByRole('menuitem', { name: '标记做完' }));
     expect(onSettle).toHaveBeenCalledWith('done');
     cleanup();
     const settled = render(
@@ -202,7 +208,7 @@ describe('NeoAskTodos', () => {
         onSettle={onSettle}
       />
     );
-    expect(settled.queryByRole('button', { name: 'Ask actions' })).toBeNull();
+    expect(settled.queryByRole('button', { name: '更多操作' })).toBeNull();
   });
 
   it('moves removed todos into Details, one line each with what replaced them', () => {
@@ -219,7 +225,7 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.queryByText('Todo d')).toBeNull();
-    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    fireEvent.click(app.getByRole('button', { name: '详情' }));
     const line = app.getByRole('list', { name: '已移除' }).querySelector('li')!;
     expect(line.textContent).toBe('Todo d — 换成「Todo e」');
     expect(line.id).toBe('neo-ref-todo-d');
@@ -235,7 +241,7 @@ describe('NeoAskTodos', () => {
         onAnswer={() => {}}
       />
     );
-    expect(app.queryByRole('button', { name: 'Details' })).toBeNull();
+    expect(app.queryByRole('button', { name: '详情' })).toBeNull();
     expect(app.container.querySelectorAll('[data-ask-todo="d"]')).toHaveLength(1);
   });
 
@@ -243,7 +249,7 @@ describe('NeoAskTodos', () => {
     const app = render(
       <NeoAskTodos entry={entry({ todos: [todo('a', { state: 'doing' })] })} onAnswer={() => {}} />
     );
-    expect(app.queryByRole('button', { name: 'Details' })).toBeNull();
+    expect(app.queryByRole('button', { name: '详情' })).toBeNull();
   });
 
   it('shows a retired question in Details with why it is no longer needed', () => {
@@ -289,7 +295,7 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.queryByText('已回答')).toBeNull();
-    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    fireEvent.click(app.getByRole('button', { name: '详情' }));
     expect(app.getByText(/开始这 1 件？ — 开始 Todo a/)).toBeTruthy();
   });
 });
@@ -313,5 +319,30 @@ describe('neoAskEntryGroup', () => {
     expect(neoAskEntryGroup({ state: 'waiting' })).toBe('attention');
     expect(neoAskEntryGroup({ state: 'doing' })).toBe('running');
     expect(neoAskEntryGroup({ state: 'dropped' })).toBe('outcomes');
+  });
+});
+
+describe('NeoAskTodos in English', () => {
+  it('labels the card, todos and actions in English', () => {
+    locale.value = 'en';
+    const first = todo('a', { status: 'Not started', link: 'claude://claude.ai/epitaxy/local_1' });
+    const base = entry({});
+    const app = render(
+      <NeoAskTodos
+        entry={{
+          ...base,
+          ask: { ...base.ask, title: 'Ship it' },
+          state: 'waiting',
+          todos: [first],
+        }}
+        onAnswer={vi.fn()}
+        onOpen={vi.fn()}
+        onSettle={vi.fn()}
+      />
+    );
+    expect(app.getByText('Waiting on you')).toBeTruthy();
+    expect(app.getByRole('button', { name: 'Open Todo a' }).textContent).toContain('Open');
+    expect(app.getByRole('button', { name: 'Ask actions' })).toBeTruthy();
+    expect(app.container.textContent).not.toMatch(/[\u4e00-\u9fff]/);
   });
 });

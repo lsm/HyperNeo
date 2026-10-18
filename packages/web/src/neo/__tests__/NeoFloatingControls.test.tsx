@@ -34,6 +34,7 @@ beforeEach(async () => {
     ),
   }));
   ({ NeoLive } = await import('../NeoLive.tsx'));
+  (await import('../../lib/i18n/index.ts')).locale.value = 'zh-Hans';
 });
 
 const project = (id: string) => ({
