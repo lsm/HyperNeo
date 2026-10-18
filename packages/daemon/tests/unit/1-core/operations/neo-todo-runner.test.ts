@@ -37,6 +37,7 @@ function setup(packDone: boolean | null = null) {
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
   const askNotes: string[] = [];
+  const checkedTodos: string[] = [];
   let status: unknown = null;
   const pack = {
     id: 'coding',
@@ -44,7 +45,10 @@ function setup(packDone: boolean | null = null) {
     instructions: () => null,
     todos: {
       schema: () => {},
-      check: async () => (packDone === null ? null : { done: packDone, evidence: '#1 已合并' }),
+      check: async (todo: NeoTodo) => {
+        checkedTodos.push(todo.id);
+        return packDone === null ? null : { done: packDone, evidence: '#1 已合并' };
+      },
       statusLine: () => null,
       topics: () => [],
       event: () => [],
@@ -90,6 +94,7 @@ function setup(packDone: boolean | null = null) {
     calls,
     told,
     askNotes,
+    checkedTodos,
     add,
     setStatus: (value: unknown) => {
       status = value;
@@ -206,6 +211,15 @@ describe('neo todo runner', () => {
       expect.stringContaining('Todo "Rows": its session stopped'),
       'Todo "Rows" is done: #1 已合并',
     ]);
+  });
+
+  test('lets the packs track a todo without a check, and never finishes it from them', async () => {
+    const { runner, store, sessions, add, checkedTodos } = setup(true);
+    const todo = store.updateTodo(add(null), { state: 'doing' }, 2);
+    sessions.recordRef(todo.id, { adapter: 'hyperneo', id: 'w' });
+    await runner.refresh(() => {});
+    expect(checkedTodos).toEqual([todo.id]);
+    expect(store.getTodo(todo.id)?.state).toBe('doing');
   });
 
   test('a start that lands after its ask settled stops its session', async () => {
