@@ -61,8 +61,6 @@ function readBuildCommit(): string {
   }
 }
 
-// onnxruntime-node ships no darwin-x64 binding since 1.24, so Intel Mac builds leave the binding out;
-// agent-memory embeddings then fail to load there and log why, and the rest of the daemon runs.
 const externalFor = (target: string) =>
   target === 'bun-darwin-x64' ? ['--external', '*onnxruntime_binding.node'] : [];
 
