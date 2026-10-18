@@ -17,3 +17,26 @@ const shortApps: Record<string, string> = {
 };
 
 export const neoAppLabel = (adapter: string): string => shortApps[adapter] ?? adapter;
+
+export type NeoSessionKind = 'claude' | 'codex' | 'copilot' | 'hyperneo';
+
+const adapterKinds: Record<string, NeoSessionKind> = {
+  'claude-desktop': 'claude',
+  'codex-desktop': 'codex',
+  'copilot-cli': 'copilot',
+  hyperneo: 'hyperneo',
+  space: 'hyperneo',
+};
+
+export function neoSessionKind(
+  adapter: string | null | undefined,
+  link: string | null | undefined
+): NeoSessionKind | null {
+  if (adapter && adapterKinds[adapter]) return adapterKinds[adapter];
+  if (!link) return null;
+  if (/^claude:\/\//.test(link) || /^https:\/\/claude\.ai\//.test(link)) return 'claude';
+  if (/^codex:\/\//.test(link)) return 'codex';
+  if (/^ghapp:\/\//.test(link)) return 'copilot';
+  if (/^\/session\//.test(link)) return 'hyperneo';
+  return null;
+}
