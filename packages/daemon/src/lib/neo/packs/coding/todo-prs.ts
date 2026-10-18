@@ -9,7 +9,7 @@ import {
   pullRequestUrlOfTopic,
 } from '../../../github/parse-pr-url.ts';
 import type { NeoTodoCheckResult, NeoTodoPack } from '../types.ts';
-import { createCodingPackTables } from './schema/coding-tables.ts';
+import { CODING_TODO_PR_REFS, createCodingPackTables } from './schema/coding-tables.ts';
 import { extractNeoWorkPrUrls, type NeoWorkPrReader } from './work-prs.ts';
 
 export type CodingPrClaim = 'named' | 'reported' | 'branch';
@@ -112,6 +112,12 @@ export class CodingTodoPrRepository {
          ON CONFLICT(todo_id) DO UPDATE SET prs_json = excluded.prs_json, read_at = excluded.read_at`
       )
       .run(todoId, JSON.stringify(prs), now);
+    this.db.prepare('DELETE FROM neo_todo_pr_refs WHERE todo_id = ?').run(todoId);
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO neo_todo_pr_refs (reference, number, todo_id) ${CODING_TODO_PR_REFS} AND r.todo_id = ?`
+      )
+      .run(todoId);
   }
 }
 

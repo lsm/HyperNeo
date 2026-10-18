@@ -11,6 +11,7 @@ import {
   createCodingTodoPack,
   planCodingTodoClaims,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { readNeoProjectFacts } from '../../../../src/lib/neo/project-route-facts.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -170,6 +171,24 @@ describe('coding todo pack', () => {
     await pack.check(gpt);
     expect(pack.statusLine(reported)).toBe('#7430 开着，等 review');
     expect(pack.statusLine(gpt)).toBe('#7427 已合并');
+    db.close();
+  });
+
+  test('records the PRs a todo owns as route references for its ask project', async () => {
+    const { db, pack, todo } = setup(async () => [pr(41, 'OPEN')]);
+    const row = todo(
+      { pack: 'coding', kind: 'pr_opened', params: {} },
+      `Opened ${pr(41, 'OPEN').url}`
+    );
+    const owned = [{ reference: '#41', projectId: null }];
+    expect(readNeoProjectFacts(db, 'about #41')).toEqual([
+      { reference: '#41', projectId: undefined },
+    ]);
+    await pack.check(row);
+    expect(readNeoProjectFacts(db, 'about #41')).toEqual(owned);
+    db.prepare('DELETE FROM neo_todo_pr_refs').run();
+    pack.schema(db);
+    expect(readNeoProjectFacts(db, 'about #41')).toEqual(owned);
     db.close();
   });
 

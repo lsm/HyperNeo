@@ -91,11 +91,19 @@ export function readNeoProjectFacts(db: Database, text: string): NeoProjectFact[
     reference: `${ref.owner}/${ref.repo}#${ref.number}`,
     ref,
   }));
+  const todoRefs = !!db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'neo_todo_pr_refs'")
+    .get();
   const prOwners = (column: 'reference' | 'number', value: string | number) =>
     db
       .prepare(`SELECT w.concern_id AS projectId FROM neo_route_pr_refs r
-      JOIN neo_work w ON w.id = r.work_id WHERE r.${column} = ?`)
-      .all(value) as {
+      JOIN neo_work w ON w.id = r.work_id WHERE r.${column} = ?${
+        todoRefs
+          ? ` UNION ALL SELECT a.project_id AS projectId FROM neo_todo_pr_refs r
+      JOIN neo_todos t ON t.id = r.todo_id JOIN neo_asks a ON a.id = t.ask_id WHERE r.${column} = ?`
+          : ''
+      }`)
+      .all(...(todoRefs ? [value, value] : [value])) as {
       projectId: string | null;
     }[];
   for (const [reference, number] of text.matchAll(/(?<![\w/])#(\d+)\b/g)) {
