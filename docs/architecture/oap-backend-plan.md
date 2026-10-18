@@ -14,7 +14,7 @@ Replaced, provider by provider as each one moves (paths are under `packages/daem
 | --- | --- | --- |
 | `providers/glm-provider.ts`, `kimi-provider.ts`, `minimax-provider.ts`, `deepseek-provider.ts`, `openrouter-provider.ts`, `opencode-provider.ts`, `ollama-provider.ts` | `buildSdkConfig` sets Claude Code routing env; hard-coded `static MODELS` | Shrink to credentials plus an `engine: 'oap'` route; models come from oapx's `models` endpoint. The routing env code is deleted. |
 | `providers/openai-chat-bridge/server.ts` (905 lines), `openai-responses-bridge/server.ts` (1,776 lines), `provider-anthropic-compat/*`, `anthropic-non-streaming.ts` | Translate Anthropic wire to OpenAI wire for the CLI | Deleted once no SDK provider needs them; oapx talks to each API natively. |
-| `providers/ollama-bridge-server.ts`, `ollama-native-bridge/` | Ollama to Anthropic wire | Deleted; oapx has an `ollama` provider. |
+| `providers/ollama-bridge-server.ts`, `ollama-native-bridge/` | Ollama to Anthropic wire | Deleted; oapx has an `ollama` provider. Local Ollama needs no key; Ollama Cloud uses the pass-through proxy below. |
 | `providers/anthropic-to-codex-bridge-provider.ts` (1,282 lines), `codex-model-discovery.ts` | Codex models behind the Anthropic wire | Moved to oapx `--backend codex` or the `openai-codex` provider; deleted after. |
 | `providers/anthropic-copilot/*` | Copilot behind the Anthropic wire | oapx `github-copilot` provider; deleted after. |
 | `provider-service.ts`: `providerProcessEnv`, `clearProviderRoutingEnvVars`, `PROVIDER_ROUTING_ENV`, `userConfigured*` | Builds each SDK child's env and strips other providers' vars | Shrinks to the Anthropic case only. |
@@ -32,13 +32,13 @@ Stays unchanged:
 - **Claude** stays on the Agent SDK: `anthropic-provider.ts`, `query-runner.ts`, `sdk-message-handler.ts`, `turn-end-routing.ts`, `sdk-cli-resolver.ts`.
 - **Credentials:** the credential store and credential discovery (#7430).
 - **Session flow and storage:** `model-switch-handler.ts` (it gains an engine check), the `sdk_messages` storage, LiveQuery `messages.bySession`, the web and iOS clients, and Neo's `WorkAdapter` drivers.
-- **Credential bridge:** `providers/anthropic-messages-bridge/server.ts` and `provider-key-bridge.ts` from #7398 stay. They become how oapx reaches a key without seeing it (see section 2).
+- **Credential bridge:** `providers/anthropic-messages-bridge/server.ts` and `provider-key-bridge.ts` from #7398 stay. They become how oapx reaches an Anthropic-wire provider's key without seeing it. Providers on another wire need a protocol-native pass-through proxy instead (see section 2).
 
 ## 2. What we lose or rebuild, and how we handle each
 
 | Area | What changes under OAP | How we handle it |
 | --- | --- | --- |
-| Credentials | OAP never carries keys on the wire, and the hub has no per-session env (Decisions 0025/0029). | The generated hub config declares each provider as an oapx custom provider with `api: anthropic-messages` and `base_url` set to the daemon's loopback bridge. The only secret oapx holds is the bridge's random token, passed via the entry's `environment` allowlist. Real keys stay in daemon memory, as #7398 does today. |
+| Credentials | OAP never carries keys on the wire, and the hub has no per-session env (Decisions 0025/0029). | Each provider is declared in the generated hub config as an oapx custom provider in its own wire format, with `base_url` set to a daemon loopback proxy. The proxy forwards that wire unchanged and only swaps a random token for the real key. Anthropic-wire providers (GLM, Kimi, MiniMax, DeepSeek, OpenRouter's Anthropic endpoint) reuse the #7398 `anthropic-messages` bridge. OpenAI-wire providers (OpenCode Go, Ollama Cloud, Copilot, Codex) need a new pass-through proxy for `openai-completions` and `openai-responses`, which forwards without translating. Local Ollama needs no key. The only secret oapx holds is the proxy token, passed via the entry's `environment` allowlist; real keys stay in daemon memory. |
 | Built-in tools | Claude Code's tools (Read/Edit/Bash/…) are replaced by the oapx loop's workspace tools and permission engine. | Accept the difference. Map their tool events onto our tool-use rendering. Check behaviour on the real Neo work in step 3 before moving more providers. |
 | Daemon MCP tools (operations `invoke`, Neo turn, db-query, agent-memory) | These are in-process SDK MCP servers today; oapx cannot load them. | Offer them as client-provided tools (`action.tools.provide`, Decision 0011, supported by the oapx adapter). Answer the calls in the daemon from the same handlers. The ACP runner's `mcp-proxy-bridge.ts` is the precedent. |
 | External MCP servers (app registry) | oapx attaches only `tool_sources` declared in the hub config at startup. | Write the enabled registry entries into the generated config. A registry change regenerates the config, but it applies only when the hub next restarts while no OAP turn is running. Otherwise it waits. |
@@ -63,7 +63,7 @@ The setting is a per-provider `engine` (`sdk` or `oap`) stored in the provider r
    - latency to first token.
 
    Go/no-go is the human's call, based on these numbers.
-3. **Move the other non-Anthropic providers one at a time,** in this order: Kimi, MiniMax, DeepSeek, OpenRouter, OpenCode Go, Ollama, Copilot, Codex. In each move's own PR, delete that provider's bridge, routing-env code and `static MODELS` once nothing else uses them.
+3. **Move the other non-Anthropic providers one at a time,** in this order: Kimi, MiniMax, DeepSeek, OpenRouter, OpenCode Go, Ollama, Copilot, Codex. Each move is two PRs: a cutover that flips the provider's default engine, then a deletion-only PR that removes its translator bridge, routing-env code and `static MODELS` once nothing else uses them.
 4. **Claude last, as a decision** (see 5a). It is not part of this plan's default path.
 
 ## 4. Ordered small PRs
@@ -84,7 +84,9 @@ Each PR is about 100–200 production lines, merges from fresh `dev`, and is dep
 | 10 | Restart handling: one "engine restarted" notice, then a seeded reopen on the next message; the hub is never restarted mid-run. | Kill the oapx child while a session is idle: one notice appears, and the next message continues with context. A daemon restart gives the same result. |
 | 11 | `engine` label on turn metrics, plus a per-engine summary operation. | `engines.metrics` returns counts per engine for the last 24 hours. |
 | 12 | Neo-scoped override: Neo's GLM sessions use `engine: oap` (rollout step 1). | `neo.snapshot` shows Neo sessions on OAP; a day of Neo work runs with no stuck turns. |
-| 13+ | One PR per provider move (Kimi, MiniMax, DeepSeek, OpenRouter, OpenCode Go, Ollama, Copilot, Codex): flip its default and delete its bridge, env and `static MODELS` code. | That provider's session replies through OAP; the model list matches oapx `models` for it; the deleted bridge's port is no longer opened. |
+| 13 | Pass-through proxy for the `openai-completions` and `openai-responses` wires: forwards unchanged and swaps the token for the key. Needed before the first OpenAI-wire provider moves. | A test request through the proxy reaches a loopback stub with the key header set; the proxy rejects a wrong token. |
+| 14+ | Per provider (Kimi, MiniMax, DeepSeek, OpenRouter, OpenCode Go, Ollama, Copilot, Codex), a cutover PR that flips its default engine to `oap`. | That provider's session replies through OAP, and the model list matches oapx `models` for it. |
+| 14+ (after each cutover) | A deletion-only PR for that provider: its translator bridge, routing-env code and `static MODELS`. | That provider's sessions still reply, and the deleted bridge's port is no longer opened. |
 | last | Delete the env coordinator, routing-env tables and the OpenAI bridges once only Anthropic uses the SDK. | `grep` finds no `ANTHROPIC_DEFAULT_*_MODEL` writer; all provider sessions still reply. |
 
 ## 5. Blockers, risks and decisions
