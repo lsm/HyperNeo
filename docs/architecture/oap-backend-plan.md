@@ -72,7 +72,7 @@ Each PR is about 100–200 production lines, merges from fresh `dev`, and is dep
 
 | # | PR | Verify after deploy |
 | --- | --- | --- |
-| 1 | ADR 0007: OAP engine, the credential route through the loopback bridge, the restart policy, and decisions a–c (docs only). | The ADR is merged and linked from `neo-driver-model.md`. |
+| 1 | A new ADR (next free number) for the OAP engine, the per-wire loopback credential proxies, the restart policy, and decisions a–c (docs only). | The ADR is merged and linked from `neo-driver-model.md`. |
 | 2 | oapx binary resolution: a pinned version and SHA256, a per-platform download into the data dir, and an `engines.status` operation reporting found/version/adapters. | `operation.invoke engines.status` shows the pinned version; a wrong checksum is refused. |
 | 3 | Hub supervisor: start `oapx serve --addr 127.0.0.1:<free>` with its own HOME/state dir and a generated config holding no keys; restart on crash, stop with the daemon. | `ps` shows one child; killing it brings back one new child; stopping the daemon leaves no oapx process. `~/.oapx` is untouched. |
 | 4 | `oap-client` dependency per decision (c), plus a thin typed wrapper; tests run against `--backend memory`. | `engines.status` lists the hub's adapters. |
