@@ -2241,7 +2241,7 @@ describe('AgentSession', () => {
           model: 'opus',
         });
         expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
-        expect(mockSession.metadata.pendingModelSwitch).toBeUndefined();
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
       });
 
       it('holds a switch during a turn and applies it when the turn ends', async () => {
@@ -2257,7 +2257,7 @@ describe('AgentSession', () => {
         await agentSession.stateManager.setIdle();
         expect(switchModel).toHaveBeenCalledTimes(1);
         expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
-        expect(mockSession.metadata.pendingModelSwitch).toBeUndefined();
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
       });
 
       it('applies a switch at once right after Stop ends the turn', async () => {
@@ -2284,7 +2284,7 @@ describe('AgentSession', () => {
           model: 'claude-sonnet-4-20250514',
           error: 'Invalid model: typo. Use a valid model ID or alias.',
         });
-        expect(mockSession.metadata.pendingModelSwitch).toBeUndefined();
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
       });
 
       it('keeps the pending switch when a new turn has already started at the idle callback', async () => {
@@ -2315,7 +2315,36 @@ describe('AgentSession', () => {
         lifecycle.executeDeferredRestartIfPending = async () => true;
         await agentSession.stateManager.setIdle();
         expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
-        expect(mockSession.metadata.pendingModelSwitch).toBeUndefined();
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('clearing writes null so the stored row drops the pending switch', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        await agentSession.stateManager.setIdle();
+        expect(mockDb.updateSession).toHaveBeenLastCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ pendingModelSwitch: null }),
+          })
+        );
+      });
+
+      it('applies at once when the turn ends while the model is being validated', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        // biome-ignore lint: test mock access
+        const handler = (agentSession as unknown as Record<string, Record<string, unknown>>)
+          .modelSwitchHandler;
+        handler.invalidModel = async () => {
+          await agentSession.stateManager.setIdle();
+          return null;
+        };
+        expect(await agentSession.requestModelSwitch('opus', 'anthropic')).toEqual({
+          success: true,
+          model: 'opus',
+        });
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
       });
 
       it('a later request replaces the pending one', async () => {

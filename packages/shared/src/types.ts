@@ -393,7 +393,7 @@ export interface SessionMetadata {
   acpCommandIdentity?: string;
   acpSessionCommand?: string;
   pastSdkSessionIds?: string[];
-  pendingModelSwitch?: PendingModelSwitch;
+  pendingModelSwitch?: PendingModelSwitch | null;
   acpContextUsageEstimate?: number;
   worktreeChoice?: {
     status: 'pending' | 'completed';

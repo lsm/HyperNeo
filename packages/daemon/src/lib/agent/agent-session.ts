@@ -1594,7 +1594,13 @@ export class AgentSession
     if (invalid) return { success: false, model: this.session.config.model, error: invalid };
     const pending = { model, provider, requestedAt: Date.now() };
     await this.setPendingModelSwitch(pending);
-    return { success: true, model, pending };
+    const applied =
+      modelSwitchTiming(this.stateManager.getState().status) === 'now' &&
+      (await this.applyPendingModelSwitch());
+    if (this.session.metadata?.pendingModelSwitch) return { success: true, model, pending };
+    return applied || this.session.config.model === model
+      ? { success: true, model }
+      : { success: false, model: this.session.config.model, error: 'The model switch failed' };
   }
 
   private async applyPendingModelSwitch(): Promise<boolean> {
@@ -1609,11 +1615,10 @@ export class AgentSession
 
   private async setPendingModelSwitch(pending: PendingModelSwitch | undefined): Promise<void> {
     if (!pending && !this.session.metadata?.pendingModelSwitch) return;
-    const { pendingModelSwitch: _previous, ...rest } =
-      this.session.metadata ?? ({} as SessionMetadata);
-    this.session.metadata = (
-      pending ? { ...rest, pendingModelSwitch: pending } : rest
-    ) as SessionMetadata;
+    this.session.metadata = {
+      ...this.session.metadata,
+      pendingModelSwitch: pending ?? null,
+    } as SessionMetadata;
     this.db.updateSession(this.session.id, { metadata: this.session.metadata });
     await this.internalEventBus.publish('session.updated', {
       sessionId: this.session.id,
