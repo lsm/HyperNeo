@@ -3,6 +3,7 @@ import type {
   NeoConversationAskPageItem,
   NeoConversationImageRef,
 } from '@hyperneo/shared/types/neo-conversation-ask';
+import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
 import { neoForwardKey, type NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
@@ -11,6 +12,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
 import { type NeoAskItem, readNeoConversationImage } from './conversation-ask-client.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { NeoQuoteBar } from './NeoQuoteBar.tsx';
 import { NeoClampedText } from './NeoClampedText.tsx';
 import { NeoMessageMenu, neoMessageMenuActions, useNeoMessageMenu } from './NeoMessageMenu.tsx';
 import { copyToClipboard } from '../lib/utils.ts';
@@ -303,6 +305,57 @@ function NoticeRow({
   );
 }
 
+const FLASH_MS = 1500;
+const SEEK_PAGES = 9;
+
+function flashMessage(target: Element) {
+  target.scrollIntoView({ block: 'center' });
+  target.classList.remove('neo-message-flash');
+  void (target as HTMLElement).offsetWidth;
+  target.classList.add('neo-message-flash');
+  setTimeout(() => target.classList.remove('neo-message-flash'), FLASH_MS);
+}
+
+function revealMessage(messageId: string): boolean {
+  const target = document.querySelector(`[data-message-ref="${messageId}"]`);
+  if (target) flashMessage(target);
+  return !!target;
+}
+
+function ReplyQuote({
+  replyTo,
+  labels,
+  onSeek,
+}: {
+  replyTo: NeoReplyTo;
+  labels?: ReadonlyMap<string, { label: string; askId: string }>;
+  onSeek?: (messageId: string) => void;
+}) {
+  const label = labels?.get(`${replyTo.kind}:${replyTo.id}`);
+  if (replyTo.kind !== 'message') {
+    const excerpt = label?.label ?? replyTo.excerpt;
+    return (
+      <NeoQuoteBar
+        author={excerpt === undefined ? undefined : 'Neo'}
+        excerpt={excerpt}
+        onOpen={() =>
+          (
+            document.getElementById(`neo-ref-${replyTo.kind}-${replyTo.id}`) ??
+            document.querySelector(`[data-ask="${label?.askId}"]`)
+          )?.scrollIntoView({ block: 'center' })
+        }
+      />
+    );
+  }
+  return (
+    <NeoQuoteBar
+      author={replyTo.author && (replyTo.author === 'user' ? 'You' : 'Neo')}
+      excerpt={replyTo.excerpt ?? label?.label}
+      onOpen={() => (onSeek ? onSeek(replyTo.id) : revealMessage(replyTo.id))}
+    />
+  );
+}
+
 function PublicEntry({
   entry,
   onOpenScene,
@@ -312,10 +365,12 @@ function PublicEntry({
   forwarders,
   replyLabels,
   onQuote,
+  onSeek,
   status,
 }: {
   entry: NeoPublicEntry;
   status?: NeoMessageStatus;
+  onSeek?: (messageId: string) => void;
   projects?: ReadonlyMap<string, string>;
   forwarders?: ReadonlyMap<string, string>;
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
@@ -439,32 +494,14 @@ function PublicEntry({
           </button>
         )}
       </div>
-      {ask?.replyTo && (
-        <button
-          type="button"
-          data-reply-to={`${ask.replyTo.kind}:${ask.replyTo.id}`}
-          class="mb-1 block max-w-full truncate px-1 text-left text-xs text-fg-muted hover:underline"
-          onClick={() =>
-            (
-              document.getElementById(`neo-ref-${ask.replyTo!.kind}-${ask.replyTo!.id}`) ??
-              (ask.replyTo!.kind === 'message'
-                ? document.querySelector(`[data-message-ref="${ask.replyTo!.id}"]`)
-                : null) ??
-              document.querySelector(
-                `[data-ask="${replyLabels?.get(`${ask.replyTo!.kind}:${ask.replyTo!.id}`)?.askId}"]`
-              )
-            )?.scrollIntoView({ block: 'center' })
-          }
-        >
-          {t('chat.replyTo', {
-            label:
-              replyLabels?.get(`${ask.replyTo.kind}:${ask.replyTo.id}`)?.label ?? t('chat.earlier'),
-          })}
-        </button>
-      )}
       <div
         class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'} ${undelivered ? '!border-danger' : ''}`}
       >
+        {ask?.replyTo && (
+          <div data-reply-to={`${ask.replyTo.kind}:${ask.replyTo.id}`}>
+            <ReplyQuote replyTo={ask.replyTo} labels={replyLabels} onSeek={onSeek} />
+          </div>
+        )}
         {photos.length > 0 && (
           <div class="mb-3 flex flex-wrap gap-2">
             {photos.map((photo, index) =>
@@ -699,20 +736,19 @@ export function PendingAsk({
           </button>
         )}
       </div>
-      {ask.quote && (
-        <button
-          type="button"
-          class="mb-1 block max-w-full truncate px-1 text-left text-xs text-fg-muted hover:underline"
-          onClick={() =>
-            document.getElementById(ask.quote!.anchor)?.scrollIntoView({ block: 'center' })
-          }
-        >
-          {t('chat.replyTo', { label: neoQuoteExcerpt(ask.quote.text) })}
-        </button>
-      )}
       <div
         class={`neo-message-bubble rounded-2xl rounded-tr-sm border px-4 py-3 ${failed ? '!border-danger' : ''}`}
       >
+        {ask.quote && (
+          <NeoQuoteBar
+            author={ask.quote.author}
+            excerpt={neoQuoteExcerpt(ask.quote.text)}
+            onOpen={() => {
+              const target = document.getElementById(ask.quote!.anchor);
+              if (target) flashMessage(target);
+            }}
+          />
+        )}
         {ask.images.length > 0 && (
           <div class="mb-3 flex flex-wrap gap-2">
             {ask.images.map((image, index) => (
@@ -784,6 +820,25 @@ export function NeoPublicConversation({
   onLoadEarlier?: () => void;
 }) {
   const labels = new Map([...neoMessageReplyLabels(conversation.entries), ...(replyLabels ?? [])]);
+  const [seeking, setSeeking] = useState<string | null>(null);
+  const seekPages = useRef(0);
+  useEffect(() => setSeeking(null), [conversation.conversationId]);
+  const canLoadEarlier = conversation.hasEarlier && !!onLoadEarlier;
+  useEffect(() => {
+    if (!seeking || conversation.status !== 'ready') return;
+    const timer = setTimeout(() => {
+      if (revealMessage(seeking) || !canLoadEarlier || seekPages.current >= SEEK_PAGES)
+        return setSeeking(null);
+      seekPages.current += 1;
+      onLoadEarlier?.();
+    });
+    return () => clearTimeout(timer);
+  }, [seeking, conversation.entries, conversation.status, canLoadEarlier]);
+  const seek = (messageId: string) => {
+    if (revealMessage(messageId) || !canLoadEarlier) return setSeeking(null);
+    seekPages.current = 0;
+    setSeeking(messageId);
+  };
   return (
     <div class="space-y-6" aria-label={t('chat.public')}>
       {conversation.status !== 'ready' && (
@@ -824,6 +879,7 @@ export function NeoPublicConversation({
             projects={projects}
             forwarders={forwarders}
             replyLabels={labels}
+            onSeek={seek}
             onQuote={onQuote}
             status={entry.kind === 'ask' ? statuses?.get(entry.ask.requestId) : undefined}
           />

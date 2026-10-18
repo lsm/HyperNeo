@@ -385,7 +385,9 @@ describe('Neo quote reply through live chat and durable intake', () => {
     submit();
     const retry = await screen.findByRole('button', { name: '重试' });
     const failed = document.querySelector('[data-pending-ask]')!;
-    expect(failed.textContent).toContain(`回复：${fullReply.split('\n')[0]}`);
+    expect(failed.querySelector('[data-quote-bar]')?.textContent).toContain(
+      `Neo${fullReply.split('\n')[0]}`
+    );
     fireEvent.click(retry);
     await waitFor(() => expect(calls()).toHaveLength(2));
     expect(calls()[0][1].input).toMatchObject({
@@ -406,7 +408,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     fireEvent.click(screen.getByRole('button', { name: '编辑' }));
     await waitFor(() => expect(input.value).toBe('Please explain'));
     expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(fullReply);
-    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain('回复');
+    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain('Neo');
     fireEvent.click(screen.getByRole('button', { name: '移除回复' }));
     submit();
     await waitFor(() => expect(calls()).toHaveLength(2));
@@ -483,7 +485,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     fireEvent.click(button, { detail: 0 });
     expect(document.activeElement).toBe(input);
     expect(input.getAttribute('aria-describedby')).toBe('neo-quote-label');
-    expect(document.getElementById('neo-quote-label')).toHaveProperty('textContent', '回复');
+    expect(document.getElementById('neo-quote-label')).toHaveProperty('textContent', 'Neo');
     expect(document.getElementById('neo-quote-label')?.getAttribute('role')).toBe('status');
     const cancel = screen.getByRole('button', { name: '移除回复' }) as HTMLButtonElement;
     expect(cancel.type).toBe('button');
@@ -516,7 +518,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       type('Keep this');
       quote('Neo');
       const region = screen.getByRole('region', { name: /^回复Neo/ });
-      expect(region.textContent).toContain('回复');
+      expect(region.textContent).toContain('Neo');
       const preview = region.querySelector('.line-clamp-2')!;
       expect(Array.from(preview.textContent!)).toHaveLength(501);
       expect(preview.textContent).toContain('<img src=x onerror=alert(1)> **literal**\n');

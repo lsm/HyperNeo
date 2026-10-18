@@ -623,4 +623,27 @@ describe('NeoLive durable conversation activation', () => {
     });
     await waitFor(() => expect(main.scrollTop).toBe(1000));
   });
+
+  it('keeps following new messages after a tap on an unavailable quote', async () => {
+    const { container } = render(<NeoLive />);
+    const main = container.querySelector('main')!;
+    Object.defineProperties(main, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    await act(async () => {
+      asks.value = {
+        ...asks.value,
+        status: 'ready',
+        items: [{ ...ask('first'), replyTo: { kind: 'message', id: 'gone' } }],
+      };
+    });
+    await waitFor(() => expect(main.scrollTop).toBe(1000));
+    fireEvent.click(container.querySelector('[data-quote-bar]')!);
+    Object.defineProperty(main, 'scrollHeight', { configurable: true, value: 1500 });
+    await act(async () => {
+      asks.value = { ...asks.value, items: [...asks.value.items, ask('second', root, 2)] };
+    });
+    await waitFor(() => expect(main.scrollTop).toBe(1500));
+  });
 });

@@ -582,3 +582,17 @@
     opacity: 0;
   }
 }
+
+@keyframes neo-message-flash {
+  0%,
+  60% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+.neo-message-flash .neo-message-bubble {
+  animation: neo-message-flash 1.5s ease-out;
+}
