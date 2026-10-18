@@ -1,8 +1,6 @@
 [
   "NeoActivity.tsx",
   "NeoAttachments.tsx",
-  "NeoClampedText.tsx",
-  "NeoComposer.tsx",
   "NeoConversation.tsx",
   "NeoDrawer.tsx",
   "NeoExamples.tsx",
@@ -11,7 +9,6 @@
   "NeoModelMenu.tsx",
   "NeoPreferences.tsx",
   "NeoProjectTree.tsx",
-  "NeoPublicConversation.tsx",
   "NeoPublicationHistory.tsx",
   "NeoSessionPane.tsx",
   "NeoVoice.tsx"
