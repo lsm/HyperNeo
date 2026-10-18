@@ -3515,6 +3515,27 @@ describe('readDriverSettlement', () => {
     value: { ok: true, value: { lastActivityAt: 200, ...value } },
   });
 
+  test('a turn too long for the exchange to hold its opening reports the whole turn', () => {
+    const exchange = Array.from({ length: 40 }, (_, index) => ({
+      at: 160 + index,
+      role: 'agent' as const,
+      text: `step ${index}`,
+    }));
+    const turn = 'Opened https://github.com/o/r/pull/8.\n\nAll done.';
+    const read = (cut: boolean, state = 'done') =>
+      readDriverSettlement(
+        work,
+        status({ status: state, lastReply: turn, exchange, exchangeCut: cut }),
+        150,
+        120,
+        false,
+        'Fix the loader.'
+      );
+    expect(read(true)).toEqual({ status: 'reported', report: turn });
+    expect(read(false)).toBeNull();
+    expect(read(true, 'running')).toBeNull();
+  });
+
   test('settles finished, failed and stopped work that moved after it was handed over', () => {
     const settle = (outcome: Parameters<typeof readDriverSettlement>[1], now = 150) =>
       readDriverSettlement(work, outcome, now);

@@ -941,7 +941,9 @@ export function readDriverSettlement(
     return opening ? null : readUnanchoredSettlement(work, reply.value, now);
   const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
   if (!fresh && (requireFresh || now - work.updatedAt < SETTLE_GRACE_MS)) return null;
-  const report = driverExchangeReport(exchange, exchangeCut ?? false, opening);
+  const report =
+    driverExchangeReport(exchange, exchangeCut ?? false, opening) ??
+    (exchangeCut && status === 'done' ? (reply.value.lastReply ?? null) : null);
   if (opening && !report && exchange !== undefined) return null;
   if (
     exchange === undefined &&
