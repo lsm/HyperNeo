@@ -3,6 +3,8 @@ import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoQuestion, NeoReplyTo, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
+import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
@@ -21,7 +23,7 @@ import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoRouted, NeoRouter, NeoRouteSignal } from './router.ts';
-import { NeoReplyToSchema } from './conversation-ask.ts';
+import { NeoReplyRefSchema } from './conversation-ask.ts';
 
 const Input = z
   .object({
@@ -42,7 +44,7 @@ const Input = z
       )
       .max(20)
       .optional(),
-    replyTo: NeoReplyToSchema.optional(),
+    replyTo: NeoReplyRefSchema.optional(),
   })
   .superRefine((input, context) => {
     const projected = toMailboxMessage({
@@ -61,7 +63,7 @@ const Result = z.discriminatedUnion('ok', [
   }),
   z.object({ ok: z.literal(false), reason: z.string() }),
 ]);
-type IntakeInput = z.infer<typeof Input>;
+type IntakeInput = Omit<z.infer<typeof Input>, 'replyTo'> & { replyTo?: NeoReplyTo };
 type IntakeResult = z.infer<typeof Result>;
 type Gate<T> = { value: T } | { reason: Extract<IntakeResult, { ok: false }> };
 type Target = Pick<Session, 'id' | 'status' | 'config'>;
@@ -101,7 +103,9 @@ export function neoIntakeMessage(
     typeof input.content === 'string'
       ? [{ type: 'text' as const, text: input.content }]
       : input.content;
-  const fact = reply?.ask?.sessionId === sessionId ? neoReplyFact(reply) : null;
+  const fact =
+    (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply) : null) ??
+    neoQuoteFact(input.replyTo);
   return {
     type: 'user',
     uuid: input.requestId as UUID,
@@ -138,6 +142,35 @@ export function readNeoReply(
 export function neoReplyFact(reply: NeoReply | null): string | null {
   if (reply?.question) return `The human answered your question "${reply.question.text}":`;
   return reply?.todo ? `The human replied about todo ${reply.todo.id}:` : null;
+}
+
+export function neoQuoteFact(replyTo: NeoReplyTo | undefined): string | null {
+  if (replyTo?.kind !== 'message' || !replyTo.excerpt) return null;
+  return replyTo.author === 'neo'
+    ? `The human replied to the Neo message "${replyTo.excerpt}":`
+    : `The human replied to their earlier message "${replyTo.excerpt}":`;
+}
+
+export function neoReplySnapshot(
+  replyTo: NeoReplyTo | undefined,
+  publication: NeoPublication | null,
+  quoted: NeoConversationAsk | null,
+  stored: NeoConversationAsk | null
+): NeoReplyTo | undefined {
+  if (replyTo?.kind !== 'message') return replyTo;
+  if (stored) return stored.replyTo;
+  const text = publication
+    ? publication.shortText.trim() || publication.fullText.trim()
+    : quoted
+      ? neoAskText(quoted.content, '\n').trim() || '(attachment)'
+      : '';
+  const excerpt = text.length > 300 ? `${text.slice(0, 300).trimEnd()}…` : text;
+  return {
+    kind: replyTo.kind,
+    id: replyTo.id,
+    ...(publication ? { author: 'neo' as const } : quoted ? { author: 'user' as const } : {}),
+    ...(excerpt ? { excerpt } : {}),
+  };
 }
 
 export function neoReplyAuthor(
@@ -266,14 +299,14 @@ function recordNeoIntakeImages(
   return receipt;
 }
 
-function neoAskText(content: IntakeInput['content']): string {
+function neoAskText(content: IntakeInput['content'], separator = ' '): string {
   return typeof content === 'string'
     ? content
     : content
         .flatMap((block: { type: string; text?: string }) =>
           block.type === 'text' && block.text ? [block.text] : []
         )
-        .join(' ');
+        .join(separator);
 }
 
 type Routed = {
@@ -409,23 +442,17 @@ export function replayedNeoRoute(
 }
 
 const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
-  .input(['input', 'binding', 'db', 'router', 'conversationId', 'repo', 'reply'])
-  .pipe(
-    (input: IntakeInput, db: Database, conversationId: string) =>
-      input.replyTo?.kind === 'message'
-        ? new NeoPublicationRepository(db.getDatabase()).get(conversationId, input.replyTo.id)
-        : null,
-    ['input', 'db', 'conversationId'],
-    'publication'
-  )
-  .pipe(
-    (input: IntakeInput, db: Database, conversationId: string) =>
-      input.replyTo?.kind === 'message'
-        ? new NeoConversationAskRepository(db.getDatabase()).find(conversationId, input.replyTo.id)
-        : null,
-    ['input', 'db', 'conversationId'],
-    'quoted'
-  )
+  .input([
+    'input',
+    'binding',
+    'db',
+    'router',
+    'conversationId',
+    'repo',
+    'reply',
+    'publication',
+    'quoted',
+  ])
   .pipe(
     (quoted: { askOrigin: NeoAskOrigin } | null, db: Database) =>
       quoted ? new NeoAskForwardRepository(db.getDatabase()).list(quoted.askOrigin) : [],
@@ -471,7 +498,9 @@ const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
   router: NeoRouter | null,
   conversationId: string,
   repo: NeoRepository,
-  reply: NeoReply | null
+  reply: NeoReply | null,
+  publication: NeoPublication | null,
+  quoted: NeoConversationAsk | null
 ) => Promise<NeoRouted>;
 
 type IntakeTarget = { binding: NeoBinding; target: Target; conversationId: string };
@@ -524,15 +553,64 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   )
   .pipe(admitNeoIntakeTarget, ['input', 'db', 'repo'], 'result:receipt')
   .pipe(
+    (input: IntakeInput, admitted: IntakeTarget, db: Database) =>
+      input.replyTo?.kind === 'message'
+        ? new NeoPublicationRepository(db.getDatabase()).get(
+            admitted.conversationId,
+            input.replyTo.id
+          )
+        : null,
+    ['input', 'receipt', 'db'],
+    'publication'
+  )
+  .pipe(
+    (input: IntakeInput, admitted: IntakeTarget, db: Database) => {
+      const asks = new NeoConversationAskRepository(db.getDatabase());
+      return input.replyTo?.kind === 'message'
+        ? {
+            quoted: asks.find(admitted.conversationId, input.replyTo.id),
+            stored: asks.find(admitted.conversationId, input.requestId),
+          }
+        : { quoted: null, stored: null };
+    },
+    ['input', 'receipt', 'db'],
+    'asks'
+  )
+  .pipe(
+    (
+      input: IntakeInput,
+      publication: NeoPublication | null,
+      asks: { quoted: NeoConversationAsk | null; stored: NeoConversationAsk | null }
+    ): IntakeInput => {
+      const replyTo = neoReplySnapshot(input.replyTo, publication, asks.quoted, asks.stored);
+      return replyTo ? { ...input, replyTo } : input;
+    },
+    ['input', 'publication', 'asks'],
+    'input'
+  )
+  .pipe(
     (
       input: IntakeInput,
       admitted: IntakeTarget,
       db: Database,
       router: NeoRouter | null,
       repo: NeoRepository,
-      reply: NeoReply | null
-    ) => routeNeoAsk(input, admitted.binding, db, router, admitted.conversationId, repo, reply),
-    ['input', 'receipt', 'db', 'router', 'repo', 'reply'],
+      reply: NeoReply | null,
+      publication: NeoPublication | null,
+      asks: { quoted: NeoConversationAsk | null }
+    ) =>
+      routeNeoAsk(
+        input,
+        admitted.binding,
+        db,
+        router,
+        admitted.conversationId,
+        repo,
+        reply,
+        publication,
+        asks.quoted
+      ),
+    ['input', 'receipt', 'db', 'router', 'repo', 'reply', 'publication', 'asks'],
     'route'
   )
   .pipe(admitNeoIntakeTarget, ['input', 'db', 'repo'], 'result:receipt')

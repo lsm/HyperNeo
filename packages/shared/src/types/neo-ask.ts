@@ -71,6 +71,8 @@ export interface NeoQuestion {
 export interface NeoReplyTo {
   kind: 'question' | 'todo' | 'message';
   id: string;
+  author?: 'neo' | 'user';
+  excerpt?: string;
 }
 
 export interface NeoStatusCode {

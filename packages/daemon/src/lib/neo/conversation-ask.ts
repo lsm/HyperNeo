@@ -3,9 +3,14 @@ import { z } from 'zod';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { SendMessageInputSchema } from '../messaging/message-send.ts';
 
-export const NeoReplyToSchema = z
+export const NeoReplyRefSchema = z
   .object({ kind: z.enum(['question', 'todo', 'message']), id: z.string().trim().min(1).max(160) })
   .strict();
+
+export const NeoReplyToSchema = NeoReplyRefSchema.extend({
+  author: z.enum(['neo', 'user']).optional(),
+  excerpt: z.string().min(1).max(320).optional(),
+}).strict();
 
 export const NeoConversationAskSchema = z
   .object({
