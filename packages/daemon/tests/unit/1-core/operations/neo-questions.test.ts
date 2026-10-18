@@ -265,6 +265,29 @@ describe('neo.question.retire and replaces', () => {
     ).toEqual({ ok: false, reason: `question_closed: question ${old.id} is retired.` });
   });
 
+  test('never retires or replaces the start question that carries the go-ahead', async () => {
+    const { store, call, asked, fix } = setup();
+    const start = await asked({ kind: 'start', text: 'Start this?', todos: [fix.id] });
+    const refusal = {
+      ok: false,
+      reason:
+        "start_question: the daemon's start question carries the human's go-ahead; only the human answers it.",
+    } as const;
+    expect(await call('neo.question.retire', { questionId: start.id, reason: 'moot' })).toEqual(
+      refusal
+    );
+    expect(
+      await call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'reply',
+        text: 'Swap?',
+        replaces: start.id,
+      })
+    ).toEqual(refusal);
+    expect(store.getQuestion(start.id)?.state).toBe('open');
+    expect(store.listQuestions('ask')).toHaveLength(1);
+  });
+
   test("never replaces another ask's question or a missing one, and asks nothing then", async () => {
     const { store, call, asked } = setup();
     store.openAsk({

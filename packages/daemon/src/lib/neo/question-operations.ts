@@ -91,6 +91,9 @@ export function planNeoQuestion(
     : { value: { ask, draft } };
 }
 
+const START_QUESTION =
+  "start_question: the daemon's start question carries the human's go-ahead; only the human answers it.";
+
 export function requireNeoQuestionReplaceable(
   replaced: NeoQuestion | null,
   ask: NeoAsk,
@@ -100,6 +103,7 @@ export function requireNeoQuestionReplaceable(
   if (!replaced) return fail(`not_found: no question ${replaces}.`);
   if (replaced.askId !== ask.id)
     return fail(`other_ask: question ${replaces} belongs to another ask; replace only this ask's.`);
+  if (replaced.kind === 'start') return fail(START_QUESTION);
   return replaced.state === 'open'
     ? { value: replaced }
     : fail(`question_closed: question ${replaces} is ${replaced.state}.`);
@@ -107,6 +111,7 @@ export function requireNeoQuestionReplaceable(
 
 export function requireNeoOpenQuestion(question: NeoQuestion | null): Gate<NeoQuestion> {
   if (!question) return fail('not_found: no such question.');
+  if (question.kind === 'start') return fail(START_QUESTION);
   return question.state === 'open'
     ? { value: question }
     : fail(`question_closed: this question is ${question.state}.`);
