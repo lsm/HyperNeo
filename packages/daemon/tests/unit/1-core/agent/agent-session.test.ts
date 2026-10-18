@@ -2347,6 +2347,22 @@ describe('AgentSession', () => {
         expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
       });
 
+      it('reports a deferred switch that fails when the turn ends', async () => {
+        const handleError = mock(async () => {});
+        // biome-ignore lint: test mock access
+        (agentSession as unknown as Record<string, unknown>).errorManager = { handleError };
+        switchModel.mockImplementation(async () => ({
+          success: false,
+          model: 'claude-sonnet-4-20250514',
+          error: 'provider gone',
+        }));
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        await agentSession.stateManager.setIdle();
+        expect(handleError).toHaveBeenCalledTimes(1);
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
       it('a later request replaces the pending one', async () => {
         await agentSession.stateManager.setProcessing('turn-1');
         await agentSession.requestModelSwitch('opus', 'anthropic');

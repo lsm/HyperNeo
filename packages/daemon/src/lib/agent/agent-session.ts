@@ -1633,8 +1633,20 @@ export class AgentSession
     if (!pending || modelSwitchTiming(this.stateManager.getState().status) !== 'now') return false;
     await this.setPendingModelSwitch(undefined);
     const result = await this.handleModelSwitch(pending.model, pending.provider);
-    if (!result.success)
-      this.logger.warn(`Pending model switch to ${pending.model} failed: ${result.error ?? ''}`);
+    if (!result.success) {
+      const message = `The switch to ${pending.model} requested during the last turn failed: ${result.error ?? 'unknown error'}`;
+      this.logger.warn(message);
+      await this.errorManager
+        .handleError(
+          this.session.id,
+          new Error(message),
+          ErrorCategory.MODEL,
+          message,
+          this.stateManager.getState(),
+          { requestedModel: pending.model, currentModel: this.session.config.model }
+        )
+        .catch(() => undefined);
+    }
     return result.success;
   }
 
