@@ -4,6 +4,17 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.45.2] - 2026-10-18
+
+### Fixed
+
+- **Neo routing**: The route model id is sent without the Claude Code CLI's `[1m]` tag, which the HTTP API rejected with 400 so every message fell back to the Inbox; a failed route call now logs the model and the response body (#7500).
+- **Drivers**: An idle Claude session is opened before a send, and Claude engine version pins are gone, so an SDK upgrade no longer makes sessions unknown (#7502).
+
+### Added
+
+- **Neo**: A reply can reference a whole work card (`replyTo` kind `ask`) (#7504).
+
 ## [0.45.1] - 2026-10-18
 
 Patch release: v0.45.0 never reached npm because its Intel Mac (darwin-x64) builds failed.
