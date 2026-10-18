@@ -9,6 +9,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { SessionStore } from '../lib/session-store.ts';
 import type { MessageImage } from '@hyperneo/shared';
 import { NeoComposer } from './NeoComposer.tsx';
+import { restoreNeoImages } from './neo-attachments.ts';
 import { NeoBusyRow } from './NeoBusyRow.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoMessage } from './NeoMessage.tsx';
@@ -257,6 +258,10 @@ export function NeoSessionPane({
               await sendToSession(sessionId, text);
               return { kind: 'accepted' };
             } catch (cause) {
+              const current = inputDraft.content;
+              inputDraft.setContent(
+                text.startsWith(current) ? text : [current, text].filter(Boolean).join('\n')
+              );
               return {
                 kind: 'refused',
                 reason: cause instanceof Error ? cause.message : String(cause),
@@ -264,15 +269,15 @@ export function NeoSessionPane({
             }
           }}
           onSend={async ({ text, images }) => {
-            const submitted = inputDraft.content;
             inputDraft.setContent('');
             try {
               const messageId = await sendToSession(sessionId, text, images);
               return { ok: true, requestId: messageId, messageId, created: true };
             } catch (cause) {
               const reason = cause instanceof Error ? cause.message : String(cause);
-              setNotice(reason);
-              if (!inputDraft.content) inputDraft.setContent(submitted);
+              const kept = restoreNeoImages(sessionId, images ?? []);
+              setNotice(kept ? reason : `${reason} ${t('session.attachmentsLost')}`);
+              if (!inputDraft.content) inputDraft.setContent(text);
               return { ok: false, reason };
             }
           }}

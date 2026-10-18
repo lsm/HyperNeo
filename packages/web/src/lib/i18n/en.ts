@@ -169,4 +169,5 @@ export const en = {
   'session.modelScope': 'For this session, from its next turn',
   'session.modelScopeWorking': 'Switching the model stops the current reply',
   'session.modelFailed': 'Could not switch this session’s model.',
+  'session.attachmentsLost': 'Attach the photos again before resending.',
 } as const;
