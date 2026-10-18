@@ -154,8 +154,8 @@ describe('neo.preferences.set', () => {
     created = [];
     const sessions = {
       getSessionForControl: async (sessionId: string) => ({
-        handleModelSwitch: async (model: string, provider: string, nonInterrupting: boolean) => {
-          switched.push([sessionId, model, provider, nonInterrupting]);
+        requestModelSwitch: async (model: string, provider: string) => {
+          switched.push([sessionId, model, provider]);
           return { success: true, model };
         },
         getSessionData: () => db.getSession(sessionId),
@@ -211,7 +211,7 @@ describe('neo.preferences.set', () => {
     expect(await invoke('neo.snapshot', {})).toMatchObject({
       value: { preferences: { model: 'deepseek-v4-flash', saved: true } },
     });
-    expect(switched).toEqual([['neo:root', 'deepseek-v4-flash', 'deepseek', true]]);
+    expect(switched).toEqual([['neo:root', 'deepseek-v4-flash', 'deepseek']]);
   });
 
   test('refuses Neo itself and models the catalog does not offer', async () => {

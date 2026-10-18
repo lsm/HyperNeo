@@ -5,6 +5,7 @@ import type {
   CurrentModelInfo,
   ThinkingLevel,
   MessageHub,
+  AgentProcessingState,
 } from '@hyperneo/shared';
 import type { SessionRuntimeSettingsSnapshot } from '../../storage/repositories/session-runtime-settings-write.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -31,6 +32,10 @@ import { sessionSdkPath } from '../neo/session-policy.ts';
 const ONE_M_SUFFIX = /\[1m\]$/i;
 const ACP_SWITCH_DISPOSE_TIMEOUT_MS = 8_000;
 type ModelPair = Pick<SessionConfig, 'model' | 'provider'>;
+
+export function modelSwitchTiming(status: AgentProcessingState['status']): 'now' | 'next_turn' {
+  return status === 'idle' ? 'now' : 'next_turn';
+}
 
 export function gateSwitchIdle(guarded: boolean, busy: boolean) {
   return guarded && busy ? { reason: 'session_busy' as const } : { value: true as const };

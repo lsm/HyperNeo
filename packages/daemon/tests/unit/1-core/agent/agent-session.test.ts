@@ -2222,6 +2222,67 @@ describe('AgentSession', () => {
       expect(result).toEqual(mockResult);
     });
 
+    describe('requestModelSwitch', () => {
+      let switchModel: ReturnType<typeof mock>;
+      beforeEach(() => {
+        switchModel = mock(async (model: string) => ({ success: true, model }));
+        // biome-ignore lint: test mock access
+        (agentSession as unknown as Record<string, unknown>).modelSwitchHandler = { switchModel };
+      });
+
+      it('switches at once while the session is idle', async () => {
+        await agentSession.stateManager.setIdle();
+        expect(await agentSession.requestModelSwitch('opus', 'anthropic')).toEqual({
+          success: true,
+          model: 'opus',
+        });
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+        expect(mockSession.metadata.pendingModelSwitch).toBeUndefined();
+      });
+
+      it('holds a switch during a turn and applies it when the turn ends', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        const result = await agentSession.requestModelSwitch('opus', 'anthropic');
+        expect(result).toMatchObject({
+          success: true,
+          model: 'claude-sonnet-4-20250514',
+          pending: { model: 'opus', provider: 'anthropic' },
+        });
+        expect(switchModel).not.toHaveBeenCalled();
+        expect(mockSession.metadata.pendingModelSwitch).toMatchObject({ model: 'opus' });
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).toHaveBeenCalledTimes(1);
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+        expect(mockSession.metadata.pendingModelSwitch).toBeUndefined();
+      });
+
+      it('applies a switch at once right after Stop ends the turn', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        // biome-ignore lint: test mock access
+        (agentSession as unknown as Record<string, unknown>).interruptHandler = {
+          handleInterrupt: async () => {
+            await agentSession.stateManager.setInterrupted();
+            await agentSession.stateManager.setIdle();
+          },
+        };
+        await agentSession.handleInterrupt();
+        expect(await agentSession.requestModelSwitch('opus', 'anthropic')).toEqual({
+          success: true,
+          model: 'opus',
+        });
+        expect(switchModel).toHaveBeenCalledTimes(1);
+      });
+
+      it('a later request replaces the pending one', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        await agentSession.requestModelSwitch('haiku', 'anthropic');
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).toHaveBeenCalledTimes(1);
+        expect(switchModel).toHaveBeenCalledWith('haiku', 'anthropic');
+      });
+    });
+
     it('handleQuestionResponse should delegate to askUserQuestionHandler', async () => {
       const handleQuestionResponseSpy = mock(async () => {});
       // biome-ignore lint: test mock access

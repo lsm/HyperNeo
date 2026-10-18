@@ -1296,7 +1296,7 @@ export class NeoService {
     const live = await this.sessions.getSessionForControl(sessionId);
     if (!live) return;
     if (plan.model) {
-      const switched = await live.handleModelSwitch(preference.model, preference.provider, true);
+      const switched = await live.requestModelSwitch(preference.model, preference.provider);
       if (!switched.success)
         return this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
     }
