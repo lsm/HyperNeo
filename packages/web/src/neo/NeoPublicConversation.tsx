@@ -305,8 +305,6 @@ function NoticeRow({
   );
 }
 
-type QuotedReply = NeoReplyTo & { author?: 'neo' | 'user'; excerpt?: string };
-
 const FLASH_MS = 1500;
 
 function flashMessage(target: Element) {
@@ -328,7 +326,7 @@ function ReplyQuote({
   labels,
   onSeek,
 }: {
-  replyTo: QuotedReply;
+  replyTo: NeoReplyTo;
   labels?: ReadonlyMap<string, { label: string; askId: string }>;
   onSeek?: (messageId: string) => void;
 }) {

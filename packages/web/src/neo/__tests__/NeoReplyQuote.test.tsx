@@ -14,7 +14,7 @@ const ask = (
   requestId: string,
   sequence: number,
   text: string,
-  replyTo?: NeoConversationAsk['replyTo'] & { author?: 'neo' | 'user'; excerpt?: string }
+  replyTo?: NeoConversationAsk['replyTo']
 ): NeoConversationAsk => ({
   conversationId,
   requestId,
