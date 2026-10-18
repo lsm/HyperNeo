@@ -193,7 +193,10 @@ export function neoAskTodoScene(
   ask: NeoAsk,
   todos: readonly NeoAskTodo[],
   humanActions: readonly NeoAskHumanAction[]
-): Pick<NeoAskView, 'group' | 'label' | 'needsYou' | 'done' | 'total' | 'doneWorkIds'> {
+): Pick<
+  NeoAskView,
+  'group' | 'label' | 'labelCodes' | 'needsYou' | 'done' | 'total' | 'doneWorkIds'
+> {
   const active = todos.filter((todo) => todo.state !== 'cancelled');
   const abandoned = ask.status === 'abandoned';
   const achieved = ask.status === 'achieved';
