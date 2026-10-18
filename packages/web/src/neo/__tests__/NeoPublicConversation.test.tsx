@@ -181,6 +181,7 @@ describe('durable public conversation presentation', () => {
     expect(container.querySelector('[data-publication-details] table')).toBeTruthy();
     const copyDetails = screen.getByRole('button', { name: 'Copy details' });
     expect(copyDetails.closest('[data-publication-details]')).toBeTruthy();
+    expect(copyDetails.parentElement?.textContent).toBe('Details');
     fireEvent.click(copyDetails);
     await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
     const less = await screen.findByRole('button', { name: /^…less$/ });
