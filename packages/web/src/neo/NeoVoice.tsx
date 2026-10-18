@@ -31,7 +31,9 @@ export function NeoVoice({
   onSendHandle,
   onError,
   onPhase,
+  door,
 }: {
+  door?: 'session';
   sessionId: string;
   connected: boolean;
   draftText: string;
@@ -108,7 +110,7 @@ export function NeoVoice({
         return;
       }
       const result = await runVoiceSubmit(
-        { sessionId, mode: 'stay', retrySilent: !!entry, intent, sendDraft: draftText },
+        { sessionId, mode: 'stay', retrySilent: !!entry, intent, sendDraft: draftText, door },
         {
           stopRecording: entry ? async () => recordingFromEntry(entry) : recorder.stop,
           generateId: () => id,

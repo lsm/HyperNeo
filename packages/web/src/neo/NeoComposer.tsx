@@ -44,11 +44,9 @@ export function NeoComposer({
   onCancelQuote,
   forSession,
   onStop,
-  onSendText,
 }: {
   forSession?: boolean;
   onStop?: () => void;
-  onSendText?: (text: string) => Promise<VoiceSendOutcome>;
   preference?: NeoPreference;
   quote?: NeoQuote;
   activity?: ComponentChildren;
@@ -190,9 +188,7 @@ export function NeoComposer({
       return { kind: 'unconfirmed' };
     }
     try {
-      const outcome = onSendText
-        ? await onSendText(composed)
-        : await submitVoiceSendIntent(hub, record, composed);
+      const outcome = await submitVoiceSendIntent(hub, record, composed);
       if (
         outcome.kind === 'accepted' &&
         alive.current &&
@@ -358,6 +354,7 @@ export function NeoComposer({
         </span>
         <div class={`flex gap-2 ${voiceBusy ? 'min-w-0 flex-1' : 'ml-auto shrink-0'}`}>
           <NeoVoice
+            door={forSession ? 'session' : undefined}
             sessionId={sessionId}
             connected={connected}
             draftText={draft}

@@ -16,6 +16,7 @@ const hubRequest = vi.fn(
     }
     if (method === 'voice.transcribe') return { text: 'hello world' };
     if (method === 'session.appendVoiceDraft') return { success: true };
+    if (method === 'message.send') return { messageId: 'm1' };
     throw new Error(`No handler for method: ${method}`);
   }
 );
@@ -96,6 +97,18 @@ describe('voice send-intent recovery', () => {
     });
     expect(store.records).toHaveLength(0);
     expect(rawMethods()).not.toContain('neo.message.send');
+  });
+
+  it('sends a session pane recording to its session through message.send', async () => {
+    seedEntry({ intent: 'send', door: 'session' });
+    await flushPendingVoiceAudio();
+
+    expect(asks()).toHaveLength(0);
+    expect(hubRequest).toHaveBeenCalledWith('message.send', {
+      sessionId: 's1',
+      content: 'hello world',
+    });
+    expect(store.records).toHaveLength(0);
   });
 
   it('never re-sends after the record is durably consumed, across repeated flushes', async () => {

@@ -253,21 +253,6 @@ export function NeoSessionPane({
             inputDraft.setContent([inputDraft.content, text].filter(Boolean).join('\n'))
           }
           onStop={() => void handleInterrupt()}
-          onSendText={async (text) => {
-            try {
-              await sendToSession(sessionId, text);
-              return { kind: 'accepted' };
-            } catch (cause) {
-              const current = inputDraft.content.trim();
-              inputDraft.setContent(
-                text.startsWith(current) ? text : [current, text].filter(Boolean).join('\n')
-              );
-              return {
-                kind: 'refused',
-                reason: cause instanceof Error ? cause.message : String(cause),
-              };
-            }
-          }}
           onSend={async ({ text, images }) => {
             inputDraft.setContent('');
             try {
