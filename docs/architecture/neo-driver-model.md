@@ -284,6 +284,8 @@ The Open Agent Protocol (`~/focus/open-agent-protocol`) defines one boundary bet
 
 Its run events map one-to-one onto the six statuses (`run.started` running, `action.permission.requested` and `user.input.requested` needs you, `run.completed` done, `run.failed` failed, `run.cancelled` stopped). When it matures, an `oap` adapter can implement `WorkAdapter` over `oapx hub`, first for harnesses with no native adapter (Pi, OpenCode, ACP agents), and possibly behind codex-desktop or claude-desktop once desktop visibility is proven.
 
+Using OAP as the model backend for the daemon's own sessions is a separate question from this adapter; see [the OAP backend plan](oap-backend-plan.md).
+
 ## How Neo chooses
 
 ```mermaid

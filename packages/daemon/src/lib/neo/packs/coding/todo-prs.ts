@@ -229,27 +229,31 @@ export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader
 ): NeoTodoPack {
+  const claimsOf = (todo: NeoTodo) => {
+    const recorded = new Set(repo.prs(todo.id).flatMap((pr) => codingPrKey(pr.url) ?? []));
+    return [
+      ...planCodingTodoClaims(todo, todo.report, []),
+      ...repo.claimsOn([...recorded]).filter((row) => row.todoId === todo.id),
+    ];
+  };
   return {
     schema: createCodingPackTables,
     openedPrs: (todo, urls) =>
       repo.claim(
         todo.id,
-        [
-          ...planCodingTodoClaims(todo, todo.report, []),
-          ...urls.map((url) => ({ url, claim: 'branch' as const })),
-        ],
+        [...claimsOf(todo), ...urls.map((url) => ({ url, claim: 'branch' as const }))],
         Date.now()
       ),
     check: async (todo) => {
-      if (todo.check?.pack !== 'coding') return null;
-      repo.claim(todo.id, planCodingTodoClaims(todo, todo.report, []), Date.now());
+      if (todo.check && todo.check.pack !== 'coding') return null;
+      repo.claim(todo.id, claimsOf(todo), Date.now());
       const urls = repo.urls(todo.id);
-      if (!urls.length) return codingTodoCheck(todo.check.kind, []);
+      if (!urls.length) return todo.check ? codingTodoCheck(todo.check.kind, []) : null;
       const read = await readPrs(urls);
       if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url))) return null;
       const prs = codingTodoOwnPrs(todo, repo.claimsOn(urls), read, repo.window(todo.id));
       repo.record(todo.id, prs, Date.now());
-      return codingTodoCheck(todo.check.kind, prs);
+      return todo.check ? codingTodoCheck(todo.check.kind, prs) : null;
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id)),
     topics: (todo) =>
