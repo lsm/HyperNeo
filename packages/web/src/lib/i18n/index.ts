@@ -1,4 +1,5 @@
 import { signal } from '@preact/signals';
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import { en } from './en.ts';
 import { zhHans } from './zh-Hans.ts';
 
@@ -11,9 +12,14 @@ export function systemLocale(languages: readonly string[]): Locale {
   return languages[0]?.toLowerCase().startsWith('zh') ? 'zh-Hans' : 'en';
 }
 
-export const locale = signal<Locale>(
-  systemLocale(typeof navigator === 'undefined' ? [] : navigator.languages)
-);
+const browserLocale = () =>
+  systemLocale(typeof navigator === 'undefined' ? [] : navigator.languages);
+
+export const locale = signal<Locale>(browserLocale());
+
+export function applyLanguage(language: LanguageSetting | undefined): void {
+  locale.value = language === 'en' || language === 'zh-Hans' ? language : browserLocale();
+}
 
 export function t(key: MessageKey, params?: Record<string, string | number>): string {
   const template = catalogs[locale.value][key];

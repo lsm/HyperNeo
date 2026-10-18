@@ -13,6 +13,7 @@ import {
   type SettingSource,
 } from '@hyperneo/shared';
 import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, normalizeThinkingLevel } from '@hyperneo/shared';
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import {
   SettingsSection,
   SettingsGroup,
@@ -26,6 +27,12 @@ const PERMISSION_MODE_OPTIONS = [
   { value: 'acceptEdits', label: 'Accept Edits' },
   { value: 'plan', label: 'Plan Mode' },
   { value: 'delegate', label: 'Delegate' },
+];
+
+const LANGUAGE_OPTIONS = [
+  { value: 'system', label: 'Same as browser' },
+  { value: 'en', label: 'English' },
+  { value: 'zh-Hans', label: '简体中文' },
 ];
 
 const CHAT_DISPLAY_MODE_OPTIONS = [
@@ -57,6 +64,9 @@ export function GeneralSettings() {
   const [localSettingSources, setLocalSettingSources] = useState<SettingSource[]>(
     settings?.settingSources ?? ['user', 'project', 'local']
   );
+  const [localLanguage, setLocalLanguage] = useState<LanguageSetting>(
+    settings?.language ?? 'system'
+  );
   const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
@@ -67,6 +77,7 @@ export function GeneralSettings() {
       setLocalThinkingLevel(normalizeThinkingLevel(settings.thinkingLevel));
       setLocalShowArchived(settings.showArchived ?? false);
       setLocalSettingSources(settings.settingSources ?? ['user', 'project', 'local']);
+      setLocalLanguage(settings.language ?? 'system');
     }
   }, [settings]);
 
@@ -79,6 +90,20 @@ export function GeneralSettings() {
     } catch {
       toast.error('Failed to update permission mode');
       setLocalPermissionMode(settings?.permissionMode ?? 'default');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleLanguageChange = async (value: string) => {
+    const language = value as LanguageSetting;
+    setLocalLanguage(language);
+    setIsUpdating(true);
+    try {
+      await updateGlobalSettings({ language });
+    } catch {
+      toast.error('Failed to update language');
+      setLocalLanguage(settings?.language ?? 'system');
     } finally {
       setIsUpdating(false);
     }
@@ -218,6 +243,15 @@ export function GeneralSettings() {
             onBlur={handleGitHubPollingIntervalBlur}
             disabled={isUpdating}
             class="w-24 rounded-md border border-line bg-surface px-2.5 py-1 text-[13px] text-fg-soft focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          />
+        </SettingsRow>
+
+        <SettingsRow label="Language" description="Language for Neo on the web and on iOS">
+          <SettingsSelect
+            value={localLanguage}
+            onChange={handleLanguageChange}
+            options={LANGUAGE_OPTIONS}
+            disabled={isUpdating}
           />
         </SettingsRow>
 

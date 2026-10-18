@@ -133,8 +133,12 @@ export const VOICE_MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
 export type ChatDisplayMode = 'full' | 'compact' | 'minimal';
 
+export type LanguageSetting = 'system' | 'en' | 'zh-Hans';
+
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   settingSources: SettingSource[];
+
+  language?: LanguageSetting;
 
   providerModelAllowlists?: Record<string, string[]>;
 
