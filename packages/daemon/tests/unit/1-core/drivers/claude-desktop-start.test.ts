@@ -242,7 +242,7 @@ describe('claude-desktop start', () => {
       ok: false,
       reason: 'not_delivered',
       detail:
-        'local_u1 was created, but the task did not reach it: Could not inspect live Claude sessions: agent listing unavailable',
+        'local_u1 was created, but the task did not reach it: Claude Code Desktop did not open Bigger font.',
     });
     expect(spawned).toHaveLength(2);
     expect(spawned[0]).toContain('--session-id');
@@ -290,15 +290,23 @@ describe('claude-desktop start', () => {
     expect(spawned).toHaveLength(1);
   });
 
-  test('does not resume when the new session has no live owner', async () => {
+  test('waits for Desktop to open the new session before handing it the task', async () => {
+    expect(await adapter({ appearsAfter: 3 }).start?.(request, user)).toMatchObject({
+      ok: true,
+      value: { status: 'running', receipt: { executionId: 'u1', inputId: 'u-brief' } },
+    });
+    expect(spawned).toHaveLength(2);
+    expect(clock).toBe(7_000);
+  });
+
+  test('reports partial creation when Desktop never opens the new session', async () => {
     expect(await adapter({}).start?.(request, user)).toMatchObject({
       ok: false,
       reason: 'not_delivered',
-      detail: expect.stringContaining('ownership is unknown'),
+      detail: expect.stringContaining('Claude Code Desktop did not open Bigger font'),
     });
     expect(spawned).toHaveLength(2);
-    expect(spawned.some((args) => args[0] === 'claude' && args.includes('--resume'))).toBe(false);
-    expect(clock).toBe(1_000);
+    expect(spawned.some((args) => args.includes('HyperNeo relay'))).toBe(false);
   });
 
   test('reports partial creation without task delivery for an unknown live owner', async () => {

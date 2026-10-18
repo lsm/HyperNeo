@@ -16,8 +16,8 @@ session IDs and PIDs. Ownership is cross-checked against the matching PID's
 transcript, Desktop app record, or absence from the live list.
 
 The registration format is an undocumented, version-dependent implementation
-detail. CLI ownership is accepted only for the inspected engine versions and
-explicit `cli` or `sdk-ts` entrypoints. Missing, malformed, mismatched or
+detail. CLI ownership is accepted for explicit `cli` or `sdk-ts` entrypoints on
+any engine version; the inbox check below decides whether its protocol is known. Missing, malformed, mismatched or
 unrecognized evidence means `unknown`. A matched `claude-desktop` entrypoint
 always forbids the CLI route, including on a newer engine version. The CLI
 itself validates process liveness when producing its live list; the
@@ -42,14 +42,15 @@ identity or framing cannot be verified. No messages were sent to real sessions.
 
 | Owner | Channel | Unavailable behavior |
 | --- | --- | --- |
-| Desktop | Verified 2.1.299 peer inbox for send/steer | `unsupported` without verified protocol evidence |
-| Confirmed CLI/SDK | Inspected inbox for a live session | No blind resume or relay |
+| Desktop | Peer inbox advertising peerProtocol 1 and notify_idle | `unsupported` without verified protocol evidence |
+| Confirmed CLI/SDK | Same peer inbox, or the inspected 2.1.295 inbox | No blind resume or relay |
+| Not live | Open in Desktop with `claude --desktop --resume`, then admit as above | `not_delivered` if Desktop never opens it |
 | Unknown or conflicting | None | `unreachable`; never resume |
 
 Send admission requires exactly one known live owner and a freshly verified
-inbox registration matching its PID/session/owner. Desktop 2.1.299 must
-advertise peerProtocol 1 and notify_idle; CLI 2.1.295 keeps its inspected
-protocol. A later isolated Desktop experiment proved consumption and a real
+inbox registration matching its PID/session/owner. The registration must
+advertise peerProtocol 1 and notify_idle, on any engine version; CLI 2.1.295
+predates that advertisement and keeps its inspected protocol. A later isolated Desktop experiment proved consumption and a real
 reply through its registered inbox without changing ownership. The reply
 endpoint remains open for the daemon's lifetime; a write alone is unconfirmed.
 Conflicting, changed or unknown ownership returns `unreachable`, with no resume

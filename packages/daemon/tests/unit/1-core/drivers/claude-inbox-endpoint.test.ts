@@ -77,8 +77,25 @@ describe('requireClaudeInboxEndpoint', () => {
   });
 
   test.each([
-    { ...desktop, version: '2.1.295' },
-    { ...desktop, version: 'future' },
+    { owner: 'desktop' as const, entrypoint: 'claude-desktop', version: '2.1.400' },
+    { owner: 'cli' as const, entrypoint: 'sdk-ts', version: '2.1.302' },
+  ])('accepts any engine version that advertises peer protocol 1 %j', (engine) => {
+    expect(
+      requireClaudeInboxEndpoint(
+        { ...live, owner: engine.owner },
+        { ...desktop, entrypoint: engine.entrypoint, version: engine.version }
+      )
+    ).toEqual({
+      value: {
+        sessionId: live.sessionId,
+        pid: live.pid,
+        version: engine.version,
+        socketPath: registration.messagingSocketPath,
+      },
+    });
+  });
+
+  test.each([
     { ...desktop, peerProtocol: undefined },
     { ...desktop, peerProtocol: 2 },
     { ...desktop, peerFeatures: undefined },

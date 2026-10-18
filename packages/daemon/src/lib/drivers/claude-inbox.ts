@@ -47,8 +47,6 @@ const ReceiptSchema = z.object({
 });
 
 function requireClaudeInboxProtocol(target: ClaudeInboxTarget): void {
-  if (!['2.1.295', '2.1.299'].includes(target.version))
-    throw new Error('Unverified Claude inbox protocol version.');
   z.string().uuid().parse(target.sessionId);
 }
 

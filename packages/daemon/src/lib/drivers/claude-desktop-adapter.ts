@@ -870,6 +870,30 @@ async function sendOwnedClaudeMessage(
   );
 }
 
+export async function wakeClaudeSession(
+  record: ClaudeDesktopRecord & { cliSessionId: string },
+  liveSessions: readonly ClaudeLiveSession[],
+  deps: ClaudeDesktopAdapterDeps
+): Promise<Gate<readonly ClaudeLiveSession[]>> {
+  if (liveSessions.some((session) => session.sessionId === record.cliSessionId && session.pid))
+    return { value: liveSessions };
+  try {
+    launchInClaudeDesktop(
+      record.cliSessionId,
+      record.cwd ?? record.originCwd ?? deps.homeDir,
+      deps
+    );
+  } catch (error) {
+    return {
+      reason: reject('not_delivered', error instanceof Error ? error.message : String(error)),
+    };
+  }
+  const live = await waitUntilLive(record.cliSessionId, deps);
+  return live
+    ? { value: live }
+    : { reason: reject('not_delivered', `Claude Code Desktop did not open ${record.title}.`) };
+}
+
 export const sendClaudeMessage = (superpipe({})('claude-owner-send') as PipelineAPI)
   .input(['record', 'liveSessions', 'message', 'deps', 'context'])
   .pipe(
@@ -877,8 +901,10 @@ export const sendClaudeMessage = (superpipe({})('claude-owner-send') as Pipeline
     'record',
     'cliSessionId'
   )
-  .pipe(requireClaudePeerOwner, ['cliSessionId', 'liveSessions'], 'result:outcome')
-  .pipe(sendOwnedClaudeMessage, ['record', 'liveSessions', 'message', 'deps', 'context'], 'outcome')
+  .pipe(wakeClaudeSession, ['record', 'liveSessions', 'deps'], 'result:outcome')
+  .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'awake')
+  .pipe(requireClaudePeerOwner, ['cliSessionId', 'awake'], 'result:outcome')
+  .pipe(sendOwnedClaudeMessage, ['record', 'awake', 'message', 'deps', 'context'], 'outcome')
   .endAsync('outcome') as (
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
@@ -1001,7 +1027,11 @@ export async function waitUntilLive(
   const until = deps.now() + OPEN_WAIT_MS;
   while (deps.now() < until) {
     const live = await deps.liveSessions().catch((): readonly ClaudeLiveSession[] => []);
-    if (live.some((candidate) => candidate.sessionId === cliSessionId && candidate.name)) {
+    if (
+      live.some(
+        (candidate) => candidate.sessionId === cliSessionId && candidate.name && candidate.pid
+      )
+    ) {
       return live;
     }
     await deps.sleep(OPEN_POLL_MS);
@@ -1053,19 +1083,9 @@ export async function startClaudeSession(
     if (opened.code !== 0) {
       return claudeCliFailure(opened, `claude -p exited with ${opened.code}.`);
     }
-    launchInClaudeDesktop(cliSessionId, cwd, deps);
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   }
-  const probed = await probeLiveClaudeSessions(deps);
-  if ('reason' in probed) {
-    return reject(
-      'not_delivered',
-      `${sessionId} was created, but the task did not reach it: ${probed.reason.detail}`
-    );
-  }
-  const live = probed.value;
-  const session = live.find((candidate) => candidate.sessionId === cliSessionId);
   const appRecord = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
     (candidate) => candidate.sessionId === sessionId
   );
@@ -1080,7 +1100,7 @@ export async function startClaudeSession(
   };
   const sent = await sendClaudeMessage(
     { ...record, cliSessionId },
-    live,
+    [],
     request.message,
     deps,
     context
@@ -1094,11 +1114,7 @@ export async function startClaudeSession(
   return {
     ok: true,
     value: {
-      ...toClaudeWork(
-        record,
-        new Map(session ? [[cliSessionId, session.status]] : []),
-        deps.machine
-      ),
+      ...toClaudeWork(record, new Map(), deps.machine),
       place: { machine: deps.machine, folder, name: request.place.name },
       status: sent.value.delivered ? 'running' : 'queued',
       ...(sent.value.receipt ? { receipt: sent.value.receipt } : {}),

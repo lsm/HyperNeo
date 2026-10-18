@@ -93,10 +93,7 @@ describe('claudeInboxFrame', () => {
     expect(frame).not.toHaveProperty('token');
   });
 
-  test('rejects unverified versions, invalid identities and oversized payloads', () => {
-    expect(() =>
-      claudeInboxFrame({ ...target, version: 'future' }, '/tmp/a.sock', submission())
-    ).toThrow('Unverified');
+  test('rejects invalid identities and oversized payloads', () => {
     expect(() =>
       claudeInboxFrame(target, '/tmp/a.sock', { ...submission(), inputId: 'bad' })
     ).toThrow();
