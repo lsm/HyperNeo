@@ -164,20 +164,21 @@ export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader
 ): NeoTodoPack {
+  const claimsOf = (todo: NeoTodo) => [
+    ...planCodingTodoClaims(todo, todo.report, []),
+    ...repo.prs(todo.id).map((pr) => ({ url: pr.url, claim: 'reported' as const })),
+  ];
   return {
     schema: createCodingPackTables,
     openedPrs: (todo, urls) =>
       repo.claim(
         todo.id,
-        [
-          ...planCodingTodoClaims(todo, todo.report, []),
-          ...urls.map((url) => ({ url, claim: 'branch' as const })),
-        ],
+        [...claimsOf(todo), ...urls.map((url) => ({ url, claim: 'branch' as const }))],
         Date.now()
       ),
     check: async (todo) => {
       if (todo.check && todo.check.pack !== 'coding') return null;
-      repo.claim(todo.id, planCodingTodoClaims(todo, todo.report, []), Date.now());
+      repo.claim(todo.id, claimsOf(todo), Date.now());
       const urls = repo.urls(todo.id);
       if (!urls.length) return todo.check ? codingTodoCheck(todo.check.kind, []) : null;
       const read = await readPrs(urls);

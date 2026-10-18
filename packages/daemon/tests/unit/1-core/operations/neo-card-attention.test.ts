@@ -69,6 +69,15 @@ describe('neoCardPrAttention', () => {
         pr({ state: 'MERGED', review: 'approved', checks: 'none' }),
       ]).attention
     ).toBeNull();
+    expect(
+      neoCardPrAttention([pr({ review: 'approved', checks: 'none' })], false).attention
+    ).toBeNull();
+    expect(
+      neoCardPrAttention(
+        [pr({ review: 'approved', checks: 'passing', blockers: ['1 unresolved review thread'] })],
+        false
+      ).attention?.signature
+    ).toBe(`- ${url}: 1 unresolved review thread`);
   });
 
   test('stays quiet for a clean, pending, merged or closed PR', () => {

@@ -18,7 +18,7 @@ export function isNeoCardPrAwaited(pr: NeoWorkPr): boolean {
   return blockers.length > 0 && blockers.every((blocker) => APPROVAL_ONLY.test(blocker));
 }
 
-function needsOf(pr: NeoWorkPr): string[] {
+function needsOf(pr: NeoWorkPr, nudges: boolean): string[] {
   if (pr.state !== 'OPEN') return [];
   const blockers = pr.blockers ?? [];
   return [
@@ -26,21 +26,21 @@ function needsOf(pr: NeoWorkPr): string[] {
     ...(pr.review === 'changes_requested' ? ['a reviewer requested changes'] : []),
     ...blockers.filter((blocker) => /unresolved review thread/.test(blocker)),
     ...blockers.filter((blocker) => blocker.startsWith('merge conflicts')),
-    ...(pr.review === 'approved' && pr.checks === 'none'
+    ...(nudges && pr.review === 'approved' && pr.checks === 'none'
       ? [
           'approved, but no CI checks ran on its head; push or update the branch from its base so CI runs',
         ]
       : []),
-    ...(pr.review === 'approved' && pr.checks === 'passing' && !blockers.length
+    ...(nudges && pr.review === 'approved' && pr.checks === 'passing' && !blockers.length
       ? ['approved and green; merge it now with a manual squash merge']
       : []),
   ];
 }
 
-export function neoCardPrAttention(prs: readonly NeoWorkPr[]): NeoPackCardAttention {
+export function neoCardPrAttention(prs: readonly NeoWorkPr[], nudges = true): NeoPackCardAttention {
   const items = prs
     .flatMap((pr) => {
-      const needs = needsOf(pr);
+      const needs = needsOf(pr, nudges);
       return needs.length ? [`- ${pr.url}: ${needs.join('; ')}`] : [];
     })
     .join('\n');

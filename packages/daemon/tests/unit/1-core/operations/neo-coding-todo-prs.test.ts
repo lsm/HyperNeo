@@ -106,6 +106,10 @@ describe('coding todo pack', () => {
     const row = todo(null, 'Opened https://github.com/lsm/neo-ios/pull/5');
     expect(await pack.check(row)).toBeNull();
     expect(repo.prs(row.id).map((item) => item.url)).toEqual([pr(5, 'OPEN').url]);
+    const continued = { ...row, report: null };
+    pack.openedPrs!(continued, []);
+    expect(await pack.check(continued)).toBeNull();
+    expect(repo.urls(row.id)).toEqual(['https://github.com/lsm/neo-ios/pull/5']);
   });
 
   test('never counts a PR the session merged before the todo started', async () => {
