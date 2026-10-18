@@ -4,6 +4,32 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-18
+
+275 commits since v0.44.1. Headline families: Neo moves from cards and ask items to asks, todos and questions; quote replies that go to the session that owns the thread; a localized Neo web UI; owner-verified Claude inbox delivery; and provider keys kept out of sessions and test daemons.
+
+### Added
+
+- **Neo asks, todos and questions**: New ask, todo, question and pack-fact tables replace cards and ask items (#7331, #7333, #7335, #7339, #7353); todos start in their sessions, continue, retry and close, and settle from their reports (#7343, #7345); questions come in yesno, choice, reply and start kinds and can be retired or replaced (#7335, #7448); packs own their todo tables and checks (#7339).
+- **Quote replies**: A reply to a question, todo or message records its answer and goes to the session that owns it (#7337, #7391, #7400); the daemon stores a snapshot of the quoted message, and the web shows it as a quote block above the reply (#7487, #7489).
+- **Neo web**: Asks render as one todo list with typed questions (#7349); the Neo page, ask card, todo statuses and composer follow the saved language setting (#7463, #7468, #7469, #7472, #7475); replies fold with inline … more / …less (#7481); code blocks and expanded details have copy buttons (#7492, #7497); a graded thinking bulb shows the thinking level (#7484); Open actions show the session's logo (#7454).
+- **Neo routing**: The routing model takes a thinking level and ordered fallbacks (#7453, #7466); the routing log and Settings show why a route failed (#7041, #7047, #7461); a default Neo session takes the root's chores at startup (#7385).
+- **Drivers**: Claude CLI inbox transport with owner-verified submission, status and replies (#7259, #7292, #7294, #7296, #7300, #7314); owned session inputs queue through the mailbox and can be withdrawn (#7273, #7279, #7290); opt-in Claude Desktop mods control (#7358 to #7372).
+- **Daemon**: An OAP stdio client (#7480); fresh databases start from the v0.41.0 baseline (#7238).
+
+### Changed
+
+- **Neo**: Every Neo session has the same powers, messages route straight to the owning session, and forwarding can repeat (#7381, #7390); notes and tool results state facts while behavior lives in the system prompt (#7115, #7124, #7126, #7128); the old card and scene UI is gone (#7356).
+- **Drivers**: The per-message Claude relay and the headless resume fallback are deleted (#7315, #7271).
+
+### Fixed
+
+- **Neo PRs**: A PR belongs only to the todo whose dispatch it answers (#7437, #7456); each PR event is relayed once per session and never for merged PRs or old heads (#7477); approved PRs, with or without CI, are relayed to their session (#7445).
+- **Neo todos**: A session ending its turn doesn't finish its todo (#7408); every todo and open ask has something moving it (#7407); ask status is derived from todo facts (#7328).
+- **Credentials**: Provider API keys stay out of session subprocess environments (#7398, #7439); a test daemon can neither load the human's Claude Code login nor overwrite stored provider keys (#7430, #7474); a rejected provider key stops retrying and tells the human once (#7433).
+- **Providers**: GPT-6 models list their 1.05M context window, and every model the CLI's /model picker shows is listed (#7427, #7435, #7444).
+- **Web**: The Neo chat stays at the bottom during first load (#7446); collapsed messages clip at a line boundary (#7483).
+
 ## [0.44.1] - 2026-10-15
 
 Patch release: v0.44.0 never reached npm because its Windows build failed.
