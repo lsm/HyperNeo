@@ -994,7 +994,7 @@ describe('claudeTranscriptState', () => {
     ]);
   });
 
-  test('replies with everything the latest turn said, across notices that arrive mid-turn', () => {
+  test('replies with everything the latest turn said, across notices and subagents mid-turn', () => {
     const user = (text: string) => JSON.stringify({ type: 'user', message: { content: text } });
     const assistant = (stop: string, text?: string) =>
       JSON.stringify({
@@ -1010,6 +1010,11 @@ describe('claudeTranscriptState', () => {
       user('Neo asks: ship the fix'),
       assistant('tool_use', 'Opened https://github.com/o/r/pull/7.'),
       assistant('tool_use'),
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: true,
+        message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Subagent notes.' }] },
+      }),
       user('<task-notification>CI finished</task-notification>'),
       assistant('end_turn', 'Done.'),
     ];

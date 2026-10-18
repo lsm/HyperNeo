@@ -447,7 +447,7 @@ export function claudeTranscriptState(
     if (at !== undefined) lastAt = Math.max(lastAt, at);
     earliest ??= at;
     const said = assistantText(line);
-    if (said) {
+    if (said && entry.isSidechain !== true) {
       turn = fresh ? [said] : [...turn, said];
       fresh = false;
       replyAt = at;
