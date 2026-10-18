@@ -887,7 +887,6 @@ export class QueryOptionsBuilder {
           !PROVIDER_KEY_ENV_VARS.has(entry[0])
       )
     );
-    mergedEnv.CLAUDE_CODE_SDK_READS_SESSION_STATE = '';
 
     if (this.ctx.session.config.provider === 'anthropic' || !this.ctx.session.config.provider) {
       const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
