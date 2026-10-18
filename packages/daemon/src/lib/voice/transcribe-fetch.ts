@@ -99,7 +99,7 @@ export async function fetchTranscriptionWithRedirects(
   return response;
 }
 
-async function resolveTranscriptionEndpoint(
+export async function resolveTranscriptionEndpoint(
   endpoint: URL,
   allowPrivateNetwork: boolean,
   allowInsecureTls: boolean,

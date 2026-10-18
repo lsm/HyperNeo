@@ -1,6 +1,7 @@
-import type { CallContext, MessageHub } from '@hyperneo/shared';
+import { createEventMessage, type CallContext, type MessageHub } from '@hyperneo/shared';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import type { SettingsManager } from '../settings-manager.ts';
+import { VoiceStream, type VoiceStreamText } from '../voice/stream-relay.ts';
 import { createVoiceTranscribeLimiters, runVoiceTranscribe } from '../voice/transcribe-pipeline.ts';
 
 interface VoiceTranscribeRequest {
@@ -13,6 +14,7 @@ interface VoiceTranscribeResponse {
 }
 
 const transcriptionLimiters = createVoiceTranscribeLimiters();
+const voiceStreams = new Map<string, { stream: VoiceStream; clientId: string }>();
 
 export function resetVoiceTranscriptionLimitsForTests(): void {
   transcriptionLimiters.activeByClient.clear();
@@ -31,6 +33,71 @@ export function registerVoiceHandlers(
     (data, context) => transcribeViaPipeline(settingsManager, credentialManager, data, context)
   );
 
+  messageHub.onRequest<{ encoding?: string; sampleRate?: number }>(
+    'voice.stream.start',
+    async (data, context) => {
+      if (data?.encoding !== 'pcm16' || data.sampleRate !== 16_000)
+        throw new Error('Voice streams take pcm16 audio at 16000 Hz');
+      const clientId = context?.clientId ?? context?.sessionId ?? 'global';
+      for (const [id, owned] of voiceStreams)
+        if (owned.clientId === clientId) {
+          owned.stream.close();
+          voiceStreams.delete(id);
+        }
+      const streamId = crypto.randomUUID();
+      const started = await VoiceStream.start(streamId, {
+        voice: () => settingsManager.getGlobalSettings().voice,
+        credentialManager,
+        transcribeWav: (audioBase64) =>
+          runVoiceTranscribe({
+            data: { audioBase64, mimeType: 'audio/wav' },
+            context,
+            deps: { settingsManager, credentialManager, limiters: transcriptionLimiters },
+          }),
+        push: (text: VoiceStreamText) =>
+          messageHub
+            .getRouter()
+            ?.sendToClient(
+              clientId,
+              createEventMessage({ method: 'voice.stream.text', data: text, sessionId: 'global' })
+            ),
+      });
+      if ('error' in started) throw new Error(started.error);
+      voiceStreams.set(streamId, { stream: started.stream, clientId });
+      return {
+        streamId,
+        via: started.via,
+        ...('fallback' in started && started.fallback ? { fallback: started.fallback } : {}),
+      };
+    }
+  );
+
+  messageHub.onRequest<{ streamId: string; audioBase64: string }>(
+    'voice.stream.chunk',
+    async (data, context) => {
+      const stream = ownedStream(data?.streamId, context);
+      const refused = stream.write(Buffer.from(data.audioBase64 ?? '', 'base64'));
+      if (refused) throw new Error(refused);
+      return { ok: true };
+    }
+  );
+
+  messageHub.onRequest<{ streamId: string }>('voice.stream.stop', async (data, context) => {
+    const stream = ownedStream(data?.streamId, context);
+    voiceStreams.delete(data.streamId);
+    const result = await stream.stop();
+    if ('error' in result) throw new Error(result.error);
+    return result;
+  });
+
+  messageHub.onClientDisconnect?.((clientId) => {
+    for (const [id, owned] of voiceStreams)
+      if (owned.clientId === clientId) {
+        owned.stream.close();
+        voiceStreams.delete(id);
+      }
+  });
+
   messageHub.onRequest('voice.testConnection', async (_data, context) =>
     transcribeViaPipeline(
       settingsManager,
@@ -39,6 +106,13 @@ export function registerVoiceHandlers(
       context
     )
   );
+}
+
+function ownedStream(streamId: string | undefined, context: CallContext | undefined): VoiceStream {
+  const owned = streamId ? voiceStreams.get(streamId) : undefined;
+  if (!owned || owned.clientId !== (context?.clientId ?? context?.sessionId ?? 'global'))
+    throw new Error('Unknown voice stream');
+  return owned.stream;
 }
 
 async function transcribeViaPipeline(

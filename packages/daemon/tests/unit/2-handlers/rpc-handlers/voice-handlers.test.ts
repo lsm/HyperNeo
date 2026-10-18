@@ -1102,3 +1102,46 @@ describe('voice RPC handlers', () => {
     ).rejects.toThrow(new Error('Voice transcription response exceeds the 256 KB limit'));
   });
 });
+
+describe('voice stream RPC handlers', () => {
+  const voice = {
+    enabled: true,
+    endpoint: 'https://example.com/v1/audio/transcriptions',
+    model: 'whisper-1',
+    mode: 'batch' as const,
+  };
+
+  it('voice.stream.start takes only pcm16 at 16 kHz', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    await expect(
+      handlers.get('voice.stream.start')?.({ encoding: 'opus', sampleRate: 48_000 })
+    ).rejects.toThrow('Voice streams take pcm16 audio at 16000 Hz');
+  });
+
+  it('voice.stream.chunk and stop refuse a stream the caller does not own', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const started = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string; via: string };
+    expect(started.via).toBe('batch');
+    const other = {
+      clientId: 'other-client',
+      sessionId: 'session-2',
+      messageId: 'm',
+      method: 'voice.stream.chunk',
+      timestamp: new Date().toISOString(),
+    };
+    await expect(
+      handlers.get('voice.stream.chunk')?.(
+        { streamId: started.streamId, audioBase64: 'AAA=' },
+        other
+      )
+    ).rejects.toThrow('Unknown voice stream');
+    await expect(handlers.get('voice.stream.stop')?.({ streamId: 'missing' })).rejects.toThrow(
+      'Unknown voice stream'
+    );
+  });
+});

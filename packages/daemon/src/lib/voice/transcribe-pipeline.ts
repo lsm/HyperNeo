@@ -240,7 +240,7 @@ function resolveTranscriptionEndpoint(ctx: VoiceTranscribeCtx): VoiceTranscribeC
   };
 }
 
-async function resolveApiKey(
+export async function resolveApiKey(
   legacyApiKey: string | undefined,
   apiKeyEndpoint: string | undefined,
   endpoint: URL,
