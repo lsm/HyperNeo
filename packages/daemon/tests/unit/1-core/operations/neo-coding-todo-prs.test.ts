@@ -238,8 +238,38 @@ describe('codingTodoCheck', () => {
 });
 
 describe('codingTodoStatusLine', () => {
-  test('says one line per PR, or that the session claims done without a PR', () => {
-    const doing = { state: 'doing' as const, report: null, evidence: null };
+  const doing = { state: 'doing' as const, report: null, evidence: null };
+
+  test('a merged PR', () => {
+    expect(codingTodoStatusLine(doing, [pr(7426, 'MERGED')])).toEqual({
+      status: '#7426 merged',
+      statusCodes: [{ code: 'todo.pr.merged', params: { pr: '#7426' } }],
+    });
+  });
+
+  test('each open and closed PR state has its own code', () => {
+    expect(
+      codingTodoStatusLine(doing, [pr(1, 'OPEN', { review: 'approved' })])?.statusCodes[0]?.code
+    ).toBe('todo.pr.approved');
+    expect(
+      codingTodoStatusLine(doing, [pr(2, 'OPEN', { checks: 'failing' })])?.statusCodes[0]?.code
+    ).toBe('todo.pr.ciFailing');
+    expect(
+      codingTodoStatusLine(doing, [pr(3, 'OPEN', { review: 'changes_requested' })])?.statusCodes[0]
+        ?.code
+    ).toBe('todo.pr.changesRequested');
+    expect(codingTodoStatusLine(doing, [pr(4, 'OPEN')])?.statusCodes[0]?.code).toBe(
+      'todo.pr.waitingReview'
+    );
+    expect(
+      codingTodoStatusLine(doing, [pr(5, 'OPEN', { checks: 'pending' })])?.statusCodes[0]?.code
+    ).toBe('todo.pr.waitingCi');
+    expect(codingTodoStatusLine(doing, [pr(6, 'CLOSED')])?.statusCodes[0]?.code).toBe(
+      'todo.pr.closed'
+    );
+  });
+
+  test('several PRs give one code each and one English line', () => {
     expect(
       codingTodoStatusLine(doing, [
         pr(1, 'OPEN', { review: 'approved' }),
@@ -247,12 +277,18 @@ describe('codingTodoStatusLine', () => {
         pr(3, 'OPEN', { review: 'changes_requested' }),
         pr(4, 'OPEN'),
         pr(5, 'CLOSED'),
-      ])
-    ).toBe('#1 已批准，等合并，#2 CI 没过，#3 要改，#4 开着，等 review，#5 已关闭');
-    expect(codingTodoStatusLine(doing, [])).toBeNull();
-    expect(codingTodoStatusLine({ state: 'done', report: 'Done', evidence: null }, [])).toBe(
-      '会话说做完了，没查到 PR'
+      ])?.status
+    ).toBe(
+      '#1 approved, waiting to merge; #2 CI failing; #3 needs changes; #4 open, waiting on review; #5 closed'
     );
+  });
+
+  test('no PR yet, or a session that claims done without one', () => {
+    expect(codingTodoStatusLine(doing, [])).toBeNull();
+    expect(codingTodoStatusLine({ state: 'done', report: 'Done', evidence: null }, [])).toEqual({
+      status: 'Session says it is done; no PR found',
+      statusCodes: [{ code: 'todo.reportedNoPr', params: {} }],
+    });
   });
 });
 
