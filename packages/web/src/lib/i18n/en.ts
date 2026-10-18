@@ -13,6 +13,7 @@ export const en = {
   'ask.answered': 'Answered',
   'ask.outcome': 'Outcome',
   'ask.details': 'Details',
+  'ask.retired': 'No longer needed',
   'todo.new': 'New',
   'todo.doneWhen': 'Done when: {doneWhen}',
   'todo.open': 'Open',
@@ -24,4 +25,5 @@ export const en = {
   'question.notNow': 'Not now',
   'question.none': 'None',
   'question.started': 'Start {todos}',
+  'question.retired': '{question} — no longer needed',
 } as const;

@@ -15,6 +15,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'ask.answered': '已回答',
   'ask.outcome': '结果',
   'ask.details': '详情',
+  'ask.retired': '不再需要',
   'todo.new': '新',
   'todo.doneWhen': '做完 = {doneWhen}',
   'todo.open': '打开',
@@ -26,4 +27,5 @@ export const zhHans: Record<keyof typeof en, string> = {
   'question.notNow': '先不做',
   'question.none': '都不要',
   'question.started': '开始 {todos}',
+  'question.retired': '{question} — 不再需要',
 };

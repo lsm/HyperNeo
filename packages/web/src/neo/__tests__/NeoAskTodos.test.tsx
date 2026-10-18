@@ -268,9 +268,9 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.queryByText('Allow a placeholder key?')).toBeNull();
-    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    fireEvent.click(app.getByRole('button', { name: '详情' }));
     expect(app.getByRole('list', { name: '不再需要' }).textContent).toBe(
-      'Allow a placeholder key? — no longer needed: the root cause was found'
+      'Allow a placeholder key? — 不再需要: the root cause was found'
     );
   });
 
