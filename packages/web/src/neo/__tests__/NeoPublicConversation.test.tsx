@@ -179,10 +179,15 @@ describe('durable public conversation presentation', () => {
     expect(container.querySelector('pre code')?.textContent).toContain('Fictional detail');
     expect(screen.queryByRole('button', { name: /^…\smore$/ })).toBeNull();
     expect(container.querySelector('[data-publication-details] table')).toBeTruthy();
+    const copyDetails = screen.getByRole('button', { name: 'Copy details' });
+    expect(copyDetails.closest('[data-publication-details]')).toBeTruthy();
+    fireEvent.click(copyDetails);
+    await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
     const less = await screen.findByRole('button', { name: /^…less$/ });
     expect(less.closest('[data-publication-details]')).toBeTruthy();
     fireEvent.click(less);
     expect(container.querySelector('[data-publication-details]')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
     expect(await screen.findByRole('button', { name: /^…\smore$/ })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
     await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));

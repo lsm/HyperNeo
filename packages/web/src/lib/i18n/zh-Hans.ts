@@ -92,6 +92,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'chat.accepted': '消息已接收',
   'chat.acceptedTitle': 'Neo 已收到。这不代表工作已完成。',
   'chat.foldMore': '…\u00a0更多',
+  'chat.copyDetails': '复制详情',
   'chat.foldLess': '…收起',
   'chat.scenes': '相关的 Neo 场景',
   'chat.editResend': '编辑后重发',

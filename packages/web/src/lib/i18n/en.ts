@@ -92,6 +92,7 @@ export const en = {
   'chat.accepted': 'Message accepted',
   'chat.acceptedTitle': 'Accepted by Neo. This does not mean work is complete.',
   'chat.foldMore': '…\u00a0more',
+  'chat.copyDetails': 'Copy details',
   'chat.foldLess': '…less',
   'chat.scenes': 'Related Neo scenes',
   'chat.editResend': 'Edit and send again',
