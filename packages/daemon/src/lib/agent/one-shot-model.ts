@@ -12,6 +12,7 @@ export interface OneShotModelRequest {
   provider: string;
   model: string;
   thinkingModelId: string;
+  thinking?: Options['thinking'];
   env: Record<string, string | undefined>;
   separator?: string;
   abortController?: AbortController;
@@ -56,9 +57,10 @@ export function buildOneShotQueryOptions(
     settings: withSdkTranscriptRetention(),
     env: request.env,
     thinking:
-      request.provider === 'kimi'
+      request.thinking ??
+      (request.provider === 'kimi'
         ? KimiProvider.resolveKimiTitleThinkingConfig(request.thinkingModelId)
-        : { type: 'disabled' },
+        : { type: 'disabled' }),
     ...(request.abortController ? { abortController: request.abortController } : {}),
     ...(request.cwd ? { cwd: request.cwd } : {}),
   };

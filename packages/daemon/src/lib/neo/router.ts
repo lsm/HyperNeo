@@ -669,7 +669,7 @@ export function createNeoRouter(
         text,
         options,
         context,
-        neo?.routeModel,
+        [neo?.routeModel, ...(neo?.routeFallbacks ?? [])],
         neoRouteTimeoutMs(neo?.routeTimeoutMs)
       );
     },

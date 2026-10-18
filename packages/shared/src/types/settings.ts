@@ -97,8 +97,15 @@ export interface NeoModelPreference {
   thinkingLevel: ThinkingLevel;
 }
 
+export interface NeoRouteModel {
+  provider: string;
+  model: string;
+  thinkingLevel?: ThinkingLevel;
+}
+
 export interface NeoSettings {
-  routeModel?: { provider: string; model: string };
+  routeModel?: NeoRouteModel;
+  routeFallbacks?: NeoRouteModel[];
   routeTimeoutMs?: number;
   standingRules?: string[];
   preferences?: NeoModelPreference;
