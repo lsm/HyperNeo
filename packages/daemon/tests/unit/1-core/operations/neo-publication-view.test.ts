@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import {
   isNeoPublicationViewReset,
+  isNeoSlashCommand,
   NEO_PUBLICATION_VIEW_RECENT,
   neoPublicationViewNote,
   nextNeoPublicationAnchor,
   readNeoPublicationView,
+  readNeoTurnInput,
   withNeoPublicationView,
 } from '../../../../src/lib/neo/publication-view.ts';
 import { NeoConversationReader } from '../../../../src/storage/repositories/neo-conversation-reader.ts';
@@ -48,6 +50,18 @@ describe('withNeoPublicationView', () => {
       { type: 'text', text: 'Seen.' },
     ]);
     expect(withNeoPublicationView(text, null)).toBe(text);
+  });
+});
+
+describe('isNeoSlashCommand', () => {
+  test('a prompt whose first token starts with a slash is a command', () => {
+    const input = (content: unknown) => ({ message: { content } });
+    expect(isNeoSlashCommand(input('/compact'))).toBe(true);
+    expect(isNeoSlashCommand(input('  /compact keep the PR list'))).toBe(true);
+    expect(isNeoSlashCommand(input([{ type: 'text', text: '/clear' }]))).toBe(true);
+    expect(isNeoSlashCommand(input('compact /now'))).toBe(false);
+    expect(isNeoSlashCommand(input([{ type: 'image' }, { type: 'text', text: 'hi' }]))).toBe(false);
+    expect(isNeoSlashCommand({})).toBe(false);
   });
 });
 
@@ -150,6 +164,27 @@ describe('recorded conversation injection', () => {
     expect(
       new NeoConversationAskRepository(db.getDatabase()).list(conversationId)?.[0].content
     ).toEqual([{ type: 'text', text: words }]);
+  });
+
+  test('a slash command reaches the session bare and leaves the view for the next input', async () => {
+    human();
+    publish();
+    const anchors = new NeoPublicationAnchorRepository(db.getDatabase());
+    const before = anchors.get(holder);
+    let snapshots = 0;
+    const snapshot = async () => `Snapshot ${++snapshots}.`;
+    const command = { uuid: 'c1', message: { role: 'user', content: '/compact' } };
+    const skipped = await readNeoTurnInput(db, holder, command, true, snapshot);
+    expect(skipped).toEqual({ input: command, viewed: false });
+    expect(anchors.get(holder)).toEqual(before);
+    expect(snapshots).toBe(0);
+    const next = { uuid: 'm2', message: { role: 'user', content: 'Hi' } };
+    const fed = await readNeoTurnInput(db, holder, next, true, snapshot);
+    expect(fed.viewed).toBe(true);
+    expect(fed.input.message.content).toStartWith(
+      'Hi\n\nSnapshot 1.\n\nRecent recorded conversation'
+    );
+    expect(fed.input.message.content).toContain('Reply 2.');
   });
 
   test('an empty context stays readable and receives its first human message later', () => {

@@ -136,3 +136,28 @@ export function withNeoPublicationView<T extends { message?: { content?: unknown
     },
   };
 }
+
+export function isNeoSlashCommand(input: { message?: { content?: unknown } }): boolean {
+  const content = input.message?.content;
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? (content.find((part) => part?.type === 'text')?.text ?? '')
+        : '';
+  return typeof text === 'string' && text.trimStart().startsWith('/');
+}
+
+export async function readNeoTurnInput<T extends { message?: { content?: unknown } }>(
+  db: Database,
+  sessionId: string,
+  input: T,
+  fresh: boolean,
+  freshContext: () => Promise<string | undefined>
+): Promise<{ input: T; viewed: boolean }> {
+  if (isNeoSlashCommand(input)) return { input, viewed: false };
+  const view = readNeoPublicationView(db, sessionId, fresh);
+  const state = view.reset ? await freshContext() : '';
+  const note = [state, view.note].filter(Boolean).join('\n\n') || null;
+  return { input: withNeoPublicationView(input, note), viewed: true };
+}
