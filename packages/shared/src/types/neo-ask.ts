@@ -63,6 +63,8 @@ export interface NeoQuestion {
   answer: NeoQuestionAnswer | null;
   answeredBy: 'button' | 'chat' | null;
   answeredAt: number | null;
+  retiredReason: string | null;
+  replacedBy: string | null;
   createdAt: number;
 }
 
@@ -71,8 +73,14 @@ export interface NeoReplyTo {
   id: string;
 }
 
+export interface NeoStatusCode {
+  code: string;
+  params: Record<string, string>;
+}
+
 export interface NeoTodoEntry extends NeoTodo {
   status: string;
+  statusCodes?: NeoStatusCode[];
   link: string | null;
   remoteLink: string | null;
 }

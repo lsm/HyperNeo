@@ -4,9 +4,16 @@ import { join } from 'node:path';
 import { neoExcerpt } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { oneShotModelIds, runOneShotModel } from '../agent/one-shot-model.ts';
 import { Logger } from '../logger.ts';
+import { isCuratedOutModel } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
+import { getProviderRegistry } from '../providers/factory.js';
 import { KimiProvider } from '../providers/kimi-provider.js';
-import { DEFAULT_NEO_ROUTE_TIMEOUT_MS } from '@hyperneo/shared';
+import {
+  DEFAULT_NEO_ROUTE_TIMEOUT_MS,
+  THINKING_LEVEL_TOKENS,
+  type NeoRouteModel,
+  type ThinkingLevel,
+} from '@hyperneo/shared';
 import { fillPrompt, NEO_ROUTE_PROMPT } from '@hyperneo/prompts';
 import {
   NEO_ROUTE_BASES,
@@ -22,7 +29,6 @@ const ANSWER_TOKENS = 512;
 const ANTHROPIC_VERSION = '2023-06-01';
 let leanCwd: string | undefined;
 
-type NeoRouteModel = { provider: string; model: string };
 type RouteThinking = { type: 'enabled'; budgetTokens: number } | { type: 'disabled' } | undefined;
 
 interface NeoRouteHttpCall {
@@ -76,6 +82,51 @@ export function neoRouteHttpCall(
           : {}),
     },
   };
+}
+
+export function neoRouteThinking(
+  provider: string,
+  modelId: string,
+  level: ThinkingLevel | undefined,
+  mode: 'off' | 'on' | 'granular' | undefined
+): RouteThinking {
+  const tokens = level ? THINKING_LEVEL_TOKENS[level] : undefined;
+  if (tokens !== undefined && mode !== 'off') return { type: 'enabled', budgetTokens: tokens };
+  return provider === 'kimi'
+    ? KimiProvider.resolveKimiTitleThinkingConfig(modelId)
+    : { type: 'disabled' };
+}
+
+function readThinkingMode(provider: string, modelId: string) {
+  try {
+    const registered = getProviderRegistry().get(provider);
+    return registered?.getModelThinkingMode?.(modelId) ?? registered?.capabilities?.thinkingModes;
+  } catch {
+    return undefined;
+  }
+}
+
+async function neoRouteRefusal(choice: NeoRouteModel): Promise<string | null> {
+  if (!(await getProviderService().isProviderAvailable(choice.provider)))
+    return `refused ${choice.provider}/${choice.model}: provider is unavailable`;
+  return isCuratedOutModel(choice.model, choice.provider)
+    ? `refused ${choice.provider}/${choice.model}: model is not offered by this provider`
+    : null;
+}
+
+export async function firstNeoRouteVerdict(
+  choices: readonly (NeoRouteModel | undefined)[],
+  ask: (choice: NeoRouteModel | undefined) => Promise<NeoRouteVerdict>,
+  signal: AbortSignal
+): Promise<NeoRouteVerdict> {
+  const failures: string[] = [];
+  for (const choice of choices.length ? choices : [undefined]) {
+    if (signal.aborted) break;
+    const verdict = await ask(choice);
+    if (!verdict || !('miss' in verdict) || verdict.miss !== 'failed') return verdict;
+    failures.push(verdict.cause);
+  }
+  return { miss: 'failed', cause: failures.join('; ') || 'routing was aborted' };
 }
 
 export function neoRouteTimeoutMs(setting: number | undefined): number {
@@ -197,6 +248,8 @@ async function askNeoRouteModel(
 ): Promise<NeoRouteVerdict> {
   const providers = getProviderService();
   try {
+    const refusal = choice ? await neoRouteRefusal(choice) : null;
+    if (refusal) return { miss: 'failed', cause: refusal };
     const provider = choice?.provider ?? (await providers.getDefaultProvider());
     const title = choice ? null : await providers.getTitleGenerationConfig(provider);
     const requested = choice?.model ?? title?.modelId;
@@ -204,10 +257,12 @@ async function askNeoRouteModel(
     const env = await providers.getIsolatedEnvForModel(provider, requested);
     const config = neoRouteEndpoint(title, requested, env);
     const prompt = buildNeoRoutePrompt(text, candidates, context);
-    const thinking: RouteThinking =
-      provider === 'kimi'
-        ? KimiProvider.resolveKimiTitleThinkingConfig(config.modelId)
-        : { type: 'disabled' };
+    const thinking = neoRouteThinking(
+      provider,
+      config.modelId,
+      choice?.thinkingLevel,
+      readThinkingMode(provider, config.modelId)
+    );
     const call = neoRouteHttpCall(config.baseUrl, config.modelId, env, prompt, thinking);
     if (call) {
       const response = await fetch(call.url, {
@@ -224,6 +279,7 @@ async function askNeoRouteModel(
       prompt,
       provider,
       ...oneShotModelIds(provider, config.modelId, env),
+      thinking,
       env: { ...env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
       abortController,
       cwd: leanCwd,
@@ -239,7 +295,7 @@ export async function classifyNeoRoute(
   text: string,
   candidates: readonly NeoHolder[],
   context: string,
-  choice?: NeoRouteModel,
+  choices: readonly (NeoRouteModel | undefined)[] = [],
   timeoutMs = DEFAULT_NEO_ROUTE_TIMEOUT_MS
 ): Promise<NeoRouteVerdict> {
   if (process.env.NODE_ENV === 'test') return null;
@@ -253,7 +309,11 @@ export async function classifyNeoRoute(
   });
   try {
     return await Promise.race([
-      askNeoRouteModel(text, candidates, context, abortController, choice),
+      firstNeoRouteVerdict(
+        choices,
+        (choice) => askNeoRouteModel(text, candidates, context, abortController, choice),
+        abortController.signal
+      ),
       timeout,
     ]);
   } finally {

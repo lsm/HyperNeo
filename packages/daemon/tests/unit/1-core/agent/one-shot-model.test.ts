@@ -55,6 +55,12 @@ describe('buildOneShotQueryOptions', () => {
     expect(thinking('kimi-for-coding')).toEqual({ type: 'enabled', budgetTokens: 16_000 });
     expect(thinking('kimi-k3')).toBeUndefined();
     expect(thinking('moonshot-v1')).toEqual({ type: 'disabled' });
+    expect(
+      buildOneShotQueryOptions(
+        request({ provider: 'kimi', thinking: { type: 'enabled', budgetTokens: 8_000 } }),
+        runtime
+      ).thinking
+    ).toEqual({ type: 'enabled', budgetTokens: 8_000 });
   });
 
   test('sets a working directory only when one is given', () => {

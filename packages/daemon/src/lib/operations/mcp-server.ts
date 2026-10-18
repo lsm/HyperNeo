@@ -22,5 +22,5 @@ export function createOperationMcpServer(
       createOperationMcpHandler(registry, resolveCaller, recordRefusal)
     ),
   ];
-  return { ...createSdkMcpServer({ name: OPERATIONS_MCP_SERVER_NAME, tools }), tools };
+  return createSdkMcpServer({ name: OPERATIONS_MCP_SERVER_NAME, tools });
 }

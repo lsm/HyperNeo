@@ -1,18 +1,19 @@
-import { transitionStandaloneTask } from '../../../../src/storage/tasks/transition-task';
-import { editStandaloneTaskWithDependencies } from '../../../../src/storage/tasks/set-task-dependencies';
-import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
-import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
-import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { InProcessTransport, MessageHub, type Session } from '@hyperneo/shared';
+import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
-import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import { createDaemonOperationCatalog } from '../../../../src/lib/operations/catalog';
 import { createOperationMcpServer } from '../../../../src/lib/operations/mcp-server';
 import { setupOperationHandlers } from '../../../../src/lib/rpc-handlers/operation-handlers';
+import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
+import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
+import { editStandaloneTaskWithDependencies } from '../../../../src/storage/tasks/set-task-dependencies';
+import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
+import { transitionStandaloneTask } from '../../../../src/storage/tasks/transition-task';
 import { createTestSession } from '../../../helpers/database';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
+import { operationInvoke } from '../../../helpers/operation-mcp';
 
 const categories = [undefined, 'lobby', 'worker', 'space_chat', 'worker'] as const;
 const cases = categories.flatMap((targetType) => [
@@ -111,7 +112,7 @@ describe('shared operation delivery parity', () => {
             sessionId: sender.id,
           })
         );
-        const result = await mcp.tools[0].handler({ name: 'message.send', input }, {});
+        const result = await operationInvoke(mcp)({ name: 'message.send', input });
         expect(result.isError).not.toBe(true);
         const content = result.content[0];
         if (content.type !== 'text') throw new Error('Expected an MCP text receipt');

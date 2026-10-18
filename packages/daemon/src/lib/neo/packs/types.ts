@@ -5,6 +5,7 @@ import type { WorkExecutionPreparation } from '../../drivers/start-preparation.t
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { ExternalEvent } from '../../external-events/types.ts';
 import type { NeoEvidence, NeoEvidenceRead } from '../evidence.ts';
+import type { NeoStatusLine } from '../status-codes.ts';
 
 export type NeoPackCheck = (
   item: NeoAskItem,
@@ -50,7 +51,7 @@ export interface NeoTodoCheckResult {
 export interface NeoTodoPack {
   schema(db: Database): void;
   check(todo: NeoTodo): Promise<NeoTodoCheckResult | null>;
-  statusLine(todo: NeoTodo): string | null;
+  statusLine(todo: NeoTodo): NeoStatusLine | null;
   topics(todo: NeoTodo): string[];
   event(event: ExternalEvent): string[];
   openedPrs?(todo: NeoTodo, urls: readonly string[]): void;

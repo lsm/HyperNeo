@@ -56,7 +56,6 @@ export const createSdkMcpServer = vi.fn(
       type: 'sdk' as const,
       name: _options.name,
       version: _options.version ?? '1.0.0',
-      tools: _options.tools ?? [],
       instance: server,
     };
   }
