@@ -133,14 +133,16 @@ describe('codexTurnState', () => {
     });
   });
 
-  test('keeps the newest text when a turn says too much', () => {
+  test('keeps the opening and the newest text when a turn says too much', () => {
     const reply =
       codexTurnState([
         line('event_msg', { type: 'task_started' }),
-        said(`https://github.com/o/r/pull/1 ${'a'.repeat(12_000)}`),
+        said('Opened https://github.com/o/r/pull/1.'),
+        said('a'.repeat(12_000)),
         said('Done.'),
       ]).reply ?? '';
     expect(reply).toHaveLength(12_000);
+    expect(reply.startsWith('Opened https://github.com/o/r/pull/1.\n\n(…)\n\naaa')).toBe(true);
     expect(reply.endsWith('a\n\nDone.')).toBe(true);
   });
 

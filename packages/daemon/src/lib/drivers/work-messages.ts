@@ -6,6 +6,7 @@ const INPUT_TEXT_LIMIT = 160;
 const EXCHANGE_TEXT_LIMIT = 4_000;
 const EXCHANGE_ENTRIES = 40;
 const TURN_REPLY_LIMIT = 12_000;
+const TURN_REPLY_HEAD = 2_000;
 const TURN_REPLIES = 39;
 
 export function workEntryTime(timestamp: unknown): number | undefined {
@@ -30,7 +31,9 @@ export function recentWorkInputs(inputs: readonly WorkInput[], since?: number): 
 
 export function turnReply(texts: readonly string[]): string | null {
   const whole = texts.join('\n\n').trim();
-  return whole ? whole.slice(-TURN_REPLY_LIMIT).trim() : null;
+  if (whole.length <= TURN_REPLY_LIMIT) return whole || null;
+  const head = `${texts[0].trim().slice(0, TURN_REPLY_HEAD)}\n\n(…)\n\n`;
+  return `${head}${whole.slice(head.length - TURN_REPLY_LIMIT).trim()}`;
 }
 
 export function turnReplies(replies: readonly WorkExchangeEntry[]): WorkExchangeEntry[] {
