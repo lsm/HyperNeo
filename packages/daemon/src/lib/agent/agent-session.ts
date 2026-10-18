@@ -734,7 +734,9 @@ export class AgentSession
 
     this.stateManager.setOnIdleCallback(async (owner) => {
       const restartedForSettings = await this.lifecycleManager.executeDeferredRestartIfPending();
-      const switched = await this.applyPendingModelSwitch();
+      const switched =
+        !this.modelSwitchBusy &&
+        (await this.queueModelSwitch(() => this.applyPendingModelSwitch()));
       const restarted = restartedForSettings || switched;
       this.flushPendingTaskNotificationRequery();
       const reconcileOwner = restarted ? this.stateManager.getCurrentIdleOwner() : owner;
@@ -1582,7 +1584,30 @@ export class AgentSession
       : this.modelSwitchHandler.switchModel(newModel, newProvider);
   }
 
-  async requestModelSwitch(
+  private modelSwitchBusy = false;
+  private modelSwitchChain: Promise<unknown> = Promise.resolve();
+
+  private queueModelSwitch<T>(run: () => Promise<T>): Promise<T> {
+    const next = this.modelSwitchChain.then(async () => {
+      this.modelSwitchBusy = true;
+      try {
+        return await run();
+      } finally {
+        this.modelSwitchBusy = false;
+      }
+    });
+    this.modelSwitchChain = next.catch(() => undefined);
+    return next;
+  }
+
+  requestModelSwitch(
+    model: string,
+    provider: string
+  ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
+    return this.queueModelSwitch(() => this.runModelSwitchRequest(model, provider));
+  }
+
+  private async runModelSwitchRequest(
     model: string,
     provider: string
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
@@ -1598,7 +1623,7 @@ export class AgentSession
       modelSwitchTiming(this.stateManager.getState().status) === 'now' &&
       (await this.applyPendingModelSwitch());
     if (this.session.metadata?.pendingModelSwitch) return { success: true, model, pending };
-    return applied || this.session.config.model === model
+    return applied
       ? { success: true, model }
       : { success: false, model: this.session.config.model, error: 'The model switch failed' };
   }
