@@ -24,4 +24,14 @@ describe('GeneralSettings', () => {
     fireEvent.change(select, { target: { value: 'full' } });
     expect(updateGlobalSettings).toHaveBeenCalledWith({ chatDisplayMode: 'full' });
   });
+
+  it('saves the language, defaulting to the browser language', () => {
+    const { container } = render(<GeneralSettings />);
+    const select = [...container.querySelectorAll('select')].find((element) =>
+      [...element.options].some((option) => option.value === 'zh-Hans')
+    )!;
+    expect(select.value).toBe('system');
+    fireEvent.change(select, { target: { value: 'zh-Hans' } });
+    expect(updateGlobalSettings).toHaveBeenCalledWith({ language: 'zh-Hans' });
+  });
 });
