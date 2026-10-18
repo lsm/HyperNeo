@@ -136,7 +136,7 @@ describe('Neo desktop panes', () => {
     });
     const main = container.querySelector('main')!;
     const chat = container.querySelector('.neo-chat-rail')!;
-    const list = screen.getByRole('region', { name: 'Work scenes' });
+    const list = screen.getByRole('region', { name: '工作场景' });
     expect(chat.parentElement).toBe(main);
     expect(list.parentElement).toBe(main);
     const draft = screen.getByRole('textbox', {
@@ -153,7 +153,7 @@ describe('Neo desktop panes', () => {
     expect(within(list).queryByRole('article', { name: 'Fictional proposal' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close chat' }));
     expect(screen.queryByTestId('neo-chat-panel')).toBeNull();
-    expect(screen.getByRole('region', { name: 'Work scenes' })).toBe(list);
+    expect(screen.getByRole('region', { name: '工作场景' })).toBe(list);
     expect(within(list).getByRole('article', { name: 'Fictional proposal' })).toBeTruthy();
   });
 

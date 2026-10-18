@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { findNeoProject } from './project-redirects.ts';
+import { neoTodoStatus } from './todo-status.ts';
 
 type Project = { readonly id: string; readonly title: string };
 type Activity = { readonly key: string; readonly text: string };
@@ -22,7 +23,10 @@ export function neoActivityItems(
       .flatMap((entry) =>
         entry.todos
           .filter((todo) => todo.state === 'doing')
-          .map((todo) => ({ key: `todo:${todo.id}`, text: `${todo.status} · ${todo.title}` }))
+          .map((todo) => ({
+            key: `todo:${todo.id}`,
+            text: `${neoTodoStatus(todo)} · ${todo.title}`,
+          }))
       ),
     ...(snapshot?.consultations ?? [])
       .filter((item) => item.status === 'pending')

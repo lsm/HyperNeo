@@ -31,6 +31,7 @@ import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 import { neoForwardKey } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoQuote } from './neo-intake.ts';
+import { t } from '../lib/i18n/index.ts';
 
 export function NeoLive() {
   const neo = useNeo();
@@ -113,9 +114,9 @@ export function NeoLive() {
     ])
   );
   const sceneGroups = [
-    { key: 'attention', label: 'Needs your attention' },
-    { key: 'running', label: 'In progress' },
-    { key: 'outcomes', label: 'Recent outcomes' },
+    { key: 'attention', label: t('live.group.attention') },
+    { key: 'running', label: t('live.group.running') },
+    { key: 'outcomes', label: t('live.group.outcomes') },
   ].map((group) => {
     const key = group.key as NeoAskGroup;
     return {
@@ -250,7 +251,7 @@ export function NeoLive() {
       dragDepth.current = 0;
       setDragging(false);
       if (!ready) {
-        neo.setError('Wait for the conversation to load before attaching files.');
+        neo.setError(t('live.attachWait'));
         return;
       }
       void attachments.add(files, neo.setError);
@@ -339,10 +340,8 @@ export function NeoLive() {
         >
           <div>
             <NeoIcon name="plus" class="mx-auto mb-3 text-accent" />
-            <p class="text-lg font-medium">Drop photos or files here</p>
-            <p class="mt-2 text-sm text-fg-muted">
-              Added to this conversation. Review before sending.
-            </p>
+            <p class="text-lg font-medium">{t('live.drop.title')}</p>
+            <p class="mt-2 text-sm text-fg-muted">{t('live.drop.hint')}</p>
           </div>
         </div>
       )}
@@ -359,7 +358,7 @@ export function NeoLive() {
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
-          aria-label="Settings and connection"
+          aria-label={t('live.menu')}
           aria-expanded={drawerOpen}
           aria-haspopup="dialog"
           class="neo-glass-button"
@@ -380,7 +379,9 @@ export function NeoLive() {
         {sheet && (
           <button
             type="button"
-            aria-label={`Your work${attentionCount ? `, ${attentionCount} need your attention` : ''}`}
+            aria-label={
+              attentionCount ? t('live.workAttention', { count: attentionCount }) : t('live.work')
+            }
             aria-expanded={scenesOpen}
             onClick={() => setScenesOpen(true)}
             class="neo-glass-button relative"
@@ -412,17 +413,12 @@ export function NeoLive() {
           onScroll={(event) => recordScroll(event.currentTarget)}
         >
           <div class="mb-7">
-            <h1 class="text-3xl font-medium leading-tight tracking-tight">
-              A little less on your mind.
-            </h1>
-            <p class="mt-3 max-w-lg text-sm leading-relaxed text-fg-muted">
-              Tell me what’s going on. I’ll hold the context, connect the right work, and bring back
-              what matters.
-            </p>
+            <h1 class="text-3xl font-medium leading-tight tracking-tight">{t('live.heading')}</h1>
+            <p class="mt-3 max-w-lg text-sm leading-relaxed text-fg-muted">{t('live.intro')}</p>
           </div>
           {firstConnect && (
             <p role="status" class="mb-4 rounded-xl bg-warning/10 p-3 text-sm text-warning">
-              Connecting to HyperNeo…
+              {t('live.connecting')}
             </p>
           )}
           {neo.error && (
@@ -432,22 +428,18 @@ export function NeoLive() {
             >
               <p class="break-words text-danger">{neo.error}</p>
               <Button variant="ghost" size="sm" class="mt-2" onClick={neo.retry}>
-                Reconnect
+                {t('live.reconnect')}
               </Button>
               <a href="/" class="ml-3 text-accent" target="_blank" rel="noreferrer">
-                HyperNeo settings ↗
+                {t('live.settingsLink')}
               </a>
             </div>
           )}
           {neo.store.loadErrorKind.value && (
             <div role="alert" class="mb-4 text-sm text-danger">
-              <p>
-                {publicConversation
-                  ? 'Native session controls could not be loaded.'
-                  : 'Conversation could not be loaded.'}
-              </p>
+              <p>{publicConversation ? t('live.controlsFailed') : t('live.conversationFailed')}</p>
               <Button variant="ghost" size="sm" onClick={() => void neo.open()}>
-                Try again
+                {t('live.tryAgain')}
               </Button>
             </div>
           )}
@@ -516,7 +508,7 @@ export function NeoLive() {
                 const images = await readNeoAskImages(ask, () => connectionManager.getHub());
                 if (liveSession.current !== sessionId) return false;
                 if (!images) {
-                  neo.setError('Could not load this message’s photos. Please try again.');
+                  neo.setError(t('live.photosFailed'));
                   return false;
                 }
                 if (!restoreNeoImages(sessionId, images)) {
@@ -548,7 +540,7 @@ export function NeoLive() {
           ) : (
             !neo.error && (
               <p role="status" class="py-8 text-sm text-fg-muted">
-                Opening your conversation…
+                {t('live.opening')}
               </p>
             )
           )}
@@ -560,11 +552,8 @@ export function NeoLive() {
                 <span class="mb-3 inline-flex text-accent">
                   <NeoIcon name="spark" />
                 </span>
-                <p>
-                  No setup, no folders to choose. Ask a quick question or tell me about something
-                  ongoing.
-                </p>
-                <p class="mt-2 text-xs">Proposed work waits for your answer to its question.</p>
+                <p>{t('live.empty')}</p>
+                <p class="mt-2 text-xs">{t('live.emptyHint')}</p>
               </div>
             )}
         </div>
@@ -572,16 +561,16 @@ export function NeoLive() {
           ref={sceneSheet}
           class={`neo-scene-list${sheet ? ` neo-scene-sheet${scenesOpen ? ' is-open' : ''}` : ''}`}
           role="region"
-          aria-label="Work scenes"
+          aria-label={t('live.scenes')}
           aria-hidden={(sheet && !scenesOpen) || chat ? true : undefined}
           inert={(sheet && !scenesOpen) || !!chat}
         >
           {sheet && (
             <div class="sticky top-0 z-10 -mx-5 mb-2 flex items-center justify-between bg-[var(--neo-background)] px-5 py-3">
-              <h2 class="text-sm font-medium">Your work</h2>
+              <h2 class="text-sm font-medium">{t('live.work')}</h2>
               <button
                 type="button"
-                aria-label="Close work list"
+                aria-label={t('live.closeWork')}
                 onClick={() => setScenesOpen(false)}
                 class="neo-float-link"
               >
@@ -591,7 +580,7 @@ export function NeoLive() {
           )}
           {publicConversation && workCount === 0 && (
             <p role="status" class="mt-6 text-sm text-fg-muted">
-              No work yet.
+              {t('live.noWork')}
             </p>
           )}
           {sceneGroups.map((group) =>

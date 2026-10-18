@@ -21,6 +21,10 @@ export function applyLanguage(language: LanguageSetting | undefined): void {
   locale.value = language === 'en' || language === 'zh-Hans' ? language : browserLocale();
 }
 
+export function isMessageKey(key: string): key is MessageKey {
+  return Object.hasOwn(en, key);
+}
+
 export function t(key: MessageKey, params?: Record<string, string | number>): string {
   const template = catalogs[locale.value][key];
   if (!params) return template;
