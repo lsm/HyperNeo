@@ -111,6 +111,20 @@ describe('voice send-intent recovery', () => {
     expect(store.records).toHaveLength(0);
   });
 
+  it('parks an unconfirmed session send in the draft instead of replaying it', async () => {
+    seedEntry({ intent: 'send', door: 'session' });
+    hubRequest.mockImplementation(async (method: string) => {
+      if (method === 'voice.transcribe') return { text: 'hello world' };
+      if (method === 'message.send') throw new Error('Request timeout');
+      return { success: true };
+    });
+    await flushPendingVoiceAudio();
+    await flushPendingVoiceAudio();
+
+    expect(rawMethods().filter((method) => method === 'message.send')).toHaveLength(1);
+    expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', 'rec-1');
+  });
+
   it('never re-sends after the record is durably consumed, across repeated flushes', async () => {
     seedEntry({ intent: 'send' });
     await flushPendingVoiceAudio();

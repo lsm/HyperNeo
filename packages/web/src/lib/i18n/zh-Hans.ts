@@ -169,4 +169,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'session.modelScopeWorking': '切换模型会停止当前回复',
   'session.modelFailed': '没能切换这个会话的模型。',
   'session.attachmentsLost': '重新发送前请再附上照片。',
+  'session.modelLoading': '这个会话的模型还没加载好，请稍后再试。',
+  'session.voiceUnconfirmed': '没能确认已发送，已放回草稿。',
 };

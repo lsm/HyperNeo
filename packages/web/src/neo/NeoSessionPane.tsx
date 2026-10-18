@@ -253,19 +253,23 @@ export function NeoSessionPane({
             inputDraft.setContent([inputDraft.content, text].filter(Boolean).join('\n'))
           }
           onStop={() => void handleInterrupt()}
-          onSend={async ({ text, images }) => {
-            inputDraft.setContent('');
-            try {
-              const messageId = await sendToSession(sessionId, text, images);
-              return { ok: true, requestId: messageId, messageId, created: true };
-            } catch (cause) {
-              const reason = cause instanceof Error ? cause.message : String(cause);
-              const kept = restoreNeoImages(sessionId, images ?? []);
-              setNotice(kept ? reason : `${reason} ${t('session.attachmentsLost')}`);
-              if (!inputDraft.content) inputDraft.setContent(text);
-              return { ok: false, reason };
-            }
-          }}
+          onSend={({ text, images }) =>
+            inputDraft.holdDraftAdoption(async () => {
+              const submitted = inputDraft.content;
+              inputDraft.setContent('');
+              try {
+                const messageId = await sendToSession(sessionId, text, images);
+                await inputDraft.clearSubmitted(sessionId, submitted);
+                return { ok: true as const, requestId: messageId, messageId, created: true };
+              } catch (cause) {
+                const reason = cause instanceof Error ? cause.message : String(cause);
+                const kept = restoreNeoImages(sessionId, images ?? []);
+                setNotice(kept ? reason : `${reason} ${t('session.attachmentsLost')}`);
+                if (!inputDraft.content) inputDraft.setContent(text);
+                return { ok: false as const, reason };
+              }
+            })
+          }
         />
       </footer>
     </aside>

@@ -3,6 +3,7 @@ import { effect, signal } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
 import { NEO_UNCONFIRMED_RECEIPT, submitNeoDraft } from '../../neo/neo-intake.ts';
 import { connectionState } from '../state';
+import { t } from '../i18n/index.ts';
 import {
   deleteVoiceRecord,
   listVoiceRecords,
@@ -81,8 +82,11 @@ async function sendSessionVoice(
     await hub.request('message.send', { sessionId, content: text });
     return { ok: true };
   } catch (cause) {
-    if (cause instanceof MessageHubResponseError) return { ok: false, reason: cause.message };
-    throw cause;
+    return {
+      ok: false,
+      reason:
+        cause instanceof MessageHubResponseError ? cause.message : t('session.voiceUnconfirmed'),
+    };
   }
 }
 

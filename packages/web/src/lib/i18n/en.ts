@@ -170,4 +170,6 @@ export const en = {
   'session.modelScopeWorking': 'Switching the model stops the current reply',
   'session.modelFailed': 'Could not switch this session’s model.',
   'session.attachmentsLost': 'Attach the photos again before resending.',
+  'session.modelLoading': 'This session’s model hasn’t loaded yet. Try again in a moment.',
+  'session.voiceUnconfirmed': 'Couldn’t confirm this was sent, so it’s back in your draft.',
 } as const;

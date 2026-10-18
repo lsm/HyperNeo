@@ -109,7 +109,13 @@ export function NeoPreferences({
       onSaved?.();
       await store.refresh();
     } catch (error) {
-      onError(error instanceof Error ? error.message : 'Could not change Neo’s model.');
+      onError(
+        error instanceof Error
+          ? error.message
+          : forSession
+            ? t('session.modelFailed')
+            : 'Could not change Neo’s model.'
+      );
     } finally {
       setSaving(false);
     }
@@ -131,7 +137,11 @@ export function NeoPreferences({
   async function changeThinking(next: ThinkingLevel) {
     if (busy) return;
     if (!info || !currentId) {
-      onError('Neo’s model hasn’t loaded yet. Try again in a moment.');
+      onError(
+        forSession
+          ? t('session.modelLoading')
+          : 'Neo’s model hasn’t loaded yet. Try again in a moment.'
+      );
       return;
     }
     await save({ model: currentId, provider: info.provider, thinkingLevel: next });
