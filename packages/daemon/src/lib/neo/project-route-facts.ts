@@ -91,9 +91,7 @@ export function readNeoProjectFacts(db: Database, text: string): NeoProjectFact[
     reference: `${ref.owner}/${ref.repo}#${ref.number}`,
     ref,
   }));
-  const todoRefs = !!db
-    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'neo_todo_pr_refs'")
-    .get();
+  const todoRefs = db.prepare('PRAGMA table_info(neo_todo_pr_refs)').all().length > 0;
   const prOwners = (column: 'reference' | 'number', value: string | number) =>
     db
       .prepare(`SELECT w.concern_id AS projectId FROM neo_route_pr_refs r
