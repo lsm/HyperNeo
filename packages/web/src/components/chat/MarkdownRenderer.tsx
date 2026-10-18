@@ -1,6 +1,6 @@
 import { escapeRawHtmlBlocks, hasCodeBlock, renderPlainText } from './markdown-escape.ts';
 export { renderPlainText } from './markdown-escape.ts';
-import { render } from 'preact';
+import { type ComponentChildren, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { resolvedTheme } from '../../lib/theme.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
@@ -11,6 +11,7 @@ import { LruCache } from '../../lib/lru-cache.ts';
 interface MarkdownRendererProps {
   content: string;
   class?: string;
+  trailing?: ComponentChildren;
 }
 
 type MarkdownModules = {
@@ -400,8 +401,14 @@ async function renderMarkdown(content: string) {
   return htmlStr;
 }
 
-export default function MarkdownRenderer({ content, class: className }: MarkdownRendererProps) {
+export default function MarkdownRenderer({
+  content,
+  class: className,
+  trailing,
+}: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const trailingMount = useRef<HTMLElement | null>(null);
+  const hasTrailing = trailing != null;
   const overlayOwner = useRef({});
   const [html, setHtml] = useState<string | null>(() => renderedMarkdownCache.get(content) ?? null);
   const theme = resolvedTheme.value;
@@ -485,6 +492,14 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
       lastP.style.marginBottom = '0';
     }
 
+    const last = container.lastElementChild;
+    const mount = hasTrailing ? document.createElement(last?.tagName === 'P' ? 'span' : 'p') : null;
+    if (mount) {
+      mount.style.marginBottom = '0';
+      (last?.tagName === 'P' ? last : container).appendChild(mount);
+    }
+    trailingMount.current = mount;
+
     return () => {
       container.removeEventListener('click', handleImageActivate);
       container.removeEventListener('auxclick', handleImageActivate);
@@ -495,8 +510,14 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
         render(null, mount);
       });
       mermaidCancelled = true;
+      if (mount) render(null, mount);
+      trailingMount.current = null;
     };
-  }, [html, theme]);
+  }, [html, theme, hasTrailing]);
+
+  useLayoutEffect(() => {
+    if (trailingMount.current) render(trailing ?? null, trailingMount.current);
+  });
 
   return <div ref={containerRef} class={`prose ${className || ''}`} />;
 }

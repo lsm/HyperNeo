@@ -487,42 +487,37 @@ function PublicEntry({
           </div>
         )}
         {(() => {
+          const fold = (word: 'chat.foldMore' | 'chat.foldLess') => (
+            <>
+              {' '}
+              <button
+                type="button"
+                aria-expanded={expanded}
+                onClick={() => setExpanded(!expanded)}
+                class="text-accent hover:underline"
+              >
+                {t(word)}
+              </button>
+            </>
+          );
+          const more = hasDetails && !expanded ? fold('chat.foldMore') : undefined;
           const body = /^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
-            <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
+            <p class="whitespace-pre-wrap text-base leading-relaxed">
+              {text}
+              {more}
+            </p>
           ) : (
             <MarkdownRenderer
               content={text}
+              trailing={more}
               class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
             />
           );
-          const shown = ask ? <NeoClampedText text={text}>{body}</NeoClampedText> : body;
-          const chevron = hasDetails && (
-            <button
-              type="button"
-              aria-expanded={expanded}
-              aria-label={t(expanded ? 'chat.hideDetails' : 'chat.showDetails')}
-              title={t(expanded ? 'chat.hideDetails' : 'chat.showDetails')}
-              onClick={() => setExpanded(!expanded)}
-              class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-fill-soft text-fg-muted hover:text-fg"
-            >
-              <NeoIcon
-                name="chevron"
-                class={`!h-3.5 !w-3.5 transition-transform${expanded ? '' : ' rotate-180'}`}
-              />
-            </button>
-          );
           return (
             <>
-              {chevron && !links.length ? (
-                <div class="flex items-end gap-2">
-                  <div ref={bubbleText} class="min-w-0 flex-1">
-                    {shown}
-                  </div>
-                  {chevron}
-                </div>
-              ) : (
-                <div ref={bubbleText}>{shown}</div>
-              )}
+              <div ref={bubbleText}>
+                {ask ? <NeoClampedText text={text}>{body}</NeoClampedText> : body}
+              </div>
               {hasDetails && expanded && (
                 <div
                   data-publication-details
@@ -531,34 +526,32 @@ function PublicEntry({
                 >
                   <MarkdownRenderer
                     content={full}
+                    trailing={fold('chat.foldLess')}
                     class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
                   />
                 </div>
               )}
               {publication && links.length > 0 && (
-                <div class="mt-3 flex items-end gap-3">
-                  <ul
-                    aria-label={t('chat.scenes')}
-                    class="flex min-w-0 flex-1 flex-wrap gap-3 text-sm text-accent"
-                  >
-                    {links.map((link) => (
-                      <li key={JSON.stringify([link.kind, link.id])}>
-                        {onOpenScene && (canOpenScene?.(link) ?? true) ? (
-                          <button
-                            type="button"
-                            class="text-left hover:underline"
-                            onClick={() => onOpenScene({ kind: link.kind, id: link.id })}
-                          >
-                            {link.label}
-                          </button>
-                        ) : (
-                          <span>{link.label}</span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  {chevron}
-                </div>
+                <ul
+                  aria-label={t('chat.scenes')}
+                  class="mt-3 flex flex-wrap gap-3 text-sm text-accent"
+                >
+                  {links.map((link) => (
+                    <li key={JSON.stringify([link.kind, link.id])}>
+                      {onOpenScene && (canOpenScene?.(link) ?? true) ? (
+                        <button
+                          type="button"
+                          class="text-left hover:underline"
+                          onClick={() => onOpenScene({ kind: link.kind, id: link.id })}
+                        >
+                          {link.label}
+                        </button>
+                      ) : (
+                        <span>{link.label}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               )}
             </>
           );

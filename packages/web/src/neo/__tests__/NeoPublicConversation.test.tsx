@@ -169,17 +169,21 @@ describe('durable public conversation presentation', () => {
       <NeoPublicConversation conversation={conversation([], [value])} />
     );
     expect(container.querySelector('details')).toBeNull();
-    expect(await screen.findByText(value.shortText)).toBeTruthy();
+    const more = await screen.findByRole('button', { name: /^…\smore$/ });
+    expect(more.closest('p')?.textContent).toBe(`${value.shortText} …\u00a0more`);
+    expect(more.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('table')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Show details' }));
+    fireEvent.click(more);
     await waitFor(() => expect(container.querySelector('table')).toBeTruthy());
     expect(container.querySelector('blockquote')?.textContent).toContain('not verified completion');
     expect(container.querySelector('pre code')?.textContent).toContain('Fictional detail');
-    expect(screen.getByText(value.shortText)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^…\smore$/ })).toBeNull();
     expect(container.querySelector('[data-publication-details] table')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Hide details' }));
+    const less = await screen.findByRole('button', { name: /^…less$/ });
+    expect(less.closest('[data-publication-details]')).toBeTruthy();
+    fireEvent.click(less);
     expect(container.querySelector('[data-publication-details]')).toBeNull();
-    expect(screen.getByText(value.shortText)).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^…\smore$/ })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
     await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
     expect(container.querySelector('script')).toBeNull();
