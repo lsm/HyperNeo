@@ -462,8 +462,8 @@ function neoUnavailableWorkspaceHolders(
 export async function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRouted> {
   if (!text.trim()) return { choice: null };
   let holders = await deps.holders();
-  const recorded = (await deps.facts?.(text)) ?? [];
-  const facts = recorded.length ? recorded : readNamedRouteFacts(text, holders);
+  const known = ((await deps.facts?.(text)) ?? []).filter((fact) => fact.projectId !== undefined);
+  const facts = known.length ? known : readNamedRouteFacts(text, holders);
   let chosen: NeoRouted = { choice: null };
   let scopedWorkspace = false;
   if (facts.length) {
