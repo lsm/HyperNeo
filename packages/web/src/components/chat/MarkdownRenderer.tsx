@@ -185,7 +185,7 @@ function attachCodeBlockCopyButtons(container: HTMLElement) {
     pre.parentNode?.insertBefore(wrapper, pre);
     wrapper.appendChild(pre);
     const mount = document.createElement('div');
-    mount.className = 'code-block-copy absolute top-2 right-2';
+    mount.className = 'absolute top-2 right-2';
     wrapper.appendChild(mount);
     render(<CopyButton text={code?.textContent || ''} label="Copy code" />, mount);
     mounts.push(mount);
