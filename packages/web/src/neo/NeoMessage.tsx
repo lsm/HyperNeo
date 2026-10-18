@@ -35,6 +35,7 @@ export function NeoMessage({
   work,
   sessionId,
   replyTo,
+  author,
   children,
 }: {
   message: ChatMessage;
@@ -42,6 +43,7 @@ export function NeoMessage({
   work?: NeoWork;
   sessionId?: string;
   replyTo?: NeoReplyContext;
+  author?: string;
   children?: ComponentChildren;
 }) {
   const user = message.type === 'user';
@@ -63,7 +65,7 @@ export function NeoMessage({
       <div
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${user ? 'justify-end' : ''}`}
       >
-        <span class="neo-message-name font-medium">{user ? 'You' : 'Neo'}</span>
+        <span class="neo-message-name font-medium">{author ?? (user ? 'You' : 'Neo')}</span>
         {time && (
           <time dateTime={time.iso} title={time.full} class="neo-message-time text-[11px]">
             {time.label}
