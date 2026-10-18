@@ -277,4 +277,35 @@ describe('reply quote block', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(scrolled).toEqual([near]);
   });
+
+  it('stops looking for an original after nine older pages', async () => {
+    const reply = ask('reply', 1000, 'Following up', {
+      kind: 'message',
+      id: 'far',
+      author: 'user',
+      excerpt: 'Far away',
+    });
+    const loads = vi.fn();
+    function Harness() {
+      const [pages, setPages] = useState(0);
+      const older = Array.from({ length: pages }, (_, index) =>
+        ask(`older-${index}`, 999 - index, `Older ${index}`)
+      ).reverse();
+      return (
+        <NeoPublicConversation
+          conversation={conversation([...older, reply], [], true)}
+          onLoadEarlier={() => {
+            loads();
+            setPages((count) => count + 1);
+          }}
+        />
+      );
+    }
+    const { container } = render(<Harness />);
+    fireEvent.click(quoteBar(container, 'message:far'));
+    await waitFor(() => expect(loads).toHaveBeenCalledTimes(9));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(loads).toHaveBeenCalledTimes(9);
+    expect(scrolled).toEqual([]);
+  });
 });

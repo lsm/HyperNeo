@@ -306,6 +306,7 @@ function NoticeRow({
 }
 
 const FLASH_MS = 1500;
+const SEEK_PAGES = 9;
 
 function flashMessage(target: Element) {
   target.scrollIntoView({ block: 'center' });
@@ -820,18 +821,22 @@ export function NeoPublicConversation({
 }) {
   const labels = new Map([...neoMessageReplyLabels(conversation.entries), ...(replyLabels ?? [])]);
   const [seeking, setSeeking] = useState<string | null>(null);
+  const seekPages = useRef(0);
   useEffect(() => setSeeking(null), [conversation.conversationId]);
   const canLoadEarlier = conversation.hasEarlier && !!onLoadEarlier;
   useEffect(() => {
     if (!seeking || conversation.status !== 'ready') return;
     const timer = setTimeout(() => {
-      if (revealMessage(seeking) || !canLoadEarlier) setSeeking(null);
-      else onLoadEarlier?.();
+      if (revealMessage(seeking) || !canLoadEarlier || seekPages.current >= SEEK_PAGES)
+        return setSeeking(null);
+      seekPages.current += 1;
+      onLoadEarlier?.();
     });
     return () => clearTimeout(timer);
   }, [seeking, conversation.entries, conversation.status, canLoadEarlier]);
   const seek = (messageId: string) => {
     if (revealMessage(messageId) || !canLoadEarlier) return setSeeking(null);
+    seekPages.current = 0;
     setSeeking(messageId);
   };
   return (
