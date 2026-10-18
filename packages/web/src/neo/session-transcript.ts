@@ -8,7 +8,13 @@ export type SessionItemKind =
   | { type: 'tool'; name: string; summary: string; result: string | null; isError: boolean }
   | { type: 'thinking'; text: string };
 
-export type SessionItem = { id: string; kind: SessionItemKind; date: number; images: unknown[] };
+export type SessionItem = {
+  id: string;
+  kind: SessionItemKind;
+  date: number;
+  images: unknown[];
+  finished?: number;
+};
 
 export type SessionSteps = {
   id: string;
@@ -99,6 +105,7 @@ export function sessionItems(messages: readonly ChatMessage[]): SessionItem[] {
         if (!tool || tool.kind.type !== 'tool') continue;
         out[at!] = {
           ...tool,
+          finished: date,
           kind: {
             ...tool.kind,
             result: sessionToolResult(block.content) ?? '',
@@ -171,7 +178,7 @@ function flushTurn(turn: SessionItem[], last: boolean, running: boolean): Sessio
       items: group.steps,
       running: live,
       start: group.message?.date ?? first.date,
-      end: next ?? group.steps[group.steps.length - 1].date,
+      end: next ?? Math.max(...group.steps.map((step) => step.finished ?? step.date)),
     };
     return [...out, { type: 'steps', id: steps.id, steps }];
   });

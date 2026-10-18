@@ -160,3 +160,20 @@ describe('sessionItems tool results', () => {
     expect(items[0].kind).toMatchObject({ type: 'tool', result: '' });
   });
 });
+
+describe('sessionEntries turn-final steps', () => {
+  it('ends a turn’s last steps when their results arrived', () => {
+    const entries = sessionEntries(
+      sessionItems([
+        row('user', 'u', [text('Go')], 0),
+        row('assistant', 'a', [text('Running both'), tool('p1', 'a'), tool('p2', 'b')], 5),
+        row('user', 'r1', [result('p1')], 50),
+        row('user', 'r2', [result('p2')], 95),
+      ]),
+      false
+    );
+    const steps = entries.at(-1);
+    if (steps?.type !== 'steps') throw new Error('expected steps');
+    expect(sessionDuration(steps.steps.end - steps.steps.start)).toBe('1m 30s');
+  });
+});
