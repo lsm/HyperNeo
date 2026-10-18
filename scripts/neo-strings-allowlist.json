@@ -14,5 +14,6 @@
   "NeoProjectTree.tsx",
   "NeoPublicConversation.tsx",
   "NeoPublicationHistory.tsx",
+  "NeoSessionPane.tsx",
   "NeoVoice.tsx"
 ]

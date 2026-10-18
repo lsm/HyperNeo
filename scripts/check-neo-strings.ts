@@ -28,8 +28,10 @@ export function findHardCodedStrings(source: string, fileName = 'file.tsx'): str
   );
   const found: string[] = [];
   const at = (node: ts.Node) => `${file.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
-  const rendered = (expression: ts.Expression): ts.StringLiteralLike[] => {
+  const rendered = (expression: ts.Expression): Array<ts.Node & { text: string }> => {
     if (ts.isStringLiteralLike(expression)) return [expression];
+    if (ts.isTemplateExpression(expression))
+      return [expression.head, ...expression.templateSpans.map((span) => span.literal)];
     if (ts.isParenthesizedExpression(expression)) return rendered(expression.expression);
     if (ts.isConditionalExpression(expression))
       return [...rendered(expression.whenTrue), ...rendered(expression.whenFalse)];
