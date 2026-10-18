@@ -14,6 +14,7 @@ import {
   type OperationCaller,
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry';
+import { operationInvoke, operationInvokeTool } from '../../../helpers/operation-mcp';
 
 describe('operation MCP server', () => {
   let server: ReturnType<typeof createOperationMcpServer>;
@@ -39,15 +40,14 @@ describe('operation MCP server', () => {
   });
 
   function call(args: { name: string; input?: unknown; caller?: unknown }) {
-    return server.tools[0].handler(args, {});
+    return operationInvoke(server)(args);
   }
 
   test('discovers operations and schemas through one generic SDK tool', async () => {
-    const { tools } = server;
     expect(server.type).toBe('sdk');
     expect(server.name).toBe('hyperneo-operations');
-    expect(tools.map(({ name }) => name)).toEqual(['invoke']);
-    expect(tools[0].inputSchema).toHaveProperty('name');
+    expect(server).not.toHaveProperty('tools');
+    expect(operationInvokeTool(server).inputSchema).toHaveProperty('name');
     const listed = await call({ name: 'operations.list' });
     expect(listed.isError).not.toBe(true);
     expect(listed.content).toEqual([

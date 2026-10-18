@@ -1,28 +1,29 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { vi } from 'vitest';
 import type { MessageHub, Session, SessionConfig } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import { vi } from 'vitest';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
-import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
+import {
+  type DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
+import { neoConsultationRequestContent } from '../../../../src/lib/neo/consultation-request-content.ts';
 import { neoFolderPath } from '../../../../src/lib/neo/folder.ts';
+import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
+import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
+import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   neoCoordinatorAllowedTools,
   neoCoordinatorNativeTools,
   neoCoordinatorRuntimePath,
 } from '../../../../src/lib/neo/session-policy.ts';
-import { neoConsultationRequestContent } from '../../../../src/lib/neo/consultation-request-content.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import {
-  InternalEventBus,
-  type DaemonInternalEventMap,
-} from '../../../../src/lib/internal-event-bus.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import { operationInvokeTool } from '../../../helpers/operation-mcp.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = `neo:${conversationId}`;
@@ -191,7 +192,7 @@ describe('consultation runtime', () => {
       );
       agents.push(agent);
       if (kind !== 'worker') {
-        const description = agent.createNeoTurnMcpServer(() => undefined).tools[0].description;
+        const { description } = operationInvokeTool(agent.createNeoTurnMcpServer(() => undefined));
         const signature = (name: string) =>
           description.split('\n').find((line) => line.startsWith(`${name} {`));
         expect(signature('neo.publication.publish')).toContain('requestId: string');

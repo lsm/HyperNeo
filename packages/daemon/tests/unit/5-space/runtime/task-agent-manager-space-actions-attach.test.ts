@@ -1,10 +1,12 @@
-import { describe, test, expect, spyOn } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { type McpServerConfig, MessageHub, type SpaceWorkflow } from '@hyperneo/shared';
 import { z } from 'zod';
-import { createAuditOperations } from '../../../../src/lib/audit/operations.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { createAuditOperations } from '../../../../src/lib/audit/operations.ts';
+import { HookEngine } from '../../../../src/lib/hooks/hook-engine.ts';
+import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
   defineOperation,
@@ -12,19 +14,18 @@ import {
   type OperationDefinition,
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry.ts';
-import { createDiscoveryOperations } from '../../../../src/lib/operations/discovery.ts';
-import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { HookEngine } from '../../../../src/lib/hooks/hook-engine.ts';
 import { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { hasRuntimeWorkerOperations } from '../../../../src/lib/session/sub-session-identity.ts';
+import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { MessageHub, type McpServerConfig, type SpaceWorkflow } from '@hyperneo/shared';
 import {
   createTestDb,
   createTestInternalEventBus,
   createTestSession,
 } from '../../../helpers/database';
+import { operationInvoke } from '../../../helpers/operation-mcp';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 const SPACE_ID = 'space-actions-attach';
@@ -571,7 +572,7 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
       manager.setOperationRegistryProvider(() => createOperationRegistry([]));
 
       const probe = async (session: AgentSession) =>
-        (await session.getOperationMcpServer().tools[0].handler({ name: 'worker_probe' }, {}))
+        (await operationInvoke(session.getOperationMcpServer())({ name: 'worker_probe' }, {}))
           .isError;
       expect(await probe(worker)).not.toBe(true);
       expect(await probe(plain)).toBe(true);
