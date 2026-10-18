@@ -20,9 +20,12 @@ describe('NeoClampedText', () => {
         <p>long</p>
       </NeoClampedText>
     );
-    expect(container.querySelector('[data-clamped]')?.className).toBe('line-clamp-10');
+    const clamped = container.querySelector<HTMLElement>('[data-clamped]');
+    expect(clamped?.className).toBe('overflow-hidden');
+    expect(clamped?.style.maxHeight).toMatch(/^\d+px$/);
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
     expect(container.querySelector('[data-clamped]')).toBeNull();
+    expect(container.querySelector<HTMLElement>('div')?.style.maxHeight).toBe('');
     expect(screen.getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe(
       'true'
     );
