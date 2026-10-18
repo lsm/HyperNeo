@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'preact/hooks';
 import {
   DEFAULT_NEO_ROUTE_TIMEOUT_MS,
+  THINKING_LEVELS,
+  THINKING_LEVEL_LABELS,
   type ModelInfo,
+  type NeoRouteModel,
   type NeoSettings as NeoSettingsValue,
+  type ThinkingLevel,
 } from '@hyperneo/shared';
 import { connectionState, globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
@@ -15,6 +19,7 @@ import {
   mapRawModelsToModelInfos,
   type RawModelEntry,
 } from '../../hooks/useModelSwitcher.ts';
+import { Button } from '../ui/Button.tsx';
 import { SettingsRow, SettingsSection, SettingsSelect } from './SettingsSection.tsx';
 
 const DEFAULT_CHOICE = '';
@@ -37,6 +42,48 @@ export function neoRouteModelOptions(
   return current && !options.some((option) => option.value === current)
     ? [...options, { value: current, label: `${current.replace('|', ' — ')} (unavailable)` }]
     : options;
+}
+
+const THINKING_OPTIONS = THINKING_LEVELS.map((value) => ({
+  value,
+  label: THINKING_LEVEL_LABELS[value],
+}));
+
+export function readNeoRouteModel(
+  choice: string,
+  thinkingLevel?: ThinkingLevel
+): NeoRouteModel | undefined {
+  const at = choice.indexOf('|');
+  if (at <= 0) return undefined;
+  return {
+    provider: choice.slice(0, at),
+    model: choice.slice(at + 1),
+    ...(thinkingLevel && thinkingLevel !== 'off' ? { thinkingLevel } : {}),
+  };
+}
+
+export function addNeoRouteFallback(
+  fallbacks: readonly NeoRouteModel[],
+  models: readonly ModelInfo[],
+  primary: NeoRouteModel | undefined
+): NeoRouteModel[] {
+  const used = new Set(
+    [primary, ...fallbacks].flatMap((item) =>
+      item ? [neoRouteModelChoice(item.provider, item.model)] : []
+    )
+  );
+  const next = models.find((model) => !used.has(neoRouteModelChoice(model.provider, model.id)));
+  return next ? [...fallbacks, { provider: next.provider, model: next.id }] : [...fallbacks];
+}
+
+export function moveNeoRouteFallbackUp(
+  fallbacks: readonly NeoRouteModel[],
+  index: number
+): NeoRouteModel[] {
+  if (index <= 0 || index >= fallbacks.length) return [...fallbacks];
+  const next = [...fallbacks];
+  [next[index - 1], next[index]] = [next[index], next[index - 1]];
+  return next;
 }
 
 const ROUTE_TIMEOUT_SECONDS = [5, 10, 15, 20, 30, 60];
@@ -100,13 +147,12 @@ export function NeoSettings() {
     }
   };
 
-  const save = (choice: string) => {
-    const at = choice.indexOf('|');
-    return saveNeo({
-      routeModel:
-        at > 0 ? { provider: choice.slice(0, at), model: choice.slice(at + 1) } : undefined,
-    });
-  };
+  const fallbacks = globalSettings.value?.neo?.routeFallbacks ?? [];
+  const save = (choice: string, thinkingLevel = routeModel?.thinkingLevel) =>
+    saveNeo({ routeModel: readNeoRouteModel(choice, thinkingLevel) });
+  const saveFallbacks = (next: NeoRouteModel[]) => saveNeo({ routeFallbacks: next });
+  const replaceFallback = (index: number, next: NeoRouteModel | undefined) =>
+    saveFallbacks(fallbacks.flatMap((item, at) => (at !== index ? [item] : next ? [next] : [])));
 
   return (
     <SettingsSection title="Neo">
@@ -121,7 +167,70 @@ export function NeoSettings() {
           options={neoRouteModelOptions(models, current)}
           disabled={saving}
         />
+        {routeModel && (
+          <div class="mt-2">
+            <SettingsSelect
+              value={routeModel.thinkingLevel ?? 'off'}
+              onChange={(level) => void save(current, level as ThinkingLevel)}
+              options={THINKING_OPTIONS}
+              disabled={saving}
+            />
+          </div>
+        )}
         {failure && <p class="mt-2 text-xs text-danger">{neoRouteFailureText(failure)}</p>}
+      </SettingsRow>
+      <SettingsRow
+        label="Fallback models"
+        description="Tried in order when the routing model is unavailable or refused. A model that answers is never retried with a fallback."
+        layout="stacked"
+      >
+        {fallbacks.map((item, index) => {
+          const choice = neoRouteModelChoice(item.provider, item.model);
+          return (
+            <div key={`${choice}-${index}`} class="mb-2 flex flex-wrap items-center gap-2">
+              <SettingsSelect
+                value={choice}
+                onChange={(next) =>
+                  void replaceFallback(index, readNeoRouteModel(next, item.thinkingLevel))
+                }
+                options={neoRouteModelOptions(models, choice).filter((option) => option.value)}
+                disabled={saving}
+              />
+              <SettingsSelect
+                value={item.thinkingLevel ?? 'off'}
+                onChange={(level) =>
+                  void replaceFallback(index, readNeoRouteModel(choice, level as ThinkingLevel))
+                }
+                options={THINKING_OPTIONS}
+                disabled={saving}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void saveFallbacks(moveNeoRouteFallbackUp(fallbacks, index))}
+                disabled={saving || index === 0}
+              >
+                Move up
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void replaceFallback(index, undefined)}
+                disabled={saving}
+              >
+                Remove
+              </Button>
+            </div>
+          );
+        })}
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => void saveFallbacks(addNeoRouteFallback(fallbacks, models, routeModel))}
+          disabled={saving || !models.length}
+        >
+          Add fallback
+        </Button>
       </SettingsRow>
       <SettingsRow
         label="Routing timeout"
