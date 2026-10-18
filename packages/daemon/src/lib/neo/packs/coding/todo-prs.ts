@@ -235,10 +235,13 @@ export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader
 ): NeoTodoPack {
-  const claimsOf = (todo: NeoTodo) => [
-    ...planCodingTodoClaims(todo, todo.report, []),
-    ...repo.prs(todo.id).map((pr) => ({ url: pr.url, claim: 'reported' as const })),
-  ];
+  const claimsOf = (todo: NeoTodo) => {
+    const recorded = new Set(repo.prs(todo.id).flatMap((pr) => codingPrKey(pr.url) ?? []));
+    return [
+      ...planCodingTodoClaims(todo, todo.report, []),
+      ...repo.claimsOn([...recorded]).filter((row) => row.todoId === todo.id),
+    ];
+  };
   return {
     schema: createCodingPackTables,
     openedPrs: (todo, urls) =>
