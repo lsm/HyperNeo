@@ -341,6 +341,14 @@ describe('Neo todo pull request events', () => {
       { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_other' },
     ]);
   });
+  test('a merge event leaves a removed todo removed', async () => {
+    const row = todo();
+    service.todos.updateTodo(row, { state: 'removed' }, 3);
+    prs = [{ ...open, state: 'MERGED' }];
+    await event('closed', { state: 'closed', merged: true });
+    expect(service.todos.getTodo(row.id)?.state).toBe('removed');
+    expect(jobs()).toEqual([]);
+  });
   test('a PR merged without its closing event stays quiet after the next read', async () => {
     const row = todo();
     prs = [{ ...open, state: 'MERGED' }];
