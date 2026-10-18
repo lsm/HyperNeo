@@ -61,6 +61,9 @@ function readBuildCommit(): string {
   }
 }
 
+const externalFor = (target: string) =>
+  target === 'bun-darwin-x64' ? ['--external', '*onnxruntime_binding.node'] : [];
+
 const buildCommit = readBuildCommit();
 const defineBuildCommit = /^[0-9a-f]{40}$/.test(buildCommit)
   ? ['--define', `process.env.HYPERNEO_BUILD_COMMIT="${buildCommit}"`]
@@ -76,6 +79,7 @@ for (const target of targets) {
     '--compile',
     `--target=${target}`,
     ...defineBuildCommit,
+    ...externalFor(target),
     `--outfile=${outputPath}`,
     'packages/cli/prod-entry.ts',
   ]);
@@ -93,6 +97,7 @@ for (const target of targets) {
       '--compile',
       `--target=${target}`,
       ...defineBuildCommit,
+      ...externalFor(target),
       `--outfile=${daemonOutputPath}`,
       'packages/cli/daemon-entry.ts',
     ]);

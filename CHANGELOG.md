@@ -4,6 +4,14 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.45.1] - 2026-10-18
+
+Patch release: v0.45.0 never reached npm because its Intel Mac (darwin-x64) builds failed.
+
+### Fixed
+
+- **Release**: onnxruntime-node 1.24 ships no darwin-x64 binding, so Intel Mac builds leave the binding out. Agent-memory embeddings are unavailable there and log why; the rest of the daemon runs.
+
 ## [0.45.0] - 2026-10-18
 
 275 commits since v0.44.1. Headline families: Neo moves from cards and ask items to asks, todos and questions; quote replies that go to the session that owns the thread; a localized Neo web UI; owner-verified Claude inbox delivery; and provider keys kept out of sessions and test daemons.
