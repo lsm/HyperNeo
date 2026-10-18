@@ -4564,7 +4564,7 @@ describe('QueryRunner', () => {
       expect(notices.length).toBe(1);
       expect(notices[0]?.markAsError).toBe(false);
       expect(notices[0]?.text).toContain('provider is temporarily unavailable');
-      expect(process.env.ANTHROPIC_API_KEY).toBe('sk-original-key');
+      expect(process.env.ANTHROPIC_API_KEY).toBe('sk-test-key');
     });
 
     it('provider-backoff arm skips re-enqueue when no user message was consumed', async () => {
@@ -4620,7 +4620,7 @@ describe('QueryRunner', () => {
         'idle',
       ]);
       expect(notices).toEqual([]);
-      expect(process.env.ANTHROPIC_API_KEY).toBe('sk-original-key');
+      expect(process.env.ANTHROPIC_API_KEY).toBe('sk-test-key');
     });
 
     it('api-validation route begins terminal idle before its marked display', async () => {
