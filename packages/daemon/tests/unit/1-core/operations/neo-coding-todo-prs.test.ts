@@ -88,7 +88,7 @@ describe('coding todo pack', () => {
     expect(reads).toEqual([
       ['https://github.com/lsm/neo-ios/pull/102', 'https://github.com/lsm/neo-ios/pull/103'],
     ]);
-    expect(pack.statusLine(row)).toBe('#102 已合并，#103 开着，等 CI');
+    expect(pack.statusLine(row)?.status).toBe('#102 merged; #103 open, waiting on CI');
     expect(pack.topics(row)).toEqual([
       'github/lsm/neo-ios/pull_request/102.*',
       'github/lsm/neo-ios/pull_request/103.*',
@@ -162,14 +162,14 @@ describe('coding todo pack', () => {
       );
     await pack.check(gpt);
     await pack.check(ids);
-    expect(pack.statusLine(gpt)).toBe('#7427 已合并');
-    expect(pack.statusLine(ids)).toBe('#7426 开着，等 review');
+    expect(pack.statusLine(gpt)?.status).toBe('#7427 merged');
+    expect(pack.statusLine(ids)?.status).toBe('#7426 open, waiting on review');
 
     const reported = { ...ids, report: `Done: ${opened[3].url}` };
     await pack.check(reported);
     await pack.check(gpt);
-    expect(pack.statusLine(reported)).toBe('#7430 开着，等 review');
-    expect(pack.statusLine(gpt)).toBe('#7427 已合并');
+    expect(pack.statusLine(reported)?.status).toBe('#7430 open, waiting on review');
+    expect(pack.statusLine(gpt)?.status).toBe('#7427 merged');
     db.close();
   });
 
