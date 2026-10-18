@@ -687,6 +687,45 @@ describe('AnthropicProvider', () => {
       expect(converted.find((m) => m.id === 'fable')?.family).toBe('fable');
     });
 
+    it('keeps every row the CLI lists with its own id and label', () => {
+      const sdkModels = [
+        {
+          value: 'default',
+          resolvedModel: 'claude-haiku-5-5',
+          displayName: 'Default (recommended)',
+          description: 'Haiku 5.5',
+        },
+        {
+          value: 'opus[1m]',
+          resolvedModel: 'claude-opus-5[1m]',
+          displayName: 'Opus (1M context)',
+          description: 'Opus 5 with 1M context · Best for everyday, complex tasks',
+        },
+        {
+          value: 'sonnet',
+          resolvedModel: 'claude-sonnet-5-5',
+          displayName: 'Sonnet 5.5',
+          description: 'Most efficient for simpler tasks',
+        },
+        {
+          value: 'claude-sonnet-5',
+          resolvedModel: 'claude-sonnet-5',
+          displayName: 'Sonnet 5',
+          description: 'Efficient for routine tasks',
+        },
+      ];
+
+      const converted = provider.convertSdkModels(sdkModels);
+
+      expect(converted.map((m) => [m.id, m.name, m.family])).toEqual([
+        ['default', 'Default (recommended)', 'haiku'],
+        ['opus[1m]', 'Opus (1M context)', 'opus'],
+        ['sonnet', 'Sonnet 5.5', 'sonnet'],
+        ['claude-sonnet-5', 'Sonnet 5', 'sonnet'],
+      ]);
+      expect(converted.map((m) => m.contextWindow)).toEqual([200000, 1_000_000, 200000, 200000]);
+    });
+
     it('claims the fable SDK alias as Anthropic', () => {
       expect(provider.ownsModel('fable')).toBe(true);
     });
