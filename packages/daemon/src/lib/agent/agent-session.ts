@@ -253,12 +253,7 @@ import {
   QueryOptionsBuilder,
   type QueryOptionsBuilderContext,
 } from './query-options-builder.ts';
-import {
-  type OriginalEnvVars,
-  QueryRunner,
-  type QueryRunnerContext,
-  type TrackedAgentProcess,
-} from './query-runner.ts';
+import { QueryRunner, type QueryRunnerContext, type TrackedAgentProcess } from './query-runner.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
@@ -467,7 +462,6 @@ export class AgentSession
   private outstandingToolUseIds = new Set<string>();
 
   private readonly deliveryErrorSubs: Array<() => void> = [];
-  originalEnvVars: OriginalEnvVars = {};
   processExitedPromise: Promise<void> | null = null;
   private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
   private agentChildRepo: AgentChildProcessRepository | null = null;

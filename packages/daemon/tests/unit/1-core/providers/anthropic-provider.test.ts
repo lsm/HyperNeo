@@ -134,7 +134,7 @@ describe('AnthropicProvider', () => {
   });
 
   describe('getModels with SDK failure', () => {
-    it('should apply stored API key env while loading SDK models', async () => {
+    it('passes the stored API key to the model discovery query only', async () => {
       const seenEnv: Array<string | undefined> = [];
       class MockMcpServer {
         readonly _registeredTools: Record<string, object> = {};
@@ -142,8 +142,8 @@ describe('AnthropicProvider', () => {
         disconnect(): void {}
       }
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: () => {
-          seenEnv.push(process.env.ANTHROPIC_API_KEY);
+        query: ({ options }: { options: { env: Record<string, string | undefined> } }) => {
+          seenEnv.push(options.env.ANTHROPIC_API_KEY);
           return {
             interrupt: mock(async () => {}),
             supportedModels: mock(async () => [
@@ -181,7 +181,7 @@ describe('AnthropicProvider', () => {
       expect(models.map((model) => model.id)).toEqual(['sonnet']);
     });
 
-    it('should apply stored OAuth env while loading SDK models', async () => {
+    it('passes the stored OAuth token to the model discovery query only', async () => {
       const seenEnv: Array<string | undefined> = [];
       class MockMcpServer {
         readonly _registeredTools: Record<string, object> = {};
@@ -189,8 +189,8 @@ describe('AnthropicProvider', () => {
         disconnect(): void {}
       }
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: () => {
-          seenEnv.push(process.env.CLAUDE_CODE_OAUTH_TOKEN);
+        query: ({ options }: { options: { env: Record<string, string | undefined> } }) => {
+          seenEnv.push(options.env.CLAUDE_CODE_OAUTH_TOKEN);
           return {
             interrupt: mock(async () => {}),
             supportedModels: mock(async () => [

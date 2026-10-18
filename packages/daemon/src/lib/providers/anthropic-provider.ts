@@ -106,7 +106,6 @@ export class AnthropicProvider implements Provider {
   private credentials: ProviderCredentials | null = null;
   private credentialsVersion = 0;
   private credentialSignature: string | undefined;
-  private readonly capturedAnthropicBaseUrl: string | undefined;
   private readonly credentialListeners = new Set<
     (credentials: ProviderCredentials) => void | Promise<void>
   >();
@@ -122,9 +121,7 @@ export class AnthropicProvider implements Provider {
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly modelCacheKey: string = 'anthropic-global',
     private readonly fetchImpl: typeof fetch = fetch
-  ) {
-    this.capturedAnthropicBaseUrl = env.ANTHROPIC_BASE_URL;
-  }
+  ) {}
 
   setCredentials(credentials: ProviderCredentials): void {
     const signature = JSON.stringify(credentials);
@@ -385,35 +382,33 @@ export class AnthropicProvider implements Provider {
 
   private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const env = this.buildSdkConfig().envVars;
-    const restoreEnv = this.applyEnvVarsForSdk(env);
+    const env: Record<string, string | undefined> = { ...this.env };
+    for (const [key, value] of Object.entries(this.buildSdkConfig().envVars)) {
+      env[key] = value === '' ? undefined : value;
+    }
+    const tmpQuery = query({
+      prompt: '',
+      options: {
+        model: 'default',
+        env,
+        cwd: process.cwd(),
+        maxTurns: 0,
+        pathToClaudeCodeExecutable: resolveSDKCliPath(),
+        executable: isRunningUnderBun() ? 'bun' : undefined,
+        settings: withSdkTranscriptRetention(),
+      },
+    });
 
     try {
-      const tmpQuery = query({
-        prompt: '',
-        options: {
-          model: 'default',
-          cwd: process.cwd(),
-          maxTurns: 0,
-          pathToClaudeCodeExecutable: resolveSDKCliPath(),
-          executable: isRunningUnderBun() ? 'bun' : undefined,
-          settings: withSdkTranscriptRetention(),
-        },
-      });
-
-      try {
-        const sdkModels = await Promise.race([
-          tmpQuery.supportedModels(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('SDK model load timeout')), timeout)
-          ),
-        ]);
-        return this.convertSdkModels(sdkModels);
-      } finally {
-        tmpQuery.interrupt().catch(() => {});
-      }
+      const sdkModels = await Promise.race([
+        tmpQuery.supportedModels(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('SDK model load timeout')), timeout)
+        ),
+      ]);
+      return this.convertSdkModels(sdkModels);
     } finally {
-      restoreEnv();
+      tmpQuery.interrupt().catch(() => {});
     }
   }
 
@@ -567,40 +562,6 @@ export class AnthropicProvider implements Provider {
       envVars,
       isAnthropicCompatible: true,
       apiVersion: 'v1',
-    };
-  }
-
-  private applyEnvVarsForSdk(envVars: Record<string, string>): () => void {
-    const originals = new Map<string, string | undefined>();
-
-    if (process.env.ANTHROPIC_BASE_URL !== undefined) {
-      if (process.env.ANTHROPIC_BASE_URL !== this.capturedAnthropicBaseUrl) {
-        originals.set('ANTHROPIC_BASE_URL', process.env.ANTHROPIC_BASE_URL);
-        delete process.env.ANTHROPIC_BASE_URL;
-      }
-    }
-    if (process.env.ANTHROPIC_AUTH_TOKEN?.startsWith('anthropic-copilot-proxy:')) {
-      originals.set('ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN);
-      delete process.env.ANTHROPIC_AUTH_TOKEN;
-    }
-
-    for (const [key, value] of Object.entries(envVars)) {
-      originals.set(key, process.env[key]);
-      if (value === '') {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-
-    return () => {
-      for (const [key, value] of originals) {
-        if (value === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = value;
-        }
-      }
     };
   }
 
