@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { codexTurnState } from '../../../../src/lib/drivers/codex-desktop-adapter.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import {
   type CodingPrClaim,
@@ -98,6 +99,29 @@ describe('coding todo pack', () => {
       []
     );
     expect(repo.urls(row.id)).toHaveLength(2);
+  });
+
+  test('a turn that names its PR only before its last message still claims it, done once merged', async () => {
+    const said = (text: string) =>
+      JSON.stringify({
+        type: 'response_item',
+        payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
+      });
+    const report = codexTurnState([
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started' } }),
+      said(`Opened ${pr(104, 'OPEN').url}; waiting on CI.`),
+      said('CI is green and the review approved it.'),
+      JSON.stringify({
+        type: 'event_msg',
+        payload: { type: 'task_complete', last_agent_message: 'Merged. All done.' },
+      }),
+    ]).reply;
+    let state: NeoWorkPr['state'] = 'OPEN';
+    const { pack, todo } = setup(async () => [pr(104, state)]);
+    const row = todo({ pack: 'coding', kind: 'pr_merged', params: {} }, report);
+    expect(await pack.check(row)).toEqual({ done: false, evidence: null });
+    state = 'MERGED';
+    expect(await pack.check(row)).toEqual({ done: true, evidence: '#104 merged' });
   });
 
   test('reads and records the PRs of a todo without a check, but gives no verdict', async () => {

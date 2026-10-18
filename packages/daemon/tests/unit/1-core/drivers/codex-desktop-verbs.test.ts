@@ -89,6 +89,21 @@ describe('codexInputEvidence', () => {
     });
   });
 
+  test('keeps the first and the newest replies of a long turn', () => {
+    const replies = Array.from({ length: 41 }, (_, index) =>
+      saidAt(`step ${index}`, `2026-10-04T11:01:${String(index).padStart(2, '0')}.000Z`)
+    );
+    expect(codexInputEvidence([heardAs('msg_1', 'fix'), ...replies], receipt, 't1')).toMatchObject({
+      state: 'observed',
+      exchangeCut: true,
+      exchange: [
+        { text: 'fix' },
+        { text: 'step 0' },
+        ...Array.from({ length: 38 }, (_, index) => ({ text: `step ${index + 3}` })),
+      ],
+    });
+  });
+
   test('is unavailable for another thread, an id outside the tail, or a malformed line', () => {
     expect(codexInputEvidence(rollout, receipt, 't2').state).toBe('unavailable');
     expect(codexInputEvidence(rollout, { ...receipt, inputId: 'msg_9' }, 't1').state).toBe(
@@ -101,15 +116,34 @@ describe('codexInputEvidence', () => {
 });
 
 describe('codexTurnState', () => {
-  test('reads a finished turn and prefers its final message', () => {
+  test('reads a finished turn as everything it said, in order, without repeating the final message', () => {
     expect(
       codexTurnState([
+        said('an earlier turn'),
+        line('event_msg', { type: 'task_complete', last_agent_message: 'an earlier turn' }),
         line('event_msg', { type: 'task_started' }),
-        said('working on it'),
+        said('Opened https://github.com/o/r/pull/569.'),
+        said('Merged #569.'),
         line('event_msg', { type: 'task_complete', last_agent_message: 'Merged #569.' }),
         '',
       ])
-    ).toEqual({ marker: 'task_complete', reply: 'Merged #569.' });
+    ).toEqual({
+      marker: 'task_complete',
+      reply: 'Opened https://github.com/o/r/pull/569.\n\nMerged #569.',
+    });
+  });
+
+  test('keeps the opening and the newest text when a turn says too much', () => {
+    const reply =
+      codexTurnState([
+        line('event_msg', { type: 'task_started' }),
+        said('Opened https://github.com/o/r/pull/1.'),
+        said('a'.repeat(12_000)),
+        said('Done.'),
+      ]).reply ?? '';
+    expect(reply).toHaveLength(12_000);
+    expect(reply.startsWith('Opened https://github.com/o/r/pull/1.\n\n(…)\n\naaa')).toBe(true);
+    expect(reply.endsWith('a\n\nDone.')).toBe(true);
   });
 
   test('reads a running turn with the latest thing it said', () => {
@@ -201,7 +235,7 @@ describe('codexRecentInputs and reply time', () => {
       ])
     ).toEqual({
       marker: 'task_complete',
-      reply: 'Blocked.',
+      reply: 'working\n\nBlocked.',
       replyAt: Date.parse('2026-10-08T17:53:57.904Z'),
     });
     expect(

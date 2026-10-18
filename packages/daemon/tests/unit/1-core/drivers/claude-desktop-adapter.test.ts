@@ -994,6 +994,41 @@ describe('claudeTranscriptState', () => {
     ]);
   });
 
+  test('replies with everything the latest turn said, across notices and subagents mid-turn', () => {
+    const user = (text: string) => JSON.stringify({ type: 'user', message: { content: text } });
+    const assistant = (stop: string, text?: string) =>
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          stop_reason: stop,
+          content: text ? [{ type: 'text', text }] : [{ type: 'tool_use', name: 'Bash' }],
+        },
+      });
+    const lines = [
+      user('earlier task'),
+      assistant('end_turn', 'Earlier answer.'),
+      user('Neo asks: ship the fix'),
+      assistant('tool_use', 'Opened https://github.com/o/r/pull/7.'),
+      assistant('tool_use'),
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: true,
+        message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Subagent notes.' }] },
+      }),
+      user('<task-notification>CI finished</task-notification>'),
+      assistant('end_turn', 'Done.'),
+    ];
+    expect(claudeTranscriptState(lines).reply).toBe(
+      'Opened https://github.com/o/r/pull/7.\n\nDone.'
+    );
+    expect(claudeTranscriptState([...lines, user('next task')]).reply).toBe(
+      'Opened https://github.com/o/r/pull/7.\n\nDone.'
+    );
+    expect(
+      claudeTranscriptState([...lines, user('next task'), assistant('tool_use', 'On it.')]).reply
+    ).toBe('On it.');
+  });
+
   test('lists the messages after since, typed, relayed and said', () => {
     const entry = (timestamp: string, fields: Record<string, unknown>) =>
       JSON.stringify({ timestamp, ...fields });

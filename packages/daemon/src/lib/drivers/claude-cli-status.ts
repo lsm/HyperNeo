@@ -75,7 +75,7 @@ function describeCliWork(
       place: { machine: deps.machine, name: 'Claude Code', ...(folder ? { folder } : {}) },
       status: live.status,
       lastActivityAt: transcript?.lastAt ?? 0,
-      ...(transcript?.reply ? { lastReply: transcript.reply.slice(0, 4_000) } : {}),
+      ...(transcript?.reply ? { lastReply: transcript.reply } : {}),
       ...(transcript?.replyAt !== undefined ? { lastReplyAt: transcript.replyAt } : {}),
       ...(transcript
         ? { recentInputs: transcript.inputs, ...withExchange(transcript.exchange) }

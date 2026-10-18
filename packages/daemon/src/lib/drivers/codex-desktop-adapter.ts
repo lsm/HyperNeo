@@ -38,6 +38,9 @@ import {
   WORK_AGENT_INPUT,
   exchangeEntry,
   recentWorkInputs,
+  TURN_REPLIES,
+  turnReplies,
+  turnReply,
   type WorkExchange,
   withExchange,
   workEntryTime,
@@ -55,7 +58,6 @@ const CLOSED_THREADS = 500;
 const RECENT_MS = 2 * 60_000;
 const BUSY_TIMEOUT_MS = 2_000;
 const ROLLOUT_TAIL_BYTES = 4 * 1024 * 1024;
-const REPLY_LIMIT = 4_000;
 const QUEUE_TIMEOUT_MS = 30_000;
 const START_RECEIPT_TRIES = 10;
 const START_RECEIPT_WAIT_MS = 200;
@@ -389,27 +391,29 @@ function completedTurnOutcome(
 }
 
 export function codexTurnState(lines: readonly string[]): CodexTurnState {
-  let reply: string | null = null;
+  let end: Pick<CodexTurnState, 'marker' | 'outcome'> | null = null;
+  const said: string[] = [];
   let replyAt: number | undefined;
   for (let index = lines.length - 1; index >= 0; index--) {
     const entry = parseLine(lines[index]);
     const payload = entry?.payload ?? {};
-    if (reply === null && entry?.type === 'response_item') {
-      reply = messageText(payload, 'assistant');
-      replyAt = workEntryTime(entry.timestamp);
+    const marker = entry?.type === 'event_msg' && TURN_MARKERS.has(String(payload.type));
+    if (marker && end) break;
+    if (marker)
+      end = { marker: String(payload.type), ...completedTurnOutcome(payload, lines, index) };
+    const text =
+      entry?.type === 'response_item'
+        ? messageText(payload, 'assistant')
+        : marker && typeof payload.last_agent_message === 'string'
+          ? payload.last_agent_message
+          : null;
+    if (text && said[0] !== text) {
+      said.unshift(text);
+      replyAt ??= workEntryTime(entry?.timestamp);
     }
-    if (entry?.type === 'event_msg' && TURN_MARKERS.has(String(payload.type))) {
-      const marker = String(payload.type);
-      const outcome = completedTurnOutcome(payload, lines, index);
-      return payload.type === 'task_complete' && typeof payload.last_agent_message === 'string'
-        ? withReplyAt(
-            { marker, ...outcome, reply: payload.last_agent_message },
-            workEntryTime(entry.timestamp)
-          )
-        : withReplyAt({ marker, ...outcome, reply }, replyAt);
-    }
+    if (payload.type === 'task_started' && marker) break;
   }
-  return withReplyAt({ marker: null, reply }, replyAt);
+  return withReplyAt({ marker: null, ...end, reply: turnReply(said) }, replyAt);
 }
 
 export function codexRecentInputs(lines: readonly string[], since?: number): WorkInput[] {
@@ -550,7 +554,7 @@ export function describeCodexThread(
       status: turnStatus(thread, state, deps.now()),
       lastActivityAt: thread.updatedAt,
       link: `codex://threads/${thread.id}`,
-      ...(state.reply ? { lastReply: state.reply.slice(0, REPLY_LIMIT) } : {}),
+      ...(state.reply ? { lastReply: state.reply } : {}),
       ...(state.reply && state.replyAt !== undefined ? { lastReplyAt: state.replyAt } : {}),
       ...(state.inputs ? { recentInputs: state.inputs } : {}),
       ...withExchange(state.exchange),
@@ -668,8 +672,8 @@ export function codexInputEvidence(
   return {
     receipt,
     state: 'observed',
-    exchange: [first, ...replies.slice(0, 39)],
-    exchangeCut: replies.length > 39,
+    exchange: [first, ...turnReplies(replies)],
+    exchangeCut: replies.length > TURN_REPLIES,
   };
 }
 
