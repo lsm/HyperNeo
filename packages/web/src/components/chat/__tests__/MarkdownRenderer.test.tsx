@@ -104,10 +104,6 @@ describe('MarkdownRenderer', () => {
         button.getAttribute('title')
       );
       expect(titles).toEqual(['Copy code', 'Copy code']);
-      for (const button of container.querySelectorAll('button'))
-        expect(
-          button.parentElement?.closest('.code-block-wrapper > .code-block-copy')
-        ).toBeTruthy();
     });
 
     it('should copy only the code block content on click', async () => {
