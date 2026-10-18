@@ -62,6 +62,7 @@ export function NeoComposer({
   onTranscript: (text: string) => void;
   onSend: ReturnType<typeof createNeoIntakeClient>['send'];
 }) {
+  const idSuffix = forSession ? '-session' : '';
   const [sending, setSending] = useState(false);
   const coarsePointer = useCoarsePointer();
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
@@ -230,7 +231,7 @@ export function NeoComposer({
           <NeoQuoteBar
             author={quote.author}
             excerpt={neoQuoteExcerpt(quote.text)}
-            labelId="neo-quote-label"
+            labelId={`neo-quote-label${idSuffix}`}
           >
             <button
               type="button"
@@ -282,9 +283,9 @@ export function NeoComposer({
       ) : (
         <textarea
           ref={thought}
-          id="neo-thought"
+          id={`neo-thought${idSuffix}`}
           aria-label={forSession ? t('session.message') : t('composer.message')}
-          aria-describedby={quote ? 'neo-quote-label' : undefined}
+          aria-describedby={quote ? `neo-quote-label${idSuffix}` : undefined}
           value={draft}
           onInput={(event) => onDraft(event.currentTarget.value)}
           onPaste={(event) => {

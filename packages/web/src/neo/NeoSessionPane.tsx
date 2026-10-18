@@ -258,7 +258,7 @@ export function NeoSessionPane({
               await sendToSession(sessionId, text);
               return { kind: 'accepted' };
             } catch (cause) {
-              const current = inputDraft.content;
+              const current = inputDraft.content.trim();
               inputDraft.setContent(
                 text.startsWith(current) ? text : [current, text].filter(Boolean).join('\n')
               );

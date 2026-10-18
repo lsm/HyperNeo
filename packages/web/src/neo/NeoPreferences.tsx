@@ -144,7 +144,7 @@ export function NeoPreferences({
         type="button"
         aria-label="Model and thinking"
         aria-expanded={open}
-        aria-controls="neo-preferences"
+        aria-controls={forSession ? 'neo-preferences-session' : 'neo-preferences'}
         onClick={() => setOpen(!open)}
         title={`${name} · Thinking: ${thinking}`}
         class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-fill-soft px-2.5 py-2 text-xs text-fg-muted transition-colors hover:border-accent/30 hover:text-fg sm:gap-2 sm:px-3"
@@ -171,6 +171,7 @@ export function NeoPreferences({
       </button>
       {open && (
         <NeoModelMenu
+          id={forSession ? 'neo-preferences-session' : 'neo-preferences'}
           models={models}
           current={current}
           level={options.some((option) => option.value === level) ? level : 'off'}
