@@ -186,6 +186,8 @@ jobs:
           - runner: macos-15-intel
             target: bun-darwin-x64
             binary: hyperneo-darwin-x64
+            # onnxruntime-node ships no darwin-x64 binding; see scripts/build-binary.ts.
+            external: --external '*onnxruntime_binding.node'
             entry: packages/cli/prod-entry.ts
             smoke: true
             daemon: false
@@ -216,6 +218,8 @@ jobs:
           - runner: macos-15-intel
             target: bun-darwin-x64
             binary: hyperneod-darwin-x64
+            # onnxruntime-node ships no darwin-x64 binding; see scripts/build-binary.ts.
+            external: --external '*onnxruntime_binding.node'
             entry: packages/cli/daemon-entry.ts
             smoke: true
             daemon: true
@@ -257,7 +261,7 @@ jobs:
         run: bun run scripts/generate-embedded-assets.ts
 
       - name: Compile binary
-        run: bun build --compile --target=${{ matrix.target }} --define 'process.env.HYPERNEO_BUILD_COMMIT="${{ github.sha }}"' --outfile=dist/bin/${{ matrix.binary }} ${{ matrix.entry }}
+        run: bun build --compile --target=${{ matrix.target }} --define 'process.env.HYPERNEO_BUILD_COMMIT="${{ github.sha }}"' ${{ matrix.external }} --outfile=dist/bin/${{ matrix.binary }} ${{ matrix.entry }}
 
       - name: Smoke test
         if: matrix.smoke
