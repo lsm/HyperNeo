@@ -2736,7 +2736,10 @@ export class NeoService {
     )
     .pipe(
       (event: ExternalEvent) =>
-        this.todoRunner.checkNow(this.packs().flatMap((pack) => pack.todos?.event(event) ?? [])),
+        this.todoRunner.checkNow(
+          this.packs().flatMap((pack) => pack.todos?.event(event) ?? []),
+          (message, error) => this.log.warn(message, error)
+        ),
       'event',
       'checked'
     )

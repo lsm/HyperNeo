@@ -18,15 +18,25 @@ export function neoCardPrTopics(prs: readonly NeoWorkPr[]): string[] {
   });
 }
 
-function isNeoCardPrEventCurrent(pr: NeoWorkPr | null, event: ExternalEvent): boolean {
+function isNeoCardPrEventCurrent(
+  read: { pr: NeoWorkPr; readAt: number } | null,
+  event: ExternalEvent
+): boolean {
+  if (!read) return true;
   const head = event.payload.headSha ?? event.payload.commitId;
-  return !pr || (pr.state === 'OPEN' && (typeof head !== 'string' || !pr.head || head === pr.head));
+  return (
+    read.pr.state === 'OPEN' &&
+    (typeof head !== 'string' ||
+      !read.pr.head ||
+      read.readAt < event.occurredAt ||
+      head === read.pr.head)
+  );
 }
 
 export function routeNeoCardPrEvent(
   event: ExternalEvent,
   subscriptions: readonly NeoCardEventSubscription[],
-  prOf: (url: string) => NeoWorkPr | null
+  prOf: (url: string) => { pr: NeoWorkPr; readAt: number } | null
 ): NeoPackEventRoute | null {
   const matched = subscriptions.filter(
     (row) => row.topic.startsWith('github/') && topicMatchesPattern(row.topic, event.topic)

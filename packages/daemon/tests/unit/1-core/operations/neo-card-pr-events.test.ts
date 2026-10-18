@@ -341,6 +341,21 @@ describe('Neo todo pull request events', () => {
       { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_other' },
     ]);
   });
+  test.each([
+    ['fails', async () => null],
+    [
+      'throws',
+      async () => {
+        throw new Error('gh down');
+      },
+    ],
+  ])('an event on a newer head still arrives when the PR re-read %s', async (_, read) => {
+    prs = [{ ...open, head: 'old' }];
+    todo();
+    service.readPrs = read;
+    await event('check_failed', { checkName: 'Lint', headSha: 'new' });
+    expect(sent).toHaveLength(1);
+  });
   test('a merge event leaves a removed todo removed', async () => {
     const row = todo();
     service.todos.updateTodo(row, { state: 'removed' }, 3);

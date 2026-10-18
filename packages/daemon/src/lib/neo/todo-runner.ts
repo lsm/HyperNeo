@@ -460,10 +460,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     recheck(todoIds: readonly string[]) {
       for (const id of todoIds) checked.delete(id);
     },
-    async checkNow(todoIds: readonly string[]): Promise<void> {
+    async checkNow(
+      todoIds: readonly string[],
+      warn: (message: string, error: unknown) => void
+    ): Promise<void> {
       for (const todo of store.listCheckable().filter((item) => todoIds.includes(item.id))) {
         checked.delete(todo.id);
-        await check(todo, Date.now());
+        await check(todo, Date.now()).catch((error) => warn('Todo check pending', error));
       }
     },
     async refresh(warn: (message: string, error: unknown) => void): Promise<void> {
