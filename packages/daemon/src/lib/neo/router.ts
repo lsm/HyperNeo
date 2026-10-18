@@ -124,6 +124,7 @@ export type NeoRouteSignal =
   | 'facts'
   | 'embedding'
   | 'default'
+  | `default:${string}`
   | 'classifier'
   | `classifier:${NeoRouteBasis}`;
 
@@ -526,7 +527,7 @@ export async function defaultNeoRoute(
     choice: {
       projectId: holder.projectId,
       sessionId: holder.sessionId,
-      signal: 'default',
+      signal: routed.fallback ? `default:${routed.fallback}` : 'default',
       confidence: 1,
     },
     ...(routed.cause ? { cause: routed.cause } : {}),

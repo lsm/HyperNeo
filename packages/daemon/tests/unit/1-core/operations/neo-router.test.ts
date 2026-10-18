@@ -11,6 +11,7 @@ import {
   createNeoRouter,
   defaultNeoRoute,
   type NeoHolder,
+  type NeoRouteSignal,
   type NeoRouteVerdict,
   type NeoRouterDeps,
   neoHolderProfile,
@@ -298,22 +299,25 @@ describe('chooseNeoRoute', () => {
 describe('defaultNeoRoute', () => {
   const inbox = { ...drivers, projectId: 'inbox', sessionId: 'neo:holder:inbox' };
 
-  test('hands an unplaced message to the default session, logging a cause only for a route model failure', async () => {
-    const choice = {
+  test('hands an unplaced message to the default session with the reason in its signal, logging a cause only for a route model failure', async () => {
+    const choice = (signal: NeoRouteSignal) => ({
       projectId: 'inbox',
       sessionId: inbox.sessionId,
-      signal: 'default' as const,
+      signal,
       confidence: 1,
-    };
+    });
     expect(
       await defaultNeoRoute({ choice: null, fallback: 'facts:cross_project' }, async () => inbox)
-    ).toEqual({ choice });
+    ).toEqual({ choice: choice('default:facts:cross_project') });
     expect(
       await defaultNeoRoute(
         { choice: null, fallback: 'classifier-timeout', cause: 'no answer within 15000 ms' },
         async () => inbox
       )
-    ).toEqual({ choice, cause: 'no answer within 15000 ms' });
+    ).toEqual({ choice: choice('default:classifier-timeout'), cause: 'no answer within 15000 ms' });
+    expect(await defaultNeoRoute({ choice: null }, async () => inbox)).toEqual({
+      choice: choice('default'),
+    });
   });
 
   test('keeps a chosen session and reports a default session that cannot open', async () => {
