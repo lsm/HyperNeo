@@ -97,7 +97,9 @@ export function projectNeoAskEntries(
         const line = neoStartQuestionLine(
           question.startTodos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
         );
-        return { ...question, text: line.status, textCodes: line.statusCodes };
+        return line.status === question.text
+          ? { ...question, textCodes: line.statusCodes }
+          : question;
       }),
     };
   });
