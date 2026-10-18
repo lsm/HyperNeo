@@ -374,11 +374,11 @@ export function NeoAskTodos({
           )}
           {retired.length > 0 && (
             <div>
-              <p class="text-xs font-medium text-fg-faint">不再需要</p>
-              <ul class="mt-1.5 space-y-1.5" aria-label="不再需要">
+              <p class="text-xs font-medium text-fg-faint">{t('ask.retired')}</p>
+              <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.retired')}>
                 {retired.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
-                    {question.text} — no longer needed
+                    {t('question.retired', { question: question.text })}
                     {question.retiredReason ? `: ${question.retiredReason}` : ''}
                   </li>
                 ))}
