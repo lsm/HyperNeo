@@ -668,6 +668,17 @@ describe('claude-desktop adapter against the app session records', () => {
       mkdirSync(folder, { recursive: true });
       transcript = join(folder, 'cli-b2.jsonl');
       writeFileSync(
+        join(dir, 'acct-b', 'scope-2', 'local_b2.json'),
+        JSON.stringify(
+          record('b2', {
+            cwd: '/focus/ops',
+            title: 'woodpecker',
+            lastActivityAt: 5,
+            permissionMode: 'bypassPermissions',
+          })
+        )
+      );
+      writeFileSync(
         transcript,
         `${JSON.stringify({ type: 'user', uuid: 'older', message: { content: 'run the audit' } })}\n`
       );
@@ -689,8 +700,34 @@ describe('claude-desktop adapter against the app session records', () => {
         },
       });
       expect(spawned).toEqual([
-        { args: ['claude', '-p', '--resume', 'cli-b2', '--', 'run the audit'], cwd: '/focus/ops' },
+        {
+          args: [
+            'claude',
+            '-p',
+            '--resume',
+            'cli-b2',
+            '--permission-mode',
+            'bypassPermissions',
+            '--',
+            'run the audit',
+          ],
+          cwd: '/focus/ops',
+        },
       ]);
+    });
+
+    test('sends a session that cannot approve tools headless to Desktop instead', async () => {
+      writeFileSync(
+        join(dir, 'acct-b', 'scope-2', 'local_b2.json'),
+        JSON.stringify(record('b2', { cwd: '/focus/ops', title: 'woodpecker', lastActivityAt: 5 }))
+      );
+      expect(await adapter([]).send?.(ref, 'run the audit', user)).toEqual({
+        ok: false,
+        reason: 'unreachable',
+        detail:
+          'woodpecker is not running, and without bypassPermissions a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/local_b2',
+      });
+      expect(spawned).toEqual([]);
     });
 
     test('does not count an older copy of the message, and reports a failed resume', async () => {

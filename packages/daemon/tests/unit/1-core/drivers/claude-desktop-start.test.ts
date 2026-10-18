@@ -39,6 +39,7 @@ describe('claude-desktop start', () => {
   let cwds: (string | undefined)[];
   let clock: number;
   let effects: string[];
+  let killed: string[];
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'claude-start-'));
@@ -46,6 +47,7 @@ describe('claude-desktop start', () => {
     cwds = [];
     clock = 1_000;
     effects = [];
+    killed = [];
   });
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -92,7 +94,9 @@ describe('claude-desktop start', () => {
           stderr: new Response(code ? 'no auth' : '').body,
           exited: Promise.resolve(code),
           exitCode: code,
-          kill: () => {},
+          kill: (signal?: string) => {
+            killed.push(String(signal));
+          },
         };
       },
       folderExists: () => {
@@ -164,6 +168,15 @@ describe('claude-desktop start', () => {
     expect(effects).not.toContain('liveSessions');
   });
 
+  test('status finds the started session before Desktop registers it', async () => {
+    const driver = adapter();
+    const started = await driver.start?.(request, user);
+    expect(started).toMatchObject({ ok: true });
+    expect(
+      await driver.status({ adapter: 'claude-desktop', id: 'local_u1' }, undefined)
+    ).toMatchObject({ ok: true, value: { ref: { id: 'local_u1' }, title: 'Bigger font' } });
+  });
+
   test('uses the prepared directory for CLI creation and desktop without --worktree', async () => {
     const driver = adapter({
       prepareExecution: async () => ({
@@ -227,6 +240,7 @@ describe('claude-desktop start', () => {
       reason: 'not_delivered',
       detail: 'the message did not appear in the session transcript',
     });
-    expect(spawned[0]).toContain('--session-id');
+    expect(spawned).toHaveLength(1);
+    expect(killed).toEqual(['SIGKILL']);
   });
 });
