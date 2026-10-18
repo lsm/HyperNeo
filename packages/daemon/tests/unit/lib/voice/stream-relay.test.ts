@@ -150,6 +150,27 @@ describe('VoiceStream against a stub ASR server', () => {
     expect([...Buffer.from(batches[0], 'base64').subarray(44)]).toEqual([1, 0, 2, 0]);
   });
 
+  test('a denied batch fallback keeps the audio so a retried stop transcribes all of it', async () => {
+    const outcomes: VoiceTranscribeOutcome[] = [
+      { action: 'denied', message: 'Voice transcription rate limit exceeded' },
+      { action: 'transcribed', text: 'batch text' },
+    ];
+    const started = await VoiceStream.start('s1', {
+      ...deps({ mode: 'batch' }),
+      transcribeWav: async (wav: string) => {
+        batches.push(wav);
+        return outcomes.shift()!;
+      },
+    });
+    if ('error' in started) throw new Error(started.error);
+    started.stream.write(new Uint8Array([1, 0, 2, 0]));
+    expect(await started.stream.stop()).toEqual({
+      error: 'Voice transcription rate limit exceeded',
+    });
+    expect(await started.stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+    expect(batches[1]).toBe(batches[0]);
+  });
+
   test('batch mode never opens the stream', async () => {
     const { stream, via } = await start({ mode: 'batch' });
     expect(via).toBe('batch');

@@ -84,9 +84,9 @@ export function registerVoiceHandlers(
 
   messageHub.onRequest<{ streamId: string }>('voice.stream.stop', async (data, context) => {
     const stream = ownedStream(data?.streamId, context);
-    voiceStreams.delete(data.streamId);
     const result = await stream.stop();
     if ('error' in result) throw new Error(result.error);
+    voiceStreams.delete(data.streamId);
     return result;
   });
 
