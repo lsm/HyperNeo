@@ -326,21 +326,6 @@
   background: transparent;
 }
 
-.neo-markdown .code-block-copy {
-  opacity: 0;
-  transition: opacity 120ms ease-out;
-}
-
-.neo-markdown .code-block-wrapper:is(:hover, :focus-within) .code-block-copy {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .neo-markdown .code-block-copy {
-    opacity: 1;
-  }
-}
-
 .neo-markdown strong {
   color: var(--neo-markdown-emphasis);
 }
