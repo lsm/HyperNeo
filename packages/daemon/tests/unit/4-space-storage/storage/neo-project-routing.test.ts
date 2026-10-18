@@ -220,15 +220,25 @@ describe('chooseNeoRoute', () => {
       fallback: 'facts:cross_project',
     });
   });
-  test('unknown references go to root without creating a guessed project', async () => {
-    expect(await chooseNeoRoute('unknown/repo#2', deps())).toEqual({
-      choice: null,
-      fallback: 'facts:unresolved',
+  test('an unknown reference is no evidence: known facts decide, otherwise the classifier does', async () => {
+    const asked: string[] = [];
+    const classified = (): NeoRouterDeps => ({
+      ...deps(),
+      embed: async () => null,
+      classify: async (text) => {
+        asked.push(text);
+        return null;
+      },
     });
-    work('card-one', 'alpha');
-    expect(await chooseNeoRoute('card-one and #99999', deps())).toEqual({
+    expect(await chooseNeoRoute('unknown/repo#2 and #99999', classified())).toMatchObject({
       choice: null,
-      fallback: 'facts:unresolved',
+      fallback: 'classifier-unanswered',
+    });
+    expect(asked).toEqual(['unknown/repo#2 and #99999', 'unknown/repo#2 and #99999']);
+    work('card-one', 'alpha');
+    expect((await chooseNeoRoute('card-one and #99999', deps())).choice).toMatchObject({
+      projectId: 'alpha',
+      signal: 'facts',
     });
   });
 });
