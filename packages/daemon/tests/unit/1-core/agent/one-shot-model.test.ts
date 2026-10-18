@@ -47,6 +47,16 @@ describe('buildOneShotQueryOptions', () => {
       thinking: { type: 'disabled' },
     });
     expect(options.abortController).toBeUndefined();
+    expect(options.systemPrompt).toBeUndefined();
+  });
+
+  test('appends a stable system prompt to the static, cacheable Claude Code preset', () => {
+    expect(buildOneShotQueryOptions(request({ system: 'rules' }), runtime).systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+      append: 'rules',
+      excludeDynamicSections: true,
+    });
   });
 
   test('resolves Kimi thinking from the thinking model id', () => {

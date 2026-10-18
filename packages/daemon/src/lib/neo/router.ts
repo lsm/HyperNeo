@@ -139,7 +139,11 @@ export interface NeoRouterDeps {
   projectTurns(): NeoRoute[];
   recentAsks(projectId: string, limit: number): string[];
   embed(text: string): Promise<Float32Array | null>;
-  classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteVerdict>;
+  classify?(
+    text: string,
+    options: readonly NeoHolder[],
+    context: NeoRouteContext
+  ): Promise<NeoRouteVerdict>;
   inbox?(): Promise<NeoHolder | null>;
   inboxRunnable?(): Promise<boolean>;
 }
@@ -257,47 +261,46 @@ function requireRouteQuestion(
     : { reason: { choice: null } };
 }
 
+export interface NeoRouteContext {
+  projects: string;
+  recent: string;
+}
+
 export function renderNeoRouteContext(
   holders: readonly NeoHolder[],
   recent: readonly NeoRoute[],
   latest: readonly NeoRoute[],
   withInbox: boolean
-): string {
+): NeoRouteContext {
   const titles = new Map(holders.map((holder) => [holder.projectId, holder.title]));
-  const notes = (project: string) => {
-    const route = latest.find((item) => projectOf(item) === project);
-    if (!route) return [];
-    return [
-      `    last: ${neoTurnLine(route, titles)}`,
-      ...(route.awaiting
-        ? [`    WAITING ON YOU: "${neoExcerpt(route.awaiting, TURN_TEXT_CHARS)}"`]
-        : []),
-    ];
-  };
-  const waiting = (project: string) => {
+  const ids = [...holders.map((holder) => holder.projectId), ...(withInbox ? [NEO_INBOX_ID] : [])];
+  const waiting = ids.flatMap((project) => {
     const awaiting = latest.find((item) => projectOf(item) === project)?.awaiting;
-    return awaiting ? [`    WAITING ON YOU: "${neoExcerpt(awaiting, TURN_TEXT_CHARS)}"`] : [];
-  };
-  const projects = [
-    ...holders.flatMap((holder) => [
-      `- ${holder.projectId}: ${holder.title}${holder.repository ? ` [${holder.repository}]` : ''}${holder.summary ? ` (${neoExcerpt(holder.summary, PROJECT_SUMMARY_CHARS)})` : ''}`,
-      ...waiting(holder.projectId),
-    ]),
-    ...(withInbox ? [`- ${NEO_INBOX_ID}: ${NEO_INBOX_SUMMARY}`, ...notes(NEO_INBOX_ID)] : []),
-  ];
+    return awaiting ? [`- ${project}: "${neoExcerpt(awaiting, TURN_TEXT_CHARS)}"`] : [];
+  });
+  const inboxLast = withInbox ? latest.find((item) => projectOf(item) === NEO_INBOX_ID) : null;
   const turns = fitLines(
     recent
       .filter((route) => route.projectId !== null)
       .map((route) => `- ${neoTurnLine(route, titles)}`),
     TURNS_CHARS
   );
-  return [
-    'Projects:',
-    ...projects,
-    '',
-    'Recent turns (newest first):',
-    ...(turns.length > 0 ? turns : ['(none)']),
-  ].join('\n');
+  return {
+    projects: [
+      'Projects:',
+      ...holders.map(
+        (holder) =>
+          `- ${holder.projectId}: ${holder.title}${holder.repository ? ` [${holder.repository}]` : ''}${holder.summary ? ` (${neoExcerpt(holder.summary, PROJECT_SUMMARY_CHARS)})` : ''}`
+      ),
+      ...(withInbox ? [`- ${NEO_INBOX_ID}: ${NEO_INBOX_SUMMARY}`] : []),
+    ].join('\n'),
+    recent: [
+      ...(waiting.length ? ['WAITING ON YOU:', ...waiting, ''] : []),
+      ...(inboxLast ? [`Inbox's last turn: ${neoTurnLine(inboxLast, titles)}`, ''] : []),
+      'Recent turns (newest first):',
+      ...(turns.length > 0 ? turns : ['(none)']),
+    ].join('\n'),
+  };
 }
 
 function unanswered(verdict: NeoRouteVerdict): boolean {
@@ -307,7 +310,7 @@ function unanswered(verdict: NeoRouteVerdict): boolean {
 export async function askNeoRouteModel(
   text: string,
   candidates: readonly NeoHolder[],
-  context: string,
+  context: NeoRouteContext,
   withInbox: boolean,
   deps: Pick<NeoRouterDeps, 'classify'>
 ): Promise<NeoRouteVerdict> {

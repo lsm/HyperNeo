@@ -44,28 +44,30 @@ const inboxChoice: NeoHolder = {
 };
 
 describe('buildNeoRoutePrompt', () => {
-  test('puts the conversation context before the new message and lists the allowed ids', () => {
-    const prompt = buildNeoRoutePrompt(
+  const context = { projects: 'Projects:\n- drivers: Neo driver epic', recent: 'Recent turns' };
+
+  test('keeps the rules and projects in a stable system prompt and the per-call text after it', () => {
+    const { system, prompt } = buildNeoRoutePrompt(
       'how about 5060 now?',
       [drivers, youtube],
-      'Projects:\n- drivers: Neo driver epic'
+      context
     );
-    expect(prompt.indexOf('Projects:')).toBeLessThan(
-      prompt.indexOf('New message:\nhow about 5060 now?')
-    );
-    expect(prompt).toContain('Reply with one JSON object and nothing else');
-    expect(prompt).toContain('choice is one of: drivers, youtube');
-    expect(prompt).not.toContain('main');
-    expect(prompt).toContain('answers_waiting: it answers a WAITING ON YOU question');
-    expect(prompt.indexOf('- answers_waiting:')).toBeLessThan(prompt.indexOf('- continues_turn:'));
-    expect(prompt).toContain(
+    expect(system).toContain('Reply with one JSON object and nothing else');
+    expect(system.indexOf('- answers_waiting:')).toBeLessThan(system.indexOf('- continues_turn:'));
+    expect(system).toContain(
       'cross_project: it asks about work across projects ("how is everything going?"); choose inbox (when listed).'
     );
-    expect(prompt).toContain('basis is the name of the rule below, exactly as written');
+    expect(system).toContain('basis is the name of the rule below, exactly as written');
+    expect(system.endsWith('Projects:\n- drivers: Neo driver epic')).toBe(true);
+    expect(system).not.toContain('5060');
+    expect(prompt).toBe(
+      'Allowed choices: drivers, youtube\n\nRecent turns\n\nNew message:\nhow about 5060 now?'
+    );
+    expect(buildNeoRoutePrompt('another message', [drivers], context).system).toBe(system);
   });
 
   test('keeps the end of a long message where the question usually is', () => {
-    const prompt = buildNeoRoutePrompt(`${'x'.repeat(5_000)} so which PR?`, [drivers], '');
+    const { prompt } = buildNeoRoutePrompt(`${'x'.repeat(5_000)} so which PR?`, [drivers], context);
     expect(prompt).toContain('so which PR?');
   });
 });
@@ -77,7 +79,7 @@ describe('neoRouteHttpCall', () => {
         'https://api.deepseek.com/anthropic/',
         'deepseek-v4-flash',
         { ANTHROPIC_AUTH_TOKEN: 'tok', ANTHROPIC_CUSTOM_HEADERS: 'X-Team: neo\nbad line' },
-        'route this',
+        { system: 'rules', prompt: 'route this' },
         { type: 'disabled' }
       )
     ).toEqual({
@@ -92,6 +94,7 @@ describe('neoRouteHttpCall', () => {
         model: 'deepseek-v4-flash',
         max_tokens: 512,
         stream: true,
+        system: 'rules',
         messages: [{ role: 'user', content: 'route this' }],
         thinking: { type: 'disabled' },
       },
@@ -99,11 +102,12 @@ describe('neoRouteHttpCall', () => {
   });
 
   test('keeps a required thinking budget, uses an API key, and leaves Anthropic to the SDK', () => {
+    const route = { system: 's', prompt: 'p' };
     const call = neoRouteHttpCall(
       'http://127.0.0.1:4000',
       'kimi-k2.7',
       { ANTHROPIC_API_KEY: 'key' },
-      'p',
+      { system: 's', prompt: 'p' },
       { type: 'enabled', budgetTokens: 16_000 }
     );
     expect(call?.headers['x-api-key']).toBe('key');
@@ -112,9 +116,9 @@ describe('neoRouteHttpCall', () => {
       thinking: { type: 'enabled', budget_tokens: 16_000 },
     });
     expect(
-      neoRouteHttpCall('https://api.anthropic.com', 'claude-haiku-4-5', {}, 'p', undefined)
+      neoRouteHttpCall('https://api.anthropic.com', 'claude-haiku-4-5', {}, route, undefined)
     ).toBeNull();
-    expect(neoRouteHttpCall('not a url', 'm', {}, 'p', undefined)).toBeNull();
+    expect(neoRouteHttpCall('not a url', 'm', {}, route, undefined)).toBeNull();
   });
 });
 
@@ -331,7 +335,7 @@ describe('chooseNeoRoute with a classifier', () => {
       'yes',
       deps(async (_text, options, context) => {
         seen.push(options.map((holder) => holder.projectId).join(','));
-        return context.includes('WAITING ON YOU: "Draft a reply?"') ? youtube : null;
+        return context.recent.includes('- youtube: "Draft a reply?"') ? youtube : null;
       })
     );
     expect(seen).toEqual(['drivers,youtube']);

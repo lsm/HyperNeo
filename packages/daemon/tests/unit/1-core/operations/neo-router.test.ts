@@ -99,7 +99,7 @@ describe('pickNeoHolder', () => {
 });
 
 describe('renderNeoRouteContext', () => {
-  test("lists topics with their waiting question and the inbox's last turn, then the topics' recent turns", () => {
+  test('lists topics apart from their waiting questions and recent turns', () => {
     const pr = route({
       id: 2,
       destination: 'main',
@@ -115,17 +115,29 @@ describe('renderNeoRouteContext', () => {
       outcome: 'A git beta.',
       awaiting: 'Draft a reply?',
     });
-    const context = renderNeoRouteContext([drivers, youtube], [pr, blog], [pr, blog], true);
-    expect(context).not.toContain('- main:');
-    expect(context).toContain('- youtube: YouTube (drivers)\n    WAITING ON YOU: "Draft a reply?"');
-    expect(context).toContain('- inbox: Self-contained one-off questions');
-    expect(context.split('Recent turns (newest first):\n')[1]).toBe(
-      '- [YouTube] you: "What is the post?" → A git beta.'
+    const { projects, recent } = renderNeoRouteContext(
+      [drivers, youtube],
+      [pr, blog],
+      [pr, blog],
+      true
+    );
+    expect(projects).not.toContain('- main:');
+    expect(projects).toContain('- youtube: YouTube (drivers)\n- inbox: Self-contained one-off');
+    expect(projects).not.toContain('Draft a reply?');
+    expect(renderNeoRouteContext([drivers, youtube], [], [], true).projects).toBe(projects);
+    expect(recent).toBe(
+      [
+        'WAITING ON YOU:',
+        '- youtube: "Draft a reply?"',
+        '',
+        'Recent turns (newest first):',
+        '- [YouTube] you: "What is the post?" → A git beta.',
+      ].join('\n')
     );
   });
 
   test('names each topic with its repository and summary on one line', () => {
-    const context = renderNeoRouteContext(
+    const { projects } = renderNeoRouteContext(
       [
         { ...drivers, repository: 'lsm/neo-ios' },
         { ...youtube, summary: '' },
@@ -134,16 +146,15 @@ describe('renderNeoRouteContext', () => {
       [],
       false
     );
-    expect(context).toContain(
-      '- drivers: Neo driver epic [lsm/neo-ios] (drivers)\n- youtube: YouTube\n'
+    expect(projects).toBe(
+      'Projects:\n- drivers: Neo driver epic [lsm/neo-ios] (drivers)\n- youtube: YouTube'
     );
   });
 
   test('lists every topic on one line, however many there are', () => {
     const many = Array.from({ length: 40 }, (_, n) => ({ ...drivers, projectId: `t${n}` }));
     const projects = renderNeoRouteContext(many, [], [], false)
-      .split('Recent turns')[0]
-      .split('\n')
+      .projects.split('\n')
       .filter((line) => line.startsWith('- t'));
     expect(projects).toHaveLength(40);
   });
@@ -151,7 +162,7 @@ describe('renderNeoRouteContext', () => {
   test('keeps recent turns within the budget', () => {
     const many = Array.from({ length: 40 }, (_, n) => route({ id: n, ask: 'q'.repeat(300) }));
     const turns = renderNeoRouteContext([drivers], many, [], false)
-      .split('Recent turns (newest first):\n')[1]
+      .recent.split('Recent turns (newest first):\n')[1]
       .split('\n');
     expect(turns.length).toBeLessThan(40);
     expect(turns.join('\n').length).toBeLessThanOrEqual(3_000);
