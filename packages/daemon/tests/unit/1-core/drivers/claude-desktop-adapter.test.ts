@@ -106,7 +106,7 @@ describe('claude-desktop adapter against the app session records', () => {
   let clock = 0;
 
   function adapter(
-    live: ClaudeLiveSession[] | Error = [
+    live: ClaudeLiveSession[] | Error | (() => ClaudeLiveSession[]) = [
       { sessionId: 'cli-a1', status: 'waiting', name: 'lakehouse loader', owner: 'cli', pid: 1 },
     ],
     exitCode = 0,
@@ -127,7 +127,7 @@ describe('claude-desktop adapter against the app session records', () => {
       liveSessions: async () => {
         liveReads++;
         if (live instanceof Error) throw live;
-        return live;
+        return typeof live === 'function' ? live() : live;
       },
       folderExists: (folder) => folder !== '/gone',
       makeFolder: () => {},
@@ -674,7 +674,7 @@ describe('claude-desktop adapter against the app session records', () => {
             cwd: '/focus/ops',
             title: 'woodpecker',
             lastActivityAt: 5,
-            permissionMode: 'bypassPermissions',
+            permissionMode: 'auto',
           })
         )
       );
@@ -707,13 +707,29 @@ describe('claude-desktop adapter against the app session records', () => {
             '--resume',
             'cli-b2',
             '--permission-mode',
-            'bypassPermissions',
+            'auto',
             '--',
             'run the audit',
           ],
           cwd: '/focus/ops',
         },
       ]);
+    });
+
+    test('uses the inbox instead when the session starts running before the resume', async () => {
+      let reads = 0;
+      const racing = adapter(() =>
+        reads++
+          ? [{ sessionId: 'cli-b2', status: 'idle', name: 'woodpecker', owner: 'cli', pid: 7 }]
+          : []
+      );
+      expect(await racing.send?.(ref, 'run the audit', user)).toMatchObject({
+        ok: false,
+        reason: 'unsupported',
+      });
+      expect(spawned.map((entry) => entry.args)).not.toContainEqual(
+        expect.arrayContaining(['--resume'])
+      );
     });
 
     test('sends a session that cannot approve tools headless to Desktop instead', async () => {
@@ -725,7 +741,7 @@ describe('claude-desktop adapter against the app session records', () => {
         ok: false,
         reason: 'unreachable',
         detail:
-          'woodpecker is not running, and without bypassPermissions a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/local_b2',
+          'woodpecker is not running, and in default permission mode a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/local_b2',
       });
       expect(spawned).toEqual([]);
     });

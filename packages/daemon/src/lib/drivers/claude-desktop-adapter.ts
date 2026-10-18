@@ -132,6 +132,7 @@ async function listDir(dir: string): Promise<string[]> {
 
 export type ClaudeRecordCache = Map<string, { modifiedAt: number; records: ClaudeDesktopRecord[] }>;
 const STARTED_KEY = 'started:';
+const HEADLESS_PERMISSION_MODES = new Set(['bypassPermissions', 'auto']);
 
 async function readRecord(path: string, cache: ClaudeRecordCache): Promise<ClaudeDesktopRecord[]> {
   try {
@@ -905,15 +906,18 @@ export async function resumeIdleClaudeSession(
   message: string,
   deps: ClaudeDesktopAdapterDeps
 ): Promise<{ value: readonly ClaudeLiveSession[] } | { reason: Result<WorkDelivery> }> {
-  if (liveSessions.some((session) => session.sessionId === record.cliSessionId && session.pid))
-    return { value: liveSessions };
-  if (record.permissionMode !== 'bypassPermissions')
+  const running = (sessions: readonly ClaudeLiveSession[]) =>
+    sessions.some((session) => session.sessionId === record.cliSessionId && session.pid);
+  if (running(liveSessions)) return { value: liveSessions };
+  if (!record.permissionMode || !HEADLESS_PERMISSION_MODES.has(record.permissionMode))
     return {
       reason: reject(
         'unreachable',
-        `${record.title} is not running, and without bypassPermissions a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/${record.sessionId}`
+        `${record.title} is not running, and in ${record.permissionMode ?? 'default'} permission mode a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/${record.sessionId}`
       ),
     };
+  const recheck = await deps.liveSessions().catch(() => liveSessions);
+  if (running(recheck)) return { value: recheck };
   const turn = await runClaudeTurn(
     [
       'claude',
@@ -921,7 +925,7 @@ export async function resumeIdleClaudeSession(
       '--resume',
       record.cliSessionId,
       '--permission-mode',
-      'bypassPermissions',
+      record.permissionMode,
       '--',
       message,
     ],
@@ -955,8 +959,9 @@ export const sendClaudeMessage = (superpipe({})('claude-owner-send') as Pipeline
     'cliSessionId'
   )
   .pipe(resumeIdleClaudeSession, ['record', 'liveSessions', 'message', 'deps'], 'result:outcome')
-  .pipe(requireClaudePeerOwner, ['cliSessionId', 'liveSessions'], 'result:outcome')
-  .pipe(sendOwnedClaudeMessage, ['record', 'liveSessions', 'message', 'deps', 'context'], 'outcome')
+  .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'running')
+  .pipe(requireClaudePeerOwner, ['cliSessionId', 'running'], 'result:outcome')
+  .pipe(sendOwnedClaudeMessage, ['record', 'running', 'message', 'deps', 'context'], 'outcome')
   .endAsync('outcome') as (
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
