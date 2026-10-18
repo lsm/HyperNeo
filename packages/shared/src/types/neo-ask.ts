@@ -69,7 +69,7 @@ export interface NeoQuestion {
 }
 
 export interface NeoReplyTo {
-  kind: 'question' | 'todo' | 'message';
+  kind: 'question' | 'todo' | 'message' | 'ask';
   id: string;
   author?: 'neo' | 'user';
   excerpt?: string;

@@ -161,6 +161,23 @@ describe('neo.message.send replyTo', () => {
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
+  test('a reply to a work card goes to its ask owner with the card title as context', async () => {
+    const id = crypto.randomUUID();
+    await send(id, 'Where is this stuck?', { kind: 'ask', id: 'ask' });
+    expect(prompt(id)).toMatchObject({
+      session_id: holder,
+      replyTo: { kind: 'ask', id: 'ask' },
+      message: {
+        content: [
+          { type: 'text', text: 'The human replied to the work card "iOS card":' },
+          { type: 'text', text: 'Where is this stuck?' },
+        ],
+      },
+      humanContent: [{ type: 'text', text: 'Where is this stuck?' }],
+    });
+    expect(store.getQuestion('q1')?.state).toBe('open');
+  });
+
   test('a reply whose owner session is unavailable goes to Neo without recording an answer', async () => {
     (db.getSession as unknown as (id: string) => { status: string } | undefined)(holder)!.status =
       'archived';

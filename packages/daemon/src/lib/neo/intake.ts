@@ -135,13 +135,16 @@ export function readNeoReply(
   if (!replyTo) return null;
   const question = replyTo.kind === 'question' ? store.getQuestion(replyTo.id) : null;
   const todo = replyTo.kind === 'todo' ? store.getTodo(replyTo.id) : null;
-  const askId = question?.askId ?? todo?.askId;
+  const askId = replyTo.kind === 'ask' ? replyTo.id : (question?.askId ?? todo?.askId);
   return { replyTo, question, todo, ask: askId ? store.getAsk(askId) : null };
 }
 
 export function neoReplyFact(reply: NeoReply | null): string | null {
   if (reply?.question) return `The human answered your question "${reply.question.text}":`;
-  return reply?.todo ? `The human replied about todo ${reply.todo.id}:` : null;
+  if (reply?.todo) return `The human replied about todo ${reply.todo.id}:`;
+  return reply?.replyTo.kind === 'ask' && reply.ask
+    ? `The human replied to the work card "${reply.ask.title}":`
+    : null;
 }
 
 export function neoQuoteFact(replyTo: NeoReplyTo | undefined): string | null {
@@ -677,7 +680,7 @@ export function createNeoIntakeOperation(
   return defineOperation({
     name: 'neo.message.send',
     description:
-      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered. replyTo {kind, id} quotes a question, todo or message: a reply to a question or todo goes to the Neo session that owns its ask, a reply to a Neo message goes to the session that wrote it, a reply to the human’s own message goes to the session that answered it, and a reply to a question is recorded as its answer. For each photo, thumbnails may carry a small preview { index, mediaType, data, width?, height? } keyed by the photo’s content index; it is stored for conversation pages and never sent to the model.',
+      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered. replyTo {kind, id} quotes a question, todo, ask (work card) or message: a reply to a question, todo or ask goes to the Neo session that owns that ask, a reply to a Neo message goes to the session that wrote it, a reply to the human’s own message goes to the session that answered it, and a reply to a question is recorded as its answer. For each photo, thumbnails may carry a small preview { index, mediaType, data, width?, height? } keyed by the photo’s content index; it is stored for conversation pages and never sent to the model.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
