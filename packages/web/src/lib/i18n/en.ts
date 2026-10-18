@@ -164,4 +164,9 @@ export const en = {
   'session.loadEarlier': 'Load earlier messages',
   'session.loadFailed': 'This chat didn’t open.',
   'session.loadEarlierFailed': 'Couldn’t load earlier messages. Try again',
+  'composer.stop': 'Stop',
+  'session.message': 'Message this chat',
+  'session.modelScope': 'For this session, from its next turn',
+  'session.modelScopeWorking': 'Switching the model stops the current reply',
+  'session.modelFailed': 'Could not switch this session’s model.',
 } as const;

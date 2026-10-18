@@ -42,7 +42,13 @@ export function NeoComposer({
   quote,
   activity,
   onCancelQuote,
+  forSession,
+  onStop,
+  onSendText,
 }: {
+  forSession?: boolean;
+  onStop?: () => void;
+  onSendText?: (text: string) => Promise<VoiceSendOutcome>;
   preference?: NeoPreference;
   quote?: NeoQuote;
   activity?: ComponentChildren;
@@ -183,7 +189,9 @@ export function NeoComposer({
       return { kind: 'unconfirmed' };
     }
     try {
-      const outcome = await submitVoiceSendIntent(hub, record, composed);
+      const outcome = onSendText
+        ? await onSendText(composed)
+        : await submitVoiceSendIntent(hub, record, composed);
       if (
         outcome.kind === 'accepted' &&
         alive.current &&
@@ -275,7 +283,7 @@ export function NeoComposer({
         <textarea
           ref={thought}
           id="neo-thought"
-          aria-label={t('composer.message')}
+          aria-label={forSession ? t('session.message') : t('composer.message')}
           aria-describedby={quote ? 'neo-quote-label' : undefined}
           value={draft}
           onInput={(event) => onDraft(event.currentTarget.value)}
@@ -326,6 +334,7 @@ export function NeoComposer({
             onError={onError}
             preference={preference}
             onSaved={onPreferenceSaved}
+            forSession={forSession}
           />
         </div>
         <span
@@ -361,6 +370,17 @@ export function NeoComposer({
             onError={onError}
             onPhase={setVoicePhase}
           />
+          {onStop && store.isWorking.value && !voiceBusy && (
+            <button
+              type="button"
+              aria-label={t('composer.stop')}
+              title={t('composer.stop')}
+              onClick={onStop}
+              class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-line text-fg-muted hover:border-accent/40 hover:text-fg"
+            >
+              <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
+            </button>
+          )}
           <Button
             type="submit"
             size="sm"

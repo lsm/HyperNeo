@@ -3,7 +3,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
 import { setupFocusTrap } from '../components/ui/Modal.tsx';
 import { t } from '../lib/i18n/index.ts';
+import { useInputDraft } from '../hooks/useInputDraft.ts';
+import { useInterrupt } from '../hooks/useInterrupt.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
 import { SessionStore } from '../lib/session-store.ts';
+import type { MessageImage } from '@hyperneo/shared';
+import { NeoComposer } from './NeoComposer.tsx';
 import { NeoBusyRow } from './NeoBusyRow.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoMessage } from './NeoMessage.tsx';
@@ -13,6 +18,17 @@ import {
   type SessionItem,
   projectSessionTranscript,
 } from './session-transcript.ts';
+
+async function sendToSession(sessionId: string, content: string, images?: readonly MessageImage[]) {
+  const hub = connectionManager.getHubIfConnected();
+  if (!hub) throw new Error(t('composer.reconnecting'));
+  const result = await hub.request<{ messageId?: string }>('message.send', {
+    sessionId,
+    content,
+    ...(images?.length ? { images } : {}),
+  });
+  return result?.messageId ?? '';
+}
 
 function SessionItemView({ item }: { item: SessionItem }) {
   const { kind } = item;
@@ -82,6 +98,9 @@ export function NeoSessionPane({
     if (!pane.current.contains(document.activeElement)) pane.current.focus();
     return release;
   }, [overlay]);
+  const inputDraft = useInputDraft(sessionId, 250, true);
+  const { handleInterrupt } = useInterrupt({ sessionId });
+  const [notice, setNotice] = useState('');
   const running = store.isWorking.value;
   const messages = store.sdkMessages.value;
   const blocks = projectSessionTranscript(messages, running);
@@ -120,7 +139,7 @@ export function NeoSessionPane({
   const question = state.status === 'waiting_for_input' ? state.pendingQuestion : null;
   const last = blocks.at(-1)?.at(-1);
   const showsRunningSteps = last?.type === 'steps' && last.steps.running;
-  const error = store.error.value?.message;
+  const error = notice || store.error.value?.message;
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -221,6 +240,44 @@ export function NeoSessionPane({
           )}
         </div>
       </div>
+      <footer class="mx-auto w-full max-w-3xl shrink-0 px-3 pt-2 pb-3">
+        <NeoComposer
+          store={store}
+          sessionId={sessionId}
+          forSession
+          draft={inputDraft.content}
+          onDraft={inputDraft.setContent}
+          onError={setNotice}
+          onTranscript={(text) =>
+            inputDraft.setContent([inputDraft.content, text].filter(Boolean).join('\n'))
+          }
+          onStop={() => void handleInterrupt()}
+          onSendText={async (text) => {
+            try {
+              await sendToSession(sessionId, text);
+              return { kind: 'accepted' };
+            } catch (cause) {
+              return {
+                kind: 'refused',
+                reason: cause instanceof Error ? cause.message : String(cause),
+              };
+            }
+          }}
+          onSend={async ({ text, images }) => {
+            const submitted = inputDraft.content;
+            inputDraft.setContent('');
+            try {
+              const messageId = await sendToSession(sessionId, text, images);
+              return { ok: true, requestId: messageId, messageId, created: true };
+            } catch (cause) {
+              const reason = cause instanceof Error ? cause.message : String(cause);
+              setNotice(reason);
+              if (!inputDraft.content) inputDraft.setContent(submitted);
+              return { ok: false, reason };
+            }
+          }}
+        />
+      </footer>
     </aside>
   );
 }

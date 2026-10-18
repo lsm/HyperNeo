@@ -86,6 +86,62 @@ describe('Neo preferences', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close model settings' }));
     expect(screen.queryByLabelText('Thinking')).toBeNull();
   });
+  it('changes one session’s own model and thinking, ignoring Neo’s preference', async () => {
+    const store = makeStore();
+    api.request.mockImplementation(async (method: string) =>
+      method === 'session.model.switch' ? { success: true, model: 'haiku' } : { providers: [] }
+    );
+    render(
+      <NeoPreferences
+        sessionId="s1"
+        store={store}
+        onError={vi.fn()}
+        forSession
+        preference={{ model: 'haiku', provider: 'anthropic', thinkingLevel: 'off', saved: true }}
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Model and thinking' }).textContent).toContain(
+      'Sonnet'
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    expect(screen.getByText('For this session, from its next turn')).toBeTruthy();
+    fireEvent.change(screen.getByRole('slider', { name: 'Thinking' }), { target: { value: '2' } });
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('session.thinking.set', {
+        sessionId: 's1',
+        level: 'think16k',
+      })
+    );
+    expect(api.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Haiku · Anthropic' }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Haiku · Anthropic' }));
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('session.model.switch', {
+        sessionId: 's1',
+        model: 'haiku',
+        provider: 'anthropic',
+      })
+    );
+    expect(api.request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+    await waitFor(() => expect(store.refresh).toHaveBeenCalled());
+  });
+  it('reports a session model switch the daemon refuses', async () => {
+    const onError = vi.fn();
+    api.request.mockImplementation(async (method: string) =>
+      method === 'session.model.switch'
+        ? { success: false, model: 'sonnet', error: 'Invalid model: haiku' }
+        : { providers: [] }
+    );
+    render(<NeoPreferences sessionId="s1" store={makeStore(true)} onError={onError} forSession />);
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    expect(screen.getByText('Switching the model stops the current reply')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Haiku · Anthropic' }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Invalid model: haiku'));
+  });
   it('lets Neo’s preference change while it works, applying from its next reply', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore(true)} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));

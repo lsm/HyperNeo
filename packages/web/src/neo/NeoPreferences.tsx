@@ -13,6 +13,7 @@ import { providerLogoColor, shortenModelName } from '../lib/provider-brand.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoModelMenu } from './NeoModelMenu.tsx';
+import { t } from '../lib/i18n/index.ts';
 import { ThinkingLevelIcon } from '../components/ThinkingLevelIcon.tsx';
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
 
@@ -24,12 +25,14 @@ export function NeoPreferences({
   onError,
   preference,
   onSaved,
+  forSession,
 }: {
   sessionId: string;
   store: SessionStore;
   onError: (message: string) => void;
   preference?: NeoPreference;
   onSaved?: () => void;
+  forSession?: boolean;
 }) {
   const model = useModelSwitcher(sessionId);
   const [open, setOpen] = useState(false);
@@ -38,17 +41,18 @@ export function NeoPreferences({
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const connected = connectionState.value === 'connected';
-  const chosen = preference
-    ? model.availableModels.find(
-        (item) =>
-          (item.id === preference.model || item.alias === preference.model) &&
-          item.provider === preference.provider
-      )
-    : undefined;
+  const chosen =
+    preference && !forSession
+      ? model.availableModels.find(
+          (item) =>
+            (item.id === preference.model || item.alias === preference.model) &&
+            item.provider === preference.provider
+        )
+      : undefined;
   const info = chosen ?? model.currentModelInfo;
-  const currentId = preference?.model ?? model.currentModel;
+  const currentId = (!forSession && preference?.model) || model.currentModel;
   const level = normalizeThinkingLevel(
-    preference?.thinkingLevel ?? store.sessionInfo.value?.config?.thinkingLevel
+    (!forSession && preference?.thinkingLevel) || store.sessionInfo.value?.config?.thinkingLevel
   );
   const options = getThinkingOptionsForProvider(info?.provider, info?.thinkingModes);
   const busy = saving || model.loading || !connected;
@@ -85,6 +89,19 @@ export function NeoPreferences({
     try {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error('Reconnect before changing the model.');
+      if (forSession) {
+        if (next.model !== currentId || next.provider !== info?.provider) {
+          const switched = await hub.request<{ success: boolean; error?: string }>(
+            'session.model.switch',
+            { sessionId, model: next.model, provider: next.provider }
+          );
+          if (!switched.success) throw new Error(switched.error || t('session.modelFailed'));
+        }
+        if (next.thinkingLevel !== level)
+          await hub.request('session.thinking.set', { sessionId, level: next.thinkingLevel });
+        await Promise.all([model.reload(), store.refresh()]);
+        return;
+      }
       const result = await invokeOperation<
         { ok: true; preferences: NeoModelPreference } | { ok: false; reason: string }
       >(hub, 'neo.preferences.set', next);
@@ -161,7 +178,11 @@ export function NeoPreferences({
           busy={busy}
           loading={model.loading}
           working={store.isWorking.value}
-          scope={{ idle: 'For Neo and all its projects', working: 'Neo switches after this reply' }}
+          scope={
+            forSession
+              ? { idle: t('session.modelScope'), working: t('session.modelScopeWorking') }
+              : { idle: 'For Neo and all its projects', working: 'Neo switches after this reply' }
+          }
           onModel={(next) => void changeModel(next)}
           onThinking={(next) => void changeThinking(next)}
           onReload={() => void model.reload()}
