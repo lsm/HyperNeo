@@ -99,8 +99,10 @@ async function openAsrSocket(
   deps: VoiceStreamDeps
 ): Promise<Gate<WebSocket>> {
   try {
+    const http = new URL(url);
+    http.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
     const [resolved] = await resolveTranscriptionEndpoint(
-      new URL(url.toString().replace(/^ws/, 'http')),
+      http,
       voice.allowPrivateNetwork ?? false,
       voice.allowInsecureTls ?? false
     );
@@ -241,8 +243,10 @@ export class VoiceStream {
       if (this.socket) {
         const text = this.text();
         this.close();
-        this.deps.push({ streamId: this.id, text, isFinal: true });
-        return { text, via: 'streaming' };
+        if (text || this.bytes === 0) {
+          this.deps.push({ streamId: this.id, text, isFinal: true });
+          return { text, via: 'streaming' };
+        }
       }
     }
     if (this.bytes === 0) return { error: 'Audio data is empty' };

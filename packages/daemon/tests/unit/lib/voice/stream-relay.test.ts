@@ -140,6 +140,15 @@ describe('VoiceStream against a stub ASR server', () => {
     expect(pushed).toEqual([{ streamId: 's1', text: 'batch text', isFinal: true }]);
   });
 
+  test('a stream that never heard any text falls back to batch with the buffered audio', async () => {
+    onAudio = () => {};
+    const { stream, via } = await start();
+    expect(via).toBe('streaming');
+    stream.write(new Uint8Array([1, 0, 2, 0]));
+    expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+    expect([...Buffer.from(batches[0], 'base64').subarray(44)]).toEqual([1, 0, 2, 0]);
+  });
+
   test('a mid-stream drop falls back to batch without losing audio sent before or after it', async () => {
     onAudio = (socket) => socket.terminate();
     const { stream } = await start();

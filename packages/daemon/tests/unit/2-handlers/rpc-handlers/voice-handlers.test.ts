@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 import type { CallContext, GlobalSettings, MessageHub } from '@hyperneo/shared';
 import {
   admitVoiceStreamStart,
+  expireIdleVoiceStreams,
   registerVoiceHandlers,
   resetVoiceTranscriptionLimitsForTests,
 } from '../../../../src/lib/rpc-handlers/voice-handlers';
@@ -1183,6 +1184,45 @@ describe('voice stream RPC handlers', () => {
     await expect(
       handlers.get('voice.stream.chunk')?.({ streamId: last.streamId, audioBase64: 'AAA=' })
     ).resolves.toEqual({ ok: true });
+  });
+
+  it("a start that fails after admission leaves the caller's existing stream in place", async () => {
+    const settings = { voice: { ...voice } as GlobalSettings['voice'] };
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings(settings));
+    const start = () =>
+      handlers.get('voice.stream.start')?.({ encoding: 'pcm16', sampleRate: 16_000 }) as Promise<{
+        streamId: string;
+      }>;
+    const { streamId } = await start();
+    settings.voice = {
+      enabled: true,
+      endpoint: 'http://127.0.0.1:1/v1/audio/transcriptions',
+      model: 'm',
+      mode: 'streaming',
+      allowPrivateNetwork: true,
+    };
+    await expect(start()).rejects.toThrow('Streaming transcription is unavailable');
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAA=' })
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it('an abandoned stream expires after three idle minutes', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const { streamId } = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string };
+    expireIdleVoiceStreams(Date.now() + 60_000);
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAA=' })
+    ).resolves.toEqual({ ok: true });
+    expireIdleVoiceStreams(Date.now() + 3 * 60_000 + 1);
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAA=' })
+    ).rejects.toThrow('Unknown voice stream');
   });
 
   it('a stop with no audio frees the stream instead of keeping it for a retry', async () => {

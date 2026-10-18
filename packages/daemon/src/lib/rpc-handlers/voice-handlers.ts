@@ -14,11 +14,15 @@ interface VoiceTranscribeResponse {
 }
 
 const transcriptionLimiters = createVoiceTranscribeLimiters();
-const voiceStreams = new Map<string, { stream: VoiceStream; clientId: string }>();
+const voiceStreams = new Map<
+  string,
+  { stream: VoiceStream; clientId: string; touchedAt: number }
+>();
 const voiceStreamStarts = new Map<string, number[]>();
 const startingStreams = { count: 0 };
 const STREAM_STARTS_PER_MINUTE = 10;
 const MAX_VOICE_STREAMS = 8;
+const VOICE_STREAM_IDLE_MS = 3 * 60_000;
 
 export function admitVoiceStreamStart(
   starts: readonly number[],
@@ -30,6 +34,14 @@ export function admitVoiceStreamStart(
     return { reason: 'Voice stream rate limit exceeded; please wait before trying again' };
   if (open >= MAX_VOICE_STREAMS) return { reason: 'Too many voice streams are already open' };
   return { value: [...recent, now] };
+}
+
+export function expireIdleVoiceStreams(now: number): void {
+  for (const [id, owned] of voiceStreams)
+    if (now - owned.touchedAt > VOICE_STREAM_IDLE_MS) {
+      owned.stream.close();
+      voiceStreams.delete(id);
+    }
 }
 
 export function resetVoiceTranscriptionLimitsForTests(): void {
@@ -58,6 +70,7 @@ export function registerVoiceHandlers(
       if (data?.encoding !== 'pcm16' || data.sampleRate !== 16_000)
         throw new Error('Voice streams take pcm16 audio at 16000 Hz');
       const clientId = context?.clientId ?? context?.sessionId ?? 'global';
+      expireIdleVoiceStreams(Date.now());
       const replaced = [...voiceStreams].filter(([, owned]) => owned.clientId === clientId);
       const admitted = admitVoiceStreamStart(
         voiceStreamStarts.get(clientId) ?? [],
@@ -65,10 +78,6 @@ export function registerVoiceHandlers(
         Date.now()
       );
       if ('reason' in admitted) throw new Error(admitted.reason);
-      for (const [id, owned] of replaced) {
-        owned.stream.close();
-        voiceStreams.delete(id);
-      }
       voiceStreamStarts.set(clientId, admitted.value);
       startingStreams.count += 1;
       try {
@@ -96,7 +105,11 @@ export function registerVoiceHandlers(
           started.stream.close();
           throw new Error('The client disconnected while the voice stream was starting');
         }
-        voiceStreams.set(streamId, { stream: started.stream, clientId });
+        for (const [id, owned] of replaced) {
+          owned.stream.close();
+          voiceStreams.delete(id);
+        }
+        voiceStreams.set(streamId, { stream: started.stream, clientId, touchedAt: Date.now() });
         return {
           streamId,
           via: started.via,
@@ -121,6 +134,8 @@ export function registerVoiceHandlers(
   messageHub.onRequest<{ streamId: string }>('voice.stream.stop', async (data, context) => {
     const stream = ownedStream(data?.streamId, context);
     const result = await stream.stop();
+    const owned = voiceStreams.get(data.streamId);
+    if (owned) owned.touchedAt = Date.now();
     if (!('error' in result) || !result.retryable) voiceStreams.delete(data.streamId);
     if ('error' in result) throw new Error(result.error);
     return result;
@@ -149,6 +164,7 @@ function ownedStream(streamId: string | undefined, context: CallContext | undefi
   const owned = streamId ? voiceStreams.get(streamId) : undefined;
   if (!owned || owned.clientId !== (context?.clientId ?? context?.sessionId ?? 'global'))
     throw new Error('Unknown voice stream');
+  owned.touchedAt = Date.now();
   return owned.stream;
 }
 
