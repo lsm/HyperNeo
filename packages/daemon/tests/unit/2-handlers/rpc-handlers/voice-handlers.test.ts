@@ -1232,6 +1232,21 @@ describe('voice stream RPC handlers', () => {
     expect(alive.filter(Boolean)).toHaveLength(1);
   });
 
+  it('refuses an oversized chunk before decoding it', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const { streamId } = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string };
+    const from = vi.spyOn(Buffer, 'from');
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'A'.repeat(14_000_000) })
+    ).rejects.toThrow('Audio data exceeds the 10 MB voice input limit');
+    expect(from).not.toHaveBeenCalled();
+    from.mockRestore();
+  });
+
   it('an abandoned stream expires after three idle minutes', async () => {
     const { hub, handlers } = createMockMessageHub();
     registerVoiceHandlers(hub, createSettings({ voice }));

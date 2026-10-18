@@ -1,4 +1,9 @@
-import { createEventMessage, type CallContext, type MessageHub } from '@hyperneo/shared';
+import {
+  createEventMessage,
+  type CallContext,
+  type MessageHub,
+  VOICE_MAX_AUDIO_BYTES,
+} from '@hyperneo/shared';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import { VoiceStream, type VoiceStreamText } from '../voice/stream-relay.ts';
@@ -23,6 +28,7 @@ const startingStreams = { count: 0 };
 const STREAM_STARTS_PER_MINUTE = 10;
 const MAX_VOICE_STREAMS = 8;
 const VOICE_STREAM_IDLE_MS = 3 * 60_000;
+const MAX_CHUNK_BASE64_LENGTH = Math.ceil((VOICE_MAX_AUDIO_BYTES - 44) / 3) * 4;
 
 export function admitVoiceStreamStart(
   starts: readonly number[],
@@ -126,6 +132,8 @@ export function registerVoiceHandlers(
     'voice.stream.chunk',
     async (data, context) => {
       const stream = ownedStream(data?.streamId, context);
+      if ((data.audioBase64 ?? '').length > MAX_CHUNK_BASE64_LENGTH)
+        throw new Error('Audio data exceeds the 10 MB voice input limit');
       const refused = stream.write(Buffer.from(data.audioBase64 ?? '', 'base64'));
       if (refused) throw new Error(refused);
       return { ok: true };
