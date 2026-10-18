@@ -277,9 +277,20 @@ export function NeoLive() {
       if (scroll.current) setAwayFromBottom(!isAtBottom(scroll.current));
     });
     resize.observe(element);
-    if (rail.current) resize.observe(rail.current);
-    return () => resize.disconnect();
-  }, []);
+    const railElement = rail.current;
+    const observeRail = () => {
+      if (!railElement) return;
+      resize.observe(railElement);
+      for (const child of railElement.children) resize.observe(child);
+    };
+    observeRail();
+    const added = new MutationObserver(observeRail);
+    if (railElement) added.observe(railElement, { childList: true });
+    return () => {
+      resize.disconnect();
+      added.disconnect();
+    };
+  }, [columns]);
 
   useEffect(() => {
     if (nearBottom.current && scroll.current)
