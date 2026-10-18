@@ -62,10 +62,13 @@ export function NeoSessionPane({
   const [store] = useState(() => new SessionStore());
   useEffect(() => {
     void store.select(sessionId);
-    return () => {
-      store.destroy().catch(() => {});
-    };
   }, [store, sessionId]);
+  useEffect(
+    () => () => {
+      store.destroy().catch(() => {});
+    },
+    [store]
+  );
   useEffect(() => {
     pane.current?.focus();
     const target = opener.current;
