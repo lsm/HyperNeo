@@ -14,7 +14,9 @@ import {
   neoPlainClass,
   neoPrimaryClass,
   neoSecondaryClass,
+  NeoSessionMark,
 } from './NeoCardParts.tsx';
+import { neoSessionKind } from './work-driver.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 
 const states = {
@@ -101,6 +103,7 @@ function TodoRow({
           aria-label={`打开 ${todo.title}`}
           onClick={() => onOpen(todo.link!, todo.title)}
         >
+          <NeoSessionMark kind={neoSessionKind(null, todo.link)} />
           打开
         </button>
       )}
