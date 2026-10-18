@@ -177,3 +177,28 @@ describe('sessionEntries turn-final steps', () => {
     expect(sessionDuration(steps.steps.end - steps.steps.start)).toBe('1m 30s');
   });
 });
+
+describe('sessionItems tool headers', () => {
+  it('titles invoke calls with their operation and keeps the server for other MCP tools', () => {
+    const items = sessionItems([
+      row(
+        'assistant',
+        'a',
+        [
+          {
+            type: 'tool_use',
+            id: 'i1',
+            name: 'mcp__hyperneo-operations__invoke',
+            input: { name: 'daemon.session.inspect', input: {} },
+          },
+          { type: 'tool_use', id: 'm1', name: 'mcp__filesystem__read_file', input: { path: 'a' } },
+        ],
+        1
+      ),
+    ]);
+    expect(items.map((item) => item.kind)).toMatchObject([
+      { type: 'tool', name: 'invoke daemon.session.inspect', summary: '' },
+      { type: 'tool', name: 'read_file', summary: 'filesystem' },
+    ]);
+  });
+});

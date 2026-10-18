@@ -210,14 +210,6 @@ describe('tool-registry', () => {
         expect(summary).toBe('my_server');
       });
 
-      it('should name the invoked operation for HyperNeo operation calls', () => {
-        const config = getToolConfig('mcp__hyperneo-operations__invoke');
-        expect(config.summaryExtractor?.({ name: 'neo.ask.settle', input: {} })).toBe(
-          'neo.ask.settle'
-        );
-        expect(config.summaryExtractor?.({})).toBe('hyperneo-operations');
-      });
-
       it('should keep the server name for other tools with a name input', () => {
         const config = getToolConfig('mcp__filesystem__read_file');
         expect(config.summaryExtractor?.({ name: 'notes.md' })).toBe('filesystem');

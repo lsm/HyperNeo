@@ -34,8 +34,10 @@ describe('SDKMessageRenderer', () => {
         toolInputsMap={new Map([[message.tool_use_id, { name: 'neo.snapshot', input: {} }]])}
       />
     );
-    expect(app.container.querySelector('span.font-medium')?.textContent).toBe('neo.snapshot');
-    expect(app.getAllByText('neo.snapshot')).toHaveLength(1);
+    expect(app.container.querySelector('span.font-medium')?.textContent).toBe(
+      'invoke neo.snapshot'
+    );
+    expect(app.queryByText('hyperneo-operations')).toBeNull();
   });
 
   describe('Basic Rendering', () => {

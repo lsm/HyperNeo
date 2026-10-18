@@ -13,16 +13,32 @@ export function getToolSummary(toolName: string, input: unknown): string {
 }
 
 export function getInvokedOperationName(toolName: string, input: unknown): string | null {
-  const invoke =
-    toolName === 'invoke' ||
-    (toolName.startsWith('mcp__') && toolName.split('__').slice(2).join('__') === 'invoke');
-  if (!invoke || !input || typeof input !== 'object' || !('name' in input)) return null;
+  if (!isInvokeTool(toolName) || !input || typeof input !== 'object' || !('name' in input))
+    return null;
   return typeof input.name === 'string' && input.name.trim() ? input.name.trim() : null;
 }
 
-export function getToolDisplayName(toolName: string, input?: unknown): string {
+function isInvokeTool(toolName: string): boolean {
+  return (
+    toolName === 'invoke' ||
+    (toolName.startsWith('mcp__') && toolName.split('__').slice(2).join('__') === 'invoke')
+  );
+}
+
+export function getToolHeader(
+  toolName: string,
+  input?: unknown
+): { name: string; detail: string | null } {
+  if (isInvokeTool(toolName)) {
+    const operation = getInvokedOperationName(toolName, input);
+    return { name: operation ? `invoke ${operation}` : 'invoke', detail: null };
+  }
   const config = getToolConfig(toolName);
-  return getInvokedOperationName(toolName, input) ?? (config.displayName || toolName);
+  return { name: config.displayName || toolName, detail: getToolSummary(toolName, input) };
+}
+
+export function getToolDisplayName(toolName: string, input?: unknown): string {
+  return getToolHeader(toolName, input).name;
 }
 
 export function getToolColors(toolName: string) {

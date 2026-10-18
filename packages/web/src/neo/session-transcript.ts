@@ -1,5 +1,6 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { getToolHeader } from '../components/sdk/tools/tool-utils.ts';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 
 export type SessionItemKind =
@@ -137,8 +138,11 @@ export function sessionItems(messages: readonly ChatMessage[]): SessionItem[] {
       } else if (block?.type === 'tool_use') {
         const toolId = typeof block.id === 'string' ? block.id : id;
         toolIndex.set(toolId, out.length);
-        const name = typeof block.name === 'string' ? block.name : 'Tool';
-        const summary = sessionToolSummary(block.input);
+        const raw = typeof block.name === 'string' ? block.name : 'Tool';
+        const header =
+          raw.startsWith('mcp__') || raw === 'invoke' ? getToolHeader(raw, block.input) : null;
+        const name = header?.name ?? raw;
+        const summary = header ? (header.detail ?? '') : sessionToolSummary(block.input);
         out.push({
           id: toolId,
           kind: { type: 'tool', name, summary, result: null, isError: false },

@@ -8,6 +8,7 @@ import {
   formatElapsedTime,
   truncateText,
   getOutputDisplayText,
+  getToolHeader,
 } from '../tool-utils';
 
 describe('tool-utils', () => {
@@ -99,9 +100,12 @@ describe('tool-utils', () => {
 
   describe('getToolDisplayName', () => {
     it.each(['invoke', 'mcp__hyperneo-operations__invoke', 'mcp__other-server__invoke'])(
-      'uses the input operation as the display name of %s',
+      'titles %s as invoke plus its operation',
       (name) => {
-        expect(getToolDisplayName(name, { name: 'neo.snapshot', input: {} })).toBe('neo.snapshot');
+        expect(getToolDisplayName(name, { name: 'neo.snapshot', input: {} })).toBe(
+          'invoke neo.snapshot'
+        );
+        expect(getToolHeader(name, { name: 'neo.snapshot', input: {} }).detail).toBeNull();
       }
     );
     it.each([undefined, null, {}, { name: '' }, { name: '  ' }, { name: 42 }, 'neo.snapshot'])(
@@ -313,6 +317,26 @@ describe('tool-utils', () => {
     it('should convert primitives to string', () => {
       expect(getOutputDisplayText(42)).toBe('42');
       expect(getOutputDisplayText(true)).toBe('true');
+    });
+  });
+});
+
+describe('getToolHeader', () => {
+  it('gives invoke the same title collapsed and expanded, with no server name', () => {
+    const input = { name: 'daemon.session.inspect', input: {} };
+    expect(getToolHeader('mcp__hyperneo-operations__invoke', input)).toEqual({
+      name: 'invoke daemon.session.inspect',
+      detail: null,
+    });
+    expect(getToolDisplayName('mcp__hyperneo-operations__invoke', input)).toBe(
+      'invoke daemon.session.inspect'
+    );
+  });
+
+  it('keeps other MCP tools as tool name plus server name', () => {
+    expect(getToolHeader('mcp__filesystem__read_file', { name: 'notes.md' })).toEqual({
+      name: 'read_file',
+      detail: 'filesystem',
     });
   });
 });

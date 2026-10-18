@@ -1,5 +1,5 @@
 import type { ToolSummaryProps } from './tool-types.ts';
-import { getToolSummary, getInvokedOperationName, truncateText } from './tool-utils.ts';
+import { getToolHeader, truncateText } from './tool-utils.ts';
 import { Tooltip } from '../../ui/Tooltip.tsx';
 import { cn } from '../../../lib/utils.ts';
 
@@ -10,8 +10,8 @@ export function ToolSummary({
   showTooltip = true,
   className,
 }: ToolSummaryProps) {
-  const summary = getToolSummary(toolName, input);
-  if (summary.trim() === getInvokedOperationName(toolName, input)) return null;
+  const summary = getToolHeader(toolName, input).detail;
+  if (!summary) return null;
   const truncated = maxLength > 0 ? truncateText(summary, maxLength) : summary;
   const isTruncated = truncated !== summary;
 

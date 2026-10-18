@@ -139,8 +139,8 @@ describe('ToolResultCard Component', () => {
       const title = app.container.querySelector(
         variant === 'default' || variant === 'detailed' ? 'span.font-semibold' : 'span.font-medium'
       );
-      expect(title?.textContent).toBe('neo.snapshot');
-      expect(app.queryByText('invoke')).toBeNull();
+      expect(title?.textContent).toBe('invoke neo.snapshot');
+      expect(app.queryByText('hyperneo-operations')).toBeNull();
     }
   );
 

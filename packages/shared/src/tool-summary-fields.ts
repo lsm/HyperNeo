@@ -12,6 +12,7 @@ export const TOOL_SUMMARY_INPUT_FIELDS: readonly string[] = [
   'server',
   'uri',
   'message_prefix',
+  'name',
 ];
 
 export const WHOLE_INPUT_TOOLS: readonly string[] = ['TodoWrite', 'AskUserQuestion'];

@@ -15,11 +15,18 @@ describe('ToolSummary', () => {
     expect(container.childElementCount).toBe(0);
   });
 
-  it('preserves the existing summary when invoke has no operation name', () => {
+  it('never shows the operations server name for invoke, even without an operation', () => {
     const { container } = render(
       <ToolSummary toolName="mcp__hyperneo-operations__invoke" input={{}} />
     );
-    expect(container.textContent).toBe('hyperneo-operations');
+    expect(container.childElementCount).toBe(0);
+  });
+
+  it('keeps the server name as the summary of other MCP tools', () => {
+    const { container } = render(
+      <ToolSummary toolName="mcp__filesystem__read_file" input={{ path: 'a.md' }} />
+    );
+    expect(container.textContent).toBe('filesystem');
   });
 
   describe('Basic Rendering', () => {
