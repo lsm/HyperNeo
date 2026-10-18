@@ -52,7 +52,8 @@ export type NeoQuestionDraft = Pick<
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, text, kind, options, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
-  answered_at AS answeredAt, created_at AS createdAt FROM neo_questions`;
+  answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
+  created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<NeoQuestion, 'options' | 'multiple' | 'startTodos' | 'answer'> & {
   options: string | null;
@@ -299,6 +300,35 @@ export class NeoAskTodoRepository {
     if (!changed) return null;
     this.touchAsk(question.askId, now);
     return this.getQuestion(question.id);
+  }
+
+  retireQuestion(
+    question: NeoQuestion,
+    reason: string,
+    replacedBy: string | null,
+    now: number
+  ): NeoQuestion | null {
+    const changed = this.db
+      .prepare(
+        `UPDATE neo_questions SET state = 'retired', retired_reason = ?, replaced_by = ?
+         WHERE id = ? AND state = 'open'`
+      )
+      .run(reason, replacedBy, question.id).changes;
+    if (!changed) return null;
+    this.touchAsk(question.askId, now);
+    return this.getQuestion(question.id);
+  }
+
+  replaceQuestion(
+    old: NeoQuestion,
+    id: string,
+    draft: NeoQuestionDraft,
+    now: number
+  ): NeoQuestion | null {
+    return this.db.transaction(() => {
+      if (!this.retireQuestion(old, 'replaced by the new question', id, now)) return null;
+      return this.askQuestion(id, old.askId, draft, now);
+    })();
   }
 
   retireQuestions(askId: string, now: number): void {

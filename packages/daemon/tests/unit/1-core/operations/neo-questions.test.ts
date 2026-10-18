@@ -197,10 +197,111 @@ describe('neoQuestionAnsweredNote', () => {
           answer: [],
           answeredBy: 'button',
           answeredAt: 1,
+          retiredReason: null,
+          replacedBy: null,
           createdAt: 1,
         },
         []
       )
     ).toBe('The human answered "Start?": start none.');
+  });
+});
+
+describe('neo.question.retire and replaces', () => {
+  test('the owner retires a moot open question with its reason, and the ask stops waiting', async () => {
+    const { store, call, asked } = setup();
+    const moot = await asked({ kind: 'reply', text: 'Allow a placeholder key?' });
+    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+    const retired = await call('neo.question.retire', {
+      questionId: moot.id,
+      reason: 'the root cause was found',
+    });
+    expect(retired).toMatchObject({
+      ok: true,
+      question: { state: 'retired', retiredReason: 'the root cause was found', replacedBy: null },
+    });
+    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toEqual([]);
+    expect(await call('neo.question.retire', { questionId: moot.id, reason: 'again' })).toEqual({
+      ok: false,
+      reason: 'question_closed: this question is retired.',
+    });
+    expect(
+      await call(
+        'neo.question.retire',
+        { questionId: (await asked({ kind: 'reply', text: 'Other?' })).id, reason: 'x' },
+        { source: 'mcp', sessionId: 'neo-b', role: 'neo' }
+      )
+    ).toMatchObject({ ok: false });
+  });
+
+  test('asking with replaces retires the old question as replaced and opens the new one', async () => {
+    const { store, call, asked } = setup();
+    const old = await asked({ kind: 'reply', text: 'Allow a placeholder key?' });
+    const next = await asked({
+      kind: 'yesno',
+      text: 'Use the dev proxy instead?',
+      noLabel: 'Keep',
+      yesLabel: 'Switch',
+      replaces: old.id,
+    });
+    expect(store.getQuestion(old.id)).toMatchObject({
+      state: 'retired',
+      retiredReason: 'replaced by the new question',
+      replacedBy: next.id,
+    });
+    expect(
+      store
+        .listQuestions('ask')
+        .filter((q) => q.state === 'open')
+        .map((q) => q.id)
+    ).toEqual([next.id]);
+    expect(
+      await call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'reply',
+        text: 'Again?',
+        replaces: old.id,
+      })
+    ).toEqual({ ok: false, reason: `question_closed: question ${old.id} is retired.` });
+  });
+
+  test("never replaces another ask's question or a missing one, and asks nothing then", async () => {
+    const { store, call, asked } = setup();
+    store.openAsk({
+      id: 'other',
+      projectId: null,
+      sessionId: 'neo-a',
+      originMessageId: 'm2',
+      title: 'Other',
+      request: 'Other',
+      createdAt: 1,
+    });
+    const elsewhere = (
+      await call('neo.question.ask', { askId: 'other', kind: 'reply', text: 'Elsewhere?' })
+    ).ok
+      ? store.listQuestions('other')[0]
+      : null;
+    await asked({ kind: 'reply', text: 'Here?' });
+    expect(
+      await call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'reply',
+        text: 'Swap?',
+        replaces: elsewhere!.id,
+      })
+    ).toEqual({
+      ok: false,
+      reason: `other_ask: question ${elsewhere!.id} belongs to another ask; replace only this ask's.`,
+    });
+    expect(
+      await call('neo.question.ask', {
+        askId: 'ask',
+        kind: 'reply',
+        text: 'Swap?',
+        replaces: 'nope',
+      })
+    ).toEqual({ ok: false, reason: 'not_found: no question nope.' });
+    expect(store.getQuestion(elsewhere!.id)?.state).toBe('open');
+    expect(store.listQuestions('ask').map((q) => q.text)).toEqual(['Here?']);
   });
 });

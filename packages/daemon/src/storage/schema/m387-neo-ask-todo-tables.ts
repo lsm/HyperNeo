@@ -91,6 +91,8 @@ export function runMigration387(db: Database): void {
     answer TEXT CHECK (answer IS NULL OR json_valid(answer)),
     answered_by TEXT CHECK (answered_by IS NULL OR answered_by IN ('button', 'chat')),
     answered_at INTEGER,
+    retired_reason TEXT,
+    replaced_by TEXT,
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_neo_questions_ask ON neo_questions(ask_id, state);

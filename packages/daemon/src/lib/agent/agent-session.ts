@@ -85,6 +85,7 @@ const NEO_CORE_OPERATIONS = [
   'neo.todo.retry',
   'neo.todo.close',
   'neo.question.ask',
+  'neo.question.retire',
   'neo.github.read',
   'neo.publication.publish',
   'neo.publication.edit',
