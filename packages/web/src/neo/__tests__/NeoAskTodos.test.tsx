@@ -45,6 +45,8 @@ const question = (id: string, patch: Partial<NeoQuestion>): NeoQuestion => ({
   answer: null,
   answeredBy: null,
   answeredAt: null,
+  retiredReason: null,
+  replacedBy: null,
   createdAt: 1,
   ...patch,
 });
@@ -242,6 +244,28 @@ describe('NeoAskTodos', () => {
       <NeoAskTodos entry={entry({ todos: [todo('a', { state: 'doing' })] })} onAnswer={() => {}} />
     );
     expect(app.queryByRole('button', { name: 'Details' })).toBeNull();
+  });
+
+  it('shows a retired question in Details with why it is no longer needed', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('q', {
+              text: 'Allow a placeholder key?',
+              state: 'retired',
+              retiredReason: 'the root cause was found',
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    expect(app.queryByText('Allow a placeholder key?')).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Details' }));
+    expect(app.getByRole('list', { name: '不再需要' }).textContent).toBe(
+      'Allow a placeholder key? — no longer needed: the root cause was found'
+    );
   });
 
   it('keeps answered questions in Details', () => {

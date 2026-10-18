@@ -63,6 +63,8 @@ export interface NeoQuestion {
   answer: NeoQuestionAnswer | null;
   answeredBy: 'button' | 'chat' | null;
   answeredAt: number | null;
+  retiredReason: string | null;
+  replacedBy: string | null;
   createdAt: number;
 }
 
