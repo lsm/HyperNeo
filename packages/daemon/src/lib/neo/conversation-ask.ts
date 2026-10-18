@@ -4,7 +4,10 @@ import { toMailboxMessage } from '../mailbox/entry.ts';
 import { SendMessageInputSchema } from '../messaging/message-send.ts';
 
 export const NeoReplyRefSchema = z
-  .object({ kind: z.enum(['question', 'todo', 'message']), id: z.string().trim().min(1).max(160) })
+  .object({
+    kind: z.enum(['question', 'todo', 'message', 'ask']),
+    id: z.string().trim().min(1).max(160),
+  })
   .strict();
 
 export const NeoReplyToSchema = NeoReplyRefSchema.extend({
