@@ -70,7 +70,7 @@ export class OapStdioClient {
     child.stderr.resume();
     child.stdin.on('error', (error) => this.fail(error));
     child.on('error', (error) => this.fail(error));
-    child.on('exit', (code, signal) =>
+    child.on('close', (code, signal) =>
       this.fail(new Error(`OAP endpoint exited (code=${code}, signal=${signal})`))
     );
     try {

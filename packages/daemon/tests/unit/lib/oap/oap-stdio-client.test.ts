@@ -158,4 +158,29 @@ describe('OapStdioClient', () => {
     await waitFor(() => types.includes('run.completed'));
     expect(types.at(-1)).toBe('run.completed');
   });
+
+  test('frames written just before the endpoint exits are delivered before the exit fails the client', async () => {
+    const script = [
+      'const profile = "open-agent-protocol.agent-control-core";',
+      'require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {',
+      '  const r = JSON.parse(line);',
+      '  const reply = (type, payload) => JSON.stringify({ type, in_reply_to: r.id, payload }) + "\\n";',
+      '  if (r.type === "protocol.initialize.request") return process.stdout.write(reply("protocol.initialize.response", { profile }));',
+      '  if (r.type === "capabilities.request") return process.stdout.write(reply("capabilities.response", {}));',
+      '  const last = reply("session.open.response", {}) + JSON.stringify({ type: "run.completed", payload: {} }) + "\\n";',
+      '  process.stdout.write(last, () => process.exit(0));',
+      '});',
+    ].join('\n');
+    const exiting = client(['-e', script]);
+    await exiting.connect();
+    const frames: Array<OapEnvelope | Error> = [];
+    exiting.subscribe((frame) => frames.push(frame));
+    const opened = await exiting.request('session.open.request', { session_id: 's-1' });
+    expect(opened.type).toBe('session.open.response');
+    await waitFor(() => frames.some((frame) => frame instanceof Error));
+    expect(frames.map((frame) => (frame instanceof Error ? 'error' : frame.type))).toEqual([
+      'run.completed',
+      'error',
+    ]);
+  });
 });
