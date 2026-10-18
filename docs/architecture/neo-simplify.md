@@ -6,7 +6,8 @@ This replaces the earlier version of this doc (one session per project, the rout
 
 ## 1. Decisions
 
-- **One Neo session.** Neo is one session on a strong, fast model (Opus 5.5) that holds all the context. It works like a coordinator: it reads, decides and dispatches, and rarely edits anything itself.
+- **Exactly one Neo session.** Neo is one session on a strong, fast model (Opus 5.5) that holds all the context. It works like a coordinator: it reads, decides and dispatches, and rarely edits anything itself.
+- **No clones, forks or sub-agents of Neo.** Parallel help for Neo is out of scope. Everything that exists only because there were several Neo sessions is deleted (§6). The general session clone operations (`session.clone.spawn`, `session.clone.return`) are not in Neo's catalog.
 - **No router, no holders.** There are no per-project holder sessions, so there is nothing to route to. Every human message goes to the one Neo session.
 - **No ownership between Neo sessions.** Asks aren't owned by a session. Neo sessions don't forward messages or consult each other.
 - **Projects and domains are labels.** Projects and coarse domains (work, home, travel) label asks and todos. They are not sessions.
@@ -68,7 +69,7 @@ The web and iOS chats render each turn from that record, so what they show is wh
 ### One session
 
 - `neo.open` returns the single Neo session. `neo.message.send` always targets it.
-- A restart archives that session and opens a fresh one on the same database. The new session's first input is a visible daemon note with the snapshot.
+- A restart archives that session before it opens a fresh one on the same database, so there is never more than one. The new session's first input is a visible daemon note with the snapshot.
 - After a compaction, the same visible note carries the snapshot, so Neo re-reads its state from the database, not from memory.
 - Labels: `neo.ask.open` and `neo.todo.add` take an optional project or domain label. `neo.snapshot` can filter by label.
 
@@ -150,45 +151,69 @@ There is one coordinator prompt for the one session:
 
 ## 6. Deletions
 
-Sizes are line counts at `a0c491a280`.
+Everything that exists only because there were several Neo sessions goes. Sizes are line counts at `a0c491a280`. Daemon paths are under `packages/daemon/src/`; prompt paths are under `packages/prompts/src/`.
 
-**Router (about 1,600 lines):**
-- `router.ts` (708), `route-classifier.ts` (334), `project-route-facts.ts` (135), `section-route-facts.ts` (113), `named-route-facts.ts` (46).
-- `route-correct-operation.ts` (83), `route-failure-operation.ts` (25), `work-reroute.ts` (134).
+**1. The router and route classifier (D2):**
+- `lib/neo/router.ts` (708), `lib/neo/route-classifier.ts` (334), `lib/neo/project-route-facts.ts` (135), `lib/neo/section-route-facts.ts` (113), `lib/neo/named-route-facts.ts` (46).
+- `lib/neo/route-correct-operation.ts` (83), `lib/neo/route-failure-operation.ts` (25), `lib/neo/work-reroute.ts` (134).
 - Tables: `neo_routing_log`, `neo_route_pr_refs`.
 - Operations: `neo.route.correct`, `neo.route.failure`.
 - Prompts: `neo/route-classifier.md`, `neo/route-request.md`.
-- Settings: `NeoRouteModel`, `neo.routeModel`, `routeFallbacks`, `routeTimeoutMs`, and `DEFAULT_NEO_ROUTE_TIMEOUT_MS`.
+- Settings: `NeoRouteModel`, `neo.routeModel`, `routeFallbacks`, `routeTimeoutMs`, `DEFAULT_NEO_ROUTE_TIMEOUT_MS` (`shared/src/types/settings.ts`).
 
-**Holder sessions and ask ownership:**
-- `holder-turn.ts` (89), `holder-title.ts` (20), `binding-roles.ts` (15).
-- The holder and root branches of `session-policy.ts` (161) and `ask-origin.ts` (176).
-- The `'project'` binding kind in `neo_session_bindings` and `NeoContext.kind` (`shared/src/types/neo-context.ts:19`).
-- The migration that merges holder sessions into the one session.
-- Prompts: `neo/consultation/holder-*.md` and `root-*.md` (10 files).
+**2. Project holder sessions and their bindings (D3):**
+- `lib/neo/holder-turn.ts` (89), `lib/neo/holder-title.ts` (20), `lib/neo/binding-roles.ts` (15).
+- The holder and root branches of `lib/neo/session-policy.ts` (161), including `neoCoordinatorBinding`'s project case.
+- The `'project'` binding kind in `neo_session_bindings` and in `NeoContext.kind` (`shared/src/types/neo-context.ts:19`).
+- Projects stay as labels. `project-tree-operations.ts`, `project-merge.ts` and `project-mirror.ts` lose their session parts only.
 
-**Forwarding and consultations:**
-- `ask-forward-operation.ts`, `consultation-*.ts` (5 files), `cross-project-operation.ts` (171), `inbox-promote-operation.ts` (150).
-- Tables: `neo_ask_forwards` (m344), `neo_consultations` (m279), `neo_consultation_waiters` (m285), `neo_consultation_publications` (m291), `neo_cross_project_dispatches` and `neo_cross_project_dispatch_members` (m365).
-- Operations: `neo.ask.forward`, `neo.project.consult`, `neo.project.respond`, `neo.project.cancel`, `neo.projects.dispatch`, `neo.receipt.read`, `neo.inbox.promote`.
+**3. Ask ownership by session (D3):**
+- The origin and owner resolution in `lib/neo/ask-origin.ts` (176) and `lib/neo/outcome-binding-policy.ts` (104).
+- The reply routing to "the session that owns the ask" in `lib/neo/intake.ts`. Replies keep their context line.
+- Prompts: `neo/work/done-check-ask-foreign.md` and `neo/work/done-check-ask-owned.md`, which become one done-check.
+
+**4. Forwarding (D3):**
+- `lib/neo/ask-forward-operation.ts` (382), `lib/neo/inbox-promote-operation.ts` (150).
+- Table: `neo_ask_forwards` (m344).
+- Operations: `neo.ask.forward`, `neo.inbox.promote`.
 - Prompts: `neo/ask-forwarded.md`, `neo/ask-moved.md`.
 
-**The catch-up view and hidden injection:**
-- `publication-view.ts` (138) and its `withNeoPublicationView` call sites.
-- The snapshot-after-reset injection, which becomes a visible daemon note.
-- Table: `neo_publication_anchors` (m382).
+**5. Consultations between sessions (D3):**
+- `lib/neo/consultation-origin.ts` (31), `consultation-policy.ts` (2), `consultation-recovery.ts` (32), `consultation-reply-content.ts` (33), `consultation-request-content.ts` (22), and `lib/neo/cross-project-operation.ts` (171).
+- Tables: `neo_consultations` (m279, with its m282 `origin_message_id` column), `neo_consultation_waiters` (m285), `neo_consultation_publications` (m291), `neo_cross_project_dispatches` and `neo_cross_project_dispatch_members` (m365).
+- Operations: `neo.project.consult`, `neo.project.respond`, `neo.project.cancel`, `neo.projects.dispatch`, `neo.receipt.read`.
+- Prompts: everything in `neo/consultation/`: `cross-project-request.md`, `request.md`, `review-request.md`, `receipt-closed.md`, `receipt-pending.md`, `receipt-returned.md`, `settled.md`, `settled-failed.md`, `settled-reported.md` and `settled-stopped.md`.
 
-**PR tracking replaced by the ledger:**
-- `drivers/opened-prs.ts` and the adapters' `openedPrs`.
-- The claim rules in `todo-prs.ts` and the table `pack_coding_pr_claims`.
-- `card-attention.ts` (39) and `neo_card_pr_relays`.
-- The legacy ask reminders `ask-idle.ts` (63) and `ask-stall.ts` (26).
+**6. The catch-up "recorded conversation" view and its per-session cursors (D1):**
+- `lib/neo/publication-view.ts` (138), and its call in `lib/agent/query-runner.ts:2258-2261` (`readNeoPublicationView`, `withNeoPublicationView`).
+- `storage/repositories/neo-publication-anchor-repository.ts` (38) and table `neo_publication_anchors` (m382), with its `cursor_json` column (m384).
+- `storage/repositories/neo-session-seen-repository.ts` (27) and table `neo_session_seen` (m340).
+
+**7. The fresh-context project snapshot injection (D1):**
+- `readNeoProjectSnapshot` in `lib/neo/session-policy.ts:68`, called from `lib/agent/agent-session.ts:365` and folded into the turn by `query-runner.ts` beside the catch-up view.
+- After a compaction or restart, the snapshot becomes a visible daemon note (S2) instead.
+
+**8. Notes that exist only to tell one Neo session what another did (D3):**
+- `neo/ask-moved.md` and `neo/ask-forwarded.md` (also in item 4).
+- `neo/card-attention-neo.md`, the relay of a card's evidence to the Neo session that owns it, with `lib/neo/card-attention.ts` (39) and table `neo_card_pr_relays`. The ledger and sweep replace it (L4).
+- `neo/work/environment-move.md`, the reroute notice, with `work-reroute.ts` (in item 1).
+
+**9. Holder and root role prompts (D3):**
+- `neo/system/holder-role.md`, `holder-operations.md`, `holder-snapshot-scope.md` and `holder-consultation-return.md`.
+- `neo/system/root-role.md`, `root-operations.md`, `root-snapshot-scope.md`, `root-consultation-return.md`, `root-clarify.md` and `root-rule-save.md`.
+- `neo/system/prompt.md` stays as the one coordinator prompt (S3).
+
+**PR tracking replaced by the ledger (L4, L5):**
+- `lib/drivers/opened-prs.ts` and the adapters' `openedPrs`.
+- The claim rules in `packs/coding/todo-prs.ts` and table `pack_coding_pr_claims`.
+- The legacy ask reminders `lib/neo/ask-idle.ts` (63) and `lib/neo/ask-stall.ts` (26).
 
 **Kept:**
 - Asks, todos, questions and their repositories.
 - `neo_conversation` and `neo_publications`; publications stay the chat record.
-- The projects table, now as labels.
-- Drivers and the workers.
+- The projects table, as labels.
+- Drivers and the worker sessions.
+- `neo/session-track.md`. Tracking a session the human started is a worker session, not a Neo session.
 - `look-up-guard.ts`, cut down to the credential-read guard as already planned.
 
 ## 7. PR plan
