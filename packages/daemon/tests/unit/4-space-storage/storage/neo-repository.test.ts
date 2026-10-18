@@ -33,6 +33,21 @@ describe('NeoRepository', () => {
 
   afterEach(() => db.close());
 
+  test('resolves a project from its bare id, prefixed id or title', () => {
+    const daemon = { ...concern, id: 'project:4ce2', title: 'HyperNeo Daemon' };
+    repo.saveProject(daemon, 0);
+    repo.saveProject({ ...concern, id: 'legacy-1', title: 'Legacy' }, 0);
+
+    expect(repo.resolveProjectRef('4ce2')).toBe('project:4ce2');
+    expect(repo.resolveProjectRef('project:4ce2')).toBe('project:4ce2');
+    expect(repo.resolveProjectRef(' hyperneo daemon ')).toBe('project:4ce2');
+    expect(repo.resolveProjectRef('legacy-1')).toBe('legacy-1');
+    expect(repo.resolveProjectRef('project:legacy-1')).toBe('legacy-1');
+    expect(repo.resolveProjectRef('missing')).toBeNull();
+    repo.saveProject({ ...concern, id: 'project:x', title: 'legacy-1' }, 0);
+    expect(repo.resolveProjectRef('legacy-1')).toBe('legacy-1');
+  });
+
   test('creates projects once and rejects stale changes without losing context', () => {
     expect(repo.listProjects()).toEqual([]);
     const saved = repo.saveProject(concern, 0);

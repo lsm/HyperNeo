@@ -1601,7 +1601,10 @@ export function createNeoOperations(service: NeoService) {
       getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
       forwards: (ask) => service.askForwards.list(ask),
-      getProject: (id) => service.repo.getProject(id),
+      getProject: (id) => {
+        const resolved = service.repo.resolveProjectRef(id);
+        return resolved ? service.repo.getProject(resolved) : null;
+      },
       listProjects: () => service.repo.listProjects(),
       openDefault: async () =>
         (
@@ -1644,14 +1647,12 @@ export function createNeoOperations(service: NeoService) {
       service.todoSessions,
       todoControls,
       (sessionId) => service.repo.getBindingBySession(sessionId)?.projectId ?? null,
-      (projectId) => {
-        const resolved = service.repo.projectMerges.resolve(projectId) ?? projectId;
-        return service.repo.getProject(resolved) ? resolved : null;
-      },
+      (projectId) => service.repo.resolveProjectRef(projectId),
       (sessionId) => {
         const binding = service.repo.getBindingBySession(sessionId);
         return !!binding && binding.kind !== 'worker';
-      }
+      },
+      () => service.repo.listProjects()
     ),
     ...createNeoQuestionOperations(
       service.todos,
