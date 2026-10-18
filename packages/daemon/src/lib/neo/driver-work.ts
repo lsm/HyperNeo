@@ -851,7 +851,7 @@ export function readDriverInputAttribution(
 }
 
 export const NEO_WORK_LATER_REPLIES_CUT =
-  '(Not every reply was read; this is not the whole exchange.)';
+  '(Later replies were not read; this is not the whole exchange.)';
 
 function attributedDriverReport(attribution: {
   replies: readonly WorkExchangeEntry[];
