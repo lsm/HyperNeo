@@ -14,6 +14,7 @@ import { getVoiceRecord, type VoiceRecordEntry } from '../lib/voice/voice-audio-
 import { NeoAttachments } from './NeoAttachments.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { type NeoPreference, NeoPreferences } from './NeoPreferences.tsx';
+import { NeoQuoteBar } from './NeoQuoteBar.tsx';
 import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
 import { attachmentMessage, NEO_FILE_ACCEPT, useNeoAttachments } from './neo-attachments.ts';
 import { type createNeoIntakeClient, type NeoQuote, neoQuoteExcerpt } from './neo-intake.ts';
@@ -217,30 +218,25 @@ export function NeoComposer({
             author: quoteAuthor,
             excerpt: neoQuoteExcerpt(quote.text),
           })}
-          class="mb-2 flex items-start gap-2.5 rounded-xl bg-surface py-1.5 pl-2.5"
         >
-          <span
-            aria-hidden="true"
-            class={`w-[3px] self-stretch rounded-full ${quote.author === 'You' ? 'bg-[var(--neo-user-accent)]' : 'bg-accent'}`}
-          />
-          <div class="min-w-0 flex-1">
-            <p id="neo-quote-label" role="status" class="text-xs font-medium text-fg-muted">
-              {quote.replyTo ? t('chat.reply') : t('composer.replyingTo', { author: quoteAuthor })}
-            </p>
-            <p class="line-clamp-2 break-words text-sm text-fg">{neoQuoteExcerpt(quote.text)}</p>
-          </div>
-          <button
-            type="button"
-            aria-label={t('composer.removeReply')}
-            title={t('composer.removeReplyTitle')}
-            class="p-2 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            onClick={() => {
-              onCancelQuote?.();
-              thought.current?.focus();
-            }}
+          <NeoQuoteBar
+            author={quote.author}
+            excerpt={neoQuoteExcerpt(quote.text)}
+            labelId="neo-quote-label"
           >
-            <NeoIcon name="close" class="!h-3 !w-3" />
-          </button>
+            <button
+              type="button"
+              aria-label={t('composer.removeReply')}
+              title={t('composer.removeReplyTitle')}
+              class="p-2 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              onClick={() => {
+                onCancelQuote?.();
+                thought.current?.focus();
+              }}
+            >
+              <NeoIcon name="close" class="!h-3 !w-3" />
+            </button>
+          </NeoQuoteBar>
         </div>
       )}
       {attachments.files.length > 0 && (
