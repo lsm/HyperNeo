@@ -203,35 +203,36 @@ describe('askNeoRouteModel', () => {
 
   const timedOut = { miss: 'timeout', cause: 'no answer within 15000 ms' } as const;
   const failed = { miss: 'failed', cause: 'route model returned 429' } as const;
+  const ctx = { projects: 'Projects:', recent: 'Recent turns' };
 
   test.each([timedOut, failed, null])(
     'asks once more when the route model gives %o',
     async (first) => {
       const { deps, calls } = answering([first, drivers]);
-      expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, deps)).toEqual(drivers);
+      expect(await askNeoRouteModel('hi', [drivers], ctx, false, deps)).toEqual(drivers);
       expect(calls).toHaveLength(2);
     }
   );
 
   test('keeps an answer without retrying, and retries only once', async () => {
     const answered = answering([youtube]);
-    expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, answered.deps)).toBe(youtube);
+    expect(await askNeoRouteModel('hi', [drivers], ctx, false, answered.deps)).toBe(youtube);
     expect(answered.calls).toHaveLength(1);
     const silent = answering([timedOut, failed]);
-    expect(await askNeoRouteModel('hi', [drivers], 'ctx', false, silent.deps)).toBe(failed);
+    expect(await askNeoRouteModel('hi', [drivers], ctx, false, silent.deps)).toBe(failed);
     expect(silent.calls).toHaveLength(2);
   });
 
   test('offers the inbox to the route model when it is runnable', async () => {
     const offered: string[][] = [];
-    await askNeoRouteModel('hi', [drivers], 'ctx', true, {
+    await askNeoRouteModel('hi', [drivers], ctx, true, {
       classify: async (_text, options) => {
         offered.push(options.map((option) => option.projectId));
         return drivers;
       },
     });
     expect(offered).toEqual([['drivers', 'inbox']]);
-    expect(await askNeoRouteModel('hi', [drivers], 'ctx', true, {})).toBeNull();
+    expect(await askNeoRouteModel('hi', [drivers], ctx, true, {})).toBeNull();
   });
 });
 
