@@ -113,6 +113,25 @@ describe('durable conversation ask client', () => {
     });
   });
 
+  it('keeps the quoted message author and excerpt and drops malformed ones', () => {
+    const quoted = {
+      ...ask(),
+      replyTo: { kind: 'message', id: 'p1', author: 'neo', excerpt: 'Line one\nline two' },
+    };
+    const gone = { ...ask(2), replyTo: { kind: 'message', id: 'p2' } };
+    const odd = {
+      ...ask(3),
+      replyTo: { kind: 'message', id: 'p3', author: 'bot', excerpt: 42 },
+    };
+    expect(presentConversationAskPage(response([quoted, gone, odd]), page)).toEqual({
+      value: {
+        state: 'ready',
+        items: [quoted, gone, { ...odd, replyTo: { kind: 'message', id: 'p3' } }],
+        nextAfter: 3,
+      },
+    });
+  });
+
   it.each([
     { conversationId: 'legacy-root', after: 0 },
     { conversationId, after: -1 },

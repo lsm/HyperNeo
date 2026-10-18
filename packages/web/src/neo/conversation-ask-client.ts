@@ -144,7 +144,16 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
     ...(replyTo &&
     (replyTo.kind === 'question' || replyTo.kind === 'todo' || replyTo.kind === 'message') &&
     text(replyTo.id, 160)
-      ? { replyTo: { kind: replyTo.kind, id: replyTo.id } }
+      ? {
+          replyTo: {
+            kind: replyTo.kind,
+            id: replyTo.id,
+            ...(replyTo.author === 'neo' || replyTo.author === 'user'
+              ? { author: replyTo.author }
+              : {}),
+            ...(text(replyTo.excerpt, 1200) ? { excerpt: replyTo.excerpt } : {}),
+          },
+        }
       : {}),
   };
 }
