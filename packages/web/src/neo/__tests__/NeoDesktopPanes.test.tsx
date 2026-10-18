@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
 import { testAskEntry, testTodo } from './neo-test-views.ts';
+import { locale } from '../../lib/i18n/index.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
@@ -36,6 +37,14 @@ vi.mock('../NeoSessionPane.tsx', () => ({
     </div>
   ),
 }));
+
+beforeEach(() => {
+  locale.value = 'zh-Hans';
+});
+
+afterEach(() => {
+  locale.value = 'en';
+});
 
 beforeEach(() => {
   connectionState.value = 'connected';

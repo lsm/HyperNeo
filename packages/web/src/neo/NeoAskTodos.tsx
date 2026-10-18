@@ -18,13 +18,14 @@ import {
 } from './NeoCardParts.tsx';
 import { neoSessionKind } from './work-driver.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { t } from '../lib/i18n/index.ts';
 
 const states = {
-  waiting: ['等你', 'text-warning bg-warning/10'],
-  doing: ['在做', 'text-accent bg-accent/10'],
-  done: ['做完', 'text-success bg-success/10'],
-  dropped: ['放弃了', 'text-fg-muted bg-fill-soft'],
-  todo: ['没开始', 'text-fg-muted bg-fill-soft'],
+  waiting: ['ask.state.waiting', 'text-warning bg-warning/10'],
+  doing: ['ask.state.doing', 'text-accent bg-accent/10'],
+  done: ['ask.state.done', 'text-success bg-success/10'],
+  dropped: ['ask.state.dropped', 'text-fg-muted bg-fill-soft'],
+  todo: ['ask.state.todo', 'text-fg-muted bg-fill-soft'],
 } as const;
 
 const marks = {
@@ -42,9 +43,13 @@ export function neoQuestionAnswerLabel(question: NeoQuestion, todos: readonly Ne
     return (answer === 'yes' ? question.yesLabel : question.noLabel) ?? String(answer);
   if (question.kind === 'start' && Array.isArray(answer))
     return answer.length
-      ? `开始 ${answer.map((id) => todos.find((todo) => todo.id === id)?.title ?? id).join('、')}`
-      : '先不做';
-  return Array.isArray(answer) ? answer.join('、') || '都不要' : answer;
+      ? t('question.started', {
+          todos: answer
+            .map((id) => todos.find((todo) => todo.id === id)?.title ?? id)
+            .join(t('list.separator')),
+        })
+      : t('question.notNow');
+  return Array.isArray(answer) ? answer.join(t('list.separator')) || t('question.none') : answer;
 }
 
 function TodoRow({
@@ -71,7 +76,7 @@ function TodoRow({
       {onCheck ? (
         <input
           type="checkbox"
-          aria-label={`开始 ${todo.title}`}
+          aria-label={t('todo.startTitle', { title: todo.title })}
           checked={checked}
           onChange={(event) => onCheck((event.target as HTMLInputElement).checked)}
           class="mt-1 shrink-0"
@@ -89,22 +94,22 @@ function TodoRow({
         </span>
         {todo.addedAfterStart && todo.state !== 'removed' && (
           <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
-            新
+            {t('todo.new')}
           </span>
         )}
         <span class="block break-words text-xs text-fg-muted">
-          {number === undefined ? todo.status : `做完 = ${todo.doneWhen}`}
+          {number === undefined ? todo.status : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
         </span>
       </div>
       {todo.link && todo.state !== 'removed' && onOpen && (
         <button
           type="button"
           class={neoSecondaryClass}
-          aria-label={`打开 ${todo.title}`}
+          aria-label={t('todo.openTitle', { title: todo.title })}
           onClick={() => onOpen(todo.link!, todo.title)}
         >
           <NeoSessionMark kind={neoSessionKind(null, todo.link)} />
-          打开
+          {t('todo.open')}
         </button>
       )}
     </div>
@@ -143,7 +148,7 @@ function QuestionBox({
     setPicked((current) => (on ? [...current, value] : current.filter((item) => item !== value)));
   const reply = onReply && (
     <button type="button" class={neoPlainClass} disabled={disabled} onClick={onReply}>
-      在聊天里回复
+      {t('question.reply')}
     </button>
   );
   return (
@@ -220,7 +225,7 @@ function QuestionBox({
             disabled={disabled}
             onClick={() => onAnswer(picked)}
           >
-            确定
+            {t('question.confirm')}
           </button>
         )}
         {question.kind === 'start' && (
@@ -231,7 +236,7 @@ function QuestionBox({
               disabled={disabled}
               onClick={() => onAnswer([])}
             >
-              先不做
+              {t('question.notNow')}
             </button>
             <button
               type="button"
@@ -239,7 +244,7 @@ function QuestionBox({
               disabled={disabled || picked.length === 0}
               onClick={() => onAnswer(picked)}
             >
-              开始
+              {t('question.start')}
             </button>
           </>
         )}
@@ -282,22 +287,22 @@ export function NeoAskTodos({
       class={neoCardClass}
     >
       <div class="flex min-h-7 items-center gap-2">
-        <span class={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${tone}`}>{label}</span>
+        <span class={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${tone}`}>{t(label)}</span>
         <span class="flex-1" />
         {onSettle && ask.status === 'open' && (
           <Dropdown
             position="right"
             items={[
-              { label: 'Mark done', onClick: () => onSettle('done'), disabled },
+              { label: t('ask.markDone'), onClick: () => onSettle('done'), disabled },
               {
-                label: 'Drop this ask',
+                label: t('ask.drop'),
                 onClick: () => onSettle('dropped'),
                 danger: true,
                 disabled,
               },
             ]}
             trigger={
-              <IconButton title="Ask actions" size="sm" class="text-fg-faint">
+              <IconButton title={t('ask.actions')} size="sm" class="text-fg-faint">
                 <NeoMoreIcon />
               </IconButton>
             }
@@ -318,7 +323,7 @@ export function NeoAskTodos({
         />
       ))}
       {live.some((todo) => !inQuestion.has(todo.id)) && (
-        <div class="mt-3" aria-label="Todos">
+        <div class="mt-3" aria-label={t('ask.todos')}>
           {live
             .filter((todo) => !inQuestion.has(todo.id))
             .map((todo) => (
@@ -330,8 +335,8 @@ export function NeoAskTodos({
         <div data-ask-details class="mt-3 space-y-3 text-sm text-fg-muted">
           {removed.length > 0 && (
             <div>
-              <p class="text-xs font-medium text-fg-faint">已移除</p>
-              <ul class="mt-1.5 space-y-1.5" aria-label="已移除">
+              <p class="text-xs font-medium text-fg-faint">{t('ask.removed')}</p>
+              <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.removed')}>
                 {removed.map((todo) => (
                   <li
                     key={todo.id}
@@ -349,8 +354,8 @@ export function NeoAskTodos({
           )}
           {answered.length > 0 && (
             <div>
-              <p class="text-xs font-medium text-fg-faint">已回答</p>
-              <ul class="mt-1.5 space-y-1.5" aria-label="已回答">
+              <p class="text-xs font-medium text-fg-faint">{t('ask.answered')}</p>
+              <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.answered')}>
                 {answered.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
                     {question.text} — {neoQuestionAnswerLabel(question, todos)}
@@ -367,7 +372,7 @@ export function NeoAskTodos({
           )}
           {ask.outcome && (
             <div>
-              <p class="text-xs font-medium text-fg-faint">Outcome</p>
+              <p class="text-xs font-medium text-fg-faint">{t('ask.outcome')}</p>
               <p class="mt-1 whitespace-pre-wrap break-words">{ask.outcome}</p>
             </div>
           )}
@@ -382,7 +387,7 @@ export function NeoAskTodos({
             onClick={() => setOpen(!open)}
             class={neoPlainClass}
           >
-            Details
+            {t('ask.details')}
             <NeoIcon
               name="chevron"
               class={`!h-3.5 !w-3.5 transition-transform${open ? '' : ' rotate-180'}`}

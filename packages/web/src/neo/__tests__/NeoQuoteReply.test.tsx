@@ -8,6 +8,7 @@ import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
 import { createNeoIntakeClient, type NeoPendingAsk } from '../neo-intake.ts';
 import type { NeoPublicConversation } from '../public-conversation.ts';
+import { locale } from '../../lib/i18n/index.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
@@ -81,6 +82,14 @@ const nativeState = (id: string) =>
     revision: 1,
     daemonEpoch: 'quote-test',
   }) as SessionState;
+
+beforeEach(() => {
+  locale.value = 'zh-Hans';
+});
+
+afterEach(() => {
+  locale.value = 'en';
+});
 
 beforeEach(async () => {
   localStorage.clear();

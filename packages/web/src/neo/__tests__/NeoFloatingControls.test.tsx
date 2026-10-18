@@ -4,9 +4,18 @@ import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { testAskEntry, testTodo } from './neo-test-views.ts';
+import { locale } from '../../lib/i18n/index.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
+
+beforeEach(() => {
+  locale.value = 'zh-Hans';
+});
+
+afterEach(() => {
+  locale.value = 'en';
+});
 
 beforeEach(async () => {
   vi.resetModules();
