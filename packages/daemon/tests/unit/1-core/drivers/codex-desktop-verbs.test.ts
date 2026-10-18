@@ -89,7 +89,7 @@ describe('codexInputEvidence', () => {
     });
   });
 
-  test('keeps the newest replies of a long turn', () => {
+  test('keeps the first and the newest replies of a long turn', () => {
     const replies = Array.from({ length: 41 }, (_, index) =>
       saidAt(`step ${index}`, `2026-10-04T11:01:${String(index).padStart(2, '0')}.000Z`)
     );
@@ -98,7 +98,8 @@ describe('codexInputEvidence', () => {
       exchangeCut: true,
       exchange: [
         { text: 'fix' },
-        ...Array.from({ length: 39 }, (_, index) => ({ text: `step ${index + 2}` })),
+        { text: 'step 0' },
+        ...Array.from({ length: 38 }, (_, index) => ({ text: `step ${index + 3}` })),
       ],
     });
   });

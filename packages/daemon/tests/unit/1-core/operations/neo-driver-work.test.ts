@@ -707,16 +707,16 @@ describe('driverExchangeReport', () => {
     expect(driverExchangeReport(undefined, false, null)).toBeNull();
   });
 
-  test('says when earlier messages were not read and keeps the newest to fit', () => {
+  test('says when earlier messages were not read and trims the middle to fit', () => {
     expect(driverExchangeReport([agent(1, 'Done.')], true, null)).toBe(
       '(Earlier messages were not read; this is not the whole exchange.)\n\nAgent: Done.'
     );
     const long = Array.from({ length: 10 }, (_, index) => agent(index, `${index}`.repeat(3_000)));
     const report = driverExchangeReport(long, false, null) ?? '';
     expect(report.length).toBeLessThanOrEqual(12_000);
-    expect(report.startsWith('(7 earlier messages trimmed.)')).toBe(true);
-    expect(report).toContain(`Agent: ${'7'.repeat(3_000)}`);
+    expect(report.startsWith(`Agent: ${'0'.repeat(3_000)}`)).toBe(true);
     expect(report.endsWith(`Agent: ${'9'.repeat(3_000)}`)).toBe(true);
+    expect(report).toContain('messages in between trimmed.');
   });
 });
 

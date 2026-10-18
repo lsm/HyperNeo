@@ -38,6 +38,7 @@ import {
   WORK_AGENT_INPUT,
   exchangeEntry,
   recentWorkInputs,
+  turnReplies,
   turnReply,
   type WorkExchange,
   withExchange,
@@ -670,7 +671,7 @@ export function codexInputEvidence(
   return {
     receipt,
     state: 'observed',
-    exchange: [first, ...replies.slice(-39)],
+    exchange: [first, ...turnReplies(replies)],
     exchangeCut: replies.length > 39,
   };
 }
