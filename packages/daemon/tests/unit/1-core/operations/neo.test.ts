@@ -670,6 +670,7 @@ describe('Neo MVP', () => {
       'neo.ask.open',
       'neo.ask.settle',
       'neo.question.ask',
+      'neo.question.retire',
       'neo.question.answer',
       'neo.project.cancel',
       'neo.project.consult',

@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration391(db: Database): void {
+export function runMigration392(db: Database): void {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_todos' AND type = 'table'").get())
     return;
   db.exec(`CREATE TABLE IF NOT EXISTS neo_todo_pr_refs (

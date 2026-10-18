@@ -22,18 +22,21 @@ const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, 
 
 const Text = z.string().trim().min(1);
 
+const Asked = { askId: Text, text: Text, replaces: Text.optional() };
+
 const Ask = z.discriminatedUnion('kind', [
-  z.object({ askId: Text, kind: z.literal('yesno'), text: Text, noLabel: Text, yesLabel: Text }),
+  z.object({ ...Asked, kind: z.literal('yesno'), noLabel: Text, yesLabel: Text }),
   z.object({
-    askId: Text,
+    ...Asked,
     kind: z.literal('choice'),
-    text: Text,
     options: z.array(Text).min(2).max(6),
     multiple: z.boolean().default(false),
   }),
-  z.object({ askId: Text, kind: z.literal('reply'), text: Text }),
-  z.object({ askId: Text, kind: z.literal('start'), text: Text, todos: z.array(Text).min(1) }),
+  z.object({ ...Asked, kind: z.literal('reply') }),
+  z.object({ ...Asked, kind: z.literal('start'), todos: z.array(Text).min(1) }),
 ]);
+
+const Retire = z.object({ questionId: Text, reason: Text });
 
 const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array(z.string())]) });
 
@@ -51,6 +54,8 @@ export const NeoQuestionSchema = z.object({
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
   answeredBy: z.enum(['button', 'chat']).nullable(),
   answeredAt: z.number().nullable(),
+  retiredReason: z.string().nullable(),
+  replacedBy: z.string().nullable(),
   createdAt: z.number(),
 });
 
@@ -84,6 +89,32 @@ export function planNeoQuestion(
         `not_startable: ${unstartable.join(', ')} is not a not-started todo with a session on this ask.`
       )
     : { value: { ask, draft } };
+}
+
+const START_QUESTION =
+  "start_question: the daemon's start question carries the human's go-ahead; only the human answers it.";
+
+export function requireNeoQuestionReplaceable(
+  replaced: NeoQuestion | null,
+  ask: NeoAsk,
+  replaces: string | undefined
+): Gate<NeoQuestion | null> {
+  if (replaces === undefined) return { value: null };
+  if (!replaced) return fail(`not_found: no question ${replaces}.`);
+  if (replaced.askId !== ask.id)
+    return fail(`other_ask: question ${replaces} belongs to another ask; replace only this ask's.`);
+  if (replaced.kind === 'start') return fail(START_QUESTION);
+  return replaced.state === 'open'
+    ? { value: replaced }
+    : fail(`question_closed: question ${replaces} is ${replaced.state}.`);
+}
+
+export function requireNeoOpenQuestion(question: NeoQuestion | null): Gate<NeoQuestion> {
+  if (!question) return fail('not_found: no such question.');
+  if (question.kind === 'start') return fail(START_QUESTION);
+  return question.state === 'open'
+    ? { value: question }
+    : fail(`question_closed: this question is ${question.state}.`);
 }
 
 export function planNeoQuestionAnswer(
@@ -158,15 +189,67 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
-      (plan: { ask: NeoAsk; draft: NeoQuestionDraft }): QuestionReceipt => ({
-        ok: true,
-        question: store.askQuestion(crypto.randomUUID(), plan.ask.id, plan.draft, Date.now()),
-      }),
+      (plan: { ask: NeoAsk; draft: NeoQuestionDraft }, input: z.infer<typeof Ask>) => {
+        const replaced = requireNeoQuestionReplaceable(
+          input.replaces ? store.getQuestion(input.replaces) : null,
+          plan.ask,
+          input.replaces
+        );
+        return 'reason' in replaced ? replaced : { value: { ...plan, replaced: replaced.value } };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      (plan: {
+        ask: NeoAsk;
+        draft: NeoQuestionDraft;
+        replaced: NeoQuestion | null;
+      }): QuestionReceipt | Rejection => {
+        const id = crypto.randomUUID();
+        const question = plan.replaced
+          ? store.replaceQuestion(plan.replaced, id, plan.draft, Date.now())
+          : store.askQuestion(id, plan.ask.id, plan.draft, Date.now());
+        return question
+          ? { ok: true, question }
+          : { ok: false, reason: 'question_closed: the question to replace is no longer open.' };
+      },
       'outcome',
       'outcome'
     )
     .end('outcome') as (
     input: z.infer<typeof Ask>,
+    caller: OperationCaller
+  ) => QuestionReceipt | Rejection;
+
+  const retire = (superpipe({})('neo.question.retire') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof Retire>) =>
+        requireNeoOpenQuestion(store.getQuestion(input.questionId)),
+      'input',
+      'result:outcome'
+    )
+    .pipe(
+      (question: NeoQuestion, caller: OperationCaller): Gate<NeoQuestion> => {
+        const owned = requireNeoAskOwner(store.getAsk(question.askId), caller);
+        return 'reason' in owned ? owned : { value: question };
+      },
+      ['outcome', 'caller'],
+      'result:outcome'
+    )
+    .pipe(
+      (question: NeoQuestion, input: z.infer<typeof Retire>): QuestionReceipt | Rejection => {
+        const retired = store.retireQuestion(question, input.reason, null, Date.now());
+        return retired
+          ? { ok: true, question: retired }
+          : { ok: false, reason: 'question_closed: this question is no longer open.' };
+      },
+      ['outcome', 'input'],
+      'outcome'
+    )
+    .end('outcome') as (
+    input: z.infer<typeof Retire>,
     caller: OperationCaller
   ) => QuestionReceipt | Rejection;
 
@@ -219,11 +302,20 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any. reply: answered in chat. start: todos lists not-started todos; the human unticks any they do not want, and answering starts the ticked ones. Ask only what you cannot read yourself; never a bookkeeping question.',
+        'Ask the human one question on an open ask you own. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any. reply: answered in chat. start: todos lists not-started todos; the human unticks any they do not want, and answering starts the ticked ones. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => ask(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.question.retire',
+      description:
+        'Retire an open question on an ask you own when it no longer needs an answer, with the reason in one short sentence. It leaves the open questions and shows in Details as no longer needed.',
+      inputSchema: Retire,
+      resultSchema: QuestionResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => retire(input, caller),
     }),
     defineOperation({
       name: 'neo.question.answer',

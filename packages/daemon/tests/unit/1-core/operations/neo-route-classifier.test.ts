@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildNeoRoutePrompt,
+  firstNeoRouteVerdict,
   neoRouteEndpoint,
+  neoRouteThinking,
   neoRouteTimeoutMs,
   neoRouteHttpCall,
   neoRouteMiss,
@@ -113,6 +115,76 @@ describe('neoRouteHttpCall', () => {
       neoRouteHttpCall('https://api.anthropic.com', 'claude-haiku-4-5', {}, 'p', undefined)
     ).toBeNull();
     expect(neoRouteHttpCall('not a url', 'm', {}, 'p', undefined)).toBeNull();
+  });
+});
+
+describe('neoRouteThinking', () => {
+  test('a chosen level turns thinking on only where the model supports it', () => {
+    expect(neoRouteThinking('glm', 'glm-5', 'think8k', 'granular')).toEqual({
+      type: 'enabled',
+      budgetTokens: 8000,
+    });
+    expect(neoRouteThinking('glm', 'glm-5', 'think8k', 'off')).toEqual({ type: 'disabled' });
+    expect(neoRouteThinking('glm', 'glm-5', 'off', 'granular')).toEqual({ type: 'disabled' });
+    expect(neoRouteThinking('glm', 'glm-5', undefined, 'granular')).toEqual({ type: 'disabled' });
+    expect(neoRouteThinking('kimi', 'kimi-k3', undefined, 'on')).toBeUndefined();
+  });
+});
+
+describe('firstNeoRouteVerdict', () => {
+  const primary = { provider: 'glm', model: 'glm-5' };
+  const fallback = { provider: 'deepseek', model: 'deepseek-flash', thinkingLevel: 'off' as const };
+  test('tries fallbacks in order only while each model fails', async () => {
+    const asked: unknown[] = [];
+    const verdict = await firstNeoRouteVerdict(
+      [primary, fallback, undefined],
+      async (choice) => {
+        asked.push(choice);
+        return choice === primary
+          ? { miss: 'failed', cause: 'refused glm/glm-5: provider is unavailable' }
+          : { miss: 'unanswered', cause: 'no id' };
+      },
+      new AbortController().signal
+    );
+    expect(asked).toEqual([primary, fallback]);
+    expect(verdict).toEqual({ miss: 'unanswered', cause: 'no id' });
+  });
+
+  test('reports every refusal when no model answers, and stops once aborted', async () => {
+    expect(
+      await firstNeoRouteVerdict(
+        [primary, fallback],
+        async (choice) => ({ miss: 'failed', cause: `down ${choice?.model}` }),
+        new AbortController().signal
+      )
+    ).toEqual({ miss: 'failed', cause: 'down glm-5; down deepseek-flash' });
+    const aborted = new AbortController();
+    aborted.abort();
+    const asked: unknown[] = [];
+    await firstNeoRouteVerdict(
+      [primary],
+      async (choice) => {
+        asked.push(choice);
+        return null;
+      },
+      aborted.signal
+    );
+    expect(asked).toEqual([]);
+  });
+
+  test('no configured model asks the default once', async () => {
+    const asked: unknown[] = [];
+    expect(
+      await firstNeoRouteVerdict(
+        [],
+        async (choice) => {
+          asked.push(choice);
+          return null;
+        },
+        new AbortController().signal
+      )
+    ).toBeNull();
+    expect(asked).toEqual([undefined]);
   });
 });
 

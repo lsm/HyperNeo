@@ -9,6 +9,7 @@ import {
   pullRequestUrlOfTopic,
 } from '../../../github/parse-pr-url.ts';
 import type { NeoTodoCheckResult, NeoTodoPack } from '../types.ts';
+import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
 import { CODING_TODO_PR_REFS, createCodingPackTables } from './schema/coding-tables.ts';
 import { extractNeoWorkPrUrls, type NeoWorkPrReader } from './work-prs.ts';
 
@@ -208,27 +209,44 @@ export function codingTodoCheck(
   return null;
 }
 
-const PR_LINES = {
-  done: '已合并',
-  failed: '',
-  waiting: '开着，等 CI',
-  ready: '已批准，等合并',
-  pending: '开着，等 review',
+const CODING_TODO_STATUS_EN = {
+  'todo.pr.merged': '{pr} merged',
+  'todo.pr.closed': '{pr} closed',
+  'todo.pr.ciFailing': '{pr} CI failing',
+  'todo.pr.changesRequested': '{pr} needs changes',
+  'todo.pr.waitingCi': '{pr} open, waiting on CI',
+  'todo.pr.approved': '{pr} approved, waiting to merge',
+  'todo.pr.waitingReview': '{pr} open, waiting on review',
+  'todo.reportedNoPr': 'Session says it is done; no PR found',
 } as const;
 
-function prLine(pr: NeoWorkPr): string {
-  if (pr.state === 'CLOSED') return `${prNumber(pr)} 已关闭`;
-  if (pr.state === 'OPEN' && pr.checks === 'failing') return `${prNumber(pr)} CI 没过`;
-  if (pr.state === 'OPEN' && pr.review === 'changes_requested') return `${prNumber(pr)} 要改`;
-  return `${prNumber(pr)} ${PR_LINES[neoWorkPrVerdict(pr)]}`;
+const PR_CODES = {
+  done: 'todo.pr.merged',
+  failed: 'todo.pr.ciFailing',
+  waiting: 'todo.pr.waitingCi',
+  ready: 'todo.pr.approved',
+  pending: 'todo.pr.waitingReview',
+} as const;
+
+function prCode(pr: NeoWorkPr): keyof typeof CODING_TODO_STATUS_EN {
+  if (pr.state === 'CLOSED') return 'todo.pr.closed';
+  if (pr.state === 'OPEN' && pr.checks === 'failing') return 'todo.pr.ciFailing';
+  if (pr.state === 'OPEN' && pr.review === 'changes_requested') return 'todo.pr.changesRequested';
+  return PR_CODES[neoWorkPrVerdict(pr)];
 }
 
 export function codingTodoStatusLine(
   todo: Pick<NeoTodo, 'state' | 'report' | 'evidence'>,
   prs: readonly NeoWorkPr[]
-): string | null {
-  if (prs.length) return prs.map(prLine).join('，');
-  return todo.state === 'done' && todo.report && !todo.evidence ? '会话说做完了，没查到 PR' : null;
+): NeoStatusLine | null {
+  if (prs.length)
+    return neoStatusLine(
+      CODING_TODO_STATUS_EN,
+      prs.map((pr) => ({ code: prCode(pr), params: { pr: prNumber(pr) } }))
+    );
+  return todo.state === 'done' && todo.report && !todo.evidence
+    ? neoStatusLine(CODING_TODO_STATUS_EN, [{ code: 'todo.reportedNoPr', params: {} }])
+    : null;
 }
 
 export function createCodingTodoPack(

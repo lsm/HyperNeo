@@ -91,9 +91,8 @@ export function createAgentMemoryMcpServer(config: AgentMemoryToolsConfig) {
       (args) => handlers['memory.delete'](args)
     ),
   ];
-  const server = createSdkMcpServer({
+  return createSdkMcpServer({
     name: 'agent-memory',
     tools,
   });
-  return { ...server, tools };
 }

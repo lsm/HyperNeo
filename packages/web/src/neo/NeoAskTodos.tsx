@@ -267,12 +267,14 @@ export function NeoAskTodos({
   const { ask, todos } = entry;
   const asked = entry.questions.filter((question) => question.state === 'open');
   const answered = entry.questions.filter((question) => question.state === 'answered');
+  const retired = entry.questions.filter((question) => question.state === 'retired');
   const inQuestion = new Set(
     asked.flatMap((question) => (question.kind === 'start' ? (question.startTodos ?? []) : []))
   );
   const live = todos.filter((todo) => todo.state !== 'removed');
   const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
-  const hasDetails = answered.length > 0 || !!ask.outcome || removed.length > 0;
+  const hasDetails =
+    answered.length > 0 || retired.length > 0 || !!ask.outcome || removed.length > 0;
   const [label, tone] = states[entry.state];
   return (
     <article
@@ -360,6 +362,19 @@ export function NeoAskTodos({
                           minute: '2-digit',
                         })}`
                       : ''}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {retired.length > 0 && (
+            <div>
+              <p class="text-xs font-medium text-fg-faint">不再需要</p>
+              <ul class="mt-1.5 space-y-1.5" aria-label="不再需要">
+                {retired.map((question) => (
+                  <li key={question.id} id={`neo-ref-question-${question.id}`}>
+                    {question.text} — no longer needed
+                    {question.retiredReason ? `: ${question.retiredReason}` : ''}
                   </li>
                 ))}
               </ul>
