@@ -101,6 +101,7 @@ import {
   backfillDeepSeekProvider,
   migrateProvidersIfNeeded,
   refreshGlmDisplayName,
+  usesHumanLogin,
 } from './lib/credential-discovery.ts';
 import { createReactiveDatabase } from './storage/reactive-database.ts';
 import { LiveQueryEngine } from './storage/live-query.ts';
@@ -1386,8 +1387,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
-    oauthRefreshScheduler.start();
-    logInfo('[Daemon] OAuth refresh scheduler started');
+    if (usesHumanLogin()) {
+      oauthRefreshScheduler.start();
+      logInfo('[Daemon] OAuth refresh scheduler started');
+    } else {
+      logInfo('[Daemon] OAuth refresh scheduler skipped: test daemon without the human login');
+    }
 
     const pendingCleanup = jobQueue.listJobs({
       queue: JOB_QUEUE_CLEANUP,

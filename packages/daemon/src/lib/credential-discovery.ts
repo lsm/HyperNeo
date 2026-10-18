@@ -20,6 +20,10 @@ export interface DiscoveryOptions {
   platformName?: string;
 }
 
+export function usesHumanLogin(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NODE_ENV !== 'test' || env.HYPERNEO_TEST_USE_HUMAN_LOGIN === '1';
+}
+
 export function discoverCredentials(
   claudeDir?: string,
   options?: DiscoveryOptions

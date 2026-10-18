@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { discoverCredentials } from '../../../../src/lib/credential-discovery';
+import { discoverCredentials, usesHumanLogin } from '../../../../src/lib/credential-discovery';
 
 describe('discoverCredentials', () => {
   let originalEnv: Record<string, string | undefined>;
@@ -520,5 +520,20 @@ describe('discoverCredentials', () => {
 
       expect(result.settingsEnvApplied).toBe(0);
     });
+  });
+});
+
+describe('usesHumanLogin', () => {
+  it('keeps a test daemon away from the human login', () => {
+    expect(usesHumanLogin({ NODE_ENV: 'test' })).toBe(false);
+  });
+
+  it('lets a test daemon opt in explicitly', () => {
+    expect(usesHumanLogin({ NODE_ENV: 'test', HYPERNEO_TEST_USE_HUMAN_LOGIN: '1' })).toBe(true);
+  });
+
+  it('uses the login outside tests', () => {
+    expect(usesHumanLogin({ NODE_ENV: 'production' })).toBe(true);
+    expect(usesHumanLogin({})).toBe(true);
   });
 });

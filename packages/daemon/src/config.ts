@@ -9,9 +9,9 @@ import {
 } from './storage/sqlite-query-observability.ts';
 import { getDataDir } from './lib/data-dir.ts';
 
-import { discoverCredentials } from './lib/credential-discovery.ts';
+import { discoverCredentials, usesHumanLogin } from './lib/credential-discovery.ts';
 
-discoverCredentials();
+if (usesHumanLogin()) discoverCredentials();
 
 export interface Config {
   port: number;
