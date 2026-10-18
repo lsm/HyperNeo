@@ -733,9 +733,9 @@ export class AgentSession
     this.eventSubscriptionSetup = new EventSubscriptionSetup(this);
 
     this.stateManager.setOnIdleCallback(async (owner) => {
-      const restarted =
-        (await this.lifecycleManager.executeDeferredRestartIfPending()) ||
-        (await this.applyPendingModelSwitch());
+      const restartedForSettings = await this.lifecycleManager.executeDeferredRestartIfPending();
+      const switched = await this.applyPendingModelSwitch();
+      const restarted = restartedForSettings || switched;
       this.flushPendingTaskNotificationRequery();
       const reconcileOwner = restarted ? this.stateManager.getCurrentIdleOwner() : owner;
       void this.reconcileStrandedDeliveries(reconcileOwner).catch((error) => {

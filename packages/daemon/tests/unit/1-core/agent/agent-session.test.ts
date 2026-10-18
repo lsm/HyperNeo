@@ -2306,6 +2306,18 @@ describe('AgentSession', () => {
         expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
       });
 
+      it('applies the pending switch even when a deferred settings restart runs first', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        // biome-ignore lint: test mock access
+        const lifecycle = (agentSession as unknown as Record<string, Record<string, unknown>>)
+          .lifecycleManager;
+        lifecycle.executeDeferredRestartIfPending = async () => true;
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+        expect(mockSession.metadata.pendingModelSwitch).toBeUndefined();
+      });
+
       it('a later request replaces the pending one', async () => {
         await agentSession.stateManager.setProcessing('turn-1');
         await agentSession.requestModelSwitch('opus', 'anthropic');
