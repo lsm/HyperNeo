@@ -298,6 +298,15 @@ export class ModelSwitchHandler {
     }
   }
 
+  async invalidModel(newModel: string, newProvider: string): Promise<string | null> {
+    const { session } = this.ctx;
+    const sessionApiKey =
+      newProvider === session.config.provider ? session.config.providerConfig?.apiKey : undefined;
+    return (await isValidModel(newModel, 'global', newProvider, sessionApiKey))
+      ? null
+      : `Invalid model: ${newModel}. Use a valid model ID or alias.`;
+  }
+
   async switchModel(
     newModel: string,
     newProvider: string,
@@ -348,13 +357,10 @@ export class ModelSwitchHandler {
         throw new Error('Session has no provider configured');
       }
 
-      const sessionApiKey =
-        newProvider === session.config.provider ? session.config.providerConfig?.apiKey : undefined;
-      const isValid = await isValidModel(newModel, 'global', newProvider, sessionApiKey);
-      if (!isValid) {
-        const error = `Invalid model: ${newModel}. Use a valid model ID or alias.`;
-        logger.error(`${error}`);
-        return { success: false, model: session.config.model, error };
+      const invalid = await this.invalidModel(newModel, newProvider);
+      if (invalid) {
+        logger.error(invalid);
+        return { success: false, model: session.config.model, error: invalid };
       }
 
       const modelInfo = await getModelInfo(newModel, 'global', newProvider);

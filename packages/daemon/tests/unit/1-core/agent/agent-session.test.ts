@@ -2227,7 +2227,11 @@ describe('AgentSession', () => {
       beforeEach(() => {
         switchModel = mock(async (model: string) => ({ success: true, model }));
         // biome-ignore lint: test mock access
-        (agentSession as unknown as Record<string, unknown>).modelSwitchHandler = { switchModel };
+        (agentSession as unknown as Record<string, unknown>).modelSwitchHandler = {
+          switchModel,
+          invalidModel: async (model: string) =>
+            model === 'typo' ? 'Invalid model: typo. Use a valid model ID or alias.' : null,
+        };
       });
 
       it('switches at once while the session is idle', async () => {
@@ -2245,7 +2249,7 @@ describe('AgentSession', () => {
         const result = await agentSession.requestModelSwitch('opus', 'anthropic');
         expect(result).toMatchObject({
           success: true,
-          model: 'claude-sonnet-4-20250514',
+          model: 'opus',
           pending: { model: 'opus', provider: 'anthropic' },
         });
         expect(switchModel).not.toHaveBeenCalled();
@@ -2271,6 +2275,35 @@ describe('AgentSession', () => {
           model: 'opus',
         });
         expect(switchModel).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses an invalid model during a turn instead of storing it', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        expect(await agentSession.requestModelSwitch('typo', 'anthropic')).toEqual({
+          success: false,
+          model: 'claude-sonnet-4-20250514',
+          error: 'Invalid model: typo. Use a valid model ID or alias.',
+        });
+        expect(mockSession.metadata.pendingModelSwitch).toBeUndefined();
+      });
+
+      it('keeps the pending switch when a new turn has already started at the idle callback', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        // biome-ignore lint: test mock access
+        const manager = agentSession.stateManager as unknown as Record<string, unknown>;
+        const realGetState = agentSession.stateManager.getState.bind(agentSession.stateManager);
+        manager.getState = () => ({
+          status: 'processing',
+          messageId: 'turn-2',
+          phase: 'initializing',
+        });
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).not.toHaveBeenCalled();
+        expect(mockSession.metadata.pendingModelSwitch).toMatchObject({ model: 'opus' });
+        manager.getState = realGetState;
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
       });
 
       it('a later request replaces the pending one', async () => {

@@ -748,7 +748,10 @@ export class AgentSession
       void this.reevaluateContextBudgetAfterModelSwitch();
     }
     this.stateManager.restoreFromDatabase();
-    if (session.metadata?.pendingModelSwitch) void this.setPendingModelSwitch(undefined);
+    if (session.metadata?.pendingModelSwitch)
+      void this.setPendingModelSwitch(undefined).catch((error) => {
+        this.logger.warn('Clearing a stale pending model switch failed:', error);
+      });
     this.armPersistedRateLimitCooldown();
 
     this.eventSubscriptionSetup.setup();
@@ -1587,14 +1590,16 @@ export class AgentSession
       await this.setPendingModelSwitch(undefined);
       return this.handleModelSwitch(model, provider);
     }
+    const invalid = await this.modelSwitchHandler.invalidModel(model, provider);
+    if (invalid) return { success: false, model: this.session.config.model, error: invalid };
     const pending = { model, provider, requestedAt: Date.now() };
     await this.setPendingModelSwitch(pending);
-    return { success: true, model: this.session.config.model, pending };
+    return { success: true, model, pending };
   }
 
   private async applyPendingModelSwitch(): Promise<boolean> {
     const pending = this.session.metadata?.pendingModelSwitch;
-    if (!pending) return false;
+    if (!pending || modelSwitchTiming(this.stateManager.getState().status) !== 'now') return false;
     await this.setPendingModelSwitch(undefined);
     const result = await this.handleModelSwitch(pending.model, pending.provider);
     if (!result.success)
