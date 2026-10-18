@@ -3,7 +3,9 @@ import type { Session } from '@hyperneo/shared';
 import {
   createNeoIntakeOperation,
   neoReplyAuthor,
+  neoQuoteFact,
   neoReplyFact,
+  neoReplySnapshot,
   readNeoReply,
   repliedNeoRoute,
 } from '../../../../src/lib/neo/intake.ts';
@@ -206,14 +208,32 @@ describe('neo.message.send replyTo', () => {
       );
     const id = crypto.randomUUID();
     await reply(id, publicationId);
+    const snapshot = {
+      kind: 'message',
+      id: publicationId,
+      author: 'neo',
+      excerpt: 'Card is redone.',
+    };
     expect(prompt(id)).toMatchObject({
       session_id: holder,
-      replyTo: { kind: 'message', id: publicationId },
-      message: { content: [{ type: 'text', text: 'Thanks' }] },
+      replyTo: snapshot,
+      message: {
+        content: [
+          { type: 'text', text: 'The human replied to the Neo message "Card is redone.":' },
+          { type: 'text', text: 'Thanks' },
+        ],
+      },
     });
+    expect(ledger(id)).toEqual(
+      expect.objectContaining({ content: [{ type: 'text', text: 'Thanks' }], replyTo: snapshot })
+    );
     const unknown = crypto.randomUUID();
     await reply(unknown, 'pub-1');
     expect([prompt(unknown).session_id, routed]).toEqual([root, ['Thanks']]);
+    expect([ledger(unknown).replyTo, prompt(unknown).message.content]).toEqual([
+      { kind: 'message', id: 'pub-1' },
+      [{ type: 'text', text: 'Thanks' }],
+    ]);
   });
 
   test('a reply quoting the human’s own message goes to the session that answered it', async () => {
@@ -238,6 +258,43 @@ describe('neo.message.send replyTo', () => {
       human
     );
     expect([prompt(id).session_id, routed]).toEqual([holder, []]);
+    expect(ledger(id).replyTo).toEqual({
+      kind: 'message',
+      id: own,
+      author: 'user',
+      excerpt: '在做',
+    });
+  });
+});
+
+describe('neoReplySnapshot', () => {
+  const ref = { kind: 'message' as const, id: 'm' };
+  const ask = (content: unknown) => ({ content }) as never;
+  test('quotes the first 300 characters of the original and keeps what a retry stored', () => {
+    const long = `${'a'.repeat(299)} tail`;
+    expect(neoReplySnapshot(ref, null, ask([{ type: 'text', text: long }]), null)).toEqual({
+      ...ref,
+      author: 'user',
+      excerpt: `${'a'.repeat(299)}…`,
+    });
+    expect(neoReplySnapshot(ref, null, ask([{ type: 'image' }]), null)?.excerpt).toBe(
+      '(attachment)'
+    );
+    expect(neoReplySnapshot(ref, null, null, null)).toEqual(ref);
+    expect(neoReplySnapshot(ref, null, ask([]), { replyTo: ref } as never)).toEqual(ref);
+    expect(neoReplySnapshot({ kind: 'todo', id: 't' }, null, null, null)).toEqual({
+      kind: 'todo',
+      id: 't',
+    });
+  });
+});
+
+describe('neoQuoteFact', () => {
+  test('quotes the original only when the snapshot has one', () => {
+    expect(neoQuoteFact({ kind: 'message', id: 'm', author: 'user', excerpt: 'Ship it' })).toBe(
+      'The human replied to their earlier message "Ship it":'
+    );
+    expect(neoQuoteFact({ kind: 'message', id: 'm' })).toBeNull();
   });
 });
 
