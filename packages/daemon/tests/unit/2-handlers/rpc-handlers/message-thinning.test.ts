@@ -42,6 +42,23 @@ describe('thinMessage', () => {
     });
   });
 
+  test("keeps an invoke call's operation name even when it is not the first field", () => {
+    const thinned = thinMessage({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 't1',
+            name: 'mcp__hyperneo-operations__invoke',
+            input: { input: { sessionId: 's' }, name: 'daemon.session.inspect' },
+          },
+        ],
+      },
+    }) as { message: { content: Array<{ input: Record<string, unknown> }> } };
+    expect(thinned.message.content[0].input).toEqual({ name: 'daemon.session.inspect' });
+  });
+
   test('keeps whole inputs for todos and questions, and plain text as is', () => {
     const todo = {
       type: 'tool_use',

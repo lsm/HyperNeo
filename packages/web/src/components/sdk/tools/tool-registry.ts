@@ -374,13 +374,7 @@ export function getToolConfig(toolName: string): ToolConfig {
     return {
       displayName: toolShortName,
       category: 'mcp',
-      summaryExtractor: (input) => {
-        if (serverName === 'hyperneo-operations' && toolShortName === 'invoke') {
-          const operationName = getProp(input, 'name');
-          if (operationName) return operationName;
-        }
-        return serverName;
-      },
+      summaryExtractor: () => serverName,
       hasLongOutput: true,
       defaultExpanded: false,
     };
