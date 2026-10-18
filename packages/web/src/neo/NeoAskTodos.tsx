@@ -19,7 +19,7 @@ import {
 import { neoSessionKind } from './work-driver.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { t } from '../lib/i18n/index.ts';
-import { neoTodoStatus } from './todo-status.ts';
+import { neoQuestionText, neoTodoStatus } from './todo-status.ts';
 
 const states = {
   waiting: ['ask.state.waiting', 'text-warning bg-warning/10'],
@@ -161,7 +161,7 @@ function QuestionBox({
       data-question-kind={question.kind}
       class="mt-3 rounded-lg bg-warning/10 px-3 py-2"
     >
-      <p class="text-sm font-semibold">{question.text}</p>
+      <p class="text-sm font-semibold">{neoQuestionText(question)}</p>
       {question.kind === 'start' &&
         listed.map((todo) => (
           <TodoRow
@@ -363,7 +363,7 @@ export function NeoAskTodos({
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.answered')}>
                 {answered.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
-                    {question.text} — {neoQuestionAnswerLabel(question, todos)}
+                    {neoQuestionText(question)} — {neoQuestionAnswerLabel(question, todos)}
                     {question.answeredAt
                       ? ` · ${new Date(question.answeredAt).toLocaleTimeString([], {
                           hour: 'numeric',
@@ -381,7 +381,7 @@ export function NeoAskTodos({
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.retired')}>
                 {retired.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
-                    {t('question.retired', { question: question.text })}
+                    {t('question.retired', { question: neoQuestionText(question) })}
                     {question.retiredReason ? `: ${question.retiredReason}` : ''}
                   </li>
                 ))}

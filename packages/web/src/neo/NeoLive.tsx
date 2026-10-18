@@ -32,6 +32,7 @@ import './neo.css';
 import { neoForwardKey } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoQuote } from './neo-intake.ts';
 import { t } from '../lib/i18n/index.ts';
+import { neoQuestionText } from './todo-status.ts';
 
 export function NeoLive() {
   const neo = useNeo();
@@ -106,7 +107,10 @@ export function NeoLive() {
     (view?.todoAsks ?? []).flatMap((entry) => [
       ...entry.questions.map(
         (question) =>
-          [`question:${question.id}`, { label: question.text, askId: entry.ask.id }] as const
+          [
+            `question:${question.id}`,
+            { label: neoQuestionText(question), askId: entry.ask.id },
+          ] as const
       ),
       ...entry.todos.map(
         (todo) => [`todo:${todo.id}`, { label: todo.title, askId: entry.ask.id }] as const
@@ -607,7 +611,7 @@ export function NeoLive() {
                               scope: neo.sessionId!,
                               quote: {
                                 author: 'Neo',
-                                text: question.text,
+                                text: neoQuestionText(question),
                                 anchor: `neo-ref-question-${question.id}`,
                                 replyTo: { kind: 'question', id: question.id },
                               },

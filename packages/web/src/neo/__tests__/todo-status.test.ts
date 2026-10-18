@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { locale } from '../../lib/i18n/index.ts';
-import { neoTodoStatus } from '../todo-status.ts';
+import { neoQuestionText, neoTodoStatus } from '../todo-status.ts';
 
 afterEach(() => {
   locale.value = 'en';
@@ -33,5 +33,28 @@ describe('neoTodoStatus', () => {
     expect(neoTodoStatus({ status: 'Done', statusCodes: [{ code: 'toString', params: {} }] })).toBe(
       'Done'
     );
+  });
+});
+
+describe('neoQuestionText', () => {
+  it('renders daemon start-question codes in each language', () => {
+    const one = {
+      text: 'Start "Ship W5"?',
+      textCodes: [{ code: 'question.startOne', params: { title: 'Ship W5' } }],
+    };
+    const many = {
+      text: 'Start these 3?',
+      textCodes: [{ code: 'question.startMany', params: { count: '3' } }],
+    };
+    expect(neoQuestionText(one)).toBe('Start "Ship W5"?');
+    expect(neoQuestionText(many)).toBe('Start these 3?');
+    locale.value = 'zh-Hans';
+    expect(neoQuestionText(one)).toBe('开始「Ship W5」？');
+    expect(neoQuestionText(many)).toBe('开始这 3 件？');
+  });
+
+  it('keeps questions Neo wrote itself verbatim', () => {
+    locale.value = 'zh-Hans';
+    expect(neoQuestionText({ text: 'Which repo should I use?' })).toBe('Which repo should I use?');
   });
 });
