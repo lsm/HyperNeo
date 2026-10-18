@@ -145,7 +145,7 @@ export function NeoPreferences({
           aria-label={`Thinking: ${thinking}`}
           title={`Thinking: ${thinking}`}
         >
-          <ThinkingLevelIcon ring level={options.length ? level : 'off'} />
+          <ThinkingLevelIcon level={options.length ? level : 'off'} />
         </span>
         <NeoIcon
           name="chevron"
