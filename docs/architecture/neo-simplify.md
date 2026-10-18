@@ -12,7 +12,12 @@ This replaces the earlier version of this doc (one session per project, the rout
 - **No ownership between Neo sessions.** Asks aren't owned by a session. Neo sessions don't forward messages or consult each other.
 - **Projects and domains are labels.** Projects and coarse domains (work, home, travel) label asks and todos. They are not sessions.
 - **The database is the source of truth.** Asks, todos and the PR ledger live in the database, so a compaction or a restart loses nothing.
-- **Deterministic code does the waiting.** CI, reviews, the deadline sweep and merged→done are followed by code, which wakes Neo only when something changes. Neo's turns stay short.
+- **Deterministic code does the waiting.** CI, reviews, the deadline sweep and merged→done are followed by code, which wakes Neo only for a milestone. Neo's turns stay short.
+- **PR events: push state to the worker, wake Neo for milestones, read on demand.** This is a first-class rule (§4):
+  1. PR state changes go from the daemon straight to the worker session that owns the PR, once per event, not through Neo.
+  2. Neo is woken only for things that need its judgment: a PR merged, a worker stopped or is stuck or keeps failing at the same thing, something needs the human, or a relayed event passed its deadline with no action.
+  3. Nothing is piled onto the human's next message. When the human asks, Neo reads the current state from the ledger then.
+  4. Each todo card's status line reads straight from the ledger.
 - **Workers do the real work.** Worker sessions (HyperNeo, Claude Desktop, Codex) do the coding. Neo dispatches to them and follows the ledger.
 - **The human comes first.** A human message preempts a running Neo turn, as it already does (`service.ts:3774` `preemptForHumanMessage`). A "restart Neo" control starts a fresh session on the same database.
 - **Compaction works, and caching keeps the cost down.** See §4.
@@ -48,7 +53,7 @@ In both cases the project's own session had done the work and Neo had never hear
 This is a first-class rule. The daemon may add context to a human message (quoted facts, local time, a snapshot) and may send Neo its own notes, but every addition is visible in the conversation:
 
 - **Additions to a human message.** Under the human's message there is a collapsed "added by the daemon" line. It expands to the exact text that was sent.
-- **Daemon notes.** Each daemon note to Neo (a todo is done, PR news, an ask is idle) is its own visible row in the chat, marked as from the daemon, not the human.
+- **Daemon notes.** Each daemon note to Neo (a PR merged, a worker is stuck, an event passed its deadline) is its own visible row in the chat, marked as from the daemon, not the human.
 - **Other senders.** Coordinator and worker messages sent on the human's behalf are labelled with their real sender. They are never shown as the human.
 - **The system prompt.** It can be viewed from settings, by version.
 
@@ -95,30 +100,46 @@ This is unchanged from the previous plan:
 
 With one session, the ledger also replaces the router's profile: Neo sees every project's open and recently merged PR titles in its snapshot.
 
-### Waiting is code, not turns
+### PR events: push to the worker, wake Neo for milestones, read on demand
 
-These run in the daemon and wake Neo with a visible daemon note only when a fact changes:
+Waiting is code, not Neo turns. The ledger reconcile and the sweep run in the daemon and send each fact to the one party that acts on it.
 
-| Waiter | Wakes Neo when |
+**To the worker that owns the PR, once per event.** The message goes to the PR's `merge_owner` session, not to Neo:
+
+| Event | What the worker is told |
 |---|---|
-| Ledger reconcile | A linked PR merges or closes; a todo becomes met |
-| Sweep | Two tells to a merge owner were ignored, or a PR has no owner |
-| Todo runner | A todo reports, fails, or waits on the human |
-| Awaiting-check pass | A pack check can't decide |
-| Question answers | The human answers |
+| CI failed | The failing check and its link; fix it |
+| CI green | Checks passed on the head |
+| Changes requested, or new review comments | The comments; address them and push |
+| Approved and green | Ready to merge: merge now, manual squash |
+| `dirty` | Merge the base in, resolve conflicts, push |
 
-The sweep tells a PR's merge owner what to do once the PR has sat in one state past its deadline:
+**To Neo, as a visible daemon note, only for milestones:**
 
-| State | Deadline | Action told to the owner |
-|---|---|---|
-| `approved_green` | 20 min | Merge now, manual squash |
-| `approved_pending` | 60 min | Inspect or re-run the pending check, then merge |
-| `dirty` | 20 min | Merge the base in, resolve conflicts, push |
-| `failing` | 30 min | Read the failing check and fix it |
-| `changes_requested` | 30 min | Address the review and push |
-| `waiting_review` | 30 min | Request review, or re-run the review bot |
+| Milestone | Why Neo is woken |
+|---|---|
+| A linked PR merged | The todo is met: tell the human or plan the next step |
+| A linked PR closed without merging | Decide whether the todo fails (open question 6) |
+| The worker session stopped, got stuck, or failed at the same thing twice | Reassign, retry, or ask the human |
+| Something needs the human | A question or approval only the human can give |
+| A relayed event passed its deadline with no action | The sweep's escalation |
 
-At 2 ignored tells Neo reassigns the PR to a free worker, or asks the human. An idle `doing` todo goes through the same ladder.
+**The sweep** re-tells the worker. When a PR sits in one state past its deadline, the sweep tells the `merge_owner` worker again and counts a nudge. At 2 ignored tells the PR passes the deadline with no action, and that is the milestone that wakes Neo.
+
+| State | Deadline |
+|---|---|
+| `approved_green` | 20 min |
+| `approved_pending` | 60 min |
+| `dirty` | 20 min |
+| `failing` | 30 min |
+| `changes_requested` | 30 min |
+| `waiting_review` | 30 min |
+
+An idle `doing` todo goes through the same ladder: its worker is told first, and Neo is woken at the second ignored tell.
+
+**On demand, never piled on.**
+- The daemon adds nothing to the human's next message. When the human asks about a piece of work, Neo reads the ledger at that moment with `neo.snapshot` or `neo.github.read`, so the answer is current, not something injected earlier.
+- Each todo card's status line on web and iOS reads straight from the ledger row, so the human sees the current state without asking Neo.
 
 ### Asks, follow-ups and titles
 
@@ -195,7 +216,7 @@ Everything that exists only because there were several Neo sessions goes. Sizes 
 
 **8. Notes that exist only to tell one Neo session what another did (D3):**
 - `neo/ask-moved.md` and `neo/ask-forwarded.md` (also in item 4).
-- `neo/card-attention-neo.md`, the relay of a card's evidence to the Neo session that owns it, with `lib/neo/card-attention.ts` (39) and table `neo_card_pr_relays`. The ledger and sweep replace it (L4).
+- `neo/card-attention-neo.md`, the relay of a card's evidence to the Neo session that owns it. See the relays under PR tracking below.
 - `neo/work/environment-move.md`, the reroute notice, with `work-reroute.ts` (in item 1).
 
 **9. Holder and root role prompts (D3):**
@@ -203,7 +224,12 @@ Everything that exists only because there were several Neo sessions goes. Sizes 
 - `neo/system/root-role.md`, `root-operations.md`, `root-snapshot-scope.md`, `root-consultation-return.md`, `root-clarify.md` and `root-rule-save.md`.
 - `neo/system/prompt.md` stays as the one coordinator prompt (S3).
 
-**PR tracking replaced by the ledger (L4, L5):**
+**PR tracking and relays replaced by the ledger (L4, L5, L9):**
+- Every path that relays PR events to a Neo session is replaced by L9's push to the owning worker plus Neo's milestone notes:
+  - `lib/neo/card-attention.ts` (39) and prompt `neo/card-attention-neo.md`;
+  - `needsOf` and `neoCardPrAttention` in `lib/neo/packs/coding/card-facts.ts` (85), with prompt `neo/packs/coding/card-pr-attention.md`;
+  - tables `neo_card_pr_relays` (m347) and `neo_card_event_subscriptions` (m355), with `storage/repositories/neo-card-pr-relay-repository.ts` (25) and `neo-card-event-subscription-repository.ts` (36);
+  - their wiring in `lib/neo/packs/coding/pack.ts` and `lib/neo/service.ts`.
 - `lib/drivers/opened-prs.ts` and the adapters' `openedPrs`.
 - The claim rules in `packs/coding/todo-prs.ts` and table `pack_coding_pr_claims`.
 - The legacy ask reminders `lib/neo/ask-idle.ts` (63) and `lib/neo/ask-stall.ts` (26).
@@ -232,12 +258,15 @@ Each PR is opened from fresh `dev` and ships and verifies on its own. Deletions 
 | D2 | Delete the router, route facts, routing log, route operations and prompts, and the route settings | No route classification runs; `neo.route.*` isn't in the catalog |
 | D3 | Delete holders, consultations, forwards, cross-project dispatch and `inbox.promote`, with their tables, operations and prompts | None of the operations in §6 is in the catalog; their migrations reverse cleanly |
 | L1 | PR ledger and reconcile, feeding the snapshot | `neo.snapshot` lists every open PR in the project repos, including PRs no todo opened |
-| L2 | Sweep: deadlines, tell the owner, act at 2 nudges | An `approved_green` PR with an idle owner is told at 20 and 40 min, then reassigned or asked about |
+| L2 | Sweep: deadlines, re-tell the owning worker, wake Neo at 2 ignored tells | An `approved_green` PR with an idle owner: the worker is told at 20 and 40 min, and Neo gets one milestone note after the second tell, not before |
 | L3 | Todo gate: no `done` or `close` while a linked PR is open | `neo.todo.close` on a todo with an open PR returns `pr_open`; the merge marks it met |
 | L4 | Delete the transcript probe, claim rules, card-attention relay and old route-PR reads | No `openedPrs` in `work.status`; todos still show their PRs, now from the ledger |
 | L5 | Idle and awaiting-check todos on the sweep; delete the legacy ask reminders | An idle doing todo is told and then escalated; an awaiting check is decided within one cycle |
 | L6 | Prompts: merge owner, ledger-only done | A new coding todo names its session as the merge owner |
 | L7 | Follow-ups join the existing ask (`ask_open`, `pr_linked`, `pr_merged`, push notice) | A change to covered work adds a todo to the open ask |
+| L9 | Push PR events to the owning worker: CI failed or green, changes requested, review comments, approved-and-green, `dirty`, each once per event, from the ledger to `merge_owner` | A failing check on a worker's PR reaches that worker once and never Neo; the same event replayed doesn't re-send; a PR with no owner goes to the sweep instead |
+| L10 | Milestone wakes for Neo: PR merged or closed, worker stopped, stuck or repeating a failure, needs the human, SLA passed; each as a visible daemon note | Neo's turn log for a day of PR traffic has only milestone notes; each is a visible row in the chat |
+| L11 | Card status line from the ledger on web and iOS (split into two PRs, one per client) | A PR's state changes on GitHub and the card line shows it within one reconcile, with no Neo turn |
 | L8 | Titles in the human's language | With `zh-Hans`, an English instruction still produces Chinese titles; an English title is refused |
 
 **Order:**
@@ -246,6 +275,7 @@ Each PR is opened from fresh `dev` and ships and verifies on its own. Deletions 
 - S2 and S3 follow S1.
 - D1 follows V2 and V3. D2 and D3 follow S1.
 - L1 → L2 → L3 → L4, and L5–L7 as before. They can run alongside the V, S and D lanes, since they touch the coding pack, not routing.
+- L9 needs L1. L10 needs L9 and replaces the card relays that L4 deletes. L11 needs L1.
 - L8 is independent.
 
 ## 8. Open questions
@@ -280,3 +310,7 @@ The first seven cases were seen on 2026-10-18. Each line can be ticked by readin
 | 7 | Two of 5 unlabelled messages went to the wrong project session | There are no project sessions; Neo answers both from the ledger's PR titles for hyperneo-review and dolmen | S1, L1 |
 | 8 | The daemon prepended a hidden conversation record and snapshot to Neo's input | The web and iOS chats show 100% of what was sent to the model for a turn; the system prompt is viewable from settings | V1–V3, D1 |
 | 9 | Neo's context was split across holder sessions | Neo alone has every open ask, todo and PR in its snapshot, and a restart keeps them | S1, S2 |
+| 10 | PR state changes went through Neo, or were relayed once and lost | CI failed or green, changes requested, review comments and approved-and-green each reach the owning worker once per event, and none of them wakes Neo | L9 |
+| 11 | Neo was woken for routine PR churn | Neo is woken only for: PR merged, PR closed unmerged, worker stopped, stuck or repeating a failure, needs the human, and an event past its deadline with no action | L2, L10 |
+| 12 | State piled onto the human's next message, sometimes stale | A human message reaches Neo unchanged; asked about a PR, Neo's answer matches the ledger at that moment | D1, L1 |
+| 13 | The human had to ask Neo for a PR's state | Each todo card's status line shows the ledger state, at most one reconcile old, without a Neo turn | L11 |
