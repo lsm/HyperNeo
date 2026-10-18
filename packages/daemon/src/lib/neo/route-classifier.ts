@@ -14,11 +14,12 @@ import {
   type NeoRouteModel,
   type ThinkingLevel,
 } from '@hyperneo/shared';
-import { fillPrompt, NEO_ROUTE_PROMPT } from '@hyperneo/prompts';
+import { fillPrompt, NEO_ROUTE_PROMPT, NEO_ROUTE_REQUEST } from '@hyperneo/prompts';
 import {
   NEO_ROUTE_BASES,
   type NeoHolder,
   type NeoRouteBasis,
+  type NeoRouteContext,
   type NeoRouteDecision,
   type NeoRouteVerdict,
 } from './router.ts';
@@ -31,6 +32,11 @@ let leanCwd: string | undefined;
 
 type RouteThinking = { type: 'enabled'; budgetTokens: number } | { type: 'disabled' } | undefined;
 
+interface NeoRoutePrompt {
+  system: string;
+  prompt: string;
+}
+
 interface NeoRouteHttpCall {
   url: string;
   headers: Record<string, string>;
@@ -41,7 +47,7 @@ export function neoRouteHttpCall(
   baseUrl: string,
   modelId: string,
   env: Record<string, string | undefined>,
-  prompt: string,
+  prompt: NeoRoutePrompt,
   thinking: RouteThinking
 ): NeoRouteHttpCall | null {
   let host: string;
@@ -74,7 +80,8 @@ export function neoRouteHttpCall(
       model: modelId,
       max_tokens: ANSWER_TOKENS + (thinking?.type === 'enabled' ? thinking.budgetTokens : 0),
       stream: true,
-      messages: [{ role: 'user', content: prompt }],
+      system: prompt.system,
+      messages: [{ role: 'user', content: prompt.prompt }],
       ...(thinking?.type === 'enabled'
         ? { thinking: { type: 'enabled', budget_tokens: thinking.budgetTokens } }
         : thinking
@@ -165,14 +172,16 @@ export function readNeoRouteStream(stream: string): string {
 export function buildNeoRoutePrompt(
   text: string,
   candidates: readonly NeoHolder[],
-  context: string
-): string {
-  const ids = candidates.map((holder) => holder.projectId).join(', ');
-  return fillPrompt(NEO_ROUTE_PROMPT, {
-    context,
-    message: neoExcerpt(text, ASK_CHARS),
-    ids,
-  });
+  context: NeoRouteContext
+): NeoRoutePrompt {
+  return {
+    system: fillPrompt(NEO_ROUTE_PROMPT, { projects: context.projects }),
+    prompt: fillPrompt(NEO_ROUTE_REQUEST, {
+      ids: candidates.map((holder) => holder.projectId).join(', '),
+      recent: context.recent,
+      message: neoExcerpt(text, ASK_CHARS),
+    }),
+  };
 }
 
 function plainRouteId(raw: string): string {
@@ -241,7 +250,7 @@ function readNeoRouteAnswer(raw: string, candidates: readonly NeoHolder[]): NeoR
 async function askNeoRouteModel(
   text: string,
   candidates: readonly NeoHolder[],
-  context: string,
+  context: NeoRouteContext,
   abortController: AbortController,
   choice: NeoRouteModel | undefined
 ): Promise<NeoRouteVerdict> {
@@ -278,7 +287,8 @@ async function askNeoRouteModel(
     }
     leanCwd ??= mkdtempSync(join(tmpdir(), 'neo-route-'));
     const raw = await runOneShotModel({
-      prompt,
+      prompt: prompt.prompt,
+      system: prompt.system,
       provider,
       ...oneShotModelIds(provider, config.modelId, env),
       thinking,
@@ -296,7 +306,7 @@ async function askNeoRouteModel(
 export async function classifyNeoRoute(
   text: string,
   candidates: readonly NeoHolder[],
-  context: string,
+  context: NeoRouteContext,
   choices: readonly (NeoRouteModel | undefined)[] = [],
   timeoutMs = DEFAULT_NEO_ROUTE_TIMEOUT_MS
 ): Promise<NeoRouteVerdict> {

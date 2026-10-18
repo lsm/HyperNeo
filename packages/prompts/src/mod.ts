@@ -61,6 +61,7 @@ import mdneoConsultationSettledStopped from './neo/consultation/settled-stopped.
 };
 import mdneoAskForwarded from './neo/ask-forwarded.md' with { type: 'text' };
 import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text' };
+import mdneoRouteRequest from './neo/route-request.md' with { type: 'text' };
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
@@ -360,6 +361,7 @@ const registry: Record<string, string> = {
   'neo/consultation/settled.md': mdneoConsultationSettled,
   'neo/ask-forwarded.md': mdneoAskForwarded,
   'neo/route-classifier.md': mdneoRouteClassifier,
+  'neo/route-request.md': mdneoRouteRequest,
   'neo/waiting-reminder.md': mdneoWaitingReminder,
   'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-evidence.md': mdneoAskEvidence,
@@ -548,6 +550,7 @@ export const {
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_ASK_FORWARDED,
   NEO_ROUTE_PROMPT,
+  NEO_ROUTE_REQUEST,
   NEO_WAITING_REMINDER,
   NEO_SESSION_TRACK,
   NEO_ASK_EVIDENCE,

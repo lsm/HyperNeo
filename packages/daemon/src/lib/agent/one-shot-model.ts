@@ -9,6 +9,7 @@ type SdkQueryFunction = typeof import('@anthropic-ai/claude-agent-sdk').query;
 
 export interface OneShotModelRequest {
   prompt: string;
+  system?: string;
   provider: string;
   model: string;
   thinkingModelId: string;
@@ -61,6 +62,16 @@ export function buildOneShotQueryOptions(
       (request.provider === 'kimi'
         ? KimiProvider.resolveKimiTitleThinkingConfig(request.thinkingModelId)
         : { type: 'disabled' }),
+    ...(request.system
+      ? {
+          systemPrompt: {
+            type: 'preset' as const,
+            preset: 'claude_code' as const,
+            append: request.system,
+            excludeDynamicSections: true,
+          },
+        }
+      : {}),
     ...(request.abortController ? { abortController: request.abortController } : {}),
     ...(request.cwd ? { cwd: request.cwd } : {}),
   };
