@@ -66,6 +66,7 @@ export class OapStdioClient {
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => this.receive(chunk));
     child.stderr.resume();
+    child.stdin.on('error', (error) => this.fail(error));
     child.on('error', (error) => this.fail(error));
     child.on('exit', (code, signal) =>
       this.fail(new Error(`OAP endpoint exited (code=${code}, signal=${signal})`))
