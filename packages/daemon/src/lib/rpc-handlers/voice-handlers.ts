@@ -16,6 +16,7 @@ interface VoiceTranscribeResponse {
 const transcriptionLimiters = createVoiceTranscribeLimiters();
 const voiceStreams = new Map<string, { stream: VoiceStream; clientId: string }>();
 const voiceStreamStarts = new Map<string, number[]>();
+const startingStreams = { count: 0 };
 const STREAM_STARTS_PER_MINUTE = 10;
 const MAX_VOICE_STREAMS = 8;
 
@@ -38,6 +39,7 @@ export function resetVoiceTranscriptionLimitsForTests(): void {
   transcriptionLimiters.daemonRateWindow = { windowStartedAt: 0, count: 0 };
   voiceStreams.clear();
   voiceStreamStarts.clear();
+  startingStreams.count = 0;
 }
 
 export function registerVoiceHandlers(
@@ -63,41 +65,46 @@ export function registerVoiceHandlers(
         }
       const admitted = admitVoiceStreamStart(
         voiceStreamStarts.get(clientId) ?? [],
-        voiceStreams.size,
+        voiceStreams.size + startingStreams.count,
         Date.now()
       );
       if ('reason' in admitted) throw new Error(admitted.reason);
       voiceStreamStarts.set(clientId, admitted.value);
-      const streamId = crypto.randomUUID();
-      const started = await VoiceStream.start(streamId, {
-        voice: () => settingsManager.getGlobalSettings().voice,
-        credentialManager,
-        transcribeWav: (audioBase64) =>
-          runVoiceTranscribe({
-            data: { audioBase64, mimeType: 'audio/wav' },
-            context,
-            deps: { settingsManager, credentialManager, limiters: transcriptionLimiters },
-          }),
-        push: (text: VoiceStreamText) =>
-          messageHub
-            .getRouter()
-            ?.sendToClient(
-              clientId,
-              createEventMessage({ method: 'voice.stream.text', data: text, sessionId: 'global' })
-            ),
-      });
-      if ('error' in started) throw new Error(started.error);
-      const router = messageHub.getRouter?.();
-      if (context?.clientId && router && !router.getClientById(context.clientId)) {
-        started.stream.close();
-        throw new Error('The client disconnected while the voice stream was starting');
+      startingStreams.count += 1;
+      try {
+        const streamId = crypto.randomUUID();
+        const started = await VoiceStream.start(streamId, {
+          voice: () => settingsManager.getGlobalSettings().voice,
+          credentialManager,
+          transcribeWav: (audioBase64) =>
+            runVoiceTranscribe({
+              data: { audioBase64, mimeType: 'audio/wav' },
+              context,
+              deps: { settingsManager, credentialManager, limiters: transcriptionLimiters },
+            }),
+          push: (text: VoiceStreamText) =>
+            messageHub
+              .getRouter()
+              ?.sendToClient(
+                clientId,
+                createEventMessage({ method: 'voice.stream.text', data: text, sessionId: 'global' })
+              ),
+        });
+        if ('error' in started) throw new Error(started.error);
+        const router = messageHub.getRouter?.();
+        if (context?.clientId && router && !router.getClientById(context.clientId)) {
+          started.stream.close();
+          throw new Error('The client disconnected while the voice stream was starting');
+        }
+        voiceStreams.set(streamId, { stream: started.stream, clientId });
+        return {
+          streamId,
+          via: started.via,
+          ...('fallback' in started && started.fallback ? { fallback: started.fallback } : {}),
+        };
+      } finally {
+        startingStreams.count -= 1;
       }
-      voiceStreams.set(streamId, { stream: started.stream, clientId });
-      return {
-        streamId,
-        via: started.via,
-        ...('fallback' in started && started.fallback ? { fallback: started.fallback } : {}),
-      };
     }
   );
 
@@ -114,8 +121,8 @@ export function registerVoiceHandlers(
   messageHub.onRequest<{ streamId: string }>('voice.stream.stop', async (data, context) => {
     const stream = ownedStream(data?.streamId, context);
     const result = await stream.stop();
+    if (!('error' in result) || !result.retryable) voiceStreams.delete(data.streamId);
     if ('error' in result) throw new Error(result.error);
-    voiceStreams.delete(data.streamId);
     return result;
   });
 

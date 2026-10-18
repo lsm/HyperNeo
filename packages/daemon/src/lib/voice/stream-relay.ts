@@ -226,7 +226,9 @@ export class VoiceStream {
     return null;
   }
 
-  async stop(): Promise<{ text: string; via: 'streaming' | 'batch' } | { error: string }> {
+  async stop(): Promise<
+    { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
+  > {
     if (this.socket) {
       const started = Date.now();
       this.lastMessageAt = Math.max(this.lastMessageAt, started);
@@ -252,7 +254,10 @@ export class VoiceStream {
     }
     const outcome = await this.deps.transcribeWav(Buffer.from(pcm16Wav(pcm)).toString('base64'));
     if (outcome.action !== 'transcribed')
-      return { error: outcome.action === 'denied' ? outcome.message : outcome.error };
+      return {
+        error: outcome.action === 'denied' ? outcome.message : outcome.error,
+        retryable: true,
+      };
     this.deps.push({ streamId: this.id, text: outcome.text, isFinal: true });
     return { text: outcome.text, via: 'batch' };
   }

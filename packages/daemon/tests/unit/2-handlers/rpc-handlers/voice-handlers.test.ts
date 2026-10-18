@@ -1170,6 +1170,21 @@ describe('voice stream RPC handlers', () => {
     ).rejects.toThrow('The client disconnected while the voice stream was starting');
   });
 
+  it('a stop with no audio frees the stream instead of keeping it for a retry', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const { streamId } = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string };
+    await expect(handlers.get('voice.stream.stop')?.({ streamId })).rejects.toThrow(
+      'Audio data is empty'
+    );
+    await expect(handlers.get('voice.stream.stop')?.({ streamId })).rejects.toThrow(
+      'Unknown voice stream'
+    );
+  });
+
   it('voice.stream.chunk and stop refuse a stream the caller does not own', async () => {
     const { hub, handlers } = createMockMessageHub();
     registerVoiceHandlers(hub, createSettings({ voice }));

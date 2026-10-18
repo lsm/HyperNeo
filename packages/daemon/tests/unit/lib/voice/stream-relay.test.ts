@@ -166,6 +166,7 @@ describe('VoiceStream against a stub ASR server', () => {
     started.stream.write(new Uint8Array([1, 0, 2, 0]));
     expect(await started.stream.stop()).toEqual({
       error: 'Voice transcription rate limit exceeded',
+      retryable: true,
     });
     expect(await started.stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
     expect(batches[1]).toBe(batches[0]);
