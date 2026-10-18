@@ -831,7 +831,7 @@ export function NeoPublicConversation({
     return () => clearTimeout(timer);
   }, [seeking, conversation.entries, conversation.status, canLoadEarlier]);
   const seek = (messageId: string) => {
-    if (revealMessage(messageId) || !canLoadEarlier) return;
+    if (revealMessage(messageId) || !canLoadEarlier) return setSeeking(null);
     setSeeking(messageId);
   };
   return (

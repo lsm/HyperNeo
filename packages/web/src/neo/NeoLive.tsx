@@ -404,7 +404,7 @@ export function NeoLive() {
         onClickCapture={(event) => {
           if (
             (event.target as Element).closest(
-              'summary, [aria-controls="neo-conversation-details"], [data-quote-bar]'
+              'summary, [aria-controls="neo-conversation-details"], button[data-quote-bar]'
             )
           )
             nearBottom.current = false;

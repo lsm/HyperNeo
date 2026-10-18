@@ -249,4 +249,32 @@ describe('reply quote block', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(loads).toHaveBeenCalledTimes(1);
   });
+
+  it('a tap on a loaded quote cancels a seek still waiting for an older page', async () => {
+    const reply = (id: string, target: string, sequence: number) =>
+      ask(id, sequence, `About ${target}`, {
+        kind: 'message',
+        id: target,
+        author: 'user',
+        excerpt: target,
+      });
+    const loads = vi.fn();
+    const recent = [ask('near', 2, 'Near'), reply('to-old', 'old', 3), reply('to-near', 'near', 4)];
+    const { container, rerender } = render(
+      <NeoPublicConversation conversation={conversation(recent, [], true)} onLoadEarlier={loads} />
+    );
+    fireEvent.click(quoteBar(container, 'message:old'));
+    await waitFor(() => expect(loads).toHaveBeenCalledTimes(1));
+    fireEvent.click(quoteBar(container, 'message:near'));
+    const near = container.querySelector('[data-message-ref="near"]');
+    expect(scrolled).toEqual([near]);
+    rerender(
+      <NeoPublicConversation
+        conversation={conversation([ask('old', 1, 'Old'), ...recent], [])}
+        onLoadEarlier={loads}
+      />
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(scrolled).toEqual([near]);
+  });
 });
