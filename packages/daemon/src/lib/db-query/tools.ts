@@ -21,7 +21,6 @@ interface DbQueryMcpServer {
   type: 'sdk';
   name: string;
   version?: string;
-  tools?: unknown[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   instance: any;
   close(): void;
@@ -225,7 +224,6 @@ export function createDbQueryMcpServer(config: DbQueryToolsConfig): DbQueryMcpSe
 
   return {
     ...server,
-    tools,
     close() {
       workerService.close();
       db.close();

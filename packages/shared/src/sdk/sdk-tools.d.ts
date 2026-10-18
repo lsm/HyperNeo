@@ -4,7 +4,6 @@
 export type ToolInputSchemas =
   | AgentInput
   | BashInput
-  | TaskOutputInput
   | ExitPlanModeInput
   | FileEditInput
   | FileReadInput
@@ -31,7 +30,6 @@ export type ToolInputSchemas =
   | TaskGetInput
   | TaskUpdateInput
   | TaskListInput
-  | REPLInput
   | WorkflowInput
   | CronCreateInput
   | CronDeleteInput
@@ -39,6 +37,7 @@ export type ToolInputSchemas =
   | ScheduleWakeupInput
   | RemoteTriggerInput
   | ShowOnboardingRolePickerInput
+  | OfferChromeSetupInput
   | ReadNotificationsInput
   | MonitorInput
   | ProposeSkillsInput
@@ -79,13 +78,13 @@ export type ToolOutputSchemas =
   | ArtifactOutput
   | RemoteTriggerOutput
   | ShowOnboardingRolePickerOutput
+  | OfferChromeSetupOutput
   | ReadNotificationsOutput
   | ScheduleWakeupOutput
   | MonitorOutput
   | ProposeSkillsOutput
   | ProposeGoalOutput
   | EnterPlanModeOutput
-  | REPLOutput
   | WorkflowOutput
   | CronCreateOutput
   | CronDeleteOutput
@@ -127,6 +126,7 @@ export type AgentOutput =
         output_tokens_details?: {
           thinking_tokens?: number | null;
         } | null;
+        fallback_credit?: unknown;
       };
       toolStats?: {
         readCount: number;
@@ -275,10 +275,15 @@ export type ArtifactOutput =
       publishesResetAt?: number;
       contract?: string;
       updated?: boolean;
+      owned?: boolean;
+      icon?: string;
+      faviconSent?: true;
+      iconDropped?: true;
       audience?: string;
       seq?: number;
       unchanged?: true;
       liveSubscription?: string;
+      pinned?: boolean;
     }
   | {
       artifacts: {
@@ -287,9 +292,16 @@ export type ArtifactOutput =
         favicon?: string;
         updatedAt?: string;
         rel?: "mine" | "shared";
+        external?: true;
+        role?: "editor" | "commenter" | "reader" | "viewer";
+        pinned?: boolean;
       }[];
       truncated?: boolean;
+      total?: number;
+      total_at_least?: true;
+      pins_enabled?: boolean;
       scope?: "shared" | "all";
+      external_listed?: true;
     }
   | {
       read: {
@@ -299,7 +311,9 @@ export type ArtifactOutput =
         codeText: string;
         result: string;
         durationMs: number;
+        title?: string;
       };
+      owned?: boolean;
       artifactRead?: {
         slug: string;
         ver?: string;
@@ -377,6 +391,10 @@ export type ArtifactOutput =
       }[];
     }
   | {
+      written?: {
+        url: string;
+      };
+      owned?: boolean;
       asset_upload: {
         id: string;
         url: string;
@@ -384,6 +402,55 @@ export type ArtifactOutput =
         content_type: string;
         sha256?: string;
         file_name: string;
+      };
+    }
+  | {
+      written?: {
+        url: string;
+      };
+      owned?: boolean;
+      asset_uploads: {
+        url: string;
+        results: [
+          (
+            | {
+                file_path: string;
+                status: "uploaded";
+                id: string;
+                url: string;
+                size_bytes: number;
+                content_type: string;
+                sha256?: string;
+                file_name: string;
+              }
+            | {
+                file_path: string;
+                status: "failed" | "not_attempted";
+                reason: string;
+                message: string;
+                may_be_stored?: true;
+              }
+          ),
+          ...(
+            | {
+                file_path: string;
+                status: "uploaded";
+                id: string;
+                url: string;
+                size_bytes: number;
+                content_type: string;
+                sha256?: string;
+                file_name: string;
+              }
+            | {
+                file_path: string;
+                status: "failed" | "not_attempted";
+                reason: string;
+                message: string;
+                may_be_stored?: true;
+              }
+          )[]
+        ];
       };
     }
   | {
@@ -405,6 +472,7 @@ export type ArtifactOutput =
         };
         next?: string;
         cowritten?: true;
+        outside_writer?: true;
       };
     }
   | {
@@ -415,12 +483,27 @@ export type ArtifactOutput =
         content_type: string;
         sha256: string;
         cowritten?: true;
+        outside_writer?: true;
+        public_read?: true;
+        foreign?: true;
       };
     }
   | {
+      written?: {
+        url: string;
+      };
+      owned?: boolean;
       asset_delete: {
         id: string;
         deleted: boolean;
+      };
+    }
+  | {
+      pin: {
+        action: "pin" | "unpin";
+        url: string;
+        pinned: boolean;
+        title?: string;
       };
     };
 export type ProjectsOutput =
@@ -512,6 +595,7 @@ export interface AgentInput {
   prompt: string;
   subagent_type?: string;
   model?: "sonnet" | "opus" | "haiku" | "fable";
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   run_in_background?: boolean;
   name?: string;
   team_name?: string;
@@ -524,11 +608,6 @@ export interface BashInput {
   description?: string;
   run_in_background?: boolean;
   dangerouslyDisableSandbox?: boolean;
-}
-export interface TaskOutputInput {
-  task_id: string;
-  block: boolean;
-  timeout: number;
 }
 export interface ExitPlanModeInput {
   allowedPrompts?: {
@@ -548,6 +627,7 @@ export interface FileReadInput {
   offset?: number;
   limit?: number;
   pages?: string;
+  allow_large?: boolean;
 }
 export interface FileWriteInput {
   file_path: string;
@@ -625,6 +705,7 @@ export interface TodoWriteInput {
 export interface WebFetchInput {
   url: string;
   prompt: string;
+  offset?: number;
 }
 export interface WebSearchInput {
   query: string;
@@ -1296,11 +1377,6 @@ export interface TaskUpdateInput {
   };
 }
 export interface TaskListInput {}
-export interface REPLInput {
-  code: string;
-  description?: string;
-  timeout?: number;
-}
 export interface WorkflowInput {
   script?: string;
   name?: string;
@@ -1339,11 +1415,13 @@ export interface RemoteTriggerInput {
   };
 }
 export interface ShowOnboardingRolePickerInput {}
+export interface OfferChromeSetupInput {
+  reason?: string;
+}
 export interface ReadNotificationsInput {}
 export interface MonitorInput {
   description: string;
   timeout_ms: number;
-  persistent: boolean;
   command?: string;
   ws?: {
     url: string;
@@ -1423,7 +1501,9 @@ export interface ArtifactInput {
     | "upload_asset"
     | "list_assets"
     | "read_asset"
-    | "delete_asset";
+    | "delete_asset"
+    | "pin"
+    | "unpin";
   file_path?: string;
   favicon?: string;
   icon?: string;
@@ -1435,7 +1515,9 @@ export interface ArtifactInput {
   url?: string;
   prompt?: string;
   force?: boolean;
+  pin?: boolean;
   out_dir?: string;
+  file_paths?: [string, ...string[]];
   asset_id?: string;
   after?: string;
   capabilities?: {
@@ -1536,6 +1618,7 @@ export interface FileEditOutput {
     patch: string;
     repository?: string | null;
   };
+  staged?: boolean;
 }
 export interface FileWriteOutput {
   type: "create" | "update";
@@ -1559,6 +1642,7 @@ export interface FileWriteOutput {
     repository?: string | null;
   };
   userModified?: boolean;
+  staged?: boolean;
 }
 export interface GlobOutput {
   durationMs: number;
@@ -1662,6 +1746,7 @@ export interface WebSearchOutput {
         content: {
           title: string;
           url: string;
+          snippet?: string;
         }[];
       }
     | string
@@ -1802,14 +1887,19 @@ export interface ShowOnboardingRolePickerOutput {
   role?: string;
   dismissed?: boolean;
 }
+export interface OfferChromeSetupOutput {
+  outcome: "connected" | "not_now" | "no_attempt_yet";
+}
 export interface ReadNotificationsOutput {
   notifications: {
     notification_id: string;
     origin: string;
     queued_at: string;
     content: string;
+    arrived_at?: string;
   }[];
   remaining: number;
+  read_at?: string;
 }
 export interface ScheduleWakeupOutput {
   scheduledFor: number;
@@ -1833,32 +1923,6 @@ export interface ProposeGoalOutput {
 export interface EnterPlanModeOutput {
   message: string;
 }
-export interface REPLOutput {
-  code: string;
-  result?: {
-    [k: string]: unknown;
-  };
-  stdout: string;
-  stderr: string;
-  error?: string;
-  asyncDispatched?: boolean;
-  registeredTools?: string[];
-  images?: {
-    base64: string;
-    mediaType: string;
-  }[];
-  imagesOmitted?: number;
-  imagePagesFailed?: {
-    page: number;
-    file?: string;
-    error?: string;
-  }[];
-  imagePagesFailedOmitted?: number;
-  documents?: {
-    base64: string;
-  }[];
-  documentsOmitted?: number;
-}
 export interface WorkflowOutput {
   status: "async_launched" | "remote_launched";
   taskId: string;
@@ -1877,6 +1941,7 @@ export interface CronCreateOutput {
   humanSchedule: string;
   recurring: boolean;
   durable?: boolean;
+  nextFireAt?: number;
 }
 export interface CronDeleteOutput {
   id: string;
@@ -1889,6 +1954,7 @@ export interface CronListOutput {
     prompt: string;
     recurring?: boolean;
     durable?: boolean;
+    nextFireAt?: number;
   }[];
 }
 export interface PushNotificationOutput {

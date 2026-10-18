@@ -1,22 +1,23 @@
-import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { CallContext } from '@hyperneo/shared';
+import { MessageHub, type Session } from '@hyperneo/shared';
 import { z } from 'zod';
-import { SessionManager } from '../../../../src/lib/session/session-manager';
+import { convertMcpServersForAcp } from '../../../../src/lib/acp/acp-query-runner';
+import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
+import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
+import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
+import { SessionManager } from '../../../../src/lib/session/session-manager';
+import type { Database } from '../../../../src/storage/database';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
-import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
-import { convertMcpServersForAcp } from '../../../../src/lib/acp/acp-query-runner';
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { MessageHub, type Session } from '@hyperneo/shared';
-import { AgentSession } from '../../../../src/lib/agent/agent-session';
-import type { Database } from '../../../../src/storage/database';
 import {
   createTestDb,
   createTestInternalEventBus,
   createTestSession,
 } from '../../../helpers/database';
+import { operationInvoke } from '../../../helpers/operation-mcp';
 
 describe('session operation MCP attachment', () => {
   let db: Database;
@@ -92,14 +93,14 @@ describe('session operation MCP attachment', () => {
         timestamp: 'now',
       } as CallContext;
       expect(await rpc(input, context)).toBeNull();
-      expect(await cachedServer.tools[0].handler(input, {})).toMatchObject({
+      expect(await operationInvoke(cachedServer)(input, {})).toMatchObject({
         content: [{ text: 'null' }],
       });
       expect(lookup).toHaveBeenCalledTimes(2);
       lookup.mockRestore();
       manager.setDefaultOperationRegistryProvider(() => catalog('configured'));
       expect(await rpc({ name: 'configured' }, context)).toMatchObject({ source: 'rpc' });
-      expect((await cachedServer.tools[0].handler({ name: 'configured' }, {})).isError).not.toBe(
+      expect((await operationInvoke(cachedServer)({ name: 'configured' }, {})).isError).not.toBe(
         true
       );
       db.createSession(createTestSession('initial-load'));
@@ -108,11 +109,11 @@ describe('session operation MCP attachment', () => {
       manager.setOperationRegistryProvider(() => catalog('first'));
       const initiallyLoaded = (await initialLoad)!;
       expect(
-        (await initiallyLoaded.getOperationMcpServer().tools[0].handler({ name: 'first' }, {}))
+        (await operationInvoke(initiallyLoaded.getOperationMcpServer())({ name: 'first' }, {}))
           .isError
       ).not.toBe(true);
       expect(existing.getOperationMcpServer()).toBe(cachedServer);
-      expect(await cachedServer.tools[0].handler({ name: 'first' }, {})).toMatchObject({
+      expect(await operationInvoke(cachedServer)({ name: 'first' }, {})).toMatchObject({
         content: [{ text: JSON.stringify({ sessionId: 'existing', source: 'mcp' }) }],
       });
       db.createSession(createTestSession('resumed'));
@@ -125,7 +126,7 @@ describe('session operation MCP attachment', () => {
       manager.registerSession(workflow);
       for (const session of [resumed, created, workflow]) {
         expect(
-          (await session.getOperationMcpServer().tools[0].handler({ name: 'first' }, {})).isError
+          (await operationInvoke(session.getOperationMcpServer())({ name: 'first' }, {})).isError
         ).not.toBe(true);
       }
       db.createSession(createTestSession('replacement-load'));
@@ -141,7 +142,7 @@ describe('session operation MCP attachment', () => {
         initiallyLoaded,
         replacedWhileLoading,
       ]) {
-        const handler = session.getOperationMcpServer().tools[0].handler;
+        const handler = operationInvoke(session.getOperationMcpServer());
         expect((await handler({ name: 'second' }, {})).isError).not.toBe(true);
         expect((await handler({ name: 'first' }, {})).isError).toBe(true);
       }
@@ -155,18 +156,20 @@ describe('session operation MCP attachment', () => {
   test('ordinary chat sessions create independent tasks through the shared MCP operation', async () => {
     db.createSession(createTestSession('creator'));
     const session = await restore('creator');
-    const result = await session
-      .getOperationMcpServer()
-      .tools[0].handler({ name: 'task.create', input: { title: 'Work' } }, {});
+    const result = await operationInvoke(session.getOperationMcpServer())(
+      { name: 'task.create', input: { title: 'Work' } },
+      {}
+    );
     expect(result.isError).not.toBe(true);
     const content = result.content[0];
     if (content.type !== 'text') throw new Error('Expected task JSON');
     const task = JSON.parse(content.text);
     expect(task).toMatchObject({ title: 'Work', status: 'open' });
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(task);
-    const listed = await session
-      .getOperationMcpServer()
-      .tools[0].handler({ name: 'task.list' }, {});
+    const listed = await operationInvoke(session.getOperationMcpServer())(
+      { name: 'task.list' },
+      {}
+    );
     expect(listed.isError).not.toBe(true);
     const page = listed.content[0];
     if (page.type !== 'text') throw new Error('Expected task page JSON');
@@ -176,7 +179,7 @@ describe('session operation MCP attachment', () => {
       nextCursor: null,
       scope: { standalone: true },
     });
-    const updated = await session.getOperationMcpServer().tools[0].handler(
+    const updated = await operationInvoke(session.getOperationMcpServer())(
       {
         name: 'task.update',
         input: { taskId: task.id, description: 'Next steps', priority: 'high' },
@@ -193,18 +196,17 @@ describe('session operation MCP attachment', () => {
       updatedAt: expect.any(Number),
     });
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(JSON.parse(edited.text));
-    const dependency = await session
-      .getOperationMcpServer()
-      .tools[0].handler({ name: 'task.create', input: { title: 'Prerequisite' } }, {});
+    const dependency = await operationInvoke(session.getOperationMcpServer())(
+      { name: 'task.create', input: { title: 'Prerequisite' } },
+      {}
+    );
     const dependencyContent = dependency.content[0];
     if (dependencyContent.type !== 'text') throw new Error('Expected dependency task JSON');
     const prerequisite = JSON.parse(dependencyContent.text);
-    const linked = await session
-      .getOperationMcpServer()
-      .tools[0].handler(
-        { name: 'task.update', input: { taskId: task.id, dependsOn: [prerequisite.id] } },
-        {}
-      );
+    const linked = await operationInvoke(session.getOperationMcpServer())(
+      { name: 'task.update', input: { taskId: task.id, dependsOn: [prerequisite.id] } },
+      {}
+    );
     expect(linked.isError).not.toBe(true);
     const linkedContent = linked.content[0];
     if (linkedContent.type !== 'text') throw new Error('Expected linked task JSON');
@@ -213,12 +215,10 @@ describe('session operation MCP attachment', () => {
       dependsOn: [prerequisite.id],
     });
     expect(readTaskCore(db.getDatabase(), task.id)?.dependsOn).toEqual([prerequisite.id]);
-    const transitioned = await session
-      .getOperationMcpServer()
-      .tools[0].handler(
-        { name: 'task.transition', input: { taskId: task.id, status: 'done', result: 'Finished' } },
-        {}
-      );
+    const transitioned = await operationInvoke(session.getOperationMcpServer())(
+      { name: 'task.transition', input: { taskId: task.id, status: 'done', result: 'Finished' } },
+      {}
+    );
     expect(transitioned.isError).not.toBe(true);
     const completed = transitioned.content[0];
     if (completed.type !== 'text') throw new Error('Expected completed task JSON');
@@ -228,12 +228,10 @@ describe('session operation MCP attachment', () => {
       result: 'Finished',
     });
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(JSON.parse(completed.text));
-    const reopened = await session
-      .getOperationMcpServer()
-      .tools[0].handler(
-        { name: 'task.transition', input: { taskId: task.id, status: 'open' } },
-        {}
-      );
+    const reopened = await operationInvoke(session.getOperationMcpServer())(
+      { name: 'task.transition', input: { taskId: task.id, status: 'open' } },
+      {}
+    );
     const reopenedContent = reopened.content[0];
     if (reopenedContent.type !== 'text') throw new Error('Expected reopened task JSON');
     expect(JSON.parse(reopenedContent.text)).toMatchObject({
@@ -261,14 +259,14 @@ describe('session operation MCP attachment', () => {
     });
     const tasks = new SpaceTaskRepository(db.getDatabase());
     const stored = tasks.createTask({ spaceId: space.id, title: 'Read me', description: '' });
-    const tool = session.getOperationMcpServer().tools[0];
-    const result = await tool.handler({ name: 'task.get', input: { taskId: stored.id } }, {});
+    const invoke = operationInvoke(session.getOperationMcpServer());
+    const result = await invoke({ name: 'task.get', input: { taskId: stored.id } });
     expect(result.isError).not.toBe(true);
     const content = result.content[0];
     if (content.type !== 'text') throw new Error('Expected task JSON');
     expect(JSON.parse(content.text)).toBeNull();
     expect(tasks.getTask(stored.id)).toEqual(stored);
-    const discovery = await tool.handler({ name: 'operations.list' }, {});
+    const discovery = await invoke({ name: 'operations.list' });
     const listed = discovery.content[0];
     if (listed.type !== 'text') throw new Error('Expected catalog JSON');
     expect(JSON.parse(listed.text)).toContainEqual(expect.objectContaining({ name: 'task.get' }));
@@ -286,7 +284,7 @@ describe('session operation MCP attachment', () => {
         'hyperneo-operations',
         operationServer
       );
-      const result = await operationServer.tools[0].handler(
+      const result = await operationInvoke(operationServer)(
         {
           name: 'message.send',
           input: {
@@ -336,7 +334,7 @@ describe('session operation MCP attachment', () => {
   test('rejects MCP attempts to claim human input provenance before persistence', async () => {
     db.createSession(createTestSession('sender'));
     const session = await restore('sender');
-    const result = await session.getOperationMcpServer().tools[0].handler(
+    const result = await operationInvoke(session.getOperationMcpServer())(
       {
         name: 'message.send',
         input: {
