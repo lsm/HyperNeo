@@ -346,7 +346,7 @@ function ReplyQuote({
     );
   return (
     <NeoQuoteBar
-      author={replyTo.author === 'user' ? 'You' : 'Neo'}
+      author={replyTo.author && (replyTo.author === 'user' ? 'You' : 'Neo')}
       excerpt={replyTo.excerpt ?? label?.label}
       onOpen={() => (onSeek ? onSeek(replyTo.id) : revealMessage(replyTo.id))}
     />
@@ -821,8 +821,11 @@ export function NeoPublicConversation({
   const canLoadEarlier = conversation.hasEarlier && !!onLoadEarlier;
   useEffect(() => {
     if (!seeking || conversation.status !== 'ready') return;
-    if (revealMessage(seeking) || !canLoadEarlier) return setSeeking(null);
-    onLoadEarlier?.();
+    const timer = setTimeout(() => {
+      if (revealMessage(seeking) || !canLoadEarlier) setSeeking(null);
+      else onLoadEarlier?.();
+    });
+    return () => clearTimeout(timer);
   }, [seeking, conversation.entries, conversation.status, canLoadEarlier]);
   const seek = (messageId: string) => {
     if (revealMessage(messageId) || !canLoadEarlier) return;

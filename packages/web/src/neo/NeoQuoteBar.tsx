@@ -8,13 +8,13 @@ export function NeoQuoteBar({
   onOpen,
   children,
 }: {
-  author: 'You' | 'Neo';
+  author?: 'You' | 'Neo';
   excerpt?: string;
   labelId?: string;
   onOpen?: () => void;
   children?: ComponentChildren;
 }) {
-  const name = author === 'You' ? t('chat.you') : 'Neo';
+  const name = author === 'You' ? t('chat.you') : author;
   const body = (
     <>
       <span
@@ -28,13 +28,15 @@ export function NeoQuoteBar({
         }`}
       />
       <span class="block min-w-0 flex-1">
-        <span
-          id={labelId}
-          role={labelId ? 'status' : undefined}
-          class="block text-xs font-medium text-fg-muted"
-        >
-          {name}
-        </span>
+        {name && (
+          <span
+            id={labelId}
+            role={labelId ? 'status' : undefined}
+            class="block text-xs font-medium text-fg-muted"
+          >
+            {name}
+          </span>
+        )}
         <span
           class={`line-clamp-2 block break-words text-sm ${excerpt === undefined ? 'italic text-fg-muted' : 'text-fg'}`}
         >

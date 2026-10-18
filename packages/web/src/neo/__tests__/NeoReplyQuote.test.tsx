@@ -1,6 +1,6 @@
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import { act, cleanup, fireEvent, render } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { t } from '../../lib/i18n/index.ts';
@@ -148,9 +148,8 @@ describe('reply quote block', () => {
     }
     const { container } = render(<Harness />);
     expect(container.querySelector('[data-message-ref="old"]')).toBeNull();
-    await act(async () => {
-      fireEvent.click(quoteBar(container, 'message:old'));
-    });
+    fireEvent.click(quoteBar(container, 'message:old'));
+    await waitFor(() => expect(scrolled).toHaveLength(1));
     const original = container.querySelector('[data-message-ref="old"]');
     expect(loads).toHaveBeenCalledTimes(2);
     expect(scrolled).toEqual([original]);
@@ -162,7 +161,7 @@ describe('reply quote block', () => {
     const { container } = render(
       <NeoPublicConversation
         conversation={conversation(
-          [ask('reply', 2, 'Following up', { kind: 'message', id: 'gone', author: 'neo' })],
+          [ask('reply', 2, 'Following up', { kind: 'message', id: 'gone' })],
           [],
           true
         )}
@@ -171,7 +170,7 @@ describe('reply quote block', () => {
     );
     const bar = quoteBar(container, 'message:gone');
     expect(bar.tagName).toBe('DIV');
-    expect(bar.textContent).toContain(t('chat.originalUnavailable'));
+    expect(bar.textContent).toBe(t('chat.originalUnavailable'));
     fireEvent.click(bar);
     expect(loads).not.toHaveBeenCalled();
     expect(scrolled).toEqual([]);
