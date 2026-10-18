@@ -154,21 +154,21 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     expect(getModelContextWindow('codex-5.4-mini')).toBe(400_000);
   });
 
-  it('codexBackendContextWindow caps GPT-5.6 at 272K for the ChatGPT Codex backend', () => {
-    expect(codexBackendContextWindow('gpt-5.6-sol')).toBe(272_000);
-    expect(codexBackendContextWindow('gpt-5.6-terra')).toBe(272_000);
-    expect(codexBackendContextWindow('gpt-5.6-luna')).toBe(272_000);
-    expect(codexBackendContextWindow('codex-mini')).toBe(272_000);
-    expect(codexBackendContextWindow('codex-latest')).toBe(272_000);
+  it('codexBackendContextWindow uses the ChatGPT backend maximum for GPT-5.6', () => {
+    expect(codexBackendContextWindow('gpt-5.6-sol')).toBe(872_000);
+    expect(codexBackendContextWindow('gpt-5.6-terra')).toBe(872_000);
+    expect(codexBackendContextWindow('gpt-5.6-luna')).toBe(872_000);
+    expect(codexBackendContextWindow('codex-mini')).toBe(872_000);
+    expect(codexBackendContextWindow('codex-latest')).toBe(872_000);
     expect(codexBackendContextWindow('gpt-5.5')).toBe(272_000);
     expect(codexBackendContextWindow('gpt-5.4-mini')).toBe(128_000);
   });
 
-  it('keeps GPT-6 at the ChatGPT backend default window, not the API window', () => {
-    expect(codexBackendContextWindow('gpt-6-sol')).toBe(272_000);
-    expect(codexBackendContextWindow('gpt-6-astra')).toBe(272_000);
-    expect(codexBackendContextWindow('gpt-6-luna')).toBe(272_000);
-    expect(codexBackendContextWindow('gpt-6.1-sol')).toBe(500_000);
+  it('uses the ChatGPT backend maximum for GPT-6, not the API window', () => {
+    expect(codexBackendContextWindow('gpt-6-sol')).toBe(872_000);
+    expect(codexBackendContextWindow('gpt-6-astra')).toBe(872_000);
+    expect(codexBackendContextWindow('gpt-6-luna')).toBe(872_000);
+    expect(codexBackendContextWindow('gpt-6.1-sol')).toBe(872_000);
     expect(getModelContextWindow('codex-6-luna')).toBe(1_050_000);
   });
 

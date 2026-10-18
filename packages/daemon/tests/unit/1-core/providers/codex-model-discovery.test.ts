@@ -125,7 +125,7 @@ describe('normalizeCodexRemoteModel', () => {
       sdkModelIds: ['gpt-6-astra'],
       family: 'gpt',
       provider: 'anthropic-codex',
-      contextWindow: 272000,
+      contextWindow: 872000,
       preferContextWindowMetadata: true,
       description: 'Frontier intelligence for the most demanding work.',
       available: true,

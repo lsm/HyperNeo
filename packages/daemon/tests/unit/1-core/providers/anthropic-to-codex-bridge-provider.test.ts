@@ -467,7 +467,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
-    it('caps GPT-5.6 at 272K on the ChatGPT Codex (OAuth) backend', async () => {
+    it('uses the ChatGPT backend maximum window for GPT-5.6 on OAuth', async () => {
       const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-codex-oauth-window-'));
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       writeHyperNeoAuth(hyperneoDir, {
@@ -482,11 +482,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
         await p.getApiKey();
         await p.ensureBridgeStarted('gpt-5.6-sol', { workspacePath: '/tmp/ws-oauth-window' });
         const cfg = p.buildSdkConfig('gpt-5.6-sol', { workspacePath: '/tmp/ws-oauth-window' });
-        expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
+        expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('872000');
         const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/models`);
         const body = (await resp.json()) as { data: Array<{ id: string; context_window: number }> };
         const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
-        expect(byId.get('gpt-5.6-sol')).toBe(272000);
+        expect(byId.get('gpt-5.6-sol')).toBe(872000);
         expect(byId.get('gpt-5.5')).toBe(272000);
         const models = await p.getModels();
         for (const model of models) {
@@ -1045,7 +1045,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models).toHaveLength(11);
       for (const model of models) {
         const expected =
-          model.id === 'gpt-5.4-mini' ? 128_000 : model.id === 'gpt-6.1-sol' ? 500_000 : 272_000;
+          model.id === 'gpt-5.4-mini'
+            ? 128_000
+            : /^gpt-(6|5\.6)/.test(model.id)
+              ? 872_000
+              : 272_000;
         expect(model.contextWindow).toBe(expected);
         expect(bridgeWindows.get(model.id)).toBe(expected);
         expect(provider.buildSdkConfig(model.id).envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
@@ -1325,7 +1329,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       expect(byId.get('gpt-7-astra')?.available).toBe(true);
       expect(byId.get('gpt-7-astra')?.sdkModelIds).toEqual(['gpt-7-astra']);
-      expect(byId.get('gpt-7-astra')?.contextWindow).toBe(272000);
+      expect(byId.get('gpt-7-astra')?.contextWindow).toBe(872000);
       expect(byId.get('gpt-5.5')?.available).toBe(true);
       expect(byId.has('gpt-reserve')).toBe(false);
       expect(byId.has('codex-auto-review')).toBe(false);
@@ -1346,7 +1350,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
         workspacePath: '/tmp/ws-discovery',
       });
       expect(dynamicConfig.envVars.ANTHROPIC_BASE_URL).toContain('127.0.0.1');
-      expect(dynamicConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
+      expect(dynamicConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('872000');
       expect(dynamicConfig.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-7-astra');
       expect(dynamicConfig.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-7-astra');
 
