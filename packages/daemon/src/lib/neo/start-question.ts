@@ -2,6 +2,7 @@ import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { readNeoAskAnswerOption } from './ask-answer-evidence.ts';
 import { neoDerivedId } from './derived-id.ts';
+import { neoStatusLine, type NeoStatusLine } from './status-codes.ts';
 
 export const NEO_START_QUESTION_PREFIX = 'neo-start:';
 const targets = z.array(
@@ -45,10 +46,21 @@ export function neoStartDecision(ask: NeoAsk, target: NeoStartTarget) {
       : null;
 }
 
+const START_QUESTION_EN = {
+  'question.startOne': 'Start "{title}"?',
+  'question.startMany': 'Start these {count}?',
+} as const;
+
+export function neoStartQuestionLine(steps: readonly { title?: string }[]): NeoStatusLine {
+  return neoStatusLine(START_QUESTION_EN, [
+    steps.length === 1 && steps[0].title
+      ? { code: 'question.startOne', params: { title: steps[0].title } }
+      : { code: 'question.startMany', params: { count: String(steps.length) } },
+  ]);
+}
+
 export function neoStartQuestionTitle(steps: readonly { title?: string }[]): string {
-  return steps.length === 1 && steps[0].title
-    ? `开始「${steps[0].title}」？`
-    : `开始这 ${steps.length} 件？`;
+  return neoStartQuestionLine(steps).status;
 }
 
 export function planNeoStartQuestion(ask: NeoAsk, proposed: NeoStartTarget[]) {

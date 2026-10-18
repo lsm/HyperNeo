@@ -9,7 +9,13 @@ import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { NeoPack } from './packs/types.ts';
-import { neoStatusLine, neoTextStatus, type NeoStatusLine } from './status-codes.ts';
+import { neoStartQuestionLine } from './start-question.ts';
+import {
+  NeoStatusCodesSchema,
+  neoStatusLine,
+  neoTextStatus,
+  type NeoStatusLine,
+} from './status-codes.ts';
 import { NeoQuestionSchema } from './question-operations.ts';
 import { NeoTodoSchema } from './todo-operations.ts';
 
@@ -86,7 +92,15 @@ export function projectNeoAskEntries(
         ),
         ...sessions.readLinks(todo.id),
       })),
-      questions,
+      questions: questions.map((question) => {
+        if (question.kind !== 'start' || !question.startTodos?.length) return question;
+        const line = neoStartQuestionLine(
+          question.startTodos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
+        );
+        return line.status === question.text
+          ? { ...question, textCodes: line.statusCodes }
+          : question;
+      }),
     };
   });
 }
@@ -111,12 +125,10 @@ export const NeoAskEntrySchema = z.object({
   todos: z.array(
     NeoTodoSchema.extend({
       status: z.string(),
-      statusCodes: z
-        .array(z.object({ code: z.string(), params: z.record(z.string(), z.string()) }))
-        .optional(),
+      statusCodes: NeoStatusCodesSchema,
       link: Nullable,
       remoteLink: Nullable,
     })
   ),
-  questions: z.array(NeoQuestionSchema),
+  questions: z.array(NeoQuestionSchema.extend({ textCodes: NeoStatusCodesSchema })),
 });

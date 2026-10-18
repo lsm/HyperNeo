@@ -1,4 +1,4 @@
-import type { NeoAskEntry } from './neo-ask.ts';
+import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
 import type { DaemonInventoryLink } from './daemon-snapshot.ts';
 import type { NeoProject, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
 import type { NeoModelPreference } from './settings.ts';
@@ -303,6 +303,7 @@ export interface NeoAskView {
   askId: string;
   group: NeoCardGroup;
   label: string;
+  labelCodes?: NeoStatusCode[];
   settled: boolean;
   needsYou: boolean;
   idle?: true;
@@ -344,6 +345,7 @@ export interface NeoSessionNoticeGroup {
   id: string;
   at: number;
   line: string;
+  lineCodes?: NeoStatusCode[];
   notices: NeoSessionNotice[];
 }
 

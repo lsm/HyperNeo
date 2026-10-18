@@ -1,5 +1,6 @@
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
+import { NeoStatusCodesSchema, neoStatusLine } from './status-codes.ts';
 import { type PlaceGroup, type WorkRef, WorkRefSchema, type WorkStatus } from '../drivers/types.ts';
 
 export type { NeoSessionNotice, NeoSessionNoticeGroup };
@@ -21,6 +22,7 @@ export const NeoSessionNoticeGroupSchema = z.object({
   id: z.string(),
   at: z.number(),
   line: z.string(),
+  lineCodes: NeoStatusCodesSchema,
   notices: z.array(NeoSessionNoticeSchema).max(NEO_SESSION_GROUP_NOTICES_MAX),
 });
 export const NEO_SESSION_GROUP_MS = 60_000;
@@ -33,11 +35,20 @@ const ADAPTER_LABELS: Record<string, string> = {
   'claude-desktop': 'Claude',
   'claude-code': 'Claude Code',
 };
-const KIND_LABELS: Record<NeoSessionNotice['kind'], string> = {
-  needs_you: 'needs you',
-  failed: 'failed',
-  finished: 'finished',
-};
+const NOTICE_CODES = {
+  needs_you: 'notice.session.needsYou',
+  failed: 'notice.session.failed',
+  finished: 'notice.session.finished',
+} as const;
+const NOTICE_LINE_EN = {
+  'notice.session.needsYou': '{app} · {title} needs you',
+  'notice.session.failed': '{app} · {title} failed',
+  'notice.session.finished': '{app} · {title} finished',
+  'notice.session.needsYou.open': '{app} · {title} needs you · Open',
+  'notice.session.failed.open': '{app} · {title} failed · Open',
+  'notice.session.finished.open': '{app} · {title} finished · Open',
+  'notice.more': '{count} more',
+} as const;
 const NEO_SESSION_ACTIVE_MS = 24 * 60 * 60_000;
 
 type NeoSessionNoticeKind = NeoSessionNotice['kind'];
@@ -149,18 +160,17 @@ export function keepNeoSessionNotices(
   return [...kept, ...added].slice(-NEO_SESSION_NOTICES_MAX);
 }
 
-export function neoSessionNoticeLine(notices: readonly NeoSessionNotice[]): string {
-  const shown = notices
-    .slice(0, NEO_SESSION_GROUP_LINE_MAX)
-    .map((notice) =>
-      [
-        ADAPTER_LABELS[notice.ref.adapter] ?? notice.ref.adapter,
-        `${notice.title} ${KIND_LABELS[notice.kind]}`,
-        ...(notice.link ? ['Open'] : []),
-      ].join(' · ')
-    );
+export function neoSessionNoticeLine(notices: readonly NeoSessionNotice[]) {
+  const shown = notices.slice(0, NEO_SESSION_GROUP_LINE_MAX).map((notice) => ({
+    code: `${NOTICE_CODES[notice.kind]}${notice.link ? '.open' : ''}`,
+    params: { app: ADAPTER_LABELS[notice.ref.adapter] ?? notice.ref.adapter, title: notice.title },
+  }));
   const more = notices.length - shown.length;
-  return [...shown, ...(more > 0 ? [`${more} more`] : [])].join('; ');
+  const line = neoStatusLine(NOTICE_LINE_EN, [
+    ...shown,
+    ...(more > 0 ? [{ code: 'notice.more', params: { count: String(more) } }] : []),
+  ]);
+  return { line: line.status, lineCodes: line.statusCodes };
 }
 
 export function neoSessionNoticeGroup(
@@ -171,7 +181,7 @@ export function neoSessionNoticeGroup(
     ? {
         id: `neo-session-notices:${first.at}:${first.key}`,
         at: first.at,
-        line: neoSessionNoticeLine(notices),
+        ...neoSessionNoticeLine(notices),
         notices: [...notices],
       }
     : null;
@@ -218,7 +228,7 @@ export function latestNeoSessionNoticeGroups(
       if (!notices.length) return [];
       return notices.length === group.notices.length
         ? [group]
-        : [{ ...group, line: neoSessionNoticeLine(notices), notices }];
+        : [{ ...group, ...neoSessionNoticeLine(notices), notices }];
     })
     .toReversed();
 }

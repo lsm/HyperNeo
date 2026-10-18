@@ -141,7 +141,7 @@ describe('projectNeoAskViews todo projection', () => {
         const view = project([work('w', workStatus)], [standard], [], { status });
         expect(view).toMatchObject({
           group: 'outcomes',
-          label: status === 'achieved' ? '做完' : '放弃了',
+          label: status === 'achieved' ? 'Done' : 'Dropped',
           done: 0,
         });
         expect(view.todos?.[0]).toMatchObject({ state: 'failed' });
@@ -209,26 +209,31 @@ describe('projectNeoAskViews todo projection', () => {
 
   test('retains idle wake facts while showing the new todo label', () => {
     const view = project([], []);
-    expect(view).toMatchObject({ idle: true, label: '没开始', needsYou: false });
+    expect(view).toMatchObject({
+      idle: true,
+      label: 'Not started',
+      labelCodes: [{ code: 'ask.state.todo', params: {} }],
+      needsYou: false,
+    });
   });
 
   test('an achieved ask with no active todos remains settled in outcomes', () => {
     expect(project([], [], [], { status: 'achieved' })).toMatchObject({
       settled: true,
-      label: '做完',
+      label: 'Done',
       group: 'outcomes',
       total: 0,
     });
   });
 
   test.each([
-    ['waiting', ['pending'], true, '等你', 'attention'],
-    ['open', ['done'], true, '等你', 'attention'],
-    ['open', ['running', 'failed'], false, '在做', 'running'],
-    ['open', ['done', 'cancelled'], false, '做完', 'outcomes'],
-    ['abandoned', ['running'], false, '放弃了', 'outcomes'],
-    ['open', ['failed'], false, '没做成', 'outcomes'],
-    ['open', ['pending'], false, '没开始', 'running'],
+    ['waiting', ['pending'], true, 'Waiting on you', 'attention'],
+    ['open', ['done'], true, 'Waiting on you', 'attention'],
+    ['open', ['running', 'failed'], false, 'In progress', 'running'],
+    ['open', ['done', 'cancelled'], false, 'Done', 'outcomes'],
+    ['abandoned', ['running'], false, 'Dropped', 'outcomes'],
+    ['open', ['failed'], false, 'Not done', 'outcomes'],
+    ['open', ['pending'], false, 'Not started', 'running'],
   ] as const)(
     'top status follows questions and todo facts (%s %j)',
     (status, states, question, label, group) => {

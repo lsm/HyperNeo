@@ -188,6 +188,59 @@ describe('projectNeoAskEntries', () => {
       questions: [],
     });
   });
+
+  test('a generated start question carries a code; Neo-written text stays as written', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const sessions = new NeoTodoSessionRepository(db);
+    const opened = store.openAsk({
+      id: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'iOS card',
+      request: 'Redo the iOS card',
+      createdAt: 1,
+    });
+    const draft = { doneWhen: 'Merged', check: null, instruction: 'Do', named: null };
+    store.addTodo('t1', 'ask', { ...draft, title: 'Rows' }, 1);
+    store.addTodo('t2', 'ask', { ...draft, title: 'Icons' }, 1);
+    const ask = (id: string, startTodos: string[], text: string) =>
+      store.askQuestion(
+        id,
+        'ask',
+        {
+          text,
+          kind: 'start',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos,
+        },
+        1
+      );
+    ask('q1', ['t1'], 'Start "Rows"?');
+    ask('q2', ['t1', 't2'], 'Start these 2?');
+    ask('q3', ['t2'], '要不要先把图标做了？');
+    const [entry] = projectNeoAskEntries([opened], store, sessions, []);
+    expect(entry.questions).toMatchObject([
+      {
+        id: 'q1',
+        text: 'Start "Rows"?',
+        textCodes: [{ code: 'question.startOne', params: { title: 'Rows' } }],
+      },
+      {
+        id: 'q2',
+        text: 'Start these 2?',
+        textCodes: [{ code: 'question.startMany', params: { count: '2' } }],
+      },
+      { id: 'q3', text: '要不要先把图标做了？' },
+    ]);
+    expect(entry.questions[2]).not.toHaveProperty('textCodes');
+  });
 });
 
 describe('fitNeoSnapshotBudget with todoAsks', () => {

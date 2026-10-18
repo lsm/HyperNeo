@@ -13,6 +13,7 @@ import {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { projectNeoAskTodos, type NeoAskTodoParts } from './ask-todo-views.ts';
 import { neoQuestionStartTargets, neoStartQuestionTitle } from './start-question.ts';
+import { neoStatusLine } from './status-codes.ts';
 
 const NEO_ASK_SUMMARY_LIMIT = 160;
 
@@ -174,11 +175,28 @@ export function describeNeoAskViews(asks: readonly NeoAsk[], index: AskViewIndex
   return asks.map((ask) => describeNeoAskView(ask, index));
 }
 
+const ASK_VIEW_LABEL_EN = {
+  'ask.state.dropped': 'Dropped',
+  'ask.state.done': 'Done',
+  'ask.state.waiting': 'Waiting on you',
+  'ask.state.doing': 'In progress',
+  'ask.state.failed': 'Not done',
+  'ask.state.todo': 'Not started',
+} as const;
+
+function neoAskViewLabel(code: keyof typeof ASK_VIEW_LABEL_EN) {
+  const line = neoStatusLine(ASK_VIEW_LABEL_EN, [{ code, params: {} }]);
+  return { label: line.status, labelCodes: line.statusCodes };
+}
+
 export function neoAskTodoScene(
   ask: NeoAsk,
   todos: readonly NeoAskTodo[],
   humanActions: readonly NeoAskHumanAction[]
-): Pick<NeoAskView, 'group' | 'label' | 'needsYou' | 'done' | 'total' | 'doneWorkIds'> {
+): Pick<
+  NeoAskView,
+  'group' | 'label' | 'labelCodes' | 'needsYou' | 'done' | 'total' | 'doneWorkIds'
+> {
   const active = todos.filter((todo) => todo.state !== 'cancelled');
   const abandoned = ask.status === 'abandoned';
   const achieved = ask.status === 'achieved';
@@ -188,19 +206,21 @@ export function neoAskTodoScene(
   const finished = active.length ? done.length === active.length : ask.status === 'achieved';
   const failed = active.some((todo) => todo.state === 'failed');
   return {
-    label: abandoned
-      ? '放弃了'
-      : achieved
-        ? '做完'
-        : needsYou
-          ? '等你'
-          : running
-            ? '在做'
-            : finished
-              ? '做完'
-              : failed
-                ? '没做成'
-                : '没开始',
+    ...neoAskViewLabel(
+      abandoned
+        ? 'ask.state.dropped'
+        : achieved
+          ? 'ask.state.done'
+          : needsYou
+            ? 'ask.state.waiting'
+            : running
+              ? 'ask.state.doing'
+              : finished
+                ? 'ask.state.done'
+                : failed
+                  ? 'ask.state.failed'
+                  : 'ask.state.todo'
+    ),
     group:
       abandoned || achieved
         ? 'outcomes'

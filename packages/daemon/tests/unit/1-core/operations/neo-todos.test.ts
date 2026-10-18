@@ -228,7 +228,7 @@ describe('neo.todo operations', () => {
     });
     if (!fix.ok) throw new Error(fix.reason);
     expect(repo.listQuestions('ask')).toMatchObject([
-      { kind: 'start', state: 'open', text: '开始「Fix」？', startTodos: [fix.todo.id] },
+      { kind: 'start', state: 'open', text: 'Start "Fix"?', startTodos: [fix.todo.id] },
     ]);
     await call('neo.todo.add', { askId: 'ask', title: 'Note', doneWhen: 'Written' });
     const deploy = await call('neo.todo.add', {
@@ -240,7 +240,7 @@ describe('neo.todo operations', () => {
     });
     if (!deploy.ok) throw new Error(deploy.reason);
     expect(repo.listQuestions('ask')).toMatchObject([
-      { kind: 'start', text: '开始这 2 件？', startTodos: [fix.todo.id, deploy.todo.id] },
+      { kind: 'start', text: 'Start these 2?', startTodos: [fix.todo.id, deploy.todo.id] },
     ]);
   });
 
@@ -265,7 +265,7 @@ describe('neo.todo operations', () => {
     });
     if (!deploy.ok) throw new Error(deploy.reason);
     expect(repo.listQuestions('ask')).toMatchObject([
-      { text: '开始「Deploy」？', startTodos: [deploy.todo.id] },
+      { text: 'Start "Deploy"?', startTodos: [deploy.todo.id] },
     ]);
   });
 });

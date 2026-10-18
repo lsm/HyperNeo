@@ -251,7 +251,7 @@ describe('Neo todo pull request events', () => {
     expect(sent[0].message).toContain('7.closed');
     expect(service.todos.getTodo(row.id)).toMatchObject({
       state: 'done',
-      evidence: expect.stringContaining('已合并'),
+      evidence: expect.stringContaining('merged'),
     });
     expect(jobs()).toHaveLength(1);
     expect(JSON.stringify(jobs()[0].payload)).toContain('is done');

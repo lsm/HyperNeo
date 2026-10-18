@@ -87,9 +87,13 @@ export interface NeoTodoEntry extends NeoTodo {
 
 export type NeoAskEntryState = 'waiting' | 'doing' | 'done' | 'dropped' | 'todo';
 
+export interface NeoQuestionEntry extends NeoQuestion {
+  textCodes?: NeoStatusCode[];
+}
+
 export interface NeoAskEntry {
   ask: NeoAsk;
   state: NeoAskEntryState;
   todos: NeoTodoEntry[];
-  questions: NeoQuestion[];
+  questions: NeoQuestionEntry[];
 }

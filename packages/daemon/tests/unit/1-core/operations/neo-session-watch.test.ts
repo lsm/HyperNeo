@@ -202,13 +202,25 @@ describe('neoSessionNoticeLine', () => {
           link: undefined,
         }),
       ])
-    ).toBe('Codex · Quiet-model research finished · Open; Claude · Auth fix needs you');
+    ).toEqual({
+      line: 'Codex · Quiet-model research finished · Open; Claude · Auth fix needs you',
+      lineCodes: [
+        {
+          code: 'notice.session.finished.open',
+          params: { app: 'Codex', title: 'Quiet-model research' },
+        },
+        { code: 'notice.session.needsYou', params: { app: 'Claude', title: 'Auth fix' } },
+      ],
+    });
   });
 
   test('shows the first five and counts the rest', () => {
-    const line = neoSessionNoticeLine(Array.from({ length: 7 }, (_, index) => notice(index)));
+    const { line, lineCodes } = neoSessionNoticeLine(
+      Array.from({ length: 7 }, (_, index) => notice(index))
+    );
     expect(line.split('; ')).toHaveLength(6);
     expect(line.endsWith('; 2 more')).toBe(true);
+    expect(lineCodes.at(-1)).toEqual({ code: 'notice.more', params: { count: '2' } });
   });
 });
 
@@ -232,6 +244,12 @@ describe('planNeoSessionNoticeGroup', () => {
           id: `neo-session-notices:${now}:${session.key}`,
           at: now,
           line: 'Codex · Quiet-model research finished · Open',
+          lineCodes: [
+            {
+              code: 'notice.session.finished.open',
+              params: { app: 'Codex', title: 'Quiet-model research' },
+            },
+          ],
           notices: [first],
         },
       ],
