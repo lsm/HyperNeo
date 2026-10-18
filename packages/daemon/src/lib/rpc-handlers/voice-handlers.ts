@@ -58,17 +58,17 @@ export function registerVoiceHandlers(
       if (data?.encoding !== 'pcm16' || data.sampleRate !== 16_000)
         throw new Error('Voice streams take pcm16 audio at 16000 Hz');
       const clientId = context?.clientId ?? context?.sessionId ?? 'global';
-      for (const [id, owned] of voiceStreams)
-        if (owned.clientId === clientId) {
-          owned.stream.close();
-          voiceStreams.delete(id);
-        }
+      const replaced = [...voiceStreams].filter(([, owned]) => owned.clientId === clientId);
       const admitted = admitVoiceStreamStart(
         voiceStreamStarts.get(clientId) ?? [],
-        voiceStreams.size + startingStreams.count,
+        voiceStreams.size - replaced.length + startingStreams.count,
         Date.now()
       );
       if ('reason' in admitted) throw new Error(admitted.reason);
+      for (const [id, owned] of replaced) {
+        owned.stream.close();
+        voiceStreams.delete(id);
+      }
       voiceStreamStarts.set(clientId, admitted.value);
       startingStreams.count += 1;
       try {

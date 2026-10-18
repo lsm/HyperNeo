@@ -1170,6 +1170,21 @@ describe('voice stream RPC handlers', () => {
     ).rejects.toThrow('The client disconnected while the voice stream was starting');
   });
 
+  it('a refused start leaves the existing stream of the caller in place', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const start = () =>
+      handlers.get('voice.stream.start')?.({ encoding: 'pcm16', sampleRate: 16_000 }) as Promise<{
+        streamId: string;
+      }>;
+    let last = { streamId: '' };
+    for (let index = 0; index < 10; index++) last = await start();
+    await expect(start()).rejects.toThrow('Voice stream rate limit exceeded');
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId: last.streamId, audioBase64: 'AAA=' })
+    ).resolves.toEqual({ ok: true });
+  });
+
   it('a stop with no audio frees the stream instead of keeping it for a retry', async () => {
     const { hub, handlers } = createMockMessageHub();
     registerVoiceHandlers(hub, createSettings({ voice }));
