@@ -26,6 +26,14 @@ function needsOf(pr: NeoWorkPr): string[] {
     ...(pr.review === 'changes_requested' ? ['a reviewer requested changes'] : []),
     ...blockers.filter((blocker) => /unresolved review thread/.test(blocker)),
     ...blockers.filter((blocker) => blocker.startsWith('merge conflicts')),
+    ...(pr.review === 'approved' && pr.checks === 'none'
+      ? [
+          'approved, but no CI checks ran on its head; push or update the branch from its base so CI runs',
+        ]
+      : []),
+    ...(pr.review === 'approved' && pr.checks === 'passing' && !blockers.length
+      ? ['approved and green; merge it now with a manual squash merge']
+      : []),
   ];
 }
 

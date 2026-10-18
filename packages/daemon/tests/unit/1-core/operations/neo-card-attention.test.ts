@@ -53,6 +53,24 @@ describe('neoCardPrAttention', () => {
     expect(one.attention?.signature).not.toBe(two.attention?.signature);
   });
 
+  test('asks for a CI run on an approved head with no checks, then for the merge once it is green', () => {
+    const unrun = neoCardPrAttention([pr({ review: 'approved', checks: 'none' })]);
+    const green = neoCardPrAttention([pr({ review: 'approved', checks: 'passing' })]);
+    expect(unrun.attention?.signature).toBe(
+      `- ${url}: approved, but no CI checks ran on its head; push or update the branch from its base so CI runs`
+    );
+    expect(green.attention?.signature).toBe(
+      `- ${url}: approved and green; merge it now with a manual squash merge`
+    );
+    expect(
+      neoCardPrAttention([
+        pr({ review: 'approved', checks: 'passing', blockers: ['behind dev'] }),
+        pr({ review: 'approved', checks: 'pending' }),
+        pr({ state: 'MERGED', review: 'approved', checks: 'none' }),
+      ]).attention
+    ).toBeNull();
+  });
+
   test('stays quiet for a clean, pending, merged or closed PR', () => {
     expect(
       neoCardPrAttention([

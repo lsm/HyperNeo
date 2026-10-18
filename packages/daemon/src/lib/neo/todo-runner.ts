@@ -321,12 +321,18 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const check = async (todo: NeoTodo, now: number) => {
-    const pack = deps.packs().find((candidate) => candidate.id === todo.check?.pack)?.todos;
+    const packs = deps
+      .packs()
+      .filter((candidate) => !todo.check || candidate.id === todo.check.pack)
+      .flatMap((candidate) => candidate.todos ?? []);
     const ask = store.getAsk(todo.askId);
-    if (!pack || !ask || now - (checked.get(todo.id) ?? 0) < NEO_TODO_CHECK_MS) return;
+    if (!packs.length || !ask || now - (checked.get(todo.id) ?? 0) < NEO_TODO_CHECK_MS) return;
     checked.set(todo.id, now);
-    const patch = planNeoTodoCheck(todo, await pack.check(todo), now);
-    if (patch) await finish(todo, ask, patch, now);
+    for (const pack of packs) {
+      const result = await pack.check(todo);
+      const patch = todo.check ? planNeoTodoCheck(todo, result, now) : null;
+      if (patch) await finish(todo, ask, patch, now);
+    }
     deps.changed();
   };
 

@@ -176,15 +176,15 @@ export function createCodingTodoPack(
         Date.now()
       ),
     check: async (todo) => {
-      if (todo.check?.pack !== 'coding') return null;
+      if (todo.check && todo.check.pack !== 'coding') return null;
       repo.claim(todo.id, planCodingTodoClaims(todo, todo.report, []), Date.now());
       const urls = repo.urls(todo.id);
-      if (!urls.length) return codingTodoCheck(todo.check.kind, []);
+      if (!urls.length) return todo.check ? codingTodoCheck(todo.check.kind, []) : null;
       const read = await readPrs(urls);
       if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url))) return null;
       const prs = codingTodoOwnPrs(todo, read);
       repo.record(todo.id, prs, Date.now());
-      return codingTodoCheck(todo.check.kind, prs);
+      return todo.check ? codingTodoCheck(todo.check.kind, prs) : null;
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id)),
     topics: (todo) =>
