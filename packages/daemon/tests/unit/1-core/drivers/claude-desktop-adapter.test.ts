@@ -344,20 +344,6 @@ describe('claude-desktop adapter against the app session records', () => {
     });
   });
 
-  test.each(['chat', 'session:missing'])(
-    'rejects reply target %s before start effects',
-    async (from) => {
-      const driver = adapter(undefined, 0, undefined, undefined, async () => {
-        throw new Error('not reached');
-      });
-      const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'd' };
-      expect(
-        await driver.start!({ place, title: 'new', message: 'task' }, { ...user, from })
-      ).toMatchObject({ ok: false, reason: from === 'chat' ? 'unsupported' : 'unreachable' });
-      expect(spawned).toEqual([]);
-    }
-  );
-
   test('status exposes execution cwd without requiring a transcript', async () => {
     const result = await adapter().status!({ adapter: 'claude-desktop', id: 'local_a1' });
     expect(result.ok).toBe(true);
@@ -644,16 +630,6 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(
       await adapter().send?.({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user)
     ).toMatchObject({ ok: false, reason: 'unsupported' });
-    expect(
-      await adapter().start!(
-        {
-          place: { machine: 'laptop', name: 'project', folder: '/project' },
-          title: 'task',
-          message: 'task',
-        },
-        user
-      )
-    ).toMatchObject({ ok: false, reason: 'unsupported' });
     expect(spawned).toEqual([]);
   });
 
@@ -684,53 +660,51 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(liveReads).toBe(before + 1);
   });
 
-  test('send opens an idle session in Desktop and delivers once it is live', async () => {
-    const live: ClaudeLiveSession[] = [];
-    const folder = join(dir, 'projects', '-focus-ops');
-    mkdirSync(folder, { recursive: true });
-    const chat = join(folder, 'cli-b2.jsonl');
-    writeFileSync(chat, `${JSON.stringify({ type: 'user', uuid: 'older' })}\n`);
-    const receipt = { executionId: 'cli-b2', inputId: 'in-b2' };
-    const driver = adapter(
-      live,
-      0,
-      () =>
-        live.push({
-          sessionId: 'cli-b2',
-          status: 'idle',
-          name: 'woodpecker',
-          owner: 'desktop',
-          pid: 2,
-        }),
-      undefined,
-      async () => {
-        appendFileSync(chat, `${JSON.stringify({ type: 'user', uuid: 'in-b2' })}\n`);
-        return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
-      }
-    );
-    expect(
-      await driver.send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user)
-    ).toMatchObject({ ok: true, value: { delivered: true, receipt } });
-    expect(spawned).toEqual([
-      {
-        args: ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', 'cli-b2'],
-        cwd: '/focus/ops',
-      },
-    ]);
-  });
-
-  test('send reports a session Desktop never opens and still refuses archived sessions', async () => {
+  describe('send to a session that is not running', () => {
     const ref = { adapter: 'claude-desktop', id: 'local_b2' };
-    expect(await adapter([]).send?.(ref, '-v next', user)).toEqual({
-      ok: false,
-      reason: 'not_delivered',
-      detail: 'Claude Code Desktop did not open woodpecker.',
+    let transcript: string;
+    beforeEach(() => {
+      const folder = join(dir, 'projects', '-focus-ops');
+      mkdirSync(folder, { recursive: true });
+      transcript = join(folder, 'cli-b2.jsonl');
+      writeFileSync(
+        transcript,
+        `${JSON.stringify({ type: 'user', uuid: 'older', message: { content: 'run the audit' } })}\n`
+      );
     });
-    expect(spawned.map((call) => call.args.at(-1))).toEqual(['cli-b2']);
-    expect(
-      await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_a2' }, 'next', user)
-    ).toMatchObject({ ok: false, reason: 'not_open' });
-    expect(spawned).toEqual([]);
+
+    test('resumes it headless and confirms the turn in its transcript', async () => {
+      const resumed = adapter([], 0, () =>
+        appendFileSync(
+          transcript,
+          `${JSON.stringify({ type: 'user', uuid: 'in-b2', timestamp: '2026-10-18T01:00:00.000Z', message: { content: 'run the audit' } })}\n`
+        )
+      );
+      expect(await resumed.send?.(ref, 'run the audit', user)).toEqual({
+        ok: true,
+        value: {
+          delivered: true,
+          receipt: { executionId: 'cli-b2', inputId: 'in-b2' },
+          confirmedAt: Date.parse('2026-10-18T01:00:00.000Z'),
+        },
+      });
+      expect(spawned).toEqual([
+        { args: ['claude', '-p', '--resume', 'cli-b2', '--', 'run the audit'], cwd: '/focus/ops' },
+      ]);
+    });
+
+    test('does not count an older copy of the message, and reports a failed resume', async () => {
+      expect(await adapter([]).send?.(ref, 'run the audit', user)).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+      });
+      expect(await adapter([], 1).send?.(ref, 'run the audit', user)).toMatchObject({
+        ok: false,
+      });
+      expect(
+        await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_a2' }, 'next', user)
+      ).toMatchObject({ ok: false, reason: 'not_open' });
+    });
   });
 
   test.each(['desktop', 'unknown', undefined] as const)(
