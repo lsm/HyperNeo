@@ -15,12 +15,29 @@ interface VoiceTranscribeResponse {
 
 const transcriptionLimiters = createVoiceTranscribeLimiters();
 const voiceStreams = new Map<string, { stream: VoiceStream; clientId: string }>();
+const voiceStreamStarts = new Map<string, number[]>();
+const STREAM_STARTS_PER_MINUTE = 10;
+const MAX_VOICE_STREAMS = 8;
+
+export function admitVoiceStreamStart(
+  starts: readonly number[],
+  open: number,
+  now: number
+): { value: number[] } | { reason: string } {
+  const recent = starts.filter((at) => now - at < 60_000);
+  if (recent.length >= STREAM_STARTS_PER_MINUTE)
+    return { reason: 'Voice stream rate limit exceeded; please wait before trying again' };
+  if (open >= MAX_VOICE_STREAMS) return { reason: 'Too many voice streams are already open' };
+  return { value: [...recent, now] };
+}
 
 export function resetVoiceTranscriptionLimitsForTests(): void {
   transcriptionLimiters.activeByClient.clear();
   transcriptionLimiters.rateWindowsByClient.clear();
   transcriptionLimiters.daemonActive.count = 0;
   transcriptionLimiters.daemonRateWindow = { windowStartedAt: 0, count: 0 };
+  voiceStreams.clear();
+  voiceStreamStarts.clear();
 }
 
 export function registerVoiceHandlers(
@@ -44,6 +61,13 @@ export function registerVoiceHandlers(
           owned.stream.close();
           voiceStreams.delete(id);
         }
+      const admitted = admitVoiceStreamStart(
+        voiceStreamStarts.get(clientId) ?? [],
+        voiceStreams.size,
+        Date.now()
+      );
+      if ('reason' in admitted) throw new Error(admitted.reason);
+      voiceStreamStarts.set(clientId, admitted.value);
       const streamId = crypto.randomUUID();
       const started = await VoiceStream.start(streamId, {
         voice: () => settingsManager.getGlobalSettings().voice,
@@ -96,6 +120,7 @@ export function registerVoiceHandlers(
   });
 
   messageHub.onClientDisconnect?.((clientId) => {
+    voiceStreamStarts.delete(clientId);
     for (const [id, owned] of voiceStreams)
       if (owned.clientId === clientId) {
         owned.stream.close();

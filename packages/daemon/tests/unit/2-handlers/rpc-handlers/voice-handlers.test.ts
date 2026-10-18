@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { vi } from 'vitest';
 import type { CallContext, GlobalSettings, MessageHub } from '@hyperneo/shared';
 import {
+  admitVoiceStreamStart,
   registerVoiceHandlers,
   resetVoiceTranscriptionLimitsForTests,
 } from '../../../../src/lib/rpc-handlers/voice-handlers';
@@ -1100,6 +1101,21 @@ describe('voice RPC handlers', () => {
     await expect(
       handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
     ).rejects.toThrow(new Error('Voice transcription response exceeds the 256 KB limit'));
+  });
+});
+
+describe('admitVoiceStreamStart', () => {
+  it('allows 10 starts a minute per client and 8 open streams in total', () => {
+    const now = 100_000;
+    const nine = Array.from({ length: 9 }, (_, index) => now - index * 1_000);
+    expect(admitVoiceStreamStart(nine, 0, now)).toEqual({ value: [...nine, now] });
+    expect(admitVoiceStreamStart([...nine, now - 59_000], 0, now)).toEqual({
+      reason: 'Voice stream rate limit exceeded; please wait before trying again',
+    });
+    expect(admitVoiceStreamStart([now - 61_000], 0, now)).toEqual({ value: [now] });
+    expect(admitVoiceStreamStart([], 8, now)).toEqual({
+      reason: 'Too many voice streams are already open',
+    });
   });
 });
 

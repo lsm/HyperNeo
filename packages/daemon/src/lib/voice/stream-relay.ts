@@ -2,11 +2,13 @@ import { VOICE_MAX_AUDIO_BYTES, type VoiceMode, type VoiceSettings } from '@hype
 import superpipe, { type PipelineAPI } from 'superpipe';
 import WebSocket from 'ws';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
-import { resolveTranscriptionEndpoint } from './transcribe-fetch.ts';
+import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
+import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts';
 import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
 
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
+const CREDENTIAL_LOOKUP_TIMEOUT_MS = 16_000;
 const SETTLE_QUIET_MS = 700;
 const SETTLE_MAX_MS = 3_000;
 const STREAM_PATH = /\/audio\/transcriptions\/?$/;
@@ -97,25 +99,32 @@ async function openAsrSocket(
   deps: VoiceStreamDeps
 ): Promise<Gate<WebSocket>> {
   try {
-    await resolveTranscriptionEndpoint(
+    const [resolved] = await resolveTranscriptionEndpoint(
       new URL(url.toString().replace(/^ws/, 'http')),
       voice.allowPrivateNetwork ?? false,
       voice.allowInsecureTls ?? false
     );
     const endpoint = new URL(voice.endpoint);
-    const apiKey = await resolveApiKey(
-      voice.apiKey,
-      voice.apiKeyEndpoint,
-      endpoint,
-      deps.credentialManager
+    const apiKey = await withVoiceCredentialLock(() =>
+      withTimeout(
+        resolveApiKey(voice.apiKey, voice.apiKeyEndpoint, endpoint, deps.credentialManager),
+        CREDENTIAL_LOOKUP_TIMEOUT_MS,
+        'Voice transcription credential lookup timed out'
+      )
     );
     if (apiKey && url.protocol !== 'wss:')
       return { reason: 'Voice API keys are only sent over TLS' };
-    const tls = voiceStreamTls(voice);
-    const socket = new WebSocket(url, {
+    const target = new URL(url);
+    target.hostname = resolved.hostname;
+    const pinned = target.hostname !== url.hostname;
+    const tls = { ...voiceStreamTls(voice), ...(pinned ? { servername: url.hostname } : {}) };
+    const socket = new WebSocket(target, {
       ...tls,
-      tls,
-      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      tls: { ...tls, ...(pinned ? { serverName: url.hostname } : {}) },
+      headers: {
+        ...(pinned ? { Host: url.host } : {}),
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
       handshakeTimeout: CONNECT_TIMEOUT_MS,
     } as WebSocket.ClientOptions);
     return await new Promise((resolve) => {
