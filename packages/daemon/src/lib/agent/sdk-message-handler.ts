@@ -147,11 +147,17 @@ export interface SDKMessageHandlerContext {
     queryGeneration?: number
   ): Promise<boolean>;
 
+  onProviderAuthRejected?(error: string, queryGeneration?: number): Promise<void>;
+
   isLimitRecoveryPending?(): boolean;
 
   getQueryGeneration?(): number;
 
   resetTaskNotificationRequery?(): void;
+}
+
+export function isProviderAuthRejection(status: number | null | undefined): boolean {
+  return status === 401 || status === 403;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -952,6 +958,11 @@ export class SDKMessageHandler {
         error_status: message.error_status,
         error: message.error,
       });
+      if (isProviderAuthRejection(message.error_status))
+        await this.ctx.onProviderAuthRejected?.(
+          `HTTP ${message.error_status}: ${message.error}`,
+          invocationGeneration ?? undefined
+        );
     }
 
     if (isSDKThinkingTokensMessage(message)) {

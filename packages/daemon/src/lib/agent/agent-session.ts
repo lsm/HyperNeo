@@ -188,6 +188,10 @@ import {
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
 import {
+  claimProviderFailureNotice,
+  recordClassifiedProviderFailure,
+} from '../providers/provider-failure-store.ts';
+import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
@@ -2744,6 +2748,21 @@ export class AgentSession
       errorText,
       this.queryRunner.resolveRetryUserMessage(userMessageUuid),
       queryGeneration
+    );
+  }
+
+  async onProviderAuthRejected(error: string, queryGeneration?: number): Promise<void> {
+    if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) return;
+    const providerId = this.session.config.provider ?? 'anthropic';
+    if (providerId === 'anthropic') return;
+    recordClassifiedProviderFailure(providerId, { errorKind: 'credential', message: error });
+    if (claimProviderFailureNotice(providerId))
+      await this.queryRunner.displayErrorAsAssistantMessage(
+        `${getProviderRegistry().get(providerId)?.displayName ?? providerId} key rejected; update it in Providers.`,
+        { markAsError: true }
+      );
+    void this.handleInterrupt().catch((interruptError: unknown) =>
+      this.logger.warn(`Stopping after a rejected provider key failed: ${String(interruptError)}`)
     );
   }
 
