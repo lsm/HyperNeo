@@ -151,6 +151,25 @@ The sweep runs after each reconcile.
 | `draft` | none | No action |
 | `merged`, `closed` | — | Linked todos are met or flagged; the row is dropped after 7 days |
 
+A todo whose session stopped and is waiting for its check (`awaitingReports`, `todo-runner.ts:489`) joins the same pass:
+- The daemon runs the pack check within one sweep cycle.
+- If the check can't decide, Neo is told the facts.
+- A "waiting for Neo to check" line therefore never outlives one cycle.
+
+### Follow-ups join the existing ask
+
+One piece of work is one ask:
+- **`neo.ask.open` refuses overlapping asks.** If the request names a PR, issue or todo that is already linked to an open ask in this project, or the human's message replies to an item of one, the call is refused with `ask_open: <askId> "<title>" already covers <ref>`. Neo adds a todo to that ask with `neo.todo.add`.
+- **A PR links to one open todo.** Linking a ledger row that already has an open todo is refused with `pr_linked: <todoId>`. A follow-up change on the same PR is a new todo only once the earlier one is done.
+
+### Titles in the human's language
+
+Ask and todo titles follow `GlobalSettings.language` (`'en' | 'zh-Hans' | 'system'`; `shared/src/types/settings.ts:136`), not the language the instruction arrived in:
+- **The daemon resolves the language and tells Neo.** `'system'` resolves to the language of the human's latest message. The daemon passes the result to Neo as one line in each turn's context.
+- **The daemon checks every title.** `neo.ask.open`, `neo.todo.add` and `neo.todo.edit` check the title's script against that language. A mismatch is refused with `title_language: write the title in zh-Hans`.
+- **Code and names are exempt.** Code, PR and issue references, and proper names are exempt from the check.
+- **Existing titles stay as they are.**
+
 ### What reaches Neo each turn
 
 - **Unchanged:** the human's local time, the last 7 conversation items (untrusted), and the project snapshot after a context reset. The snapshot now includes the project's ledger rows.
@@ -227,8 +246,10 @@ Each PR is about 100–200 lines of production code, opened from fresh `dev`, an
 | L2 | Sweep: deadlines, re-tell the owner, act at 2 nudges; branch→session owner | +170 | An `approved_green` PR with an idle owner is told at 20 min and 40 min, then reassigned or asked about |
 | L3 | Todo gate: link named PRs; refuse `done` or `close` while a linked PR is open; reopen done todos with open PRs (once, logged) | +120 | `neo.todo.close` on a todo with an open PR returns `pr_open`; merging the PR marks it met |
 | L4 | Delete the transcript probe, claim rules, `pack_coding_pr_claims`, the card-attention relay and the old route-PR reads | −400, split by caller | No `openedPrs` in `work.status`; todos still show their PRs, now from the ledger |
-| L5 | Idle todo sessions on the sweep; delete the legacy ask stall/idle loops (R5, R6) | +60 / −250, split | A doing todo whose session is idle 20 min is told, then escalated |
+| L5 | Idle and awaiting-check todo sessions on the sweep; delete the legacy ask stall/idle loops (R5, R6) | +60 / −250, split | A doing todo whose session is idle 20 min is told, then escalated; an awaiting-check todo is checked within one cycle |
 | L6 | Prompts: merge owner, ledger-only done; `goal-merge.md` and `instructions.md` | text | A new coding todo's instruction names its session as the merge owner |
+| L7 | Follow-ups join the existing ask: the `ask_open` refusal on `neo.ask.open`; the one-open-todo-per-PR link (`pr_linked`) | +100 | Asking for a change to work an open ask already covers adds a todo there; `neo.ask.open` naming that PR is refused |
+| L8 | Titles in the human's language: resolve `GlobalSettings.language`, add it to the turn context, check the script in `ask.open`, `todo.add` and `todo.edit` | +90 | With language `zh-Hans`, an English instruction still produces Chinese ask and todo titles; an English title is refused with `title_language` |
 | R1–R3 | Snapshot is the same for every caller; project links (#7420); don't echo Neo's own changes (#7424) | as in the re-cut | as in the re-cut |
 | R4, R7–R9 | Close in-flight legacy cards; delete reroute, environment-move, old approvals | as in the re-cut | as in the re-cut |
 | R10–R17 | Retire, then delete, consultations and dispatch | as in the re-cut | as in the re-cut |
@@ -237,7 +258,8 @@ Each PR is about 100–200 lines of production code, opened from fresh `dev`, an
 | R31–R33 | neo-ios session list, voice to default, push opens the owning session | as in the re-cut | as in the re-cut |
 
 **Order and conflicts:**
-- L1 → L2 → L3 → L4 in sequence. L5 needs L2, and L6 needs L3.
+- L1 → L2 → L3 → L4 in sequence. L5 needs L2, L6 needs L3, and L7 needs L3.
+- L8 is independent and can run alongside.
 - R1–R3 and the guard lane (R22–R24) don't touch the ledger files and can run alongside.
 - R5 and R6 are absorbed into L5.
 - `service.ts` stays a one-holder file, as in the re-cut.
@@ -251,3 +273,17 @@ Each PR is about 100–200 lines of production code, opened from fresh `dev`, an
 5. **Unowned PRs.** PRs no session owns, including ones a human opened, should be tracked, assigned, or ignored?
 6. **Closed without merging.** When a linked PR is closed unmerged, should the todo fail, or should Neo ask?
 7. **The timer exception.** Is the sweep the only timer-driven notice, with every other notice still state-only?
+8. **Overlapping asks.** Should an overlapping `neo.ask.open` be refused outright (L7), or accepted and folded into the existing ask automatically?
+9. **Title language.** Should `'system'` resolve to the language of the human's latest message, or to the device locale the client reports?
+
+## 8. Acceptance
+
+These are the cases seen on two live Neo cards on 2026-10-18. After the plan ships, each line can be ticked by reading `neo.snapshot` and GitHub.
+
+| # | Seen | Accepted when | Fixed by |
+|---|---|---|---|
+| 1 | The "Web details header row (fullstack 1)" todo is ticked done while lsm/HyperNeo#7492 is still `OPEN` | The web todo is ticked only when the ledger reads #7492 `merged`. Until then, `neo.todo.edit` with `done` and `neo.todo.close` return `pr_open` | Ledger-only done (L3) |
+| 2 | "iOS: details copy button (iOS-2)" says "approved, waiting to merge", but lsm/neo-ios#130 merged at 15:02Z | A todo's PR status line always shows the PR's current ledger state, no older than one reconcile (5 min, sooner after an event). Within a cycle of #130 merging it reads merged, and the todo is met | Ledger reconcile and snapshot view (L1, L3) |
+| 3 | One piece of work became two asks. The header-row follow-up opened a new ask, and #7492 sits on a todo in each | The two cards are one ask. The follow-up is a todo on the original ask, and #7492 is linked to exactly one open todo | Follow-ups join the existing ask (L7) |
+| 4 | A todo shows "session stopped, waiting for Neo to check", and nothing checks it | A stopped session is noticed within one sweep cycle: the daemon runs the check, or Neo is told the facts. The line never sits longer than one cycle | Sweep for idle and awaiting-check sessions (L5) |
+| 5 | Card and todo titles mix Chinese and English, following whichever language the instruction came in | Every new ask and todo title is in `GlobalSettings.language`; a title in another script is refused with `title_language` | Titles in the human's language (L8) |
