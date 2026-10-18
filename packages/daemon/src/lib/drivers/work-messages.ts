@@ -7,7 +7,7 @@ const EXCHANGE_TEXT_LIMIT = 4_000;
 const EXCHANGE_ENTRIES = 40;
 const TURN_REPLY_LIMIT = 12_000;
 const TURN_REPLY_HEAD = 2_000;
-const TURN_REPLIES = 39;
+export const TURN_REPLIES = 39;
 
 export function workEntryTime(timestamp: unknown): number | undefined {
   const at = Date.parse(String(timestamp));

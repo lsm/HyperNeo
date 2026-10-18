@@ -37,6 +37,7 @@ import {
   boundExchange,
   exchangeEntry,
   recentWorkInputs,
+  TURN_REPLIES,
   turnReplies,
   turnReply,
   type WorkExchange,
@@ -679,7 +680,7 @@ export function claudeInputEvidence(
     receipt,
     state: 'observed',
     exchange: [first, ...turnReplies(replies)],
-    exchangeCut: replies.length > 39,
+    exchangeCut: replies.length > TURN_REPLIES,
   };
 }
 
