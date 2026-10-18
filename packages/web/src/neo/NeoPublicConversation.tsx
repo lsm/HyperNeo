@@ -331,11 +331,12 @@ function ReplyQuote({
   onSeek?: (messageId: string) => void;
 }) {
   const label = labels?.get(`${replyTo.kind}:${replyTo.id}`);
-  if (replyTo.kind !== 'message')
+  if (replyTo.kind !== 'message') {
+    const excerpt = label?.label ?? replyTo.excerpt;
     return (
       <NeoQuoteBar
-        author="Neo"
-        excerpt={label?.label ?? replyTo.excerpt}
+        author={excerpt === undefined ? undefined : 'Neo'}
+        excerpt={excerpt}
         onOpen={() =>
           (
             document.getElementById(`neo-ref-${replyTo.kind}-${replyTo.id}`) ??
@@ -344,6 +345,7 @@ function ReplyQuote({
         }
       />
     );
+  }
   return (
     <NeoQuoteBar
       author={replyTo.author && (replyTo.author === 'user' ? 'You' : 'Neo')}
@@ -818,6 +820,7 @@ export function NeoPublicConversation({
 }) {
   const labels = new Map([...neoMessageReplyLabels(conversation.entries), ...(replyLabels ?? [])]);
   const [seeking, setSeeking] = useState<string | null>(null);
+  useEffect(() => setSeeking(null), [conversation.conversationId]);
   const canLoadEarlier = conversation.hasEarlier && !!onLoadEarlier;
   useEffect(() => {
     if (!seeking || conversation.status !== 'ready') return;

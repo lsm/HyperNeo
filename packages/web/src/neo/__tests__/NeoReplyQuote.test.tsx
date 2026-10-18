@@ -195,4 +195,58 @@ describe('reply quote block', () => {
     expect(scrolled).toEqual([card]);
     card.remove();
   });
+
+  it('shows no author when a quoted question is no longer known', () => {
+    const { container } = render(
+      <NeoPublicConversation
+        conversation={conversation(
+          [ask('reply', 1, 'Late answer', { kind: 'question', id: 'q9' })],
+          []
+        )}
+      />
+    );
+    expect(quoteBar(container, 'question:q9').textContent).toBe(t('chat.originalUnavailable'));
+  });
+
+  it('drops a pending seek when the conversation changes', async () => {
+    const loads = vi.fn();
+    const reply = ask('reply', 2, 'Following up', {
+      kind: 'message',
+      id: 'old',
+      author: 'neo',
+      excerpt: 'An old answer',
+    });
+    const other = '10000000-0000-4000-8000-000000000002';
+    const { container, rerender } = render(
+      <NeoPublicConversation conversation={conversation([reply], [], true)} onLoadEarlier={loads} />
+    );
+    fireEvent.click(quoteBar(container, 'message:old'));
+    await waitFor(() => expect(loads).toHaveBeenCalledTimes(1));
+    rerender(
+      <NeoPublicConversation
+        conversation={projectNeoPublicConversation(
+          `neo:${other}`,
+          {
+            conversationId: other,
+            status: 'ready',
+            items: [{ ...ask('fresh', 1, 'Elsewhere'), conversationId: other }],
+            nextAfter: 1,
+            hasMore: false,
+            hasEarlier: true,
+          },
+          {
+            conversationId: other,
+            status: 'ready',
+            items: [],
+            nextAfter: 0,
+            hasMore: false,
+            hasEarlier: true,
+          }
+        )}
+        onLoadEarlier={loads}
+      />
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(loads).toHaveBeenCalledTimes(1);
+  });
 });
