@@ -163,4 +163,12 @@ export const zhHans: Record<keyof typeof en, string> = {
   'session.loadEarlier': '加载更早的消息',
   'session.loadFailed': '这个会话没能打开。',
   'session.loadEarlierFailed': '没能加载更早的消息，再试一次',
+  'composer.stop': '停止',
+  'session.message': '在这个会话里发消息',
+  'session.modelScope': '只改这个会话，下一轮生效',
+  'session.modelScopeWorking': '切换模型会停止当前回复',
+  'session.modelFailed': '没能切换这个会话的模型。',
+  'session.attachmentsLost': '重新发送前请再附上照片。',
+  'session.modelLoading': '这个会话的模型还没加载好，请稍后再试。',
+  'session.voiceUnconfirmed': '没能确认已发送，已放回草稿。',
 };

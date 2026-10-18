@@ -23,6 +23,7 @@ export interface VoiceSubmitInput {
   retrySilent?: boolean;
   intent?: 'draft' | 'send';
   sendDraft?: string;
+  door?: 'session';
 }
 
 export interface VoiceSubmitDeps {
@@ -132,6 +133,7 @@ async function persistVoiceAudio(ctx: VoiceSubmitGatedCtx): Promise<VoiceSubmitP
     createdAt: ctx.startedAt,
     intent: ctx.intent === 'send' ? 'send' : 'draft',
     sendDraft: ctx.intent === 'send' ? (ctx.sendDraft ?? '') : undefined,
+    ...(ctx.door ? { door: ctx.door } : {}),
   };
   return { ...ctx, persisted: await ctx.deps.putRecord(entry) };
 }

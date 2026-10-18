@@ -9,6 +9,7 @@ export interface VoiceRecordEntry {
   intent?: 'draft' | 'send';
   sendDraft?: string;
   sendText?: string;
+  door?: 'session';
 }
 
 const DB_NAME = 'hyperneo-voice-audio';

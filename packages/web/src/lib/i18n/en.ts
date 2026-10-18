@@ -164,4 +164,12 @@ export const en = {
   'session.loadEarlier': 'Load earlier messages',
   'session.loadFailed': 'This chat didn’t open.',
   'session.loadEarlierFailed': 'Couldn’t load earlier messages. Try again',
+  'composer.stop': 'Stop',
+  'session.message': 'Message this chat',
+  'session.modelScope': 'For this session, from its next turn',
+  'session.modelScopeWorking': 'Switching the model stops the current reply',
+  'session.modelFailed': 'Could not switch this session’s model.',
+  'session.attachmentsLost': 'Attach the photos again before resending.',
+  'session.modelLoading': 'This session’s model hasn’t loaded yet. Try again in a moment.',
+  'session.voiceUnconfirmed': 'Couldn’t confirm this was sent, so it’s back in your draft.',
 } as const;

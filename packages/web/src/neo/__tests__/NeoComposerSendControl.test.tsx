@@ -14,7 +14,7 @@ vi.mock('../../lib/state.ts', () => ({
   connectionState: { value: 'connected', subscribe: () => () => {} },
 }));
 
-function mount(working: boolean, draft: string) {
+function mount(working: boolean, draft: string, onStop?: () => void) {
   const store = {
     sdkMessages: signal([]),
     agentState: signal({ status: working ? 'processing' : 'idle' }),
@@ -33,6 +33,7 @@ function mount(working: boolean, draft: string) {
       onError={vi.fn()}
       onTranscript={vi.fn()}
       onSend={vi.fn()}
+      onStop={onStop}
     />
   );
 }
@@ -68,5 +69,16 @@ describe('Neo composer send slot', () => {
     mount(true, 'Another fictional ask');
     expect((send() as HTMLButtonElement).disabled).toBe(false);
     expect(interrupt).not.toHaveBeenCalled();
+  });
+
+  it('offers Stop for a session’s running turn when the pane can stop it', () => {
+    const onStop = vi.fn();
+    mount(false, '', onStop);
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+    cleanup();
+    mount(true, '', onStop);
+    screen.getByRole('button', { name: 'Stop' }).click();
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(send()).toBeTruthy();
   });
 });

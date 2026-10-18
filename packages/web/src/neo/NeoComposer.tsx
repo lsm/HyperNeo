@@ -42,7 +42,11 @@ export function NeoComposer({
   quote,
   activity,
   onCancelQuote,
+  forSession,
+  onStop,
 }: {
+  forSession?: boolean;
+  onStop?: () => void;
   preference?: NeoPreference;
   quote?: NeoQuote;
   activity?: ComponentChildren;
@@ -56,6 +60,7 @@ export function NeoComposer({
   onTranscript: (text: string) => void;
   onSend: ReturnType<typeof createNeoIntakeClient>['send'];
 }) {
+  const idSuffix = forSession ? '-session' : '';
   const [sending, setSending] = useState(false);
   const coarsePointer = useCoarsePointer();
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
@@ -222,7 +227,7 @@ export function NeoComposer({
           <NeoQuoteBar
             author={quote.author}
             excerpt={neoQuoteExcerpt(quote.text)}
-            labelId="neo-quote-label"
+            labelId={`neo-quote-label${idSuffix}`}
           >
             <button
               type="button"
@@ -274,9 +279,9 @@ export function NeoComposer({
       ) : (
         <textarea
           ref={thought}
-          id="neo-thought"
-          aria-label={t('composer.message')}
-          aria-describedby={quote ? 'neo-quote-label' : undefined}
+          id={`neo-thought${idSuffix}`}
+          aria-label={forSession ? t('session.message') : t('composer.message')}
+          aria-describedby={quote ? `neo-quote-label${idSuffix}` : undefined}
           value={draft}
           onInput={(event) => onDraft(event.currentTarget.value)}
           onPaste={(event) => {
@@ -326,6 +331,7 @@ export function NeoComposer({
             onError={onError}
             preference={preference}
             onSaved={onPreferenceSaved}
+            forSession={forSession}
           />
         </div>
         <span
@@ -348,6 +354,7 @@ export function NeoComposer({
         </span>
         <div class={`flex gap-2 ${voiceBusy ? 'min-w-0 flex-1' : 'ml-auto shrink-0'}`}>
           <NeoVoice
+            door={forSession ? 'session' : undefined}
             sessionId={sessionId}
             connected={connected}
             draftText={draft}
@@ -361,6 +368,17 @@ export function NeoComposer({
             onError={onError}
             onPhase={setVoicePhase}
           />
+          {onStop && store.isWorking.value && !voiceBusy && (
+            <button
+              type="button"
+              aria-label={t('composer.stop')}
+              title={t('composer.stop')}
+              onClick={onStop}
+              class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-line text-fg-muted hover:border-accent/40 hover:text-fg"
+            >
+              <NeoIcon name="stop" class="!h-3.5 !w-3.5" />
+            </button>
+          )}
           <Button
             type="submit"
             size="sm"

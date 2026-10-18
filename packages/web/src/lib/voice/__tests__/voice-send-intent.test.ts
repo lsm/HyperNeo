@@ -16,6 +16,7 @@ const hubRequest = vi.fn(
     }
     if (method === 'voice.transcribe') return { text: 'hello world' };
     if (method === 'session.appendVoiceDraft') return { success: true };
+    if (method === 'message.send') return { messageId: 'm1' };
     throw new Error(`No handler for method: ${method}`);
   }
 );
@@ -96,6 +97,32 @@ describe('voice send-intent recovery', () => {
     });
     expect(store.records).toHaveLength(0);
     expect(rawMethods()).not.toContain('neo.message.send');
+  });
+
+  it('sends a session pane recording to its session through message.send', async () => {
+    seedEntry({ intent: 'send', door: 'session' });
+    await flushPendingVoiceAudio();
+
+    expect(asks()).toHaveLength(0);
+    expect(hubRequest).toHaveBeenCalledWith('message.send', {
+      sessionId: 's1',
+      content: 'hello world',
+    });
+    expect(store.records).toHaveLength(0);
+  });
+
+  it('parks an unconfirmed session send in the draft instead of replaying it', async () => {
+    seedEntry({ intent: 'send', door: 'session' });
+    hubRequest.mockImplementation(async (method: string) => {
+      if (method === 'voice.transcribe') return { text: 'hello world' };
+      if (method === 'message.send') throw new Error('Request timeout');
+      return { success: true };
+    });
+    await flushPendingVoiceAudio();
+    await flushPendingVoiceAudio();
+
+    expect(rawMethods().filter((method) => method === 'message.send')).toHaveLength(1);
+    expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', 'rec-1');
   });
 
   it('never re-sends after the record is durably consumed, across repeated flushes', async () => {

@@ -1,8 +1,9 @@
-import type { MessageHub } from '@hyperneo/shared';
+import { type MessageHub, MessageHubResponseError } from '@hyperneo/shared';
 import { effect, signal } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
 import { NEO_UNCONFIRMED_RECEIPT, submitNeoDraft } from '../../neo/neo-intake.ts';
 import { connectionState } from '../state';
+import { t } from '../i18n/index.ts';
 import {
   deleteVoiceRecord,
   listVoiceRecords,
@@ -72,6 +73,23 @@ export function combineVoiceSubmission(draft: string, transcript: string): strin
   return [draft.trim(), transcript].filter(Boolean).join('\n');
 }
 
+async function sendSessionVoice(
+  hub: MessageHub,
+  sessionId: string,
+  text: string
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  try {
+    await hub.request('message.send', { sessionId, content: text });
+    return { ok: true };
+  } catch (cause) {
+    return {
+      ok: false,
+      reason:
+        cause instanceof MessageHubResponseError ? cause.message : t('session.voiceUnconfirmed'),
+    };
+  }
+}
+
 export async function submitVoiceSendIntent(
   hub: MessageHub,
   record: VoiceRecordEntry,
@@ -89,14 +107,15 @@ export async function submitVoiceSendIntent(
     const stored = await putVoiceRecord({ ...record, sendText: settled });
     if (!stored) return { kind: 'unconfirmed' };
   }
-  let receipt:
-    | { ok: true; requestId: string; messageId: string; created: boolean }
-    | { ok: false; reason: string };
+  let receipt: { ok: true } | { ok: false; reason: string };
   try {
-    receipt = await submitNeoDraft(
-      { sessionId: record.sessionId, requestId: record.id, text: settled },
-      async () => hub
-    );
+    receipt =
+      record.door !== 'session'
+        ? await submitNeoDraft(
+            { sessionId: record.sessionId, requestId: record.id, text: settled },
+            async () => hub
+          )
+        : await sendSessionVoice(hub, record.sessionId, settled);
   } catch {
     return { kind: 'unconfirmed' };
   }
