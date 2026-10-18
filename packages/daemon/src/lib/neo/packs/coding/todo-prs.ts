@@ -106,6 +106,21 @@ export class CodingTodoPrRepository {
     return row ? (JSON.parse(row.prs) as NeoWorkPr[]) : [];
   }
 
+  latest(url: string): NeoWorkPr | null {
+    const key = codingPrKey(url);
+    const rows = this.db
+      .prepare(
+        `SELECT prs_json AS prs FROM pack_coding_todo_prs WHERE todo_id IN
+           (SELECT todo_id FROM pack_coding_pr_claims WHERE url = ?) ORDER BY read_at DESC`
+      )
+      .all(key) as { prs: string }[];
+    for (const row of rows) {
+      const pr = (JSON.parse(row.prs) as NeoWorkPr[]).find((item) => codingPrKey(item.url) === key);
+      if (pr) return pr;
+    }
+    return null;
+  }
+
   record(todoId: string, prs: readonly NeoWorkPr[], now: number): void {
     this.db
       .prepare(
@@ -282,7 +297,7 @@ export function createCodingTodoPack(
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id)),
     topics: (todo) =>
       repo.urls(todo.id).flatMap((url) => {
-        const parsed = parsePrUrl(url);
+        const parsed = (repo.latest(url)?.state ?? 'OPEN') === 'OPEN' ? parsePrUrl(url) : null;
         return parsed ? [buildPrEventTopicPattern(parsed)] : [];
       }),
     event: (event: ExternalEvent) => {

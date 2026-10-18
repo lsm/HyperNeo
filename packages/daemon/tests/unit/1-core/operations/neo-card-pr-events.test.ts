@@ -168,9 +168,9 @@ describe('Neo todo pull request events', () => {
     db.close();
   });
 
-  function todo(target: WorkRef = ref) {
+  function todo(target: WorkRef = ref, id = 'todo') {
     const row = service.todos.addTodo(
-      'todo',
+      id,
       'ask',
       {
         title: 'Fix the bug',
@@ -330,6 +330,39 @@ describe('Neo todo pull request events', () => {
     ).toBe(true);
     await event('review_submitted', { state: 'approved' });
     expect(sent[0].ref).toEqual({ adapter: 'hyperneo', id: 'native' });
+  });
+  test('an event reaches a session once however many of its todos follow the PR', async () => {
+    todo();
+    todo(ref, 'todo-2');
+    todo({ adapter: 'claude-desktop', daemon: 'laptop', id: 'local_other' }, 'todo-3');
+    await event('check_failed', { checkName: 'Web Tests' });
+    expect(sent.map((item) => item.ref)).toEqual([
+      ref,
+      { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_other' },
+    ]);
+  });
+  test('a PR merged without its closing event stays quiet after the next read', async () => {
+    const row = todo();
+    prs = [{ ...open, state: 'MERGED' }];
+    service.todoPrs.record(row.id, prs, 3);
+    service.cardEvents.end(row.id, 'github/lsm/hyperneo/pull_request/7.*', 3);
+    service.followCardTopics(row.id);
+    expect(service.cardEvents.listActive()).toEqual([]);
+    service.cardEvents.subscribe(row.id, 'github/lsm/hyperneo/pull_request/7.*', 4);
+    await event('comment_created', { body: 'Late comment' });
+    expect(sent).toEqual([]);
+  });
+  test('an event on an old head is dropped once the PR is re-read at its new head', async () => {
+    prs = [{ ...open, head: 'old' }];
+    todo();
+    todo({ adapter: 'claude-desktop', daemon: 'laptop', id: 'local_other' }, 'todo-2');
+    prs = [{ ...open, head: 'new' }];
+    await event('review_comment_created', { body: 'Outdated thread', commitId: 'old' });
+    await event('check_failed', { checkName: 'Lint', headSha: 'old' });
+    expect(sent).toEqual([]);
+    await event('check_failed', { checkName: 'Lint', headSha: 'new' });
+    await event('comment_created', { body: 'No commit on this one' });
+    expect(sent).toHaveLength(4);
   });
   test('routine polls and pending checks do not send work to the todo session', async () => {
     todo();

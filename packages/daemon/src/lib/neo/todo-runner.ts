@@ -459,6 +459,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     recheck(todoIds: readonly string[]) {
       for (const id of todoIds) checked.delete(id);
     },
+    async checkNow(todoIds: readonly string[]): Promise<void> {
+      for (const id of todoIds) {
+        checked.delete(id);
+        const todo = store.getTodo(id);
+        if (todo) await check(todo, Date.now());
+      }
+    },
     async refresh(warn: (message: string, error: unknown) => void): Promise<void> {
       for (const todoId of sessions.unrecordedStarts()) {
         const todo = store.getTodo(todoId);

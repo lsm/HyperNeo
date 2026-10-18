@@ -59,6 +59,24 @@ export function neoCardWorkerSession(send: NeoCardSend): string | null {
     : null;
 }
 
+export function planNeoCardEventSends(
+  workIds: readonly string[],
+  sendOf: (workId: string) => NeoCardSend
+): { target: string; workIds: string[] }[] {
+  const groups = new Map<string, string[]>();
+  for (const workId of workIds) {
+    const send = sendOf(workId);
+    const session = neoCardWorkerSession(send);
+    const target = session
+      ? `session:${session}`
+      : send.via === 'driver'
+        ? `${send.ref.adapter}:${send.ref.daemon ?? ''}:${send.ref.id}`
+        : null;
+    if (target) groups.set(target, [...(groups.get(target) ?? []), workId]);
+  }
+  return [...groups].map(([target, ids]) => ({ target, workIds: ids }));
+}
+
 const PROJECT_EVENT = 'neo-project-event:';
 
 export function neoProjectEventMessageId(projectId: string, eventId: string): string {

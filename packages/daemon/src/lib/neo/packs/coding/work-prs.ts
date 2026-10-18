@@ -99,6 +99,7 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
     ...(Number.isFinite(merged) ? { mergedAt: merged } : {}),
     ...(title ? { title } : {}),
     ...(headRefName ? { branch: headRefName } : {}),
+    head: headRefOid,
     ...(refs.length ? { refs } : {}),
   };
 }

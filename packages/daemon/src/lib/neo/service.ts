@@ -144,6 +144,7 @@ import { planNeoCardCheck } from './card-check.ts';
 import {
   neoProjectEventMessageId,
   planNeoCardEventRoute,
+  planNeoCardEventSends,
   planNeoCardSend,
   planNeoCardTopicsEnded,
   planNeoProjectEventHolders,
@@ -2711,7 +2712,6 @@ export class NeoService {
     )
     .pipe(
       async (event: ExternalEvent) => {
-        this.todoRunner.recheck(this.packs().flatMap((pack) => pack.todos?.event(event) ?? []));
         for (const ask of this.askRecords.listLive()) {
           const ticks = await readNeoAskEventTicks(this.packs(), ask, event, (id, error) =>
             this.log.warn(`Neo pack ${id} event ticks pending`, error)
@@ -2736,6 +2736,12 @@ export class NeoService {
     )
     .pipe(
       (event: ExternalEvent) =>
+        this.todoRunner.checkNow(this.packs().flatMap((pack) => pack.todos?.event(event) ?? [])),
+      'event',
+      'checked'
+    )
+    .pipe(
+      (event: ExternalEvent) =>
         planNeoCardEventRoute(this.packs(), event, this.cardEvents.listActive()),
       'event',
       'result:route'
@@ -2743,18 +2749,24 @@ export class NeoService {
     .pipe(
       async (event: ExternalEvent, route: NeoPackEventRoute) => {
         const delivered: string[] = [];
-        for (const workId of route.workIds)
+        const sends = planNeoCardEventSends(route.workIds, (workId) =>
+          planNeoCardSend({
+            work: this.followedTodo(workId),
+            ref: this.todoSessions.readRef(workId),
+          })
+        );
+        for (const send of sends)
           if (
             await this.sendToCard(
-              workId,
-              `neo-card-event:${workId}:${event.id}`,
+              send.workIds[0],
+              `neo-card-event:${send.target}:${event.id}`,
               sessionEventText(event)
             ).catch((error) => {
               this.log.warn('Card event not delivered', error);
               return false;
             })
           )
-            delivered.push(workId);
+            delivered.push(...send.workIds);
         return delivered;
       },
       ['event', 'route'],
@@ -2798,17 +2810,13 @@ export class NeoService {
       },
       ['event', 'holders']
     )
-    .pipe(
-      async (event: ExternalEvent, route: NeoPackEventRoute, delivered: string[]) => {
-        this.todoRunner.recheck(route.workIds);
-        await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
-        for (const workId of delivered) {
-          const told = neoCardPrAttention(this.todoPrs.prs(workId), false).attention;
-          if (told) this.cardPrRelays.markTold(workId, told.signature, Date.now());
-        }
-      },
-      ['event', 'route', 'delivered']
-    )
+    .pipe(async (delivered: string[]) => {
+      await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
+      for (const workId of delivered) {
+        const told = neoCardPrAttention(this.todoPrs.prs(workId), false).attention;
+        if (told) this.cardPrRelays.markTold(workId, told.signature, Date.now());
+      }
+    }, 'delivered')
     .pipe((route: NeoPackEventRoute) => {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
     }, 'route')
