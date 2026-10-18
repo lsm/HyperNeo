@@ -14,4 +14,16 @@ export function createCodingPackTables(db: Database): void {
     PRIMARY KEY (todo_id, url)
   );
   CREATE INDEX IF NOT EXISTS idx_pack_coding_pr_claims_url ON pack_coding_pr_claims(url)`);
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_todo_pr_refs'").get())
+    db.exec(
+      `INSERT OR IGNORE INTO neo_todo_pr_refs (reference, number, todo_id) ${CODING_TODO_PR_REFS}`
+    );
 }
+
+export const CODING_TODO_PR_REFS = `SELECT
+    lower(replace(json_extract(p.value, '$.url'), 'http://', 'https://')),
+    CAST(substr(json_extract(p.value, '$.url'),
+      length(rtrim(json_extract(p.value, '$.url'), '0123456789')) + 1) AS INTEGER),
+    r.todo_id
+  FROM pack_coding_todo_prs r, json_each(r.prs_json) p
+  WHERE json_extract(p.value, '$.url') IS NOT NULL`;
