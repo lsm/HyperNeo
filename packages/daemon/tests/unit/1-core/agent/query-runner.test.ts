@@ -272,7 +272,6 @@ describe('QueryRunner', () => {
       queryAbortController: null,
       firstMessageReceived: false,
       startupTimeoutTimer: null,
-      originalEnvVars: {},
 
       processExitedPromise: null,
       resetProcessExitedPromise: mock(function (this: {
@@ -3973,7 +3972,6 @@ describe('QueryRunner', () => {
       expect(stopSpy).toHaveBeenCalledTimes(1);
       expect(clearSpy).toHaveBeenCalledTimes(1);
       expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
-      expect(ctx.originalEnvVars).toEqual({});
       expect(ctx.queryPromise).toBeNull();
       const runnerPrivate = runner as unknown as {
         _lastConsumedUserMessage: unknown;
@@ -4259,7 +4257,6 @@ describe('QueryRunner', () => {
         queryAbortController: new AbortController(),
         firstMessageReceived: false,
         startupTimeoutTimer: null,
-        originalEnvVars: {},
         processExitedPromise: Promise.resolve(),
         resetProcessExitedPromise: mock(function (this: {
           processExitedPromise: Promise<void> | null;
@@ -4311,15 +4308,6 @@ describe('QueryRunner', () => {
           if (!value) events.push('firstMsg.reset');
         },
       });
-      let originalEnvVars: QueryRunnerContext['originalEnvVars'] = {};
-      Object.defineProperty(ctx, 'originalEnvVars', {
-        configurable: true,
-        get: () => originalEnvVars,
-        set: (value: QueryRunnerContext['originalEnvVars']) => {
-          originalEnvVars = value;
-          if (Object.keys(value).length === 0) events.push('env.restore');
-        },
-      });
       return () => timerValue;
     }
 
@@ -4345,7 +4333,6 @@ describe('QueryRunner', () => {
       Object.assign(ctx, config.overrides);
       const seededTimer = setTimeout(() => {}, 60000);
       ctx.startupTimeoutTimer = seededTimer;
-      ctx.originalEnvVars = { ANTHROPIC_API_KEY: 'sk-original-key' };
       events.length = 0;
 
       let buildCount = 0;
@@ -4431,7 +4418,6 @@ describe('QueryRunner', () => {
         'timer.clear',
         'exit.reset',
         'queue.stop',
-        'env.restore',
         'idle',
         'exit.reset',
         'queue.stop',
@@ -4468,7 +4454,6 @@ describe('QueryRunner', () => {
         'idle',
         'exit.reset',
         'queue.stop',
-        'env.restore',
         'idle',
         'exit.reset',
         'queue.stop',
@@ -4502,7 +4487,6 @@ describe('QueryRunner', () => {
         'idle',
         'exit.reset',
         'queue.stop',
-        'env.restore',
         'idle',
         'exit.reset',
         'queue.stop',
@@ -4536,7 +4520,6 @@ describe('QueryRunner', () => {
         'idle',
         'exit.reset',
         'queue.stop',
-        'env.restore',
         'idle',
         'exit.reset',
         'queue.stop',
@@ -4565,7 +4548,6 @@ describe('QueryRunner', () => {
         'display',
         'query.close',
         'exit.reset',
-        'env.restore',
         'enqueue:pm1',
         'build#2',
         'queue.clear',
@@ -4603,7 +4585,6 @@ describe('QueryRunner', () => {
         'display',
         'query.close',
         'exit.reset',
-        'env.restore',
         'build#2',
         'queue.clear',
         'terminal.begin',
@@ -4636,7 +4617,6 @@ describe('QueryRunner', () => {
         'exit.reset',
         'queue.stop',
         'query.close',
-        'env.restore',
         'idle',
       ]);
       expect(notices).toEqual([]);
@@ -4660,7 +4640,6 @@ describe('QueryRunner', () => {
         'exit.reset',
         'queue.stop',
         'query.close',
-        'env.restore',
         'idle',
       ]);
       expect(notices.length).toBe(1);
@@ -5340,39 +5319,6 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(ctx.startupTimeoutTimer).toBeNull();
-    });
-
-    it('should restore originalEnvVars before recursive retry (env-leak guard)', async () => {
-      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
-
-      const ctx = createContext({
-        originalEnvVars: { ANTHROPIC_API_KEY: 'fake-original-key', SOME_VAR: 'val' },
-      });
-      runner = new QueryRunner(ctx);
-      runner.start();
-      await ctx.queryPromise?.catch(() => {});
-
-      expect(ctx.originalEnvVars).toEqual({});
-    });
-
-    it('should restore env vars even when retry is cancelled during backoff', async () => {
-      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '100';
-      const abortController = new AbortController();
-      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
-
-      const ctx = createContext({
-        queryAbortController: abortController,
-        originalEnvVars: { ANTHROPIC_API_KEY: 'fake-original-key' },
-      });
-      runner = new QueryRunner(ctx);
-
-      setTimeout(() => abortController.abort(), 20);
-
-      runner.start();
-      await ctx.queryPromise?.catch(() => {});
-
-      expect(ctx.originalEnvVars).toEqual({});
-      expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
     it('should not retry after backoff if the queue was stopped (restart/stop)', async () => {
@@ -6504,24 +6450,13 @@ describe('QueryRunner', () => {
       });
     });
 
-    describe('B3c finalizer post-await guards', () => {
-      const PROVIDER_SERVICE_KEY = Symbol.for('hyperneo:providerServiceInstance');
-      let previousProviderService: unknown;
-      let onRestore: (() => void) | null = null;
+    describe('B3c finalizer guards', () => {
+      let onFinalize: (() => void) | null = null;
+      const finalizingContext = (overrides: Partial<QueryRunnerContext> = {}) =>
+        createContext({ resetProcessExitedPromise: () => onFinalize?.(), ...overrides });
 
       beforeEach(() => {
-        previousProviderService = (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY];
-        onRestore = null;
-        (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY] = {
-          restoreEnvVars: mock((_original: Record<string, unknown>) => {
-            onRestore?.();
-          }),
-          resolveSessionProviderEnvVars: mock(async () => ({})),
-        };
-      });
-
-      afterEach(() => {
-        (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY] = previousProviderService;
+        onFinalize = null;
       });
 
       it('aborted_noop route suppresses setIdle when status becomes interrupted', async () => {
@@ -6529,11 +6464,11 @@ describe('QueryRunner', () => {
         error.name = 'AbortError';
         buildSpy.mockRejectedValueOnce(error);
         getStateSpy.mockReturnValue({ status: 'idle' });
-        onRestore = () => {
+        onFinalize = () => {
           getStateSpy.mockReturnValue({ status: 'interrupted' });
         };
 
-        const ctx = createContext({ originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' } });
+        const ctx = finalizingContext();
         runner = new QueryRunner(ctx);
         runner.start();
         await ctx.queryPromise?.catch(() => {});
@@ -6547,8 +6482,8 @@ describe('QueryRunner', () => {
         buildSpy.mockRejectedValueOnce(error);
 
         let replacementController: AbortController | null = null;
-        const ctx = createContext({ originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' } });
-        onRestore = () => {
+        const ctx = finalizingContext();
+        onFinalize = () => {
           ctx.queryAbortController = new AbortController();
           replacementController = ctx.queryAbortController;
         };
@@ -6567,12 +6502,11 @@ describe('QueryRunner', () => {
         buildSpy.mockRejectedValueOnce(error);
 
         let generation = 1;
-        const ctx = createContext({
-          originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' },
+        const ctx = finalizingContext({
           getQueryGeneration: () => generation,
           incrementQueryGeneration: () => ++generation,
         });
-        onRestore = () => {
+        onFinalize = () => {
           ctx.incrementQueryGeneration();
         };
 
@@ -6587,11 +6521,11 @@ describe('QueryRunner', () => {
       it('terminal route still idles when status becomes interrupted', async () => {
         buildSpy.mockRejectedValueOnce(new Error(TERMINAL_AUTH_MSG));
         getStateSpy.mockReturnValue({ status: 'idle' });
-        onRestore = () => {
+        onFinalize = () => {
           getStateSpy.mockReturnValue({ status: 'interrupted' });
         };
 
-        const ctx = createContext({ originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' } });
+        const ctx = finalizingContext();
         runner = new QueryRunner(ctx);
         runner.start();
         await ctx.queryPromise?.catch(() => {});
@@ -7705,36 +7639,6 @@ describe('QueryRunner SDK message handling', () => {
 });
 
 describe('QueryRunner environment variable handling', () => {
-  it('should store original env vars', () => {
-    const originalEnvVars: Record<string, string | undefined> = {};
-
-    originalEnvVars.ANTHROPIC_AUTH_TOKEN = 'original-token';
-    originalEnvVars.ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
-
-    expect(Object.keys(originalEnvVars).length).toBe(2);
-  });
-
-  it('should detect when env vars need restoration', () => {
-    const originalEnvVars = {
-      ANTHROPIC_AUTH_TOKEN: 'original',
-    };
-
-    const needsRestore = Object.keys(originalEnvVars).length > 0;
-    expect(needsRestore).toBe(true);
-  });
-
-  it('should clear original env vars after restoration', () => {
-    const originalEnvVars: Record<string, string | undefined> = {
-      ANTHROPIC_AUTH_TOKEN: 'original',
-    };
-
-    const _emptyVars: Record<string, string | undefined> = {};
-    Object.assign(originalEnvVars, {});
-    Object.keys(originalEnvVars).forEach((key) => delete originalEnvVars[key]);
-
-    expect(Object.keys(originalEnvVars).length).toBe(0);
-  });
-
   it('should refresh provider-managed Kimi env from post-apply process env', () => {
     const env = refreshQueryEnvFromProcess(
       {

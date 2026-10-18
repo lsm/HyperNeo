@@ -49,39 +49,6 @@ export interface ProviderEnvVars {
   [key: string]: string | undefined;
 }
 
-export interface OriginalEnvVars {
-  ANTHROPIC_API_KEY?: string;
-  ANTHROPIC_AUTH_TOKEN?: string;
-  ANTHROPIC_BASE_URL?: string;
-  ANTHROPIC_MODEL?: string;
-  CLAUDE_CODE_SUBAGENT_MODEL?: string;
-  ENABLE_TOOL_SEARCH?: string;
-  API_TIMEOUT_MS?: string;
-  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
-  CLAUDE_CODE_AUTO_COMPACT_WINDOW?: string;
-  ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
-  ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
-  ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
-  CLAUDE_CODE_OAUTH_TOKEN?: string;
-  ANTHROPIC_CUSTOM_HEADERS?: string;
-  CLAUDE_AGENT_SDK_CLIENT_APP?: string;
-  PORT?: string;
-  HYPERNEO_PORT?: string;
-  NEOKAI_PORT?: string;
-}
-
-function mergeOriginalEnvVars(...originals: OriginalEnvVars[]): OriginalEnvVars {
-  const merged: OriginalEnvVars = {};
-  for (const original of originals) {
-    for (const [key, value] of Object.entries(original)) {
-      if (!Object.hasOwn(merged, key)) {
-        Reflect.set(merged, key, value);
-      }
-    }
-  }
-  return merged;
-}
-
 function sdkConfigToEnvVars(sdkConfig: ProviderSdkConfig): ProviderEnvVars {
   const envVars: ProviderEnvVars = { ...sdkConfig.envVars };
 
@@ -472,27 +439,16 @@ export class ProviderService {
     return shieldProviderKey(provider.id, sdkConfigToEnvVars(sdkConfig));
   }
 
-  applyEnvVarsToProcessForSession(session: Session): OriginalEnvVars {
-    const envVars = this.getProviderEnvVars(session);
-    return this.applyResolvedProviderEnvVarsToProcess(session, envVars);
+  sessionProcessEnv(session: Session): NodeJS.ProcessEnv {
+    return this.providerProcessEnv(session, this.getProviderEnvVars(session));
   }
 
-  applyResolvedProviderEnvVarsToProcess(
-    session: Session,
-    envVars: ProviderEnvVars
-  ): OriginalEnvVars {
-    const cleared = this.clearProviderRoutingEnvVars({
-      preserveUserSettings: session.config.provider === 'anthropic',
-    });
-
-    if (Object.keys(envVars).length === 0) {
-      return cleared;
-    }
-
-    return mergeOriginalEnvVars(
-      cleared,
-      this.applyEnvVars(envVars, { preserveApiKey: session.config.provider === 'anthropic' })
-    );
+  providerProcessEnv(session: Session, envVars: ProviderEnvVars): NodeJS.ProcessEnv {
+    const preserve = session.config.provider === 'anthropic';
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    clearProviderRoutingEnvVars(env, preserve);
+    applyEnvVars(env, envVars, preserve);
+    return env;
   }
 
   async getIsolatedEnvForModel(providerId: string, modelId: string): Promise<NodeJS.ProcessEnv> {
@@ -501,97 +457,9 @@ export class ProviderService {
     const env: NodeJS.ProcessEnv = { ...process.env };
     for (const key of PROVIDER_KEY_ENV_VARS) if (key !== 'ANTHROPIC_API_KEY') delete env[key];
     if (!preserve) delete env.CLAUDE_CODE_OAUTH_TOKEN;
-    this.clearProviderRoutingEnvVars({ preserveUserSettings: preserve }, env);
-    this.applyEnvVars(providerEnvVars, { preserveApiKey: preserve }, env);
+    clearProviderRoutingEnvVars(env, preserve);
+    applyEnvVars(env, providerEnvVars, preserve);
     return { ...env, ...providerEnvVars };
-  }
-
-  private applyEnvVars(
-    envVars: ProviderEnvVars,
-    options: { preserveApiKey?: boolean } = {},
-    env: NodeJS.ProcessEnv = process.env
-  ): OriginalEnvVars {
-    const original: OriginalEnvVars = {};
-
-    const set = (key: ProviderEnvKey, emptyDeletes: boolean): void => {
-      const value = envVars[key];
-      if (value === undefined) return;
-      original[key] = env[key];
-      if (emptyDeletes && value === '') delete env[key];
-      else env[key] = value;
-    };
-    for (const [key, emptyDeletes] of PROVIDER_AUTH_ENV) set(key, emptyDeletes);
-    if (envVars.ANTHROPIC_API_KEY !== undefined) {
-      if (envVars.ANTHROPIC_API_KEY === '') {
-        original.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
-        env.ANTHROPIC_API_KEY = '';
-      } else if (options.preserveApiKey) {
-        original.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
-        env.ANTHROPIC_API_KEY = envVars.ANTHROPIC_API_KEY;
-      } else {
-        original.ANTHROPIC_AUTH_TOKEN = env.ANTHROPIC_AUTH_TOKEN;
-        env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_API_KEY;
-      }
-    }
-    for (const [key, emptyDeletes] of PROVIDER_ROUTING_ENV) set(key, emptyDeletes);
-
-    this.saveClearDaemonPortEnvVars(original, env);
-
-    return original;
-  }
-
-  private clearProviderRoutingEnvVars(
-    options: { preserveUserSettings?: boolean } = {},
-    env: NodeJS.ProcessEnv = process.env
-  ): OriginalEnvVars {
-    const original: OriginalEnvVars = {};
-    let changed = false;
-
-    const clear = (key: keyof OriginalEnvVars): void => {
-      original[key] = env[key];
-      if (env[key] !== undefined) {
-        delete env[key];
-        changed = true;
-      }
-    };
-
-    clear('ANTHROPIC_AUTH_TOKEN');
-
-    for (const [key, userValue] of userPreservableRoutingEnv()) {
-      const value = env[key];
-      if (value === undefined) continue;
-      original[key] = value;
-      changed = true;
-      if (!keepsRoutingEnv(key, value, userValue, options.preserveUserSettings)) delete env[key];
-    }
-
-    this.saveClearDaemonPortEnvVars(original, env);
-    changed =
-      changed ||
-      original.PORT !== undefined ||
-      original.HYPERNEO_PORT !== undefined ||
-      original.NEOKAI_PORT !== undefined;
-
-    return changed ? original : {};
-  }
-
-  private saveClearDaemonPortEnvVars(
-    original: OriginalEnvVars,
-    env: NodeJS.ProcessEnv = process.env
-  ): void {
-    original.PORT = env.PORT;
-    delete env.PORT;
-    original.HYPERNEO_PORT = env.HYPERNEO_PORT;
-    delete env.HYPERNEO_PORT;
-    original.NEOKAI_PORT = env.NEOKAI_PORT;
-    delete env.NEOKAI_PORT;
-  }
-
-  restoreEnvVars(original: OriginalEnvVars): void {
-    for (const [key, value] of Object.entries(original)) {
-      if (value !== undefined) process.env[key] = value;
-      else delete process.env[key];
-    }
   }
 
   async isGlmAvailable(): Promise<boolean> {
@@ -632,7 +500,7 @@ const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODE
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 const userConfiguredCustomHeaders = process.env.ANTHROPIC_CUSTOM_HEADERS;
 
-type ProviderEnvKey = keyof OriginalEnvVars & keyof ProviderEnvVars;
+type ProviderEnvKey = keyof ProviderEnvVars & string;
 
 const PROVIDER_AUTH_ENV: ReadonlyArray<readonly [ProviderEnvKey, boolean]> = [
   ['CLAUDE_CODE_OAUTH_TOKEN', true],
@@ -652,6 +520,46 @@ const PROVIDER_ROUTING_ENV: ReadonlyArray<readonly [ProviderEnvKey, boolean]> = 
   ['ANTHROPIC_DEFAULT_HAIKU_MODEL', false],
   ['ANTHROPIC_DEFAULT_OPUS_MODEL', false],
 ];
+
+function applyEnvVars(
+  env: NodeJS.ProcessEnv,
+  envVars: ProviderEnvVars,
+  preserveApiKey: boolean
+): void {
+  const set = (key: ProviderEnvKey, emptyDeletes: boolean): void => {
+    const value = envVars[key];
+    if (value === undefined) return;
+    if (emptyDeletes && value === '') delete env[key];
+    else env[key] = value;
+  };
+  for (const [key, emptyDeletes] of PROVIDER_AUTH_ENV) set(key, emptyDeletes);
+  if (envVars.ANTHROPIC_API_KEY !== undefined) {
+    if (envVars.ANTHROPIC_API_KEY === '' || preserveApiKey) {
+      env.ANTHROPIC_API_KEY = envVars.ANTHROPIC_API_KEY;
+    } else {
+      env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_API_KEY;
+    }
+  }
+  for (const [key, emptyDeletes] of PROVIDER_ROUTING_ENV) set(key, emptyDeletes);
+  clearDaemonPortEnvVars(env);
+}
+
+function clearProviderRoutingEnvVars(env: NodeJS.ProcessEnv, preserveUserSettings: boolean): void {
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  for (const [key, userValue] of userPreservableRoutingEnv()) {
+    const value = env[key];
+    if (value !== undefined && !keepsRoutingEnv(key, value, userValue, preserveUserSettings)) {
+      delete env[key];
+    }
+  }
+  clearDaemonPortEnvVars(env);
+}
+
+function clearDaemonPortEnvVars(env: NodeJS.ProcessEnv): void {
+  delete env.PORT;
+  delete env.HYPERNEO_PORT;
+  delete env.NEOKAI_PORT;
+}
 
 function userPreservableRoutingEnv(): ReadonlyArray<readonly [ProviderEnvKey, string | undefined]> {
   return [

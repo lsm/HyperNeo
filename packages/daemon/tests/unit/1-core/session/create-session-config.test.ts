@@ -42,7 +42,6 @@ mock.module('../../../../src/lib/provider-service', () => ({
       sdkModelId: sessionModelId,
     }),
     getEnvVarsForModel: () => ({}),
-    restoreEnvVars: () => {},
   }),
 }));
 

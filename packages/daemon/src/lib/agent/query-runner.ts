@@ -20,7 +20,7 @@ import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
-import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service.ts';
+import type { ProviderEnvVars } from '../provider-service.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { resolveAvailableQueryProvider } from '../providers/registry.js';
 import {
@@ -74,8 +74,6 @@ import {
   isRetryableProviderError,
   TRANSIENT_CONNECTION_ERROR_SUBSTRINGS,
 } from './transient-error-patterns.ts';
-
-export type { OriginalEnvVars } from '../provider-service.ts';
 
 export type TrackedAgentProcess = SpawnedProcess & {
   pid?: number;
@@ -361,7 +359,6 @@ export interface QueryRunnerContext {
   queryAbortController: AbortController | null;
   firstMessageReceived: boolean;
   startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
-  originalEnvVars: OriginalEnvVars;
   processExitedPromise: Promise<void> | null;
   resetProcessExitedPromise(): void;
   trackAgentProcess(proc: TrackedAgentProcess): void;
@@ -1009,11 +1006,8 @@ export class QueryRunner {
           (key) => providerEnvVars[key] !== undefined
         );
         applyProviderEnvToFlagSettings(queryOptions, providerEnvVars);
-        this.ctx.originalEnvVars = providerService.applyResolvedProviderEnvVarsToProcess(
-          providerSession,
-          providerEnvVars
-        );
-        queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
+        const childEnv = providerService.providerProcessEnv(providerSession, providerEnvVars);
+        queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, childEnv, {
           refreshAutoCompactWindow: true,
           clearProviderManaged: true,
           preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
@@ -1837,16 +1831,6 @@ export class QueryRunner {
           this.ctx.queryObject = null;
         }
 
-        const originalEnvVars = this.ctx.originalEnvVars;
-        if (Object.keys(originalEnvVars).length > 0) {
-          const { getProviderService: getProviderServiceRestore } = await import(
-            '../provider-service.ts'
-          );
-          const providerServiceRestore = getProviderServiceRestore();
-          providerServiceRestore.restoreEnvVars(originalEnvVars);
-          this.ctx.originalEnvVars = {};
-        }
-
         this._lastConsumedUserMessage = null;
         this._turnConsumedUserMessages = [];
 
@@ -2043,15 +2027,7 @@ export class QueryRunner {
       } catch {}
     };
 
-    const restoreEnvAndBackoff = async (): Promise<void> => {
-      const envVarsToRestore = this.ctx.originalEnvVars;
-      if (Object.keys(envVarsToRestore).length > 0) {
-        const { getProviderService: getProviderServiceForRetry } = await import(
-          '../provider-service.ts'
-        );
-        getProviderServiceForRetry().restoreEnvVars(envVarsToRestore);
-        this.ctx.originalEnvVars = {};
-      }
+    const backoff = async (): Promise<void> => {
       if (options.backoffMs !== undefined) {
         await sleep(options.backoffMs);
       }
@@ -2096,7 +2072,7 @@ export class QueryRunner {
         options.noticeAfterTeardown !== undefined ? displayPostTeardownNotice : undefined,
       publicationAbandoned:
         options.noticeAfterTeardown !== undefined ? () => abandon('publication') : undefined,
-      restoreEnvAndBackoff: options.backoffMs !== undefined ? restoreEnvAndBackoff : undefined,
+      backoff: options.backoffMs !== undefined ? backoff : undefined,
       backoffAbandoned:
         options.backoffMs !== undefined
           ? () => {
@@ -2129,7 +2105,7 @@ export class QueryRunner {
       .pipe('?requeueFedPrompts', 'state', 'state')
       .pipe('?displayPostTeardownNotice', 'state')
       .pipe('!?publicationAbandoned', 'state')
-      .pipe('?restoreEnvAndBackoff', 'state')
+      .pipe('?backoff', 'state')
       .pipe('!?backoffAbandoned', 'state')
       .pipe('?requeueSnapshotted', 'state', 'state')
       .pipe(recurseNextAttempt, 'state')
