@@ -244,6 +244,12 @@ describe('planNeoSessionNoticeGroup', () => {
           id: `neo-session-notices:${now}:${session.key}`,
           at: now,
           line: 'Codex · Quiet-model research finished · Open',
+          lineCodes: [
+            {
+              code: 'notice.session.finished.open',
+              params: { app: 'Codex', title: 'Quiet-model research' },
+            },
+          ],
           notices: [first],
         },
       ],
