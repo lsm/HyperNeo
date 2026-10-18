@@ -177,14 +177,6 @@ describe('Message Persistence', () => {
 
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
-        const t0 = Date.now();
-        const trace: string[] = [];
-        daemon.messageHub.onEvent('state.session', (data: unknown) => {
-          const state = data as { sessionInfo?: { id?: string }; agentState?: { status: string } };
-          if (state.sessionInfo?.id === sessionId) {
-            trace.push(`${Date.now() - t0} state ${state.agentState?.status}`);
-          }
-        });
 
         const results = await Promise.all([
           sendMessage(daemon, sessionId, 'Message 1'),
@@ -200,20 +192,8 @@ describe('Message Persistence', () => {
         expect(results[1].messageId).not.toBe(results[2].messageId);
 
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT * 2);
-        trace.push(`${Date.now() - t0} waitForIdle returned`);
 
         const state = await getProcessingState(daemon, sessionId);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-        const { sdkMessages } = (await daemon.messageHub.request('message.sdkMessages', {
-          sessionId,
-        })) as { sdkMessages: Array<Record<string, unknown>> };
-        for (const m of sdkMessages) {
-          const content = (m.message as { content?: unknown } | undefined)?.content;
-          trace.push(
-            `sdk ${m.type}${m.subtype ? `:${m.subtype}` : ''}${m.isReplay ? ' replay' : ''} ${JSON.stringify(content ?? m.result ?? '').slice(0, 60)}`
-          );
-        }
-        console.log(`DIAG-7441\n${trace.join('\n')}`);
         expect(state.status).toBe('idle');
       },
       TEST_TIMEOUT * 3

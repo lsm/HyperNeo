@@ -833,6 +833,11 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
+    it('asks the CLI for session-state events so idle waits for queued prompts', async () => {
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS).toBe('1');
+    });
+
     it('should keep an env stored on the session out of the SDK env', async () => {
       mockSession.config.env = { MY_VAR: 'value' };
       const options = await builder.build();
