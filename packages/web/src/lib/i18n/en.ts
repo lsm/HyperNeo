@@ -161,4 +161,6 @@ export const en = {
   'session.showSteps': 'Shows the steps',
   'session.hideSteps': 'Hides the steps',
   'session.assistant': 'Assistant',
+  'session.loadEarlier': 'Load earlier messages',
+  'session.loadFailed': 'This chat didn’t open.',
 } as const;

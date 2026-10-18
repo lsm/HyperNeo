@@ -162,8 +162,10 @@ This keeps a long session's snapshot to tens of KB instead of megabytes.
 
 ### 4. Other surfaces
 
-Every chat surface mounts `ChatContainer` (`SpaceAgentChat`, `SpaceIsland`,
-`AgentOverlayChat`, `NeoSessionPane`, `MainContent`), so they inherit the modes.
+Every chat surface except Neo's session pane mounts `ChatContainer` (`SpaceAgentChat`,
+`SpaceIsland`, `AgentOverlayChat`, `MainContent`), so they inherit the modes.
+`NeoSessionPane` shows its own full-detail transcript, with tool calls and thinking
+folded under each message as on iOS, and does not take the switch.
 The Space task thread already offers compact and minimal views from its own
 queries and keeps its own single condensed view; it does not take the switch.
 Neo's conversation stays Minimal by design.

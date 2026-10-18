@@ -1,4 +1,5 @@
 import type { ChatMessage } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 
 export type SessionItemKind =
@@ -222,3 +223,10 @@ export function sessionClock(ms: number): string {
   const ss = String(s % 60).padStart(2, '0');
   return s < 3600 ? `${Math.floor(s / 60)}:${ss}` : `${Math.floor(s / 3600)}:${mm}:${ss}`;
 }
+
+export const projectSessionTranscript = (superpipe({})('neo-session-transcript') as PipelineAPI)
+  .input(['messages', 'running'])
+  .pipe(sessionItems, 'messages', 'items')
+  .pipe(sessionEntries, ['items', 'running'], 'entries')
+  .pipe(sessionEntryBlocks, 'entries', 'blocks')
+  .end('blocks') as (messages: readonly ChatMessage[], running: boolean) => SessionEntry[][];

@@ -160,4 +160,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'session.showSteps': '显示步骤',
   'session.hideSteps': '隐藏步骤',
   'session.assistant': '助手',
+  'session.loadEarlier': '加载更早的消息',
+  'session.loadFailed': '这个会话没能打开。',
 };

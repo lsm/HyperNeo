@@ -11,9 +11,7 @@ import { NeoSessionStepsLine, NeoThinkingRow, NeoToolRow } from './NeoSessionSte
 import {
   type SessionEntry,
   type SessionItem,
-  sessionEntries,
-  sessionEntryBlocks,
-  sessionItems,
+  projectSessionTranscript,
 } from './session-transcript.ts';
 
 function SessionItemView({ item }: { item: SessionItem }) {
@@ -58,6 +56,8 @@ export function NeoSessionPane({
 }) {
   const pane = useRef<HTMLElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
   const opener = useRef(document.activeElement as HTMLElement | null);
   const [store] = useState(() => new SessionStore());
   useEffect(() => {
@@ -80,14 +80,39 @@ export function NeoSessionPane({
     return release;
   }, [overlay]);
   const running = store.isWorking.value;
-  const entries = sessionEntries(sessionItems(store.sdkMessages.value), running);
+  const messages = store.sdkMessages.value;
+  const blocks = projectSessionTranscript(messages, running);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [slow, setSlow] = useState(false);
+  const loaded = store.messagesLoaded.value;
+  useEffect(() => {
+    setSlow(false);
+    if (loaded) return;
+    const timer = window.setTimeout(() => setSlow(true), 15_000);
+    return () => window.clearTimeout(timer);
+  }, [loaded]);
+  async function loadOlder() {
+    const oldest = messages[0] as { timestamp?: number; rowid?: number } | undefined;
+    if (loadingOlder || typeof oldest?.timestamp !== 'number') return;
+    setLoadingOlder(true);
+    const el = scroller.current;
+    const fromBottom = el ? el.scrollHeight - el.scrollTop : 0;
+    pinned.current = false;
+    try {
+      const older = await store.loadOlderMessages(oldest.timestamp, 100, sessionId, oldest.rowid);
+      if (older.messages.length) store.prependMessages(older.messages);
+      requestAnimationFrame(() => {
+        if (el) el.scrollTop = el.scrollHeight - fromBottom;
+      });
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
   const state = store.agentState.value;
   const question = state.status === 'waiting_for_input' ? state.pendingQuestion : null;
-  const last = entries[entries.length - 1];
+  const last = blocks.at(-1)?.at(-1);
   const showsRunningSteps = last?.type === 'steps' && last.steps.running;
   const error = store.error.value?.message;
-  const content = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -134,10 +159,35 @@ export function NeoSessionPane({
           ref={content}
           class="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-end gap-5 p-5"
         >
-          {!store.messagesLoaded.value && !error && (
+          {!loaded && !error && !store.loadErrorKind.value && !slow && (
             <p class="pt-8 text-center text-sm text-fg-muted">{t('session.opening')}</p>
           )}
-          {sessionEntryBlocks(entries).map((block) => (
+          {loaded && store.hasMoreMessages.value && (
+            <button
+              type="button"
+              disabled={loadingOlder}
+              onClick={() => void loadOlder()}
+              class="self-center rounded-full border border-line px-3 py-1.5 text-xs text-fg-muted hover:text-fg disabled:opacity-60"
+            >
+              {t('session.loadEarlier')}
+            </button>
+          )}
+          {!loaded && (store.loadErrorKind.value || slow) && (
+            <div role="alert" class="flex flex-col items-center gap-2 text-sm text-fg-muted">
+              <p>{t('session.loadFailed')}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSlow(false);
+                  void store.refresh();
+                }}
+                class="rounded-full border border-line px-3 py-1.5 text-xs text-accent hover:border-accent/40"
+              >
+                {t('chat.retry')}
+              </button>
+            </div>
+          )}
+          {blocks.map((block) => (
             <div key={block[0].id} class="flex flex-col gap-1.5">
               {block.map((entry) => (
                 <SessionEntryView key={entry.id} entry={entry} />

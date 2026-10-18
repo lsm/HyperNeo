@@ -6,6 +6,7 @@ import {
   sessionDuration,
   sessionEntries,
   sessionEntryBlocks,
+  projectSessionTranscript,
   sessionItems,
   sessionStepCounts,
 } from '../session-transcript.ts';
@@ -131,5 +132,16 @@ describe('sessionDuration and sessionClock', () => {
     expect(sessionClock(42_000)).toBe('0:42');
     expect(sessionClock(725_000)).toBe('12:05');
     expect(sessionClock(3_723_000)).toBe('1:02:03');
+  });
+});
+
+describe('projectSessionTranscript', () => {
+  it('projects rows straight to message blocks', () => {
+    const blocks = projectSessionTranscript(rows.slice(0, 4), true);
+    expect(blocks.map((block) => block.map((entry) => entry.type))).toEqual([
+      ['item'],
+      ['item'],
+      ['item', 'steps'],
+    ]);
   });
 });
