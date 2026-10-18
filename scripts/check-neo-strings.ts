@@ -6,7 +6,8 @@ import ts from 'typescript';
 
 const NEO_ROOT = join(import.meta.dir, '..', 'packages', 'web', 'src', 'neo');
 const ALLOWLIST_PATH = join(import.meta.dir, 'neo-strings-allowlist.json');
-const CJK = /[\u3000-\u303f\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+const CJK =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]/u;
 const LETTERS = /[A-Za-z]/;
 const TEXT_ATTRIBUTES = new Set(['aria-label', 'title']);
 
