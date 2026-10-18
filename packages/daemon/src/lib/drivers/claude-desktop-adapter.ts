@@ -37,6 +37,7 @@ import {
   boundExchange,
   exchangeEntry,
   recentWorkInputs,
+  turnReply,
   type WorkExchange,
   withExchange,
   workEntryTime,
@@ -57,7 +58,6 @@ const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
 const LIVE_REUSE_MS = 5_000;
 const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
-const REPLY_LIMIT = 4_000;
 const BOOTSTRAP_TIMEOUT_MS = 120_000;
 const RELAY_TIMEOUT_MS = 120_000;
 const DELIVERY_POLL_MS = 2_000;
@@ -429,7 +429,9 @@ export function claudeTranscriptState(
 ): ClaudeTranscriptState {
   const inputs: WorkInput[] = [];
   const exchange: WorkExchangeEntry[] = [];
-  let reply: string | null = null;
+  let turn: string[] = [];
+  let ended = true;
+  let fresh = false;
   let replyAt: number | undefined;
   let lastAt = 0;
   let earliest: number | undefined;
@@ -446,10 +448,13 @@ export function claudeTranscriptState(
     earliest ??= at;
     const said = assistantText(line);
     if (said) {
-      reply = said;
+      turn = fresh ? [said] : [...turn, said];
+      fresh = false;
       replyAt = at;
     }
+    if (entry.type === 'assistant' && entry.isSidechain !== true) ended = claudeTurnEnded(entry);
     const text = claudeInputText(entry);
+    if (text !== null && ended) fresh = true;
     const input =
       text === null
         ? null
@@ -473,6 +478,7 @@ export function claudeTranscriptState(
     if (next) exchange.push(next);
   }
   const openedPrs = claudeOpenedPrs(lines);
+  const reply = turnReply(turn);
   return {
     reply,
     ...(reply !== null && replyAt !== undefined ? { replyAt } : {}),
@@ -532,7 +538,7 @@ export function describeClaudeSession(
     value: {
       ...work,
       lastActivityAt: Math.max(work.lastActivityAt, transcript.lastAt),
-      ...(transcript.reply ? { lastReply: transcript.reply.slice(0, REPLY_LIMIT) } : {}),
+      ...(transcript.reply ? { lastReply: transcript.reply } : {}),
       ...(transcript.reply && transcript.replyAt !== undefined
         ? { lastReplyAt: transcript.replyAt }
         : {}),
@@ -671,7 +677,7 @@ export function claudeInputEvidence(
   return {
     receipt,
     state: 'observed',
-    exchange: [first, ...replies.slice(0, 39)],
+    exchange: [first, ...replies.slice(-39)],
     exchangeCut: replies.length > 39,
   };
 }

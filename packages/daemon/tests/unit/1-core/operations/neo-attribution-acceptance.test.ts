@@ -135,7 +135,7 @@ describe('readDriverSettlement', () => {
     for (let n = 0; n < 45; n++) write(`result-${n}`, 'result', 11 + n, `Step ${n}`);
     expect(
       readDriverSettlement(work, await status(), 10_000, 5, true, opening, receipt)?.report
-    ).toEndWith('(Later replies were not read; this is not the whole exchange.)');
+    ).toEndWith('(Not every reply was read; this is not the whole exchange.)');
   });
 
   test('a card without a receipt (adoption) gets only an unverified latest reply', async () => {

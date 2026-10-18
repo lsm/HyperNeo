@@ -142,7 +142,7 @@ describe('readDriverSettlement', () => {
         opening,
         receipt
       )?.report
-    ).toBe('Agent: Raised it.\n\n(Later replies were not read; this is not the whole exchange.)');
+    ).toBe('Agent: Raised it.\n\n(Not every reply was read; this is not the whole exchange.)');
   });
 
   test('waits on running work and on an input still pending', () => {

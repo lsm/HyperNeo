@@ -800,14 +800,14 @@ export function driverExchangeReport(
   const whole = [...head, ...parts].join('\n\n');
   if (whole.length <= EXCHANGE_REPORT_LIMIT) return whole;
   const tail: string[] = [];
-  let size = [...head, parts[0]].join('\n\n').length + 60;
-  for (let index = parts.length - 1; index > 0; index--) {
+  let size = head.join('\n\n').length + 60;
+  for (let index = parts.length - 1; index >= 0; index--) {
     if (size + parts[index].length + 2 > EXCHANGE_REPORT_LIMIT) break;
     tail.unshift(parts[index]);
     size += parts[index].length + 2;
   }
-  const trimmed = parts.length - 1 - tail.length;
-  return [...head, parts[0], `(${trimmed} messages in between trimmed.)`, ...tail].join('\n\n');
+  const trimmed = parts.length - tail.length;
+  return [...head, `(${trimmed} earlier messages trimmed.)`, ...tail].join('\n\n');
 }
 
 export const NEO_WORK_UNANCHORED_SETTLE_MS = 3 * 60 * 60 * 1000;
@@ -851,7 +851,7 @@ export function readDriverInputAttribution(
 }
 
 export const NEO_WORK_LATER_REPLIES_CUT =
-  '(Later replies were not read; this is not the whole exchange.)';
+  '(Not every reply was read; this is not the whole exchange.)';
 
 function attributedDriverReport(attribution: {
   replies: readonly WorkExchangeEntry[];
