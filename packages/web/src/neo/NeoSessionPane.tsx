@@ -84,13 +84,15 @@ export function NeoSessionPane({
   const blocks = projectSessionTranscript(messages, running);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [slow, setSlow] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [olderFailed, setOlderFailed] = useState(false);
   const loaded = store.messagesLoaded.value;
   useEffect(() => {
     setSlow(false);
     if (loaded) return;
     const timer = window.setTimeout(() => setSlow(true), 15_000);
     return () => window.clearTimeout(timer);
-  }, [loaded]);
+  }, [loaded, attempt]);
   async function loadOlder() {
     const oldest = messages[0] as { timestamp?: number; rowid?: number } | undefined;
     if (loadingOlder || typeof oldest?.timestamp !== 'number') return;
@@ -98,12 +100,15 @@ export function NeoSessionPane({
     const el = scroller.current;
     const fromBottom = el ? el.scrollHeight - el.scrollTop : 0;
     pinned.current = false;
+    setOlderFailed(false);
     try {
       const older = await store.loadOlderMessages(oldest.timestamp, 100, sessionId, oldest.rowid);
       if (older.messages.length) store.prependMessages(older.messages);
       requestAnimationFrame(() => {
         if (el) el.scrollTop = el.scrollHeight - fromBottom;
       });
+    } catch {
+      setOlderFailed(true);
     } finally {
       setLoadingOlder(false);
     }
@@ -169,7 +174,7 @@ export function NeoSessionPane({
               onClick={() => void loadOlder()}
               class="self-center rounded-full border border-line px-3 py-1.5 text-xs text-fg-muted hover:text-fg disabled:opacity-60"
             >
-              {t('session.loadEarlier')}
+              {t(olderFailed ? 'session.loadEarlierFailed' : 'session.loadEarlier')}
             </button>
           )}
           {!loaded && (store.loadErrorKind.value || slow) && (
@@ -178,8 +183,8 @@ export function NeoSessionPane({
               <button
                 type="button"
                 onClick={() => {
-                  setSlow(false);
-                  void store.refresh();
+                  setAttempt(attempt + 1);
+                  void store.select(null).then(() => store.select(sessionId));
                 }}
                 class="rounded-full border border-line px-3 py-1.5 text-xs text-accent hover:border-accent/40"
               >

@@ -145,3 +145,18 @@ describe('projectSessionTranscript', () => {
     ]);
   });
 });
+
+describe('sessionItems tool results', () => {
+  it('marks a call done when its result has no text', () => {
+    const items = sessionItems([
+      row('assistant', 'a', [tool('t9', 'screenshot')], 1),
+      row(
+        'user',
+        'r',
+        [{ type: 'tool_result', tool_use_id: 't9', content: [{ type: 'image' }] }],
+        2
+      ),
+    ]);
+    expect(items[0].kind).toMatchObject({ type: 'tool', result: '' });
+  });
+});

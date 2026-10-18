@@ -40,8 +40,8 @@ export function NeoToolRow({
     <div class={rowClass}>
       <button
         type="button"
-        disabled={result === null}
-        aria-expanded={result === null ? undefined : open}
+        disabled={!result}
+        aria-expanded={result ? open : undefined}
         aria-label={`${name} ${summary}`}
         onClick={() => setOpen(!open)}
         class="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left"
@@ -54,9 +54,9 @@ export function NeoToolRow({
         </span>
         <span class="shrink-0 text-xs font-semibold text-fg">{name}</span>
         <span class="min-w-0 flex-1 truncate font-mono text-xs text-fg-muted">{summary}</span>
-        {result !== null && <Chevron open={open} small />}
+        {!!result && <Chevron open={open} small />}
       </button>
-      {open && result !== null && (
+      {open && !!result && (
         <pre class="mx-3 mb-2.5 max-h-[220px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-fg-muted">
           {result}
         </pre>

@@ -75,6 +75,11 @@ describe('NeoToolRow', () => {
     fireEvent.click(row);
     expect(screen.getByText('file.txt')).toBeTruthy();
     cleanup();
+    render(<NeoToolRow name="Shot" summary="page" result="" isError={false} />);
+    expect((screen.getByRole('button', { name: 'Shot page' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+    cleanup();
     render(<NeoToolRow name="Read" summary="a.ts" result={null} isError={false} />);
     expect((screen.getByRole('button', { name: 'Read a.ts' }) as HTMLButtonElement).disabled).toBe(
       true

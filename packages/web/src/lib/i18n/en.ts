@@ -163,4 +163,5 @@ export const en = {
   'session.assistant': 'Assistant',
   'session.loadEarlier': 'Load earlier messages',
   'session.loadFailed': 'This chat didn’t open.',
+  'session.loadEarlierFailed': 'Couldn’t load earlier messages. Try again',
 } as const;

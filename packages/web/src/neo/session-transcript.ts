@@ -101,7 +101,7 @@ export function sessionItems(messages: readonly ChatMessage[]): SessionItem[] {
           ...tool,
           kind: {
             ...tool.kind,
-            result: sessionToolResult(block.content),
+            result: sessionToolResult(block.content) ?? '',
             isError: block.is_error === true,
           },
         };
