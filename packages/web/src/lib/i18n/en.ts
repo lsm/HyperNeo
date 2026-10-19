@@ -46,6 +46,7 @@ export const en = {
   'todo.pr.waitingCi': '{pr} open, waiting on CI',
   'todo.pr.approved': '{pr} approved, waiting to merge',
   'todo.pr.waitingReview': '{pr} open, waiting on review',
+  'todo.pr.noReviewer': '{pr} open, no reviewer yet',
   'todo.pr.approvedGreen': '{pr} approved and green',
   'todo.pr.approvedPending': '{pr} approved, CI still pending',
   'todo.pr.dirty': '{pr} in conflict with its base',

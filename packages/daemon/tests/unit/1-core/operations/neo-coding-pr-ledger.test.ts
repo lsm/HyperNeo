@@ -118,6 +118,24 @@ describe('planCodingLedgerRead', () => {
     ).toBeNull();
     expect(planCodingLedgerRead(null, now)).toBeNull();
   });
+
+  test('a repo with no review and no merge yet reads its open PRs as unreviewed', () => {
+    const states = (done: unknown[], more: Record<string, unknown> = {}) =>
+      planCodingLedgerRead(response([node(1, more)], done), 0)?.rows.map((row) => row.state);
+    expect(states([])).toEqual(['unreviewed']);
+    expect(states([node(2, { state: 'CLOSED', closedAt: new Date(0).toISOString() })])).toEqual([
+      'unreviewed',
+      'closed',
+    ]);
+    expect(states([node(2, { state: 'MERGED', closedAt: new Date(0).toISOString() })])).toEqual([
+      'waiting_review',
+      'merged',
+    ]);
+    expect(states([], { reviews: { nodes: [{ state: 'COMMENTED', commit: null }] } })).toEqual([
+      'waiting_review',
+    ]);
+    expect(states([], { reviewDecision: 'REVIEW_REQUIRED' })).toEqual(['waiting_review']);
+  });
 });
 
 describe('PR ledger reconcile', () => {
@@ -128,9 +146,9 @@ describe('PR ledger reconcile', () => {
       repo === 'lsm/hyperneo' ? response([node(1), node(2, { isDraft: true })]) : response(second);
     await reconcile(ledger, ['lsm/hyperneo', 'lsm/neo-ios'], read, 100);
     expect(ledger.list().map((row) => [row.repo, row.number, row.state, row.stateSince])).toEqual([
-      ['lsm/hyperneo', 1, 'waiting_review', 100],
+      ['lsm/hyperneo', 1, 'unreviewed', 100],
       ['lsm/hyperneo', 2, 'draft', 100],
-      ['lsm/neo-ios', 7, 'waiting_review', 100],
+      ['lsm/neo-ios', 7, 'unreviewed', 100],
     ]);
     db.exec('UPDATE pack_coding_pr_ledger SET nudges = 2');
     await reconcile(ledger, ['lsm/hyperneo', 'lsm/neo-ios'], read, 200);
