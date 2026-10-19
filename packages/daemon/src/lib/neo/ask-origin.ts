@@ -1,5 +1,5 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
@@ -49,19 +49,6 @@ export function neoAskParent(ask: NeoAskOriginAsk): NeoAskOrigin | null {
     : null;
 }
 
-export function neoReviewWorkId(id: string): string | null {
-  return /^neo-work:(.+):review(?::retry:\d+)?(?::continued:\d+)?$/.exec(id)?.[1] ?? null;
-}
-
-export function neoConsultationParent(
-  item: Pick<NeoConsultation, 'id' | 'originSessionId' | 'originMessageId'>,
-  reviewed: Pick<NeoWork, 'id' | 'originSessionId' | 'originMessageId'> | null = null
-): NeoAskOrigin | null {
-  if (item.originMessageId)
-    return { sessionId: item.originSessionId, messageId: item.originMessageId };
-  return reviewed && neoReviewWorkId(item.id) === reviewed.id ? neoWorkParent(reviewed) : null;
-}
-
 export function neoDoneCheckMessageId(
   workId: string,
   continued: number,
@@ -90,10 +77,6 @@ export function neoNeedsYouMessageId(workId: string, at: number): string {
 export function neoWorkReturnMessageId(workId: string, retries: number, continued = 0): string {
   const base = retries ? `${workId}:retry:${retries}` : workId;
   return continued ? `${base}:continued:${continued}` : base;
-}
-
-export function neoWorkReviewId(workId: string, retries: number, continued = 0): string {
-  return `neo-work:${workId}:review${retries ? `:retry:${retries}` : ''}${continued ? `:continued:${continued}` : ''}`;
 }
 
 export function nudgedMessageId(messageId: string): string | null {

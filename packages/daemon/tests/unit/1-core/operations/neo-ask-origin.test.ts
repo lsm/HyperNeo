@@ -9,15 +9,12 @@ import { runMigration363 } from '../../../../src/storage/schema/m363-neo-work-re
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   classifyNeoAskInput,
   createNeoAskOriginResolver,
   neoDoneCheckMessageId,
   neoWorkReturnMessageId,
-  neoWorkReviewId,
-  neoConsultationParent,
-  neoReviewWorkId,
   requireNeoAskCoordinator,
   requireNeoAskReference,
   type NeoAskOrigin,
@@ -34,10 +31,7 @@ import type { OperationCaller } from '../../../../src/lib/operations/registry.ts
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
-import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
-import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
-import { runMigration285 } from '../../../../src/storage/schema/m285-neo-consultation-waiters.ts';
 import { runMigration289 } from '../../../../src/storage/schema/m289-neo-conversation-asks.ts';
 import { runMigration307 } from '../../../../src/storage/schema/m307-neo-work-goals.ts';
 import { runMigration308 } from '../../../../src/storage/schema/m308-neo-work-continues.ts';
@@ -84,18 +78,6 @@ const root: NeoBinding = {
 };
 const holder: NeoBinding = { sessionId: 'holder:a', projectId: 'a', kind: 'project' };
 const ask: NeoAskOrigin = { sessionId: root.sessionId, messageId: 'human:1' };
-const consultation: NeoConsultation = {
-  id: 'check:with:delimiters',
-  requestKey: 'key',
-  projectId: 'a',
-  originSessionId: root.sessionId,
-  originMessageId: ask.messageId,
-  sessionId: holder.sessionId,
-  question: 'Untrusted text cannot select ancestry.',
-  status: 'pending',
-  answer: null,
-  createdAt: 1,
-};
 const work: NeoWork = {
   id: 'work:opaque:id',
   requestKey: 'work-key',
@@ -110,13 +92,9 @@ const work: NeoWork = {
   createdAt: 1,
   updatedAt: 2,
 };
-const request = (item = consultation): NeoAskOrigin => ({
-  sessionId: item.sessionId,
-  messageId: `neo-consult:${item.id}:request`,
-});
-const reply = (item = consultation): NeoAskOrigin => ({
-  sessionId: item.originSessionId,
-  messageId: `neo-consult:${item.id}:reply`,
+const request = (): NeoAskOrigin => ({
+  sessionId: holder.sessionId,
+  messageId: 'neo-consult:check:with:delimiters:request',
 });
 const prompt = (input: NeoAskOrigin, inputKind: string | undefined = 'human'): SDKUserMessage =>
   ({
@@ -130,7 +108,6 @@ const prompt = (input: NeoAskOrigin, inputKind: string | undefined = 'human'): S
 function fixtures() {
   const bindings = new Map([root, holder].map((item) => [item.sessionId, item]));
   const prompts = new Map<string, SDKMessage[]>();
-  const consultations = new Map([[consultation.id, consultation]]);
   const works = new Map([[work.id, work]]);
   const asks = new Map<
     string,
@@ -154,7 +131,6 @@ function fixtures() {
     stamps,
     bindings,
     prompts,
-    consultations,
     works,
     key,
     put,
@@ -182,26 +158,6 @@ describe('stamped ask origins', () => {
     f.put(ask);
     expect(f.resolve(note)).toBeNull();
     expect(f.resolve(ask)).toEqual(ask);
-  });
-});
-
-describe('neoConsultationParent', () => {
-  const reviewed = { id: 'w1', originSessionId: holder.sessionId, originMessageId: 'holder-ask' };
-  test('a consultation with an origin message is stamped with it', () => {
-    expect(neoConsultationParent(consultation)).toEqual({
-      sessionId: consultation.originSessionId,
-      messageId: consultation.originMessageId,
-    });
-  });
-  test('an internal review has no origin message, so it takes the reviewed card origin', () => {
-    const review = { ...consultation, id: neoWorkReviewId('w1', 2, 1), originMessageId: null };
-    expect(neoReviewWorkId(review.id)).toBe('w1');
-    expect(neoConsultationParent(review, reviewed)).toEqual({
-      sessionId: holder.sessionId,
-      messageId: 'holder-ask',
-    });
-    expect(neoConsultationParent(review, { ...reviewed, id: 'w2' })).toBeNull();
-    expect(neoConsultationParent({ ...review, id: 'plain' }, reviewed)).toBeNull();
   });
 });
 
@@ -300,10 +256,7 @@ describe('real SQLite ask lineage facade', () => {
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
     runMigration363(mailbox.db);
-    runMigration279(mailbox.db);
-    runMigration282(mailbox.db);
     runMigration283(mailbox.db);
-    runMigration285(mailbox.db);
     runMigration289(mailbox.db);
     runMigration307(mailbox.db);
     runMigration308(mailbox.db);
@@ -390,16 +343,12 @@ describe('real SQLite ask lineage facade', () => {
     const origin = parent ? service.resolveAskOrigin(parent) : null;
     if (origin) service.inputOrigins.record(input, origin, 0);
   }
-  function reserve(item: NeoConsultation) {
-    expect(service.consultations.reserve(item)?.id).toBe(item.id);
-  }
   function unchangedState() {
     return {
       sdk: mailbox.sdkRows(),
       jobs: mailbox.rows(),
       projects: service.repo.listProjects(),
       work: service.repo.listWork(),
-      consultations: service.consultations.list(),
     };
   }
   async function snapshot(caller: OperationCaller = { source: 'rpc', principal: 'local' }) {
@@ -423,7 +372,6 @@ describe('real SQLite ask lineage facade', () => {
       requestKey: 'other',
       originMessageId: b.messageId,
     });
-    reserve({ ...consultation, originMessageId: a.messageId });
     const before = unchangedState();
     notify.mockClear();
     const value = await snapshot();
@@ -431,12 +379,10 @@ describe('real SQLite ask lineage facade', () => {
       expect.arrayContaining([
         { kind: 'work', id: first.id, origin: a },
         { kind: 'work', id: 'other-work', origin: b },
-        { kind: 'consultation', id: consultation.id, origin: a },
       ])
     );
-    expect(value.askOrigins).toHaveLength(value.work.length + value.consultations!.length);
+    expect(value.askOrigins).toHaveLength(value.work.length);
     expect(value.work.find((item) => item.id === first.id)?.status).toBe('proposed');
-    expect(value.consultations![0].status).toBe('pending');
     const definition = createNeoOperations(service).find((item) => item.name === 'neo.snapshot')!;
     expect(definition.resultSchema.safeParse(value).success).toBe(true);
     const { askOrigins: _removed, ...older } = value;
@@ -445,49 +391,6 @@ describe('real SQLite ask lineage facade', () => {
     expect(createSession).not.toHaveBeenCalled();
     expect(getSessionAsync).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
-  });
-  test('snapshot follows holder work and only actually delivered owned review provenance', async () => {
-    const a = await intake();
-    await intake(root.sessionId, 'e4da4c3c-d629-46dc-a550-047144cf9499');
-    const item = { ...consultation, originMessageId: a.messageId };
-    reserve(item);
-    storeSystem(request(item), a);
-    service.consultations.finish(item.id, 'reported', 'Context checked');
-    const proposed = service.repo.proposeWork({
-      ...work,
-      originSessionId: holder.sessionId,
-      originMessageId: request(item).messageId,
-    });
-    service.repo.transitionWork(proposed.id, proposed, {
-      status: 'reported',
-      report: 'Claim only',
-    });
-    const id = `neo-work:${proposed.id}:review`;
-    const review = { ...item, id, requestKey: id, originMessageId: null };
-    reserve(review);
-    expect((await snapshot()).askOrigins).toContainEqual({
-      kind: 'consultation',
-      id,
-      origin: null,
-    });
-    storeSystem(request(review), request(item));
-    const before = unchangedState();
-    expect((await snapshot()).askOrigins).toEqual(
-      expect.arrayContaining([
-        { kind: 'work', id: proposed.id, origin: a },
-        { kind: 'consultation', id, origin: a },
-      ])
-    );
-    expect(unchangedState()).toEqual(before);
-    const forged = { ...review, id: `neo-work:${proposed.id}:bad:review`, requestKey: 'ordinary' };
-    service.consultations.finish(review.id, 'reported', 'Fixture review settled');
-    reserve(forged);
-    storeSystem(request(forged));
-    expect((await snapshot()).askOrigins).toContainEqual({
-      kind: 'consultation',
-      id: forged.id,
-      origin: null,
-    });
   });
   test('snapshot preserves explicit unknown legacy sources instead of using a newer accepted ask', async () => {
     await intake();
@@ -498,12 +401,10 @@ describe('real SQLite ask lineage facade', () => {
       requestKey: 'legacy',
       originMessageId: null,
     });
-    reserve({ ...consultation, originMessageId: null });
     expect((await snapshot()).askOrigins).toEqual(
       expect.arrayContaining([
         { kind: 'work', id: unknown.id, origin: null },
         { kind: 'work', id: legacy.id, origin: null },
-        { kind: 'consultation', id: consultation.id, origin: null },
       ])
     );
   });
@@ -526,7 +427,6 @@ describe('real SQLite ask lineage facade', () => {
       projectId: 'b',
       originMessageId: b.messageId,
     });
-    reserve({ ...consultation, originMessageId: a.messageId });
     const rootCaller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: root.sessionId };
     const holderCaller: OperationCaller = { ...rootCaller, sessionId: holder.sessionId };
     const overview = await snapshot(rootCaller);
@@ -534,19 +434,12 @@ describe('real SQLite ask lineage facade', () => {
     expect(overview.work.every((item) => item.instruction === '' && item.report === null)).toBe(
       true
     );
-    expect(overview.consultations![0]).toMatchObject({ question: '', answer: null });
     expect(overview.askOrigins).toContainEqual({ kind: 'work', id: 'work-b', origin: b });
     const scoped = await snapshot(holderCaller);
     expect(scoped.projects.map((item) => item.id)).toEqual(['a']);
     expect(scoped.projects[0].context).toBe('Private A');
     expect(scoped.work.map((item) => item.id)).toEqual([work.id]);
-    expect(scoped.askOrigins).toEqual(
-      expect.arrayContaining([
-        { kind: 'work', id: work.id, origin: a },
-        { kind: 'consultation', id: consultation.id, origin: a },
-      ])
-    );
-    expect(scoped.askOrigins).toHaveLength(2);
+    expect(scoped.askOrigins).toEqual([{ kind: 'work', id: work.id, origin: a }]);
     expect(
       await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
@@ -593,49 +486,6 @@ describe('real SQLite ask lineage facade', () => {
     expect(createSession).not.toHaveBeenCalled();
     expect(getSessionAsync).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
-  });
-  test('recorded requests and failed replies preserve original root ask, not latest transcript', async () => {
-    const human = await intake();
-    await intake(root.sessionId, 'e4da4c3c-d629-46dc-a550-047144cf9499');
-    const item = { ...consultation, originMessageId: human.messageId };
-    reserve(item);
-    storeSystem(request(item), human);
-    expect(service.resolveAskOrigin(request(item))).toEqual(human);
-    service.consultations.finish(item.id, 'failed', 'Human stopped waiting');
-    storeSystem(reply(item), human);
-    const before = unchangedState();
-    expect(service.resolveAskOrigin(request(item))).toEqual(human);
-    expect(service.resolveAskOrigin(reply(item))).toEqual(human);
-    expect(unchangedState()).toEqual(before);
-  });
-  test('internal holder review follows terminal holder work through its historical consultation', async () => {
-    const human = await intake();
-    const item = { ...consultation, originMessageId: human.messageId };
-    reserve(item);
-    storeSystem(request(item), human);
-    service.consultations.finish(item.id, 'reported', 'Context checked');
-    const proposed = service.repo.proposeWork({
-      ...work,
-      originSessionId: holder.sessionId,
-      originMessageId: request(item).messageId,
-    });
-    service.repo.transitionWork(proposed.id, proposed, {
-      status: 'reported',
-      sessionId: 'worker',
-      report: 'Reported only',
-    });
-    const id = `neo-work:${proposed.id}:review`;
-    const review = { ...item, id, requestKey: id, originMessageId: null };
-    reserve(review);
-    storeSystem(request(review), request(item));
-    expect(service.resolveAskOrigin(request(review))).toEqual(human);
-    service.consultations.finish(id, 'reported', 'Review interpretation');
-    storeSystem(reply(review), request(item));
-    const before = unchangedState();
-    expect(service.resolveAskOrigin(reply(review))).toEqual(human);
-    expect(unchangedState()).toEqual(before);
-    expect(createSession).not.toHaveBeenCalled();
-    expect(getSessionAsync).not.toHaveBeenCalled();
   });
   test('returns to root remain distinct from legacy nullable origins', async () => {
     const human = await intake();

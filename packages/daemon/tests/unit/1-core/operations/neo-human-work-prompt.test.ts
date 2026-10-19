@@ -22,18 +22,15 @@ describe('current human work guidance', () => {
     );
   });
 
-  test.each([
-    'notes',
-    'worker replies',
-    'consultation results',
-    'compaction',
-    'remembered instructions',
-  ])('never derives the go-ahead from %s', (input) => {
-    const exclusions = neoPrompt('garden')
-      .split("Never infer the human's go-ahead from ")[1]!
-      .split('.')[0]!;
-    expect(exclusions).toContain(input);
-  });
+  test.each(['notes', 'worker replies', 'compaction', 'remembered instructions'])(
+    'never derives the go-ahead from %s',
+    (input) => {
+      const exclusions = neoPrompt('garden')
+        .split("Never infer the human's go-ahead from ")[1]!
+        .split('.')[0]!;
+      expect(exclusions).toContain(input);
+    }
+  );
 
   test.each(turns)('keeps a set-up-only request unstarted in $projectId', (turn) => {
     const setUp = neoPrompt(turn.projectId)

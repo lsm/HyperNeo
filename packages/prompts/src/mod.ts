@@ -36,29 +36,6 @@ import mdcoordinatorVcs from './coordinator/vcs.md' with { type: 'text' };
 import mdcoordinatorVerifier from './coordinator/verifier.md' with { type: 'text' };
 import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with { type: 'text' };
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
-import mdneoConsultationReceiptClosed from './neo/consultation/receipt-closed.md' with {
-  type: 'text',
-};
-import mdneoConsultationReceiptPending from './neo/consultation/receipt-pending.md' with {
-  type: 'text',
-};
-import mdneoConsultationReceiptReturned from './neo/consultation/receipt-returned.md' with {
-  type: 'text',
-};
-import mdneoCrossProjectRequest from './neo/consultation/cross-project-request.md' with {
-  type: 'text',
-};
-import mdneoConsultationRequest from './neo/consultation/request.md' with { type: 'text' };
-import mdneoConsultationSettled from './neo/consultation/settled.md' with { type: 'text' };
-import mdneoConsultationSettledFailed from './neo/consultation/settled-failed.md' with {
-  type: 'text',
-};
-import mdneoConsultationSettledReported from './neo/consultation/settled-reported.md' with {
-  type: 'text',
-};
-import mdneoConsultationSettledStopped from './neo/consultation/settled-stopped.md' with {
-  type: 'text',
-};
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
@@ -68,10 +45,6 @@ import mdneoAskIdle from './neo/ask-idle.md' with { type: 'text' };
 import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
 import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
 import mdneoTriggerNote from './neo/trigger-note.md' with { type: 'text' };
-import mdneoReviewRequest from './neo/consultation/review-request.md' with { type: 'text' };
-import mdneoSystemHolderConsultationReturn from './neo/system/holder-consultation-return.md' with {
-  type: 'text',
-};
 import mdneoSystemHolderOperations from './neo/system/holder-operations.md' with { type: 'text' };
 import mdneoSystemHolderRole from './neo/system/holder-role.md' with { type: 'text' };
 import mdneoSystemHolderSnapshotScope from './neo/system/holder-snapshot-scope.md' with {
@@ -115,7 +88,6 @@ import mdneoPacksLifeAdminInstructions from './neo/packs/life-admin/instructions
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
 import mdneoWorkNeedsYou from './neo/work/needs-you.md' with { type: 'text' };
 import mdneoWorkPackNote from './neo/work/pack-note.md' with { type: 'text' };
-import mdneoWorkReturnReview from './neo/work/return-review.md' with { type: 'text' };
 import mdneoWorkReturned from './neo/work/returned.md' with { type: 'text' };
 import mdneoWorkReturnedRetried from './neo/work/returned-retried.md' with { type: 'text' };
 import mdneoWorkEnvironmentMove from './neo/work/environment-move.md' with { type: 'text' };
@@ -334,15 +306,6 @@ const registry: Record<string, string> = {
   'github/security-system-prompt.md': mdgithubSecuritySystemPrompt,
   'neo/capabilities.md': mdneoCapabilities,
   'neo/speaking-policy.md': mdneoSpeakingPolicy,
-  'neo/consultation/receipt-closed.md': mdneoConsultationReceiptClosed,
-  'neo/consultation/receipt-pending.md': mdneoConsultationReceiptPending,
-  'neo/consultation/receipt-returned.md': mdneoConsultationReceiptReturned,
-  'neo/consultation/cross-project-request.md': mdneoCrossProjectRequest,
-  'neo/consultation/request.md': mdneoConsultationRequest,
-  'neo/consultation/settled-failed.md': mdneoConsultationSettledFailed,
-  'neo/consultation/settled-reported.md': mdneoConsultationSettledReported,
-  'neo/consultation/settled-stopped.md': mdneoConsultationSettledStopped,
-  'neo/consultation/settled.md': mdneoConsultationSettled,
   'neo/waiting-reminder.md': mdneoWaitingReminder,
   'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-evidence.md': mdneoAskEvidence,
@@ -352,8 +315,6 @@ const registry: Record<string, string> = {
   'neo/ask-moved.md': mdneoAskMoved,
   'neo/ask-stalled.md': mdneoAskStalled,
   'neo/trigger-note.md': mdneoTriggerNote,
-  'neo/consultation/review-request.md': mdneoReviewRequest,
-  'neo/system/holder-consultation-return.md': mdneoSystemHolderConsultationReturn,
   'neo/system/holder-operations.md': mdneoSystemHolderOperations,
   'neo/system/holder-role.md': mdneoSystemHolderRole,
   'neo/system/holder-snapshot-scope.md': mdneoSystemHolderSnapshotScope,
@@ -381,7 +342,6 @@ const registry: Record<string, string> = {
   'neo/work/goal.md': mdneoWorkGoal,
   'neo/work/needs-you.md': mdneoWorkNeedsYou,
   'neo/work/pack-note.md': mdneoWorkPackNote,
-  'neo/work/return-review.md': mdneoWorkReturnReview,
   'neo/work/returned-retried.md': mdneoWorkReturnedRetried,
   'neo/work/environment-move.md': mdneoWorkEnvironmentMove,
   'neo/work/blocker.md': mdneoWorkBlocker,
@@ -511,15 +471,6 @@ export const {
   NEO_CAPABILITIES_BRIEFING,
   NEO_SPEAKING_POLICY,
   NEO_DONE_CHECK_STEPS,
-  NEO_CONSULTATION_RECEIPT_CLOSED,
-  NEO_CONSULTATION_RECEIPT_PENDING,
-  NEO_CONSULTATION_RECEIPT_RETURNED,
-  NEO_CONSULTATION_REQUEST,
-  NEO_CROSS_PROJECT_REQUEST,
-  NEO_CONSULTATION_SETTLED_FAILED,
-  NEO_CONSULTATION_SETTLED_REPORTED,
-  NEO_CONSULTATION_SETTLED_STOPPED,
-  NEO_CONSULTATION_SETTLED,
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_CODING_WORKER_RULES,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
@@ -530,10 +481,8 @@ export const {
   NEO_CARD_PROGRESS,
   NEO_ASK_STALLED,
   NEO_TRIGGER_NOTE,
-  NEO_WORK_REVIEW_REQUEST,
   NEO_ASK_MOVED,
   NEO_ASK_IDLE,
-  NEO_HOLDER_CONSULTATION_RETURN,
   NEO_HOLDER_OPERATIONS,
   NEO_HOLDER_ROLE,
   NEO_HOLDER_SNAPSHOT_SCOPE,
@@ -557,7 +506,6 @@ export const {
   NEO_WORK_GOAL,
   NEO_WORK_NEEDS_YOU,
   NEO_WORK_PACK_NOTE,
-  NEO_WORK_RETURN_REVIEW,
   NEO_WORK_RETURNED_RETRIED,
   NEO_WORK_ENVIRONMENT_MOVE,
   NEO_WORK_BLOCKER,

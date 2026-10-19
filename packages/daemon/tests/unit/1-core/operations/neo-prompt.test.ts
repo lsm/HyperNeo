@@ -202,7 +202,7 @@ describe('Neo world briefing delivery', () => {
       expect(options.settingSources).toEqual([]);
       expect(options.model).toBe('fixture-model');
       expect(options.maxTurns).toBeUndefined();
-      expect(prompt).toContain('neo.project.respond {id,answer}');
+      expect(prompt).not.toContain('neo.project.respond');
     }
   );
 
@@ -272,14 +272,11 @@ describe('Neo world briefing delivery', () => {
     expect(prompt).toContain('Before adding a todo, find where it belongs: call work.find');
   });
 
-  test('keeps holder context, consultation correlation and supersession distinct from world metadata', () => {
+  test('keeps holder context distinct from world metadata', () => {
     const holder = neoPrompt('saas');
     expect(holder).toContain('context holder for project "saas"');
-    expect(holder).toContain('id is the consultationId, not a work id');
-    expect(holder).toContain(
-      'It is delivered to Neo; it does not publish in the human-facing conversation'
-    );
-    expect(holder).toContain('If a save is rejected as superseded, do not reread and retry it');
+    expect(holder).toContain('A superseded response means read again before changing anything');
+    expect(holder).not.toContain('consultation');
   });
 });
 

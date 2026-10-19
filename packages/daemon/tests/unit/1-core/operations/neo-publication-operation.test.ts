@@ -29,11 +29,8 @@ import {
   requirePublicationTrigger,
 } from '../../../../src/lib/neo/notification-triggers.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
-import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
-import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publications.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
@@ -54,20 +51,9 @@ const caller = (sessionId = root.sessionId, messageId = ask.messageId, human = t
   role: 'neo' as const,
   neoTurn: { messageId, human, isLive: () => true },
 });
-const consultCaller = (id: string): OperationCaller => ({
-  ...caller(holder.sessionId, `neo-consult:${id}:request`, false),
-  neoTurn: {
-    messageId: `neo-consult:${id}:request`,
-    consultationId: id,
-    human: false,
-    isLive: () => true,
-  },
-});
-
 describe('runtime-bound publication operation', () => {
   let mailbox: MailboxTestDb;
   let repo: NeoRepository;
-  let consultations: NeoConsultationRepository;
   let ledger: NeoPublicationRepository;
   let runtime: Parameters<typeof createNeoPublisher>[0];
   let publish: ReturnType<typeof createNeoPublisher>;
@@ -100,28 +86,6 @@ describe('runtime-bound publication operation', () => {
       neoDeliveryTrigger(trigger, () => inputTrigger(parent))
     );
   }
-  function consultation(
-    id = 'consult:1',
-    messageId = ask.messageId,
-    projectId = 'a',
-    sessionId = holder.sessionId
-  ) {
-    const item = consultations.reserve({
-      id,
-      requestKey: id,
-      projectId,
-      originSessionId: root.sessionId,
-      originMessageId: messageId,
-      sessionId,
-      question: 'Compare fictional sources',
-    })!;
-    stamp(
-      { sessionId, messageId: `neo-consult:${id}:request` },
-      { sessionId: root.sessionId, messageId },
-      'continues'
-    );
-    return item;
-  }
   function work(id = 'work:1', messageId = ask.messageId, projectId = 'a') {
     return repo.proposeWork({
       id,
@@ -147,12 +111,9 @@ describe('runtime-bound publication operation', () => {
     triggers.clear();
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
-    runMigration279(mailbox.db);
-    runMigration282(mailbox.db);
     runMigration283(mailbox.db);
     runMigration288(mailbox.db);
     repo = new NeoRepository(mailbox.db);
-    consultations = new NeoConsultationRepository(mailbox.db, () => {});
     ledger = new NeoPublicationRepository(mailbox.db);
     for (const id of ['a', 'b']) repo.saveProject({ id, title: id, summary: '', context: '' }, 0);
     for (const binding of [
@@ -177,7 +138,6 @@ describe('runtime-bound publication operation', () => {
       getRootBinding: () => repo.getBindingForProject(null),
       hasProject: (id) => !!repo.getProject(id),
       getWork: (id) => repo.getWork(id),
-      getConsultation: (id) => consultations.get(id),
       resolveAskOrigin: resolve,
       resolveHumanAskOrigin: (input) => {
         const origin = resolve(input);
@@ -337,20 +297,6 @@ describe('runtime-bound publication operation', () => {
     });
   });
 
-  test('a consultation turn never publishes to the human: it answers Neo with neo.project.respond', async () => {
-    const item = consultation();
-    prompt(holder.sessionId, `neo-consult:${item.id}:request`, 'system');
-    expect(await invoke(draft, consultCaller(item.id))).toMatchObject({
-      value: {
-        accepted: false,
-        reason: 'consultation_answer',
-        detail: expect.stringContaining('neo.project.respond'),
-      },
-    });
-    expect(ledger.list(conversationId)).toEqual([]);
-    expect(notify).not.toHaveBeenCalled();
-  });
-
   test('a live turn can deliver an acknowledgement without a trigger', async () => {
     prompt(root.sessionId, 'note-1', 'system');
     expect(
@@ -373,32 +319,15 @@ describe('runtime-bound publication operation', () => {
     expect(publish(draft, caller())).toEqual({ ...first, created: false });
   });
 
-  test('a cross-project return answers the human message that started it; a later fact also posts', () => {
-    const reply = 'neo-cross-project:group-1:reply';
+  test('a stamped return answers the human message that asked it; a note’s new fact posts without one', () => {
+    const reply = 'neo-return:1';
     prompt(root.sessionId, reply, 'system');
     stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
     expect(publish(draft, caller(root.sessionId, reply, false))).toMatchObject({
       accepted: true,
       publication: { triggerId: `human:${ask.messageId}` },
     });
-    expect(
-      publish(
-        { ...draft, publicationId: '20000000-0000-4000-8000-000000000002', shortText: 'Final.' },
-        caller(root.sessionId, reply, false)
-      )
-    ).toMatchObject({ accepted: true, created: true });
-    expect(ledger.list(conversationId)).toHaveLength(2);
-  });
-
-  test('a returned consultation answers the human message that asked it; a note’s new fact posts without one', () => {
-    const reply = 'neo-consult:consult:1:reply';
-    prompt(root.sessionId, reply, 'system');
-    stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
-    expect(publish(draft, caller(root.sessionId, reply, false))).toMatchObject({
-      accepted: true,
-      publication: { triggerId: `human:${ask.messageId}` },
-    });
-    const noted = 'neo-consult:consult:2:reply';
+    const noted = 'neo-return:2';
     prompt(root.sessionId, 'note-1', 'system');
     prompt(root.sessionId, noted, 'system');
     stamp(
@@ -448,7 +377,7 @@ describe('runtime-bound publication operation', () => {
 
   test('a later input on an answered human trigger posts its new fact, never replacing the first', () => {
     expect(publish(draft, caller())).toMatchObject({ accepted: true, created: true });
-    const reply = 'neo-consult:consult:9:reply';
+    const reply = 'neo-return:9';
     prompt(root.sessionId, reply, 'system');
     stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
     expect(
@@ -609,12 +538,10 @@ describe('runtime-bound publication operation', () => {
     ).toMatchObject({ accepted: false, reason: 'wrong_trigger' });
   });
 
-  test('preserves arbitrary authored labels and validates actual work/consultation ownership', async () => {
+  test('preserves arbitrary authored labels and validates actual work ownership', async () => {
     work();
-    consultation();
     const links = [
       { label: '看看对比', kind: 'work', id: 'work:1' },
-      { label: 'Context check', kind: 'consultation', id: 'consult:1' },
       { label: 'More about A', kind: 'project', id: 'a' },
     ];
     expect(await invoke({ ...draft, links })).toMatchObject({
@@ -626,9 +553,9 @@ describe('runtime-bound publication operation', () => {
   test.each(['unknown', 'foreign-ask', 'foreign-project', 'unsafe-kind'])(
     'rejects %s scene refs, without partial publication',
     async (kind) => {
-      consultation();
-      const input = 'neo-consult:consult:1:request';
+      const input = 'neo-note:1';
       prompt(holder.sessionId, input, 'system');
+      stamp({ sessionId: holder.sessionId, messageId: input }, ask, 'continues');
       work(
         'work:1',
         kind === 'foreign-ask' ? 'other-ask' : ask.messageId,
@@ -643,9 +570,9 @@ describe('runtime-bound publication operation', () => {
       const result = await invoke({ ...draft, links: [link] }, caller(holder.sessionId, input));
       const detail = {
         unknown:
-          'work link "missing" does not exist; link only Neo project, work or consultation ids, never work.find refs or session ids',
+          'work link "missing" does not exist; link only Neo project or work ids, never work.find refs or session ids',
         'foreign-ask':
-          'work link "work:1" was not started for this ask; link only work or consultations this ask created',
+          'work link "work:1" was not started for this ask; link only work this ask created',
         'foreign-project': 'work link "work:1" belongs to another project',
       }[kind];
       expect(result).toMatchObject(

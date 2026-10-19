@@ -126,11 +126,7 @@ export class NeoProjectMergeRepository {
       (NOT json_valid(s.processing_state) OR json_extract(s.processing_state, '$.status') IS NOT 'idle')`)
       .all() as { id: string }[])
       unavailable.add(row.id);
-    for (const [table, condition] of [
-      ['legacy_neo_asks', "status IN ('waiting', 'blocked')"],
-      ['neo_consultations', "status = 'pending'"],
-      ['neo_consultation_waiters', "status = 'queued'"],
-    ]) {
+    for (const [table, condition] of [['legacy_neo_asks', "status IN ('waiting', 'blocked')"]]) {
       for (const row of this.db
         .prepare(`SELECT DISTINCT concern_id AS id FROM ${table} WHERE ${condition}`)
         .all() as { id: string }[])
@@ -161,12 +157,7 @@ export class NeoProjectMergeRepository {
             .prepare(`INSERT INTO neo_project_merges(source_id, target_id, source_session_id, merged_at)
           VALUES (?, ?, ?, ?)`)
             .run(source.id, target.id, binding?.session_id ?? null, Date.now());
-          for (const table of [
-            'legacy_neo_asks',
-            'neo_work',
-            'neo_consultations',
-            'neo_consultation_waiters',
-          ])
+          for (const table of ['legacy_neo_asks', 'neo_work'])
             this.db
               .prepare(`UPDATE ${table} SET concern_id = ? WHERE concern_id = ?`)
               .run(target.id, source.id);

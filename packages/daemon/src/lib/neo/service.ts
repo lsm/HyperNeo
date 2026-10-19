@@ -17,7 +17,7 @@ import {
   NEO_WORK_RETURNED_RETRY,
 } from '@hyperneo/prompts';
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
-import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { MailboxMessageContent } from '../mailbox/entry.ts';
 import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
@@ -57,15 +57,7 @@ import { neoDerivedId } from './derived-id.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { pullRequestUrlOfTopic } from '../github/parse-pr-url.ts';
-import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
-import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
-import {
-  type NeoCrossProjectGroup,
-  type NeoCrossProjectMember,
-  NeoCrossProjectRepository,
-  neoCrossProjectReplyId,
-} from '../../storage/repositories/neo-cross-project-repository.ts';
 import { NeoDependencyRepository } from '../../storage/repositories/neo-dependency-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoNotificationTriggerRepository } from '../../storage/repositories/neo-notification-trigger-repository.ts';
@@ -123,10 +115,8 @@ import {
   neoAskEvidenceMessageId,
   neoAskParent,
   neoAskTickedMessageId,
-  neoConsultationParent,
   neoDoneCheckMessageId,
   neoNeedsYouMessageId,
-  neoReviewWorkId,
   neoStallMessageId,
   neoWorkParent,
   neoWorkReturnMessageId,
@@ -151,8 +141,6 @@ import {
   isNeoHumanInputSince,
   neoCardWakeProgress,
 } from './card-wake.ts';
-import { neoConsultationReplyContent } from './consultation-reply-content.ts';
-import { neoConsultationRequestContent } from './consultation-request-content.ts';
 import {
   admitNeoWorkContinue,
   type NeoContinueCaller,
@@ -240,7 +228,6 @@ import {
   neoAskOutcomeBase,
   neoAskTriggerKeys,
   neoAskTriggerConcern,
-  neoConsultationDelivery,
   neoDeliveryTrigger,
   neoHumanTrigger,
   neoHumanTriggerMessageId,
@@ -376,28 +363,6 @@ import {
 } from './work-reroute.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
 
-const dispatchNeoConsultationWaiter = (
-  superpipe({})('neo-consultation-waiter-dispatch') as PipelineAPI
-)
-  .input(['service', 'projectId'])
-  .pipe(
-    (service: NeoService, projectId: string) => {
-      const item = service.consultationWaiters.admitNext(projectId);
-      return item ? { value: item } : { reason: null };
-    },
-    ['service', 'projectId'],
-    'result:admission'
-  )
-  .pipe(
-    async (service: NeoService, item: NeoConsultation) => {
-      await service.syncConsultation(item.id);
-    },
-    ['service', 'admission']
-  )
-  .endAsync('admission');
-
-const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
-
 type NeoWorkPrCard = {
   ask: NeoAsk | null;
   goal: NeoWorkGoal | null;
@@ -514,9 +479,6 @@ export class NeoService {
       readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
     );
   private readonly watchedAskTopics = new Set<string>();
-  readonly crossProjects: NeoCrossProjectRepository;
-  readonly consultations: NeoConsultationRepository;
-  readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   private readonly commitPublication: ReturnType<typeof createNeoPublicationCommit>;
@@ -798,12 +760,6 @@ export class NeoService {
       createLifeAdminPack(),
     ];
     for (const pack of this.builtinPacks) pack.todos?.schema(db.getDatabase());
-    this.crossProjects = new NeoCrossProjectRepository(db.getDatabase());
-    this.consultations = new NeoConsultationRepository(db.getDatabase(), this.notifyChanged);
-    this.consultationWaiters = new NeoConsultationWaiterRepository(
-      db.getDatabase(),
-      this.notifyChanged
-    );
     this.reportWork = createNeoWorkReporter({
       readWork: (id) => this.repo.getWork(id),
       readBinding: (id) => this.repo.getBindingBySession(id),
@@ -840,7 +796,6 @@ export class NeoService {
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
       getWork: (id) => this.repo.getWork(id),
-      getConsultation: (id) => this.consultations.get(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
       resolveHumanAskOrigin: (input) => this.resolveHumanAskOrigin(input),
       inputTrigger: (input) => this.inputTrigger(input),
@@ -852,11 +807,7 @@ export class NeoService {
       notify: notifyPublication,
     });
     this.commitPublication = createNeoPublicationCommit({
-      commit: (input) => {
-        const problem = this.crossProjects.publicationProblem(input);
-        if (problem) return { accepted: false, reason: problem };
-        return this.appendPublication(input);
-      },
+      commit: (input) => this.appendPublication(input),
       published: (input, publication) => {
         this.notePublishedAnswer(publication);
       },
@@ -906,23 +857,12 @@ export class NeoService {
         const bound = status || session?.status ? this.repo.getBindingBySession(sessionId) : null;
         if (bound && bound.kind !== 'worker') this.noteWorking();
         if (status !== 'idle') return;
-        for (const item of this.consultations
-          .unsettled()
-          .filter((item) => item.sessionId === sessionId)) {
-          await this.syncConsultation(item.id).catch((error) =>
-            this.log.warn('Consultation return pending', error)
-          );
-        }
         const binding = this.repo.getBindingBySession(sessionId);
         if (binding && binding.kind !== 'worker')
           await this.alignModelPreference(sessionId).catch((error) =>
             this.log.warn('Neo model preference not applied', error)
           );
         if (binding && binding.kind !== 'worker') this.scheduleTriggerSweep();
-        if (binding?.kind === 'project' && binding.projectId)
-          await this.dispatchConsultationWaiter(binding.projectId).catch((error) =>
-            this.log.warn('Consultation admission pending', error)
-          );
         const work = this.repo.findWorkBySession(sessionId);
         if (work)
           return this.reconcile(work.id).catch((error) =>
@@ -1177,9 +1117,7 @@ export class NeoService {
       standingRules: neoStandingRules(this.db.getGlobalSettings?.().neo),
       stored: !!this.publications.get(input.conversationId, input.publicationId),
     });
-    const receipt = this.crossProjects.append(input, () =>
-      this.publications.append(withNeoSavedRules(input, plan.rules))
-    );
+    const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
     if (receipt.accepted && receipt.created) this.spendWaitingReminders(input.producerInput);
     return receipt;
@@ -2052,7 +1990,6 @@ export class NeoService {
     this.initializeTriggerFacts();
     for (const binding of [this.repo.defaultBinding(), ...this.repo.listProjectBindings()])
       if (binding) await this.removeTurnLimit(binding.sessionId);
-    await this.recoverConsultations();
     await this.clearStaleNeedsYou().catch((error) =>
       this.log.warn('Stale needs_you check pending', error)
     );
@@ -2082,6 +2019,7 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
+    this.notifyChanged();
   }
 
   async refreshDriverWork(): Promise<void> {
@@ -3104,122 +3042,6 @@ export class NeoService {
     return text || null;
   }
 
-  private readonly returnCrossProjectGroup = (
-    superpipe({})('neo-cross-project-return') as PipelineAPI
-  )
-    .input(['group'])
-    .pipe((group: NeoCrossProjectGroup) => this.crossProjects.members(group), 'group', 'members')
-    .pipe(
-      (group: NeoCrossProjectGroup, members: NeoCrossProjectMember[]) =>
-        members.length === (JSON.parse(group.partsJson) as unknown[]).length &&
-        members.every((member) => ['reported', 'failed', 'cancelled'].includes(member.status))
-          ? { value: group }
-          : { reason: null },
-      ['group', 'members'],
-      'result:return'
-    )
-    .pipe(
-      (group: NeoCrossProjectGroup, members: NeoCrossProjectMember[]) =>
-        this.deliver(
-          group.rootSessionId,
-          neoCrossProjectReplyId(group),
-          `All assigned cross-project owners have returned for this original human ask.\n${JSON.stringify({ humanMessageId: group.askMessageId, parts: JSON.parse(group.partsJson), results: members })}`,
-          group.rootSessionId,
-          { sessionId: group.askSessionId, messageId: group.askMessageId },
-          'continues'
-        ),
-      ['return', 'members']
-    )
-    .endAsync() as (group: NeoCrossProjectGroup) => Promise<unknown>;
-
-  async recoverConsultations(): Promise<void> {
-    for (const item of this.consultations.unsettled()) {
-      await this.syncConsultation(item.id).catch((error) =>
-        this.log.warn('Consultation recovery pending', error)
-      );
-    }
-    for (const group of this.crossProjects.pending())
-      await this.returnCrossProjectGroup(group).catch((error) =>
-        this.log.warn('Cross-project return recovery pending', error)
-      );
-    for (const projectId of this.consultationWaiters.queuedProjects())
-      await this.dispatchConsultationWaiter(projectId).catch((error) =>
-        this.log.warn('Consultation admission pending', error)
-      );
-  }
-
-  async dispatchConsultationWaiter(projectId: string): Promise<void> {
-    await dispatchNeoConsultationWaiter(this, projectId);
-  }
-
-  async syncConsultation(id: string): Promise<void> {
-    let item = this.consultations.get(id);
-    if (!item) return;
-    const messages = this.db.getSDKMessageRepo();
-    const requestId = `neo-consult:${id}:request`;
-    if (item.status === 'pending') {
-      const failure = messages.getErrorTerminalResultSubtypeAfter(item.sessionId, requestId);
-      if (failure || messages.hasTerminalResultAfter(item.sessionId, requestId)) {
-        item = this.consultations.finish(
-          id,
-          failure || !neoReviewWorkId(id) ? 'failed' : 'reported',
-          failure
-            ? `The context holder stopped: ${failure}.`
-            : neoReviewWorkId(id)
-              ? NEO_WORK_REVIEWED
-              : 'The context holder ended without returning an answer.'
-        );
-      } else {
-        await this.open();
-        const content = neoConsultationRequestContent(
-          item,
-          !!this.crossProjects.forReceipt(item.id),
-          this.crossProjects.forReceipt(item.id)?.askMessageId
-        );
-        await this.deliver(
-          item.sessionId,
-          requestId,
-          content,
-          item.originSessionId,
-          this.consultationParent(item),
-          neoConsultationDelivery(item)
-        );
-        return;
-      }
-    }
-    if (!item) return;
-    const group = this.crossProjects.forReceipt(id);
-    if (group) {
-      await this.returnCrossProjectGroup(group);
-      this.consultations.returned(id);
-      await this.dispatchConsultationWaiter(item.projectId);
-      return;
-    }
-    if (item.status === 'pending') return;
-    if (
-      !(neoReviewWorkId(id) && item.originSessionId === item.sessionId) &&
-      !this.consultations.isReturned(id) &&
-      !this.consultations.wasPublished(id) &&
-      !(item.status === 'reported' && item.answer === NEO_WORK_REVIEWED)
-    ) {
-      const content = neoConsultationReplyContent(item);
-      if (content === null) return;
-      await this.deliver(
-        item.originSessionId,
-        `neo-consult:${id}:reply`,
-        content,
-        item.sessionId,
-        this.consultationParent(item),
-        'continues'
-      );
-    }
-    this.consultations.returned(id);
-    await this.dispatchConsultationWaiter(item.projectId);
-    for (const work of this.repo.listWork(item.projectId)) {
-      if (work.status === 'reported' || work.status === 'failed') await this.returnReport(work);
-    }
-  }
-
   async reconcile(id: string): Promise<void> {
     const work = this.repo.getWork(id);
     if (!work?.sessionId) {
@@ -3599,11 +3421,6 @@ export class NeoService {
     return outcome;
   }
 
-  private consultationParent(item: NeoConsultation): NeoAskOrigin | null {
-    const reviewed = neoReviewWorkId(item.id);
-    return neoConsultationParent(item, reviewed ? this.repo.getWork(reviewed) : null);
-  }
-
   private async wakeCards(
     workIds: readonly string[],
     originSessionId: string,
@@ -3692,7 +3509,7 @@ export class NeoService {
 
   ownsHumanMessage(caller: OperationCaller): boolean {
     const turn = caller.neoTurn;
-    return !!turn && !!caller.sessionId && turn.human && !turn.consultationId;
+    return !!turn && !!caller.sessionId && turn.human;
   }
 
   stampContinuation(input: NeoAskOrigin, parent: NeoAskOrigin): void {
@@ -3704,18 +3521,6 @@ export class NeoService {
     return (
       this.inputOrigins.trigger(input.sessionId, input.messageId) ??
       (this.isHumanInput(input) ? neoHumanTrigger(input.messageId) : null)
-    );
-  }
-
-  consultationFor(origin: NeoAskOrigin, projectId: string): NeoConsultation | null {
-    const ask = this.resolveAskOrigin(origin) ?? origin;
-    return (
-      this.consultations.startedBy(origin.sessionId, projectId).find((item) => {
-        if (!item.originMessageId) return false;
-        const input = { sessionId: item.originSessionId, messageId: item.originMessageId };
-        const previous = this.resolveAskOrigin(input) ?? input;
-        return previous.sessionId === ask.sessionId && previous.messageId === ask.messageId;
-      }) ?? null
     );
   }
 

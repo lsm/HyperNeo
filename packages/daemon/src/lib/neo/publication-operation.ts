@@ -1,4 +1,4 @@
-import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoPublicationAppendResult,
   NeoPublicationInput,
@@ -57,7 +57,6 @@ interface NeoPublicationRuntime {
   getRootBinding(): NeoBinding | null;
   hasProject(id: string): boolean;
   getWork(id: string): NeoWork | null;
-  getConsultation(id: string): NeoConsultation | null;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   resolveHumanAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   append(input: NeoPublicationInput): Receipt;
@@ -131,14 +130,14 @@ function publicationLinkProblem(
 ): string | null {
   const ref = `${link.kind} link "${link.id}"`;
   if (!exists)
-    return `${ref} does not exist; link only Neo project, work or consultation ids, never work.find refs or session ids`;
+    return `${ref} does not exist; link only Neo project or work ids, never work.find refs or session ids`;
   if (proof.binding.kind !== 'neo' && projectId !== proof.binding.projectId)
     return `${ref} belongs to another project`;
   if (
     link.kind !== 'project' &&
     (origin?.sessionId !== proof.ask.sessionId || origin.messageId !== proof.ask.messageId)
   )
-    return `${ref} was not started for this ask; link only work or consultations this ask created`;
+    return `${ref} was not started for this ask; link only work this ask created`;
   return null;
 }
 
@@ -150,21 +149,6 @@ export function requirePublicationLinks(
   return problem
     ? { reason: { accepted: false, reason: 'invalid_scene_reference', detail: problem } }
     : { value: proof };
-}
-
-export function requirePublicationNotConsulted(
-  producer: Producer
-): { value: Producer } | { reason: Rejection } {
-  return producer.turn.consultationId
-    ? {
-        reason: {
-          accepted: false,
-          reason: 'consultation_answer',
-          detail:
-            'A consultation informs Neo; it never answers the human. Return your answer with neo.project.respond {id, answer}; Neo answers the human.',
-        },
-      }
-    : { value: producer };
 }
 
 export function requirePublicationLifetime(
@@ -189,12 +173,10 @@ export function requirePublicationLifetime(
 function readLinkEvidence(link: NeoPublicationLink, runtime: NeoPublicationRuntime): LinkEvidence {
   if (link.kind === 'project')
     return { link, exists: runtime.hasProject(link.id), projectId: link.id, origin: null };
-  const item = link.kind === 'work' ? runtime.getWork(link.id) : runtime.getConsultation(link.id);
+  const item = link.kind === 'work' ? runtime.getWork(link.id) : null;
   const input = item?.originMessageId
     ? { sessionId: item.originSessionId, messageId: item.originMessageId }
-    : link.kind === 'consultation' && item?.sessionId
-      ? { sessionId: item.sessionId, messageId: `neo-consult:${item.id}:request` }
-      : null;
+    : null;
   return {
     link,
     exists: !!item,
@@ -215,7 +197,6 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
     .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
-    .pipe(requirePublicationNotConsulted, 'publication', 'result:publication')
     .pipe(
       (producer: Producer): Proof => ({
         ...producer,

@@ -2,7 +2,6 @@ import { runMigration370 } from './m370-neo-project-merges.ts';
 import { runMigration368 } from './m368-neo-project-tree.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { createNeoPublicationTable } from './m288-neo-publications.ts';
-import { createNeoConsultationPublicationTable } from './m291-neo-consultation-publications.ts';
 import { runMigration380 } from './m380-neo-work-follows.ts';
 import { runMigration385 } from './m385-neo-work-kickoff.ts';
 import { runMigration389 } from './m389-neo-conversation.ts';
@@ -53,5 +52,4 @@ export function createNeoTables(db: Database): void {
   runMigration368(db);
   runMigration370(db);
   createNeoPublicationTable(db);
-  createNeoConsultationPublicationTable(db);
 }
