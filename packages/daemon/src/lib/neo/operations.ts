@@ -109,6 +109,7 @@ import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import { hasNeoHumanWorkInput, neoTurnOrigin } from './work-origin.ts';
 import {
   admitNeoConsultationOrigin,
+  requireNeoOtherSession,
   requireLiveNeoConsultationOrigin,
   type NeoConsultationOrigin,
 } from './consultation-origin.ts';
@@ -1281,7 +1282,13 @@ export function createNeoOperations(service: NeoService) {
       ['input', 'admission'],
       'result:admission'
     )
-    .pipe((input: ConsultRequest) => service.open(input.projectId), 'input', 'sessionId')
+    .pipe(() => service.open(), 'input', 'sessionId')
+    .pipe(
+      (origin: NeoConsultationOrigin, sessionId: string) =>
+        requireNeoOtherSession(origin, [sessionId]),
+      ['admission', 'sessionId'],
+      'result:admission'
+    )
     .pipe(
       (origin: NeoConsultationOrigin, caller: OperationCaller) =>
         requireLiveNeoConsultationOrigin(origin, caller.neoTurn),
@@ -1383,7 +1390,7 @@ export function createNeoOperations(service: NeoService) {
         ).catch(() => null),
       0
     );
-    const sessionId = await service.open(null);
+    const sessionId = await service.open();
     return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
   });
   const readReceipt = path('neo.receipt.read', (input: z.infer<typeof ReceiptRead>, caller) => {
@@ -1561,7 +1568,7 @@ export function createNeoOperations(service: NeoService) {
       createProject: (title) =>
         openNeoNewProject(
           service.repo,
-          () => service.open(null),
+          () => service.open(),
           neoNewProject(title, crypto.randomUUID())
         ),
     }),
@@ -1574,7 +1581,7 @@ export function createNeoOperations(service: NeoService) {
         return resolved ? service.repo.getProject(resolved) : null;
       },
       listProjects: () => service.repo.listProjects(),
-      openDefault: () => service.open(null),
+      openDefault: () => service.open(),
       askContent: (ask) => {
         const conversation = service.repo.conversationId();
         const stored = conversation ? service.asks.find(conversation, ask.messageId) : null;
@@ -1583,7 +1590,7 @@ export function createNeoOperations(service: NeoService) {
           ? stored.content
           : null;
       },
-      open: () => service.open(null),
+      open: () => service.open(),
       record: (ask, forward) => service.askForwards.record(ask, forward),
       moveAsks: (from, to) => service.todos.moveAsks(from, to),
       unrecord: (ask, hop) => service.askForwards.remove(ask, hop),
@@ -1641,7 +1648,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.project.consult',
       description:
-        'Ask a context holder a question from the current root input. Returns a durable receipt; its answer arrives asynchronously. Repeating a completed consultation for the same human request returns its recorded receipt and full answer. Identical in-flight retries reuse their receipt.',
+        'Retired: there is one Neo session now, so this refuses with single_session. Ask a context holder a question from the current root input. Returns a durable receipt; its answer arrives asynchronously. Repeating a completed consultation for the same human request returns its recorded receipt and full answer. Identical in-flight retries reuse their receipt.',
       inputSchema: Consult,
       resultSchema: ConsultationResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

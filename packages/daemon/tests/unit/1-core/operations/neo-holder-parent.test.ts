@@ -42,19 +42,16 @@ describe('Neo holder sessions', () => {
     db.close();
   });
 
-  test('nest under the root Neo session', async () => {
-    const root = await service.open(null);
-    const holder = await service.open('garden');
-    expect(createSession.mock.calls[0][0]).toMatchObject({ sessionId: root });
-    expect(createSession.mock.calls[0][0]).not.toHaveProperty('parentSessionId', root);
-    expect(createSession.mock.calls[1][0]).toMatchObject({
-      sessionId: holder,
-      parentSessionId: root,
-    });
+  test('opening Neo returns the root session and creates no holder', async () => {
+    const root = await service.open();
+    expect(await service.open()).toBe(root);
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession.mock.calls[0][0]).not.toHaveProperty('parentSessionId');
+    expect(service.repo.listProjectBindings('garden')).toEqual([]);
   });
 
   test('new coordinators have no turn cap; opening a legacy coordinator removes only its stored cap', async () => {
-    const root = await service.open(null);
+    const root = await service.open();
     expect(createSession.mock.calls[0][0]).not.toHaveProperty('config.maxTurns');
     const base = db.getSession(root)!;
     const sdkSessionId = crypto.randomUUID();
@@ -62,23 +59,13 @@ describe('Neo holder sessions', () => {
       sdkSessionId,
       config: { ...base.config, maxTurns: 32, systemPrompt: 'Stored context' },
     });
-    expect(await service.open(null)).toBe(root);
+    expect(await service.open()).toBe(root);
     expect(createSession).toHaveBeenCalledTimes(1);
     expect(db.getSession(root)).toMatchObject({
       sdkSessionId,
       config: { systemPrompt: 'Stored context' },
     });
     expect(db.getSession(root)?.config).not.toHaveProperty('maxTurns');
-  });
-
-  test("start on main Neo's model and provider, not the global default", async () => {
-    const root = await service.open(null);
-    const base = createTestSession(root);
-    db.updateSession(root, { config: { ...base.config, model: 'glm-5.3[1m]', provider: 'glm' } });
-    await service.open('garden');
-    expect(createSession.mock.calls[1][0]).toMatchObject({
-      config: { model: 'glm-5.3[1m]', provider: 'glm' },
-    });
   });
 
   test('cannot use the clone return path into Neo', () => {

@@ -4,6 +4,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type { NeoService } from './service.ts';
 import {
   admitNeoConsultationOrigin,
+  requireNeoOtherSession,
   requireLiveNeoConsultationOrigin,
   type NeoConsultationOrigin,
 } from './consultation-origin.ts';
@@ -112,12 +113,17 @@ export function createNeoCrossProjectOperation(service: NeoService) {
     .pipe(
       async (draft: Draft) => {
         const sessions = new Map<string, string>();
-        for (const part of draft.parts)
-          sessions.set(part.projectId, await service.open(part.projectId));
+        for (const part of draft.parts) sessions.set(part.projectId, await service.open());
         return sessions;
       },
       'draft',
       'sessions'
+    )
+    .pipe(
+      (draft: Draft, sessions: ReadonlyMap<string, string>) =>
+        requireNeoOtherSession(draft.root, sessions.values()),
+      ['dispatch', 'sessions'],
+      'result:dispatch'
     )
     .pipe(
       (draft: Draft, caller: OperationCaller) =>
@@ -162,7 +168,7 @@ export function createNeoCrossProjectOperation(service: NeoService) {
   return defineOperation({
     name: 'neo.projects.dispatch',
     description:
-      'Split the current human request across its owning projects. Quote the human exactly in each part and give only that owner its instruction. Parts must cover every known owner. Returns one durable group; holders return privately and root receives every recorded result together. Identical retries reuse the group.',
+      'Retired: there is one Neo session now, so this refuses with single_session. Split the current human request across its owning projects. Quote the human exactly in each part and give only that owner its instruction. Parts must cover every known owner. Returns one durable group; holders return privately and root receives every recorded result together. Identical retries reuse the group.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

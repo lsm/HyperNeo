@@ -4,6 +4,18 @@ import type { OperationCaller } from '../operations/registry.ts';
 export type NeoConsultationOrigin = { originSessionId: string; originMessageId: string };
 type Admission = { value: NeoConsultationOrigin } | { reason: { ok: false; reason: string } };
 
+export const NEO_SINGLE_SESSION =
+  'single_session: there is one Neo session now. Handle this ask yourself, or hand the work to a worker with work.send.';
+
+export function requireNeoOtherSession(
+  origin: NeoConsultationOrigin,
+  sessions: Iterable<string>
+): Admission {
+  return [...sessions].includes(origin.originSessionId)
+    ? { reason: { ok: false, reason: NEO_SINGLE_SESSION } }
+    : { value: origin };
+}
+
 export function requireLiveNeoConsultationOrigin(
   origin: NeoConsultationOrigin,
   turn: OperationCaller['neoTurn']
