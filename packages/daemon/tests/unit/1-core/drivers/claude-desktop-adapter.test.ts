@@ -473,6 +473,42 @@ describe('claude-desktop adapter against the app session records', () => {
     expect((await status('r5')).value.remoteLink).toBeUndefined();
   });
 
+  test('reports the pull requests Claude Desktop linked to the session, with dismissals', async () => {
+    const scope = join(dir, 'acct-a/scope-1');
+    const pr = (n: number, dismissed?: boolean) => ({
+      prNumber: n,
+      repo: 'lsm/open-agent-protocol',
+      url: `https://github.com/lsm/open-agent-protocol/pull/${n}`,
+      state: 'OPEN',
+      ...(dismissed === undefined ? {} : { dismissed }),
+    });
+    writeFileSync(
+      join(scope, 'local_p1.json'),
+      JSON.stringify(
+        record('p1', {
+          originCwd: '/focus/oap',
+          title: 'OAP TUI',
+          lastActivityAt: 40,
+          prs: [pr(1064, true), pr(1299, false), pr(1305)],
+        })
+      )
+    );
+    writeFileSync(
+      join(scope, 'local_p2.json'),
+      JSON.stringify(record('p2', { originCwd: '/focus/oap', title: 'none', lastActivityAt: 40 }))
+    );
+    const status = async (id: string) =>
+      (await adapter().status?.({ adapter: 'claude-desktop', id: `local_${id}` })) as {
+        value: { linkedPrs?: unknown };
+      };
+    expect((await status('p1')).value.linkedPrs).toEqual([
+      { url: 'https://github.com/lsm/open-agent-protocol/pull/1064', dismissed: true },
+      { url: 'https://github.com/lsm/open-agent-protocol/pull/1299' },
+      { url: 'https://github.com/lsm/open-agent-protocol/pull/1305' },
+    ]);
+    expect((await status('p2')).value.linkedPrs).toBeUndefined();
+  });
+
   test('adds archived sessions as stopped when asked for closed work', async () => {
     const groups = await adapter([]).find({
       includeClosed: true,
