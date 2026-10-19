@@ -9,8 +9,6 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import { readNeoDaemonCommits } from '../../../../src/lib/neo/daemon-commits.ts';
 import {
-  judgeNeoDeployCheck,
-  planNeoDeployChecks,
   readGithubDeploys,
   type NeoDeployRead,
 } from '../../../../src/lib/neo/packs/coding/deploy-checks.ts';
@@ -57,35 +55,6 @@ describe('deploy checks', () => {
   const read = (daemons: NeoDeployRead['daemons'], mergeCommit: string | null = MERGE) => ({
     prs: [{ url: pull(7), mergeCommit }],
     daemons,
-  });
-
-  test("checks a deploy item's watched PRs, else the ask's card PRs", () => {
-    expect(
-      planNeoDeployChecks(ask([deployItem({ watch: [pull(7)] })]), [pull(8)]).map(
-        (plan) => plan.urls
-      )
-    ).toEqual([[pull(7)]]);
-    expect(
-      planNeoDeployChecks(ask([deployItem()]), [pull(8), pull(8)]).map((plan) => plan.urls)
-    ).toEqual([[pull(8)]]);
-    expect(planNeoDeployChecks(ask([deployItem({ state: 'met' })]), [pull(8)])).toEqual([]);
-  });
-
-  test('is met only when every daemon runs a commit containing every merge', () => {
-    const plan = { item: deployItem(), urls: [pull(7)] };
-    const laptop = { daemon: 'm5', commit: RUNNING, contains: [MERGE] };
-    expect(judgeNeoDeployCheck(plan, read([laptop, { ...laptop, daemon: 'tts' }]))).toEqual({
-      id: 'i1',
-      evidence: `Deployed: ${pull(7)} (aaaaaaaaaa) runs on m5 at bbbbbbbbbb, tts at bbbbbbbbbb`,
-    });
-    expect(
-      judgeNeoDeployCheck(plan, read([laptop, { daemon: 'tts', commit: null, contains: [] }]))
-    ).toBe(null);
-    expect(
-      judgeNeoDeployCheck(plan, read([laptop, { daemon: 'tts', commit: RUNNING, contains: [] }]))
-    ).toBe(null);
-    expect(judgeNeoDeployCheck(plan, read([laptop], null))).toBe(null);
-    expect(judgeNeoDeployCheck(plan, read([]))).toBe(null);
   });
 
   test('reads the merge commit and asks GitHub whether each running commit contains it', async () => {

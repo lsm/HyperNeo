@@ -7,25 +7,6 @@ export interface NeoEvidence {
   blockers: string[];
 }
 
-export type NeoEvidenceRead = {
-  evidence: NeoEvidence[];
-  read: { ok: boolean; okAt: number };
-};
-
-export function combineNeoEvidenceReads(
-  reads: readonly (NeoEvidenceRead | null | undefined)[]
-): NeoEvidenceRead | null {
-  const found = reads.filter((read): read is NeoEvidenceRead => !!read);
-  if (!found.length) return null;
-  return {
-    evidence: found.flatMap((read) => read.evidence),
-    read: {
-      ok: found.every((read) => read.read.ok),
-      okAt: Math.min(...found.map((read) => read.read.okAt)),
-    },
-  };
-}
-
 export type NeoEvidenceTold = {
   signature: string;
   toldAt: number | null;

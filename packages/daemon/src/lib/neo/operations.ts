@@ -62,9 +62,7 @@ import {
   neoSnapshotOmitted,
 } from './snapshot-compact.ts';
 import { hasNeoHumanWorkInput, neoTurnOrigin } from './work-origin.ts';
-import { type NeoDriverTarget } from './driver-work.ts';
-import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
-import type { WorkRef } from '../drivers/types.ts';
+import { invokeOperation } from '../operations/invoke.ts';
 import {
   NEO_SESSION_MUTES_MAX,
   NeoSessionNoticeGroupSchema,
@@ -221,87 +219,6 @@ const PackReadResult = z.union([
   }),
 ]);
 type Rejection = { ok: false; reason: string };
-
-export function requireNeoProposalAsk(
-  input: { askId?: string },
-  caller: OperationCaller
-): { value: OperationCaller } | { reason: Rejection } {
-  return input.askId || caller.source !== 'mcp'
-    ? { value: caller }
-    : {
-        reason: {
-          ok: false,
-          reason:
-            'ask_required: work serves an ask. In the human’s turn open it with neo.ask.open (each doneItem declares its check), then propose with its askId; in any other turn, propose under the ask you are working on.',
-        },
-      };
-}
-
-export function requireNeoExecutionChoice(
-  input: { targetSessionId?: string | null; work?: NeoDriverTarget },
-  caller: OperationCaller
-): { value: OperationCaller } | { reason: Rejection } {
-  if (input.work && (input.targetSessionId || (input as { targetAgent?: unknown }).targetAgent))
-    return {
-      reason: {
-        ok: false,
-        reason: 'Choose either work (a work.find place or ref) or targetSessionId, not both.',
-      },
-    };
-  if (input.work?.verb === 'start' && !input.work.place.folder && !input.work.place.spaceId)
-    return {
-      reason: {
-        ok: false,
-        reason:
-          'Start new work in a project folder or a Space, not a place without a folder. If none clearly fits, ask the human where the work belongs.',
-      },
-    };
-  return input.targetSessionId || input.work
-    ? { value: caller }
-    : {
-        reason: {
-          ok: false,
-          reason:
-            'Choose where the work runs: targetSessionId for an existing chat, or work {verb:"start", adapter, place} or {verb:"send", ref} from work.find, or {verb:"adopt", ref} for a session the human named in chat. There is no standalone scratch session. If no project, Space or chat clearly fits, ask the human where the work belongs instead of proposing.',
-        },
-      };
-}
-
-type OwnedLookupInput = {
-  targetSessionId?: string | null;
-  targetAgent?: unknown;
-  work?: NeoDriverTarget;
-};
-
-export function ownedLookupSessionId(input: OwnedLookupInput): string | null {
-  return input.targetSessionId && !input.work && !input.targetAgent ? input.targetSessionId : null;
-}
-
-export function adoptOwnedNeoTarget<Input extends OwnedLookupInput>(
-  input: Input,
-  owned: { ref: WorkRef | null }
-): Input {
-  return owned.ref && ownedLookupSessionId(input)
-    ? { ...input, targetSessionId: undefined, work: { verb: 'send', ref: owned.ref } }
-    : input;
-}
-
-export function adoptNeoRefTarget<Input extends OwnedLookupInput>(input: Input): Input {
-  const id = ownedLookupSessionId(input);
-  return id?.startsWith('local_')
-    ? {
-        ...input,
-        targetSessionId: undefined,
-        work: { verb: 'send', ref: { adapter: 'claude-desktop', id } },
-      }
-    : input;
-}
-
-export function isNeoWorkMissingHere(outcome: OperationOutcome | null): boolean {
-  if (outcome?.kind !== 'completed') return false;
-  const value = outcome.value as { ok?: boolean; reason?: string } | null;
-  return value?.ok === false && value.reason === 'not_found';
-}
 
 export function neoSnapshotRevision<T extends { ok: boolean }>(
   snapshot: T,
@@ -691,7 +608,7 @@ export function createNeoOperations(service: NeoService) {
     const pack = service.pack(id);
     if (!pack)
       return { ok: false as const, reason: `pack_not_found: no pack "${id}" is installed.` };
-    const instructions = pack.instructions(null);
+    const instructions = pack.instructions();
     return instructions === null
       ? {
           ok: false as const,

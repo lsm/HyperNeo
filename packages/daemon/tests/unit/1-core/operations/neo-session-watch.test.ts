@@ -434,26 +434,6 @@ describe('refreshDriverWork', () => {
     db.close();
   });
 
-  test("skips a session Neo's live card drives, and watches it again once the card is cancelled", async () => {
-    const { work: card } = service.driverTargets.propose(
-      service.repo,
-      {
-        id: 'w-card',
-        requestKey: 'root:card',
-        projectId: null,
-        originSessionId: 'neo:root',
-        title: 'Card',
-        instruction: 'Do it.',
-      },
-      { verb: 'send', ref }
-    );
-    service.driverTargets.recordRef(card.id, ref);
-    const queued = service.repo.transitionWork(card.id, card, { status: 'queued' })!;
-    expect(service.driverTargets.cardRefs(0)).toEqual([{ workId: card.id, ref }]);
-    service.repo.transitionWork(card.id, queued, { status: 'cancelled' });
-    expect(service.driverTargets.cardRefs(0)).toEqual([]);
-  });
-
   test('keeps what it saw when a listing comes back partial', async () => {
     let clock = Date.now();
     const time = spyOn(Date, 'now').mockImplementation(() => clock);

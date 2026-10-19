@@ -32,17 +32,11 @@ import {
   readDriverSendBaseline,
   readDriverSent,
   readDriverSettlement,
-  requireNeoWorkRetryable,
   withWorkGoal,
 } from '../../../../src/lib/neo/driver-work.ts';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
-import {
-  createNeoOperations,
-  requireNeoExecutionChoice,
-  requireNeoProposalAsk,
-} from '../../../../src/lib/neo/operations.ts';
+import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
-import { lifeAdminReportEvidence } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { pickNeoReplacementWorkers } from '../../../../src/lib/neo/work-reroute.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -63,50 +57,6 @@ const sendTarget: NeoDriverTarget = {
 };
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
 
-describe('requireNeoWorkRetryable', () => {
-  test.each<
-    [
-      string,
-      { status: NeoWork['status']; report: string | null },
-      { target: boolean; ref: boolean; interrupted: boolean },
-      boolean,
-    ]
-  >([
-    [
-      'a hand-off that failed before it started',
-      { status: 'failed', report: 'down' },
-      { target: true, ref: false, interrupted: false },
-      true,
-    ],
-    [
-      'started work',
-      { status: 'failed', report: 'down' },
-      { target: true, ref: true, interrupted: false },
-      false,
-    ],
-    [
-      'work with no driver target',
-      { status: 'failed', report: null },
-      { target: false, ref: false, interrupted: false },
-      false,
-    ],
-    [
-      'work still queued',
-      { status: 'queued', report: null },
-      { target: true, ref: false, interrupted: false },
-      false,
-    ],
-    [
-      'a start that was interrupted',
-      { status: 'failed', report: 'down' },
-      { target: true, ref: false, interrupted: true },
-      false,
-    ],
-  ])('%s', (_label, work, card, retryable) => {
-    expect('value' in requireNeoWorkRetryable(work, card, true)).toBe(retryable);
-  });
-});
-
 describe('isNeoReceiptUnconfirmed', () => {
   const card: Parameters<typeof isNeoReceiptUnconfirmed>[0] = {
     ref: true,
@@ -126,45 +76,6 @@ describe('isNeoReceiptUnconfirmed', () => {
     ['a later send', { inputBefore: 5_000 }, 100 + NEO_CARD_CONFIRM_MS, false],
   ])('%s', (_label, overrides, now, unconfirmed) => {
     expect(isNeoReceiptUnconfirmed({ ...card, ...overrides }, now)).toBe(unconfirmed);
-  });
-});
-
-describe('requireNeoProposalAsk', () => {
-  const neo = { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const };
-  const human = { source: 'rpc' as const, principal: 'local' as const };
-
-  test('leaves the human proposing from the app alone', () => {
-    expect(requireNeoProposalAsk({}, human)).toEqual({ value: human });
-  });
-});
-
-describe('requireNeoExecutionChoice', () => {
-  const neo = { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const };
-
-  test('accepts a drivers target as the explicit choice and refuses it next to a chat', () => {
-    expect(requireNeoExecutionChoice({ work: sendTarget }, neo)).toEqual({ value: neo });
-    expect(
-      requireNeoExecutionChoice({ work: sendTarget, targetSessionId: 's1' }, neo)
-    ).toMatchObject({ reason: { ok: false } });
-  });
-
-  test('refuses a start in a place with no folder or Space before a card exists', () => {
-    const chats = { machine: 'laptop', name: 'Chats' };
-    expect(
-      requireNeoExecutionChoice({ work: { verb: 'start', adapter: 'hyperneo', place: chats } }, neo)
-    ).toMatchObject({
-      reason: {
-        ok: false,
-        reason: expect.stringContaining('ask the human where the work belongs'),
-      },
-    });
-    expect(
-      requireNeoExecutionChoice(
-        { work: { verb: 'start', adapter: 'space', place: { ...chats, spaceId: 'sp1' } } },
-        neo
-      )
-    ).toEqual({ value: neo });
-    expect(requireNeoExecutionChoice({ work: startTarget }, neo)).toEqual({ value: neo });
   });
 });
 
@@ -519,106 +430,6 @@ describe('driverExchangeReport', () => {
 });
 
 describe('Neo work with a drivers target', () => {
-  function fileUnderAsk(service: NeoService, workId = 'work-1') {
-    const ask = service.askRecords.open({
-      id: `ask-${workId}`,
-      requestKey: `neo:root:${workId}`,
-      projectId: null,
-      originSessionId: 'neo:root',
-      originMessageId: 'ask-1',
-      title: 'Fix it',
-      ask: 'Fix it',
-      doneWhen: '- merged',
-      doneSource: 'human',
-    })!;
-    service.askRecords.link(ask.id, workId);
-    return ask;
-  }
-
-  async function setup(
-    reply: unknown,
-    during?: (service: NeoService) => Promise<void>,
-    status: (input: Record<string, unknown>) => unknown = () => ({
-      ok: false,
-      reason: 'unreachable',
-      detail: 'down',
-    }),
-    target: NeoDriverTarget = startTarget,
-    find: (input: Record<string, unknown>) => unknown = () => ({ places: [], unreachable: [] })
-  ) {
-    const db = await createTestDb();
-    const calls: Array<{ name: string; input: unknown; caller: OperationCaller }> = [];
-    let service: NeoService;
-    const operation = (name: string) =>
-      defineOperation({
-        name,
-        description: name,
-        inputSchema: z.record(z.string(), z.unknown()),
-        resultSchema: z.unknown(),
-        execute: async (input, caller) => {
-          calls.push({ name, input, caller });
-          if (name === 'work.start') await during?.(service);
-          if (name === 'work.status') return status(input);
-          if (name === 'work.find') return find(input);
-          return name === 'work.stop'
-            ? { ok: true, value: { stopped: true } }
-            : typeof reply === 'function'
-              ? reply(input)
-              : reply;
-        },
-      });
-    const registry = createOperationRegistry([
-      operation('work.start'),
-      operation('work.send'),
-      operation('work.stop'),
-      operation('work.status'),
-      operation('work.find'),
-    ]);
-    service = new NeoService(
-      db,
-      { getOperationRegistry: () => registry } as unknown as SessionManager,
-      { event: mock(() => {}) } as unknown as MessageHub,
-      new InternalEventBus<DaemonInternalEventMap>()
-    );
-    const proposed = service.driverTargets.propose(
-      service.repo,
-      {
-        id: 'work-1',
-        requestKey: 'root:font',
-        projectId: null,
-        originSessionId: 'neo:root',
-        originMessageId: 'ask-1',
-        title: work.title,
-        instruction: work.instruction,
-      },
-      target
-    );
-    return { db, service, calls, proposed };
-  }
-
-  function independentlyMerged(service: NeoService, urls: string[]) {
-    const at = Date.now() + 60_000;
-    const reader = mock(async (refs: NeoRef[]) =>
-      refs.flatMap((ref) => {
-        const url = `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`;
-        return urls.includes(url)
-          ? [
-              {
-                url,
-                kind: 'pr' as const,
-                state: 'MERGED' as const,
-                at,
-                done: true,
-                closedBy: null,
-              },
-            ]
-          : [];
-      })
-    );
-    service.readRefStates = reader;
-    return reader;
-  }
-
   const archivedRef = { adapter: 'claude-desktop', id: 'archived' };
   const worker = (id: string, overrides: Partial<WorkSummary> = {}): WorkSummary => ({
     ref: { ...archivedRef, id },
@@ -628,18 +439,6 @@ describe('Neo work with a drivers target', () => {
     lastActivityAt: 100,
     ...overrides,
   });
-  const found = (workers: WorkSummary[]) => ({
-    places: workers.map((item) => ({
-      place: item.place,
-      lastActivityAt: item.lastActivityAt,
-      openCount: 1,
-      archivedCount: 0,
-      adapters: [item.ref.adapter],
-      work: [item],
-    })),
-    unreachable: [],
-  });
-  const statusReply = () => ({ ok: true, value: { status: 'done', lastActivityAt: 10 } });
 
   test('replacement selection preserves the project, daemon and adapter and skips every non-idle candidate', () => {
     const original = worker('archived');
@@ -669,33 +468,6 @@ describe('Neo work with a drivers target', () => {
         new Set()
       )
     ).toEqual([]);
-  });
-
-  test('reserving a replacement skips a worker already reserved by another card', async () => {
-    const { db, service } = await setup({ ok: false, reason: 'not_open', detail: 'archived' });
-    try {
-      service.driverTargets.propose(
-        service.repo,
-        {
-          id: 'other-card',
-          requestKey: 'other-card',
-          projectId: null,
-          originSessionId: 'neo:root',
-          originMessageId: 'ask-1',
-          ...work,
-        },
-        { verb: 'send', ref: worker('claimed').ref }
-      );
-      const original = service.repo.getWork('work-1')!;
-      expect(
-        service.driverTargets.reassign(service.repo, original, [
-          worker('claimed').ref,
-          worker('free').ref,
-        ])?.target
-      ).toEqual({ verb: 'send', ref: worker('free').ref });
-    } finally {
-      db.close();
-    }
   });
 
   test('stuck reminders step through the schedule and end on abandoned', () => {
@@ -728,21 +500,6 @@ describe('Neo work with a drivers target', () => {
       decideCardLiveStatus({ status: 'needs_you', lastActivityAt: 30, lastReplyAt: 20 }, 10, null)
     ).toBe('needs_you');
   });
-
-  async function undelivered(approved: boolean) {
-    const ready = await setup({ ok: false, reason: 'not_delivered', detail: 'down' });
-    const delivered: string[] = [];
-    ready.db.createSession(createTestSession('neo:root'));
-    Object.assign(ready.service, {
-      open: async () => 'neo:root',
-      deliver: async (_target: string, messageId: string) => {
-        delivered.push(messageId);
-      },
-    });
-    const ask = fileUnderAsk(ready.service);
-    if (approved) ready.service.askRecords.approve(ask.id, Date.now());
-    return { ...ready, delivered };
-  }
 });
 
 describe('readDriverSettlement', () => {

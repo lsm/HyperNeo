@@ -118,21 +118,6 @@ function settledCard(harness: Harness, id: string): void {
   harness.service.repo.transitionWork(id, work, { status: 'cancelled' });
 }
 
-function settledAsk(harness: Harness, id: string): void {
-  const ask = harness.service.askRecords.open({
-    id,
-    requestKey: `k-${id}`,
-    projectId: null,
-    originSessionId: harness.sessionId,
-    originMessageId: `m-${id}`,
-    title: 'Done ask',
-    ask: 'Ship it',
-    doneWhen: '- shipped',
-    doneSource: 'human',
-  })!;
-  harness.service.askRecords.settle(ask, 'achieved', 'Shipped.', 'merged');
-}
-
 const statusOf = (harness: Harness, uuid: string) =>
   harness.db.getSDKMessageRepo().getDeliveryContent(harness.sessionId, uuid)?.sendStatus;
 
@@ -187,7 +172,6 @@ describe('Neo note queue', () => {
     const harness = await makeHarness('neo:settled');
     queueNote(harness, 'neo-card-pr:w-done:s1');
     settledCard(harness, 'w-done');
-    settledAsk(harness, 'a-done');
     await harness.service.deliverForward(
       harness.sessionId,
       'w-done:done-check:4',

@@ -163,7 +163,6 @@ describe('neo.session.track', () => {
     status = { status: 'done', lastActivityAt: tapped + 10_000 };
     await service.todoRunner.refresh(() => {});
     expect(service.todos.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
-    expect(service.askRecords.list()).toEqual([]);
   });
 
   test('every tap tells Neo its own ask, and closing the todo never stops the human session', async () => {

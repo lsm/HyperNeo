@@ -1,13 +1,10 @@
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { type NeoWorkPr, neoWorkPrVerdict } from '@hyperneo/shared/types/neo-snapshot';
+import { type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubGraphqlArgs, githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
-import { isNeoCardPrRoutine } from '../../card-wake.ts';
-import type { NeoEvidence, planNeoDoneCheck } from '../../evidence.ts';
 
 export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
 
@@ -111,67 +108,6 @@ export function neoTextRefs(text: string): number[] {
   return [...text.matchAll(/(?:#|\/(?:issues|pull)\/)(\d+)\b/g)].map((match) => Number(match[1]));
 }
 
-export const isNeoWorkPrWaiting = (prs: readonly NeoWorkPr[]) =>
-  prs.some((pr) => neoWorkPrVerdict(pr) === 'waiting');
-
-export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
-  return prs.map((pr) => ({
-    key: pr.url,
-    state: isNeoCardPrRoutine(pr) ? 'waiting' : neoWorkPrVerdict(pr),
-    summary: `${pr.state.toLowerCase()}, checks ${pr.checks}, review ${pr.review}`,
-    blockers: pr.blockers ?? [],
-  }));
-}
-
-export function isNeoWorkPrEvidenceOpened(evidence: Pick<NeoEvidence, 'key' | 'summary'>) {
-  return /^https?:\/\//.test(evidence.key) && /^(open|merged)\b/.test(evidence.summary);
-}
-
-type NeoPrClaimHold = { workId: string; urlKey: string; claim: string };
-
-export function neoCardDisownsPr(
-  claims: readonly NeoPrClaimHold[],
-  workId: string,
-  url: string
-): boolean {
-  const held = claims.filter((claim) => claim.urlKey === githubUrlKey(url));
-  const mine = held.find((claim) => claim.workId === workId);
-  return mine ? mine.claim === 'rejected' : held.some((claim) => claim.claim !== 'rejected');
-}
-
-export function neoAskPrEvidence(
-  works: readonly Pick<NeoWork, 'id' | 'status' | 'report'>[],
-  rows: readonly { workId: string; prs: readonly NeoWorkPr[] }[],
-  claims: readonly NeoPrClaimHold[] = []
-): NeoEvidence[] {
-  const live = works.filter((work) => work.status !== 'cancelled');
-  const tracked = new Set(rows.map((row) => row.workId));
-  const prs = new Map(
-    rows
-      .filter((row) => live.some((work) => work.id === row.workId))
-      .flatMap((row) => row.prs.map((pr) => [githubUrlKey(pr.url), pr] as const))
-  );
-  const unread = new Set(
-    live.flatMap((work) =>
-      extractNeoWorkPrUrls(work.report).filter(
-        (url) => !prs.has(githubUrlKey(url)) && !neoCardDisownsPr(claims, work.id, url)
-      )
-    )
-  );
-  const untracked = live.filter((work) => !tracked.has(work.id));
-  const pending = (key: string, summary: string): NeoEvidence => ({
-    key,
-    state: 'pending',
-    summary,
-    blockers: [],
-  });
-  return [
-    ...neoWorkPrEvidence([...prs.values()]),
-    ...[...unread].map((url) => pending(url, 'not read yet')),
-    ...untracked.map((work) => pending(`work:${work.id}`, 'no pull request tracked')),
-  ];
-}
-
 type StoredPrs = {
   prs: readonly NeoWorkPr[];
   readAt: number;
@@ -187,43 +123,6 @@ export function shouldReadNeoWorkPrs(
   const same = (url: string) => (pr: { url: string }) => githubUrlKey(pr.url) === githubUrlKey(url);
   if (!stored || urls.some((url) => !stored.prs.some(same(url)))) return true;
   return stored.prs.some((pr) => pr.state === 'OPEN') && now - stored.readAt >= NEO_WORK_PR_READ_MS;
-}
-
-export type NeoWorkPrRefreshSkip = 'missing' | 'not_due' | 'quiet';
-
-export function requireNeoWorkPrCurrent<Work>(current: {
-  work: Work | null;
-}): { value: { work: Work } } | { reason: 'missing' } {
-  return current.work ? { value: { work: current.work } } : { reason: 'missing' };
-}
-
-export function requireNeoWorkPrRefresh<
-  Refresh extends { work: { status: string; report: string | null } },
-  Row extends { readAt: number },
->(
-  refresh: Refresh,
-  card: { row: Row | null; session: boolean; changed?: boolean },
-  now: number,
-  closedDonePrefix: string
-): { value: Refresh & { row: Row } } | { reason: 'not_due' } {
-  const { work } = refresh;
-  return work.status === 'reported' &&
-    !work.report?.startsWith(closedDonePrefix) &&
-    card.session &&
-    card.row &&
-    (card.changed || now - card.row.readAt >= NEO_WORK_PR_READ_MS)
-    ? { value: { ...refresh, row: card.row } }
-    : { reason: 'not_due' };
-}
-
-export function requireNeoWorkPrDelivery<Refresh extends object>(
-  refresh: Refresh,
-  plan: ReturnType<typeof planNeoDoneCheck>,
-  live: boolean
-): { value: Refresh & { delivery: 'deliver' } } | { reason: 'quiet' } {
-  return live && plan === 'deliver'
-    ? { value: { ...refresh, delivery: plan } }
-    : { reason: 'quiet' };
 }
 
 type BranchRule = {

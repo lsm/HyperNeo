@@ -1,14 +1,8 @@
-import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
-import type { NeoAskTick } from './issue-checks.ts';
-
-export const CODING_CHECK_DEPLOYED = 'coding.deployed';
-const NEO_DEPLOY_READ_MS = 2 * 60_000;
-const lastRead = new Map<string, number>();
 
 export type NeoDaemonCommit = { daemon: string; commit: string | null };
 export type NeoDeployRead = {
@@ -16,54 +10,6 @@ export type NeoDeployRead = {
   daemons: (NeoDaemonCommit & { contains: string[] })[];
 };
 export type NeoDeployReader = (urls: readonly string[]) => Promise<NeoDeployRead>;
-export type NeoDeployPlan = { item: NeoAskItem; urls: string[] };
-
-export function isNeoDeployItem(item: NeoAskItem): boolean {
-  return item.check === CODING_CHECK_DEPLOYED && !item.removed && item.state !== 'met';
-}
-
-const prUrls = (urls: readonly string[]) => [
-  ...new Map(urls.filter((url) => parsePrUrl(url)).map((url) => [githubUrlKey(url), url])).values(),
-];
-
-export function planNeoDeployChecks(ask: NeoAsk, cardPrUrls: readonly string[]): NeoDeployPlan[] {
-  return (ask.doneItems ?? []).filter(isNeoDeployItem).map((item) => {
-    const watched = prUrls(item.watch ?? []);
-    return { item, urls: watched.length ? watched : prUrls(cardPrUrls) };
-  });
-}
-
-const short = (sha: string) => sha.slice(0, 10);
-
-export function judgeNeoDeployCheck(plan: NeoDeployPlan, read: NeoDeployRead): NeoAskTick | null {
-  if (!plan.urls.length || !read.daemons.length) return null;
-  const merges = plan.urls.map(
-    (url) => read.prs.find((pr) => githubUrlKey(pr.url) === githubUrlKey(url))?.mergeCommit ?? null
-  );
-  if (merges.some((sha) => !sha)) return null;
-  const running = read.daemons.every(
-    (daemon) => daemon.commit && merges.every((sha) => daemon.contains.includes(sha!))
-  );
-  if (!running) return null;
-  return {
-    id: plan.item.id,
-    evidence: `Deployed: ${plan.urls.map((url, index) => `${url} (${short(merges[index]!)})`).join(', ')} runs on ${read.daemons.map((daemon) => `${daemon.daemon} at ${short(daemon.commit!)}`).join(', ')}`,
-  };
-}
-
-export async function readNeoDeployTicks(
-  ask: NeoAsk,
-  cardPrUrls: readonly string[],
-  readDeploys: NeoDeployReader,
-  now: number
-): Promise<NeoAskTick[]> {
-  const plans = planNeoDeployChecks(ask, cardPrUrls).filter((plan) => plan.urls.length);
-  if (!plans.length || now - (lastRead.get(ask.id) ?? -Infinity) < NEO_DEPLOY_READ_MS) return [];
-  lastRead.set(ask.id, now);
-  const read = await readDeploys(prUrls(plans.flatMap((plan) => plan.urls)));
-  return plans.flatMap((plan) => judgeNeoDeployCheck(plan, read) ?? []);
-}
-
 const MergeSchema = z.object({
   state: z.string(),
   mergeCommit: z.object({ oid: z.string() }).nullable(),
