@@ -5,7 +5,6 @@ import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { requireNeoAskStalled } from '../../../../src/lib/neo/ask-stall.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -148,17 +147,5 @@ describe('NeoService.cardWaits', () => {
     } finally {
       db.close();
     }
-  });
-});
-
-describe('requireNeoAskStalled', () => {
-  test('an ask whose card waits on prerequisites is never reported as stalled', () => {
-    expect(
-      requireNeoAskStalled(
-        { status: 'open', updatedAt: 0 },
-        { cards: [{ id: 'b', title: 'b', status: 'proposed', updatedAt: 0 }], session: true },
-        10 * 60 * 60_000
-      )
-    ).toEqual({ reason: 'running' });
   });
 });

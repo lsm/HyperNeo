@@ -8,8 +8,6 @@ import { neoWorkingKey, readNeoWorking } from './working.ts';
 import {
   fillPrompt,
   NEO_ASK_EVIDENCE,
-  NEO_ASK_IDLE,
-  NEO_ASK_STALLED,
   NEO_SESSION_TRACK,
   NEO_WORK_PACK_NOTE,
   NEO_WORK_RETURNED,
@@ -105,12 +103,6 @@ import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-
 import { isNeoAskAnswerReady, planNeoAnswerPublished } from './answer-outcome.ts';
 import { planNeoAskEvidenceNote, requireNeoAskEvidenceDue } from './ask-evidence.ts';
 import {
-  type NeoAskIdleSeen,
-  neoAskIdleSignature,
-  requireNeoAskIdle,
-  trackNeoAskIdle,
-} from './ask-idle.ts';
-import {
   neoAskLiveOutcomeCards,
   planNeoAskTickStatus,
   planNeoAskWorkStops,
@@ -132,7 +124,6 @@ import {
   neoWorkReturnMessageId,
   nudgedMessageId,
 } from './ask-origin.ts';
-import { requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
 import { neoAskProgressNote } from './ask-progress.ts';
 import { planNeoCardCheck } from './card-check.ts';
 import {
@@ -145,7 +136,6 @@ import {
 import { planNeoDaemonCardSettle, requireNeoCardTurn } from './card-settle.ts';
 import type { NeoCardWait } from './card-views.ts';
 import {
-  isNeoCardAwaitingPr,
   isNeoCardDoneWhenMet,
   neoContinueFacts,
   isNeoHumanInputSince,
@@ -465,7 +455,6 @@ export class NeoService {
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
-  private askIdleSeen: NeoAskIdleSeen = new Map();
   private settledReports = new Map<string, number>();
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
@@ -2141,23 +2130,6 @@ export class NeoService {
       unprocessed
     );
     this.scheduleTriggerSweep();
-    for (const ask of this.askRecords.listLive()) {
-      await this.noteAskStall(ask, Date.now()).catch((error) =>
-        this.log.warn('Ask stall note pending', error)
-      );
-    }
-    const idleAsks = this.askRecords.listLive();
-    this.askIdleSeen = trackNeoAskIdle(
-      this.askIdleSeen,
-      idleAsks,
-      new Map(idleAsks.map((ask) => [ask.id, neoAskIdleSignature(ask, this.askIdleCards(ask))])),
-      Date.now()
-    );
-    for (const ask of idleAsks) {
-      await this.noteAskIdle(ask, Date.now()).catch((error) =>
-        this.log.warn('Ask idle note pending', error)
-      );
-    }
     this.pruneReadThrottles(Date.now());
     if (this.watching || this.disposed) return;
     this.watching = this.sessionWatcher
@@ -2230,118 +2202,6 @@ export class NeoService {
   followedCardRefs(_now: number): WorkRef[] {
     return this.packEvidenceWorkIds().flatMap((id) => this.todoSessions.readRef(id) ?? []);
   }
-
-  private readonly noteAskStall = (superpipe({})('neo-ask-stall-note') as PipelineAPI)
-    .input(['ask', 'now'])
-    .pipe(
-      (ask: NeoAsk) => ({
-        cards: ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
-        session: !!this.db.getSession(ask.originSessionId),
-        newer:
-          this.workSupersessions
-            .list(ask.workIds)
-            .flatMap((row) => this.askRecords.forWork(row.supersededBy) ?? [])
-            .find((other) => other.id !== ask.id)?.id ?? null,
-      }),
-      'ask',
-      'read'
-    )
-    .pipe(requireNeoAskStalled, ['ask', 'read', 'now'], 'result:stall')
-    .pipe(
-      (ask: NeoAsk, signature: string) => ({ id: neoAskEvidenceMessageId(ask.id, signature) }),
-      ['ask', 'stall'],
-      'note'
-    )
-    .pipe(
-      (ask: NeoAsk, note: { id: string }) =>
-        requireNeoAskStallUntold(this.hasDelivery(ask.originSessionId, note.id)),
-      ['ask', 'note'],
-      'result:stall'
-    )
-    .pipe(
-      async (
-        ask: NeoAsk,
-        read: { cards: NeoWork[]; newer: string | null },
-        note: { id: string }
-      ) => {
-        await this.deliverToOrigin(
-          ask.originSessionId,
-          note.id,
-          neoAskProgressNote(ask, NEO_ASK_STALLED, {
-            cards: read.cards.map(({ id, title, status }) => ({ id, title, status })),
-            ...(read.newer ? { replacedBy: read.newer } : {}),
-          }),
-          neoAskParent(ask)
-        );
-      },
-      ['ask', 'read', 'note']
-    )
-    .endAsync('stall') as (ask: NeoAsk, now: number) => Promise<unknown>;
-
-  private askIdleCards(ask: NeoAsk) {
-    return ask.workIds.flatMap((id) => {
-      const work = this.repo.getWork(id);
-      return work
-        ? [
-            {
-              id: work.id,
-              title: work.title,
-              status: work.status,
-              progress: `${this.workProgress(work)}:${this.workContinues.get(work.id)?.count ?? 0}`,
-              awaited: isNeoCardAwaitingPr(this.workPrs.get(work.id)?.prs ?? []),
-            },
-          ]
-        : [];
-    });
-  }
-
-  private readonly noteAskIdle = (superpipe({})('neo-ask-idle-note') as PipelineAPI)
-    .input(['ask', 'now'])
-    .pipe(
-      (ask: NeoAsk, now: number) => {
-        const cards = this.askIdleCards(ask);
-        const seen = this.askIdleSeen.get(ask.id);
-        return {
-          cards,
-          session: !!this.db.getSession(ask.originSessionId),
-          since: seen?.since ?? now,
-          signature: seen?.signature ?? neoAskIdleSignature(ask, cards),
-        };
-      },
-      ['ask', 'now'],
-      'read'
-    )
-    .pipe(requireNeoAskIdle, ['ask', 'read', 'now'], 'result:idle')
-    .pipe(
-      (ask: NeoAsk, signature: string) => ({ id: neoAskEvidenceMessageId(ask.id, signature) }),
-      ['ask', 'idle'],
-      'note'
-    )
-    .pipe(
-      (ask: NeoAsk, note: { id: string }) =>
-        requireNeoAskStallUntold(this.hasDelivery(ask.originSessionId, note.id)),
-      ['ask', 'note'],
-      'result:idle'
-    )
-    .pipe(
-      async (
-        ask: NeoAsk,
-        read: { cards: ReturnType<NeoService['askIdleCards']> },
-        note: { id: string }
-      ) => {
-        await this.wakeCards(
-          read.cards.map((card) => card.id),
-          ask.originSessionId,
-          note.id,
-          neoAskProgressNote(ask, NEO_ASK_IDLE, {
-            cards: read.cards.map(({ id, title, status }) => ({ id, title, status })),
-          }),
-          neoAskParent(ask)
-        );
-      },
-      ['ask', 'read', 'note']
-    )
-    .endAsync('idle') as (ask: NeoAsk, now: number) => Promise<unknown>;
 
   private readonly checkAskEvidence = (superpipe({})('neo-ask-evidence-check') as PipelineAPI)
     .input(['ask', 'now'])
