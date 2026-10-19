@@ -192,6 +192,24 @@ describe('neo.session.track', () => {
     expect(service.askRecords.list()).toEqual([]);
   });
 
+  test('every tap tells Neo its own ask, and closing the todo never stops the human session', async () => {
+    const told: string[] = [];
+    Object.assign(service, {
+      deliver: async (_root: string, messageId: string) => {
+        told.push(messageId);
+      },
+    });
+    await service.trackSession('neo:root', notice(), 1_000);
+    const [first] = service.todos.listOpenAsks();
+    const [todo] = service.todos.listTodos(first.id);
+    expect(await service.todoRunner.stop(todo)).toBeNull();
+    expect(stopped).not.toHaveBeenCalled();
+    service.todos.settleAsk(first, 'dropped', 'Not needed', 2_000);
+    await service.trackSession('neo:root', notice(), 3_000);
+    expect(told).toHaveLength(2);
+    expect(new Set(told).size).toBe(2);
+  });
+
   test('a restart mid-adoption finishes adopting instead of failing the card', async () => {
     const { work: card } = service.driverTargets.propose(
       service.repo,
