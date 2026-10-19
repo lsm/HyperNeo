@@ -335,6 +335,62 @@ describe('NeoService direct consultation return', () => {
     expect(handleInterrupt).toHaveBeenCalledExactlyOnceWith({ preserveDeliveryJobs: true });
   });
 
+  test('a human message preempts a running note turn that has no trigger', async () => {
+    const handleInterrupt = vi.fn(async () => {});
+    Object.assign(service.sessions, {
+      getSessionForControl: vi.fn(async () => ({ handleInterrupt })),
+    });
+    const note = 'returned-work-note';
+    prompt(root, note, 'system');
+    db.updateSession(root, {
+      processingState: JSON.stringify({
+        status: 'processing',
+        messageId: note,
+        phase: 'streaming',
+      }),
+    });
+    await service.preemptForHumanMessage(root);
+    expect(handleInterrupt).toHaveBeenCalledExactlyOnceWith({ preserveDeliveryJobs: true });
+  });
+
+  test('a note turn starting while a human message waits is preempted, and the human turn publishes under its own trigger', async () => {
+    const handleInterrupt = vi.fn(async () => {});
+    Object.assign(service.sessions, {
+      getSessionForControl: vi.fn(async () => ({ handleInterrupt })),
+    });
+    const note = 'returned-work-note';
+    const human = 'waiting-human';
+    prompt(root, note, 'system');
+    prompt(root, human, 'human');
+    db.getSDKMessageRepo().updateMessageStatus(
+      [db.getSDKMessageRepo().findMessageIdByUuid(root, human)!],
+      'enqueued'
+    );
+    const turn = {
+      status: 'processing' as const,
+      messageId: note,
+      phase: 'initializing' as const,
+    };
+    db.updateSession(root, { processingState: JSON.stringify(turn) });
+    await events.publish('session.updated', { sessionId: root, processingState: turn });
+    await events.publish('session.updated', {
+      sessionId: root,
+      processingState: { ...turn, phase: 'streaming' as const },
+    });
+    expect(handleInterrupt).toHaveBeenCalledExactlyOnceWith({ preserveDeliveryJobs: true });
+    const publish = (messageId: string, isHuman: boolean) =>
+      invokeOperation(
+        ops(),
+        'neo.publication.publish',
+        withMintedPublicationId(service, { ...interim, triggerId: `human:${human}` }),
+        rootCaller(messageId, isHuman)
+      );
+    expect(await publish(note, false)).toMatchObject({
+      value: { accepted: false, reason: 'wrong_trigger' },
+    });
+    expect(await publish(human, true)).toMatchObject({ value: { accepted: true } });
+  });
+
   test('a waiting human message ends a root turn whose trigger is already answered', async () => {
     const handleInterrupt = vi.fn(async () => {});
     Object.assign(service.sessions, {

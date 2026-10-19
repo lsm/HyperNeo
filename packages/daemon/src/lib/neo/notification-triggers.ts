@@ -291,7 +291,8 @@ export function requireNeoTriggerUnrecorded(
 export function shouldPreemptNeoTurn(
   processingState: string | undefined,
   trigger: (messageId: string) => string | null,
-  answered: (trigger: string) => boolean
+  answered: (trigger: string) => boolean,
+  isSystemInput: (messageId: string) => boolean = () => false
 ): boolean {
   let state: { status?: unknown; messageId?: unknown } | null = null;
   try {
@@ -301,7 +302,8 @@ export function shouldPreemptNeoTurn(
   }
   if (state?.status !== 'processing' || typeof state.messageId !== 'string') return false;
   const current = trigger(state.messageId);
-  return !!current && (!current.startsWith(NEO_HUMAN_TRIGGER_PREFIX) || answered(current));
+  if (!current) return isSystemInput(state.messageId);
+  return !current.startsWith(NEO_HUMAN_TRIGGER_PREFIX) || answered(current);
 }
 
 export function neoHumanTurnOrigin(

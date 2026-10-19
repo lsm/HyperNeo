@@ -1659,15 +1659,18 @@ export class SDKMessageRepository {
     }));
   }
 
-  listQueuedSystemInputs(sessionId: string): { uuid: string; seq: number }[] {
+  listQueuedInputs(
+    sessionId: string,
+    kind: 'system' | 'human' = 'system'
+  ): { uuid: string; seq: number }[] {
     return this.db
       .prepare(
         `SELECT sdk_uuid AS uuid, seq FROM sdk_messages
          WHERE session_id = ? AND send_status = 'enqueued' AND message_type = 'user'
-           AND sdk_uuid IS NOT NULL AND json_extract(sdk_message, '$.inputKind') = 'system'
+           AND sdk_uuid IS NOT NULL AND json_extract(sdk_message, '$.inputKind') = ?
          ORDER BY seq ASC`
       )
-      .all(sessionId) as { uuid: string; seq: number }[];
+      .all(sessionId, kind) as { uuid: string; seq: number }[];
   }
 
   lastConsumedInputSeq(sessionId: string): number | null {

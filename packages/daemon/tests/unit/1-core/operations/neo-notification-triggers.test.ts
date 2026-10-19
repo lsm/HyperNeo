@@ -123,6 +123,16 @@ describe('shouldPreemptNeoTurn', () => {
     expect(shouldPreemptNeoTurn(undefined, trigger, answered)).toBe(false);
     expect(shouldPreemptNeoTurn('not json', trigger, answered)).toBe(false);
   });
+
+  test('preempts a turn with no trigger only when its message is a daemon input', () => {
+    const daemonInput = (id: string) => id === 'system';
+    expect(
+      shouldPreemptNeoTurn(state('processing', 'system'), trigger, answered, daemonInput)
+    ).toBe(true);
+    expect(shouldPreemptNeoTurn(state('processing', 'fresh'), trigger, answered, daemonInput)).toBe(
+      false
+    );
+  });
 });
 
 describe('trigger keys of an ask', () => {

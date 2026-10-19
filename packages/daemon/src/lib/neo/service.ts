@@ -900,9 +900,18 @@ export class NeoService {
       'session.updated',
       async ({ sessionId, processingState, session }) => {
         const status = processingState?.status;
+        const previous = this.processingStatus.get(sessionId);
         if (status) this.processingStatus.set(sessionId, status);
         const bound = status || session?.status ? this.repo.getBindingBySession(sessionId) : null;
         if (bound && bound.kind !== 'worker') this.noteWorking();
+        if (
+          bound &&
+          bound.kind !== 'worker' &&
+          status === 'processing' &&
+          previous !== 'processing' &&
+          this.db.getSDKMessageRepo().listQueuedInputs(sessionId, 'human').length
+        )
+          await this.preemptForHumanMessage(sessionId);
         if (status !== 'idle') return;
         for (const item of this.consultations
           .unsettled()
@@ -1025,12 +1034,19 @@ export class NeoService {
   }
 
   private isHumanInput(input: NeoAskOrigin): boolean {
+    return this.hasInputKind(input, 'human');
+  }
+
+  private isSystemInput(input: NeoAskOrigin): boolean {
+    return this.hasInputKind(input, 'system');
+  }
+
+  private hasInputKind(input: NeoAskOrigin, kind: 'human' | 'system'): boolean {
     return this.db
       .getSDKMessageRepo()
       .getStoredPromptsByUuid(input.sessionId, input.messageId)
       .some(
-        (message) =>
-          message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
+        (message) => message.type === 'user' && 'inputKind' in message && message.inputKind === kind
       );
   }
 
@@ -3762,7 +3778,8 @@ export class NeoService {
       !shouldPreemptNeoTurn(
         this.db.getSession(sessionId)?.processingState,
         (messageId) => this.inputTrigger({ sessionId, messageId }),
-        (trigger) => !!this.publications.byTrigger(conversationId, trigger)
+        (trigger) => !!this.publications.byTrigger(conversationId, trigger),
+        (messageId) => this.isSystemInput({ sessionId, messageId })
       )
     )
       return;
