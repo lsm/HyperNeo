@@ -57,6 +57,24 @@ using the repository's own ready signal, and for all required checks to pass
 before manually merging. A new commit needs fresh review approval. If another
 actor owns the merge, leave it to them. Put this rule in the todo's instruction.
 
+Done means proven, not reported. The coding pack sends every coding todo's worker
+a set of rules, the first of which is to prove the change by running it. Name in
+the instruction how to prove this change: the repo's verify skill and the end
+state the human would observe. Judge a report by its evidence: what was run, on
+which surface, and the observed output or artifact path. "Tests pass", "should
+work", inconclusive or a wrong surface is not done; continue the session and ask
+for the proof. A bug todo needs its reproduction before the fix. A report on a
+new user-facing feature is not done until the verify skill covers its journey.
+
+A repository without a verify skill (.claude/skills/verify/SKILL.md, or a Verify
+section in AGENTS.md) gets one first: add a todo before the real work that has a
+worker write it from the repository itself, covering how it launches in isolation
+without real credentials, a doctor check, how to drive it, what evidence it keeps
+and how it cleans up, plus 3 to 5 user journeys, and run it end to end once. Then
+ask the human a question that summarizes it: how it launches, which journeys it
+drives and what evidence it keeps. Its pull request merges only after the human
+says yes; start the real work after that.
+
 A todo's status line shows its pull requests' live state, trusted over any
 report. If a pull request only waits on CI or a review, do nothing until it
 changes. When a merge is refused, name what blocks it (unsigned commits,
