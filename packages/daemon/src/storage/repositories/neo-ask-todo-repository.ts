@@ -128,21 +128,6 @@ export class NeoAskTodoRepository {
     );
   }
 
-  moveAsks(
-    from: { sessionId: string; messageIds: readonly string[] },
-    to: { sessionId: string; messageId: string; projectId: string | null },
-    now = Date.now()
-  ): void {
-    const moved = this.db
-      .prepare(
-        `UPDATE neo_asks SET session_id = ?, origin_message_id = ?, project_id = ?, updated_at = ?
-         WHERE session_id = ? AND status = 'open'
-           AND origin_message_id IN (${from.messageIds.map(() => '?').join(', ')})`
-      )
-      .run(to.sessionId, to.messageId, to.projectId, now, from.sessionId, ...from.messageIds);
-    if (moved.changes) this.changed();
-  }
-
   settleAsk(ask: NeoAsk, status: 'done' | 'dropped', outcome: string, now: number): NeoAsk {
     this.db
       .prepare(

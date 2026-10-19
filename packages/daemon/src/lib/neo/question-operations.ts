@@ -12,7 +12,7 @@ import type {
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { requireNeoAskOwner } from './todo-operations.ts';
+import { requireNeoOpenAsk } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -178,9 +178,8 @@ export function createNeoQuestionOperations(
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Ask>, caller: OperationCaller) =>
-        requireNeoAskOwner(store.getAsk(input.askId), caller),
-      ['input', 'caller'],
+      (input: z.infer<typeof Ask>) => requireNeoOpenAsk(store.getAsk(input.askId)),
+      'input',
       'result:outcome'
     )
     .pipe(
@@ -232,11 +231,11 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
-      (question: NeoQuestion, caller: OperationCaller): Gate<NeoQuestion> => {
-        const owned = requireNeoAskOwner(store.getAsk(question.askId), caller);
-        return 'reason' in owned ? owned : { value: question };
+      (question: NeoQuestion): Gate<NeoQuestion> => {
+        const open = requireNeoOpenAsk(store.getAsk(question.askId));
+        return 'reason' in open ? open : { value: question };
       },
-      ['outcome', 'caller'],
+      'outcome',
       'result:outcome'
     )
     .pipe(

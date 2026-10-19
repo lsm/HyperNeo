@@ -53,8 +53,6 @@ import {
   createNeoOperations,
   requireNeoExecutionChoice,
   requireNeoProposalAsk,
-  requireNeoWorkContinuation,
-  requireNeoWorkRetryCaller,
 } from '../../../../src/lib/neo/operations.ts';
 import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 import { neoCardPrFacts } from '../../../../src/lib/neo/packs/coding/card-facts.ts';
@@ -78,30 +76,6 @@ const sendTarget: NeoDriverTarget = {
   ref: { adapter: 'hyperneo', id: 's1' },
 };
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
-
-describe('requireNeoWorkRetryCaller', () => {
-  test('refuses another Neo session in words about retrying, not continuing', () => {
-    const work = { id: 'w1', originSessionId: 'neo:root' } as NeoWork;
-    const other = { source: 'mcp' as const, sessionId: 'neo:other' };
-    expect(requireNeoWorkRetryCaller(work, other)).toEqual({
-      reason: {
-        ok: false,
-        reason:
-          'Only the Neo session that proposed this work, Neo answering the human’s own chat message, or the user can retry it.',
-      },
-    });
-    expect(requireNeoWorkContinuation(work, other)).toEqual({
-      reason: {
-        ok: false,
-        reason:
-          'Only the Neo session that proposed this work, Neo answering the human’s own chat message, or the user can continue it.',
-      },
-    });
-    expect(requireNeoWorkRetryCaller(work, { source: 'mcp', sessionId: 'neo:root' })).toEqual({
-      value: work,
-    });
-  });
-});
 
 describe('requireNeoWorkRetryable', () => {
   test.each<

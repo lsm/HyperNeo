@@ -99,12 +99,8 @@ describe('neo.todo operations', () => {
       expect(add.inputSchema.safeParse({ ...input, target: { verb, ref } }).success).toBe(false);
   });
 
-  test('only the owning Neo session changes an open ask', async () => {
+  test('changes only an open ask', async () => {
     const { db, call } = setup();
-    expect(await call('neo.todo.add', { askId: 'ask', title: 'x', doneWhen: 'y' }, other)).toEqual({
-      ok: false,
-      reason: 'not_owner: another Neo session owns this ask.',
-    });
     db.exec("UPDATE neo_asks SET status = 'done'");
     expect(await call('neo.todo.add', { askId: 'ask', title: 'x', doneWhen: 'y' })).toEqual({
       ok: false,

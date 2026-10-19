@@ -10,7 +10,7 @@ import {
   addNeoTodo,
   type NeoTodoControls,
   NeoTodoDraftSchema,
-  requireNeoAskOwner,
+  requireNeoOpenAsk,
 } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
 
@@ -55,13 +55,10 @@ export function requireNeoAskSession(
 
 export function requireNeoAskProject(
   input: { projectId?: string | null },
-  sessionId: string,
-  projectOf: (sessionId: string) => string | null,
   resolveProject: (projectId: string) => string | null,
   knownProjects: () => readonly { id: string; title: string }[] = () => []
 ): Gate<string | null> {
-  if (input.projectId === undefined) return { value: projectOf(sessionId) };
-  if (input.projectId === null) return { value: null };
+  if (!input.projectId) return { value: null };
   const projectId = resolveProject(input.projectId);
   if (projectId) return { value: projectId };
   const known = knownProjects()
@@ -77,7 +74,6 @@ export function createNeoAskRecordOperations(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
   controls: NeoTodoControls,
-  projectOf: (sessionId: string) => string | null,
   resolveProject: (projectId: string) => string | null,
   isNeoSession: (sessionId: string) => boolean,
   knownProjects: () => readonly { id: string; title: string }[]
@@ -91,13 +87,7 @@ export function createNeoAskRecordOperations(
     )
     .pipe(
       (sessionId: string, input: z.infer<typeof Open>) => {
-        const project = requireNeoAskProject(
-          input,
-          sessionId,
-          projectOf,
-          resolveProject,
-          knownProjects
-        );
+        const project = requireNeoAskProject(input, resolveProject, knownProjects);
         return 'value' in project ? { value: { sessionId, projectId: project.value } } : project;
       },
       ['outcome', 'input'],
@@ -144,9 +134,8 @@ export function createNeoAskRecordOperations(
   const settle = (superpipe({})('neo.ask.settle') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Settle>, caller: OperationCaller) =>
-        requireNeoAskOwner(store.getAsk(input.askId), caller),
-      ['input', 'caller'],
+      (input: z.infer<typeof Settle>) => requireNeoOpenAsk(store.getAsk(input.askId)),
+      'input',
       'result:outcome'
     )
     .pipe(
@@ -193,7 +182,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        'End an ask you own: done when its todos are done, dropped when the human drops it. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
+        'End an ask: done when its todos are done, dropped when the human drops it. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

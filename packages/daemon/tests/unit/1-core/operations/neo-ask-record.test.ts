@@ -55,7 +55,6 @@ function setup() {
           return stopFails.value ? 'stop_failed: offline' : null;
         },
       },
-      () => 'project-1',
       (projectId) => (projectId === 'project-1' ? projectId : null),
       (sessionId) => sessionId === 'neo-a',
       () => [{ id: 'project-1', title: 'P' }]
@@ -88,7 +87,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     const first = await call('neo.ask.open', opening, turn('m1'));
     if (!first.ok) throw new Error(first.reason);
     expect(first.ask).toMatchObject({
-      projectId: 'project-1',
+      projectId: null,
       sessionId: 'neo-a',
       originMessageId: 'm1',
       status: 'open',
@@ -205,43 +204,19 @@ describe('neo.ask.open and neo.ask.settle', () => {
 });
 
 describe('requireNeoAskProject', () => {
-  test('lets a project session open an ask in another project or none', () => {
-    const resolve = (id: string) => id;
-    expect(requireNeoAskProject({ projectId: 'other' }, 's', () => 'held', resolve)).toEqual({
-      value: 'other',
-    });
-    expect(requireNeoAskProject({ projectId: null }, 's', () => 'held', resolve)).toEqual({
-      value: null,
-    });
-    expect(requireNeoAskProject({ projectId: 'held' }, 's', () => 'held', resolve)).toEqual({
-      value: 'held',
-    });
-  });
-
-  test('uses the session project, keeps an explicit null and refuses an unknown id', () => {
-    const projectOf = () => null;
+  test('keeps no project by default and refuses an unknown id', () => {
     const resolve = (id: string) => (id === 'old' ? 'kept' : null);
-    expect(requireNeoAskProject({}, 's', () => 'bound', resolve)).toEqual({ value: 'bound' });
-    expect(requireNeoAskProject({ projectId: null }, 's', projectOf, resolve)).toEqual({
-      value: null,
-    });
-    expect(requireNeoAskProject({ projectId: 'old' }, 's', projectOf, resolve)).toEqual({
-      value: 'kept',
-    });
-    expect(requireNeoAskProject({ projectId: 'nope' }, 's', projectOf, resolve)).toEqual({
+    expect(requireNeoAskProject({}, resolve)).toEqual({ value: null });
+    expect(requireNeoAskProject({ projectId: null }, resolve)).toEqual({ value: null });
+    expect(requireNeoAskProject({ projectId: 'old' }, resolve)).toEqual({ value: 'kept' });
+    expect(requireNeoAskProject({ projectId: 'nope' }, resolve)).toEqual({
       reason: { ok: false, reason: 'unknown_project: no project nope.' },
     });
   });
 
   test('caps the listed projects at 50', () => {
     const known = () => Array.from({ length: 60 }, (_, i) => ({ id: `p${i}`, title: `T${i}` }));
-    const refused = requireNeoAskProject(
-      { projectId: 'x' },
-      's',
-      () => null,
-      () => null,
-      known
-    );
+    const refused = requireNeoAskProject({ projectId: 'x' }, () => null, known);
     const reason = 'reason' in refused ? refused.reason.reason : '';
     expect(reason).toContain('p49 (T49)');
     expect(reason).not.toContain('p50 (T50)');
@@ -252,15 +227,7 @@ describe('requireNeoAskProject', () => {
       { id: 'project:a', title: 'Alpha' },
       { id: 'b', title: 'Beta' },
     ];
-    expect(
-      requireNeoAskProject(
-        { projectId: 'nope' },
-        's',
-        () => null,
-        () => null,
-        known
-      )
-    ).toEqual({
+    expect(requireNeoAskProject({ projectId: 'nope' }, () => null, known)).toEqual({
       reason: {
         ok: false,
         reason: 'unknown_project: no project nope. Projects: project:a (Alpha); b (Beta).',
@@ -278,29 +245,5 @@ describe('requireNeoAskSession', () => {
     expect(requireNeoAskSession({ source: 'mcp', sessionId: 'worker-1' }, () => false)).toEqual(
       refused
     );
-  });
-});
-
-describe('NeoAskTodoRepository.moveAsks', () => {
-  test('hands the open ask of a forwarded message to its receiver, which then reuses it', async () => {
-    const { call, store } = setup();
-    const opened = await call(
-      'neo.ask.open',
-      { ...opening, todos: [] },
-      turn('restart-recovery:m1')
-    );
-    if (!opened.ok) throw new Error(opened.reason);
-    expect(opened.ask.originMessageId).toBe('m1');
-    store.moveAsks(
-      { sessionId: 'neo-a', messageIds: ['m1'] },
-      { sessionId: 'neo-b', messageId: 'neo-forward:m1:0', projectId: null }
-    );
-    expect(store.findAsk('neo-a', 'm1', opening.title)).toBeNull();
-    expect(store.findAsk('neo-b', 'neo-forward:m1:0', opening.title)).toMatchObject({
-      id: opened.ask.id,
-      sessionId: 'neo-b',
-      projectId: null,
-    });
-    expect(store.listAsks(undefined, 10)).toHaveLength(1);
   });
 });

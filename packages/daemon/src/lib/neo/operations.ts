@@ -406,38 +406,6 @@ export function isNeoWorkMissingHere(outcome: OperationOutcome | null): boolean 
   return value?.ok === false && value.reason === 'not_found';
 }
 
-function requireNeoWorkProposer(
-  work: NeoWork,
-  caller: OperationCaller,
-  verb: 'continue' | 'retry' | 'record a refusal on',
-  humanTurn: boolean
-): { value: NeoWork } | { reason: Rejection } {
-  if (caller.source === 'mcp' && caller.sessionId !== work.originSessionId && !humanTurn)
-    return {
-      reason: {
-        ok: false,
-        reason: `Only the Neo session that proposed this work, Neo answering the human’s own chat message, or the user can ${verb} it.`,
-      },
-    };
-  return { value: work };
-}
-
-export function requireNeoWorkContinuation(
-  work: NeoWork,
-  caller: OperationCaller,
-  humanTurn = false
-) {
-  return requireNeoWorkProposer(work, caller, 'continue', humanTurn);
-}
-
-export function requireNeoWorkRetryCaller(
-  work: NeoWork,
-  caller: OperationCaller,
-  humanTurn = false
-) {
-  return requireNeoWorkProposer(work, caller, 'retry', humanTurn);
-}
-
 export function isNeoTurnAskReadable(
   binding: { kind: string; projectId: string | null } | null,
   ask: Pick<NeoAsk, 'projectId'>
@@ -1146,7 +1114,6 @@ export function createNeoOperations(service: NeoService) {
       service.todos,
       service.todoSessions,
       todoControls,
-      (sessionId) => service.repo.getBindingBySession(sessionId)?.projectId ?? null,
       (projectId) => service.repo.resolveProjectRef(projectId),
       (sessionId) => {
         const binding = service.repo.getBindingBySession(sessionId);
