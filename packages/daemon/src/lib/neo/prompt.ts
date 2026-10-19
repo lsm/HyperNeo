@@ -2,7 +2,6 @@ import {
   fillPrompt,
   NEO_CAPABILITIES_BRIEFING,
   NEO_DONE_CHECK_STEPS,
-  NEO_HOLDER_CONSULTATION_RETURN,
   NEO_LOOK_UP,
   NEO_HOLDER_OPERATIONS,
   NEO_HOLDER_ROLE,
@@ -41,7 +40,6 @@ export function neoPrompt(
     packs: neoPackBriefing(packs),
     done_check_steps: NEO_DONE_CHECK_STEPS,
     operations: NEO_HOLDER_OPERATIONS,
-    consultation_return: NEO_HOLDER_CONSULTATION_RETURN,
     speaking_policy: NEO_SPEAKING_POLICY,
     look_up: NEO_LOOK_UP,
   });

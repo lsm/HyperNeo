@@ -17,7 +17,6 @@ export function hasNeoHumanWorkInput(
   return (
     caller.source === 'mcp' &&
     !!caller.neoTurn?.human &&
-    !caller.neoTurn.consultationId &&
     prompts.some((message) => message.type === 'user' && message.inputKind === 'human')
   );
 }

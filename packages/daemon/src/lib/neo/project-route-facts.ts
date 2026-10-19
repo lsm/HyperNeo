@@ -48,7 +48,7 @@ export function readNeoProjectFacts(db: Database, text: string): NeoProjectFact[
   for (let start = 0; start < ids.length; start += 256) {
     const batch = ids.slice(start, start + 256);
     const placeholders = batch.map(() => '?').join(',');
-    for (const table of ['legacy_neo_asks', 'neo_work', 'neo_consultations', 'neo_concerns'])
+    for (const table of ['legacy_neo_asks', 'neo_work', 'neo_concerns'])
       facts.push(
         ...(db
           .prepare(`SELECT id AS reference, ${table === 'neo_concerns' ? 'id' : 'concern_id'} AS projectId

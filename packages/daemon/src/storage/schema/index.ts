@@ -1,6 +1,5 @@
 import { runMigration386 } from './m386-neo-work-control-failures.ts';
 import { runMigration388 } from './m388-claude-desktop-bridge-events.ts';
-import { runMigration365 } from './m365-neo-cross-project-dispatch.ts';
 import { runMigration361 } from './m361-neo-project-avatars.ts';
 import { runMigration260 } from './m260-direct-start-requests.ts';
 import { runMigration363 } from './m363-neo-work-refusals.ts';
@@ -23,7 +22,6 @@ import { createNeoTables } from './neo.ts';
 import { createNeoWorkResourceTable } from './m287-neo-work-resources.ts';
 import { createNeoPublicationTable } from './m288-neo-publications.ts';
 import { createNeoConversationAskTable } from './m289-neo-conversation-asks.ts';
-import { createNeoConsultationPublicationTable } from './m291-neo-consultation-publications.ts';
 import { createSessionIncarnationTable } from './m290-session-incarnations.ts';
 import { createSpaceAgentTemplatesTable } from './space-agent-templates.ts';
 import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions.ts';
@@ -132,7 +130,6 @@ export function createTables(db: BunDatabase): void {
   createNeoWorkResourceTable(db);
   createNeoPublicationTable(db);
   createNeoConversationAskTable(db);
-  createNeoConsultationPublicationTable(db);
   db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -1122,5 +1119,4 @@ function createIndexes(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
 		 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
   );
-  runMigration365(db);
 }

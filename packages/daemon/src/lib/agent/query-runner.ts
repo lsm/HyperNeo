@@ -35,7 +35,6 @@ import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts'
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
-import { NeoHolderTurn } from '../neo/holder-turn.ts';
 import { NeoCoordinatorTurn } from '../neo/coordinator-turn.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { stampNeoResponseInput } from '../neo/response-input.ts';
@@ -871,8 +870,7 @@ export class QueryRunner {
       const coordinator = neoCoordinatorBinding(this.ctx.db, session.id);
       if (coordinator) {
         if (!this.ctx.createNeoTurnMcpServer) throw new Error('Neo turn isolation unavailable.');
-        const Turn = coordinator.kind === 'neo' ? NeoCoordinatorTurn : NeoHolderTurn;
-        holderTurn = new Turn(this.ctx.db, session.id, {
+        holderTurn = new NeoCoordinatorTurn(this.ctx.db, session.id, {
           yield: () => runAbortController?.abort(),
           isLive: () =>
             attemptToken.isLive() &&
