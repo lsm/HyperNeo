@@ -434,6 +434,8 @@ export class QueryRunner {
 
   private redeliveredFedPrompts: string[] = [];
 
+  private readonly requestedInputs = new Set<string>();
+
   private turnEndedState(queryGeneration: number): { turnEnded: boolean; hasFedPrompt: boolean } {
     if (this.turnEndedGeneration !== queryGeneration)
       return { turnEnded: false, hasFedPrompt: false };
@@ -733,6 +735,7 @@ export class QueryRunner {
     let isAbortError = false;
     this.turnEndedGeneration = null;
     this.fedAfterTurnEnd = [];
+    this.requestedInputs.clear();
 
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
     const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;
@@ -1379,6 +1382,7 @@ export class QueryRunner {
             }
           }
 
+          if (holderTurn) this.noteRequestedInputs(message);
           if (holderTurn && (message.type === 'assistant' || message.type === 'result'))
             message = stampNeoResponseInput(
               message,
@@ -2280,7 +2284,15 @@ export class QueryRunner {
       onSent();
     }
     await turn.ended;
-    for (const uuid of fed) if (!turn.answered(uuid)) this.ctx.requeueNeoInput?.(uuid);
+    for (const uuid of fed) if (!this.requestedInputs.has(uuid)) this.ctx.requeueNeoInput?.(uuid);
+  }
+
+  noteRequestedInputs(message: SDKMessage): void {
+    if (message.type !== 'result' && (message.type !== 'system' || message.subtype !== 'status'))
+      return;
+    const uuids = (message as { user_message_uuids?: unknown }).user_message_uuids;
+    if (Array.isArray(uuids))
+      for (const uuid of uuids) if (typeof uuid === 'string') this.requestedInputs.add(uuid);
   }
 
   async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {

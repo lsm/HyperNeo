@@ -305,6 +305,7 @@ export function createCodingPack(
         now,
         ledgerSkips
       ),
+    snapshotRows: (repos, now) => deps.prLedger.snapshot(repos, now),
     prerequisiteParameters: (items) =>
       readCodingPrerequisiteBase(items, {
         readRefStates: deps.readRefStates,

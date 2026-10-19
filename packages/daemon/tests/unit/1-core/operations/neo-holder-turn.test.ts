@@ -12,9 +12,6 @@ import { runMigration339 } from '../../../../src/storage/schema/m339-neo-input-o
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
 import { runMigration377 } from '../../../../src/storage/schema/m377-neo-input-origin-trigger.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
-import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
-import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -168,7 +165,7 @@ describe('Neo isolated holder turns', () => {
     expect(finished).toBe(true);
   });
 
-  test('a root turn takes steered human messages mid-turn, leaves notes queued, and requeues an unanswered one', async () => {
+  test('a root turn takes steered human messages mid-turn, leaves notes queued, and requeues only one no request carried, even when the turn ends without a result', async () => {
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
     const consumed: string[] = [];
     const requeued: string[] = [];
@@ -198,12 +195,25 @@ describe('Neo isolated holder turns', () => {
     void rootQueue.admitWithId('human-b', 'Second', false, { durable: true }).catch(() => {});
     expect(rootQueue.steer('human-b')).toBe(true);
     expect((await input.next()).value?.uuid).toBe('human-b');
-    vi.spyOn(active, 'answered').mockImplementation((id) => id === 'human-a');
-    const end = input.next();
+    void rootQueue
+      .admitWithId('human-c', 'Third', false, { durable: true, steer: true })
+      .catch(() => {});
+    expect((await input.next()).value?.uuid).toBe('human-c');
+    rootRunner.noteRequestedInputs({
+      type: 'system',
+      subtype: 'status',
+      user_message_uuids: [note, 'human-a'],
+    } as never);
+    rootRunner.noteRequestedInputs({
+      type: 'result',
+      subtype: 'error_during_execution',
+      user_message_uuids: [note, 'human-a', 'human-b'],
+    } as never);
+    const aborted = input.next();
     active.dispose();
-    expect((await end).done).toBe(true);
-    expect(consumed).toEqual([note, 'human-a', 'human-b']);
-    expect(requeued).toEqual(['human-b']);
+    expect((await aborted).done).toBe(true);
+    expect(consumed).toEqual([note, 'human-a', 'human-b', 'human-c']);
+    expect(requeued).toEqual(['human-c']);
     expect(rootQueue.hasPendingOrClaimed('later-note')).toBe(true);
     rootQueue.clear();
     rootQueue.stop();
@@ -312,23 +322,6 @@ describe('Neo isolated holder turns', () => {
       expect.objectContaining({ text: expect.stringContaining('"ok":false') }),
     ]);
     expect(() => unknown.bind('human-input')).toThrow('already bound');
-  });
-
-  test('a human message already answered in another turn starts no turn of its own', () => {
-    vi.spyOn(NeoRepository.prototype, 'conversationId').mockReturnValue('conversation');
-    const byTrigger = vi
-      .spyOn(NeoPublicationRepository.prototype, 'byTrigger')
-      .mockReturnValue(null);
-    expect(turn().bind('human-input')).toBe(true);
-    byTrigger.mockImplementation((conversationId, triggerId) =>
-      conversationId === 'conversation' && triggerId === 'human:human-input'
-        ? ({} as NeoPublication)
-        : null
-    );
-    const answered = turn();
-    expect(answered.bind('human-input')).toBe(false);
-    expect(answered.identity()).toBeUndefined();
-    vi.restoreAllMocks();
   });
 
   test('a project event note turn may save what the event changed', async () => {

@@ -51,13 +51,15 @@ describe('root Neo system prompt', () => {
       snapshot: false,
     });
     expect(neoPrompt(null, [])).toBe(NEO_ROOT_PROMPT);
-    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(130);
+    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(160);
     for (const fact of [
       'work.find',
       'work.send',
       'neo.publication.publish',
       'neo.question.ask',
       'neo.rule.save',
+      'plain assistant text is discarded and never shown to the human',
+      'After your last tool call, end the turn with no text.',
     ])
       expect(NEO_ROOT_PROMPT).toContain(fact);
   });

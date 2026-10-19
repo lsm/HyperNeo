@@ -51,6 +51,45 @@ function planPreparation(request: Request): Gate<Plan> {
   };
 }
 
+const VERIFY_SKILL = /^\.claude\/skills\/verify[^/]*\/SKILL\.md$/m;
+const VERIFY_SECTION = /^ {0,3}#{1,6}[ \t]+Verify\b/m;
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+function withoutFencedCode(markdown: string): string {
+  let open: string | null = null;
+  return markdown
+    .split(/\r\n?|\n/)
+    .filter((line) => {
+      const fence = FENCE.exec(line);
+      if (open === null) {
+        if (!fence || (fence[1][0] === '`' && fence[2].includes('`'))) return true;
+        open = fence[1];
+        return false;
+      }
+      if (fence && fence[1][0] === open[0] && fence[1].length >= open.length && !fence[2].trim())
+        open = null;
+      return false;
+    })
+    .join('\n');
+}
+
+export function requireVerifySkill(
+  mode: unknown,
+  listed: CommandResult,
+  agents: CommandResult | null
+): Gate<true> {
+  if (mode === 'create') return { value: true };
+  if (listed.code !== 0) return refuse(`verify_skill_unreadable: ${listed.stderr.trim()}`);
+  if (
+    VERIFY_SKILL.test(listed.stdout) ||
+    (agents?.code === 0 && VERIFY_SECTION.test(withoutFencedCode(agents.stdout)))
+  )
+    return { value: true };
+  return refuse(
+    'verify_skill_missing: this repository has no verify skill (.claude/skills/verify/SKILL.md or a Verify section in AGENTS.md). Add a todo before this one whose worker writes it and runs it end to end once, start that todo with target.preparationParameters.verifySkill "create", and ask the human to approve it before its pull request merges; then retry this todo.'
+  );
+}
+
 function requireCommand(result: CommandResult, phase: string): Gate<CommandResult> {
   return result.code === 0 ? { value: result } : refuse(`${phase}: ${result.stderr.trim()}`);
 }
@@ -134,6 +173,29 @@ export const prepareCodingExecution = (superpipe({})('neo-coding-prepare-executi
       return { value: commit };
     },
     ['plan', 'commit', 'effects'],
+    'result:prepared'
+  )
+  .pipe(
+    async (plan: Plan, commit: string, effects: Effects) =>
+      effects.run(
+        ['git', 'ls-tree', '-r', '--name-only', commit, '--', '.claude/skills', 'AGENTS.md'],
+        plan.directory
+      ),
+    ['plan', 'commit', 'effects'],
+    'listed'
+  )
+  .pipe(
+    async (plan: Plan, commit: string, listed: CommandResult, effects: Effects) =>
+      /^AGENTS\.md$/m.test(listed.stdout)
+        ? effects.run(['git', 'show', `${commit}:AGENTS.md`], plan.directory)
+        : null,
+    ['plan', 'commit', 'listed', 'effects'],
+    'agents'
+  )
+  .pipe(
+    (request: Request, listed: CommandResult, agents: CommandResult | null) =>
+      requireVerifySkill(request.parameters.verifySkill, listed, agents),
+    ['request', 'listed', 'agents'],
     'result:prepared'
   )
   .pipe(

@@ -66,6 +66,10 @@ export interface NeoPack extends NeoPackBrief {
     links: readonly { ref: WorkRef; urls: readonly string[] }[],
     now: number
   ): void;
+  snapshotRows?(
+    repos: readonly string[] | null,
+    now: number
+  ): Record<string, string | number | null>[];
   workerRules?: string;
   prepareExecution?: NeoExecutionPreparation;
   prerequisiteParameters?(

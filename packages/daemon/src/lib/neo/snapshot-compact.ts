@@ -364,6 +364,17 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
   if (!focused)
     for (let count = fitted.todoAsks?.length ?? 0; size(fitted) > room && count > 1; )
       fitted = { ...fitted, todoAsks: fitted.todoAsks?.slice(0, (count = Math.floor(count / 2))) };
+  for (
+    let count = Math.max(0, ...(fitted.packRows ?? []).map((item) => item.rows.length));
+    size(fitted) > room && count > 1;
+  ) {
+    count = Math.floor(count / 2);
+    const keep = count;
+    fitted = {
+      ...fitted,
+      packRows: fitted.packRows?.map((item) => ({ ...item, rows: item.rows.slice(0, keep) })),
+    };
+  }
   if (size(fitted) > room) fitted = withTodoText(withBareText(fitted), 0);
   if (size(fitted) <= room)
     return {
