@@ -1975,6 +1975,19 @@ export class SDKMessageRepository {
     return null;
   }
 
+  lastHumanPromptAt(sessionId: string): number | null {
+    const row = this.db
+      .prepare(
+        `SELECT timestamp FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user'
+            AND json_extract(sdk_message, '$.inputKind') = 'human'
+          ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+      )
+      .get(sessionId) as { timestamp: string } | undefined;
+    const at = row ? Date.parse(row.timestamp) : Number.NaN;
+    return Number.isFinite(at) ? at : null;
+  }
+
   getUserMessageContentByUuid(sessionId: string, uuid: string): string | MessageContent[] | null {
     const row = this.db
       .prepare(

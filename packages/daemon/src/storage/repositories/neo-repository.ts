@@ -57,7 +57,6 @@ export class NeoRepository {
             AND a.status IN ('open', 'waiting', 'blocked')) AS liveAsks,
           (SELECT count(*) FROM neo_work w WHERE w.concern_id = c.id
             AND w.status IN ('proposed', 'queued')) AS liveWork,
-          (SELECT count(*) FROM neo_routing_log r WHERE r.concern_id = c.id) AS routed,
           (SELECT count(*) FROM neo_session_bindings b JOIN sdk_messages m ON m.session_id = b.session_id
             WHERE b.kind = 'project' AND b.concern_id = c.id) AS holderMessages,
           EXISTS (SELECT 1 FROM neo_session_bindings b JOIN sessions s ON s.id = b.session_id
@@ -95,7 +94,6 @@ export class NeoRepository {
           AND NOT EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)
           AND NOT EXISTS (SELECT 1 FROM legacy_neo_asks a WHERE a.concern_id = c.id)
           AND NOT EXISTS (SELECT 1 FROM neo_work w WHERE w.concern_id = c.id)
-          AND NOT EXISTS (SELECT 1 FROM neo_routing_log r WHERE r.concern_id = c.id)
           AND NOT EXISTS (SELECT 1 FROM neo_session_bindings b JOIN sdk_messages m
             ON m.session_id = b.session_id WHERE b.kind = 'project' AND b.concern_id = c.id)`)
         .get(projectId);
@@ -158,10 +156,6 @@ export class NeoRepository {
           WHERE b.kind = 'project' AND s.created_at > ?`,
         new Date(since).toISOString()
       ),
-      routing: this.db
-        .prepare(`SELECT signal, count(*) AS count FROM neo_routing_log WHERE asked_at > ?
-          GROUP BY signal ORDER BY count DESC`)
-        .all(since) as NeoHealthFacts['routing'],
       refusals: this.db
         .prepare(`SELECT what, count(*) AS count FROM neo_work_refusals WHERE at > ?
           GROUP BY what ORDER BY count DESC`)

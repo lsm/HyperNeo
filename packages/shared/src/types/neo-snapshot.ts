@@ -350,12 +350,6 @@ export interface NeoSessionNoticeGroup {
   notices: NeoSessionNotice[];
 }
 
-export interface NeoRouteFailure {
-  at: number;
-  signal: string;
-  cause: string;
-}
-
 export interface NeoWaitingOnHuman {
   note: string;
   asks: { id: string; title: string; status: NeoAskStatus; question: string }[];
@@ -404,7 +398,6 @@ export interface NeoSnapshot {
   askViews: NeoAskView[];
   todoAsks?: NeoAskEntry[];
   waitingOnHuman?: NeoWaitingOnHuman;
-  routeFailure?: NeoRouteFailure;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
   trimmed?: string;
 }

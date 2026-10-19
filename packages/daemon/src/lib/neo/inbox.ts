@@ -1,5 +1,4 @@
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import { neoExcerpt } from '../../storage/repositories/neo-routing-log-repository.ts';
 
 export const NEO_INBOX_ID = 'inbox';
 const NEO_INBOX_SUMMARY = 'Self-contained one-off questions that need no continuing project.';
@@ -30,6 +29,13 @@ export function neoNewProject(
         : `${line.slice(0, NEW_PROJECT_TITLE_CHARS - 1).trimEnd()}…`,
     summary: neoExcerpt(target.trim(), PROJECT_SUMMARY_CHARS),
   };
+}
+
+function neoExcerpt(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (flat.length <= max) return flat;
+  const head = Math.ceil((max - 1) / 2);
+  return `${flat.slice(0, head)}…${flat.slice(flat.length - (max - 1 - head))}`;
 }
 
 export async function openNeoNewProject(

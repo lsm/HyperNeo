@@ -180,7 +180,6 @@ describe('durable Neo intake operation', () => {
   });
   test('a retry whose routing log was lost stays the same root ask', async () => {
     expect(await invoke()).toMatchObject({ value: { ok: true, created: true } });
-    mailbox.db.exec('DELETE FROM neo_routing_log');
     expect(await invoke()).toMatchObject({ value: { ok: true, created: false } });
     expect(mailbox.sdkRows().map((row) => row.session_id)).toEqual([input.sessionId]);
   });

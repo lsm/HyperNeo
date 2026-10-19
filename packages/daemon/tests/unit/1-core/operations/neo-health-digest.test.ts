@@ -15,10 +15,6 @@ describe('neoHealthDigest', () => {
         projectsMerged: 1,
         holders: 5,
         holdersOpened: 2,
-        routing: [
-          { signal: 'classifier-failed', count: 31 },
-          { signal: 'facts', count: 7 },
-        ],
         refusals: [],
         doorRefusals: [{ operation: 'neo.ask.open', reason: 'invalid_input', count: 3 }],
         repeatedReplies: [{ trigger: 'neo-turn-limit:r1', count: 4 }],
@@ -45,7 +41,6 @@ describe('neoHealthDigest', () => {
       'Cleanup done tonight: drop P (p).',
       'Cleanup failed tonight: x: busy.',
       'Merges asked of the human, not applied: merge Q (q) into r.',
-      'Routing by signal: classifier-failed 31, facts 7.',
       'Card refusals by what was refused: none.',
       'Operation refusals at the agent door by operation and reason: neo.ask.open invalid_input 3.',
       'Triggers that got more than one message: neo-turn-limit:r1 4.',
@@ -62,17 +57,12 @@ describe('NeoRepository.healthFacts', () => {
   });
   afterEach(() => db.close());
 
-  test('counts projects, merges and routing since a time', () => {
+  test('counts projects and merges since a time', () => {
     const repo = new NeoRepository(db.getDatabase());
     repo.saveProject({ id: 'p', title: 'P', summary: '', context: '' }, 0);
-    db.getDatabase()
-      .prepare(`INSERT INTO neo_routing_log (message_id, conversation_id, asked_at, ask, destination, signal)
-        VALUES ('m1', 'c', ?, 'hi', 'main', 'classifier-failed'), ('m2', 'c', ?, 'hi', 'main', 'facts')`)
-      .run(since + 1, since - 1);
     expect(repo.healthFacts(since)).toMatchObject({
       projectsMerged: 0,
       holders: 0,
-      routing: [{ signal: 'classifier-failed', count: 1 }],
       refusals: [],
       liveAsks: [],
       unreadRepos: [],

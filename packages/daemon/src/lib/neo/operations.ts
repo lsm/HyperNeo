@@ -46,7 +46,6 @@ import type {
   NeoConsultationWaiter,
   NeoWork,
 } from '@hyperneo/shared/types/neo-context';
-import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import {
   type NeoAsk,
   type NeoReceiptAskOrigin,
@@ -63,10 +62,6 @@ import {
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { isNeoProjectEventTurn } from './card-events.ts';
 import { createNeoIntakeOperation } from './intake.ts';
-import {
-  createNeoRouteFailureOperation,
-  NeoRouteFailureSchema,
-} from './route-failure-operation.ts';
 import { createNeoAskForwardOperation, neoForwardHop } from './ask-forward-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import {
@@ -333,7 +328,6 @@ const SnapshotOk = z.object({
       ),
     } satisfies ZodShape<NeoWaitingOnHuman>)
     .optional(),
-  routeFailure: NeoRouteFailureSchema.optional(),
   preferences: z
     .object({
       model: z.string(),
@@ -1000,8 +994,6 @@ export function createNeoOperations(service: NeoService) {
               binding ? [{ sessionId: binding.sessionId, projectId: binding.projectId }] : []
             ),
             projectRedirects: service.repo.projectMerges.redirects(),
-            routeFailure:
-              new NeoRoutingLogRepository(service.db.getDatabase()).latestFailure() ?? undefined,
           }
         : {}),
       publicAuthorBindings:
@@ -1560,7 +1552,6 @@ export function createNeoOperations(service: NeoService) {
         service.notifyPublicationsChanged(conversationId);
       },
     }),
-    createNeoRouteFailureOperation(service.db),
     createNeoInboxPromoteOperation({
       ...neoReorganizeRuntime(service),
       createProject: (title) =>

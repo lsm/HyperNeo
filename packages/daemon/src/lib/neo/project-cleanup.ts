@@ -11,7 +11,6 @@ export type NeoProjectFacts = {
   liveAsks: number;
   work: { ref: string | null }[];
   liveWork: number;
-  routed: number;
   holderMessages: number;
   archived: boolean;
   holder: string | null;
@@ -35,8 +34,7 @@ const repositories = (project: NeoProjectFacts) =>
   project.aliases.filter((alias) => alias.startsWith('repository:'));
 
 const isEmpty = (project: NeoProjectFacts) =>
-  project.asks + project.work.length + project.routed + project.context + project.holderMessages ===
-  0;
+  project.asks + project.work.length + project.context + project.holderMessages === 0;
 
 export function neoMirroredAliases(
   places: readonly PlaceGroup[],

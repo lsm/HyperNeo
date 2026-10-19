@@ -20,7 +20,6 @@ const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProje
   liveAsks: 0,
   work: [],
   liveWork: 0,
-  routed: 0,
   holderMessages: 0,
   archived: false,
   holder: null,
@@ -44,7 +43,7 @@ describe('project cleanup plan', () => {
     expect(
       plan(
         [
-          project('spoke', { holderMessages: 1, routed: 1 }),
+          project('spoke', { holderMessages: 1 }),
           project('driven', { aliases: ['folder:here\u0000/kept'] }),
         ],
         [],
@@ -82,7 +81,6 @@ describe('project cleanup plan', () => {
         project('topic', {
           title: 'Topic',
           asks: 1,
-          routed: 1,
           work: [card('claude\u0000s1'), card('claude\u0000s1')],
         }),
       ])
@@ -94,7 +92,7 @@ describe('project cleanup plan', () => {
       plan([
         project('once', oneOff),
         project('notes', { context: 10, holderMessages: 4 }),
-        project('addressed', { asks: 1, routed: 1 }),
+        project('addressed', { asks: 1 }),
       ])
     ).toEqual([]);
   });
@@ -228,7 +226,6 @@ describe('NeoRepository.projectCleanupFacts', () => {
       context: 0,
       asks: 0,
       work: [],
-      routed: 0,
       holderMessages: 0,
       aliases: [],
     });
