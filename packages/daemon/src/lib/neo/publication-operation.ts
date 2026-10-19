@@ -45,7 +45,6 @@ type Producer = {
 };
 type Proof = Producer & { ask: NeoAskOrigin; answer?: NeoAskOrigin };
 type Triggered = Proof & { triggerId?: string };
-type Answering = { messageId: string; delivered: boolean; publishedId: string | null };
 type LinkEvidence = {
   link: NeoPublicationLink;
   exists: boolean;
@@ -64,7 +63,6 @@ interface NeoPublicationRuntime {
   append(input: NeoPublicationInput): Receipt;
   inputTrigger(input: NeoAskOrigin): string | null;
   isDeliveredHumanInput(input: NeoAskOrigin): boolean;
-  publicationIdFor(triggerId: string): string | null;
   notify(): void;
 }
 
@@ -81,11 +79,11 @@ function publicationIdFor(input: NeoAskOrigin, requestId: string): string {
   );
 }
 
-function readAnswering(
+function readAnswer(
   draft: Draft,
   proof: Proof,
   runtime: NeoPublicationRuntime
-): Answering | null {
+): NeoAskOrigin | null {
   const triggerId = draft.triggerId;
   if (
     !triggerId?.startsWith(NEO_HUMAN_TRIGGER_PREFIX) ||
@@ -94,31 +92,11 @@ function readAnswering(
     runtime.inputTrigger(proof.input) === triggerId
   )
     return null;
-  const messageId = triggerId.slice(NEO_HUMAN_TRIGGER_PREFIX.length);
-  return {
-    messageId,
-    delivered: runtime.isDeliveredHumanInput({ sessionId: proof.root.sessionId, messageId }),
-    publishedId: runtime.publicationIdFor(triggerId),
+  const answer = {
+    sessionId: proof.root.sessionId,
+    messageId: triggerId.slice(NEO_HUMAN_TRIGGER_PREFIX.length),
   };
-}
-
-function requireAnswerTarget(
-  proof: Proof,
-  draft: Draft,
-  answering: Answering | null,
-  resolve: (input: NeoAskOrigin) => NeoAskOrigin | null
-): { value: Proof } | { reason: Rejection } {
-  if (!answering?.delivered) return { value: proof };
-  const answer = { sessionId: proof.root.sessionId, messageId: answering.messageId };
-  if (answering.publishedId && answering.publishedId !== publicationIdFor(answer, draft.requestId))
-    return {
-      reason: {
-        accepted: false,
-        reason: 'already_answered',
-        detail: `human:${answering.messageId} is already answered; revise that publication with its publicationId instead.`,
-      },
-    };
-  return { value: { ...proof, ask: resolve(answer) ?? answer, answer } };
+  return runtime.isDeliveredHumanInput(answer) ? answer : null;
 }
 
 export function requirePublicationProducer(
@@ -247,15 +225,15 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'publication'
     )
     .pipe(
-      (draft: Draft, proof: Proof) => readAnswering(draft, proof, runtime),
+      (draft: Draft, proof: Proof) => readAnswer(draft, proof, runtime),
       ['draft', 'publication'],
-      'answering'
+      'answer'
     )
     .pipe(
-      (proof: Proof, draft: Draft, answering: Answering | null) =>
-        requireAnswerTarget(proof, draft, answering, runtime.resolveAskOrigin),
-      ['publication', 'draft', 'answering'],
-      'result:publication'
+      (proof: Proof, answer: NeoAskOrigin | null): Proof =>
+        answer ? { ...proof, ask: runtime.resolveAskOrigin(answer) ?? answer, answer } : proof,
+      ['publication', 'answer'],
+      'publication'
     )
     .pipe(
       (draft: Draft) => draft.links.map((link) => readLinkEvidence(link, runtime)),

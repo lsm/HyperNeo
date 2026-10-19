@@ -191,8 +191,6 @@ describe('runtime-bound publication operation', () => {
       isDeliveredHumanInput: (input) =>
         isHuman(input) &&
         mailbox.sdkMessageRepo.getUserSendStatus(input.sessionId, input.messageId) === 'consumed',
-      publicationIdFor: (triggerId) =>
-        ledger.byTrigger(conversationId, triggerId)?.publicationId ?? null,
       notify,
     };
     const publishRaw = createNeoPublisher(runtime);
@@ -225,7 +223,7 @@ describe('runtime-bound publication operation', () => {
     expect(who.neoTurn.isLive()).toBe(true);
   });
 
-  test('a root turn answers another delivered human message once, under its trigger', async () => {
+  test('a root turn may thread a publish to another delivered human message, more than once', async () => {
     prompt(root.sessionId, 'event', 'system');
     prompt(root.sessionId, 'steered');
     const turn = caller(root.sessionId, 'event', false);
@@ -244,7 +242,7 @@ describe('runtime-bound publication operation', () => {
     });
     expect(await answer('first')).toMatchObject({ value: { accepted: true, created: false } });
     expect(await answer('second')).toMatchObject({
-      value: { accepted: false, reason: 'already_answered' },
+      value: { accepted: true, created: true, publication: { triggerId: 'human:steered' } },
     });
   });
 

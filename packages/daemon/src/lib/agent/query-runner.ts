@@ -2284,8 +2284,7 @@ export class QueryRunner {
       onSent();
     }
     await turn.ended;
-    for (const uuid of fed)
-      if (!this.requestedInputs.has(uuid) && !turn.answered(uuid)) this.ctx.requeueNeoInput?.(uuid);
+    for (const uuid of fed) if (!this.requestedInputs.has(uuid)) this.ctx.requeueNeoInput?.(uuid);
   }
 
   noteRequestedInputs(message: SDKMessage): void {
