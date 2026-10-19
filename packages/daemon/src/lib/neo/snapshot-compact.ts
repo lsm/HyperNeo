@@ -367,14 +367,14 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
   for (
     let count = Math.max(0, ...(fitted.packRows ?? []).map((item) => item.rows.length));
     size(fitted) > room && count > 1;
-  )
+  ) {
+    count = Math.floor(count / 2);
+    const keep = count;
     fitted = {
       ...fitted,
-      packRows: fitted.packRows?.map((item) => ({
-        ...item,
-        rows: item.rows.slice(0, (count = Math.floor(count / 2))),
-      })),
+      packRows: fitted.packRows?.map((item) => ({ ...item, rows: item.rows.slice(0, keep) })),
     };
+  }
   if (size(fitted) > room) fitted = withTodoText(withBareText(fitted), 0);
   if (size(fitted) <= room)
     return {
